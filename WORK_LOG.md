@@ -32,8 +32,8 @@ code blocker in its reviewed scope. Evidence links are in docs/acceptance.md.
 
 ## External blockers and scope
 
-CI API authentication, accepted model/usage settings, test-release scope and
-real human approvals remain prerequisites. Local ChatGPT auth was never copied
+CI API authentication, accepted model/usage settings and real human approvals
+remain prerequisites. Local ChatGPT auth was never copied
 to CI. Full acceptance still requires live AI Actions, setup and delivery in
 both consumers, human approvals, repair and release. Do not mark the goal
 complete before then.
@@ -54,6 +54,13 @@ and documented commands. All project prose is English.
 
 Both consumers report admin access, but their rulesets API returns HTTP 403:
 GitHub requires Pro or public visibility for this feature on the current account.
-This blocks the required private-repository merge protection. Test-release scope,
-account/repository policy decisions and CI model/auth/budget decisions remain
-pending. No consumer NexKit workflow or release has run yet.
+This blocks the required private-repository merge protection. Account/repository
+policy decisions and CI model/auth/budget decisions remain pending. No consumer
+NexKit workflow or release has run yet.
+
+The owner approved testing release `v0.1.0-test.1` in the private
+`phuongnse/nexkit-validation-existing` repository. This is administrative scope
+authorization; the product must still bind a real human release approval to the
+exact source commit, version and notes before publishing. The owner is deciding
+whether to retain private visibility with GitHub Pro or authorize public test
+repositories and the sample release so that required rulesets are available.

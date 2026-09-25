@@ -52,17 +52,21 @@ simulated GitHub boundaries are distinct from live integration.
   the message "Upgrade to GitHub Pro or make this repository public to enable
   this feature." Required branch rules cannot currently be configured there.
   Both repositories remain private; account changes need a separate decision.
+- The owner approved the private test-release scope in
+  `phuongnse/nexkit-validation-existing`, using tag `v0.1.0-test.1` for the sample
+  application. This authorizes preparing and exercising that release flow.
+  The eventual source commit, version and notes still require the real human
+  candidate approval enforced by NexKit. No release has been created.
 
 ## External prerequisites still missing
 
 - GitHub support for the required branch rules in the authorized private
   consumers, followed by accepted setup settings.
-- An explicit test-release scope; permission to create the two consumers does
-  not constitute approval of a release candidate.
 - An Actions `OPENAI_API_KEY`, accepted models by role and CI usage limits.
   Local ChatGPT login is not copied to CI. Further local model validation also
   requires available account allowance after the observed usage-limit failure.
-- Real humans approving the requirement and release candidate in live acceptance.
+- Real humans approving the requirement and exact release candidate in live
+  acceptance; the approved test scope does not substitute for either event.
 
 The [rerun procedure](live-acceptance.md) preserves every criterion. No public
 release or package-registry publication has occurred. Local/CI artifacts are

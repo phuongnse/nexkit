@@ -1,0 +1,28 @@
+{
+  "date": "2026-09-25",
+  "scope": "Local authentication and model access only",
+  "codex_version": "0.156.1",
+  "authentication": "Existing ChatGPT login; API-key and access-token environment variables removed",
+  "model": "gpt-6-luna",
+  "reasoning_effort": "max",
+  "sandbox": "read-only",
+  "timeout_seconds": 45,
+  "elapsed_seconds": 13.3,
+  "exit_code": 0,
+  "terminal_tool_calls": 1,
+  "task": "Read a harmless temporary fixture with a terminal tool and return its marker using a JSON output schema",
+  "marker_verified": true,
+  "cli_reported_usage": {
+    "input_tokens": 27403,
+    "cached_input_tokens": 13056,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 266,
+    "reasoning_output_tokens": 167
+  },
+  "limits": [
+    "This does not establish GitHub Actions authentication or subscription-backed pipeline readiness",
+    "No credential was copied to GitHub, repository files, artifacts, or this evidence record",
+    "This does not establish the account's exact subscription tier or capacity for a full delivery",
+    "No API price or actual monetary cost was measured"
+  ]
+}

@@ -63,8 +63,14 @@ simulated GitHub boundaries are distinct from live integration.
   candidate approval enforced by NexKit. No release has been created.
 - The owner selected `gpt-6-luna` with `max` reasoning for implementation and
   independent review. The official model documentation confirms this effort
-  level; account access and live Actions execution remain unverified. The kit
-  now forwards per-role effort to the pinned official Codex action.
+  level. The kit forwards per-role effort to the pinned official Codex action.
+- A [local ChatGPT authentication probe](validation/chatgpt-luna-auth-2026-09-25.json)
+  succeeded with Codex 0.156.1, `gpt-6-luna`, and `max` reasoning in 13.3 seconds.
+  The CLI executed one terminal tool and returned the verified fixture marker
+  through a JSON output schema. API-key and access-token environment variables
+  were removed; the existing ChatGPT login was used without copying credentials.
+  This confirms model access for that local login, not the account's exact plan,
+  available capacity for a full delivery, or authentication on Actions.
 
 ## External prerequisites still missing
 
@@ -76,7 +82,8 @@ simulated GitHub boundaries are distinct from live integration.
   unresolved; no local login credential has been copied to Actions.
 - Accepted invocation/time limits, available subscription allowance, consumer
   setup and the required branch rules. The prior local usage-limit failure
-  remains part of the evidence; no new live model run has established recovery.
+  remains part of the evidence. The later Luna/max probe succeeded, but it does
+  not establish sufficient remaining allowance for full live acceptance.
 - Real humans approving the requirement and exact release candidate in live
   acceptance; the approved test scope does not substitute for either event.
 

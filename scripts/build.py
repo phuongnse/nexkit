@@ -30,6 +30,7 @@ def main():
         "docs",
         "scripts",
         "README.md",
+        "AGENTS.md",
         "pyproject.toml",
         "requirements-dev.txt",
         "tests",

@@ -1,6 +1,6 @@
-# Kiểm thử và vận hành
+# Verification and recovery
 
-Chạy lại bằng Python 3.11+ và Node có `node:test`:
+Run the checks with Python 3.11+ and a Node version supporting `node:test`:
 
 ```sh
 python3 -m unittest discover -v
@@ -11,47 +11,52 @@ python3 -m venv .venv
 python3 scripts/build.py
 ```
 
-Unit/controller tests dùng boundary GitHub giả có nhãn rõ. Consumer tests chạy
-Node CLI và HTTP server thật trong thư mục tạm. Chúng không gọi model và không
-chứng minh workflow GitHub thật. Live validation sẽ bổ sung links run/issue/PR
-trong acceptance report, sau khi có quyền và credentials.
+Unit/controller tests use explicitly labeled simulated GitHub boundaries.
+Consumer tests execute a real Node CLI and Python HTTP server in temporary
+repositories. They make no model calls and cannot prove a live GitHub workflow.
+Live acceptance records issue/PR/run links separately.
 
-`nexkit status <issue>` đọc GitHub state. `cancel` gửi lệnh được kiểm tra quyền;
-nó ngăn bước có tác động chưa bắt đầu khi controller kiểm tra lại. Commit/PR/tag
-đã tạo không tự rollback. `resume` giữ nguyên budget và approval; sửa spec cần
-approval requirement mới. Budget hết cần quyết định quản trị, không tự reset.
+`nexkit status <issue>` reads persistent GitHub state. `cancel` posts an
+authority-checked command; controllers prevent consequential operations that
+have not started when they revalidate. Already-created commits, PRs or tags are
+not rolled back. `resume` preserves approval and budget. Changing the spec needs
+a new requirement approval. Exhausted budgets need an administrative decision;
+the pipeline never resets them automatically.
 
-Một run bị mất kết nối không mặc nhiên được khởi động lại: đọc trạng thái Actions
-run_id trước. Branch/PR hoặc release draft đã tạo được dùng lại; không dùng
-empty commit hay close/reopen giả để kích hoạt checks. Kết quả của commit/base/
-spec/config khác không có hiệu lực với candidate hiện tại.
+Inspect the current Actions run before restarting after a lost connection.
+Existing branches, PRs and release drafts are recovered. No empty commits or
+artificial PR close/reopen cycles are used to retrigger checks. Results from a
+different spec/config/base/head are invalid for the current candidate.
 
-Artifacts giữ 7 ngày trong Actions; workspace thuộc ephemeral runner. GitHub
-state chỉ giữ feedback gần nhất, reservations và candidate để tiếp tục. Không
-đưa toàn bộ transcript vào consumer knowledge. Uninstall giữ source, config,
-knowledge và dữ liệu GitHub; file kit đã được user sửa cũng được giữ lại.
+Artifacts are retained for seven days; workspaces use ephemeral runners. State
+keeps recent feedback, reservations and candidate identity. Do not copy full
+transcripts into project knowledge. Uninstall preserves consumer source,
+configuration, knowledge, GitHub data and locally edited kit files.
 
-Candidate hiện hỗ trợ text source changes tối đa 200 files/2 MB; đổi symlink,
-submodule hoặc binary source sẽ dừng với lý do cụ thể. Release artifacts tối đa
-100 MB/file. Chỉ ephemeral GitHub-hosted Ubuntu 24.04 đã được thiết kế; các
-runner/engine khác cần integration và kiểm chứng riêng.
+Partial releases reuse their original artifact run within that retention period.
+If artifacts expire or hashes/tags differ, the pipeline stops and retains the
+draft for investigation. It never overwrites assets or silently selects a new candidate.
 
-## Lặp lại smoke có model thật
+Changed source transfers are limited to 200 text files and 2 MB. Existing large
+or binary files are hashed for comparison; changed binaries, symlinks or submodules
+cannot cross the publication boundary. Release artifacts are limited to 100 MB
+per file. Only ephemeral GitHub-hosted Ubuntu 24.04 is currently integrated.
+Other runner/engine combinations require separate integration and verification.
+
+## Repeat the live local CLI smoke
 
 ```sh
 python3 scripts/local_agent_smoke.py \
-  --implement-model MODEL_BAN_CO_QUYEN_DUNG \
-  --review-model MODEL_BAN_CO_QUYEN_DUNG \
-  --output dist/local-smoke-lan-1
+  --implement-model YOUR_ACCESSIBLE_MODEL \
+  --review-model YOUR_ACCESSIBLE_MODEL \
+  --output dist/local-smoke-run-1
 ```
 
-Script tạo fixture Git tạm, gọi hai sessions Codex độc lập, kiểm tra tool output
-đọc đúng skill, regression/CLI thật và reviewer không sửa source. Kết quả, diff,
-usage CLI báo và thời gian nằm ở output directory. Script dùng model usage của
-account hiện tại, mỗi session mặc định tối đa 180 giây. Không ghi GitHub hoặc
-release. [Nghiệm thu GitHub](live-acceptance.md) là bước riêng.
-
-Release đang dở dùng artifact từ run gốc trong thời hạn lưu 7 ngày. Nếu artifact
-hết hạn hoặc bytes/tag khác, pipeline dừng và giữ draft; không ghi đè hoặc tự
-chọn candidate mới. File lớn/binary có sẵn được snapshot bằng hash; giới hạn
-2 MB áp dụng cho nội dung thay đổi chuyển qua publication.
+The script creates a temporary Git fixture, invokes independent implementer and
+reviewer Codex sessions, checks observable skill reads, tests the actual CLI and
+rejects source changes by the reviewer. Results, diff, CLI-reported usage and
+elapsed time are written to the output directory. It uses the current account's
+model allowance, with a default 180-second limit per session. It neither writes
+to GitHub nor publishes releases. A usage-limit failure is a failed smoke, not a
+passing verdict; inspect its event log before retrying with available allowance.
+[Live GitHub acceptance](live-acceptance.md) is a separate procedure.

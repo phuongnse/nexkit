@@ -73,7 +73,9 @@ def invoke(role, model, workspace, output, seconds):
             stderr=errors,
             timeout=seconds,
         )
-    require(completed.returncode == 0, f"{role} CLI failed; inspect {errors.name}")
+    require(
+        completed.returncode == 0, f"{role} CLI failed; inspect {events_path} and {errors.name}"
+    )
     result = agent_result(json.loads(result_path.read_text()), role)
     require(result["status"] == "done", f"{role} reported blocked")
     events = [json.loads(line) for line in events_path.read_text().splitlines() if line.strip()]

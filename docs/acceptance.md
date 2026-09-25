@@ -1,47 +1,54 @@
-# Nghiệm thu: chưa hoàn tất
+# Acceptance status: incomplete
 
-Mục tiêu đầy đủ ở [bootstrap issue #1](https://github.com/phuongnse/nexkit/issues/1).
-Candidate `0.1.0-rc.1` có implementation và gói cài, chưa đủ bằng chứng để xác nhận
-trọn SDLC. Không tạo human approval giả và không coi mock là live integration.
+The full goal is recorded in [bootstrap issue #1](https://github.com/phuongnse/nexkit/issues/1).
+Candidate `0.1.0-rc.1` contains an implementation and installable archive. Evidence
+is insufficient to claim the complete SDLC. Human approvals are never fabricated;
+simulated GitHub boundaries are distinct from live integration.
 
-| Nhóm | Bằng chứng hiện có | Còn phải chứng minh |
+| Group | Evidence available | Still unverified |
 |---|---|---|
-| A — package/hosts | Native Codex 0.156.1 install/list và Claude Code 2.1.282 install/details nhận 8 skills; archive và validators | Các host khác mới đối chiếu tài liệu; không quảng cáo đã chạy model |
-| B — CLI trên Actions | Live local Codex dùng skills/tools, sửa code, reviewer session riêng; GitHub platform probe qua | Live AI runner, API auth và độc lập terminal trên Actions |
-| C — hai consumer | Tests chạy Node CLI mới và HTTP API Python có sẵn, cấu hình khác nhau, không thêm preset | Hai GitHub consumer được cho phép và setup/live delivery thực tế |
-| D — success | Controller simulation issue→approval→review/checks→merge; CI của kit chạy thật | Human approval và tự merge consumer trên GitHub, không release |
-| E — repair | Live local agent tái hiện sign bug, sửa bằng tools; reviewer chạy regression với hàm gốc; controller chuyển feedback qua vòng kế | Feedback→AI sửa→checks/review mới→merge trên Actions |
-| F — blocked | Tests unauthorized, edit/revert, stale identity, invalid/missing output, zero/skip/fail tests, exhausted budgets, control edits | Failure injection trên live environment với guards cuối |
-| G — durability | Ownership install/reinstall/uninstall; cancel/resume guards; duplicate intake/reservation; orphan/merged recovery; base ancestry; native queue syntax qua | Live concurrent work, duplicate events, interruption, cancellation và quyền thiếu trên consumer |
-| H — release | Tests wrong approver, drift, bytes/tag khác, cancel/deadline, retry không trùng, lost upload response dùng lại artifact gốc | Human duyệt và test release đúng phạm vi được phép |
+| A — package/hosts | Native Codex 0.156.1 install/list and Claude Code 2.1.282 install/details with 8 skills; extracted archive and validators | Other target hosts have documentation checks only; no model-use claim |
+| B — CLI on Actions | Live local Codex used skills/tools, changed code and ran a separate reviewer; GitHub platform probe passed | Live AI runner, API authentication and independence from the local host on Actions |
+| C — two consumers | Real new Node CLI and existing Python HTTP API tests with distinct configurations, no core presets | Two authorized GitHub consumers with actual setup and delivery |
+| D — success | Simulated controller issue→approval→review/checks→merge; the kit's own CI ran on GitHub | Real human approval and autonomous consumer merge without release |
+| E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
+| F — blocked | Tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Failure injection in the live environment and final guards |
+| G — durability | Ownership, reinstall/uninstall, cancel/resume guards, duplicate intake/reservation, orphan/merged recovery, base ancestry; GitHub accepted native queue syntax | Live concurrent work, repeated events, interruptions, cancellation and insufficient consumer permissions |
+| H — release | Tests cover wrong approver/drift/changed bytes or tags/cancel/deadline/retry/lost upload response with original artifact recovery | Real human release decision and publication within the authorized test scope |
 
-## Kết quả đã chạy
+## Executed verification
 
-- 60 tests local qua sau independent review. Hai consumer chạy code/unit/CLI/HTTP
-  thật; GitHub/controller boundaries là mô phỏng có nhãn rõ.
-- [CI GitHub đầu tiên](https://github.com/phuongnse/nexkit/actions/runs/36115605127)
-  chạy 55 tests, Ruff và build tại `21f68b7`. Các runs mới nằm trong
-  [workflow checks](https://github.com/phuongnse/nexkit/actions/workflows/ci.yml).
+- 60 local tests passed after independent review. Consumer commands, unit cases
+  and CLI/HTTP behavior are real; GitHub/controller boundaries are simulated.
+- [GitHub CI](https://github.com/phuongnse/nexkit/actions/runs/36117084919) passed
+  all 60 tests, Ruff and archive build at `720278e`. Follow subsequent runs in
+  [the checks workflow](https://github.com/phuongnse/nexkit/actions/workflows/ci.yml).
 - [Platform probe](https://github.com/phuongnse/nexkit/actions/runs/36115701671)
-  qua với Contents/Issues/Metadata read; đọc được issue edit history và Actions
-  App ID 15368. Repo kit không có ruleset: probe chứng minh quyền API/cú pháp
-  `queue: max`, chưa chứng minh merge protection hay model auth.
-- [Independent review](validation/independent-review.md) dùng session riêng,
-  reproductions và regression. Kết luận cuối: không tìm thấy blocker code mới
-  trong phạm vi review; không kết luận đạt live acceptance.
-- [Live Codex local đầu tiên](validation/local-codex-2026-09-25.json): 2 sessions,
-  4 unit cases qua; reviewer chạy 11 ca CLI, không đổi source và tái hiện lỗi trên
-  hàm gốc. Mỗi session giới hạn 180 giây. CLI báo implement input/output
-  137238/2572 tokens, review 104836/4248; input bao gồm cache, xem JSON chi tiết.
-  Không có số tiền thực đo. Script tái chạy ghi riêng thời gian và usage.
+  passed with Contents/Issues/Metadata read, reading issue edit history and
+  Actions App ID 15368. The kit repo has no ruleset: this proves API permissions
+  and `queue: max` syntax, not merge protection or model authentication.
+- [Independent review](validation/independent-review.md) used a separate session,
+  reproductions and regression tests. Its final conclusion found no new code
+  blocker in the reviewed scope, without claiming complete live acceptance.
+- [First live local Codex smoke](validation/local-codex-2026-09-25.json): two
+  sessions, four passing unit cases, 11 independent reviewer CLI cases, unchanged
+  source during review and confirmed regression failures on the original function.
+  Each session had a 180-second limit. CLI-reported input/output tokens were
+  137238/2572 for implementation and 104836/4248 for review; input includes cached
+  tokens. No actual monetary cost was available.
+- The later repeatable-script run completed implementation and seven real tests,
+  but its reviewer hit the account usage limit before a final structured verdict.
+  That rerun is incomplete, not an additional passing smoke. An earlier harness
+  argument mismatch was fixed before this rerun. No provider/budget was changed.
 
-## Điều kiện bên ngoài còn thiếu
+## External prerequisites still missing
 
-- Hai consumer repositories được cho phép và phạm vi test release.
-- `OPENAI_API_KEY` trong Actions secrets, model theo role và mức usage CI đã chốt.
-  Login ChatGPT local không được sao chép vào CI.
-- Người thật duyệt requirement và release candidate trong nghiệm thu live.
+- Two authorized consumer repositories and an explicit test-release scope.
+- An Actions `OPENAI_API_KEY`, accepted models by role and CI usage limits.
+  Local ChatGPT login is not copied to CI. Further local model validation also
+  requires available account allowance after the observed usage-limit failure.
+- Real humans approving the requirement and release candidate in live acceptance.
 
-[Quy trình chạy lại](live-acceptance.md) giữ nguyên tiêu chí. Chưa public release
-hoặc publish package registry. Local/CI artifact là candidate để kiểm tra,
-không phải tuyên bố sẵn sàng production.
+The [rerun procedure](live-acceptance.md) preserves every criterion. No public
+release or package-registry publication has occurred. Local/CI artifacts are
+installation candidates for validation, not a production-readiness claim.

@@ -1,18 +1,17 @@
-# Phối hợp agent và Actions
+# How agents and Actions work together
 
-Python standard library nối Git, `gh`, CLI agent và các commands của consumer.
-Không có model API client, agent tool loop, daemon, database hay model router.
-NexKit dùng vòng lặp công cụ sẵn có của Codex, và chỉ nối các vòng sửa hữu hạn
-bằng GitHub Actions.
+Python's standard library connects Git, `gh`, the official agent CLI and consumer
+commands. NexKit uses Codex's existing tool loop and connects bounded repair
+rounds through Actions. It has no model API client, agent runtime, daemon,
+database or model router.
 
 ```mermaid
 flowchart LR
-  H[Host + shared skills] --> I[Serialized GitHub intake]
-  I --> S[Issue: requirement]
-  S --> Q[Codex clarifies from repo and human answers]
+  H[Host and shared skills] --> I[Serialized GitHub intake]
+  I --> S[Issue: authoritative requirement]
+  S --> Q[Codex clarifies from repository and human answers]
   Q -->|questions| S
-  Q -->|spec ready| A
-  S --> A[Human approves exact hash]
+  Q -->|specification ready| A[Human approves exact hash]
   A --> P[Controller reserves budget]
   P --> C[Official Codex CLI: implement]
   C --> B[Publish candidate data]
@@ -26,40 +25,44 @@ flowchart LR
   HA --> REL[Verify, build, tag, release]
 ```
 
-`plugins/nexkit/skills` là một nguồn phương pháp chung. Consumer chỉ giữ cấu
-hình, knowledge, file installer quản lý và wrappers trỏ tới commit của kit.
-Runner checkout kit đã pin, cài đúng skill role vào workspace mới, đồng thời
-truyền nội dung trusted skill và hash cùng task/context cho CLI. Mỗi lần chạy
-gồm requirement, config, source/base, feedback, giới hạn, model và output schema.
+`plugins/nexkit/skills` is the shared methodology source. Consumers keep their own
+configuration, knowledge, managed installation files and small wrappers pinned
+to a kit commit. The runner checks out that pin, installs the role's skill in a
+fresh workspace and supplies the trusted method with task context and an output
+schema. Inputs include requirements, configuration, source/base, feedback,
+execution limits and the selected model.
 
-`openai/codex-action` là action chính thức bọc `codex exec`, cài CLI/proxy và
-giữ API key khỏi agent. Implementer/reviewer chạy bằng user OS riêng, trong hai
-jobs và sessions khác nhau. Reviewer không có quyền sửa source để tự approve.
-Collector kiểm tra filesystem bằng Git metadata của checkout tin cậy, không
-chạy Git hooks từ candidate. Consumer commands chạy bằng account không có GitHub
-write token. Jobs publication/merge/release chỉ xử lý dữ liệu, không execute candidate.
+The official `openai/codex-action` wraps `codex exec`, installing its CLI and
+credential proxy. The API key stays outside the agent account. Implementer and
+reviewer use separate jobs and sessions under a dedicated unprivileged OS user.
+The reviewer cannot change the candidate and approve those changes. Collectors
+use trusted checkout Git metadata and never execute candidate Git hooks.
+Consumer commands have no GitHub write token. Publication, merge and release
+control jobs process validated data without executing consumer code.
 
-Issue title/body là requirement authority. SHA-256 gắn approval với đúng nội
-dung; actor phải là người có quyền hiện tại. Thời điểm sửa body và sự kiện đổi
-title ngăn approval sống lại sau edit/revert. Progress là comments riêng.
+The issue title/body is the requirement authority. Human approval binds to its
+SHA-256; the approver must currently have write, maintain or admin access. Body
+edit timestamps and native title rename events prevent old approval reviving
+after edit/revert. Progress is posted as separate comments.
 
-Metadata nhỏ trong branch `nexkit/state` giữ attempts, reservations, candidate,
-feedback và kết quả. GitHub Contents API SHA tạo compare-and-swap khi ghi.
-`queue: max` serialize các runs; counters không reset khi retry/resume. GitHub
-intake cũng được serialize để hai host gửi cùng key không tạo issue trùng.
+Small JSON state on `nexkit/state` records budgets, reservations, candidates,
+feedback and outcomes. GitHub Contents API SHA provides compare-and-swap writes.
+Native `queue: max` serializes runs. Clarification and delivery share a queue;
+intake has its own queue to deduplicate submissions from concurrent hosts.
+Counters survive retries and resumes.
 
-Identity review/check gồm spec, config, kit, base và head SHA. Controller kiểm
-tra lại approval/cancel và GitHub PR trước merge. Strict required checks đóng
-khoảng đua khi base thay đổi. Explicit workflow_dispatch tiếp tục vòng lặp;
-pipeline không trông chờ PR events từ GITHUB_TOKEN tự chạy checks.
+Intake dispatches clarification automatically. Authorized human answers on the
+issue trigger a new bounded session with the previous questions and answers.
+The requirement agent reads source; the controller updates the issue and rejects
+changes if approval arrived while the agent was working.
 
-Release issue chứa commit, version, notes, repository và config digest. Build
-sau approval dùng đúng source, kiểm thử rồi tạo manifest hashes. Publisher kiểm
-tra server-side asset digests, không clobber và không di chuyển tag. Partial
-release giữ draft/state để retry cùng danh tính.
+Checks and review bind to spec, config, kit, base and head. The controller checks
+approval, cancellation and the current PR again before merging. Strict required
+checks protect against a changed base. Explicit `workflow_dispatch` continues
+repair rounds without relying on PR events emitted using `GITHUB_TOKEN`.
 
-Clarification và delivery dùng chung queue. Intake tự dispatch clarification;
-câu trả lời của người có quyền kích hoạt session mới. Context giữ cả câu hỏi
-trước và câu trả lời. Agent chỉ đọc source; controller cập nhật spec và từ chối
-nếu approval đến trong lúc agent chạy. Release retry tải đúng artifact của run
-đã bắt đầu publication, không build lại bytes khác cho draft upload dở.
+A release issue binds commit, version, notes, repository and config digest.
+Post-approval builds use that exact source and produce a provenance/hash manifest.
+The publisher checks server-side asset digests, never clobbers assets and never
+moves tags. A partial release persists its original artifact run locator; retries
+download those exact bytes instead of rebuilding a partly uploaded draft.

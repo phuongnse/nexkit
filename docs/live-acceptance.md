@@ -1,80 +1,88 @@
-# Chạy nghiệm thu live khi đủ điều kiện
+# Running live acceptance when prerequisites are available
 
-Giữ nguyên tiêu chí A–H. Không tự tạo repo, đổi settings, đăng approval thay
-người hoặc public release để làm bảng nghiệm thu xanh.
+Keep all A–H criteria. Do not create unauthorized repositories, change settings,
+post human approvals on someone's behalf or publish publicly to make a checklist pass.
 
-## Setup được phép
+## Authorized setup
 
-Chủ project chỉ định hai repo: một mới, một có nội dung/hành vi thật, và phạm vi
-private test release. Chốt model implement/review, CLI version, budget. Với từng
-repo dùng `nexkit survey` và skill `nexkit-init`; tạo cấu hình từ user input và
-repo thực, không lấy fixtures làm catalog setup. Pin kit bằng full SHA đã kiểm tra.
+The owner identifies two repositories: one new and one with existing real
+behavior, plus the private test-release scope. Select implement/review models,
+CLI version and usage budget. Run `nexkit survey` and use `nexkit-init` for each
+repository. Derive configuration from user decisions and actual source; test
+fixtures are not a project preset catalog. Pin a verified kit commit by full SHA.
 
-Áp dụng rules/settings đã được phép theo [configuration](configuration.md).
-Chủ tài khoản đặt OPENAI_API_KEY qua GitHub Secrets hoặc `gh secret set`, không
-đưa secret vào chat/source/logs. Chạy setup --apply --online, commit setup lên
-default branch, chạy doctor --online --checks. Ghi đúng capability chưa sẵn sàng;
-repo chưa có app không được có test pass giả. Secret metadata không chứng minh
-model auth.
+Apply only accepted rules/settings from [configuration](configuration.md).
+The account owner supplies OPENAI_API_KEY through GitHub Secrets or `gh secret
+set`, never chat/source/logs. Run setup --apply --online, commit accepted setup
+to the default branch and run doctor --online --checks. Record unavailable
+capabilities honestly; an empty application must not receive fake passing tests.
+Secret metadata alone does not demonstrate model authentication.
 
-## Prompt → Issue → approval → merge
+## Prompt → issue → approval → merge
 
-Dùng skill nexkit-request hoặc:
+Use the nexkit-request skill or:
 
 ```sh
-nexkit request --title 'Mục tiêu cụ thể' --body-file request.md --key nghiem-thu-1
-nexkit intake-status --key nghiem-thu-1
+nexkit request --title 'Concrete behavior change' --body-file request.md --key acceptance-1
+nexkit intake-status --key acceptance-1
 ```
 
-Đóng host sau dispatch thành công. Xác minh intake tạo đúng một Issue, Actions
-clarification tự đọc repo/skills. Người có quyền trả lời câu hỏi trên Issue;
-lượt sau phải hiểu câu hỏi cũ và câu trả lời mới. Người thật đọc spec và tự đăng
-`/nexkit approve HASH`. Không bấm approve plan, PR hoặc tests giữa delivery.
+Close the local host after successful dispatch. Verify exactly one issue and
+an Actions clarification session reading repository/skills. An authorized human
+answers questions on the issue; the next session must receive both the questions
+and answers. A real human reads the specification and posts `/nexkit approve HASH`.
+Do not manually approve plans, PRs or test execution during delivery.
 
-Quan sát CLI/model/skill/tool logs, implementation, real tests/E2E, reviewer
-session riêng và merge. Kiểm tra ứng dụng qua CLI/HTTP/browser phù hợp. Ghi
-Issue/PR/run URLs, spec/config/base/head/kit identity, thời gian, lượt sửa và
-human interventions; token/chi phí chỉ ghi khi đo được. Chưa được có release.
-Lặp lại trên consumer thứ hai với yêu cầu/cấu hình khác, không đổi core.
+Observe configured CLI/model/skill/tool logs, implementation, actual tests/E2E,
+a separate reviewer session and merge. Exercise the real CLI, HTTP or browser
+path appropriate to the consumer. Record issue/PR/run URLs, spec/config/base/head/
+kit identity, elapsed time, repair rounds and human interventions. Report tokens
+or cost only when measured. No release should exist. Repeat on the second
+consumer with different requirements/configuration without modifying the core.
 
-## Repair, blocked và durability
+## Repair, blocked paths and durability
 
-Dùng defect có ý nghĩa trong spec đã duyệt. Quan sát check/reviewer phát hiện,
-feedback được chuyển cho agent, candidate sửa có checks/review mới rồi mới
-merge. Không thay agent bằng mock để gọi đây là live repair.
+Use a meaningful behavioral defect within the approved scope. Observe a check
+or reviewer discover it, feedback reach the implementer, and the repaired
+candidate receive fresh checks/review before merge. Mock agents do not establish
+this live repair behavior.
 
-Trong phạm vi private đã cho phép, thử:
+Within the authorized private test scope, exercise:
 
-- Chưa duyệt, sai người, spec/body/title sửa rồi revert; outsider comments.
-- Base/head/config đổi, stale/missing review, failed/zero/skipped tests, sai schema.
-- Sửa controls để tự approve, hết attempts/calls/time, thiếu quyền GitHub.
-- Cùng key nhiều lần, dispatch đồng thời, mất kết nối sau side effect, cancel
-  trước publish/merge, resume giữ budget, reinstall/update/uninstall có user edits.
+- Missing/wrong approval, body/title edits and reverts, and outsider comments.
+- Changed base/head/config, stale/missing review, failed/zero/skipped tests and
+  malformed structured output.
+- Attempts to modify self-approval controls, exhausted attempts/calls/time and
+  insufficient GitHub permissions.
+- Duplicate keys, concurrent dispatch, interruption after a side effect,
+  cancellation before publish/merge, resume with the same budget and installation
+  updates/uninstall with consumer edits or symlink paths.
 
-Không trường hợp thiếu điều kiện nào được merge. Mocks trong tests phục vụ
-failure injection riêng; vẫn cần thao tác GitHub thật để hoàn tất nhóm G.
+No case lacking required conditions may merge. Automated mocks support separate
+failure injection, but real GitHub execution is still required to complete G.
 
 ## Human release decision
 
-Merge nhiều thay đổi và xác minh chưa có tag/release. Commit source version
-changes trước khi chọn candidate, chuẩn bị notes rồi chạy:
+Merge multiple changes and verify that no tag/release was created. Commit all
+source version changes before selecting the exact candidate. Prepare notes:
 
 ```sh
-nexkit release --commit FULL_SHA --version VERSION_DA_CHON --notes-file notes.md
-nexkit intake-status --operation release --key KEY_TRA_VE
-nexkit approval SO_ISSUE_CANDIDATE
+nexkit release --commit FULL_SHA --version SELECTED_VERSION --notes-file notes.md
+nexkit intake-status --operation release --key RETURNED_KEY
+nexkit approval CANDIDATE_ISSUE_NUMBER
 ```
 
-Người thật chọn thời điểm/candidate và tự đăng `/nexkit release HASH`. Chỉ trong
-phạm vi test release đã cho phép, quan sát verify/build/tag/publish exact source,
-version, notes; đối chiếu manifest và server asset hashes. Merge tiếp ở default
-branch không được đổi source candidate.
+A real human selects timing/candidate and posts `/nexkit release HASH`. Only in
+the authorized test scope, observe verify/build/tag/publication of that exact
+source, version and notes. Compare manifest and server asset hashes. Later
+merges to the default branch must not change the chosen source.
 
-Thử wrong approver, drift, retry và ngắt sau partial upload. Status phải ghi lý do;
-resume dùng artifact của run gốc (lưu 7 ngày), không đổi tag/upload trùng hoặc
-rebuild bytes khác. Artifact hết hạn/hash khác phải blocked và giữ draft.
-GitHub release không phải production deployment.
+Test a wrong approver, drift, retries and interruption after partial upload.
+Status must explain the outcome. Resume must reuse the original run artifact
+(retained seven days), without duplicate uploads, moving tags or rebuilding
+different bytes. Expired artifacts/hash mismatches must block and retain the
+draft. A GitHub release does not grant production deployment authority.
 
-Điền kết quả/link thực vào [acceptance](acceptance.md). B chỉ đạt khi AI CLI chạy
-trên runner; D/H chỉ đạt với human approval thật. Thiếu prerequisites thì giữ
-mục chưa xác minh, không thay bằng demo dễ hơn.
+Record real results/links in [acceptance](acceptance.md). B requires a live AI CLI
+on a runner; D/H require actual human approvals. Missing prerequisites leave the
+corresponding criterion unverified rather than replacing it with an easier demo.

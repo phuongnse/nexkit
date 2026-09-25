@@ -38,3 +38,9 @@ these prerequisites; local ChatGPT auth was never copied to CI. No unrelated
 repository was changed, new public consumer created or public release/package
 published. Full acceptance still requires live AI Actions, two consumers,
 human approvals, repair and release. Do not mark the goal complete before then.
+
+The owner clarified that all project artifacts must be in English; only our
+conversation may be Vietnamese. README, reference docs and the GitHub goal issue
+were translated, with the policy recorded in AGENTS.md. A later local CLI rerun
+hit the existing account usage limit before its reviewer returned a verdict;
+that rerun is incomplete. No provider was switched or spending limit increased.

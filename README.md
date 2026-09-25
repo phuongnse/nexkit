@@ -2,16 +2,17 @@
 
 **Agents. Skills. One workflow.**
 
-NexKit thiết lập AI SDLC từ mục tiêu của bạn và repository thực tế. Bạn duyệt
-requirement trên GitHub; Actions gọi coding-agent CLI để implement, review độc
-lập, kiểm thử, sửa lỗi và merge trong giới hạn đã chọn. Release là quyết định riêng.
+NexKit configures an AI SDLC from your goals and your repository. You approve a
+requirement on GitHub; Actions runs coding-agent CLIs to implement, independently
+review, test, repair and merge within your chosen limits. Release is a separate decision.
 
-**Trạng thái: candidate đang được kiểm chứng. Chưa chứng minh live AI delivery
-trên Actions.** Xem [bằng chứng và phần còn thiếu](docs/acceptance.md).
+**Status: installation candidate under validation. Live AI delivery on Actions
+has not yet been demonstrated.** See the [acceptance report](docs/acceptance.md).
 
-## Cài và thiết lập
+## Install and set up
 
-Cần Python 3.11+, Git và GitHub CLI đã đăng nhập. Từ source hoặc gói đã giải nén:
+Requirements: Python 3.11+, Git, and an authenticated GitHub CLI. From the source
+checkout or an extracted installation archive:
 
 ```sh
 python3 scripts/build.py
@@ -19,34 +20,32 @@ export PATH="$PWD/bin:$PATH"
 nexkit --version
 ```
 
-Trong Codex, thêm marketplace của thư mục gói bằng `codex plugin marketplace add
-/absolute/path/to/nexkit`, rồi `codex plugin add nexkit@personal`. Trong Claude
-Code, dùng `claude --plugin-dir /absolute/path/to/nexkit/plugins/nexkit`.
-Bạn cũng có thể dùng installer
-skills của NexKit. [Hướng dẫn host](docs/compatibility.md) phân biệt cài được,
-tương tác đã chạy và engine CI. Trong Codex dùng `$nexkit-init`; trong Claude
-Code plugin dùng `/nexkit:nexkit-init`, rồi mô tả mục tiêu và ràng buộc của project.
-Agent khảo sát repo, chuẩn bị cấu hình để bạn xem và chạy kiểm chứng setup.
-[Các trường cấu hình và quyền](docs/configuration.md).
+In Codex, register the package directory with `codex plugin marketplace add
+/absolute/path/to/nexkit`, then run `codex plugin add nexkit@personal`. In Claude
+Code, use `claude --plugin-dir /absolute/path/to/nexkit/plugins/nexkit`.
+The [host guide](docs/compatibility.md) distinguishes installation, interactive
+use and CI engines. The NexKit installer can also place portable project skills.
 
-## Yêu cầu đầu tiên
+Use `$nexkit-init` in Codex or `/nexkit:nexkit-init` in the Claude Code plugin,
+then describe your project goals and constraints. The agent surveys the actual
+repository, presents the setup decisions and verifies the accepted configuration.
+See [configuration and permissions](docs/configuration.md).
 
-Dùng skill `nexkit-request`. Nó gửi yêu cầu cho workflow intake tạo GitHub issue,
-Actions tiếp tục làm rõ spec trong issue đó kể cả khi đóng host local. CLI trả
-key và lệnh `intake-status` để tìm issue; trả lời câu hỏi trên GitHub.
-Người có quyền review issue và tự đăng đúng
-comment `/nexkit approve <hash>` do `nexkit approval <issue>` cung cấp.
+## Your first request
 
-Sau approval, theo dõi issue, PR và Actions. Dùng `nexkit status <issue>`;
-`nexkit cancel <issue>` hoặc `nexkit resume <issue>` khi cần. Delivery không cần
-terminal của bạn và không yêu cầu duyệt plan, task, test hay PR.
+Use the `nexkit-request` skill. GitHub intake creates an issue, and Actions
+continues requirement clarification after the local host closes. The CLI returns
+an intake key and an `intake-status` command to find the issue. Answer questions
+on GitHub. An authorized human reviews the specification and posts the exact
+`/nexkit approve <hash>` comment shown by `nexkit approval <issue>`.
 
-Khi muốn phát hành, dùng `nexkit release --commit <sha> --version <version>
---notes-file <file>`. Người có quyền chọn đúng candidate và đăng
-`/nexkit release <hash>` trên issue candidate. Merge không tự tạo release.
+Track the issue, PR and Actions with `nexkit status <issue>`. Use `nexkit cancel
+<issue>` or `nexkit resume <issue>` when needed. Delivery runs without your local
+terminal and requires no separate plan, task, test or PR approval.
 
-[Cách CLI, skills và Actions phối hợp](docs/architecture.md) ·
-[Kiểm thử và phục hồi](docs/operations.md) ·
-[Dependency và nguồn tài liệu](docs/sources.md)
+To prepare a release, run `nexkit release --commit <sha> --version <version>
+--notes-file <file>`. An authorized human chooses that candidate and posts
+`/nexkit release <hash>` on its issue. Merging never starts a release.
 
-[Quy trình nghiệm thu live và điều kiện còn thiếu](docs/live-acceptance.md).
+[Architecture](docs/architecture.md) · [Verification and recovery](docs/operations.md) ·
+[Dependencies and sources](docs/sources.md) · [Live acceptance](docs/live-acceptance.md)

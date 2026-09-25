@@ -61,6 +61,14 @@ simulated GitHub boundaries are distinct from live integration.
   application. This authorizes preparing and exercising that release flow.
   The eventual source commit, version and notes still require the real human
   candidate approval enforced by NexKit. No release has been created.
+- The existing consumer now has a deterministic local ZIP builder at
+  [ccf1b4b](https://github.com/phuongnse/nexkit-validation-existing/commit/ccf1b4b77c10e1e5f80d0a3e9a2cde64c01430b2).
+  It packages exact Git blobs with source hashes. All 17 consumer tests passed,
+  including starting the extracted HTTP application. NexKit's local release-build
+  helper ran the draft checks, collected the archive and reproduced identical bytes
+  on retry. Independent review found and rechecked fixes for the returned digest
+  and reused-file permissions. This is administrative release preparation, not
+  a live approval or publication. See the [local build record](validation/consumer-package-2026-09-25.json).
 - The owner selected `gpt-6-luna` with `max` reasoning for implementation and
   independent review. The official model documentation confirms this effort
   level. The kit forwards per-role effort to the pinned official Codex action.
@@ -108,6 +116,9 @@ simulated GitHub boundaries are distinct from live integration.
 ## External prerequisites still missing
 
 - Each consumer still needs its own official Codex login and a live model run.
+  Both device-login attempts expired after 15 minutes; the official CLI still
+  reports `Not logged in` in both running containers. New device authorization
+  must be completed by the owner before live AI acceptance can continue.
   The subscription integration is implemented, while OpenAI's account-cache CI
   guide excludes public repositories. This custom deployment was explicitly
   selected by the owner and is not an officially recommended public CI setup.

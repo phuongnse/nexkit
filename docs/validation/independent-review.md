@@ -57,3 +57,13 @@ session was stopped by a tool safety filter; its later follow-up was restricted
 to static and benign functional checks. No claim of exhaustive security review
 is made. Live login, full delivery and missing-Worker shutdown were not independently
 executed by this reviewer; root-agent probe evidence is recorded separately.
+
+## Consumer release preparation
+
+The existing consumer's local package builder received a separate functional
+review. The reviewer found that source metadata overwrote the returned ZIP hash
+and that reuse preserved unreadable permissions on an older archive. Both were
+fixed with direct regression checks. The final pass ran all six package tests,
+including the extracted application's real HTTP response, and found no remaining
+blocker within that scope. This review made no credential access, model calls,
+GitHub writes or release-approval claim.

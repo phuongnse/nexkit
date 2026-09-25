@@ -149,5 +149,7 @@ delivery round reserves two for implementation and review. Failed runs consume
 reservations. At least three calls are needed for one clarification and one
 delivery round. Delivery elapsed time starts at its first attempt and survives
 retries. Clarification reserves each session's runtime; waiting for human answers
-does not consume that reserved runtime. These are invocation/time bounds, not
+does not consume that reserved runtime. `limits.minutes` applies separately to
+total clarification reservations, elapsed delivery time and elapsed release time;
+it is not one end-to-end wall-clock cap. These are invocation/time bounds, not
 measured tokens or a provider spending cap.

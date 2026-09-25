@@ -1,0 +1,41 @@
+{
+  "date": "2026-09-25T15:46:50.252167+00:00",
+  "scope": "Local deterministic consumer release build; not live AI or Actions release acceptance",
+  "repository": "phuongnse/nexkit-validation-existing",
+  "source": "ccf1b4b77c10e1e5f80d0a3e9a2cde64c01430b2",
+  "version": "0.1.0-test.1",
+  "kit_ref": "eec26fb5b72cc3da89cc40cc7be79e874354c553",
+  "configuration": "Draft; consumer setup has not been applied",
+  "checks": [
+    {
+      "name": "test",
+      "kind": "test",
+      "passed": true,
+      "tests": 6
+    },
+    {
+      "name": "e2e",
+      "kind": "e2e",
+      "passed": true,
+      "tests": 5
+    },
+    {
+      "name": "package",
+      "kind": "test",
+      "passed": true,
+      "tests": 6
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "label-service-0.1.0-test.1.zip",
+      "sha256": "272b1b3cd4af442d4db259ba9763b94aa40a24bbba2c5267d4bcb5fd50099020",
+      "size": 4035
+    }
+  ],
+  "repeat_same_bytes": true,
+  "collector_copy_matches": true,
+  "package_test_includes_real_extracted_http_app": true,
+  "human_approval_exercised": false,
+  "publish_attempted": false
+}

@@ -17,6 +17,14 @@ PROTECTED = (".nexkit/project.json", ".nexkit/installation.json")
 HOST_DIRS = (".codex", ".agents", ".claude", ".gemini", ".cursor", ".agent")
 
 
+def authentication(cfg):
+    return cfg["engine"].get("auth", "api-key")
+
+
+def agent_runner(cfg):
+    return cfg["environment"].get("agent_runner", cfg["environment"]["runner"])
+
+
 def require(condition, message):
     if not condition:
         raise Blocked(message)
@@ -112,6 +120,9 @@ def config(value):
     engine = value.get("engine", {})
     require(engine.get("name") == "codex", "This version provides the Codex CI engine")
     require(VERSION.fullmatch(engine.get("version", "")), "Pin the Codex CLI version")
+    require(
+        authentication(value) in ("api-key", "chatgpt"), "Choose engine.auth: api-key or chatgpt"
+    )
     for role in ("implement", "review"):
         model = value.get("models", {}).get(role)
         require(
@@ -144,8 +155,33 @@ def config(value):
     environment = value.get("environment", {})
     require(
         environment.get("runner") == "ubuntu-24.04",
-        "Only ephemeral GitHub-hosted ubuntu-24.04 is supported by this release",
+        "Controller, verification and release jobs require GitHub-hosted ubuntu-24.04",
     )
+    runner = agent_runner(value)
+    if isinstance(runner, list):
+        require(
+            4 <= len(runner) <= 8
+            and all(
+                isinstance(label, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", label)
+                for label in runner
+            ),
+            "Self-hosted agent_runner must contain Linux/x64 labels and a project-specific label",
+        )
+        require(
+            len(set(runner)) == len(runner) and {"self-hosted", "linux", "x64"} < set(runner),
+            "Use self-hosted, linux, x64 and at least one project-specific runner label",
+        )
+    else:
+        require(runner == "ubuntu-24.04", "Unsupported agent runner")
+    if authentication(value) == "chatgpt":
+        require(
+            isinstance(runner, list),
+            "ChatGPT CI authentication requires an explicitly configured self-hosted agent runner",
+        )
+        require(
+            engine["version"] == "0.156.1",
+            "ChatGPT isolation is integrated with Codex 0.156.1; verify other versions before upgrading",
+        )
     require(isinstance(environment.get("setup"), list), "Declare environment.setup commands")
     for item in environment["setup"]:
         command(item)

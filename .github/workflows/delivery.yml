@@ -10,7 +10,7 @@ on:
         required: true
     secrets:
       OPENAI_API_KEY:
-        required: true
+        required: false
 permissions: {}
 concurrency:
   group: nexkit-work
@@ -37,6 +37,8 @@ jobs:
       review_effort: ${{ steps.prepare.outputs.review_effort }}
       codex_version: ${{ steps.prepare.outputs.codex_version }}
       agent_minutes: ${{ steps.prepare.outputs.agent_minutes }}
+      agent_runner: ${{ steps.prepare.outputs.agent_runner }}
+      authentication: ${{ steps.prepare.outputs.authentication }}
     steps:
       - name: Validate the kit pin against trusted default-branch configuration
         env:
@@ -80,7 +82,7 @@ jobs:
   implement:
     needs: prepare
     if: needs.prepare.outputs.ready == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(needs.prepare.outputs.agent_runner) }}
     timeout-minutes: 70
     permissions:
       contents: read
@@ -114,6 +116,7 @@ jobs:
         run: python3 -m nexkit.ci guard --context /tmp/nexkit/context.json
       - name: Implement using the official Codex CLI
         timeout-minutes: ${{ fromJSON(needs.prepare.outputs.agent_minutes) }}
+        if: needs.prepare.outputs.authentication == 'api-key'
         uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -130,6 +133,13 @@ jobs:
           sandbox: workspace-write
           codex-args: '["--ephemeral"]'
           allow-bots: true
+      - name: Run Codex with this runner's ChatGPT session
+        if: needs.prepare.outputs.authentication == 'chatgpt'
+        timeout-minutes: ${{ fromJSON(needs.prepare.outputs.agent_minutes) }}
+        uses: ./kit/actions/codex-subscription
+        with:
+          role: deliver
+          context: /tmp/nexkit/context.json
       - name: Collect data with trusted code (no candidate execution)
         env:
           PYTHONPATH: ${{ github.workspace }}/kit
@@ -221,7 +231,7 @@ jobs:
           if-no-files-found: error
   review:
     needs: [prepare, publish, verify]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(needs.prepare.outputs.agent_runner) }}
     timeout-minutes: 70
     permissions:
       contents: read
@@ -266,6 +276,7 @@ jobs:
         run: python3 -m nexkit.ci guard --context /tmp/nexkit/candidate.json
       - name: Independent reviewer in a fresh Codex session
         timeout-minutes: ${{ fromJSON(needs.prepare.outputs.agent_minutes) }}
+        if: needs.prepare.outputs.authentication == 'api-key'
         uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -282,6 +293,13 @@ jobs:
           sandbox: read-only
           codex-args: '["--ephemeral"]'
           allow-bots: true
+      - name: Run Codex with this runner's ChatGPT session
+        if: needs.prepare.outputs.authentication == 'chatgpt'
+        timeout-minutes: ${{ fromJSON(needs.prepare.outputs.agent_minutes) }}
+        uses: ./kit/actions/codex-subscription
+        with:
+          role: review
+          context: /tmp/nexkit/review-context.json
       - name: Reject review of a modified candidate
         env:
           PYTHONPATH: ${{ github.workspace }}/kit

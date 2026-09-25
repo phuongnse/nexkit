@@ -16,7 +16,7 @@ from .common import (
     safe_path,
     write_json,
 )
-from .policy import config, require
+from .policy import agent_runner, authentication, config, require
 
 HOSTS = {
     "codex": ".agents/skills",
@@ -106,6 +106,9 @@ def caller(cfg, workflow):
         required: true
         type: string
 """
+    secrets = ""
+    if workflow in ("delivery", "clarify") and authentication(cfg) == "api-key":
+        secrets = "    secrets:\n      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n"
     return f"""# Managed by NexKit {__version__}; update through nexkit install.
 name: NexKit {workflow}
 on:
@@ -123,8 +126,7 @@ jobs:
     with:
       kit_repository: {pin["repository"]}
       kit_ref: {pin["ref"]}
-    secrets:
-      OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
+{secrets}\
 """
 
 
@@ -276,24 +278,45 @@ def doctor(root, cfg, *, online=False, checks=False):
                 policy.get("can_approve_pull_request_reviews") is True,
                 "Actions permission to create pull requests is disabled",
             )
-            secrets = gh.api(f"{gh.root}/actions/secrets")["secrets"]
-            require(
-                any(x["name"] == "OPENAI_API_KEY" for x in secrets),
-                "OPENAI_API_KEY Actions secret is missing (an org secret may require admin verification)",
-            )
-            verified.append("GitHub settings and secret metadata inspected")
+            if authentication(cfg) == "api-key":
+                secrets = gh.api(f"{gh.root}/actions/secrets")["secrets"]
+                require(
+                    any(x["name"] == "OPENAI_API_KEY" for x in secrets),
+                    "OPENAI_API_KEY Actions secret is missing (an org secret may require admin verification)",
+                )
+                verified.append("API secret metadata inspected")
+            if isinstance(agent_runner(cfg), list):
+                runners = gh.api(
+                    f"{gh.root}/actions/runners?per_page=100", pages=True, collection="runners"
+                )
+                require(
+                    any(
+                        r.get("status") == "online"
+                        and set(agent_runner(cfg))
+                        <= {label["name"].lower() for label in r.get("labels", [])}
+                        for r in runners
+                    ),
+                    "No online runner matches this project's agent_runner labels",
+                )
+                verified.append(
+                    "project runner registration inspected; login and isolation require a live probe"
+                )
+            verified.append("GitHub settings inspected")
         except Blocked as exc:
             problems.append(str(exc))
     else:
         problems.append("GitHub permissions/settings/authentication have not been verified")
     return {
         "ready": not problems,
+        "ready_scope": "configuration and declared checks; live model access is reported separately",
         "verified": verified,
         "problems": problems,
         "verification": verification,
         "engine": cfg["engine"],
         "models": cfg["models"],
         "reasoning_effort": cfg.get("reasoning_effort", {}),
+        "authentication": authentication(cfg),
+        "agent_runner": agent_runner(cfg),
         "limits": cfg["limits"],
         "live_agent_verified": False,
     }

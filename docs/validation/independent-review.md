@@ -37,3 +37,23 @@ actual runner/model execution with this setting remains unverified.
 This is a scoped implementation review. Live AI Actions, delivery in both
 authorized consumer repositories, real approvals and test release remain unverified. It is not
 approval of the full product against those missing acceptance criteria.
+
+## Subscription runner follow-up
+
+The independent session identified pre-job failure handling that allowed later
+`always()` steps, HOME dependency loss, untrusted setup Git metadata, ownership
+regression in API mode, replaced workspace directories, optional native Git
+metadata execution outside the tool sandbox, and a lock acquired after cleanup.
+The implementation now terminates rejected Workers, preserves dependencies,
+restores trusted metadata with correct ownership, verifies directory identity,
+disables parent Git metadata through a fixed PATH shim and acquires the lock first.
+
+The final functional/static pass ran all 13 runner-specific tests and a benign
+workspace fixture. Dependencies, executable modes, Git ownership and reviewer
+controls were retained correctly. It inspected pinned Codex source to confirm
+metadata failures are optional and `apply_patch` does not require that Git path.
+No further functional blocker was found in that scope. A broader earlier probe
+session was stopped by a tool safety filter; its later follow-up was restricted
+to static and benign functional checks. No claim of exhaustive security review
+is made. Live login, full delivery and missing-Worker shutdown were not independently
+executed by this reviewer; root-agent probe evidence is recorded separately.

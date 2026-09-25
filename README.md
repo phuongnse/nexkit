@@ -31,6 +31,11 @@ then describe your project goals and constraints. The agent surveys the actual
 repository, presents the setup decisions and verifies the accepted configuration.
 See [configuration and permissions](docs/configuration.md).
 
+Each project selects its own runner and authentication. API mode uses an Actions
+secret; [subscription mode](docs/self-hosted.md) uses a dedicated runner and an
+official Codex ChatGPT login owned by that project. Installing the plugin gives
+no access to another user's VPS, runner or account.
+
 ## Your first request
 
 Use the `nexkit-request` skill. GitHub intake creates an issue, and Actions

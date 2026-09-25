@@ -12,7 +12,7 @@ from .checks import execute, verify
 from .common import Blocked, canonical, digest, file_hash, kit_root, read_json, run, write_json
 from .delivery import failed, finish, prepare, publish, revalidate
 from .github import GitHub
-from .policy import HOST_DIRS, agent_result, human, require, safe_path
+from .policy import HOST_DIRS, agent_result, agent_runner, authentication, human, require, safe_path
 
 
 def output(**values):
@@ -67,6 +67,8 @@ def prepare_job(destination, kit_ref):
             implement_effort=cfg.get("reasoning_effort", {}).get("implement", ""),
             review_effort=cfg.get("reasoning_effort", {}).get("review", ""),
             codex_version=cfg["engine"]["version"],
+            agent_runner=canonical(agent_runner(cfg)),
+            authentication=authentication(cfg),
             agent_minutes=max(1, min(60, cfg["limits"]["minutes"] // 2)),
         )
     else:
@@ -184,6 +186,15 @@ def materialize(source, workspace, context, role, data_dir):
         "Do not commit, push, approve a requirement, merge, publish or modify host control files. "
         "Return the JSON required by the supplied schema.\n"
     )
+    if authentication(context["config"]) == "chatgpt":
+        prompt += (
+            "Runner constraints: tool network access, including local sockets, is disabled. "
+            "Run applicable offline checks here. The separate verification job runs the "
+            "declared network/HTTP E2E checks and supplies their actual results for review. "
+            "Report unavailable checks honestly; do not change assertions or application "
+            "behavior to bypass sandbox restrictions. Native CLI Git metadata is unavailable; "
+            "use the sandboxed terminal's Git commands to inspect the supplied repository.\n"
+        )
     (data_dir / "prompt.txt").write_text(prompt)
     shutil.copyfile(kit_root() / f"schemas/{role}.json", data_dir / "schema.json")
     return {"workspace": str(workspace), "skill_sha256": digest(method), "role": role}

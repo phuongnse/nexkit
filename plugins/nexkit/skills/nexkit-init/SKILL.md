@@ -14,6 +14,14 @@ ask only about consequential missing choices: architecture for a new app,
 model access and usage limits, costs, credentials, permissions and release scope.
 Do not select a stack from a project catalog or add a preset to NexKit.
 
+Select the agent runner and authentication for this consumer during setup.
+Inspect its registered runners before requesting new infrastructure. A plugin
+installation grants no access to the plugin author's runners or accounts.
+Record runner labels and authentication mode in this consumer's project JSON;
+keep credentials on its authorized runner or in its own secret store. For
+self-hosted subscription authentication, follow `docs/self-hosted.md` and verify
+runner admission, isolation and login before claiming the pipeline is ready.
+
 Prepare a project JSON using the installed NexKit `docs/configuration.md` field
 reference. Its decisions, commands and knowledge paths belong to this consumer.
 Use native tools to enforce conventions. Use real test and E2E commands appropriate

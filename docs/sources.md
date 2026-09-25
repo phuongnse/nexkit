@@ -15,6 +15,10 @@ GitHub CLI and the consumer's actual commands.
 | Ruff | 0.16.9 | MIT; development formatting/linting only |
 | PyYAML | 6.0.3 | MIT; development workflow structure inspection only |
 | Claude Code CLI | 2.1.282 | Upstream commercial terms; installed for host verification, never redistributed |
+| GitHub Actions runner | 2.337.0; release archive SHA-256 in `runner/Dockerfile` | MIT; official repo-scoped listener and job hooks |
+| GitHub CLI | 2.101.0; release archive SHA-256 in `runner/Dockerfile` | MIT; official repository operations |
+| Node / Ubuntu runner images | 24.18.0 / 24.04; OCI digests in `runner/Dockerfile` | Upstream component licenses; base runtime packages |
+| Moby seccomp profile | `85e237f1fe229a0c61c9c7d8e743fa780d3b97ca` | Apache-2.0; default profile plus six namespace/mount syscalls; license in `runner/third-party` |
 
 Checkout/upload/download Actions use full commit pins. A kit update changes its
 version/pin through a reviewable diff and verification; consumers never silently
@@ -33,3 +37,12 @@ Evaluated upstreams: [Spec Kit](https://github.com/github/spec-kit),
 [Superpowers](https://github.com/obra/superpowers),
 [Agentic Workflows](https://github.com/github/gh-aw),
 [Ruff installation](https://docs.astral.sh/ruff/installation/).
+
+Self-hosted integration sources:
+[Codex account authentication in CI](https://learn.chatgpt.com/docs/auth/ci-cd-auth),
+[native permissions](https://learn.chatgpt.com/docs/permissions),
+[Actions job hooks](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts),
+[pinned runner hook scheduling](https://github.com/actions/runner/blob/v2.337.0/src/Runner.Worker/JobExtension.cs),
+[pinned Codex Git metadata implementation](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/git-utils/src/status.rs),
+[Ubuntu user namespace restrictions](https://discourse.ubuntu.com/t/ubuntu-24-04-lts-noble-numbat-release-notes/39890),
+[Moby default seccomp provenance](https://github.com/moby/profiles/tree/85e237f1fe229a0c61c9c7d8e743fa780d3b97ca).

@@ -25,30 +25,16 @@ runs:
         sudo chown "$(id -u):$(id -g)" /home/nexkit-agent
         sudo chmod 755 /home/nexkit-agent
         python3 -m nexkit.ci materialize --role "$NEXKIT_ROLE" --context "$NEXKIT_CONTEXT" --source "$NEXKIT_SOURCE" --workspace /home/nexkit-agent/work --data-dir /tmp/nexkit
+        # Preserve trusted Git metadata before consumer installation scripts run.
+        sudo env PYTHONPATH="$GITHUB_WORKSPACE/kit" python3 -m nexkit.workspace snapshot
         sudo chown -R nexkit-agent:nexkit-agent /home/nexkit-agent/work
         # Temporarily allow installation into the dedicated user's actual HOME.
         sudo chown nexkit-agent:nexkit-agent /home/nexkit-agent
         if [ "$NEXKIT_ROLE" != request ]; then
           python3 -m nexkit.ci environment --context "$NEXKIT_CONTEXT" --workspace /home/nexkit-agent/work
         fi
-        sudo chown "$(id -u):$(id -g)" /home/nexkit-agent
-        sudo chmod 755 /home/nexkit-agent
         # Setup commands are untrusted: rebuild host controls after they exit.
-        sudo rm -rf -- /home/nexkit-agent/.codex /home/nexkit-agent/output
-        for control in .codex .agents .claude .gemini .cursor .agent; do
-          sudo rm -rf -- "/home/nexkit-agent/work/$control"
-          sudo rm -rf -- "/home/nexkit-agent/$control"
-        done
-        sudo mkdir -p /home/nexkit-agent/work/.agents/skills
-        sudo cp -a "$GITHUB_WORKSPACE/kit/plugins/nexkit/skills/nexkit-$NEXKIT_ROLE" /home/nexkit-agent/work/.agents/skills/
-        sudo mkdir -p /home/nexkit-agent/output
-        sudo chown nexkit-agent:nexkit-agent /home/nexkit-agent/output
-        mkdir -p /home/nexkit-agent/.codex
-        cat > /home/nexkit-agent/.codex/config.toml <<'CONFIG'
-        project_doc_max_bytes = 0
-        approval_policy = "never"
-        CONFIG
-        chmod -R a+rX /tmp/nexkit /home/nexkit-agent/.codex
-        sudo chown -R nexkit-agent:nexkit-agent /home/nexkit-agent/.codex
+        sudo env PYTHONPATH="$GITHUB_WORKSPACE/kit" python3 -m nexkit.workspace restore --role "$NEXKIT_ROLE" --owner "$(id -u)"
+        sudo chmod -R a+rX /tmp/nexkit /home/nexkit-agent/.codex
         # Control sources and action implementations cannot be changed by the agent.
         chmod -R go-w "$GITHUB_WORKSPACE/kit"

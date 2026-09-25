@@ -10,11 +10,11 @@ in `.nexkit/project.json`.
 | `schema` | `1` |
 | `repository`, `default_branch` | GitHub owner/name and actual integration branch |
 | `kit` | `repository`, full commit SHA `ref`, exact `version` |
-| `engine` | `name: codex` and exact CLI `version`; currently the only CI engine |
+| `engine` | `name: codex`, exact CLI `version`, and `auth` set to `api-key` or `chatgpt` (omitted means `api-key`) |
 | `models` | Accessible models for `implement` and `review`; no implicit defaults |
-| `reasoning_effort` | Optional object declaring `implement` and `review`; forwarded unchanged to the official Codex action's `effort` input |
+| `reasoning_effort` | Optional object declaring `implement` and `review`; forwarded to the official action or CLI |
 | `limits` | `attempts` (1–20), `agent_calls` (3–40), `minutes` (1–1440), `command_seconds` (1–3600) |
-| `environment` | `runner: ubuntu-24.04`; `setup` commands as argument arrays |
+| `environment` | `runner: ubuntu-24.04` for controller/check/release jobs; optional `agent_runner` for CLI jobs; `setup` commands as argument arrays |
 | `application` | `present` or `absent` at setup; new repositories still declare intended checks before delivery |
 | `checks` | Actual commands, each with `name`, `kind`, `argv`, `timeout_seconds` |
 | `decisions` | Accepted product and technical decisions as a list of strings |
@@ -64,7 +64,9 @@ nexkit doctor --online --checks
 Setup writes configuration and runs verification. Exit code 2 identifies a
 capability that is not ready; an empty application does not receive fake passing
 checks. `doctor` inspects secret metadata but cannot infer model access from a
-secret name. Live agent acceptance remains necessary.
+secret name. For a self-hosted runner it checks online registration and matching
+labels. `ready_scope` describes configuration/check readiness; `live_agent_verified`
+is reported separately. Live agent acceptance remains necessary.
 
 ## GitHub settings
 
@@ -78,8 +80,11 @@ An administrator must inspect and accept the setup:
 - Job tokens can write the `nexkit/state` and delivery branches.
 - Existing required verification behavior is preserved through declared commands
   or a verified dispatch integration; do not simply remove checks to obtain green CI.
-- `OPENAI_API_KEY` is an Actions secret, selected models are accessible and usage
-  limits have been accepted. Never copy local ChatGPT authentication into public CI.
+- Authentication matches `engine.auth`, selected models are accessible and usage
+  limits have been accepted. API mode requires `OPENAI_API_KEY`; subscription
+  mode requires the dedicated runner setup in [self-hosted operation](self-hosted.md).
+- Public consumers using that runner require approval for all outside-contributor
+  fork workflows. Direct PR jobs never run on the credential-bearing runner.
 
 Runtime reads active rules through the Metadata:read API. Full bypass/classic
 protection auditing uses the setup administrator; CI retains no administrative
@@ -92,8 +97,8 @@ This is setup work, not an additional approval for each feature.
 
 ## OpenAI API authentication for Actions
 
-The current pipeline runs the official Codex CLI through the official GitHub
-action. It uses an OpenAI Platform API key stored as the repository Actions
+With `engine.auth: api-key`, the pipeline runs the official Codex CLI through the
+official GitHub action. It uses an OpenAI Platform API key stored as the repository Actions
 secret `OPENAI_API_KEY`. The key authenticates the API project; `models` chooses
 the model used by each role.
 
@@ -118,14 +123,24 @@ Codex CLI also supports ChatGPT sign-in with `codex login` or
 [advanced account-auth flow for CI](https://learn.chatgpt.com/docs/auth/ci-cd-auth):
 Codex maintains the login cache, and automation preserves the refreshed file
 between runs. That guide restricts this flow to trusted private automation and
-explicitly excludes public and open-source repositories. The current NexKit
-Actions implementation supports API-key authentication only; subscription-backed
-CI requires a separate integration and live verification in an eligible setup.
+explicitly excludes public and open-source repositories. NexKit's separately
+implemented public-repository mode is an experimental integration accepted by
+this project's owner; it is not an OpenAI-recommended public CI configuration.
+See [self-hosted operation](self-hosted.md) for its boundaries, setup and live
+verification status. No subscription credential is stored in repository content
+or Actions artifacts.
 
 [Codex access tokens](https://learn.chatgpt.com/docs/enterprise/access-tokens)
 are currently documented for Business and Enterprise workspaces. Do not assume
 they are available to a personal Pro account or invent a `codex setup-token`
 command. The installed CLI supports browser and device-code login.
+
+`environment.agent_runner` defaults to `environment.runner`. A dedicated runner
+uses a label list such as `["self-hosted", "linux", "x64", "project-runner"]`.
+Choose a project-specific label and register the runner to that repository.
+Labels route jobs; the installed admission hook enforces the repository/branch/
+workflow boundary. Subscription mode requires Codex `0.156.1` and this dedicated
+container integration. A plugin installation never selects NexKit's own VPS.
 
 ## Budget accounting
 

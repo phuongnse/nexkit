@@ -28,7 +28,8 @@ Existing branches, PRs and release drafts are recovered. No empty commits or
 artificial PR close/reopen cycles are used to retrigger checks. Results from a
 different spec/config/base/head are invalid for the current candidate.
 
-Artifacts are retained for seven days; workspaces use ephemeral runners. State
+Artifacts are retained for seven days. Hosted jobs use ephemeral runners;
+subscription CLI jobs use a dedicated container with per-job workspace cleanup. State
 keeps recent feedback, reservations and candidate identity. Do not copy full
 transcripts into project knowledge. Uninstall preserves consumer source,
 configuration, knowledge, GitHub data and locally edited kit files.
@@ -40,8 +41,10 @@ draft for investigation. It never overwrites assets or silently selects a new ca
 Changed source transfers are limited to 200 text files and 2 MB. Existing large
 or binary files are hashed for comparison; changed binaries, symlinks or submodules
 cannot cross the publication boundary. Release artifacts are limited to 100 MB
-per file. Only ephemeral GitHub-hosted Ubuntu 24.04 is currently integrated.
-Other runner/engine combinations require separate integration and verification.
+per file. GitHub-hosted Ubuntu 24.04 and the pinned Ubuntu 24.04 container runner
+are integrated; their different live verification status is recorded in
+[acceptance](acceptance.md). [Self-hosted operation](self-hosted.md) covers runner
+startup, login, isolation, updates and removal. Other engines require a separate integration.
 
 ## Repeat the live local CLI smoke
 

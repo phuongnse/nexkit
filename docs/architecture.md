@@ -32,9 +32,14 @@ fresh workspace and supplies the trusted method with task context and an output
 schema. Inputs include requirements, configuration, source/base, feedback,
 execution limits and the selected model.
 
-The official `openai/codex-action` wraps `codex exec`, installing its CLI and
-credential proxy. The API key stays outside the agent account. Implementer and
-reviewer use separate jobs and sessions under a dedicated unprivileged OS user.
+In API mode, official `openai/codex-action` wraps `codex exec`, installing its CLI
+and credential proxy. The API key stays outside the agent account. Subscription
+mode calls the same official CLI on the consumer's dedicated container runner;
+Codex owns login and refresh. Setup and the CLI use different Unix accounts, and
+native permission profiles deny the login directory to CLI tools. GitHub control,
+verification and release jobs remain on hosted runners. See the scoped deployment
+and limitations in [self-hosted operation](self-hosted.md).
+Implementer and reviewer use separate jobs and sessions under an unprivileged OS user.
 The reviewer cannot change the candidate and approve those changes. Collectors
 use trusted checkout Git metadata and never execute candidate Git hooks.
 Consumer commands have no GitHub write token. Publication, merge and release

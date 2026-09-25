@@ -217,6 +217,7 @@ def post_notice(gh, number, message):
 def main():
     from .ci import event_issue, output
     from .github import GitHub
+    from .policy import agent_runner, authentication
 
     p = argparse.ArgumentParser()
     p.add_argument("operation", choices=("prepare", "guard", "publish", "failed"))
@@ -247,6 +248,8 @@ def main():
                     model=cfg["models"]["implement"],
                     effort=cfg.get("reasoning_effort", {}).get("implement", ""),
                     codex_version=cfg["engine"]["version"],
+                    agent_runner=canonical(agent_runner(cfg)),
+                    authentication=authentication(cfg),
                     agent_minutes=context["agent_minutes"],
                 )
             result = context

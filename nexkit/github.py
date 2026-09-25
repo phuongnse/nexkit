@@ -16,7 +16,7 @@ class GitHub:
         self.repository = repository
         self.root = f"repos/{repository}"
 
-    def api(self, path, method="GET", data=None, *, pages=False):
+    def api(self, path, method="GET", data=None, *, pages=False, collection=None):
         args = [
             "gh",
             "api",
@@ -38,7 +38,7 @@ class GitHub:
         except ValueError as exc:
             raise Blocked("GitHub returned invalid JSON") from exc
         if pages:
-            return [item for page in value for item in page]
+            return [item for page in value for item in (page[collection] if collection else page)]
         return value
 
     def repo(self):

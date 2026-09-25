@@ -1,0 +1,123 @@
+{
+  "date": "2026-09-25",
+  "scope": "Infrastructure and native sandbox only; no live model execution",
+  "codex_version": "0.156.1",
+  "actions_runner_version": "2.337.0",
+  "updated_runner_image": "sha256:3aab9a104321b50239093aeb1cc062a25234da000f08164b2ef642efc544432e",
+  "live_repository": "phuongnse/nexkit-validation-existing",
+  "live_admission": [
+    {
+      "run_id": 36150561858,
+      "case": "main with forged workflow environment",
+      "conclusion": "success",
+      "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36150561858"
+    },
+    {
+      "run_id": 36151206117,
+      "case": "non-default branch with forged admitted environment",
+      "conclusion": "failure",
+      "workflow_steps_executed": 0,
+      "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36151206117"
+    },
+    {
+      "run_id": 36151214794,
+      "case": "pull request with an always() marker",
+      "conclusion": "failure",
+      "workflow_steps_executed": 0,
+      "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36151214794"
+    },
+    {
+      "run_id": 36151508626,
+      "case": "main recovery after rejection",
+      "conclusion": "success",
+      "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36151508626"
+    },
+    {
+      "run_id": 36152763487,
+      "case": "branch rejection after image update",
+      "conclusion": "failure",
+      "workflow_steps_executed": 0,
+      "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36152763487"
+    },
+    {
+      "run_id": 36152767603,
+      "case": "main recovery after image update",
+      "conclusion": "success",
+      "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36152767603"
+    }
+  ],
+  "fake_credential_probe": {
+    "outer_public_network_reachable": true,
+    "fixture_read": true,
+    "workspace_write": true,
+    "direct_read_denied": true,
+    "symlink_read_denied": true,
+    "proc_self_root_read_denied": true,
+    "proc_init_root_read_denied": true,
+    "auth_write_denied": true,
+    "tool_network_denied": true
+  },
+  "host_listener_probe": {
+    "host_loopback_reachable": true,
+    "container_to_host_listener_blocked": true
+  },
+  "missing_worker_probe": {
+    "environment": "throwaway pinned Tini container, no real registration or model credential",
+    "container_exit_code": 138,
+    "returned_to_job_steps": false
+  },
+  "native_consumer_checks": {
+    "fake_credentials_only": true,
+    "model_calls": 0,
+    "parent_git_exit": 127,
+    "checks": [
+      {
+        "argv": [
+          "python3",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-p",
+          "test_unit.py",
+          "-v"
+        ],
+        "exit_code": 0,
+        "output": "test_blank_value (test_unit.NormalizeTests.test_blank_value) ... ok\ntest_collapses_whitespace (test_unit.NormalizeTests.test_collapses_whitespace) ... ok\ntest_empty_value (test_unit.NormalizeTests.test_empty_value) ... ok\ntest_lowercases_words (test_unit.NormalizeTests.test_lowercases_words) ... ok\ntest_preserves_punctuation (test_unit.NormalizeTests.test_preserves_punctuation) ... ok\ntest_unicode_case (test_unit.NormalizeTests.test_unicode_case) ... ok\n\n----------------------------------------------------------------------\nRan 6 tests in 0.001s\n\nOK\n"
+      },
+      {
+        "argv": [
+          "python3",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-p",
+          "test_http.py",
+          "-v"
+        ],
+        "exit_code": 5,
+        "output": "setUpClass (test_http.HTTPTests) ... ERROR\n\n======================================================================\nERROR: setUpClass (test_http.HTTPTests)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/nexkit-agent/work/tests/test_http.py\", line 31, in setUpClass\n    raise AssertionError(f\"Unexpected service address: {cls.base!r}\")\nAssertionError: Unexpected service address: ''\n\n----------------------------------------------------------------------\nRan 0 tests in 0.093s\n\nFAILED (errors=1)\n"
+      },
+      {
+        "argv": [
+          "/usr/bin/git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "output": ""
+      }
+    ]
+  },
+  "account_credentials_used": false,
+  "existing_login_cache_copied": false,
+  "model_calls": 0,
+  "limitations": [
+    "Infrastructure success is not AI delivery acceptance.",
+    "HTTP E2E could not open local sockets: zero cases ran in the native tool sandbox. The separate hosted verification job remains required.",
+    "The independent reviewer checked static code and benign local fixtures, not these live runner runs."
+  ]
+}

@@ -25,6 +25,7 @@ def main():
         "plugins",
         "schemas",
         "actions",
+        "runner",
         ".github/workflows",
         ".agents/plugins",
         "docs",

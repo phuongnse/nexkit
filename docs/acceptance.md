@@ -8,7 +8,7 @@ simulated GitHub boundaries are distinct from live integration.
 | Group | Evidence available | Still unverified |
 |---|---|---|
 | A — package/hosts | Native Codex 0.156.1 install/list and Claude Code 2.1.282 install/details with 8 skills; extracted archive and validators | Other target hosts have documentation checks only; no model-use claim |
-| B — CLI on Actions | Live local Codex used skills/tools, changed code and ran a separate reviewer; GitHub platform probe passed | Live AI runner, API authentication and independence from the local host on Actions |
+| B — CLI on Actions | Live local Codex used skills/tools, changed code and ran a separate reviewer; GitHub platform and self-hosted admission probes passed | Live AI runner authentication and delivery independent of the local chat session |
 | C — two consumers | Real local Node CLI and Python HTTP API tests with distinct configurations; two authorized public GitHub repositories prepared, one empty and one with a working HTTP baseline | NexKit setup and autonomous delivery in both GitHub consumers |
 | D — success | Simulated controller issue→approval→review/checks→merge; the kit's own CI ran on GitHub | Real human approval and autonomous consumer merge without release |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
@@ -71,15 +71,41 @@ simulated GitHub boundaries are distinct from live integration.
   were removed; the existing ChatGPT login was used without copying credentials.
   This confirms model access for that local login, not the account's exact plan,
   available capacity for a full delivery, or authentication on Actions.
+- The owner selected public consumers, repo-scoped runners on the authorized VPS,
+  and official Codex ChatGPT login for each consumer. Both isolated containers
+  are registered and online. No existing local login cache was copied.
+- Live admission accepted a
+  [default-branch run](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36150561858),
+  rejected a
+  [non-default branch](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36151206117)
+  and a [PR](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36151214794)
+  before any workflow steps, including an `always()` marker, then accepted the
+  [next main run](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36151508626).
+  Workflow-defined forged GitHub context did not change the hook's decision.
+  The probe PR was closed without merging. After the runner image update, branch
+  [rejection](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36152763487)
+  and main [recovery](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36152767603)
+  passed again. These runs made zero model calls and had no model credential.
+- Fake-credential native sandbox probes passed eight boundaries with public
+  Internet available outside the sandbox. A host listener was reachable from the
+  host and blocked from the runner bridge. Missing Worker ancestry terminated a
+  throwaway pinned container with exit 138 instead of returning to workflow steps.
+- The installed native sandbox ran six actual existing-consumer unit tests and
+  read Git status; the parent Git shim returned 127 as intended. HTTP tests could
+  not start their service because tool sockets are disabled: zero HTTP cases ran,
+  so this is a capability limitation, not E2E acceptance. HTTP E2E remains required
+  in the separate verification job. See [self-hosted operation](self-hosted.md).
+- 79 local tests, Ruff and the updated skill validator passed. The archive builds
+  with the new runner assets. Independent static/local review checked account
+  separation, workspace restoration, lock order and the pinned CLI's optional
+  Git metadata path. It did not independently exercise live account login.
 
 ## External prerequisites still missing
 
-- The owner wants to use an existing ChatGPT Pro subscription instead of API
-  billing. The current Actions implementation supports API keys; subscription
-  CI needs an eligible setup, integration and verification. OpenAI's advanced
-  managed-auth guide excludes public repositories, while both authorized
-  consumers are currently public. The authentication/deployment decision is
-  unresolved; no local login credential has been copied to Actions.
+- Each consumer still needs its own official Codex login and a live model run.
+  The subscription integration is implemented, while OpenAI's account-cache CI
+  guide excludes public repositories. This custom deployment was explicitly
+  selected by the owner and is not an officially recommended public CI setup.
 - Accepted invocation/time limits, available subscription allowance, consumer
   setup and the required branch rules. The prior local usage-limit failure
   remains part of the evidence. The later Luna/max probe succeeded, but it does

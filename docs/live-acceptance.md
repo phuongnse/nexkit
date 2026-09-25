@@ -12,8 +12,10 @@ repository. Derive configuration from user decisions and actual source; test
 fixtures are not a project preset catalog. Pin a verified kit commit by full SHA.
 
 Apply only accepted rules/settings from [configuration](configuration.md).
-The account owner supplies OPENAI_API_KEY through GitHub Secrets or `gh secret
-set`, never chat/source/logs. Run setup --apply --online, commit accepted setup
+In API mode the account owner supplies OPENAI_API_KEY through GitHub Secrets or
+`gh secret set`. In subscription mode, follow [self-hosted setup](self-hosted.md),
+prove admission/isolation with fake credentials, then complete an official
+Codex login independently for each consumer. Run setup --apply --online, commit accepted setup
 to the default branch and run doctor --online --checks. Record unavailable
 capabilities honestly; an empty application must not receive fake passing tests.
 Secret metadata alone does not demonstrate model authentication.

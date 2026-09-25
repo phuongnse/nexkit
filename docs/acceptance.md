@@ -99,6 +99,11 @@ simulated GitHub boundaries are distinct from live integration.
   with the new runner assets. Independent static/local review checked account
   separation, workspace restoration, lock order and the pinned CLI's optional
   Git metadata path. It did not independently exercise live account login.
+- [CI at a7d5fd5](https://github.com/phuongnse/nexkit/actions/runs/36153378829)
+  passed all 79 tests, Ruff and packaging. The clean local archive and CI artifact
+  have the same SHA-256, `6507ab7ac40938ab85cef5d773630dabdd2d012be00a507bc00efa3c67e9433c`.
+  The extracted archive installed successfully through Codex's native marketplace
+  and plugin commands in a fresh isolated host configuration; no model call was used.
 
 ## External prerequisites still missing
 

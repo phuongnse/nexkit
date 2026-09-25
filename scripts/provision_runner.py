@@ -191,6 +191,7 @@ ExecStart=/usr/bin/docker start --attach {name}
 ExecStop=/usr/bin/docker stop --time 30 {name}
 Restart=always
 RestartSec=5
+SuccessExitStatus=143
 TimeoutStopSec=45
 
 [Install]

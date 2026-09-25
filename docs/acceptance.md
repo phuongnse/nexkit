@@ -9,7 +9,7 @@ simulated GitHub boundaries are distinct from live integration.
 |---|---|---|
 | A — package/hosts | Native Codex 0.156.1 install/list and Claude Code 2.1.282 install/details with 8 skills; extracted archive and validators | Other target hosts have documentation checks only; no model-use claim |
 | B — CLI on Actions | Live local Codex used skills/tools, changed code and ran a separate reviewer; GitHub platform probe passed | Live AI runner, API authentication and independence from the local host on Actions |
-| C — two consumers | Real new Node CLI and existing Python HTTP API tests with distinct configurations, no core presets | Two authorized GitHub consumers with actual setup and delivery |
+| C — two consumers | Real local Node CLI and Python HTTP API tests with distinct configurations; two authorized private GitHub repositories prepared, one empty and one with a working HTTP baseline | NexKit setup and autonomous delivery in both GitHub consumers |
 | D — success | Simulated controller issue→approval→review/checks→merge; the kit's own CI ran on GitHub | Real human approval and autonomous consumer merge without release |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
 | F — blocked | Tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Failure injection in the live environment and final guards |
@@ -40,10 +40,25 @@ simulated GitHub boundaries are distinct from live integration.
   but its reviewer hit the account usage limit before a final structured verdict.
   That rerun is incomplete, not an additional passing smoke. An earlier harness
   argument mismatch was fixed before this rerun. No provider/budget was changed.
+- The owner authorized creating private acceptance consumers on 2026-09-25.
+  [nexkit-validation-new](https://github.com/phuongnse/nexkit-validation-new)
+  starts empty; [nexkit-validation-existing](https://github.com/phuongnse/nexkit-validation-existing)
+  contains a Python standard-library HTTP service committed before NexKit setup.
+  At baseline `f22abc7`, six unit tests and five HTTP tests passed locally. The
+  HTTP tests start the actual service process and make real TCP requests.
+  `nexkit survey` read the existing conventions/commands and found no application
+  in the empty repository. Neither repository has completed NexKit setup.
+- GitHub returned HTTP 403 for the rulesets API in both private consumers with
+  the message "Upgrade to GitHub Pro or make this repository public to enable
+  this feature." Required branch rules cannot currently be configured there.
+  Both repositories remain private; account changes need a separate decision.
 
 ## External prerequisites still missing
 
-- Two authorized consumer repositories and an explicit test-release scope.
+- GitHub support for the required branch rules in the authorized private
+  consumers, followed by accepted setup settings.
+- An explicit test-release scope; permission to create the two consumers does
+  not constitute approval of a release candidate.
 - An Actions `OPENAI_API_KEY`, accepted models by role and CI usage limits.
   Local ChatGPT login is not copied to CI. Further local model validation also
   requires available account allowance after the observed usage-limit failure.

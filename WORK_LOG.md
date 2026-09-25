@@ -32,15 +32,28 @@ code blocker in its reviewed scope. Evidence links are in docs/acceptance.md.
 
 ## External blockers and scope
 
-No CI API secret, accepted model/usage settings, two authorized consumer repos,
-test release scope or real human approvals were supplied. Owner was asked for
-these prerequisites; local ChatGPT auth was never copied to CI. No unrelated
-repository was changed, new public consumer created or public release/package
-published. Full acceptance still requires live AI Actions, two consumers,
-human approvals, repair and release. Do not mark the goal complete before then.
+CI API authentication, accepted model/usage settings, test-release scope and
+real human approvals remain prerequisites. Local ChatGPT auth was never copied
+to CI. Full acceptance still requires live AI Actions, setup and delivery in
+both consumers, human approvals, repair and release. Do not mark the goal
+complete before then.
 
 The owner clarified that all project artifacts must be in English; only our
 conversation may be Vietnamese. README, reference docs and the GitHub goal issue
 were translated, with the policy recorded in AGENTS.md. A later local CLI rerun
 hit the existing account usage limit before its reviewer returned a verdict;
 that rerun is incomplete. No provider was switched or spending limit increased.
+
+The owner subsequently authorized creating the two private acceptance repos.
+Created `phuongnse/nexkit-validation-new` as an empty repository and
+`phuongnse/nexkit-validation-existing` with a Python HTTP service baseline at
+`f22abc7`, before installing NexKit. Six unit tests and five HTTP tests passed
+locally; HTTP checks launch the real service process. NexKit survey distinguishes
+the empty repository from the existing application and reads its instructions
+and documented commands. All project prose is English.
+
+Both consumers report admin access, but their rulesets API returns HTTP 403:
+GitHub requires Pro or public visibility for this feature on the current account.
+This blocks the required private-repository merge protection. Test-release scope,
+account/repository policy decisions and CI model/auth/budget decisions remain
+pending. No consumer NexKit workflow or release has run yet.

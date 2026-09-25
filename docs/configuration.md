@@ -111,6 +111,22 @@ OpenAI Platform at API rates, separately from included ChatGPT plan usage. See
 Accept the API usage/spending limits before enabling live model runs. A present
 secret does not establish that the project can access the configured model.
 
+### Using an existing ChatGPT subscription
+
+Codex CLI also supports ChatGPT sign-in with `codex login` or
+`codex login --device-auth`. OpenAI documents an
+[advanced account-auth flow for CI](https://learn.chatgpt.com/docs/auth/ci-cd-auth):
+Codex maintains the login cache, and automation preserves the refreshed file
+between runs. That guide restricts this flow to trusted private automation and
+explicitly excludes public and open-source repositories. The current NexKit
+Actions implementation supports API-key authentication only; subscription-backed
+CI requires a separate integration and live verification in an eligible setup.
+
+[Codex access tokens](https://learn.chatgpt.com/docs/enterprise/access-tokens)
+are currently documented for Business and Enterprise workspaces. Do not assume
+they are available to a personal Pro account or invent a `codex setup-token`
+command. The installed CLI supports browser and device-code login.
+
 ## Budget accounting
 
 Clarification uses the `implement` model and reserves one invocation. Each

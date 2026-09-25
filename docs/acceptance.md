@@ -68,10 +68,15 @@ simulated GitHub boundaries are distinct from live integration.
 
 ## External prerequisites still missing
 
-- An Actions `OPENAI_API_KEY` and accepted CI usage/spending limits, followed by
-  completion of consumer setup and application of the required branch rules.
-  Local ChatGPT login is not copied to CI. Further local model validation also
-  requires available account allowance after the observed usage-limit failure.
+- The owner wants to use an existing ChatGPT Pro subscription instead of API
+  billing. The current Actions implementation supports API keys; subscription
+  CI needs an eligible setup, integration and verification. OpenAI's advanced
+  managed-auth guide excludes public repositories, while both authorized
+  consumers are currently public. The authentication/deployment decision is
+  unresolved; no local login credential has been copied to Actions.
+- Accepted invocation/time limits, available subscription allowance, consumer
+  setup and the required branch rules. The prior local usage-limit failure
+  remains part of the evidence; no new live model run has established recovery.
 - Real humans approving the requirement and exact release candidate in live
   acceptance; the approved test scope does not substitute for either event.
 

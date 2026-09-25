@@ -32,7 +32,7 @@ code blocker in its reviewed scope. Evidence links are in docs/acceptance.md.
 
 ## External blockers and scope
 
-CI API authentication, accepted usage/spending limits and real human approvals
+An accepted CI authentication/deployment path, usage limits and real human approvals
 remain prerequisites. Local ChatGPT auth was never copied to CI. Full acceptance
 still requires live AI Actions, setup and delivery in
 both consumers, human approvals, repair and release. Do not mark the goal
@@ -76,3 +76,13 @@ accepted usage limits. No model call was made for this configuration change.
 The independent reviewer found no concrete defect in this diff, confirmed
 66 passing tests and Ruff, and reproduced rejection of effort drift in all
 three relevant guards. Live runner/model verification remains outstanding.
+
+The owner clarified that they have ChatGPT Pro 5x and want the pipeline to use
+their subscription rather than separately billed API usage. Read official
+OpenAI guidance on headless login, managed-auth CI refresh and access tokens.
+Codex supports ChatGPT browser/device login; the advanced managed-auth CI guide
+is limited to trusted private automation and excludes public repositories.
+Business/Enterprise access tokens are not a documented personal-Pro alternative.
+The current public-consumer/API-key implementation has not been converted, and
+no credentials were transferred or model calls made during this investigation.
+An eligible deployment decision is needed before implementing subscription CI.

@@ -1,0 +1,17 @@
+{
+  "name": "nexkit",
+  "version": "0.1.0-rc.1",
+  "description": "Agents. Skills. One workflow. Set up and operate a GitHub AI SDLC from project decisions.",
+  "author": {"name": "NexKit contributors"},
+  "repository": "https://github.com/phuongnse/nexkit",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "NexKit",
+    "shortDescription": "Agents. Skills. One workflow.",
+    "longDescription": "Configure a GitHub project from your requirements, approve its specification, and let Actions run coding agents with independent review and verification. Release remains a separate human decision.",
+    "developerName": "NexKit contributors",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": ["Use NexKit to set up this project from my goals.", "Use NexKit to submit a new requirement.", "Show NexKit delivery status."]
+  }
+}

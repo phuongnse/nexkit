@@ -1,0 +1,177 @@
+name: NexKit release engine
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+    secrets:
+      OPENAI_API_KEY:
+        required: false
+permissions: {}
+concurrency:
+  group: nexkit-release
+  queue: max
+defaults:
+  run:
+    shell: bash
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: read
+    outputs:
+      ready: ${{ steps.prepare.outputs.ready }}
+      commit: ${{ steps.prepare.outputs.commit }}
+      artifact_run: ${{ steps.prepare.outputs.artifact_run }}
+      artifact_attempt: ${{ steps.prepare.outputs.artifact_attempt }}
+    steps:
+      - name: Validate the kit pin against trusted default-branch configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh','api',path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.release prepare --kit-ref "$NEXKIT_REF"
+      - if: steps.prepare.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-release-context-${{ github.run_attempt }}
+          path: /tmp/nexkit/context.json
+          retention-days: 7
+          if-no-files-found: error
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      issues: read
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          path: source
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: nexkit-release-context-${{ github.run_attempt }}
+          path: /tmp/nexkit
+      - name: Recheck the release decision before executing consumer code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.release guard
+      - name: Verify and build exact approved source without publication credentials
+        if: needs.prepare.outputs.artifact_run == ''
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_EXEC_USER: nexkit-agent
+        run: |
+          sudo useradd --create-home --shell /bin/bash nexkit-agent
+          sudo chmod 755 /home/nexkit-agent
+          sudo cp -a source /home/nexkit-agent/work
+          sudo chown -R nexkit-agent:nexkit-agent /home/nexkit-agent/work
+          python3 -m nexkit.release build --workspace /home/nexkit-agent/work
+      - name: Recover the exact bytes of a partially published release
+        if: needs.prepare.outputs.artifact_run != ''
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.prepare.outputs.artifact_run }}
+          name: nexkit-release-build-${{ needs.prepare.outputs.artifact_attempt }}
+          path: /tmp/nexkit/release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-release-build-${{ github.run_attempt }}
+          path: /tmp/nexkit/release
+          retention-days: 7
+          if-no-files-found: error
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      issues: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: nexkit-release-context-${{ github.run_attempt }}
+          path: /tmp/nexkit
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: nexkit-release-build-${{ github.run_attempt }}
+          path: /tmp/nexkit/release
+      - name: Recheck human decision and publish matching immutable artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.release publish
+  interrupted:
+    needs: [prepare, build, publish]
+    if: always() && needs.prepare.outputs.ready == 'true' && needs.publish.result != 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: nexkit-release-context-${{ github.run_attempt }}
+          path: /tmp/nexkit
+      - name: Persist the interruption without changing tags or assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.release failed

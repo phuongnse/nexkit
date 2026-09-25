@@ -1,0 +1,56 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "done",
+        "blocked"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "skills_used": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "specification": {
+      "type": "string"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ready_for_approval": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "status",
+    "summary",
+    "skills_used",
+    "commands",
+    "limitations",
+    "specification",
+    "questions",
+    "ready_for_approval"
+  ],
+  "additionalProperties": false
+}

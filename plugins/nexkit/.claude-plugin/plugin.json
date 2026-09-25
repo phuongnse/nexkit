@@ -1,0 +1,7 @@
+{
+  "name": "nexkit",
+  "version": "0.1.0-rc.1",
+  "description": "Agents. Skills. One workflow. GitHub AI SDLC with independent review.",
+  "author": {"name": "NexKit contributors"},
+  "repository": "https://github.com/phuongnse/nexkit"
+}

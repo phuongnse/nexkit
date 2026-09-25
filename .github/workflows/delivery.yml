@@ -1,0 +1,326 @@
+name: NexKit delivery engine
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+    secrets:
+      OPENAI_API_KEY:
+        required: true
+permissions: {}
+concurrency:
+  group: nexkit-work
+  queue: max
+defaults:
+  run:
+    shell: bash
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+      actions: read
+    outputs:
+      ready: ${{ steps.prepare.outputs.ready }}
+      source: ${{ steps.prepare.outputs.source }}
+      base: ${{ steps.prepare.outputs.base }}
+      implement_model: ${{ steps.prepare.outputs.implement_model }}
+      review_model: ${{ steps.prepare.outputs.review_model }}
+      codex_version: ${{ steps.prepare.outputs.codex_version }}
+      agent_minutes: ${{ steps.prepare.outputs.agent_minutes }}
+    steps:
+      - name: Validate the kit pin against trusted default-branch configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh','api',path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.ci prepare --kit-ref "$NEXKIT_REF" --out /tmp/nexkit/context.json
+      - if: steps.prepare.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nexkit-context-${{ github.run_attempt }}
+          path: /tmp/nexkit/context.json
+          retention-days: 7
+          if-no-files-found: error
+  implement:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.prepare.outputs.base }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: nexkit-context-${{ github.run_attempt }}
+          path: /tmp/nexkit
+      - uses: ./kit/actions/agent-workspace
+        with:
+          role: deliver
+          context: /tmp/nexkit/context.json
+          source: ${{ github.workspace }}/source
+      - name: Recheck approval and cancellation before invoking the agent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.ci guard --context /tmp/nexkit/context.json
+      - name: Implement using the official Codex CLI
+        timeout-minutes: ${{ fromJSON(needs.prepare.outputs.agent_minutes) }}
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          codex-version: ${{ needs.prepare.outputs.codex_version }}
+          model: ${{ needs.prepare.outputs.implement_model }}
+          prompt-file: /tmp/nexkit/prompt.txt
+          output-schema-file: /tmp/nexkit/schema.json
+          output-file: /home/nexkit-agent/output/result.json
+          working-directory: /home/nexkit-agent/work
+          codex-home: /home/nexkit-agent/.codex
+          safety-strategy: unprivileged-user
+          codex-user: nexkit-agent
+          sandbox: workspace-write
+          codex-args: '["--ephemeral"]'
+          allow-bots: true
+      - name: Collect data with trusted code (no candidate execution)
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: |
+          sudo pkill -KILL -u nexkit-agent || test "$?" = 1
+          python3 -m nexkit.ci collect --role deliver --source "$GITHUB_WORKSPACE/source" --workspace /home/nexkit-agent/work --context /tmp/nexkit/context.json --result /home/nexkit-agent/output/result.json --out /tmp/nexkit/bundle.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-changes-${{ github.run_attempt }}
+          path: /tmp/nexkit/bundle.json
+          retention-days: 7
+          if-no-files-found: error
+  publish:
+    needs: [prepare, implement]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    outputs:
+      head: ${{ steps.publish.outputs.head }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          pattern: nexkit-*-${{ github.run_attempt }}
+          path: /tmp/nexkit
+          merge-multiple: true
+      - id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.ci publish --context /tmp/nexkit/context.json --result /tmp/nexkit/bundle.json --out /tmp/nexkit/candidate.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-candidate-${{ github.run_attempt }}
+          path: /tmp/nexkit/candidate.json
+          retention-days: 7
+          if-no-files-found: error
+  verify:
+    needs: [prepare, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.publish.outputs.head }}
+          path: source
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: nexkit-candidate-${{ github.run_attempt }}
+          path: /tmp/nexkit
+      - name: Recheck approval before running consumer code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.ci guard --context /tmp/nexkit/candidate.json
+      - name: Run actual consumer checks as a separate unprivileged user
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_EXEC_USER: nexkit-agent
+        run: |
+          sudo useradd --create-home --shell /bin/bash nexkit-agent
+          sudo chmod 755 /home/nexkit-agent
+          sudo cp -a source /home/nexkit-agent/work
+          sudo chown -R nexkit-agent:nexkit-agent /home/nexkit-agent/work
+          python3 -m nexkit.ci verify --context /tmp/nexkit/candidate.json --workspace /home/nexkit-agent/work --out /tmp/nexkit/verification.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-verification-${{ github.run_attempt }}
+          path: /tmp/nexkit/verification.json
+          retention-days: 7
+          if-no-files-found: error
+  review:
+    needs: [prepare, publish, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.publish.outputs.head }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          pattern: nexkit-*-${{ github.run_attempt }}
+          path: /tmp/nexkit
+          merge-multiple: true
+      - name: Attach current command results
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/nexkit')
+          context = json.loads((root / 'candidate.json').read_text())
+          context['verification'] = json.loads((root / 'verification.json').read_text())
+          (root / 'review-context.json').write_text(json.dumps(context))
+          PY
+      - uses: ./kit/actions/agent-workspace
+        with:
+          role: review
+          context: /tmp/nexkit/review-context.json
+          source: ${{ github.workspace }}/source
+      - name: Recheck approval and cancellation before independent review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.ci guard --context /tmp/nexkit/candidate.json
+      - name: Independent reviewer in a fresh Codex session
+        timeout-minutes: ${{ fromJSON(needs.prepare.outputs.agent_minutes) }}
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          codex-version: ${{ needs.prepare.outputs.codex_version }}
+          model: ${{ needs.prepare.outputs.review_model }}
+          prompt-file: /tmp/nexkit/prompt.txt
+          output-schema-file: /tmp/nexkit/schema.json
+          output-file: /home/nexkit-agent/output/result.json
+          working-directory: /home/nexkit-agent/work
+          codex-home: /home/nexkit-agent/.codex
+          safety-strategy: unprivileged-user
+          codex-user: nexkit-agent
+          sandbox: read-only
+          codex-args: '["--ephemeral"]'
+          allow-bots: true
+      - name: Reject review of a modified candidate
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: |
+          sudo pkill -KILL -u nexkit-agent || test "$?" = 1
+          python3 -m nexkit.ci collect --role review --source "$GITHUB_WORKSPACE/source" --workspace /home/nexkit-agent/work --context /tmp/nexkit/candidate.json --result /home/nexkit-agent/output/result.json --out /tmp/nexkit/review.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-review-${{ github.run_attempt }}
+          path: /tmp/nexkit/review.json
+          retention-days: 7
+          if-no-files-found: error
+  finish:
+    needs: [prepare, implement, publish, verify, review]
+    if: always() && needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      checks: write
+      actions: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          pattern: nexkit-*-${{ github.run_attempt }}
+          path: /tmp/nexkit
+          merge-multiple: true
+      - name: Recheck authority and merge, or forward feedback into a bounded retry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_JOBS_OK: ${{ needs.implement.result == 'success' && needs.publish.result == 'success' && needs.verify.result == 'success' && needs.review.result == 'success' }}
+        run: |
+          if [ "$NEXKIT_JOBS_OK" = true ]; then
+            python3 -m nexkit.ci finish --context /tmp/nexkit/candidate.json --verification /tmp/nexkit/verification.json --review /tmp/nexkit/review.json --out /tmp/nexkit/outcome.json
+          else
+            python3 -m nexkit.ci failed --context /tmp/nexkit/context.json --out /tmp/nexkit/outcome.json
+          fi

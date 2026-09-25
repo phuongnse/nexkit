@@ -118,6 +118,17 @@ def config(value):
             isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9._:/-]{1,100}", model),
             f"Choose an accessible model for {role}; no implicit model default",
         )
+    if "reasoning_effort" in value:
+        efforts = value["reasoning_effort"]
+        require(
+            isinstance(efforts, dict) and set(efforts) == {"implement", "review"},
+            "reasoning_effort must declare implement and review",
+        )
+        for role, effort in efforts.items():
+            require(
+                effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
+                f"Choose a supported reasoning_effort for {role}",
+            )
     limits = value.get("limits", {})
     for key, maximum in (
         ("attempts", 20),

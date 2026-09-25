@@ -293,6 +293,7 @@ def doctor(root, cfg, *, online=False, checks=False):
         "verification": verification,
         "engine": cfg["engine"],
         "models": cfg["models"],
+        "reasoning_effort": cfg.get("reasoning_effort", {}),
         "limits": cfg["limits"],
         "live_agent_verified": False,
     }

@@ -245,6 +245,7 @@ def main():
                 output(
                     base=context["base"],
                     model=cfg["models"]["implement"],
+                    effort=cfg.get("reasoning_effort", {}).get("implement", ""),
                     codex_version=cfg["engine"]["version"],
                     agent_minutes=context["agent_minutes"],
                 )

@@ -33,6 +33,8 @@ jobs:
       base: ${{ steps.prepare.outputs.base }}
       implement_model: ${{ steps.prepare.outputs.implement_model }}
       review_model: ${{ steps.prepare.outputs.review_model }}
+      implement_effort: ${{ steps.prepare.outputs.implement_effort }}
+      review_effort: ${{ steps.prepare.outputs.review_effort }}
       codex_version: ${{ steps.prepare.outputs.codex_version }}
       agent_minutes: ${{ steps.prepare.outputs.agent_minutes }}
     steps:
@@ -117,6 +119,7 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           codex-version: ${{ needs.prepare.outputs.codex_version }}
           model: ${{ needs.prepare.outputs.implement_model }}
+          effort: ${{ needs.prepare.outputs.implement_effort }}
           prompt-file: /tmp/nexkit/prompt.txt
           output-schema-file: /tmp/nexkit/schema.json
           output-file: /home/nexkit-agent/output/result.json
@@ -268,6 +271,7 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           codex-version: ${{ needs.prepare.outputs.codex_version }}
           model: ${{ needs.prepare.outputs.review_model }}
+          effort: ${{ needs.prepare.outputs.review_effort }}
           prompt-file: /tmp/nexkit/prompt.txt
           output-schema-file: /tmp/nexkit/schema.json
           output-file: /home/nexkit-agent/output/result.json

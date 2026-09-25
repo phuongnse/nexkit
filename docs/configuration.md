@@ -12,6 +12,7 @@ in `.nexkit/project.json`.
 | `kit` | `repository`, full commit SHA `ref`, exact `version` |
 | `engine` | `name: codex` and exact CLI `version`; currently the only CI engine |
 | `models` | Accessible models for `implement` and `review`; no implicit defaults |
+| `reasoning_effort` | Optional object declaring `implement` and `review`; forwarded unchanged to the official Codex action's `effort` input |
 | `limits` | `attempts` (1–20), `agent_calls` (3–40), `minutes` (1–1440), `command_seconds` (1–3600) |
 | `environment` | `runner: ubuntu-24.04`; `setup` commands as argument arrays |
 | `application` | `present` or `absent` at setup; new repositories still declare intended checks before delivery |
@@ -28,6 +29,24 @@ assesses assertion quality and its relationship to the requirement. Include
 build/lint when relevant; they do not replace E2E. Commands are argument arrays.
 If a project genuinely needs a shell, declare that choice explicitly in its argv
 and execute it only without privileged credentials.
+
+When `reasoning_effort` is supplied, both roles must be explicit. Accepted values
+are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` and `ultra`; the selected
+model and pinned CLI must support the chosen value. Clarification uses the
+implementation role's model and effort. If the object is omitted, the CLI uses
+its model default. NexKit never silently substitutes an unsupported effort.
+`doctor` reports the configured values; live account access is verified on the
+runner. For example, the acceptance owner's selected configuration is:
+
+```json
+{
+  "models": {"implement": "gpt-6-luna", "review": "gpt-6-luna"},
+  "reasoning_effort": {"implement": "max", "review": "max"}
+}
+```
+
+The [GPT-6 Luna model page](https://developers.openai.com/api/docs/models/gpt-6-luna)
+documents support for `max`. This is a consumer decision, not a core model default.
 
 Release build arguments may contain `{version}` and `{commit}`; artifact paths
 may contain `{version}`. Commit source version changes before selecting the
@@ -70,6 +89,27 @@ and must be checked in the actual environment.
 The setup command does not change GitHub settings itself. The setup agent uses
 GitHub tooling to apply accepted administrative changes and runs doctor again.
 This is setup work, not an additional approval for each feature.
+
+## OpenAI API authentication for Actions
+
+The current pipeline runs the official Codex CLI through the official GitHub
+action. It uses an OpenAI Platform API key stored as the repository Actions
+secret `OPENAI_API_KEY`. The key authenticates the API project; `models` chooses
+the model used by each role.
+
+Create a key in the [OpenAI API dashboard](https://platform.openai.com/api-keys),
+with API billing available, then add it in each consumer's **Settings → Secrets
+and variables → Actions → New repository secret**. Name it `OPENAI_API_KEY`.
+Alternatively, `gh secret set OPENAI_API_KEY --repo OWNER/REPO` prompts for the
+value without placing it in shell command history. Never paste the key into
+chat, source, issue bodies or logs.
+
+Codex's ChatGPT sign-in uses subscription access. API-key usage is billed through
+OpenAI Platform at API rates, separately from included ChatGPT plan usage. See
+[official Codex authentication](https://learn.chatgpt.com/docs/auth) and the
+[official GitHub action guide](https://learn.chatgpt.com/docs/github-action).
+Accept the API usage/spending limits before enabling live model runs. A present
+secret does not establish that the project can access the configured model.
 
 ## Budget accounting
 

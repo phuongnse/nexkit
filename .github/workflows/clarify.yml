@@ -30,6 +30,7 @@ jobs:
       ready: ${{ steps.prepare.outputs.ready }}
       base: ${{ steps.prepare.outputs.base }}
       model: ${{ steps.prepare.outputs.model }}
+      effort: ${{ steps.prepare.outputs.effort }}
       codex_version: ${{ steps.prepare.outputs.codex_version }}
       agent_minutes: ${{ steps.prepare.outputs.agent_minutes }}
     steps:
@@ -114,6 +115,7 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           codex-version: ${{ needs.prepare.outputs.codex_version }}
           model: ${{ needs.prepare.outputs.model }}
+          effort: ${{ needs.prepare.outputs.effort }}
           prompt-file: /tmp/nexkit/prompt.txt
           output-schema-file: /tmp/nexkit/schema.json
           output-file: /home/nexkit-agent/output/result.json

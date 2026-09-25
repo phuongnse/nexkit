@@ -26,6 +26,14 @@ Final review: **60 tests passed in 3.141 seconds; no new code blocker found in
 the reviewed scope**. The reviewer independently checked CI/platform-probe links
 at 21f68b7. New fixes require CI again after commit.
 
-This is a scoped implementation review. Live AI Actions, two authorized consumer
-repositories, real approvals and test release remain unverified. It is not
+The reasoning-effort follow-up review found no concrete defect in validation,
+role-specific outputs or the three official action invocations. It checked the
+pinned action's handling of an empty effort, preserving the CLI default, and
+reproduced rejection of effort drift in delivery, clarification and release
+guards. **66 tests and Ruff passed.** No model calls or secret access were used.
+The selected model's `max` support was checked against official documentation;
+actual runner/model execution with this setting remains unverified.
+
+This is a scoped implementation review. Live AI Actions, delivery in both
+authorized consumer repositories, real approvals and test release remain unverified. It is not
 approval of the full product against those missing acceptance criteria.

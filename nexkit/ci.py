@@ -64,6 +64,8 @@ def prepare_job(destination, kit_ref):
             base=context["base"],
             implement_model=cfg["models"]["implement"],
             review_model=cfg["models"]["review"],
+            implement_effort=cfg.get("reasoning_effort", {}).get("implement", ""),
+            review_effort=cfg.get("reasoning_effort", {}).get("review", ""),
             codex_version=cfg["engine"]["version"],
             agent_minutes=max(1, min(60, cfg["limits"]["minutes"] // 2)),
         )

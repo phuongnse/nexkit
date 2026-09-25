@@ -6,8 +6,8 @@ post human approvals on someone's behalf or publish publicly to make a checklist
 ## Authorized setup
 
 The owner identifies two repositories: one new and one with existing real
-behavior, plus the private test-release scope. Select implement/review models,
-CLI version and usage budget. Run `nexkit survey` and use `nexkit-init` for each
+behavior, plus the test-release scope and visibility. Select implement/review
+models, reasoning effort, CLI version and usage budget. Run `nexkit survey` and use `nexkit-init` for each
 repository. Derive configuration from user decisions and actual source; test
 fixtures are not a project preset catalog. Pin a verified kit commit by full SHA.
 
@@ -47,7 +47,7 @@ or reviewer discover it, feedback reach the implementer, and the repaired
 candidate receive fresh checks/review before merge. Mock agents do not establish
 this live repair behavior.
 
-Within the authorized private test scope, exercise:
+Within the authorized test scope, exercise:
 
 - Missing/wrong approval, body/title edits and reverts, and outsider comments.
 - Changed base/head/config, stale/missing review, failed/zero/skipped tests and

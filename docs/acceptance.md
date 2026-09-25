@@ -9,7 +9,7 @@ simulated GitHub boundaries are distinct from live integration.
 |---|---|---|
 | A — package/hosts | Native Codex 0.156.1 install/list and Claude Code 2.1.282 install/details with 8 skills; extracted archive and validators | Other target hosts have documentation checks only; no model-use claim |
 | B — CLI on Actions | Live local Codex used skills/tools, changed code and ran a separate reviewer; GitHub platform probe passed | Live AI runner, API authentication and independence from the local host on Actions |
-| C — two consumers | Real local Node CLI and Python HTTP API tests with distinct configurations; two authorized private GitHub repositories prepared, one empty and one with a working HTTP baseline | NexKit setup and autonomous delivery in both GitHub consumers |
+| C — two consumers | Real local Node CLI and Python HTTP API tests with distinct configurations; two authorized public GitHub repositories prepared, one empty and one with a working HTTP baseline | NexKit setup and autonomous delivery in both GitHub consumers |
 | D — success | Simulated controller issue→approval→review/checks→merge; the kit's own CI ran on GitHub | Real human approval and autonomous consumer merge without release |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
 | F — blocked | Tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Failure injection in the live environment and final guards |
@@ -20,6 +20,9 @@ simulated GitHub boundaries are distinct from live integration.
 
 - 60 local tests passed after independent review. Consumer commands, unit cases
   and CLI/HTTP behavior are real; GitHub/controller boundaries are simulated.
+- Reasoning configuration adds six regression tests: validation, per-role
+  outputs, clarification inheritance, workflow wiring and candidate invalidation.
+  All 66 local tests and Ruff pass. These tests do not make model calls.
 - [GitHub CI](https://github.com/phuongnse/nexkit/actions/runs/36117084919) passed
   all 60 tests, Ruff and archive build at `720278e`. Follow subsequent runs in
   [the checks workflow](https://github.com/phuongnse/nexkit/actions/workflows/ci.yml).
@@ -48,21 +51,25 @@ simulated GitHub boundaries are distinct from live integration.
   HTTP tests start the actual service process and make real TCP requests.
   `nexkit survey` read the existing conventions/commands and found no application
   in the empty repository. Neither repository has completed NexKit setup.
-- GitHub returned HTTP 403 for the rulesets API in both private consumers with
+- GitHub initially returned HTTP 403 for the rulesets API in both private consumers with
   the message "Upgrade to GitHub Pro or make this repository public to enable
-  this feature." Required branch rules cannot currently be configured there.
-  Both repositories remain private; account changes need a separate decision.
-- The owner approved the private test-release scope in
+  this feature." The owner then authorized public visibility for both consumers
+  and the sample release. Both repositories are now public and ruleset listing
+  succeeds. Actual rules still need to be applied during consumer setup.
+- The owner approved the test-release scope in
   `phuongnse/nexkit-validation-existing`, using tag `v0.1.0-test.1` for the sample
   application. This authorizes preparing and exercising that release flow.
   The eventual source commit, version and notes still require the real human
   candidate approval enforced by NexKit. No release has been created.
+- The owner selected `gpt-6-luna` with `max` reasoning for implementation and
+  independent review. The official model documentation confirms this effort
+  level; account access and live Actions execution remain unverified. The kit
+  now forwards per-role effort to the pinned official Codex action.
 
 ## External prerequisites still missing
 
-- GitHub support for the required branch rules in the authorized private
-  consumers, followed by accepted setup settings.
-- An Actions `OPENAI_API_KEY`, accepted models by role and CI usage limits.
+- An Actions `OPENAI_API_KEY` and accepted CI usage/spending limits, followed by
+  completion of consumer setup and application of the required branch rules.
   Local ChatGPT login is not copied to CI. Further local model validation also
   requires available account allowance after the observed usage-limit failure.
 - Real humans approving the requirement and exact release candidate in live

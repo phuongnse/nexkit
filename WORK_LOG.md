@@ -17,7 +17,7 @@ bootstrap development record, not a fabricated product approval.
   and assets, recovery of original artifact bytes after partial publication.
 - Pinned trusted controls, dedicated unprivileged execution, separate write jobs,
   protected config/skills, persistent counters and cancellation guards.
-- Archive/checksums/source manifest, 60 tests with two distinct real local consumers,
+- Archive/checksums/source manifest, 66 tests with two distinct real local consumers,
   repeatable live local CLI smoke and installation/operations/acceptance docs.
 
 ## Verification and review
@@ -32,9 +32,9 @@ code blocker in its reviewed scope. Evidence links are in docs/acceptance.md.
 
 ## External blockers and scope
 
-CI API authentication, accepted model/usage settings and real human approvals
-remain prerequisites. Local ChatGPT auth was never copied
-to CI. Full acceptance still requires live AI Actions, setup and delivery in
+CI API authentication, accepted usage/spending limits and real human approvals
+remain prerequisites. Local ChatGPT auth was never copied to CI. Full acceptance
+still requires live AI Actions, setup and delivery in
 both consumers, human approvals, repair and release. Do not mark the goal
 complete before then.
 
@@ -52,15 +52,27 @@ locally; HTTP checks launch the real service process. NexKit survey distinguishe
 the empty repository from the existing application and reads its instructions
 and documented commands. All project prose is English.
 
-Both consumers report admin access, but their rulesets API returns HTTP 403:
+Both consumers report admin access. Their private rulesets API initially returned HTTP 403:
 GitHub requires Pro or public visibility for this feature on the current account.
-This blocks the required private-repository merge protection. Account/repository
-policy decisions and CI model/auth/budget decisions remain pending. No consumer
-NexKit workflow or release has run yet.
+The owner subsequently authorized making both sample repos and the test release
+public. Both repositories are now public, and ruleset listing succeeds. Actual
+rules will be applied during consumer setup. No consumer NexKit workflow or
+release has run yet.
 
-The owner approved testing release `v0.1.0-test.1` in the private
+The owner approved testing release `v0.1.0-test.1` in the
 `phuongnse/nexkit-validation-existing` repository. This is administrative scope
 authorization; the product must still bind a real human release approval to the
-exact source commit, version and notes before publishing. The owner is deciding
-whether to retain private visibility with GitHub Pro or authorize public test
-repositories and the sample release so that required rulesets are available.
+exact source commit, version and notes before publishing.
+
+The owner selected `gpt-6-luna` with reasoning effort `max` for the pipeline.
+Official OpenAI documentation confirms support for this model/effort. Added an
+optional per-role `reasoning_effort` setting and forwarded it to the pinned
+Codex action for clarification, implementation and independent review. Existing
+configurations retain CLI defaults when the setting is omitted. Doctor exposes
+the configured value, and changes invalidate candidate identity through the
+existing config hash. Six additional regression tests pass, for 66 total; Ruff
+also passes. API account access and live CI model behavior await credentials and
+accepted usage limits. No model call was made for this configuration change.
+The independent reviewer found no concrete defect in this diff, confirmed
+66 passing tests and Ruff, and reproduced rejection of effort drift in all
+three relevant guards. Live runner/model verification remains outstanding.

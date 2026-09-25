@@ -102,6 +102,8 @@ def prepare_release(gh, number, run_key, kit_ref):
     if not (issue.get("body") or "").startswith(RELEASE_MARKER):
         return {"ready": False, "reason": "Not a release candidate"}
     state, revision = gh.get_state(number)
+    if state.get("status") == "released":
+        return {"ready": False, "reason": "Already released", "state": state}
     try:
         issue, approved = authorized(gh, number, release=True)
         value = parse_candidate(issue)
@@ -118,8 +120,6 @@ def prepare_release(gh, number, run_key, kit_ref):
             comparison["status"] in ("ahead", "identical"),
             "Release source is no longer on the default branch",
         )
-        if state.get("status") == "released":
-            return {"ready": False, "reason": "Already released", "state": state}
         manifest = state.get("manifest")
         if manifest:
             require(
@@ -378,7 +378,7 @@ def publish_release(gh, context, directory):
 
 
 def main():
-    from .ci import event_issue, output
+    from .ci import authorized_event, event_issue, output
     from .github import GitHub
 
     p = argparse.ArgumentParser()
@@ -400,7 +400,11 @@ def main():
                 "Release workflow must run from the default branch",
             )
             key = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
-            result = prepare_release(gh, event_issue(), key, args.kit_ref)
+            result = (
+                prepare_release(gh, event_issue(), key, args.kit_ref)
+                if authorized_event(gh)
+                else {"ready": False, "reason": "Event actor cannot authorize or resume release"}
+            )
             write_json(args.context, result)
             locator = (
                 result.get("build_run_key", "").split(".")

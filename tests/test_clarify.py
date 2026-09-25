@@ -87,7 +87,16 @@ class ClarificationTests(unittest.TestCase):
         self.assertTrue(second["ready"])
         self.assertEqual(second["answers"][-1]["body"], "Yes, print zero.")
         self.assertEqual(self.gh.state["agent_calls"], 2)
+        self.assertEqual(second["pending_questions"], ["Should no arguments print zero?"])
         publish(self.gh, second, result(second))
+
+    def test_short_answer_keeps_the_previous_question_meaning(self):
+        first = self.prepare()
+        question = "Choose invalid-input behavior: A reports an error; B skips invalid values."
+        publish(self.gh, first, result(first, [question]))
+        second = self.prepare("101.1", self.gh.answer("B"))
+        self.assertEqual(second["answers"][-1]["body"], "B")
+        self.assertEqual(second["pending_questions"], [question])
 
     def test_approval_received_during_agent_run_prevents_spec_mutation(self):
         context = self.prepare()

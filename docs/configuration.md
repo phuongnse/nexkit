@@ -11,7 +11,7 @@ framework hay loại ứng dụng. Cấu hình của consumer ở `.nexkit/proje
 | `kit` | `repository`, full commit SHA `ref`, exact `version` |
 | `engine` | `name: codex`, exact CLI `version`; hiện chỉ có engine CI này |
 | `models` | Tên model người dùng truy cập được cho `implement` và `review`; không có mặc định |
-| `limits` | `attempts` (1–20), `agent_calls` (2–40), `minutes` (1–1440), `command_seconds` (1–3600) |
+| `limits` | `attempts` (1–20), `agent_calls` (3–40), `minutes` (1–1440), `command_seconds` (1–3600) |
 | `environment` | `runner: ubuntu-24.04`, `setup`: danh sách commands dạng mảng argv |
 | `application` | `present` hoặc `absent` lúc setup; repo mới vẫn phải khai báo commands dự kiến trước delivery |
 | `checks` | Commands thực tế; mỗi mục có `name`, `kind`, `argv`, `timeout_seconds` |
@@ -66,3 +66,10 @@ availability phụ thuộc loại repository/gói GitHub và phải được ki�
 Không tự đổi settings bằng setup command hiện tại. Agent dùng GitHub tooling
 để áp dụng đúng thay đổi quản trị đã được người dùng chấp nhận rồi chạy doctor.
 Đây là công việc setup, không phải gate cho từng feature.
+
+Clarification dùng model `implement` và giữ trước một call; mỗi vòng delivery
+giữ hai calls cho implement/review. Lượt thất bại vẫn tiêu budget. Tối thiểu ba
+calls đủ một lượt clarification và một vòng delivery. Giới hạn phút delivery
+tính từ lần bắt đầu, không reset qua retry. Clarification giữ trước thời gian
+mỗi session; chờ human không tiêu thời gian này. Đây là giới hạn invocation và
+thời gian, không phải đo token hoặc trần tiền của provider.

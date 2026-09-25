@@ -9,6 +9,9 @@ bằng GitHub Actions.
 flowchart LR
   H[Host + shared skills] --> I[Serialized GitHub intake]
   I --> S[Issue: requirement]
+  S --> Q[Codex clarifies from repo and human answers]
+  Q -->|questions| S
+  Q -->|spec ready| A
   S --> A[Human approves exact hash]
   A --> P[Controller reserves budget]
   P --> C[Official Codex CLI: implement]
@@ -54,3 +57,9 @@ Release issue chứa commit, version, notes, repository và config digest. Build
 sau approval dùng đúng source, kiểm thử rồi tạo manifest hashes. Publisher kiểm
 tra server-side asset digests, không clobber và không di chuyển tag. Partial
 release giữ draft/state để retry cùng danh tính.
+
+Clarification và delivery dùng chung queue. Intake tự dispatch clarification;
+câu trả lời của người có quyền kích hoạt session mới. Context giữ cả câu hỏi
+trước và câu trả lời. Agent chỉ đọc source; controller cập nhật spec và từ chối
+nếu approval đến trong lúc agent chạy. Release retry tải đúng artifact của run
+đã bắt đầu publication, không build lại bytes khác cho draft upload dở.

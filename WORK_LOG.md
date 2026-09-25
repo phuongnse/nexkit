@@ -1,54 +1,40 @@
 # NexKit implementation record
 
-Original objective: the owner's attached 12-section specification, recorded in
-the bootstrap GitHub issue. Completion means the full specification, including
-live integrations; local simulations never establish live acceptance.
+Date: 2026-09-25. Objective: the owner's 12-section specification, recorded in
+[bootstrap issue #1](https://github.com/phuongnse/nexkit/issues/1). This is a
+bootstrap development record, not a fabricated product approval.
 
-## Current state (2026-09-25)
+## Delivered implementation
 
-- Starting repository was empty, with public remote `phuongnse/nex-kit`.
-- Python 3.12.3, Node 24.18.0, Docker 29.1.3, GitHub CLI are available.
-- Local Codex CLI 0.156.1 has ChatGPT login. No model API keys or repository
-  Actions secrets/variables are configured. Do not copy local login into CI.
-- Owner was asked for two authorized private consumer repositories, permission
-  for a test release there, CI model choices/limits and a CI API secret.
-- No public release, package publication or unrelated repository changes are
-  authorized.
+- Empty phuongnse/nex-kit repository renamed phuongnse/nexkit as requested.
+- Python standard library, Git and gh; official Codex CLI action; shared portable
+  skills and native Codex/Claude packaging. No model API client or custom runtime.
+- Survey, accepted setup preview/apply/verification, versioned installation and
+  ownership-aware uninstall; status/cancel/resume/howto/knowledge.
+- Serialized intake, bounded Actions clarification, exact human spec approval,
+  implementation, real commands/E2E, independent review, feedback/retry and merge.
+- Separate release decision, approved-source build/provenance, immutable tags
+  and assets, recovery of original artifact bytes after partial publication.
+- Pinned trusted controls, dedicated unprivileged execution, separate write jobs,
+  protected config/skills, persistent counters and cancellation guards.
+- Archive/checksums/source manifest, 60 tests with two distinct real local consumers,
+  repeatable live local CLI smoke and installation/operations/acceptance docs.
 
-## Decisions
+## Verification and review
 
-- Python >=3.11 standard library, Git and `gh`: a small CLI with deterministic
-  GitHub guards, installation and task-specific Actions helpers. No agent loop,
-  model API client, database or service.
-- One source of portable Agent Skills. Thin official host packaging. Codex is
-  the first CI engine; other hosts may submit to that engine.
-- Use pinned `openai/codex-action` (official wrapper around `codex exec`, Apache
-  2.0) with its secret proxy and an unprivileged OS user. Implementer and reviewer
-  run in different jobs. GitHub write credentials only exist in control jobs
-  that never execute consumer code.
-- GitHub issue body is the requirement authority; human comments bind approval
-  to SHA-256 of its title/body. Progress lives in separate bot comments.
-- Explicit `workflow_dispatch` joins bounded delivery runs; do not depend on PR
-  events emitted using `GITHUB_TOKEN`. One repository-wide concurrency group
-  serializes delivery; state and reserved budgets persist on GitHub.
-- Candidate identity includes requirement, config, base SHA, head SHA and kit
-  revision. Merge rechecks authority and current state. Release is a separate
-  workflow with a human decision bound to immutable source/version/notes.
-- Spec Kit 1.0.11, Superpowers 6.4.1 and Agentic Workflows 0.89.21 were examined
-  from their upstreams (MIT). They are not dependencies: adopting their broader
-  lifecycle alongside this one would add duplication. No source was copied.
+Native Codex CLI 0.156.1 and Claude Code 2.1.282 installed/loaded the plugin in
+isolated configuration directories. Live local Codex fixed a real sign defect;
+a separate reviewer used tools to check behavior without changing source.
+Own GitHub CI and a read-only platform probe passed at 21f68b7. This proves native
+queue/API support, not CI model authentication. Independent review found and
+reproduced defects, drove fixes/regressions, and ultimately found no additional
+code blocker in its reviewed scope. Evidence links are in docs/acceptance.md.
 
-## Work remaining
+## External blockers and scope
 
-1. Implement CLI, setup/install, approval/state guards and a complete bounded
-   delivery/release Actions path.
-2. Exercise local end-to-end behavior with two distinct consumers, including
-   failure injection, cancellation, stale decisions, retries and ownership.
-3. Install/load package on at least two actual hosts; document other hosts.
-4. Independent agent review, fixes and regression checks.
-5. Live Actions/agent/two-consumer/approval/release tests when authorized and
-   credentials are ready. Record exact evidence and unresolved blockers.
-6. Build installation archives and an unreleased candidate, audit every group
-   A-H and hand over usage docs and candid limitations.
-
-Do not mark the goal complete while any required live evidence is missing.
+No CI API secret, accepted model/usage settings, two authorized consumer repos,
+test release scope or real human approvals were supplied. Owner was asked for
+these prerequisites; local ChatGPT auth was never copied to CI. No unrelated
+repository was changed, new public consumer created or public release/package
+published. Full acceptance still requires live AI Actions, two consumers,
+human approvals, repair and release. Do not mark the goal complete before then.

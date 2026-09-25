@@ -101,6 +101,7 @@ def prepare(gh, number, run_key, kit_ref, event):
             "repository": gh.repository,
             "issue": issue,
             "answers": answers,
+            "pending_questions": phase.get("questions", []),
             "config": cfg,
             "base": base,
             "source": base,
@@ -198,6 +199,7 @@ def publish(gh, context, bundle):
         )
     phase.update(
         status="awaiting_answers" if questions else "awaiting_approval",
+        questions=questions,
         completed_input=digest({"spec": spec_hash(current), "answers": context["answers"]}),
         message=message,
     )

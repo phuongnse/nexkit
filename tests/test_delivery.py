@@ -1,4 +1,9 @@
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from nexkit.common import Blocked
 from nexkit.delivery import failed, finish, prepare, publish
@@ -122,11 +127,36 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(self.gh.merges, [])
 
     def test_exhausted_attempts_do_not_dispatch_again(self):
-        self.gh.cfg["limits"].update(attempts=1, agent_calls=2)
+        self.gh.cfg["limits"].update(attempts=1, agent_calls=3)
         context = prepare(self.gh, 1, "100.1", "a" * 40)
         state = failed(self.gh, context, "Invalid CLI output")
         self.assertEqual(state["status"], "blocked")
         self.assertEqual(self.gh.dispatches, [])
+
+    def test_outsider_event_cannot_spend_an_existing_approval_budget(self):
+        from nexkit.ci import prepare_job
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            event = {"issue": self.gh.work, "sender": {"login": "outsider", "type": "User"}}
+            (path / "event.json").write_text(json.dumps(event))
+            env = {
+                "GITHUB_REPOSITORY": self.gh.repository,
+                "GITHUB_REF": "refs/heads/main",
+                "GITHUB_EVENT_NAME": "issue_comment",
+                "GITHUB_EVENT_PATH": str(path / "event.json"),
+                "GITHUB_OUTPUT": str(path / "output"),
+            }
+            with patch.dict(os.environ, env), patch("nexkit.ci.GitHub", return_value=self.gh):
+                result = prepare_job(path / "context.json", "a" * 40)
+            self.assertFalse(result["ready"])
+            self.assertNotIn("agent_calls", self.gh.state)
+
+    def test_internal_dispatch_remains_an_authorized_continuation(self):
+        from nexkit.ci import authorized_event
+
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch"}):
+            self.assertTrue(authorized_event(self.gh))
 
     def test_orphan_branch_after_interruption_is_recovered_without_empty_commit(self):
         context = prepare(self.gh, 1, "100.1", "a" * 40)

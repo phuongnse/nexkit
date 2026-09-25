@@ -1,0 +1,123 @@
+{
+  "date": "2026-09-25",
+  "kind": "live local Codex CLI, not GitHub Actions",
+  "codex_version": "0.156.1",
+  "model": "gpt-6-astra (existing local configuration)",
+  "sessions": 2,
+  "timeout_seconds_per_session": 180,
+  "actual_cost": null,
+  "fixture": "isolated signed integer sum CLI",
+  "implementation": "abs(sum(values)) changed to sum(values); regression tests added",
+  "external_verifier": {
+    "unit_cases": 4,
+    "unit_passed": true,
+    "cli_negative_total": "-5",
+    "reviewer_source_unchanged": true
+  },
+  "results": {
+    "implement": {
+      "status": "done",
+      "summary": "Removed abs() and added regression tests for negative totals, mixed signs, and empty input. Before: two regression failures; CLI printed 5 for -2 -3. After: all four tests pass; CLI prints -5. All six CLI cases passed.",
+      "skills_used": [
+        "nexkit-deliver"
+      ],
+      "commands": [
+        "python3 -B -m unittest -v",
+        "python3 -B signed_sum.py -2 -3",
+        "python3 -B signed_sum.py -7 2",
+        "python3 -B signed_sum.py -2 7",
+        "python3 -B signed_sum.py -3 3",
+        "python3 -B signed_sum.py",
+        "python3 -B signed_sum.py 2 3",
+        "git diff --check",
+        "git diff -- signed_sum.py test_sum.py",
+        "git status --short"
+      ],
+      "limitations": [
+        "The python command is unavailable; verification used python3."
+      ]
+    },
+    "review": {
+      "status": "done",
+      "summary": "Approve. Independently verified four passing unit tests and 11 passing CLI cases. The original function fails both sign regressions.",
+      "skills_used": [
+        "nexkit-review"
+      ],
+      "commands": [
+        "cat .agents/skills/nexkit-review/SKILL.md",
+        "nl -ba signed_sum.py",
+        "nl -ba test_sum.py",
+        "git --no-optional-locks status --short --untracked-files=all",
+        "git diff --no-ext-diff --no-textconv HEAD --",
+        "git show HEAD:signed_sum.py",
+        "git show HEAD:test_sum.py",
+        "git diff --check HEAD --",
+        "python3 -B -m unittest discover -v",
+        "python3 -B -"
+      ],
+      "limitations": [
+        "Local CLI evidence only. No GitHub or network actions were performed; no external gate or live GitHub Actions acceptance is claimed."
+      ],
+      "verdict": "approve",
+      "findings": [],
+      "acceptance": [
+        {
+          "criterion": "Print the mathematical sum of integer arguments, preserving sign.",
+          "evidence": "signed_sum.py:3 returns sum(values); line 5 parses arguments with int and prints the result. An inline python3 -B harness verified 11 real CLI invocations, each using python3 -B, with exact stdout, exit 0, and empty stderr. Coverage included single integers, zero, explicit positive signs, and integers beyond 64-bit range.",
+          "passed": true
+        },
+        {
+          "criterion": "No arguments print 0.",
+          "evidence": "The real CLI without arguments printed '0\\n'; test_empty passed.",
+          "passed": true
+        },
+        {
+          "criterion": "Negative totals remain negative.",
+          "evidence": "The real CLI with -2 -3 printed '-5\\n'; test_negative passed.",
+          "passed": true
+        },
+        {
+          "criterion": "Mixed signs produce the correct signed total.",
+          "evidence": "CLI arguments -7 2, -2 7, and -3 3 printed -5, 5, and 0 respectively. All corresponding test_mixed_signs subtests passed.",
+          "passed": true
+        },
+        {
+          "criterion": "Positive totals remain correct.",
+          "evidence": "The real CLI with 2 3 printed '5\\n'. The original positive assertion remains unchanged and passed.",
+          "passed": true
+        },
+        {
+          "criterion": "Regression tests detect the original defect without changing files.",
+          "evidence": "Loaded HEAD:signed_sum.py into memory and rebound test_sum.total only within that Python process. The current four tests produced exactly two expected failures: negative inputs and the negative-total mixed-sign subtest both returned 5 instead of -5. Positive and empty tests passed; there were no errors or skips.",
+          "passed": true
+        },
+        {
+          "criterion": "Review the actual candidate without modifying files or git history.",
+          "evidence": "Read candidate and HEAD source/tests. The diff only removes abs() and adds regression coverage; no assertions or controls were removed. git diff --check passed. Final status and diff matched the initial candidate; all review operations were read-only.",
+          "passed": true
+        }
+      ]
+    }
+  },
+  "cli_reported_usage": {
+    "implement": {
+      "input_tokens": 137238,
+      "cached_input_tokens": 116480,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 2572,
+      "reasoning_output_tokens": 1164
+    },
+    "review": {
+      "input_tokens": 104836,
+      "cached_input_tokens": 82944,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 4248,
+      "reasoning_output_tokens": 1930
+    }
+  },
+  "limitations": [
+    "Existing ChatGPT login was used locally; no CI auth inferred",
+    "No live human approval, GitHub delivery, merge or release in this smoke",
+    "The two CLI sessions are independent; the orchestrating assistant did not write the candidate implementation"
+  ]
+}

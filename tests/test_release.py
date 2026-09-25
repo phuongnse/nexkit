@@ -136,6 +136,16 @@ class ReleaseTests(unittest.TestCase):
             publish_release(self.gh, context, self.root)
         self.assertIsNone(self.gh.tag)
 
+    def test_closed_completed_release_remains_complete_on_duplicate_event(self):
+        context = self.prepare()
+        self.assets(context)
+        with patch("nexkit.release.run", side_effect=self.upload):
+            publish_release(self.gh, context, self.root)
+        self.gh.work["state"] = "closed"
+        result = prepare_release(self.gh, 1, "101.1", "a" * 40)
+        self.assertFalse(result["ready"])
+        self.assertEqual(self.gh.state["status"], "released")
+
     def test_cancel_and_persistent_deadline_prevent_release_effects(self):
         context = self.prepare()
         self.assets(context)

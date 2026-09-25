@@ -35,3 +35,23 @@ Candidate hiện hỗ trợ text source changes tối đa 200 files/2 MB; đổi
 submodule hoặc binary source sẽ dừng với lý do cụ thể. Release artifacts tối đa
 100 MB/file. Chỉ ephemeral GitHub-hosted Ubuntu 24.04 đã được thiết kế; các
 runner/engine khác cần integration và kiểm chứng riêng.
+
+## Lặp lại smoke có model thật
+
+```sh
+python3 scripts/local_agent_smoke.py \
+  --implement-model MODEL_BAN_CO_QUYEN_DUNG \
+  --review-model MODEL_BAN_CO_QUYEN_DUNG \
+  --output dist/local-smoke-lan-1
+```
+
+Script tạo fixture Git tạm, gọi hai sessions Codex độc lập, kiểm tra tool output
+đọc đúng skill, regression/CLI thật và reviewer không sửa source. Kết quả, diff,
+usage CLI báo và thời gian nằm ở output directory. Script dùng model usage của
+account hiện tại, mỗi session mặc định tối đa 180 giây. Không ghi GitHub hoặc
+release. [Nghiệm thu GitHub](live-acceptance.md) là bước riêng.
+
+Release đang dở dùng artifact từ run gốc trong thời hạn lưu 7 ngày. Nếu artifact
+hết hạn hoặc bytes/tag khác, pipeline dừng và giữ draft; không ghi đè hoặc tự
+chọn candidate mới. File lớn/binary có sẵn được snapshot bằng hash; giới hạn
+2 MB áp dụng cho nội dung thay đổi chuyển qua publication.

@@ -126,7 +126,10 @@ def config(value):
         ("command_seconds", 3600),
     ):
         positive(limits.get(key), f"limits.{key}", maximum)
-    require(limits["agent_calls"] >= 2, "At least implement and independent review are required")
+    require(
+        limits["agent_calls"] >= 3,
+        "Reserve at least clarification, implementation and independent review",
+    )
     environment = value.get("environment", {})
     require(
         environment.get("runner") == "ubuntu-24.04",
@@ -240,6 +243,12 @@ def agent_result(value, role):
         isinstance(value.get("skills_used"), list) and f"nexkit-{role}" in value["skills_used"],
         f"Agent must report using the installed nexkit-{role} skill",
     )
+    for field in ("skills_used", "commands", "limitations"):
+        require(
+            isinstance(value.get(field), list) and all(isinstance(x, str) for x in value[field]),
+            f"Invalid agent {field}",
+        )
+    require(value["commands"], "Agent must report the tools/commands actually used")
     if role == "review":
         require(
             value.get("verdict") in ("approve", "changes_requested", "blocked"),

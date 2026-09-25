@@ -27,6 +27,22 @@ class ConsumerTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_existing_large_files_are_snapshot_by_hash_not_rejected(self):
+        from nexkit.ci import file_snapshot
+        from nexkit.delivery import validate_changes
+
+        asset = self.root / "existing-image.bin"
+        asset.write_bytes(b"x" * 2_000_001)
+        subprocess.run(["git", "add", "existing-image.bin"], cwd=self.root, check=True)
+        initial = file_snapshot(self.root, self.root)
+        self.assertEqual(initial[asset.name]["content"], {"large_sha256": file_hash(asset)})
+        self.assertEqual(initial, file_snapshot(self.root, self.root))
+        asset.write_bytes(b"y" * 2_000_001)
+        changed = file_snapshot(self.root, self.root)
+        self.assertNotEqual(initial, changed)
+        with self.assertRaisesRegex(Blocked, "Missing file contents"):
+            validate_changes([{"path": asset.name, **changed[asset.name]}])
+
     def test_new_node_cli_real_commands_reproduce_bug_then_fix(self):
         cfg = project("owner/new-cli")
         cfg["application"] = "absent"

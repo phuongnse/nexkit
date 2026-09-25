@@ -9,10 +9,10 @@ import stat
 from pathlib import Path
 
 from .checks import execute, verify
-from .common import Blocked, canonical, digest, kit_root, read_json, run, write_json
+from .common import Blocked, canonical, digest, file_hash, kit_root, read_json, run, write_json
 from .delivery import failed, finish, prepare, publish, revalidate
 from .github import GitHub
-from .policy import HOST_DIRS, agent_result, require, safe_path
+from .policy import HOST_DIRS, agent_result, human, require, safe_path
 
 
 def output(**values):
@@ -32,6 +32,15 @@ def event_issue():
     return int(value)
 
 
+def authorized_event(gh):
+    # GitHub itself restricts workflow_dispatch to accounts with write access;
+    # this also permits explicit continuation dispatched by GITHUB_TOKEN.
+    if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
+        return True
+    event = read_json(os.environ["GITHUB_EVENT_PATH"])
+    return human({"user": event.get("sender", {})}, gh.permission)
+
+
 def prepare_job(destination, kit_ref):
     gh = GitHub(os.environ["GITHUB_REPOSITORY"])
     repository = gh.repo()
@@ -39,6 +48,11 @@ def prepare_job(destination, kit_ref):
         os.environ["GITHUB_REF"] == "refs/heads/" + repository["default_branch"],
         "Delivery workflows must execute from the default branch",
     )
+    if not authorized_event(gh):
+        context = {"ready": False, "reason": "Event actor cannot authorize or resume delivery"}
+        write_json(destination, context)
+        output(ready=False)
+        return context
     run_key = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
     context = prepare(gh, event_issue(), run_key, kit_ref)
     write_json(destination, context)
@@ -94,15 +108,15 @@ def file_snapshot(source, workspace):
         if path.is_symlink():
             result[name] = {"content": os.readlink(path), "mode": "120000"}
         elif path.is_file():
-            require(path.stat().st_size <= 2_000_000, f"File exceeds transfer limit: {name}")
-            try:
-                content = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                # Preserve identity for comparison, but refuse changed binary
-                # artifacts at publication; build outputs belong to release.
-                content = {
-                    "binary_sha256": __import__("hashlib").sha256(path.read_bytes()).hexdigest()
-                }
+            if path.stat().st_size > 2_000_000:
+                content = {"large_sha256": file_hash(path)}
+            else:
+                try:
+                    content = path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    # Existing binary/large files remain usable by the agent;
+                    # changed non-text contents cannot cross publication.
+                    content = {"binary_sha256": file_hash(path)}
             result[name] = {
                 "content": content,
                 "mode": "100755" if path.stat().st_mode & stat.S_IXUSR else "100644",

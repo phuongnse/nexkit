@@ -32,7 +32,9 @@ Agent khảo sát repo, chuẩn bị cấu hình để bạn xem và chạy ki�
 ## Yêu cầu đầu tiên
 
 Dùng skill `nexkit-request`. Nó gửi yêu cầu cho workflow intake tạo GitHub issue,
-rồi làm rõ spec trong issue đó. Người có quyền review issue và tự đăng đúng
+Actions tiếp tục làm rõ spec trong issue đó kể cả khi đóng host local. CLI trả
+key và lệnh `intake-status` để tìm issue; trả lời câu hỏi trên GitHub.
+Người có quyền review issue và tự đăng đúng
 comment `/nexkit approve <hash>` do `nexkit approval <issue>` cung cấp.
 
 Sau approval, theo dõi issue, PR và Actions. Dùng `nexkit status <issue>`;
@@ -46,3 +48,5 @@ Khi muốn phát hành, dùng `nexkit release --commit <sha> --version <version>
 [Cách CLI, skills và Actions phối hợp](docs/architecture.md) ·
 [Kiểm thử và phục hồi](docs/operations.md) ·
 [Dependency và nguồn tài liệu](docs/sources.md)
+
+[Quy trình nghiệm thu live và điều kiện còn thiếu](docs/live-acceptance.md).

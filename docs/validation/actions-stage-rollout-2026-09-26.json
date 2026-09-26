@@ -1,0 +1,253 @@
+{
+  "checked_at": "2026-09-26T15:02:30.481636+00:00",
+  "scope": "Owner-authorized live administrative migration plus model-free native guards. Not a completed composed delivery or human stage-approval cycle.",
+  "repository": "phuongnse/nexkit-validation-existing",
+  "pull_request": {
+    "number": 4,
+    "html_url": "https://github.com/phuongnse/nexkit-validation-existing/pull/4",
+    "state": "closed",
+    "draft": false,
+    "merged": true,
+    "merged_at": "2026-09-26T14:49:54Z",
+    "merge_commit_sha": "439ec14ccb0b2135be3bd9c50b2cd3996a2465b4"
+  },
+  "reviewed_head": "41cf32c2c75faa19b591d7e61df92b9b36e1d67a",
+  "reviewed_tree_equals_merge": true,
+  "kit_ref": "ace93ccb318091e2722042b2ac6e0f19b509ae3f",
+  "owner_authorization": "Actual owner conversation approval of the described PR #4 rollout after confirming project-specific stage approval configuration.",
+  "pipeline": "maintenance",
+  "approval": {
+    "enabled": true,
+    "mode": "pull_request",
+    "subject": "candidate",
+    "reviewers": [
+      "phuongnse"
+    ],
+    "minimum": 1,
+    "wait_minutes": 2880,
+    "on_rejection": "retry",
+    "continuation": ".github/workflows/nexkit-continue.yml",
+    "protects": [
+      "merge"
+    ]
+  },
+  "policy": {
+    "name": "NexKit accepted delivery policy",
+    "target": "branch",
+    "enforcement": "active",
+    "conditions": {
+      "ref_name": {
+        "exclude": [],
+        "include": [
+          "refs/heads/main"
+        ]
+      }
+    },
+    "rules": [
+      {
+        "type": "deletion"
+      },
+      {
+        "type": "non_fast_forward"
+      },
+      {
+        "type": "pull_request",
+        "parameters": {
+          "required_approving_review_count": 1,
+          "dismiss_stale_reviews_on_push": true,
+          "required_reviewers": [],
+          "require_code_owner_review": false,
+          "require_last_push_approval": false,
+          "required_review_thread_resolution": false,
+          "require_extra_approval_for_unattributed_changes": true,
+          "allowed_merge_methods": [
+            "squash"
+          ]
+        }
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "strict_required_status_checks_policy": true,
+          "do_not_enforce_on_create": false,
+          "required_status_checks": [
+            {
+              "context": "NexKit verification",
+              "integration_id": 15368
+            },
+            {
+              "context": "NexKit review",
+              "integration_id": 15368
+            }
+          ]
+        }
+      }
+    ],
+    "bypass_actors": []
+  },
+  "policy_authenticated_readback_matches": true,
+  "online_doctor": {
+    "ready": true,
+    "scope": "each configured pipeline; native workflow execution needs Actions evidence",
+    "problems": [],
+    "verified": [
+      "managed files inspected",
+      "consumer checks and E2E executed",
+      "project runner registration inspected; login and isolation require a live probe",
+      "GitHub settings inspected"
+    ],
+    "live_agent_verified": false,
+    "checks": [
+      {
+        "name": "test",
+        "kind": "test",
+        "passed": true,
+        "tests": 6,
+        "exit_code": 0,
+        "seconds": 0.165,
+        "timed_out": false
+      },
+      {
+        "name": "e2e",
+        "kind": "e2e",
+        "passed": true,
+        "tests": 6,
+        "exit_code": 0,
+        "seconds": 0.318,
+        "timed_out": false
+      },
+      {
+        "name": "package",
+        "kind": "test",
+        "passed": true,
+        "tests": 6,
+        "exit_code": 0,
+        "seconds": 0.518,
+        "timed_out": false
+      }
+    ]
+  },
+  "accepted_bundle_files": 9,
+  "local_original_checkout": "Fast-forwarded from the clean accepted baseline to 439ec14ccb0b2135be3bd9c50b2cd3996a2465b4; no local edits overwritten.",
+  "runner": "Existing dedicated runner and ChatGPT login reused; no reprovisioning or new login.",
+  "native_guards": {
+    "checked_at": "2026-09-26T14:59:01.725253+00:00",
+    "scope": "Live native composed-delivery and continuation guards on an existing merged schema-1 work item. Not a successful composed delivery or real human stage approval.",
+    "repository": "phuongnse/nexkit-validation-existing",
+    "issue": 2,
+    "runs": [
+      {
+        "id": 36250155039,
+        "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36250155039",
+        "head": "439ec14ccb0b2135be3bd9c50b2cd3996a2465b4",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "name": "admit / prepare",
+            "conclusion": "success",
+            "started_at": "2026-09-26T14:55:34Z",
+            "completed_at": "2026-09-26T14:55:39Z"
+          },
+          {
+            "name": "publish",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T14:55:40Z",
+            "completed_at": "2026-09-26T14:55:40Z"
+          },
+          {
+            "name": "change",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T14:55:40Z",
+            "completed_at": "2026-09-26T14:55:40Z"
+          },
+          {
+            "name": "journey",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T14:55:40Z",
+            "completed_at": "2026-09-26T14:55:40Z"
+          },
+          {
+            "name": "package",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T14:55:40Z",
+            "completed_at": "2026-09-26T14:55:40Z"
+          },
+          {
+            "name": "unit",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T14:55:40Z",
+            "completed_at": "2026-09-26T14:55:40Z"
+          },
+          {
+            "name": "evaluate",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T14:55:40Z",
+            "completed_at": "2026-09-26T14:55:40Z"
+          },
+          {
+            "name": "human-review",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T14:55:40Z",
+            "completed_at": "2026-09-26T14:55:40Z"
+          },
+          {
+            "name": "complete",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T14:55:40Z",
+            "completed_at": "2026-09-26T14:55:40Z"
+          }
+        ],
+        "controller_result": {
+          "ready": false,
+          "reason": "Work item belongs to another pipeline"
+        }
+      },
+      {
+        "id": 36250157391,
+        "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36250157391",
+        "head": "439ec14ccb0b2135be3bd9c50b2cd3996a2465b4",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "name": "resume / resume",
+            "conclusion": "success",
+            "started_at": "2026-09-26T14:55:42Z",
+            "completed_at": "2026-09-26T14:55:47Z"
+          },
+          {
+            "name": "finish",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T14:55:48Z",
+            "completed_at": "2026-09-26T14:55:48Z"
+          }
+        ],
+        "controller_result": {
+          "ready": false,
+          "reason": "No matching pending human approval"
+        }
+      }
+    ],
+    "unchanged_before_and_after": {
+      "state_revision": "3a094aab0a70fc34b6031739c28b4eb4a3f43f00",
+      "main": "439ec14ccb0b2135be3bd9c50b2cd3996a2465b4",
+      "pull_requests": 3,
+      "releases": 0,
+      "state_status": "merged",
+      "agent_calls": 3,
+      "attempts": 1
+    },
+    "new_model_calls": 0
+  },
+  "independent_review": "Confirmed current main, exact reviewed setup tree, clean installed/original checkouts, all nine accepted hashes, target rule parameters, online results and guard/state invariants. No discrepancy found.",
+  "operator_mocked_tests": {
+    "count": 21,
+    "independently_passed": true,
+    "scope": "Separate local one-off rollout failure injection; no live interruption/recovery claim."
+  },
+  "model_calls_for_rollout_and_guards": 0,
+  "limitations": [
+    "The full composed implement/check/review/human-decision/continuation path remains unverified.",
+    "Live AI repair, active cancellation/interruption and the exact human-approved test release remain unverified.",
+    "Ruleset reads and writes are separate API operations; exclusive administrative execution was required for the rollout."
+  ]
+}

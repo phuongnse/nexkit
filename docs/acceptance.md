@@ -8,8 +8,8 @@ simulated GitHub boundaries are distinct from live integration.
 | Group | Evidence available | Still unverified |
 |---|---|---|
 | A — package/hosts | Native Codex 0.156.1 install/reinstall/update/remove and fresh discovery of 9 skills; Claude Code 2.1.282 validation and native loading of all 9 skills from the archive | Other target hosts have documentation checks only; no model-use claim from installation |
-| B — CLI on Actions | Both consumers completed live clarification and separate implementation/review jobs with Codex 0.156.1 and Luna/max; collected source bundles, current verification and unchanged review reports were audited against actual merged source | Live schema-2 composition and stage approvals |
-| C — two consumers | Distinct Node CLI and existing Python HTTP projects fulfilled their real approved requirements; bundle bytes/modes and original candidate trees match the merges; actual CLI/HTTP/package behavior passed independent audit | Live composed delivery and the newly configured human gates |
+| B — CLI on Actions | Both consumers completed live clarification and separate implementation/review jobs with Codex 0.156.1 and Luna/max; their artifacts were audited against merged source; the migrated Python consumer executed native composed-entry and continuation guards without model work | Complete composed delivery and a real human stage-approval continuation |
+| C — two consumers | Distinct Node CLI and existing Python HTTP projects fulfilled their real approved requirements; the Python consumer subsequently installed its own composed pipeline and optional human review gate, with live settings and actual checks audited | Complete composed delivery through the newly configured human gate |
 | D — success | Real owner requirement approvals, all delivery jobs successful, exact candidate/merge state matches GitHub for both consumers, and no consumer release exists | Full live acceptance remains incomplete in the other groups below |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
 | F — blocked | Live unapproved delivery stopped before any model call or PR; tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Remaining failure injection in the live environment and final guards |
@@ -18,6 +18,28 @@ simulated GitHub boundaries are distinct from live integration.
 
 ## Executed verification
 
+- [Composed-consumer clarification, September 26](validation/actions-stage-clarification-2026-09-26.json):
+  native intake created Python [issue #5](https://github.com/phuongnse/nexkit-validation-existing/issues/5)
+  for `HEAD /health`, the third and final application work item in the accepted
+  scope. [Run 36250424673](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36250424673)
+  completed one Luna/max clarification session and published the exact requirement
+  approval command. Artifact identities match; source remained unchanged. At this
+  checkpoint the issue awaits the owner's requirement approval, with one shared
+  CLI reservation and no delivery attempt. The full composed delivery and human
+  stage-approval cycle remain unverified.
+- [Live stage-approval setup, September 26](validation/actions-stage-rollout-2026-09-26.json):
+  the owner authorized the concrete administrative rollout, and Python
+  [PR #4](https://github.com/phuongnse/nexkit-validation-existing/pull/4) merged
+  as `439ec14ccb0b2135be3bd9c50b2cd3996a2465b4`. Both NexKit checks were restored
+  with strict checking, one required approving PR review, stale-review dismissal and
+  no bypass actors. Online installation verification passed 6 unit, 6 HTTP and
+  6 package cases. Independent review confirmed the exact setup tree, all nine
+  accepted hashes, clean checkouts, current rules and results. The existing
+  dedicated runner/login was reused. Native composed preparation rejected the
+  old issue's pipeline identity; continuation found no pending approval. All
+  downstream jobs skipped, leaving the old state, budgets, PR count and main
+  unchanged. These are setup and guard results; the full human approval cycle,
+  live repair and release remain unverified.
 - [Stage-approval setup preview, September 26](validation/actions-stage-setup-preview-2026-09-26.json):
   [draft Python setup PR #4](https://github.com/phuongnse/nexkit-validation-existing/pull/4)
   contains the consumer-defined pipeline and optional native human review gate.
@@ -310,10 +332,11 @@ lint and all four changed skill validators passed. GitHub boundaries and human
 decisions in these tests are simulated; no new model session was used.
 
 The [approval reference](stage-approvals.md) and native YAML examples describe
-setup and recovery. This feature has not been enabled or accepted live on either
-consumer. The prior schema-1 delivery successes above do not establish a live
-stage-approval cycle. Independent findings and the final scoped conclusion are
-recorded in the [review log](validation/independent-review.md).
+setup and recovery. The Python consumer now has the approved schema-2 installation
+and native human-review policy, verified online with its actual checks and two
+model-free guard runs. Neither those guards nor the prior schema-1 delivery
+successes establish a completed human stage-approval cycle. Independent findings
+and scoped conclusions are recorded in the [review log](validation/independent-review.md).
 
 ## External prerequisites still missing
 

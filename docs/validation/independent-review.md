@@ -254,3 +254,42 @@ based on `d2516347d796e0c3bc7bbd97de9a7ed52e9cd036`. The reviewer checked local
 6/6/6 results; the root agent separately collected the matching successful native
 setup report from run 36247864390. Main and branch policy remain unchanged at
 this checkpoint. Live migration and human stage-approval acceptance remain pending.
+
+## Applied consumer stage-approval setup — 2026-09-26
+
+After the owner authorized the reviewed administrative rollout, the separate
+reviewer audited actual main at `439ec14ccb0b2135be3bd9c50b2cd3996a2465b4`, merged
+PR #4, live rule parameters and the authenticated saved response showing no bypass
+actors. The reviewed setup-head-to-merge tree diff is empty. Both installed and
+original consumer worktrees are clean, all nine accepted hashes match, and the
+administrative PR changed no application files. Online doctor reported no problems
+with 6 unit, 6 HTTP and 6 package cases passing.
+
+Native delivery guard run 36250155039 completed one hosted preparation job and
+skipped all eight downstream jobs. Continuation run 36250157391 completed one
+hosted resume job and skipped finish. The old issue's state revision, three
+reserved calls, one round, three-PR count and zero releases remained unchanged.
+No discrepancy was found. These results establish live setup and guards; full
+composed delivery, a real human stage approval, live repair and release remain
+unverified.
+
+The separate review also exercised the one-off rollout operator outside NexKit.
+It reproduced and verified a fix for a merge completing during policy rollback;
+all 21 local mocked cases passed. Its separate GET/PUT administrative race is
+documented, and the actual rollout required exclusive administrative execution.
+Those mocks do not establish live interruption or recovery acceptance.
+
+## Third work-item clarification — 2026-09-26
+
+The separate reviewer checked the new clarification record against native intake
+run 36250408466, clarification run 36250424673, artifact metadata and saved JSON
+hashes. Both runs succeeded at consumer `439ec14` and kit `ace93ccb`. The dedicated
+ChatGPT CLI step succeeded; the API-key step skipped. Source remained unchanged.
+Issue #5 contained only the bot's exact-version approval notice, and the state
+recorded one shared CLI reservation with no delivery attempt. The reviewed scope
+contains no submitted human requirement or stage approval.
+
+The reviewer found no blocking discrepancy. One ambiguous phrase was corrected
+to distinguish the configured native PR-review requirement from an actual human
+review. These checks do not establish complete composed delivery or the human
+stage-approval cycle.

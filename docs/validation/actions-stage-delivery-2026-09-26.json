@@ -1,0 +1,327 @@
+{
+  "recorded_at": "2026-09-26T15:37:54.512929+00:00",
+  "scope": "Live composed delivery reached its configured human PR-review gate. The originating run ended; the human decision and continuation are not yet established by this record.",
+  "repository": "phuongnse/nexkit-validation-existing",
+  "issue": 5,
+  "issue_url": "https://github.com/phuongnse/nexkit-validation-existing/issues/5",
+  "pull_request": 6,
+  "pull_request_url": "https://github.com/phuongnse/nexkit-validation-existing/pull/6",
+  "candidate": {
+    "base": "439ec14ccb0b2135be3bd9c50b2cd3996a2465b4",
+    "config": "c8474ba1462d0de39fdc591fa11476ce7b028deb9ff1563ebe88febd6cf98ab7",
+    "head": "24a961ac1b8f215ad17af975cd909aa24284c4c5",
+    "kit": "ace93ccb318091e2722042b2ac6e0f19b509ae3f",
+    "spec": "90e56f84eef49613ceba208d9cff54389efe5b2dedefced337597e01a41e6c2e"
+  },
+  "requirement_approval": {
+    "actor": "phuongnse",
+    "comment_id": 5847395248,
+    "comment_updated_at": "2026-09-26T15:16:49Z",
+    "requirement_edited_at": "2026-09-26T15:04:46Z",
+    "spec": "90e56f84eef49613ceba208d9cff54389efe5b2dedefced337597e01a41e6c2e",
+    "url": "https://github.com/phuongnse/nexkit-validation-existing/issues/5#issuecomment-5847395248"
+  },
+  "run": {
+    "id": 36251384216,
+    "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36251384216",
+    "event": "issue_comment",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "admit / prepare",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:17:20Z",
+        "completed_at": "2026-09-26T15:17:42Z"
+      },
+      {
+        "name": "change / authorize",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:17:44Z",
+        "completed_at": "2026-09-26T15:18:02Z"
+      },
+      {
+        "name": "change / execute",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:18:05Z",
+        "completed_at": "2026-09-26T15:24:59Z"
+      },
+      {
+        "name": "change / record",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:25:02Z",
+        "completed_at": "2026-09-26T15:25:19Z"
+      },
+      {
+        "name": "publish / publish",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:25:22Z",
+        "completed_at": "2026-09-26T15:26:03Z"
+      },
+      {
+        "name": "package / check",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:26:05Z",
+        "completed_at": "2026-09-26T15:26:54Z"
+      },
+      {
+        "name": "journey / check",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:26:05Z",
+        "completed_at": "2026-09-26T15:26:50Z"
+      },
+      {
+        "name": "unit / check",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:26:05Z",
+        "completed_at": "2026-09-26T15:26:25Z"
+      },
+      {
+        "name": "evaluate / authorize",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:26:57Z",
+        "completed_at": "2026-09-26T15:27:21Z"
+      },
+      {
+        "name": "evaluate / execute",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:27:24Z",
+        "completed_at": "2026-09-26T15:30:38Z"
+      },
+      {
+        "name": "evaluate / record",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:30:40Z",
+        "completed_at": "2026-09-26T15:30:56Z"
+      },
+      {
+        "name": "human-review / request",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:30:59Z",
+        "completed_at": "2026-09-26T15:31:21Z"
+      },
+      {
+        "name": "complete / finish",
+        "conclusion": "success",
+        "started_at": "2026-09-26T15:31:24Z",
+        "completed_at": "2026-09-26T15:31:43Z"
+      }
+    ]
+  },
+  "source_audit": {
+    "full_candidate_tree_matches_reported_changes": true,
+    "candidate_parent_is_approved_base": true,
+    "invocation_context_digest_matches": true,
+    "tracked_files": 39,
+    "changes": [
+      {
+        "path": "README.md",
+        "mode": "100644",
+        "blob": "ae6d241c26b46ef2219fc78fc1d768a76eb1cb90",
+        "sha256": "6f92f68d987ab179908094349de6d7c8bb12f5a771f0249b46aeca9bfc3a7087",
+        "bytes": 2047
+      },
+      {
+        "path": "service.py",
+        "mode": "100644",
+        "blob": "ad2bb311486cc8e7f74c768fb4638a4ae2f00ab9",
+        "sha256": "178eb51271f8d61c0f5b4630d6902dcb64d2ef4eafd65d08e82a1ce802717043",
+        "bytes": 1912
+      },
+      {
+        "path": "tests/http_helpers.py",
+        "mode": "100644",
+        "blob": "ddf37fe67f90242993a66086537271c93665de63",
+        "sha256": "6770b18c995aab4eb2712c824a38d1e60a764f7e2670bfd687ae917f5c119cf7",
+        "bytes": 1018
+      },
+      {
+        "path": "tests/test_http.py",
+        "mode": "100644",
+        "blob": "7ea11a1c409553d394e1296849f19dd21d582ca1",
+        "sha256": "c91cd50cc45575d961cb51fb41ec2cc71325123447893d6437b9684df3de547a",
+        "bytes": 3682
+      },
+      {
+        "path": "tests/test_package.py",
+        "mode": "100644",
+        "blob": "a09cae9e89d0bee1af0fab943c988eff43d8c412",
+        "sha256": "3db0c5793957ed4cc27bfe6b23602a01679bd792b78967d55beac7edf6c73d51",
+        "bytes": 6264
+      }
+    ]
+  },
+  "live_checks": [
+    {
+      "exit_code": 0,
+      "kind": "e2e",
+      "name": "e2e",
+      "passed": true,
+      "seconds": 0.232,
+      "tests": 7,
+      "timed_out": false
+    },
+    {
+      "exit_code": 0,
+      "kind": "test",
+      "name": "package",
+      "passed": true,
+      "seconds": 0.332,
+      "tests": 6,
+      "timed_out": false
+    },
+    {
+      "exit_code": 0,
+      "kind": "test",
+      "name": "test",
+      "passed": true,
+      "seconds": 0.077,
+      "tests": 6,
+      "timed_out": false
+    }
+  ],
+  "live_ai_review": {
+    "engine": "codex",
+    "version": "0.156.1",
+    "authentication": "Existing dedicated runner ChatGPT login",
+    "model": "gpt-6-luna",
+    "reasoning_effort": "max",
+    "minutes": 30,
+    "independent": true,
+    "source_unchanged": true,
+    "context_and_recorded_result_digests_match": true,
+    "verdict": "approve",
+    "findings": [],
+    "reported_skills_used": [
+      "nexkit-review"
+    ],
+    "reported_limitations": [
+      "The local sandbox disables sockets, so I relied on the supplied hosted verification results for the HTTP and extracted-package TCP checks.",
+      "The worktree shows 17 deleted tracked NexKit skill files outside the base-to-candidate commit diff. I left them untouched; the reviewed commit changes only README.md, service.py, and the HTTP/package tests."
+    ]
+  },
+  "human_gate": {
+    "name": "human-review",
+    "checkpoint": "9ae07a8fe11daec91380a4dab0359435fae8d2d1f15293ccb2fa602fe8509228",
+    "opened_at": "2026-09-26T15:31:16.558423+00:00",
+    "origin": "36251384216.1",
+    "definition": {
+      "continuation": ".github/workflows/nexkit-continue.yml",
+      "enabled": true,
+      "minimum": 1,
+      "mode": "pull_request",
+      "on_rejection": "retry",
+      "protects": [
+        "merge"
+      ],
+      "reviewers": [
+        "phuongnse"
+      ],
+      "subject": "candidate",
+      "wait_minutes": 2880
+    },
+    "frozen_context_matches_published_context_with_current_candidate_source": true,
+    "frozen_checks_review_match_original_artifacts": true,
+    "status": "waiting",
+    "notice_id": 5847494386,
+    "notice_url": "https://github.com/phuongnse/nexkit-validation-existing/issues/5#issuecomment-5847494386"
+  },
+  "state_at_checkpoint": {
+    "revision": "7d9446a42cd5d4d4d069012c02b66154383dea66",
+    "status": "waiting_for_approval",
+    "agent_calls": 3,
+    "delivery_calls": 2,
+    "attempts": 1,
+    "pull_request_state": "open",
+    "human_pr_reviews": 0,
+    "runner_online": true,
+    "runner_busy": false
+  },
+  "independent_local_behavior": {
+    "verdict": "No behavioral defect or requirement gap found in the reviewed candidate.",
+    "python_version": "3.12.3",
+    "local_suites": {
+      "unit": 6,
+      "http": 7,
+      "package": 6,
+      "all_passed": true
+    },
+    "raw_http": {
+      "method": "Actual CLI process, raw socket, response bytes collected through EOF",
+      "head_status": 200,
+      "head_content_type": "application/json; charset=utf-8",
+      "head_content_length": 16,
+      "head_wire_body_bytes": 0,
+      "head_matches_get_metadata": true,
+      "http_request_versions": [
+        "1.0",
+        "1.1"
+      ],
+      "head_paths": [
+        "/health",
+        "/health?ignored=yes"
+      ],
+      "unchanged_get_cases": 44,
+      "exact_candidate_and_extracted_package_both_pass": true
+    },
+    "regression_quality": {
+      "new_http_and_package_tests_fail_on_baseline_501": true,
+      "raw_helper_captures_known_body_fixture": true
+    },
+    "control_files_unchanged": true,
+    "new_runtime_dependencies": false
+  },
+  "independent_local_package": {
+    "scope": "Independent local package build and extraction; no release publication",
+    "candidate": "24a961ac1b8f215ad17af975cd909aa24284c4c5",
+    "repeat_identical": true,
+    "artifact_sha256": "a4349b8b120ef362dec3bfcf697eaf8ae9bce78a95b8859531deb7f3dded92cb",
+    "artifact_mode": "0644",
+    "source_metadata_matches": true,
+    "committed_file_bytes_match": true
+  },
+  "artifact_hashes": [
+    {
+      "file": "nexkit-check-10909601714-e2e-1/e2e.json",
+      "sha256": "3c0661027fe76a9b936d4e7418b09e7f164efde6e15c0f58cf8bf2cb3c1396e6"
+    },
+    {
+      "file": "nexkit-check-10909601714-package-1/package.json",
+      "sha256": "f1d80d12eed213fde0cd360bd2164943be9fe7dca8ad4b9831e517279fc5add7"
+    },
+    {
+      "file": "nexkit-check-10909601714-test-1/test.json",
+      "sha256": "31184129cd5478fb3b3bdf82d9cd809209639b501b54e90591003b3490eec681"
+    },
+    {
+      "file": "nexkit-invocation-change-source-1/invocation.json",
+      "sha256": "5c2a46d23b5c969b84687b4aeddbbbd29833e350d7b9dd6d130c71085febcd07"
+    },
+    {
+      "file": "nexkit-invocation-evaluate-1/invocation.json",
+      "sha256": "79f987f1ecff288c8bb146daab69fd18c4a7fa9da792f81018d6559d610a83bc"
+    },
+    {
+      "file": "nexkit-published-10909680782-1/candidate.json",
+      "sha256": "367ea65efa38d655249abb9c05e54c077ab59d5eddc9d8c2dd60a4ccea329ccd"
+    },
+    {
+      "file": "nexkit-report-change-source-1/change-source.json",
+      "sha256": "944cfd90f9d4be45dcf8a8f96745ea8c05338dcea68eea6f82e630eb3f3232ad"
+    },
+    {
+      "file": "nexkit-report-evaluate-1/evaluate.json",
+      "sha256": "1e02aa99ede394a86996636cd29a34a0730f1c8fe15dc70f6d83544ecd5d69e1"
+    },
+    {
+      "file": "nexkit-work-maintenance-1/context.json",
+      "sha256": "49564e36175170f6653eee4d19543b0cc9a4fd549c49bfe3cab29203f72d3c41"
+    }
+  ],
+  "limits": [
+    "Requirement approval was an actual owner comment; no human PR approval was posted by the agent.",
+    "The completed originating run and idle runner prove a persisted wait without holding an agent job, not a completed human continuation or merge.",
+    "Independent local baseline/body fixtures verify regression quality. They are not live Actions AI repair.",
+    "No meaningful defect was found; live feedback-driven repair, active cancellation/interruption and exact-candidate test release remain unverified.",
+    "No raw private CLI logs or credentials were read for this audit. Token use and monetary cost were not measured."
+  ]
+}

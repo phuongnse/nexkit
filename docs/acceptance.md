@@ -8,9 +8,9 @@ simulated GitHub boundaries are distinct from live integration.
 | Group | Evidence available | Still unverified |
 |---|---|---|
 | A — package/hosts | Native Codex 0.156.1 install/reinstall/update/remove and fresh discovery of 9 skills; Claude Code 2.1.282 validation and native loading of all 9 skills from the archive | Other target hosts have documentation checks only; no model-use claim from installation |
-| B — CLI on Actions | Both consumers completed live clarification and separate implementation/review jobs with Codex 0.156.1 and Luna/max; their artifacts were audited against merged source; the migrated Python consumer executed native composed-entry and continuation guards without model work | Complete composed delivery and a real human stage-approval continuation |
-| C — two consumers | Distinct Node CLI and existing Python HTTP projects fulfilled their real approved requirements; the Python consumer subsequently installed its own composed pipeline and optional human review gate, with live settings and actual checks audited | Complete composed delivery through the newly configured human gate |
-| D — success | Real owner requirement approvals, all delivery jobs successful, exact candidate/merge state matches GitHub for both consumers, and no consumer release exists | Full live acceptance remains incomplete in the other groups below |
+| B — CLI on Actions | Both consumers completed live clarification and separate implementation/review jobs with Codex 0.156.1 and Luna/max; the Python composed pipeline subsequently implemented and reviewed HEAD /health, passed 19 tests and persisted a human-review checkpoint with the runner idle | Real human stage-approval continuation and merge from that checkpoint |
+| C — two consumers | Distinct Node CLI and existing Python HTTP projects fulfilled their approved requirements; the Python consumer's own composed pipeline then delivered a separately audited candidate to its optional human PR-review gate | Completion through the newly configured human gate |
+| D — success | Both consumers' earlier schema-1 deliveries merged after real owner requirement approval and successful jobs; exact candidate/merge state matches GitHub, and no consumer release exists | The later composed delivery is awaiting human PR review; full live acceptance remains incomplete in the other groups below |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
 | F — blocked | Live unapproved delivery stopped before any model call or PR; tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Remaining failure injection in the live environment and final guards |
 | G — durability | Live overlapping intake events reused an existing issue; two overlapping delivery dispatches after a real approved merge skipped all agent/side-effect jobs and left state, counters, main and PR count unchanged; native host and local consumer update/removal checks passed | Concurrent first creation and active delivery, interruptions, cancellation and insufficient consumer permissions |
@@ -18,6 +18,21 @@ simulated GitHub boundaries are distinct from live integration.
 
 ## Executed verification
 
+- [Composed delivery to human review, September 26](validation/actions-stage-delivery-2026-09-26.json):
+  the owner's real requirement approval triggered
+  [run 36251384216](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36251384216).
+  All 13 native jobs completed successfully, including separate Luna/max implement
+  and review sessions. [PR #6](https://github.com/phuongnse/nexkit-validation-existing/pull/6)
+  contains candidate `24a961ac1b8f215ad17af975cd909aa24284c4c5`; its complete tree
+  matches the collected source changes. Six unit, seven HTTP and six package cases
+  passed against that exact candidate. The independent AI review approved without
+  changing source. Separate local review verified raw HEAD wire bytes, all 44 GET
+  baseline comparisons, extracted-package behavior and regression sensitivity.
+  The configured human-review gate preserved the exact candidate, checks and
+  review. The run ended and its runner became idle, with three shared CLI calls
+  and one delivery round. At this checkpoint PR #6 remained open without a human
+  PR review. Human continuation, merge, live repair and release are not established
+  by these results.
 - [Composed-consumer clarification, September 26](validation/actions-stage-clarification-2026-09-26.json):
   native intake created Python [issue #5](https://github.com/phuongnse/nexkit-validation-existing/issues/5)
   for `HEAD /health`, the third and final application work item in the accepted
@@ -332,17 +347,18 @@ lint and all four changed skill validators passed. GitHub boundaries and human
 decisions in these tests are simulated; no new model session was used.
 
 The [approval reference](stage-approvals.md) and native YAML examples describe
-setup and recovery. The Python consumer now has the approved schema-2 installation
-and native human-review policy, verified online with its actual checks and two
-model-free guard runs. Neither those guards nor the prior schema-1 delivery
-successes establish a completed human stage-approval cycle. Independent findings
-and scoped conclusions are recorded in the [review log](validation/independent-review.md).
+setup and recovery. The Python consumer's approved schema-2 installation has now
+completed a real implement/check/AI-review segment and persisted its configured
+human PR-review checkpoint. The originating run ended with its runner idle.
+The human decision and continuation remain unverified at this checkpoint.
+Independent findings and scoped conclusions are recorded in the
+[review log](validation/independent-review.md).
 
 ## External prerequisites still missing
 
-- Both consumers' approved delivery runs merged, and their delivery reports and
+- Both consumers' earlier schema-1 delivery runs merged, and their delivery reports and
   assertion quality have now passed the detailed acceptance audit. Live repair,
-  interruption/cancellation and composed stage approvals remain unverified.
+  interruption/cancellation and completed human-stage continuation remain unverified.
   Successful prior runs do not establish enough remaining subscription allowance
   for all further acceptance.
   OpenAI's account-cache CI

@@ -293,3 +293,30 @@ The reviewer found no blocking discrepancy. One ambiguous phrase was corrected
 to distinguish the configured native PR-review requirement from an actual human
 review. These checks do not establish complete composed delivery or the human
 stage-approval cycle.
+
+## Composed delivery candidate before human review — 2026-09-26
+
+The separate reviewer audited Python PR #6 at exact candidate
+`24a961ac1b8f215ad17af975cd909aa24284c4c5`, based on `439ec14`, against the actual
+owner-approved issue #5. All 6 unit, 7 HTTP and 6 package cases passed locally.
+Raw TCP responses through EOF confirmed HEAD /health returns HTTP 200 with the
+same JSON type and Content-Length 16 as GET, and zero body bytes. The exact-commit
+extracted package passed the same checks. All 44 GET comparisons matched the
+baseline; both new endpoint regressions failed against the old 501 response, and
+the raw helper captured a known body fixture.
+
+Repeated local package builds produced identical bytes, with verified source
+metadata and readable permissions. The source diff changes only the endpoint,
+README and HTTP/package regression coverage; controls and runtime dependencies
+are unchanged. No behavioral defect or requirement gap was found. These are
+independent local application and regression checks, separate from the root's
+live Actions source/check/review/checkpoint provenance audit. They do not grant
+human PR approval or prove completed continuation, merge or live AI repair.
+
+The reviewer subsequently checked the combined delivery evidence record. All nine
+artifact hashes, invocation context/result and verification receipts, checkpoint
+digest and intentional source freeze matched. Public metadata confirmed 13
+successful jobs, PR #6 open with no human reviews, and three shared CLI calls in
+one round. Saved runner metadata showed it online and idle. Wording about merged
+deliveries was scoped to the earlier schema-1 runs so it does not include the
+new candidate. No provenance discrepancy was found.

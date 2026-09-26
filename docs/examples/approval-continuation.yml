@@ -1,0 +1,40 @@
+# Install at the exact continuation path accepted in the gate configuration.
+name: Continue after human review
+on:
+  issue_comment:
+    types: [created, edited, deleted]
+  issues:
+    types: [edited, closed]
+  workflow_dispatch:
+    inputs:
+      issue:
+        type: string
+        required: true
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  checks: write
+  actions: write
+concurrency:
+  group: nexkit-work
+  queue: max
+jobs:
+  resume:
+    if: github.event_name == 'workflow_dispatch' || !github.event.issue.pull_request
+    uses: phuongnse/nexkit/.github/workflows/resume-approval.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      pipeline: maintenance
+      gate: human-review
+  finish:
+    needs: resume
+    if: needs.resume.outputs.ready == 'true'
+    uses: phuongnse/nexkit/.github/workflows/finish-work.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.resume.outputs.context_artifact_id }}
+      checkpoint_evidence: true
+      jobs_succeeded: true

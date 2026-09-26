@@ -33,15 +33,25 @@ def runtime_guard(gh, context, kit_ref):
         context["repository"] == os.environ["GITHUB_REPOSITORY"] == gh.repository,
         "Invocation belongs to another repository",
     )
-    require(
-        context["run_key"]
-        == os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
-        "Invocation belongs to another run attempt",
-    )
+    active = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+    continuation = context.get("continuation")
+    caller = None
+    if continuation:
+        state, _ = gh.get_state(context["issue"]["number"])
+        require(
+            continuation == state.get("approval_execution")
+            and continuation["run_key"] == active
+            and continuation["origin"] == context["run_key"],
+            "Approval continuation differs from its recorded execution",
+        )
+        caller = continuation["workflow"]
+    else:
+        require(context["run_key"] == active, "Invocation belongs to another run attempt")
     cfg = context["config"]
     require(kit_ref == cfg["kit"]["ref"], "Invocation kit revision changed")
     require(
-        load_run_config(gh, context["base"], cfg["binding"]["pipeline"], "delivery") == cfg,
+        load_run_config(gh, context["base"], cfg["binding"]["pipeline"], "delivery", caller=caller)
+        == cfg,
         "Invocation configuration changed",
     )
 
@@ -163,6 +173,16 @@ def prepare(gh, context, name, input_reports=(), check_reports=()):
     from .delivery import revalidate
 
     state, _ = revalidate(gh, context)
+    from .approvals import ApprovalRequired, record_denial, require_capability, restored_data
+
+    try:
+        require_capability(context, state, "invocation:" + name)
+    except ApprovalRequired as exc:
+        record_denial(gh, context, exc)
+        raise
+    restored = restored_data(state, context)
+    input_reports = input_reports or restored.get("inputs", [])
+    check_reports = check_reports or restored.get("checks", [])
     cfg = context["config"]
     values = definitions(cfg)
     require(name in values, "Unknown configured agent invocation")

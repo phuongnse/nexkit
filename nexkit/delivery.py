@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .common import Blocked, canonical, digest
+from .github import run_attempt
 from .pipelines import (
     bind_state,
     composed_agents,
@@ -17,6 +18,7 @@ from .policy import (
     candidate_key,
     control_command,
     delivery_budget_used,
+    delivery_elapsed,
     merge_gate,
     now,
     protected_path,
@@ -47,6 +49,17 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None, individual_agents=Fa
     if issue_pipeline(issue) != pipeline:
         return {"ready": False, "reason": "Work item belongs to another pipeline"}
     state, revision = gh.get_state(number)
+    if state.get("status") == "waiting_for_approval":
+        return {"ready": False, "reason": "Waiting for a configured human approval", "state": state}
+    if state.get("human_stop"):
+        from .approvals import human_stop_released
+
+        if not human_stop_released(gh, state, number):
+            return {
+                "ready": False,
+                "reason": "A fresh human /nexkit resume is required after the approval stop",
+            }
+        state.pop("human_stop")
     if state.get("status") == "merged":
         return {"ready": False, "reason": "Already merged", "state": state}
     if state.get("pr") and state.get("candidate"):
@@ -58,6 +71,13 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None, individual_agents=Fa
             state.update(status="merged", merge_sha=prior_pr["merge_commit_sha"], updated_at=now())
             gh.save_state(number, state, revision)
             return {"ready": False, "reason": "Recovered completed merge", "state": state}
+    from .approvals import recovery_gate
+
+    if recovery_gate(state):
+        return {
+            "ready": False,
+            "reason": "Recover the recorded approval continuation before reserving new work",
+        }
     try:
         issue, approved = authorized(gh, number)
         repository = gh.repo()
@@ -71,7 +91,7 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None, individual_agents=Fa
         require(cfg["repository"] == gh.repository, "Configuration belongs to another repository")
         require(cfg["default_branch"] == repository["default_branch"], "Default branch changed")
         require(cfg["kit"]["ref"] == kit_ref, "Caller and configured kit revisions differ")
-        gh.strict_protection(cfg["default_branch"])
+        gh.strict_protection(cfg["default_branch"], cfg)
         require(
             {"test", "e2e"} <= {c["kind"] for c in cfg["checks"]},
             "Setup must declare the intended test and E2E commands before bootstrap delivery",
@@ -79,11 +99,16 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None, individual_agents=Fa
         if state.get("run_key") == run_key:
             return {"ready": False, "reason": "Duplicate run reservation"}
         if state.get("status") in ("implementing", "verifying"):
-            old_id = str(state.get("run_key", "")).split(".")[0]
-            require(old_id.isdigit(), "Unrecognized prior run identity")
-            prior = gh.api(f"{gh.root}/actions/runs/{old_id}")
+            prior = run_attempt(
+                gh, state.get("approval_execution", {}).get("run_key", state.get("run_key", ""))
+            )
             require(prior["status"] == "completed", "Previous delivery run is still active")
         state = reserve(state, cfg, run_key)
+        state.pop("approval_execution", None)
+        state.pop("approval_wait", None)
+        state.pop("approval_repair", None)
+        state.pop("approval_denial", None)
+        state["stage_approvals"] = {}
         state.update(
             status="implementing",
             writer=None,
@@ -133,7 +158,7 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None, individual_agents=Fa
         return {"ready": False, "reason": str(exc)}
 
 
-def revalidate(gh, context):
+def revalidate(gh, context, *, waiting=False, check_approvals=True):
     number = context["issue"]["number"]
     issue, approved = authorized(gh, number)
     cfg = context["config"]
@@ -153,16 +178,21 @@ def revalidate(gh, context):
         and state.get("approval") == context["approval"],
         "Delivery context differs from its accepted reservation",
     )
-    require(state.get("status") in ("implementing", "verifying"), "Delivery is no longer active")
-    from datetime import datetime
-
+    allowed = {"implementing", "verifying"} | ({"waiting_for_approval"} if waiting else set())
+    require(state.get("status") in allowed, "Delivery is no longer active")
+    if not waiting and state.get("approval_execution"):
+        require(
+            context.get("continuation") == state["approval_execution"],
+            "Superseded approval execution",
+        )
     require(
-        (
-            datetime.fromisoformat(now()) - datetime.fromisoformat(state["started_at"])
-        ).total_seconds()
-        < cfg["limits"]["minutes"] * 60,
+        delivery_elapsed(state, waiting=waiting) < cfg["limits"]["minutes"] * 60,
         "Total delivery time budget exhausted",
     )
+    from .approvals import recheck_approved
+
+    if check_approvals:
+        recheck_approved(gh, context, state)
     return state, revision
 
 
@@ -202,6 +232,13 @@ def validate_changes(changes, cfg=None):
 
 def publish(gh, context, bundle):
     state, revision = revalidate(gh, context)
+    from .approvals import ApprovalRequired, record_denial, require_capability
+
+    try:
+        require_capability(context, state, "publish")
+    except ApprovalRequired as exc:
+        record_denial(gh, context, exc)
+        raise
     if composed_agents(context["config"]):
         from .invocations import guard, reservation_key
 
@@ -370,7 +407,10 @@ def finish(gh, context, verification, review):
                 "A started agent invocation has not completed",
             )
         merge_gate(key, verification, review, context["config"])
-        gh.strict_protection(context["config"]["default_branch"])
+        from .approvals import require_complete
+
+        require_complete(gh, context, state)
+        gh.strict_protection(context["config"]["default_branch"], context["config"])
         # Check runs are emitted only by this trusted controller, after validated
         # reports from the current workflow's isolated jobs.
         gh.check("NexKit verification", key["head"], True, canonical(verification))
@@ -392,14 +432,23 @@ def finish(gh, context, verification, review):
         )
         return state
     except Blocked as exc:
+        from .approvals import ApprovalRequired, record_denial
+
+        if isinstance(exc, ApprovalRequired):
+            record_denial(gh, context, exc)
         return failed(gh, context, str(exc), verification=verification, review=review)
 
 
-def failed(gh, context, reason, *, verification=None, review=None):
+def failed(gh, context, reason, *, verification=None, review=None, dispatch_retry=True):
     number = context["issue"]["number"]
     state, revision = gh.get_state(number)
     require(state.get("run_key") == context["run_key"], "Cannot mutate another delivery run")
-    if state.get("status") == "merged":
+    if state.get("approval_execution"):
+        require(
+            context.get("continuation") == state["approval_execution"],
+            "Cannot finalize a superseded approval execution",
+        )
+    if state.get("status") in ("merged", "waiting_for_approval"):
         return state
     # A successful merge followed by an interrupted state update is recoverable.
     if state.get("pr"):
@@ -422,6 +471,36 @@ def failed(gh, context, reason, *, verification=None, review=None):
         require(approved == context["approval"], "Approval changed")
     except Blocked:
         retry = False
+    from .approvals import decision, decision_receipt, enabled, human_feedback
+
+    if state.get("approval_denial"):
+        retry = False
+        state["human_stop"] = now()
+        reason = (
+            "Required human approval was not requested or completed: "
+            + canonical(state["approval_denial"])
+            + "\n"
+            + reason
+        )
+    for name, definition in enabled(cfg).items():
+        record = state.get("stage_approvals", {}).get(name)
+        if record is None:
+            continue
+        if record["status"] == "approved":
+            try:
+                current = decision(gh, record)
+            except Blocked:
+                current = {"status": "waiting"}
+            if current["status"] == "waiting":
+                retry = False
+                state["human_stop"] = now()
+            elif current["status"] == "changes_requested":
+                record.update(status="changes_requested", decision=decision_receipt(current))
+                reason += "\n" + human_feedback(gh, record, current)
+                if definition["on_rejection"] == "block":
+                    retry = False
+                    state["human_stop"] = now()
+    reason = reason.encode()[:24000].decode(errors="ignore")
     state.update(
         status="retry" if retry else "blocked",
         reason=reason,
@@ -435,6 +514,6 @@ def failed(gh, context, reason, *, verification=None, review=None):
         f"Attempt {state.get('attempts', 0)}/{cfg['limits']['attempts']}. "
         "See Actions logs and `nexkit status` for details.",
     )
-    if retry:
+    if retry and dispatch_retry:
         dispatch(gh, cfg, "delivery", {"issue": number})
     return state

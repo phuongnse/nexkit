@@ -332,12 +332,25 @@ def config(value):
     return value
 
 
+def delivery_elapsed(state, *, clock=None, waiting=False):
+    stamp = datetime.fromisoformat(clock or now())
+    elapsed = (stamp - datetime.fromisoformat(state["started_at"])).total_seconds()
+    credit = state.get("human_wait_seconds", 0)
+    require(
+        type(credit) in (int, float) and 0 <= credit <= elapsed, "Invalid human wait accounting"
+    )
+    if waiting and state.get("status") == "waiting_for_approval":
+        pending = state["approval_wait"]
+        elapsed -= max(0, (stamp - datetime.fromisoformat(pending["opened_at"])).total_seconds())
+    return elapsed - credit
+
+
 def reserve(state, cfg, run_key, *, clock=None):
     """Reserve costs BEFORE any CLI runs. Failed/retried runs consume the reservation."""
     stamp = clock or now()
     state = dict(state)
-    started = state.setdefault("started_at", stamp)
-    elapsed = (datetime.fromisoformat(stamp) - datetime.fromisoformat(started)).total_seconds()
+    state.setdefault("started_at", stamp)
+    elapsed = delivery_elapsed(state, clock=stamp)
     require(elapsed < cfg["limits"]["minutes"] * 60, "Total delivery time budget exhausted")
     reservations = state.setdefault("reservations", [])
     require(run_key not in reservations, "This run attempt has already been reserved")

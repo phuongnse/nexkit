@@ -171,3 +171,36 @@ pipeline tests passed in the separate session. No blocker was found.
 The reviewer suggested explicitly including reasoning effort in the legacy
 fixture; the implementer added `max` and its preservation assertion. The review
 did not rerun native hosts, use credentials, invoke models or change live consumers.
+
+## Configurable stage approvals — 2026-09-26
+
+The separate session reviewed approval configuration, checkpoint provenance,
+native issue/PR events, continuation claims, usage accounting, branch policy and
+the reusable workflows. It reproduced and rechecked these corrections:
+
+| Finding | Correction |
+|---|---|
+| Lost feedback-save response or repair dispatch could strand a rejection | Persisted repair intent and repeatable default-branch recovery |
+| Shared branch rules could impose an undeclared gate on another pipeline | Consistent native review count across delivery pipelines; additional unsupported rules rejected |
+| External collaborator request-changes could trigger unauthorized repair | Preserve the native blocker without granting repair authority outside the configured list |
+| Candidate/PR gates could protect their own prerequisites | Reject impossible publication/check/review dependencies during setup |
+| A failed check guard could lose the human denial in an incomplete finalizer | Validated denial receipts survive aggregation and prevent model repair |
+| Blocked rejection discarded human feedback on later explicit recovery | Feedback retained in the next delivery context |
+| Windows issue-comment line endings were ignored | Normalize CRLF before exact command matching |
+| Native reruns queried the currently active run instead of the older attempt | Inspect the recorded Actions attempt explicitly |
+| Changed decisions or source/config drift stranded unused continuation claims | Record bounded repair or a recoverable human stop; preserve caller admission guards |
+| Per-review feedback could exceed the Contents reader's size contract | Identity-only decision receipts, bounded UTF-8 feedback and a limit on all state writes |
+| Candidate-gated agent/check jobs lacked private-repository PR reads | Add only `pull-requests: read` to those jobs |
+
+Final scoped verdict: **no remaining blocker found**. The reviewer independently
+ran **117 focused tests**, including all 48 approval tests, plus `git diff --check`.
+It reproduced changed-decision repair and revoked-approval blocking without
+additional model/round reservations, and checked caller immutability, attempt
+recovery, state bounds and workflow permissions. The full implementer suite has
+196 tests; all four changed skill validators, Ruff and workflow lint passed.
+
+This review used local tests and simulated GitHub boundaries. It made no source
+edits, GitHub writes, credential access or model calls. The stage-approval event
+and continuation cycle remains unverified live, and neither consumer was migrated.
+The documented interval between final authorization reads and GitHub writes
+remains an external API boundary, not an atomic authorization guarantee.

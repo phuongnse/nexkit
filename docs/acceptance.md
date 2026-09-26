@@ -8,9 +8,9 @@ simulated GitHub boundaries are distinct from live integration.
 | Group | Evidence available | Still unverified |
 |---|---|---|
 | A — package/hosts | Native Codex 0.156.1 install/reinstall/update/remove and fresh discovery of 9 skills; Claude Code 2.1.282 validation and native loading of all 9 skills from the archive | Other target hosts have documentation checks only; no model-use claim from installation |
-| B — CLI on Actions | Both consumers completed live Actions clarification with Codex 0.156.1, Luna/max, installed request skills and actual terminal calls; separate local implementation/review evidence is also available | Code edits and independent review on Actions; autonomous delivery after the local host closes |
-| C — two consumers | Distinct Node CLI and existing Python HTTP configurations installed in two public GitHub repositories; runner, permissions and strict branch rules audited; existing app passed 17 local cases | Approved application delivery in both consumers; the initially empty consumer still has no application behavior to verify |
-| D — success | Simulated controller issue→approval→review/checks→merge; the kit's own CI ran on GitHub | Real human approval and autonomous consumer merge without release |
+| B — CLI on Actions | Both consumers completed live clarification with Codex 0.156.1 and Luna/max; their subsequent implement and independent review jobs also completed successfully on the dedicated runners | Delivery artifact-byte audit of skill/command reports; live schema-2 composition and stage approvals |
+| C — two consumers | Distinct Node CLI and existing Python HTTP configurations installed and audited; both approved delivery runs completed all six jobs and merged their PRs | Detailed audit of delivered behavior and native test reports against each requirement; live composed delivery |
+| D — success | Real owner requirement approvals, all delivery jobs successful, exact candidate/merge state matches GitHub for both consumers, and no consumer release exists | Full live acceptance remains incomplete in the other groups below |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
 | F — blocked | Live unapproved delivery stopped before any model call or PR; tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Remaining failure injection in the live environment and final guards |
 | G — durability | Live overlapping intake events for an existing request were serialized, reused one issue and made no additional model reservation; native Codex reinstall/update/uninstall preserved the package and consumer knowledge; local tests cover installer ownership, cancel/resume, orphan/merged recovery and base ancestry | Concurrent first creation and approved delivery, interruptions, cancellation and insufficient consumer permissions |
@@ -18,6 +18,21 @@ simulated GitHub boundaries are distinct from live integration.
 
 ## Executed verification
 
+- [Live delivery metadata, September 26](validation/actions-delivery-2026-09-26.json):
+  the owner's real requirement comments triggered two successful schema-1 runs.
+  [Node run 36240304721](https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721)
+  merged [PR #2](https://github.com/phuongnse/nexkit-validation-new/pull/2) at
+  `34db8784a502ef41bbbb85b73ed65a43c3502aa9`.
+  [Python run 36240340637](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36240340637)
+  merged [PR #3](https://github.com/phuongnse/nexkit-validation-existing/pull/3) at
+  `d2516347d796e0c3bc7bbd97de9a7ed52e9cd036`.
+  Preparation, implementation, publication, verification, independent review and
+  finalization all completed successfully. Each work item records one delivery
+  round and three total CLI reservations, including its prior clarification.
+  The recorded candidate and merge SHAs match GitHub. Neither consumer has a
+  release. This read-only inspection made no additional model call or dispatch;
+  it did not inspect report bytes or private CLI logs. Both consumers retain
+  their accepted `3963c1c` pin and have no new stage-approval gate.
 - [Concurrent intake check, September 26](validation/actions-concurrent-intake-2026-09-26.json):
   two native dispatches for the existing Node request entered GitHub's queue
   together. Their receiver jobs ran serially, both reused issue #1, and both
@@ -252,19 +267,43 @@ including 88 tests, Ruff and the installation archive build. This is core CI,
 not another live consumer model invocation. Both live consumer pins, pending
 requirement approvals and accepted usage limits remain at their prior setup.
 
+## Configurable stage approvals — local verification
+
+The owner approved optional human decisions at consumer-chosen stages, including
+PR review. Schema-2 composed delivery now accepts reviewer/quorum, exact subject,
+waiting limit, rejection policy, protected capabilities and an accepted native
+continuation. The originating workflow ends while waiting; resumption preserves
+the logical round, recorded evidence and usage limits.
+
+**196 local tests passed**, including 48 approval tests. Coverage includes exact
+human authority, multiple gates, stale/revoked decisions, protected capability
+denials, request-changes feedback, bounded repair, blocked recovery, native rerun
+attempts, interrupted claims/dispatches and bounded state size. Ruff, workflow
+lint and all four changed skill validators passed. GitHub boundaries and human
+decisions in these tests are simulated; no new model session was used.
+
+The [approval reference](stage-approvals.md) and native YAML examples describe
+setup and recovery. This feature has not been enabled or accepted live on either
+consumer. The prior schema-1 delivery successes above do not establish a live
+stage-approval cycle. Independent findings and the final scoped conclusion are
+recorded in the [review log](validation/independent-review.md).
+
 ## External prerequisites still missing
 
-- Both consumers still need approved live delivery with independent review,
-  actual verification and merge. Successful clarification establishes Actions
-  model access, not enough remaining subscription allowance for all acceptance.
+- Both consumers' approved delivery runs merged, but their delivery reports and
+  assertion quality still need the detailed acceptance audit. Live repair,
+  interruption/cancellation and composed stage approvals remain unverified.
+  Successful prior runs do not establish enough remaining subscription allowance
+  for all further acceptance.
   OpenAI's account-cache CI
   guide excludes public repositories. This custom deployment was explicitly
   selected by the owner and is not an officially recommended public CI setup.
 - The prior local usage-limit failure remains part of the evidence. Approved
   invocation/time limits remain in force; retries must not reset counters or
   increase the accepted usage scope.
-- Real humans approving the requirement and exact release candidate in live
-  acceptance; the approved test scope does not substitute for either event.
+- The exact release candidate still requires a real human approval. Requirement
+  approvals have been verified above; test-scope authorization does not substitute
+  for the separate release decision.
 
 The [rerun procedure](live-acceptance.md) preserves every criterion. No public
 release or package-registry publication has occurred. Local/CI artifacts are

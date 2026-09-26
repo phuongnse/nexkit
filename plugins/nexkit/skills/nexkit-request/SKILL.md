@@ -45,7 +45,10 @@ Ask an authorized human to review the current issue and post the returned
 `/nexkit approve <hash>` command. Never post it yourself, impersonate the human,
 replace it with a label, or consider a comment from an unauthorized actor valid.
 GitHub Actions checks authority and starts delivery from the approval event.
-The local host need not stay open. No task, plan, test or PR approval follows.
+The local host need not stay open. After requirement approval, delivery follows
+the project's accepted policy. Additional task, plan, test or PR decisions apply
+only when configured during setup; show the actual gate and exact requested
+human action. See `docs/stage-approvals.md` for optional approval behavior.
 
 If delivery needs different product scope, update the issue and obtain a new
 requirement approval. Do not edit requirements merely to fit completed code.

@@ -1,4 +1,4 @@
-name: NexKit prepare approved work
+name: NexKit continue after a stage approval
 on:
   workflow_call:
     inputs:
@@ -11,29 +11,32 @@ on:
       pipeline:
         type: string
         required: true
+      gate:
+        type: string
+        required: true
     outputs:
       ready:
-        description: Whether an approved delivery round was reserved
-        value: ${{ jobs.prepare.outputs.ready }}
+        description: An exact human approval authorized this continuation
+        value: ${{ jobs.resume.outputs.ready }}
+      status:
+        description: Approved, waiting, retry, blocked or idle
+        value: ${{ jobs.resume.outputs.status }}
       context_artifact_id:
-        description: Immutable artifact ID for this delivery round
-        value: ${{ jobs.prepare.outputs.context_artifact_id }}
-      repair:
-        description: Whether this bounded round carries prior failure or human feedback
-        value: ${{ jobs.prepare.outputs.repair }}
+        description: Fresh artifact containing the recorded checkpoint context
+        value: ${{ jobs.resume.outputs.context_artifact_id }}
 permissions: {}
 jobs:
-  prepare:
+  resume:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
-      issues: read
+      issues: write
       pull-requests: read
-      actions: read
+      actions: write
     outputs:
-      ready: ${{ steps.prepare.outputs.ready }}
-      repair: ${{ steps.prepare.outputs.repair }}
+      ready: ${{ steps.resume.outputs.ready }}
+      status: ${{ steps.resume.outputs.status }}
       context_artifact_id: ${{ steps.context.outputs.artifact-id }}
     defaults:
       run:
@@ -65,18 +68,20 @@ jobs:
           ref: ${{ inputs.kit_ref }}
           path: kit
           persist-credentials: false
-      - id: prepare
+      - id: resume
+        name: Re-read human authority and claim one continuation without another agent reservation
         env:
           GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
           NEXKIT_REF: ${{ inputs.kit_ref }}
           NEXKIT_PIPELINE: ${{ inputs.pipeline }}
-          PYTHONPATH: ${{ github.workspace }}/kit
-        run: python3 -m nexkit.ci prepare --individual-agents --kit-ref "$NEXKIT_REF" --out /tmp/nexkit/context.json
+          NEXKIT_GATE: ${{ inputs.gate }}
+        run: python3 -m nexkit.ci resume-approval --gate "$NEXKIT_GATE" --kit-ref "$NEXKIT_REF" --out /tmp/nexkit/context.json
       - id: context
-        if: steps.prepare.outputs.ready == 'true'
+        if: steps.resume.outputs.ready == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: nexkit-work-${{ inputs.pipeline }}-${{ github.run_attempt }}
+          name: nexkit-resumed-${{ inputs.gate }}-${{ github.run_attempt }}
           path: /tmp/nexkit/context.json
           retention-days: 7
           if-no-files-found: error

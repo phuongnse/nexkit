@@ -46,6 +46,7 @@ jobs:
     permissions:
       contents: write
       issues: read
+      pull-requests: read
     outputs:
       role: ${{ steps.reserve.outputs.role }}
       checkout: ${{ steps.reserve.outputs.checkout }}
@@ -128,6 +129,7 @@ jobs:
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     outputs:
       report_artifact_id: ${{ steps.report.outputs.artifact-id }}
     steps:
@@ -206,6 +208,7 @@ jobs:
     permissions:
       contents: write
       issues: read
+      pull-requests: read
     outputs:
       status: ${{ steps.record.outputs.status }}
       report_artifact_id: ${{ needs.execute.outputs.report_artifact_id }}

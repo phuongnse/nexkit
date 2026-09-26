@@ -82,7 +82,12 @@ def prepare_job(destination, kit_ref, *, individual_agents=False):
     if context["ready"]:
         cfg = context["config"]
         if individual_agents:
-            output(ready=True, source=context["source"], base=context["base"])
+            output(
+                ready=True,
+                source=context["source"],
+                base=context["base"],
+                repair=bool(context.get("feedback")),
+            )
             return context
         output(
             ready=True,
@@ -105,10 +110,18 @@ def prepare_job(destination, kit_ref, *, individual_agents=False):
 def prepare_check(context, check_name, kit_ref):
     gh = GitHub(os.environ["GITHUB_REPOSITORY"])
     require(context["repository"] == gh.repository, "Check belongs to another repository")
-    run_key = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
-    require(context["run_key"] == run_key, "Check belongs to another run attempt")
+    if composed_agents(context["config"]):
+        from .invocations import runtime_guard
+
+        runtime_guard(gh, context, kit_ref)
+    else:
+        run_key = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+        require(context["run_key"] == run_key, "Check belongs to another run attempt")
     require(context["config"]["kit"]["ref"] == kit_ref, "Check kit revision changed")
     state, _ = revalidate(gh, context)
+    from .approvals import require_capability
+
+    require_capability(context, state, "check:" + check_name)
     require(
         context.get("candidate") == state.get("candidate") and context.get("candidate"),
         "Check must use the published candidate",
@@ -117,7 +130,7 @@ def prepare_check(context, check_name, kit_ref):
         check_name in {check["name"] for check in context["config"]["checks"]},
         "Unknown configured check",
     )
-    output(head=context["candidate"]["head"])
+    output(head=context["candidate"]["head"], authorized=True)
     return {"authorized": True, "check": check_name, "head": context["candidate"]["head"]}
 
 
@@ -327,6 +340,9 @@ def main():
             "guard-invocation",
             "record-invocation",
             "finish-work",
+            "request-approval",
+            "resume-approval",
+            "review-event",
             "finish",
             "failed",
         ),
@@ -334,6 +350,7 @@ def main():
     parser.add_argument("--context", default="/tmp/nexkit/context.json")
     parser.add_argument("--out", default="/tmp/nexkit/result.json")
     parser.add_argument("--kit-ref")
+    parser.add_argument("--gate", help="Accepted human approval identifier")
     parser.add_argument("--individual-agents", action="store_true")
     parser.add_argument(
         "--invocation", help="Accepted invocation identifier selected by native YAML"
@@ -356,6 +373,31 @@ def main():
     try:
         if args.operation == "prepare":
             result = prepare_job(args.out, args.kit_ref, individual_agents=args.individual_agents)
+        elif args.operation in ("resume-approval", "review-event"):
+            from .approvals import relay_review, resume
+
+            gh = GitHub(os.environ["GITHUB_REPOSITORY"])
+            if args.operation == "review-event":
+                require(
+                    os.environ["GITHUB_EVENT_NAME"] == "pull_request_review",
+                    "Expected a native PR review event",
+                )
+                result = relay_review(gh, read_json(os.environ["GITHUB_EVENT_PATH"]), args.kit_ref)
+            else:
+                require(
+                    os.environ["GITHUB_REF"] == "refs/heads/" + gh.repo()["default_branch"],
+                    "Approval continuations run on the default branch",
+                )
+                result = resume(
+                    gh,
+                    event_issue(),
+                    os.environ.get("NEXKIT_PIPELINE"),
+                    args.gate,
+                    args.kit_ref,
+                    os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+                )
+                write_json(args.out, result.get("context", result))
+                output(ready=result["ready"], status=result.get("status", "idle"))
         else:
             context = load_context(args.context)
             if args.operation == "materialize":
@@ -401,7 +443,31 @@ def main():
                 write_json(args.out, result)
                 output(passed=result["passed"])
             elif args.operation == "prepare-check":
-                result = prepare_check(context, args.check, args.kit_ref)
+                from .approvals import ApprovalRequired
+
+                try:
+                    result = prepare_check(context, args.check, args.kit_ref)
+                except ApprovalRequired as exc:
+                    check = next(
+                        item for item in context["config"]["checks"] if item["name"] == args.check
+                    )
+                    result = {
+                        "candidate": context["candidate"],
+                        "passed": False,
+                        "producer": {"run_key": context["run_key"], "check": args.check},
+                        "checks": [
+                            {
+                                "name": args.check,
+                                "kind": check["kind"],
+                                "passed": False,
+                                "executed": False,
+                                "reason": str(exc),
+                                "approval_denial": {"gate": exc.gate, "capability": exc.capability},
+                            }
+                        ],
+                    }
+                    write_json(args.out, result)
+                    output(authorized=False, passed=False)
             elif args.operation == "combine-checks":
                 result = combine_checks(context, [read_json(path) for path in args.reports or []])
                 write_json(args.out, result)
@@ -412,6 +478,7 @@ def main():
                     "guard-invocation",
                     "record-invocation",
                     "finish-work",
+                    "request-approval",
                 ):
                     require(
                         composed_agents(context["config"]),
@@ -425,18 +492,35 @@ def main():
                     verification = None
                     review = None
                     try:
+                        state, _ = gh.get_state(context["issue"]["number"])
+                        if state.get("status") == "waiting_for_approval":
+                            write_json(args.out, state)
+                            output(status=state["status"])
+                            print(canonical({"status": state["status"]}))
+                            return 0
+                        from .approvals import check_denials, restored_data
+
+                        restored = restored_data(state, context)
                         if args.review:
                             review = read_json(args.review)
-                        require(args.candidate, "No candidate was published")
-                        candidate = load_context(args.candidate)
+                        else:
+                            review = restored.get("review")
+                        require(
+                            args.candidate or context.get("candidate"), "No candidate was published"
+                        )
+                        candidate = load_context(args.candidate) if args.candidate else context
                         runtime_guard(gh, candidate, args.kit_ref)
                         require(
                             candidate["issue"]["number"] == context["issue"]["number"],
                             "Candidate belongs to another work item",
                         )
-                        verification = combine_checks(
-                            candidate, [read_json(path) for path in args.reports or []]
+                        reports = (
+                            [read_json(path) for path in args.reports]
+                            if args.reports
+                            else restored.get("checks", [])
                         )
+                        check_denials(gh, candidate, reports)
+                        verification = combine_checks(candidate, reports)
                         require(args.jobs_succeeded, args.reason)
                         require(review is not None, "Independent review output is missing")
                         result = finish(gh, candidate, verification, review)
@@ -446,6 +530,19 @@ def main():
                         )
                     write_json(args.out, result)
                     output(status=result["status"])
+                elif args.operation == "request-approval":
+                    from .approvals import request
+
+                    result = request(
+                        gh,
+                        context,
+                        args.gate,
+                        inputs=[read_json(path) for path in args.inputs or []],
+                        checks=[read_json(path) for path in args.reports or []],
+                        review=read_json(args.review) if args.review else None,
+                    )
+                    write_json(args.out, result.get("context", result))
+                    output(ready=result["ready"], status=result["status"])
                 elif args.operation == "prepare-invocation":
                     from .invocations import prepare as prepare_invocation
 

@@ -16,6 +16,9 @@ Their internal job structures are still fixed. For consumer-composed delivery,
 `candidate-check.yml` and `finish-work.yml` supply individual reusable jobs.
 Consumer YAML selects their order, conditions and inputs. See
 [individual agent invocations](agent-invocations.md) for configuration and wiring.
+Optional [stage approvals](stage-approvals.md) add issue or PR decisions through
+request/resume capabilities and native continuation workflows. They do not define
+a graph or fixed list of stages in the plugin.
 These capabilities have local controller, command and workspace tests plus
 static workflow validation. No schema-2 live delivery acceptance is claimed.
 
@@ -35,7 +38,8 @@ The root schema-2 object contains exactly:
 | `files` | Project-wide map of accepted repository paths to `{ "sha256": "…", "managed": true/false }` |
 
 Each pipeline requires `settings`, `entrypoints` and `agent_workflows`, with an
-optional `invocations` map for individually reserved agent calls:
+optional `invocations` map for individually reserved agent calls and an optional
+`approvals` map for configured human decisions:
 
 ```json
 {

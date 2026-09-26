@@ -6,8 +6,8 @@ NexKit configures an AI SDLC from your goals and your repository. You approve a
 requirement on GitHub; Actions runs coding-agent CLIs to implement, independently
 review, test, repair and merge within your chosen limits. Release is a separate decision.
 
-**Status: installation candidate under validation. Live AI delivery on Actions
-has not yet been demonstrated.** See the [acceptance report](docs/acceptance.md).
+**Status: installation candidate under validation. Two live consumer deliveries
+have merged; full acceptance remains incomplete.** See the [acceptance report](docs/acceptance.md).
 
 ## Install and set up
 
@@ -36,6 +36,8 @@ See [configuration and permissions](docs/configuration.md).
 Setup defines the project's pipelines and native workflow structure. Compose
 the [reusable capabilities](docs/agent-invocations.md) with consumer-chosen tasks,
 skills, models and limits; pipeline count and job order are not fixed by NexKit.
+Setup can also add [human approval at selected stages](docs/stage-approvals.md),
+including native PR review, with project-specific reviewers and rejection behavior.
 
 Each project selects its own runner and authentication. API mode uses an Actions
 secret; [subscription mode](docs/self-hosted.md) uses a dedicated runner and an
@@ -55,7 +57,8 @@ The hash identifies the requirement content; it is not the issue number.
 
 Track the issue, PR and Actions with `nexkit status <issue>`. Use `nexkit cancel
 <issue>` or `nexkit resume <issue>` when needed. Delivery runs without your local
-terminal and requires no separate plan, task, test or PR approval.
+terminal. By default, requirement and release are the human decisions. Additional
+stage approvals follow the policy chosen during project setup.
 
 To prepare a release, run `nexkit release --commit <sha> --version <version>
 --notes-file <file>`. An authorized human chooses that candidate and posts

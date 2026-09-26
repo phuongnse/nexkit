@@ -1,4 +1,4 @@
-name: NexKit finish approved work
+name: NexKit request a stage approval
 on:
   workflow_call:
     inputs:
@@ -11,43 +11,42 @@ on:
       context_artifact_id:
         type: string
         required: true
-      candidate_artifact_id:
+      gate:
         type: string
-        required: false
+        required: true
+      input_artifact_ids:
+        type: string
         default: ''
       check_artifact_ids:
         type: string
-        required: false
         default: ''
       review_artifact_id:
         type: string
-        required: false
         default: ''
-      jobs_succeeded:
-        type: boolean
-        required: true
-      checkpoint_evidence:
-        description: Use evidence frozen by the approval checkpoint in the resumed context
-        type: boolean
-        required: false
-        default: false
     outputs:
+      ready:
+        description: True only when this optional approval is disabled
+        value: ${{ jobs.request.outputs.ready }}
       status:
-        description: Persisted merged, retry or blocked outcome
-        value: ${{ jobs.finish.outputs.status }}
+        description: Disabled or waiting_for_approval
+        value: ${{ jobs.request.outputs.status }}
+      context_artifact_id:
+        description: Forwarded context for a disabled gate
+        value: ${{ jobs.request.outputs.context_artifact_id }}
 permissions: {}
 jobs:
-  finish:
+  request:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: write
       issues: write
-      pull-requests: write
+      pull-requests: read
       checks: write
-      actions: write
     outputs:
-      status: ${{ steps.finish.outputs.status }}
+      ready: ${{ steps.request.outputs.ready }}
+      status: ${{ steps.request.outputs.status }}
+      context_artifact_id: ${{ steps.context.outputs.artifact-id }}
     defaults:
       run:
         shell: bash
@@ -78,50 +77,47 @@ jobs:
           ref: ${{ inputs.kit_ref }}
           path: kit
           persist-credentials: false
-      - id: round-context
-        uses: ./kit/actions/download-data
+      - uses: ./kit/actions/download-data
         with:
           artifact-ids: ${{ inputs.context_artifact_id }}
-          path: /tmp/nexkit/context
-      - id: candidate-data
-        if: inputs.candidate_artifact_id != ''
+          path: /tmp/nexkit/input
+      - if: inputs.input_artifact_ids != ''
         uses: ./kit/actions/download-data
         with:
-          artifact-ids: ${{ inputs.candidate_artifact_id }}
-          path: /tmp/nexkit/candidate
-      - id: check-data
-        if: inputs.check_artifact_ids != ''
+          artifact-ids: ${{ inputs.input_artifact_ids }}
+          path: /tmp/nexkit/inputs
+          multiple: 'true'
+      - if: inputs.check_artifact_ids != ''
         uses: ./kit/actions/download-data
         with:
           artifact-ids: ${{ inputs.check_artifact_ids }}
           path: /tmp/nexkit/checks
           multiple: 'true'
-          optional: 'true'
-      - id: review-data
-        if: inputs.review_artifact_id != ''
+      - if: inputs.review_artifact_id != ''
         uses: ./kit/actions/download-data
         with:
           artifact-ids: ${{ inputs.review_artifact_id }}
           path: /tmp/nexkit/review
-      - id: finish
-        if: always() && steps.round-context.outcome == 'success'
-        name: Validate current evidence and merge or persist bounded retry feedback
+      - id: request
+        name: Freeze exact results and end execution while awaiting a human decision
         env:
           GH_TOKEN: ${{ github.token }}
           PYTHONPATH: ${{ github.workspace }}/kit
           NEXKIT_REF: ${{ inputs.kit_ref }}
-          NEXKIT_JOBS_OK: ${{ inputs.jobs_succeeded && ((inputs.checkpoint_evidence && inputs.candidate_artifact_id == '' && inputs.check_artifact_ids == '' && inputs.review_artifact_id == '') || (steps.candidate-data.outcome == 'success' && steps.check-data.outcome == 'success' && steps.review-data.outcome == 'success')) }}
-          NEXKIT_CANDIDATE_OK: ${{ steps.candidate-data.outcome == 'success' }}
-          NEXKIT_CHECKS_OK: ${{ steps.check-data.outcome == 'success' }}
-          NEXKIT_REVIEW_OK: ${{ steps.review-data.outcome == 'success' }}
+          NEXKIT_GATE: ${{ inputs.gate }}
         run: |
           shopt -s nullglob globstar
-          checks=()
-          reviews=()
-          if [ "$NEXKIT_CHECKS_OK" = true ]; then checks=(/tmp/nexkit/checks/**/*.json); fi
-          if [ "$NEXKIT_REVIEW_OK" = true ]; then reviews=(/tmp/nexkit/review/*.json); fi
+          prior=(/tmp/nexkit/inputs/**/*.json)
+          checks=(/tmp/nexkit/checks/**/*.json)
+          reviews=(/tmp/nexkit/review/*.json)
           args=()
-          if [ "$NEXKIT_JOBS_OK" = true ]; then args+=(--jobs-succeeded); fi
-          if [ "$NEXKIT_CANDIDATE_OK" = true ]; then args+=(--candidate /tmp/nexkit/candidate); fi
           if [ "${#reviews[@]}" = 1 ]; then args+=(--review "${reviews[0]}"); fi
-          python3 -m nexkit.ci finish-work --context /tmp/nexkit/context --kit-ref "$NEXKIT_REF" --reports "${checks[@]}" "${args[@]}" --out /tmp/nexkit/outcome.json
+          python3 -m nexkit.ci request-approval --context /tmp/nexkit/input --gate "$NEXKIT_GATE" --kit-ref "$NEXKIT_REF" --inputs "${prior[@]}" --reports "${checks[@]}" "${args[@]}" --out /tmp/nexkit/context.json
+      - id: context
+        if: steps.request.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-disabled-approval-${{ inputs.gate }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/context.json
+          retention-days: 7
+          if-no-files-found: error

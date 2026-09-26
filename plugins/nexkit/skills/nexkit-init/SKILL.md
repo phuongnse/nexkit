@@ -28,6 +28,17 @@ consumer workflow before claiming live readiness.
 Keep existing schema-1 consumers on their accepted settings until migration is
 explicitly part of the proposed setup change.
 
+Choose additional human decisions with the consumer. Requirement and release
+remain the defaults; do not impose a review or planning gate on every project.
+Read `docs/stage-approvals.md` for optional approvals in composed delivery. Record
+each gate's subject, authorized reviewers, quorum, waiting limit, rejection policy
+and protected capabilities. Wire request and continuation jobs in accepted native
+YAML; a JSON entry alone does not create the event path. End the originating run
+while waiting, preserve its evidence and budgets, and use exact issue commands or
+native PR reviews. Include continuation paths in runner admission only if they
+actually invoke credential-bearing agents. Deliberate setup changes can add,
+remove or revise gates; do not apply new policy to ongoing work silently.
+
 Select the agent runner and authentication for this consumer during setup.
 Inspect its registered runners before requesting new infrastructure. A plugin
 installation grants no access to the plugin author's runners or accounts.
@@ -60,8 +71,10 @@ native YAML before applying. Do not treat consumer-owned files as installer-owne
 just because they are part of verification. Select the pipeline explicitly for
 new work and declare credential-bearing runner workflow paths without wildcards.
 
-GitHub must allow Actions to create PRs and enforce current NexKit checks without
-mandatory human PR approvals. Inspect existing required checks, rulesets and
+GitHub must allow Actions to create PRs and enforce current NexKit checks plus
+the accepted native PR review policy. With PR-mode gates, require the matching
+review count and stale-review dismissal. Branch-wide review counts must agree
+across delivery pipelines. Inspect existing required checks, rulesets and
 environments for additional gates. Propose precise settings changes for the
 administrator; never silently weaken protections or grant blanket bypass.
 

@@ -29,8 +29,9 @@ jobs:
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     outputs:
-      passed: ${{ steps.execute.outputs.passed }}
+      passed: ${{ steps.execute.outputs.passed || steps.guard.outputs.passed }}
       report_artifact_id: ${{ steps.report.outputs.artifact-id }}
     defaults:
       run:
@@ -73,13 +74,15 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/kit
           NEXKIT_CHECK: ${{ inputs.check }}
           NEXKIT_REF: ${{ inputs.kit_ref }}
-        run: python3 -m nexkit.ci prepare-check --context /tmp/nexkit --check "$NEXKIT_CHECK" --kit-ref "$NEXKIT_REF"
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        run: python3 -m nexkit.ci prepare-check --context /tmp/nexkit --check "$NEXKIT_CHECK" --kit-ref "$NEXKIT_REF" --out "/tmp/nexkit/checks/$NEXKIT_CHECK.json"
+      - if: steps.guard.outputs.authorized == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: ${{ steps.guard.outputs.head }}
           path: source
           persist-credentials: false
       - id: execute
+        if: steps.guard.outputs.authorized == 'true'
         name: Execute exactly one accepted check in an isolated account
         env:
           PYTHONPATH: ${{ github.workspace }}/kit

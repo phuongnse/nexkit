@@ -159,7 +159,7 @@ def parser():
     for name in ("approval", "status", "cancel", "resume"):
         c = sub.add_parser(name)
         c.add_argument("issue", type=int)
-    sub.add_parser("howto", help="Show the two human decisions and normal workflow")
+    sub.add_parser("howto", help="Show human decisions and the configured workflow")
     sub.add_parser("knowledge", help="List this consumer's accepted knowledge sources")
     c = sub.add_parser("release", help="Prepare a specific unreleased candidate for human decision")
     c.add_argument("--commit", required=True)
@@ -176,10 +176,11 @@ def main(argv=None):
             print(
                 "Install → describe your project with nexkit-init → review setup decisions → "
                 "nexkit-request creates an issue and clarifies its spec.\n"
-                "Human decision 1: post the exact /nexkit approve HASH comment on that issue.\n"
+                "Requirement approval: post the exact /nexkit approve HASH comment on that issue.\n"
                 "Actions implements, verifies, independently reviews, repairs and merges within limits.\n"
+                "Additional human approvals may be configured for selected stages during setup.\n"
                 "Track the issue, PR and Actions; nexkit status/cancel/resume manage interrupted work.\n"
-                "Human decision 2: post /nexkit release HASH on a prepared release candidate issue.\n"
+                "Release decision: post /nexkit release HASH on a prepared release candidate issue.\n"
                 "A merge never starts a release. Credentials and policy changes belong to setup."
             )
             return 0
@@ -246,11 +247,44 @@ def main(argv=None):
                         "issue": gh.issue(args.issue)["html_url"],
                         "delivery": state or {"status": "awaiting requirement approval"},
                     }
+                    if state.get("status") == "waiting_for_approval":
+                        from datetime import datetime
+
+                        from .policy import now
+
+                        record = state["stage_approvals"][state["approval_wait"]["gate"]]
+                        result["approval_wait_expired"] = (
+                            datetime.fromisoformat(now())
+                            - datetime.fromisoformat(record["opened_at"])
+                        ).total_seconds() >= record["definition"]["wait_minutes"] * 60
                 elif args.command in ("cancel", "resume"):
                     result = gh.comment(args.issue, f"/nexkit {args.command}")
                     if args.command == "resume":
                         issue = gh.issue(args.issue)
                         state, _ = gh.get_state(args.issue)
+                        from .approvals import recovery_gate
+
+                        pending_gate = recovery_gate(state)
+                        if pending_gate:
+                            gate = state["stage_approvals"][pending_gate]
+                            gh.dispatch(
+                                gate["definition"]["continuation"].removeprefix(
+                                    ".github/workflows/"
+                                ),
+                                cfg["default_branch"],
+                                {"issue": args.issue},
+                            )
+                            print(
+                                json.dumps(
+                                    {
+                                        "queued": True,
+                                        "gate": gate["gate"],
+                                        "note": "An existing valid human approval is still required.",
+                                    },
+                                    indent=2,
+                                )
+                            )
+                            return 0
                         workflow = (
                             "release"
                             if (issue.get("body") or "").startswith("<!-- nexkit:release -->")

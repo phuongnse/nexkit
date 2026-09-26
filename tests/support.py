@@ -145,7 +145,7 @@ class FakeGitHub:
         self.revision += 1
         return str(self.revision)
 
-    def strict_protection(self, branch):
+    def strict_protection(self, branch, cfg=None):
         return {"required_status_checks": {"strict": True}}
 
     def pull_for_branch(self, branch):

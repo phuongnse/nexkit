@@ -1,0 +1,112 @@
+# Connection example only. Replace the zero SHA and all consumer identifiers.
+name: Consumer delivery with optional human review
+on:
+  issue_comment:
+    types: [created, edited]
+  workflow_dispatch:
+    inputs:
+      issue:
+        type: string
+        required: true
+      pipeline:
+        type: string
+        required: true
+        default: maintenance
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  checks: write
+  actions: write
+concurrency:
+  group: nexkit-work
+  queue: max
+jobs:
+  admit:
+    uses: phuongnse/nexkit/.github/workflows/prepare-work.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      pipeline: maintenance
+  investigate:
+    needs: admit
+    if: needs.admit.outputs.ready == 'true'
+    uses: phuongnse/nexkit/.github/workflows/agent-invocation.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.admit.outputs.context_artifact_id }}
+      invocation: investigate
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  change:
+    needs: [admit, investigate]
+    if: needs.investigate.outputs.status == 'done'
+    uses: phuongnse/nexkit/.github/workflows/agent-invocation.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.admit.outputs.context_artifact_id }}
+      invocation: change-source
+      input_artifact_ids: ${{ needs.investigate.outputs.report_artifact_id }}
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  publish:
+    needs: change
+    if: needs.change.outputs.status == 'done'
+    uses: phuongnse/nexkit/.github/workflows/publish-candidate.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.change.outputs.context_artifact_id }}
+      report_artifact_id: ${{ needs.change.outputs.report_artifact_id }}
+  unit:
+    needs: publish
+    uses: phuongnse/nexkit/.github/workflows/candidate-check.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      candidate_artifact_id: ${{ needs.publish.outputs.candidate_artifact_id }}
+      check: unit
+  journey:
+    needs: publish
+    uses: phuongnse/nexkit/.github/workflows/candidate-check.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      candidate_artifact_id: ${{ needs.publish.outputs.candidate_artifact_id }}
+      check: journey
+  evaluate:
+    needs: [publish, unit, journey]
+    uses: phuongnse/nexkit/.github/workflows/agent-invocation.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.publish.outputs.candidate_artifact_id }}
+      invocation: evaluate
+      check_artifact_ids: ${{ needs.unit.outputs.report_artifact_id }},${{ needs.journey.outputs.report_artifact_id }}
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  human-review:
+    needs: [publish, unit, journey, evaluate]
+    if: needs.evaluate.outputs.status == 'done'
+    uses: phuongnse/nexkit/.github/workflows/request-approval.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.publish.outputs.candidate_artifact_id }}
+      gate: human-review
+      check_artifact_ids: ${{ needs.unit.outputs.report_artifact_id }},${{ needs.journey.outputs.report_artifact_id }}
+      review_artifact_id: ${{ needs.evaluate.outputs.report_artifact_id }}
+  complete:
+    needs: [admit, investigate, change, publish, unit, journey, evaluate, human-review]
+    if: always() && needs.admit.outputs.ready == 'true'
+    uses: phuongnse/nexkit/.github/workflows/finish-work.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.admit.outputs.context_artifact_id }}
+      candidate_artifact_id: ${{ needs.publish.outputs.candidate_artifact_id }}
+      check_artifact_ids: ${{ needs.unit.outputs.report_artifact_id }},${{ needs.journey.outputs.report_artifact_id }}
+      review_artifact_id: ${{ needs.evaluate.outputs.report_artifact_id }}
+      jobs_succeeded: ${{ needs.human-review.result == 'success' && needs.human-review.outputs.ready == 'true' && needs.investigate.result == 'success' && needs.investigate.outputs.status == 'done' && needs.change.result == 'success' && needs.change.outputs.status == 'done' && needs.publish.result == 'success' && needs.unit.result == 'success' && needs.journey.result == 'success' && needs.evaluate.result == 'success' && needs.evaluate.outputs.status == 'done' }}

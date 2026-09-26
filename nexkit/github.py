@@ -10,6 +10,16 @@ from .common import Blocked, canonical, run
 from .policy import REPO, STATE_BRANCH, require
 
 
+def run_attempt(gh, run_key):
+    """Inspect the recorded attempt, including when the same run is being rerun."""
+    parts = str(run_key).split(".")
+    require(
+        len(parts) == 2 and all(x.isdigit() and int(x) > 0 for x in parts),
+        "Unrecognized Actions run attempt",
+    )
+    return gh.api(f"{gh.root}/actions/runs/{parts[0]}/attempts/{parts[1]}")
+
+
 class GitHub:
     def __init__(self, repository):
         require(REPO.fullmatch(repository), "Invalid repository")
@@ -138,10 +148,12 @@ class GitHub:
             self.ref(STATE_BRANCH)
 
     def save_state(self, number, value, previous):
+        encoded = (canonical(value) + "\n").encode()
+        require(len(encoded) <= 900000, "Delivery state exceeds the bounded GitHub state size")
         self.ensure_state_branch()
         data = {
             "message": f"NexKit #{int(number)}: {value.get('status', 'updated')}",
-            "content": base64.b64encode((canonical(value) + "\n").encode()).decode(),
+            "content": base64.b64encode(encoded).decode(),
             "branch": STATE_BRANCH,
         }
         if previous:
@@ -180,7 +192,7 @@ class GitHub:
             },
         )
 
-    def strict_protection(self, branch):
+    def strict_protection(self, branch, cfg=None):
         # This endpoint needs Metadata:read. The classic branch-protection
         # endpoint needs Administration:read, which GITHUB_TOKEN cannot have.
         # NexKit uses an active native ruleset, audited for bypasses at setup.
@@ -188,6 +200,10 @@ class GitHub:
             f"{self.root}/rules/branches/{quote(branch, safe='')}?per_page=100", pages=True
         )
         names, strict = set(), False
+        from .approvals import pr_review_count
+
+        expected_reviews = pr_review_count(cfg or {})
+        review_rule = False
         actions_id = self.api("apps/github-actions")["id"]
         for rule in rules:
             params = rule.get("parameters", {})
@@ -200,11 +216,17 @@ class GitHub:
                         "Required NexKit checks must be bound to the GitHub Actions App",
                     )
             if rule.get("type") == "pull_request":
+                review_rule = True
                 require(
-                    not params.get("required_approving_review_count")
+                    (params.get("required_approving_review_count") or 0) == expected_reviews
                     and not params.get("require_code_owner_review")
-                    and not params.get("require_last_push_approval"),
-                    "A ruleset adds mandatory human PR approval",
+                    and not params.get("require_last_push_approval")
+                    and not params.get("required_review_thread_resolution")
+                    and not params.get("required_reviewers")
+                    and (
+                        not expected_reviews or params.get("dismiss_stale_reviews_on_push") is True
+                    ),
+                    "PR review rules differ from the accepted human approval policy",
                 )
             require(
                 rule.get("type")
@@ -215,11 +237,15 @@ class GitHub:
             strict and names == {"NexKit verification", "NexKit review"},
             "An active strict ruleset requiring exactly NexKit verification/review is needed; migrate other checks into declared commands during setup",
         )
+        require(
+            not expected_reviews or review_rule,
+            "The configured human PR gate needs a native review ruleset",
+        )
         return rules
 
-    def audit_settings(self, branch):
+    def audit_settings(self, branch, cfg=None):
         """Administrator-only setup inspection. Never called in delivery jobs."""
-        self.strict_protection(branch)
+        self.strict_protection(branch, cfg)
         entries = self.api(f"{self.root}/rulesets?includes_parents=true&per_page=100", pages=True)
         for entry in entries:
             if entry.get("enforcement") != "active":
@@ -242,10 +268,19 @@ class GitHub:
                 raise
             classic = {}
         reviews = classic.get("required_pull_request_reviews") or {}
+        from .approvals import pr_review_count
+
+        count = reviews.get("required_approving_review_count") or 0
         require(
-            not reviews.get("required_approving_review_count")
-            and not reviews.get("require_code_owner_reviews"),
-            "Classic branch protection adds a human review gate",
+            count in (0, pr_review_count(cfg or {}))
+            and not reviews.get("require_code_owner_reviews")
+            and not reviews.get("require_last_push_approval")
+            and (not count or reviews.get("dismiss_stale_reviews") is True),
+            "Classic branch protection differs from the accepted human review policy",
+        )
+        require(
+            not (classic.get("required_conversation_resolution") or {}).get("enabled"),
+            "Required review-thread resolution needs an explicit compatible integration",
         )
         extra = (classic.get("required_status_checks") or {}).get("contexts", [])
         require(

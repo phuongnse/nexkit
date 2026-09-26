@@ -56,6 +56,14 @@ Native `queue: max` serializes runs. Clarification and delivery share a queue;
 intake has its own queue to deduplicate submissions from concurrent hosts.
 Counters survive retries and resumes.
 
+Consumer-composed delivery can add human approval at selected boundaries. A
+trusted controller persists the exact stage results or candidate and ends the
+workflow while waiting. Native issue-comment or PR-review events wake an accepted
+default-branch continuation. It rechecks real human authority and claims a new
+execution of the same logical delivery round; evidence retains its original
+receipts. Waiting consumes no CLI call and is excluded from the execution deadline.
+Native YAML defines all remaining jobs. See [stage approvals](stage-approvals.md).
+
 Intake dispatches clarification automatically. Authorized human answers on the
 issue trigger a new time-bounded session with the previous reply, questions and answers.
 The requirement agent reads source; the controller updates the issue and rejects

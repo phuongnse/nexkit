@@ -16,6 +16,11 @@ are only needed for integrations that use them, such as clarification. See the
 [invocation reference](agent-invocations.md); `doctor` reports resolved values
 and checks all selected self-hosted runner labels.
 
+Optional pipeline `approvals` configure human decisions at selected boundaries
+of composed delivery. Choose the subject, reviewers, quorum, waiting limit,
+rejection behavior and exact continuation workflow during setup. See
+[stage approvals](stage-approvals.md) for the configuration and native event wiring.
+
 | Field | Required decision |
 |---|---|
 | `schema` | `1` |
@@ -87,8 +92,10 @@ An administrator must inspect and accept the setup:
 - Actions may create PRs; wrappers exist on the default branch.
 - An active ruleset requires exactly `NexKit verification` and `NexKit review`,
   bound to the GitHub Actions App, with strict up-to-date checks.
-- There are no blanket bypasses, mandatory human PR reviews, required deployments
-  or unsupported merge queues. Inspect classic protection and inherited rules too.
+- There are no blanket bypasses, required deployments or unsupported merge queues.
+  Native human PR reviews match the accepted [approval policy](stage-approvals.md):
+  zero by default, or the configured count with stale-review dismissal. Inspect
+  classic protection and inherited rules too; unintegrated additional gates block setup.
 - Job tokens can write the `nexkit/state` and delivery branches.
 - Existing required verification behavior is preserved through declared commands
   or a verified dispatch integration; do not simply remove checks to obtain green CI.

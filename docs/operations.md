@@ -23,6 +23,13 @@ not rolled back. `resume` preserves approval and budget. Changing the spec needs
 a new requirement approval. Exhausted budgets need an administrative decision;
 the pipeline never resets them automatically.
 
+Optional [stage approvals](stage-approvals.md) persist their reviewed evidence
+before ending the originating workflow. `status` identifies the waiting gate and
+reports expiry; `resume` wakes its continuation without granting approval or
+resetting limits. A blocked rejection retains human feedback for deliberate
+recovery. An interrupted claim or repair dispatch can resume before new agent
+work; recorded run attempts distinguish native reruns from still-active work.
+
 Inspect the current Actions run before restarting after a lost connection.
 Existing branches, PRs and release drafts are recovered. No empty commits or
 artificial PR close/reopen cycles are used to retrigger checks. Results from a

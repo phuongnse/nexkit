@@ -1,4 +1,4 @@
-name: NexKit prepare approved work
+name: NexKit relay a native PR review event
 on:
   workflow_call:
     inputs:
@@ -8,33 +8,17 @@ on:
       kit_ref:
         type: string
         required: true
-      pipeline:
-        type: string
-        required: true
-    outputs:
-      ready:
-        description: Whether an approved delivery round was reserved
-        value: ${{ jobs.prepare.outputs.ready }}
-      context_artifact_id:
-        description: Immutable artifact ID for this delivery round
-        value: ${{ jobs.prepare.outputs.context_artifact_id }}
-      repair:
-        description: Whether this bounded round carries prior failure or human feedback
-        value: ${{ jobs.prepare.outputs.repair }}
 permissions: {}
 jobs:
-  prepare:
+  relay:
+    if: github.event_name == 'pull_request_review' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      contents: write
+      contents: read
       issues: read
       pull-requests: read
-      actions: read
-    outputs:
-      ready: ${{ steps.prepare.outputs.ready }}
-      repair: ${{ steps.prepare.outputs.repair }}
-      context_artifact_id: ${{ steps.context.outputs.artifact-id }}
+      actions: write
     defaults:
       run:
         shell: bash
@@ -52,7 +36,6 @@ jobs:
               return json.loads(subprocess.check_output(['gh', 'api', path]))
           repo = os.environ['GITHUB_REPOSITORY']
           branch = api('repos/' + repo)['default_branch']
-          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
           data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
           pin = json.loads(base64.b64decode(data['content']))['kit']
           assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
@@ -65,18 +48,9 @@ jobs:
           ref: ${{ inputs.kit_ref }}
           path: kit
           persist-credentials: false
-      - id: prepare
+      - name: Dispatch only the configured default-branch approval continuation
         env:
           GH_TOKEN: ${{ github.token }}
-          NEXKIT_REF: ${{ inputs.kit_ref }}
-          NEXKIT_PIPELINE: ${{ inputs.pipeline }}
           PYTHONPATH: ${{ github.workspace }}/kit
-        run: python3 -m nexkit.ci prepare --individual-agents --kit-ref "$NEXKIT_REF" --out /tmp/nexkit/context.json
-      - id: context
-        if: steps.prepare.outputs.ready == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: nexkit-work-${{ inputs.pipeline }}-${{ github.run_attempt }}
-          path: /tmp/nexkit/context.json
-          retention-days: 7
-          if-no-files-found: error
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: python3 -m nexkit.ci review-event --kit-ref "$NEXKIT_REF"

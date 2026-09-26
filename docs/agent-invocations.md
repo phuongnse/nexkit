@@ -74,11 +74,17 @@ the default branch and are themselves accepted control files.
 
 | Workflow | Main inputs | Outputs |
 |---|---|---|
-| `prepare-work.yml` | `pipeline`; the event supplies the issue | `ready`, `context_artifact_id` |
+| `prepare-work.yml` | `pipeline`; the event supplies the issue | `ready`, `repair`, `context_artifact_id` |
 | `agent-invocation.yml` | `context_artifact_id`, `invocation`; optional `input_artifact_ids`, `check_artifact_ids` | `context_artifact_id`, `report_artifact_id`, `status` |
 | `publish-candidate.yml` | The editor's reserved `context_artifact_id` and recorded `report_artifact_id` | `candidate_artifact_id`, `head` |
 | `candidate-check.yml` | `candidate_artifact_id`, configured `check` name | `report_artifact_id`, `passed` |
-| `finish-work.yml` | Original round context, optional candidate/check/review artifact IDs, `jobs_succeeded` | Persisted `status`: `merged`, `retry` or `blocked` |
+| `finish-work.yml` | Original round context, optional candidate/check/review artifact IDs, `jobs_succeeded`; optional `checkpoint_evidence` for a finish-only continuation | Persisted `status`: `merged`, `retry`, `blocked` or `waiting_for_approval` |
+
+For human decisions between selected jobs, add `request-approval.yml` and
+`resume-approval.yml`, plus `review-events.yml` for PR mode. The [approval guide](stage-approvals.md)
+defines their inputs, protected capabilities and consumer-owned continuation.
+Waiting ends the original workflow. The resumed context preserves the logical
+round and evidence while authenticating the new Actions execution separately.
 
 `input_artifact_ids` and `check_artifact_ids` are comma-separated exact IDs from
 the corresponding native `needs` job outputs. Each report artifact contains

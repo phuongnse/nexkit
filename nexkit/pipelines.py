@@ -99,7 +99,8 @@ def validate_project(value):
         require(
             isinstance(pipeline, dict)
             and {"settings", "entrypoints", "agent_workflows"} <= set(pipeline)
-            and set(pipeline) <= {"settings", "entrypoints", "agent_workflows", "invocations"},
+            and set(pipeline)
+            <= {"settings", "entrypoints", "agent_workflows", "invocations", "approvals"},
             "A pipeline declares settings, entrypoints and agent_workflows; ordering belongs to Actions YAML",
         )
         settings = pipeline["settings"]
@@ -127,6 +128,21 @@ def validate_project(value):
             from .invocations import validate_definitions
 
             validate_definitions(effective)
+        if "approvals" in pipeline:
+            from .approvals import validate_definitions as validate_approvals
+
+            validate_approvals(effective)
+    from .approvals import pr_review_count
+
+    counts = {
+        pr_review_count(_effective(value, name))
+        for name, pipeline in pipelines.items()
+        if "delivery" in pipeline["entrypoints"]
+    }
+    require(
+        len(counts) <= 1,
+        "Delivery pipelines sharing the default branch must accept the same native PR approval count",
+    )
     return value
 
 
@@ -146,6 +162,8 @@ def _effective(value, pipeline):
     }
     if "invocations" in value["pipelines"][pipeline]:
         result["binding"]["invocations"] = deepcopy(value["pipelines"][pipeline]["invocations"])
+    if "approvals" in value["pipelines"][pipeline]:
+        result["binding"]["approvals"] = deepcopy(value["pipelines"][pipeline]["approvals"])
     return result
 
 
@@ -215,9 +233,18 @@ def check_caller(cfg, operation, workflow_ref):
     require(workflow_ref == expected, "Workflow is not the pipeline's configured entrypoint")
 
 
-def load_run_config(gh, ref, selected, operation):
+def load_run_config(gh, ref, selected, operation, *, caller=None):
     cfg = effective_config(gh.read_config(ref), selected)
-    check_caller(cfg, operation, os.environ.get("GITHUB_WORKFLOW_REF"))
+    if caller is None:
+        check_caller(cfg, operation, os.environ.get("GITHUB_WORKFLOW_REF"))
+    else:
+        workflow_path(caller)
+        require(caller in cfg["binding"]["files"], "Continuation is not an accepted workflow")
+        require(
+            os.environ.get("GITHUB_WORKFLOW_REF")
+            == f"{cfg['repository']}/{caller}@refs/heads/{cfg['default_branch']}",
+            "Approval continuation must run its accepted workflow on the default branch",
+        )
     verify_controls(gh, cfg, ref)
     if "binding" in cfg:
         # GitHub's workflow SHA identifies the code actually running, including

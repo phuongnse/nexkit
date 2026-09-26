@@ -1,0 +1,261 @@
+{
+  "checked_at": "2026-09-26T13:45:11.178379+00:00",
+  "scope": "Read-only inspection of two previously authorized schema-1 delivery runs, real owner approvals, controller state, required check metadata and merged PRs. No additional workflow dispatch, model invocation or repository configuration change.",
+  "limitations": [
+    "Run artifact bytes and CLI logs were not inspected in this metadata pass.",
+    "These deliveries do not exercise the new configurable stage-approval capabilities.",
+    "This record does not establish repair, interruption, cancellation or release acceptance."
+  ],
+  "consumers": [
+    {
+      "repository": "phuongnse/nexkit-validation-new",
+      "issue": "https://github.com/phuongnse/nexkit-validation-new/issues/1",
+      "approval": {
+        "id": 5846053426,
+        "html_url": "https://github.com/phuongnse/nexkit-validation-new/issues/1#issuecomment-5846053426",
+        "body": "/nexkit approve ae9bacc77e5643e2b998e2354a33eeddc63966d9022889956d5bc9bcdbb7a028",
+        "created_at": "2026-09-26T11:55:03Z",
+        "updated_at": "2026-09-26T11:55:03Z",
+        "user": "phuongnse"
+      },
+      "workflow_run": {
+        "id": 36240304721,
+        "run_attempt": 1,
+        "html_url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721",
+        "event": "issue_comment",
+        "head_sha": "515d19cbd7011e7c48d1635e8fbd9e03168d7296",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-26T11:55:06Z",
+        "updated_at": "2026-09-26T12:12:59Z"
+      },
+      "jobs": [
+        {
+          "id": 108399423619,
+          "name": "nexkit / prepare",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721/job/108399423619",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T11:55:17Z",
+          "completed_at": "2026-09-26T11:55:32Z",
+          "runner_name": "GitHub Actions 1000012480"
+        },
+        {
+          "id": 108399482060,
+          "name": "nexkit / implement",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721/job/108399482060",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T11:55:35Z",
+          "completed_at": "2026-09-26T12:01:24Z",
+          "runner_name": "nexkit-validation-new"
+        },
+        {
+          "id": 108400293191,
+          "name": "nexkit / publish",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721/job/108400293191",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T12:01:26Z",
+          "completed_at": "2026-09-26T12:01:45Z",
+          "runner_name": "GitHub Actions 1000012486"
+        },
+        {
+          "id": 108400349048,
+          "name": "nexkit / verify",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721/job/108400349048",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T12:01:48Z",
+          "completed_at": "2026-09-26T12:02:53Z",
+          "runner_name": "GitHub Actions 1000012487"
+        },
+        {
+          "id": 108400513789,
+          "name": "nexkit / review",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721/job/108400513789",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T12:02:56Z",
+          "completed_at": "2026-09-26T12:12:41Z",
+          "runner_name": "nexkit-validation-new"
+        },
+        {
+          "id": 108401916494,
+          "name": "nexkit / finish",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721/job/108401916494",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T12:12:44Z",
+          "completed_at": "2026-09-26T12:12:58Z",
+          "runner_name": "GitHub Actions 1000012489"
+        }
+      ],
+      "pull_request": {
+        "number": 2,
+        "html_url": "https://github.com/phuongnse/nexkit-validation-new/pull/2",
+        "state": "closed",
+        "merged_at": "2026-09-26T12:12:54Z",
+        "merge_commit_sha": "34db8784a502ef41bbbb85b73ed65a43c3502aa9"
+      },
+      "state_revision": "5cbc44fd9ed916216e902e4a9679c37c29f92c17",
+      "state": {
+        "status": "merged",
+        "run_key": "36240304721.1",
+        "attempts": 1,
+        "agent_calls": 3,
+        "pr": 2,
+        "candidate": {
+          "base": "515d19cbd7011e7c48d1635e8fbd9e03168d7296",
+          "config": "cdd2cdb2ebaefc41dc2038194bad33d4efc9a4c042621909a0cc4e60ee88ead4",
+          "head": "ca2a839e907616ee96f2ec86cab58b5fb45e8abc",
+          "kit": "3963c1c10b07ff4bfc8d08c735d713141710497f",
+          "spec": "ae9bacc77e5643e2b998e2354a33eeddc63966d9022889956d5bc9bcdbb7a028"
+        },
+        "merge_sha": "34db8784a502ef41bbbb85b73ed65a43c3502aa9"
+      },
+      "candidate_checks": [
+        {
+          "id": 108401938457,
+          "name": "NexKit review",
+          "status": "completed",
+          "conclusion": "success",
+          "details_url": "https://github.com/phuongnse/nexkit-validation-new/runs/108401938457"
+        },
+        {
+          "id": 108401937521,
+          "name": "NexKit verification",
+          "status": "completed",
+          "conclusion": "success",
+          "details_url": "https://github.com/phuongnse/nexkit-validation-new/runs/108401937521"
+        }
+      ],
+      "published_releases": []
+    },
+    {
+      "repository": "phuongnse/nexkit-validation-existing",
+      "issue": "https://github.com/phuongnse/nexkit-validation-existing/issues/2",
+      "approval": {
+        "id": 5846057641,
+        "html_url": "https://github.com/phuongnse/nexkit-validation-existing/issues/2#issuecomment-5846057641",
+        "body": "/nexkit approve 42e1a3ce3e044c6780aa148f667031efa8aeb74e6d324b283a9eca3deb61f997",
+        "created_at": "2026-09-26T11:55:46Z",
+        "updated_at": "2026-09-26T11:55:46Z",
+        "user": "phuongnse"
+      },
+      "workflow_run": {
+        "id": 36240340637,
+        "run_attempt": 1,
+        "html_url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36240340637",
+        "event": "issue_comment",
+        "head_sha": "353e641f86e0b7057a7eda193bda5f088c19f6f7",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-26T11:55:49Z",
+        "updated_at": "2026-09-26T12:03:59Z"
+      },
+      "jobs": [
+        {
+          "id": 108399520888,
+          "name": "nexkit / prepare",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36240340637/job/108399520888",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T11:56:01Z",
+          "completed_at": "2026-09-26T11:56:15Z",
+          "runner_name": "GitHub Actions 1000012483"
+        },
+        {
+          "id": 108399578644,
+          "name": "nexkit / implement",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36240340637/job/108399578644",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T11:56:18Z",
+          "completed_at": "2026-09-26T11:58:45Z",
+          "runner_name": "nexkit-validation-existing"
+        },
+        {
+          "id": 108399905819,
+          "name": "nexkit / publish",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36240340637/job/108399905819",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T11:58:48Z",
+          "completed_at": "2026-09-26T11:59:07Z",
+          "runner_name": "GitHub Actions 1000012484"
+        },
+        {
+          "id": 108399954508,
+          "name": "nexkit / verify",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36240340637/job/108399954508",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T11:59:45Z",
+          "completed_at": "2026-09-26T12:00:13Z",
+          "runner_name": "GitHub Actions 1000012485"
+        },
+        {
+          "id": 108400102787,
+          "name": "nexkit / review",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36240340637/job/108400102787",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T12:00:16Z",
+          "completed_at": "2026-09-26T12:03:39Z",
+          "runner_name": "nexkit-validation-existing"
+        },
+        {
+          "id": 108400625091,
+          "name": "nexkit / finish",
+          "html_url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36240340637/job/108400625091",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T12:03:41Z",
+          "completed_at": "2026-09-26T12:03:59Z",
+          "runner_name": "GitHub Actions 1000012488"
+        }
+      ],
+      "pull_request": {
+        "number": 3,
+        "html_url": "https://github.com/phuongnse/nexkit-validation-existing/pull/3",
+        "state": "closed",
+        "merged_at": "2026-09-26T12:03:54Z",
+        "merge_commit_sha": "d2516347d796e0c3bc7bbd97de9a7ed52e9cd036"
+      },
+      "state_revision": "3a094aab0a70fc34b6031739c28b4eb4a3f43f00",
+      "state": {
+        "status": "merged",
+        "run_key": "36240340637.1",
+        "attempts": 1,
+        "agent_calls": 3,
+        "pr": 3,
+        "candidate": {
+          "base": "353e641f86e0b7057a7eda193bda5f088c19f6f7",
+          "config": "fb3490470d126ff8730c5cb1ed5cf4c52e8da3af10479957f5a3a4bad43581b3",
+          "head": "1ea334613b14c8dd24b4218c5097a18197ca0b6f",
+          "kit": "3963c1c10b07ff4bfc8d08c735d713141710497f",
+          "spec": "42e1a3ce3e044c6780aa148f667031efa8aeb74e6d324b283a9eca3deb61f997"
+        },
+        "merge_sha": "d2516347d796e0c3bc7bbd97de9a7ed52e9cd036"
+      },
+      "candidate_checks": [
+        {
+          "id": 108400650108,
+          "name": "NexKit review",
+          "status": "completed",
+          "conclusion": "success",
+          "details_url": "https://github.com/phuongnse/nexkit-validation-existing/runs/108400650108"
+        },
+        {
+          "id": 108400648973,
+          "name": "NexKit verification",
+          "status": "completed",
+          "conclusion": "success",
+          "details_url": "https://github.com/phuongnse/nexkit-validation-existing/runs/108400648973"
+        }
+      ],
+      "published_releases": []
+    }
+  ]
+}

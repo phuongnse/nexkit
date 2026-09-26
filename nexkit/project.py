@@ -410,7 +410,7 @@ def doctor(root, cfg, *, online=False, checks=False):
             repository = gh.repo()
             require(repository["default_branch"] == cfg["default_branch"], "Default branch drift")
             if not binding or "delivery" in binding["entrypoints"]:
-                gh.audit_settings(cfg["default_branch"])
+                gh.audit_settings(cfg["default_branch"], cfg)
                 policy = gh.api(f"{gh.root}/actions/permissions/workflow")
                 require(
                     policy.get("can_approve_pull_request_reviews") is True,
@@ -461,6 +461,7 @@ def doctor(root, cfg, *, online=False, checks=False):
         "models": cfg.get("models", {}),
         "reasoning_effort": cfg.get("reasoning_effort", {}),
         "invocations": invocations,
+        "approvals": binding.get("approvals", {}),
         "authentication": authentication(cfg) if cfg.get("engine") else None,
         "agent_runner": agent_runner(cfg) if cfg.get("environment") else None,
         "limits": cfg.get("limits", {}),

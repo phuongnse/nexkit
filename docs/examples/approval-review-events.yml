@@ -1,0 +1,16 @@
+# Metadata relay only: never load PR source or select the credential runner here.
+name: Forward human PR review events
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  actions: write
+jobs:
+  notify:
+    uses: phuongnse/nexkit/.github/workflows/review-events.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'

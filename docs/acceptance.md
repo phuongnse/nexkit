@@ -8,7 +8,7 @@ simulated GitHub boundaries are distinct from live integration.
 | Group | Evidence available | Still unverified |
 |---|---|---|
 | A — package/hosts | Native Codex 0.156.1 install/list and Claude Code 2.1.282 install/details with 8 skills; extracted archive and validators | Other target hosts have documentation checks only; no model-use claim |
-| B — CLI on Actions | Live local Codex used skills/tools, changed code and ran a separate reviewer; GitHub platform and self-hosted admission probes passed | Live AI runner authentication and delivery independent of the local chat session |
+| B — CLI on Actions | Live local Codex used skills/tools, changed code and ran a separate reviewer; GitHub platform and self-hosted admission probes passed; both consumer CLI logins completed | Live AI execution on Actions and delivery independent of the local chat session |
 | C — two consumers | Real local Node CLI and Python HTTP API tests with distinct configurations; two authorized public GitHub repositories prepared, one empty and one with a working HTTP baseline | NexKit setup and autonomous delivery in both GitHub consumers |
 | D — success | Simulated controller issue→approval→review/checks→merge; the kit's own CI ran on GitHub | Real human approval and autonomous consumer merge without release |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
@@ -82,6 +82,12 @@ simulated GitHub boundaries are distinct from live integration.
 - The owner selected public consumers, repo-scoped runners on the authorized VPS,
   and official Codex ChatGPT login for each consumer. Both isolated containers
   are registered and online. No existing local login cache was copied.
+- On 2026-09-26, the owner completed a separate official device login for each
+  consumer. Both CLI processes returned `Successfully logged in`; subsequent
+  `codex login status` commands under each runner's dedicated account reported
+  `Logged in using ChatGPT`. Both services restarted and GitHub reported both
+  runners online. This verifies stored login, not a live model invocation or
+  sufficient subscription allowance for delivery.
 - Live admission accepted a
   [default-branch run](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36150561858),
   rejected a
@@ -115,10 +121,8 @@ simulated GitHub boundaries are distinct from live integration.
 
 ## External prerequisites still missing
 
-- Each consumer still needs its own official Codex login and a live model run.
-  Both device-login attempts expired after 15 minutes; the official CLI still
-  reports `Not logged in` in both running containers. New device authorization
-  must be completed by the owner before live AI acceptance can continue.
+- Each consumer still needs a live model run through its configured workflow.
+  Both independent CLI logins are complete; Actions model access remains unverified.
   The subscription integration is implemented, while OpenAI's account-cache CI
   guide excludes public repositories. This custom deployment was explicitly
   selected by the owner and is not an officially recommended public CI setup.

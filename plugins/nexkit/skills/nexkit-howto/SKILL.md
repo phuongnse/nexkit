@@ -6,9 +6,10 @@ description: Explain installation, setup, the first requirement, the two human d
 # NexKit howto
 
 Run `nexkit howto` and read the installed kit README for installation commands.
-Use the host's real skill syntax: Codex `$nexkit-init`; Claude Code plugin
-`/nexkit:nexkit-init`; for other hosts consult the kit compatibility matrix rather
-than inventing slash commands. Skills installed locally do not install the runner.
+Use the host's real skill selector: in Codex, type `$` and select
+`nexkit:nexkit-init` from the native plugin, or `$nexkit-init` for directly installed
+project skills. The Claude Code plugin uses `/nexkit:nexkit-init`. For other hosts,
+consult the kit compatibility matrix. Skills installed locally do not install the runner.
 
 Explain the relevant next user action in the current project: setup, submit a
 requirement, review its issue, inspect delivery, or select a release candidate.

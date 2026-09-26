@@ -261,6 +261,61 @@ class BundleTests(unittest.TestCase):
     def install(self, apply=True):
         return install(self.root, self.cfg, ["codex"], apply=apply, bundle=self.bundle)
 
+    def snapshot(self):
+        return {
+            str(path.relative_to(self.root)): path.read_bytes()
+            for path in self.root.rglob("*")
+            if path.is_file()
+        }
+
+    def legacy_install(self):
+        legacy = project()
+        legacy["reasoning_effort"] = {"implement": "max", "review": "max"}
+        self.cfg["defaults"]["reasoning_effort"] = deepcopy(legacy["reasoning_effort"])
+        write_json(self.root / ".nexkit/project.json", legacy)
+        install(self.root, legacy, ["codex"], apply=True)
+        (self.root / "README.md").write_text("Consumer-owned knowledge\n")
+        return legacy
+
+    def test_legacy_migration_retires_only_owned_wrappers_and_keeps_settings(self):
+        legacy = self.legacy_install()
+        consumer_workflow = self.root / ".github/workflows/customer.yml"
+        consumer_workflow.write_text("# Consumer-owned workflow\n")
+        before = self.snapshot()
+        preview = self.install(False)
+        self.assertEqual(self.snapshot(), before)
+        retired = {
+            f".github/workflows/nexkit-{name}.yml"
+            for name in ("intake", "clarify", "delivery", "release")
+        }
+        self.assertEqual(
+            {item["path"] for item in preview["changes"] if item["operation"] == "remove"},
+            retired,
+        )
+        self.install()
+        self.assertTrue(all(not (self.root / path).exists() for path in retired))
+        self.assertEqual(read_json(self.root / ".nexkit/project.json"), self.cfg)
+        selected = effective_config(self.cfg, "maintenance")
+        for field in ("engine", "models", "reasoning_effort", "limits"):
+            self.assertEqual(selected[field], legacy[field])
+        self.assertNotIn("clarification", selected)
+        self.assertEqual(self.install()["changes"], [])
+        uninstall(self.root)
+        self.assertEqual(
+            consumer_workflow.read_bytes(), before[str(consumer_workflow.relative_to(self.root))]
+        )
+        self.assertEqual((self.root / "README.md").read_bytes(), before["README.md"])
+        self.assertTrue((self.root / ".nexkit/project.json").is_file())
+
+    def test_edited_legacy_wrapper_blocks_migration_before_any_writes(self):
+        self.legacy_install()
+        workflow = self.root / ".github/workflows/nexkit-delivery.yml"
+        workflow.write_text(workflow.read_text() + "\n# Consumer edit\n")
+        before = self.snapshot()
+        with self.assertRaisesRegex(Blocked, "Consumer edits preserved"):
+            self.install()
+        self.assertEqual(self.snapshot(), before)
+
     def test_arbitrary_file_set_preview_reinstall_and_safe_removal(self):
         preview = self.install(False)
         self.assertFalse((self.root / ".github").exists())

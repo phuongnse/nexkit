@@ -1,0 +1,175 @@
+{
+  "date": "2026-09-26",
+  "scope": "Local installer migration/update/reinstall/uninstall against temporary copies of real consumers; no GitHub or model calls",
+  "kit_source_commit": "37ffbb98631f5e88610be5beda5a5447b8bd8f3e",
+  "kit_worktree_changes": "Host documentation and nexkit-howto skill wording only",
+  "consumers": [
+    {
+      "repository": "phuongnse/nexkit-validation-new",
+      "consumer_source": "515d19cbd7011e7c48d1635e8fbd9e03168d7296",
+      "old_kit_ref": "3963c1c10b07ff4bfc8d08c735d713141710497f",
+      "proposed_kit_ref": "37ffbb98631f5e88610be5beda5a5447b8bd8f3e",
+      "pipeline_ids": [
+        "application"
+      ],
+      "preview_changes": [
+        {
+          "path": ".agents/skills/nexkit-howto/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".agents/skills/nexkit-init/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".agents/skills/nexkit-request/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".agents/skills/nexkit-task/SKILL.md",
+          "operation": "add"
+        },
+        {
+          "path": ".claude/skills/nexkit-howto/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".claude/skills/nexkit-init/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".claude/skills/nexkit-request/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".claude/skills/nexkit-task/SKILL.md",
+          "operation": "add"
+        },
+        {
+          "path": ".github/workflows/nexkit-intake.yml",
+          "operation": "update"
+        },
+        {
+          "path": ".github/workflows/nexkit-clarify.yml",
+          "operation": "update"
+        },
+        {
+          "path": ".github/workflows/nexkit-delivery.yml",
+          "operation": "update"
+        },
+        {
+          "path": ".github/workflows/nexkit-release.yml",
+          "operation": "update"
+        },
+        {
+          "path": ".nexkit/project.json",
+          "operation": "update"
+        }
+      ],
+      "preview_wrote_nothing": true,
+      "edited_workflow_blocked_before_writes": true,
+      "schema2_config_applied_in_copy": true,
+      "native_workflow_lint_passed": true,
+      "model_effort_engine_and_shared_limits_preserved": true,
+      "reinstall_changes": 0,
+      "uninstall_preserved_consumer_file_count": 3,
+      "application_checks": null,
+      "live_checkout_unchanged": true
+    },
+    {
+      "repository": "phuongnse/nexkit-validation-existing",
+      "consumer_source": "353e641f86e0b7057a7eda193bda5f088c19f6f7",
+      "old_kit_ref": "3963c1c10b07ff4bfc8d08c735d713141710497f",
+      "proposed_kit_ref": "37ffbb98631f5e88610be5beda5a5447b8bd8f3e",
+      "pipeline_ids": [
+        "application"
+      ],
+      "preview_changes": [
+        {
+          "path": ".agents/skills/nexkit-howto/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".agents/skills/nexkit-init/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".agents/skills/nexkit-request/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".agents/skills/nexkit-task/SKILL.md",
+          "operation": "add"
+        },
+        {
+          "path": ".claude/skills/nexkit-howto/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".claude/skills/nexkit-init/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".claude/skills/nexkit-request/SKILL.md",
+          "operation": "update"
+        },
+        {
+          "path": ".claude/skills/nexkit-task/SKILL.md",
+          "operation": "add"
+        },
+        {
+          "path": ".github/workflows/nexkit-intake.yml",
+          "operation": "update"
+        },
+        {
+          "path": ".github/workflows/nexkit-clarify.yml",
+          "operation": "update"
+        },
+        {
+          "path": ".github/workflows/nexkit-delivery.yml",
+          "operation": "update"
+        },
+        {
+          "path": ".github/workflows/nexkit-release.yml",
+          "operation": "update"
+        },
+        {
+          "path": ".nexkit/project.json",
+          "operation": "update"
+        }
+      ],
+      "preview_wrote_nothing": true,
+      "edited_workflow_blocked_before_writes": true,
+      "schema2_config_applied_in_copy": true,
+      "native_workflow_lint_passed": true,
+      "model_effort_engine_and_shared_limits_preserved": true,
+      "reinstall_changes": 0,
+      "uninstall_preserved_consumer_file_count": 9,
+      "application_checks": {
+        "test": {
+          "passed": true,
+          "tests": 6
+        },
+        "e2e": {
+          "passed": true,
+          "tests": 5
+        },
+        "package": {
+          "passed": true,
+          "tests": 6
+        }
+      },
+      "live_checkout_unchanged": true
+    }
+  ],
+  "live_migration_applied": false,
+  "pending_work_item_states_changed": false,
+  "runner_allowlists_changed": false,
+  "live_model_calls": 0,
+  "limitations": [
+    "Native workflow parsing and local application tests do not establish live schema2 execution.",
+    "The pipeline identifier is a migration-test choice, not an approved new live consumer configuration.",
+    "The initially empty consumer has no application behavior to test.",
+    "No credential-bearing runner or GitHub settings were changed."
+  ]
+}

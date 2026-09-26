@@ -158,3 +158,16 @@ recovery. No additional code blocker was found. The full implementer suite has
 146 tests. The reviewer made no live GitHub writes, credential access or model
 calls. The final validation and PATCH remain separate operations, so this is
 not an atomic issue-update guarantee.
+
+## Native host and consumer update evidence — 2026-09-26
+
+The independent reviewer verified the installation archive checksum, all 98
+manifest hashes and both nine-skill inventories against source `37ffbb9`.
+It found no inconsistency in the distinction between native installation/loading,
+local migration checks and the pending Actions delivery/release acceptance.
+The two new legacy-migration regressions were reviewed and all 19 focused
+pipeline tests passed in the separate session. No blocker was found.
+
+The reviewer suggested explicitly including reasoning effort in the legacy
+fixture; the implementer added `max` and its preservation assertion. The review
+did not rerun native hosts, use credentials, invoke models or change live consumers.

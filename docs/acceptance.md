@@ -7,17 +7,33 @@ simulated GitHub boundaries are distinct from live integration.
 
 | Group | Evidence available | Still unverified |
 |---|---|---|
-| A — package/hosts | Native Codex 0.156.1 install/list and Claude Code 2.1.282 install/details with 8 skills; extracted archive and validators | Other target hosts have documentation checks only; no model-use claim |
+| A — package/hosts | Native Codex 0.156.1 install/reinstall/update/remove and fresh discovery of 9 skills; Claude Code 2.1.282 validation and native loading of all 9 skills from the archive | Other target hosts have documentation checks only; no model-use claim from installation |
 | B — CLI on Actions | Both consumers completed live Actions clarification with Codex 0.156.1, Luna/max, installed request skills and actual terminal calls; separate local implementation/review evidence is also available | Code edits and independent review on Actions; autonomous delivery after the local host closes |
 | C — two consumers | Distinct Node CLI and existing Python HTTP configurations installed in two public GitHub repositories; runner, permissions and strict branch rules audited; existing app passed 17 local cases | Approved application delivery in both consumers; the initially empty consumer still has no application behavior to verify |
 | D — success | Simulated controller issue→approval→review/checks→merge; the kit's own CI ran on GitHub | Real human approval and autonomous consumer merge without release |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
 | F — blocked | Live unapproved delivery stopped before any model call or PR; tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Remaining failure injection in the live environment and final guards |
-| G — durability | Live repeated intake reused the issue and clarification result without another model reservation; local tests cover ownership, reinstall/uninstall, cancel/resume, orphan/merged recovery and base ancestry | Live concurrent work, interruptions, cancellation and insufficient consumer permissions |
+| G — durability | Live repeated intake reused the issue and clarification result without another model reservation; native Codex reinstall/update/uninstall preserved the package and consumer knowledge; local tests cover installer ownership, cancel/resume, orphan/merged recovery and base ancestry | Live concurrent work, interruptions, cancellation and insufficient consumer permissions |
 | H — release | Tests cover wrong approver/drift/changed bytes or tags/cancel/deadline/retry/lost upload response with original artifact recovery | Real human release decision and publication within the authorized test scope |
 
 ## Executed verification
 
+- [Native host check, September 26](validation/host-install-2026-09-26.json): the
+  clean archive at `37ffbb9` passed installation/loading on Codex 0.156.1 and
+  Claude Code 2.1.282 with all nine skills. Codex discovery verified installed
+  skill hashes and the development update in a fresh process. No model was
+  called, no host credentials were mounted, and live consumer pins were unchanged.
+- [Consumer update check, September 26](validation/consumer-update-2026-09-26.json):
+  temporary copies of both real consumers migrated from schema 1 to an explicit
+  schema-2 pipeline. Preview wrote nothing; an edited workflow blocked the whole
+  update; reinstall produced no changes; uninstall preserved consumer files.
+  Effective model, effort, engine and the shared six-call limit stayed unchanged.
+  Native workflow lint passed, and the Python consumer still passed all 17 real
+  unit/HTTP/package cases. This was a local installer check: pending GitHub work,
+  live configuration and runner admission settings were not migrated.
+  Two repeatable migration regressions cover legacy-wrapper retirement and
+  rejection of edited wrappers before writes. The full local suite passes
+  148 tests; GitHub and model boundaries in that suite remain simulated.
 - 60 local tests passed after independent review. Consumer commands, unit cases
   and CLI/HTTP behavior are real; GitHub/controller boundaries are simulated.
 - Reasoning configuration adds six regression tests: validation, per-role

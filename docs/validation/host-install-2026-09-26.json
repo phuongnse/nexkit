@@ -1,0 +1,75 @@
+{
+  "date": "2026-09-26",
+  "source_commit": "37ffbb98631f5e88610be5beda5a5447b8bd8f3e",
+  "archive_sha256": "ed9a773555359d6fe26d85fc7b59ad30cc72f2ca522739178bb7583d8231dd89",
+  "manifest_files_verified": 98,
+  "scope": "Native host installation and loading; no model calls",
+  "codex": {
+    "version": "codex-cli 0.156.1",
+    "initial_version": "0.1.0-rc.1",
+    "installed": true,
+    "enabled": true,
+    "native_skills": [
+      "nexkit:nexkit-deliver",
+      "nexkit:nexkit-howto",
+      "nexkit:nexkit-init",
+      "nexkit:nexkit-knowledge",
+      "nexkit:nexkit-release",
+      "nexkit:nexkit-request",
+      "nexkit:nexkit-review",
+      "nexkit:nexkit-status",
+      "nexkit:nexkit-task"
+    ],
+    "installed_skill_hashes_match_archive": true,
+    "reinstall_passed": true,
+    "local_cachebuster_version": "0.1.0-rc.1+codex.20260926025943",
+    "local_update_passed": true,
+    "updated_skills_loaded_in_fresh_process": true,
+    "uninstall_passed": true,
+    "no_plugin_skills_after_uninstall": true,
+    "consumer_and_package_preserved": true
+  },
+  "claude_code": {
+    "version": "2.1.282",
+    "manifest_validation_passed": true,
+    "inline_plugin_loading_passed": true,
+    "discovered_skills": [
+      "nexkit-deliver",
+      "nexkit-howto",
+      "nexkit-init",
+      "nexkit-knowledge",
+      "nexkit-release",
+      "nexkit-request",
+      "nexkit-review",
+      "nexkit-status",
+      "nexkit-task"
+    ]
+  },
+  "isolation": {
+    "fresh_container": true,
+    "host_credentials_mounted": false,
+    "personal_settings_changed": false,
+    "model_network_available_during_checks": false,
+    "package_changed_on_host": false
+  },
+  "live_model_calls": 0,
+  "live_consumer_changes": false,
+  "published": false,
+  "limitations": [
+    "No authenticated interactive task or model invocation was started in this check.",
+    "Claude Code was loaded with the documented --plugin-dir option; no persistent marketplace install was attempted in this run.",
+    "Cachebuster update changed only the disposable extracted Codex manifest, not the distributed archive.",
+    "Codex 0.157.0 is on the VPS PATH; this check deliberately used the pinned 0.156.1 from the isolated image."
+  ],
+  "commands": [
+    "codex plugin marketplace add <extracted-package>",
+    "codex plugin add nexkit@personal",
+    "codex plugin list --marketplace personal --json",
+    "codex app-server --stdio: initialize, initialized, skills/list(cwds, forceReload)",
+    "plugin-creator update_plugin_cachebuster.py <disposable-plugin-copy>",
+    "codex plugin add nexkit@personal",
+    "codex plugin remove nexkit@personal",
+    "claude plugin validate <extracted-package>/plugins/nexkit",
+    "claude --plugin-dir <extracted-package>/plugins/nexkit plugin details nexkit"
+  ]
+}

@@ -27,9 +27,10 @@ Code, use `claude --plugin-dir /absolute/path/to/nexkit/plugins/nexkit`.
 The [host guide](docs/compatibility.md) distinguishes installation, interactive
 use and CI engines. The NexKit installer can also place portable project skills.
 
-Use `$nexkit-init` in Codex or `/nexkit:nexkit-init` in the Claude Code plugin,
-then describe your project goals and constraints. The agent surveys the actual
-repository, presents the setup decisions and verifies the accepted configuration.
+In Codex, type `$` and select `nexkit:nexkit-init` from the installed plugin;
+project skills installed directly use `$nexkit-init`. In the Claude Code plugin,
+use `/nexkit:nexkit-init`. Describe your project goals and constraints. The agent
+surveys the repository, presents the setup decisions and verifies the accepted configuration.
 See [configuration and permissions](docs/configuration.md).
 
 Setup defines the project's pipelines and native workflow structure. Compose

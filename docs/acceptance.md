@@ -13,11 +13,20 @@ simulated GitHub boundaries are distinct from live integration.
 | D — success | Simulated controller issue→approval→review/checks→merge; the kit's own CI ran on GitHub | Real human approval and autonomous consumer merge without release |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
 | F — blocked | Live unapproved delivery stopped before any model call or PR; tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Remaining failure injection in the live environment and final guards |
-| G — durability | Live repeated intake reused the issue and clarification result without another model reservation; native Codex reinstall/update/uninstall preserved the package and consumer knowledge; local tests cover installer ownership, cancel/resume, orphan/merged recovery and base ancestry | Live concurrent work, interruptions, cancellation and insufficient consumer permissions |
+| G — durability | Live overlapping intake events for an existing request were serialized, reused one issue and made no additional model reservation; native Codex reinstall/update/uninstall preserved the package and consumer knowledge; local tests cover installer ownership, cancel/resume, orphan/merged recovery and base ancestry | Concurrent first creation and approved delivery, interruptions, cancellation and insufficient consumer permissions |
 | H — release | Tests cover wrong approver/drift/changed bytes or tags/cancel/deadline/retry/lost upload response with original artifact recovery | Real human release decision and publication within the authorized test scope |
 
 ## Executed verification
 
+- [Concurrent intake check, September 26](validation/actions-concurrent-intake-2026-09-26.json):
+  two native dispatches for the existing Node request entered GitHub's queue
+  together. Their receiver jobs ran serially, both reused issue #1, and both
+  resulting clarification runs skipped model execution. Persistent state and
+  revision, specification/edit time, comments and main were unchanged; no PR
+  appeared and the model reservation count stayed at one. A native rerun of the
+  first intake (attempt 2) and its follow-up clarification also passed with the
+  same observations. This proves overlapping intake and retry for an existing
+  unapproved request, not concurrent first creation or approved agent delivery.
 - [Native host check, September 26](validation/host-install-2026-09-26.json): the
   clean archive at `37ffbb9` passed installation/loading on Codex 0.156.1 and
   Claude Code 2.1.282 with all nine skills. Codex discovery verified installed

@@ -1,0 +1,223 @@
+{
+  "recorded_at": "2026-09-26T03:14:11.326685+00:00",
+  "scope": "Two overlapping native intake events for the same existing unapproved request",
+  "repository": "phuongnse/nexkit-validation-new",
+  "issue": 1,
+  "kit_ref": "3963c1c10b07ff4bfc8d08c735d713141710497f",
+  "main": "515d19cbd7011e7c48d1635e8fbd9e03168d7296",
+  "dispatches": [
+    {
+      "index": 1,
+      "sent_at": "2026-09-26T03:12:08.415682+00:00"
+    },
+    {
+      "index": 2,
+      "sent_at": "2026-09-26T03:12:10.548990+00:00"
+    }
+  ],
+  "runs": [
+    {
+      "id": 36214087530,
+      "path": ".github/workflows/nexkit-clarify.yml",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-26T03:12:32Z",
+      "updated_at": "2026-09-26T03:12:54Z",
+      "url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36214087530/attempts/1",
+      "jobs": [
+        {
+          "name": "nexkit / prepare",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T03:12:39Z",
+          "completed_at": "2026-09-26T03:12:53Z"
+        },
+        {
+          "name": "nexkit / clarify",
+          "status": "completed",
+          "conclusion": "skipped",
+          "started_at": "2026-09-26T03:12:53Z",
+          "completed_at": "2026-09-26T03:12:53Z"
+        },
+        {
+          "name": "nexkit / publish",
+          "status": "completed",
+          "conclusion": "skipped",
+          "started_at": "2026-09-26T03:12:53Z",
+          "completed_at": "2026-09-26T03:12:53Z"
+        },
+        {
+          "name": "nexkit / interrupted",
+          "status": "completed",
+          "conclusion": "skipped",
+          "started_at": "2026-09-26T03:12:54Z",
+          "completed_at": "2026-09-26T03:12:53Z"
+        }
+      ],
+      "attempt": 1
+    },
+    {
+      "id": 36214078173,
+      "path": ".github/workflows/nexkit-clarify.yml",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-26T03:12:22Z",
+      "updated_at": "2026-09-26T03:12:37Z",
+      "url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36214078173/attempts/1",
+      "jobs": [
+        {
+          "name": "nexkit / prepare",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T03:12:26Z",
+          "completed_at": "2026-09-26T03:12:36Z"
+        },
+        {
+          "name": "nexkit / clarify",
+          "status": "completed",
+          "conclusion": "skipped",
+          "started_at": "2026-09-26T03:12:36Z",
+          "completed_at": "2026-09-26T03:12:36Z"
+        },
+        {
+          "name": "nexkit / publish",
+          "status": "completed",
+          "conclusion": "skipped",
+          "started_at": "2026-09-26T03:12:37Z",
+          "completed_at": "2026-09-26T03:12:36Z"
+        },
+        {
+          "name": "nexkit / interrupted",
+          "status": "completed",
+          "conclusion": "skipped",
+          "started_at": "2026-09-26T03:12:37Z",
+          "completed_at": "2026-09-26T03:12:36Z"
+        }
+      ],
+      "attempt": 1
+    },
+    {
+      "id": 36214069769,
+      "path": ".github/workflows/nexkit-intake.yml",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-26T03:12:11Z",
+      "updated_at": "2026-09-26T03:12:35Z",
+      "url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36214069769/attempts/1",
+      "jobs": [
+        {
+          "name": "nexkit / receive",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T03:12:27Z",
+          "completed_at": "2026-09-26T03:12:34Z"
+        }
+      ],
+      "attempt": 1
+    },
+    {
+      "id": 36214068361,
+      "path": ".github/workflows/nexkit-intake.yml",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-26T03:12:10Z",
+      "updated_at": "2026-09-26T03:12:25Z",
+      "url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36214068361/attempts/1",
+      "jobs": [
+        {
+          "name": "nexkit / receive",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-09-26T03:12:14Z",
+          "completed_at": "2026-09-26T03:12:24Z"
+        }
+      ],
+      "attempt": 1
+    }
+  ],
+  "observations": {
+    "both_intakes_queued_together": true,
+    "intake_run_lifetimes_overlapped": true,
+    "receiver_jobs_serialized": true,
+    "matching_work_items": [
+      1
+    ],
+    "agent_calls_before": 1,
+    "agent_calls_after": 1,
+    "clarification_calls_after": 1,
+    "persistent_state_and_revision_unchanged": true,
+    "spec_and_edit_timestamp_unchanged": true,
+    "comments_unchanged": true,
+    "main_unchanged": true,
+    "pull_requests": [],
+    "additional_model_calls": 0
+  },
+  "limitations": [
+    "This exercises an existing unapproved request; first-time issue creation under competing events was not exercised.",
+    "No approved implementation, independent review, repair, merge or release is demonstrated.",
+    "The live consumer remains on its accepted legacy kit pin; this does not establish schema2 Actions delivery."
+  ],
+  "retry": {
+    "requested_at": "2026-09-26T03:15:18.400468+00:00",
+    "runs": [
+      {
+        "id": 36214244927,
+        "attempt": 1,
+        "path": ".github/workflows/nexkit-clarify.yml",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36214244927/attempts/1",
+        "jobs": [
+          {
+            "name": "nexkit / prepare",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-09-26T03:15:35Z",
+            "completed_at": "2026-09-26T03:15:45Z"
+          },
+          {
+            "name": "nexkit / clarify",
+            "status": "completed",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T03:15:45Z",
+            "completed_at": "2026-09-26T03:15:45Z"
+          },
+          {
+            "name": "nexkit / publish",
+            "status": "completed",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T03:15:45Z",
+            "completed_at": "2026-09-26T03:15:45Z"
+          },
+          {
+            "name": "nexkit / interrupted",
+            "status": "completed",
+            "conclusion": "skipped",
+            "started_at": "2026-09-26T03:15:45Z",
+            "completed_at": "2026-09-26T03:15:45Z"
+          }
+        ]
+      },
+      {
+        "id": 36214068361,
+        "attempt": 2,
+        "path": ".github/workflows/nexkit-intake.yml",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36214068361/attempts/2",
+        "jobs": [
+          {
+            "name": "nexkit / receive",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-09-26T03:15:23Z",
+            "completed_at": "2026-09-26T03:15:32Z"
+          }
+        ]
+      }
+    ],
+    "same_issue_spec_comments_main_state_and_revision": true,
+    "agent_calls_after": 1,
+    "additional_model_calls": 0
+  }
+}

@@ -1,6 +1,6 @@
 ---
 name: nexkit-request
-description: Record and clarify a new NexKit feature or bug requirement in a GitHub issue and request the authorized human's specification approval.
+description: Record and clarify a new NexKit feature or bug requirement in a GitHub issue and request the authorized collaborator's specification approval.
 ---
 
 # NexKit request
@@ -15,17 +15,19 @@ implement before approval. Actions continues clarification even if this host clo
 
 When the supplied context has `stage: requirement`, intake already created the
 issue. Read this skill, the actual repository, relevant accepted knowledge,
-the original request, current spec, previous reply and authorized human answers. Do not run
+the original request, current spec, previous reply and authorized collaborator answers. Do not run
 intake, post comments, edit files or call any GitHub write command. Return the
 schema's `specification`, a direct English `reply` to the latest comment,
 concrete `questions` and `ready_for_approval`, with tool evidence in `commands`.
+Address the reader directly in issue replies. Use phrases such as "Ready for
+approval" and "Please review"; do not refer to the reader as "the human".
 Answer explanations and tradeoffs in `reply`; keep unchanged specification text
 exactly as supplied when the user has not changed the requirement. The controller
 posts the reply, questions and exact approval command on the issue. Use the configured project
 decisions; ask only missing product decisions. Never invent answers. A completed
 clarification may still have questions: use `status: done`, readiness false and
 nonempty questions. Readiness is true only when questions are empty. End the run;
-the next authorized human answer triggers another time-bounded Actions session.
+the next authorized collaborator answer triggers another time-bounded Actions session.
 Conversation count limits are configured separately when selected during setup.
 
 ## In an interactive host
@@ -41,14 +43,14 @@ Keep the authoritative specification in that issue. Use `nexkit spec <issue>
 --body-file <spec-file>`; it preserves the original request and returns the exact
 approval command. Put progress in comments, never in the requirement body.
 
-Ask an authorized human to review the current issue and post the returned
-`/nexkit approve <hash>` command. Never post it yourself, impersonate the human,
+Ask an authorized collaborator to review the current issue and post the returned
+`/nexkit approve <hash>` command. Never post it yourself, impersonate the approver,
 replace it with a label, or consider a comment from an unauthorized actor valid.
 GitHub Actions checks authority and starts delivery from the approval event.
 The local host need not stay open. After requirement approval, delivery follows
 the project's accepted policy. Additional task, plan, test or PR decisions apply
 only when configured during setup; show the actual gate and exact requested
-human action. See `docs/stage-approvals.md` for optional approval behavior.
+approval action. See `docs/stage-approvals.md` for optional approval behavior.
 
 If delivery needs different product scope, update the issue and obtain a new
 requirement approval. Do not edit requirements merely to fit completed code.

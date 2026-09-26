@@ -350,7 +350,7 @@ def main():
     parser.add_argument("--context", default="/tmp/nexkit/context.json")
     parser.add_argument("--out", default="/tmp/nexkit/result.json")
     parser.add_argument("--kit-ref")
-    parser.add_argument("--gate", help="Accepted human approval identifier")
+    parser.add_argument("--gate", help="Accepted stage approval identifier")
     parser.add_argument("--individual-agents", action="store_true")
     parser.add_argument(
         "--invocation", help="Accepted invocation identifier selected by native YAML"

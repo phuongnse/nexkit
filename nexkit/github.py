@@ -6,7 +6,7 @@ import base64
 import json
 from urllib.parse import quote
 
-from .common import Blocked, canonical, run
+from .common import Blocked, canonical, run, short_summary
 from .policy import REPO, STATE_BRANCH, require
 
 
@@ -18,6 +18,42 @@ def run_attempt(gh, run_key):
         "Unrecognized Actions run attempt",
     )
     return gh.api(f"{gh.root}/actions/runs/{parts[0]}/attempts/{parts[1]}")
+
+
+def state_message(number, value):
+    """Describe recorded progress in the commit linked from the issue timeline."""
+    status = value.get("status", "")
+    summary = value.get("activity", "")
+    if not status:
+        phase = value.get("clarification", {})
+        summary = phase.get("activity") or {
+            "clarifying": "Clarifying requirement",
+            "publishing": "Updating requirement",
+            "awaiting_answers": "Awaiting requirement answers",
+            "awaiting_approval": "Ready for requirement approval",
+        }.get(phase.get("status"), "Preparing work")
+        if phase.get("status") in {"waiting", "blocked"}:
+            label = (
+                "Requirement blocked: " if phase["status"] == "blocked" else "Requirement paused: "
+            )
+            summary = label + phase.get("reason", "Awaiting input")
+    if status in {"blocked", "retry"}:
+        summary = (
+            "Blocked: " if status == "blocked" else "Preparing another attempt: "
+        ) + value.get("reason", "See the work item for details")
+    elif status == "merged":
+        summary = f"Merged PR #{value['pr']}" if value.get("pr") else "Merged"
+    elif status == "waiting_for_approval":
+        gate = value.get("approval_wait", {}).get("gate")
+        definition = value.get("stage_approvals", {}).get(gate, {}).get("definition", {})
+        summary = (
+            f"Awaiting PR review: #{value['pr']}"
+            if definition.get("mode") == "pull_request"
+            else "Awaiting stage approval"
+        )
+    elif value.get("approval_repair", {}).get("status") == "pending":
+        summary = "Review follow-up pending: " + value["approval_repair"]["feedback"]
+    return f"NexKit #{int(number)}: {short_summary(summary or status.replace('_', ' ') or 'Preparing work')}"
 
 
 class GitHub:
@@ -152,7 +188,7 @@ class GitHub:
         require(len(encoded) <= 900000, "Delivery state exceeds the bounded GitHub state size")
         self.ensure_state_branch()
         data = {
-            "message": f"NexKit #{int(number)}: {value.get('status', 'updated')}",
+            "message": state_message(number, value),
             "content": base64.b64encode(encoded).decode(),
             "branch": STATE_BRANCH,
         }
@@ -226,7 +262,7 @@ class GitHub:
                     and (
                         not expected_reviews or params.get("dismiss_stale_reviews_on_push") is True
                     ),
-                    "PR review rules differ from the accepted human approval policy",
+                    "PR review rules differ from the accepted approval policy",
                 )
             require(
                 rule.get("type")
@@ -239,7 +275,7 @@ class GitHub:
         )
         require(
             not expected_reviews or review_rule,
-            "The configured human PR gate needs a native review ruleset",
+            "The configured PR approval gate needs a native review ruleset",
         )
         return rules
 
@@ -276,7 +312,7 @@ class GitHub:
             and not reviews.get("require_code_owner_reviews")
             and not reviews.get("require_last_push_approval")
             and (not count or reviews.get("dismiss_stale_reviews") is True),
-            "Classic branch protection differs from the accepted human review policy",
+            "Classic branch protection differs from the accepted PR review policy",
         )
         require(
             not (classic.get("required_conversation_resolution") or {}).get("enabled"),

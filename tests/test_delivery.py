@@ -5,8 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from nexkit.common import Blocked
+from nexkit.common import Blocked, short_summary
 from nexkit.delivery import failed, finish, prepare, publish
+from nexkit.github import GitHub, state_message
 from tests.support import FakeGitHub, agent, approve, reviewed, verified
 
 
@@ -29,7 +30,10 @@ class DeliveryTests(unittest.TestCase):
     def test_success_pipeline_merges_without_releasing(self):
         context = prepare(self.gh, 1, "100.1", "a" * 40)
         self.assertTrue(context["ready"])
+        self.assertIn("Handle negative integers", self.gh.state["activity"])
         candidate = publish(self.gh, context, bundle(context))
+        self.assertIn("Verifying PR", self.gh.state["activity"])
+        self.assertIn("signed integer sum", self.gh.state["activity"])
         key = candidate["candidate"]
         state = finish(self.gh, candidate, verified(key), reviewed(key))
         self.assertEqual(state["status"], "merged")
@@ -37,6 +41,61 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(self.gh.dispatches, [])
         self.assertFalse(prepare(self.gh, 1, "101.1", "a" * 40)["ready"])
         self.assertEqual(len(self.gh.merges), 1)
+
+    def test_timeline_commit_includes_bounded_activity_without_changing_state(self):
+        gh = GitHub("owner/project")
+        state = {
+            "status": "verifying",
+            "activity": "Verifying PR #6:\nAdded HEAD /health support\x00",
+        }
+        with (
+            patch.object(gh, "ensure_state_branch"),
+            patch.object(gh, "api", return_value={"content": {"sha": "a" * 40}}) as api,
+        ):
+            gh.save_state(5, state, "b" * 40)
+        data = api.call_args.args[2]
+        self.assertEqual(data["message"], "NexKit #5: Verifying PR #6: Added HEAD /health support")
+        self.assertEqual(data["sha"], "b" * 40)
+        self.assertEqual(data["branch"], "nexkit/state")
+        self.assertIn("\n", state["activity"])
+        self.assertEqual(len(short_summary("a" * 1000)), 240)
+        self.assertEqual(short_summary("abcdef", 2), "ab")
+
+    def test_timeline_prioritizes_wait_block_and_merge_over_old_activity(self):
+        state = {
+            "activity": "Implementing an earlier change",
+            "status": "waiting_for_approval",
+            "pr": 6,
+            "approval_wait": {"gate": "review"},
+            "stage_approvals": {"review": {"definition": {"mode": "pull_request"}}},
+        }
+        self.assertEqual(state_message(5, state), "NexKit #5: Awaiting PR review: #6")
+        state.update(status="blocked", reason="Candidate changed")
+        self.assertEqual(state_message(5, state), "NexKit #5: Blocked: Candidate changed")
+        state.update(status="merged")
+        self.assertEqual(state_message(5, state), "NexKit #5: Merged PR #6")
+
+    def test_failed_and_legacy_clarification_progress_remain_accurate(self):
+        state = {
+            "clarification": {
+                "status": "blocked",
+                "reason": "Agent job failed",
+                "activity": "Clarifying requirement: Add HEAD /health",
+            }
+        }
+        self.assertEqual(
+            state_message(5, state), "NexKit #5: Requirement blocked: Agent job failed"
+        )
+        for phase, label in (
+            ("clarifying", "Clarifying requirement"),
+            ("publishing", "Updating requirement"),
+            ("awaiting_answers", "Awaiting requirement answers"),
+            ("awaiting_approval", "Ready for requirement approval"),
+        ):
+            with self.subTest(phase=phase):
+                self.assertEqual(
+                    state_message(5, {"clarification": {"status": phase}}), f"NexKit #5: {label}"
+                )
 
     def test_repair_consumes_feedback_and_rechecks_new_candidate(self):
         first = prepare(self.gh, 1, "100.1", "a" * 40)

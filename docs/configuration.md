@@ -16,10 +16,12 @@ are only needed for integrations that use them, such as clarification. See the
 [invocation reference](agent-invocations.md); `doctor` reports resolved values
 and checks all selected self-hosted runner labels.
 
-Optional pipeline `approvals` configure human decisions at selected boundaries
+Optional pipeline `approvals` configure approval steps at selected boundaries
 of composed delivery. Choose the subject, reviewers, quorum, waiting limit,
 rejection behavior and exact continuation workflow during setup. See
 [stage approvals](stage-approvals.md) for the configuration and native event wiring.
+Reviewer selection can use current repository permissions or an explicit login
+list. Both the required count and waiting window belong to the consumer config.
 
 | Field | Required decision |
 |---|---|
@@ -93,7 +95,7 @@ An administrator must inspect and accept the setup:
 - An active ruleset requires exactly `NexKit verification` and `NexKit review`,
   bound to the GitHub Actions App, with strict up-to-date checks.
 - There are no blanket bypasses, required deployments or unsupported merge queues.
-  Native human PR reviews match the accepted [approval policy](stage-approvals.md):
+  Native PR reviews match the accepted [approval policy](stage-approvals.md):
   zero by default, or the configured count with stale-review dismissal. Inspect
   classic protection and inherited rules too; unintegrated additional gates block setup.
 - Job tokens can write the `nexkit/state` and delivery branches.
@@ -172,11 +174,11 @@ New setup can give requirement conversation its own limits:
 }
 ```
 
-Each authorized human comment can trigger a time-bounded clarification call.
+Each authorized collaborator comment can trigger a time-bounded clarification call.
 Omitting `max_calls`, or setting it to `null`, allows further conversation without
 a total call-count cap. Set a positive integer to cap the total clarification
 calls for a work item. An unchanged successful input does not call the model
-again; failed input requires a new human comment or a fresh `/nexkit resume`
+again; failed input requires a new collaborator comment or a fresh `/nexkit resume`
 comment before another reservation. Bot responses never trigger more agent calls.
 
 With this separate configuration, `limits.agent_calls` covers implementation and
@@ -196,4 +198,4 @@ raise an existing project's allowance. `doctor` reports the effective mode.
 
 Clarification uses the `implement` model. These are invocation/time bounds, not
 measured tokens or a provider spending cap. An uncapped conversation still uses
-the configured account's allowance when an authorized human submits new input.
+the configured account's allowance when an authorized collaborator submits new input.

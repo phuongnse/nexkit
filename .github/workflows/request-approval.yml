@@ -99,7 +99,7 @@ jobs:
           artifact-ids: ${{ inputs.review_artifact_id }}
           path: /tmp/nexkit/review
       - id: request
-        name: Freeze exact results and end execution while awaiting a human decision
+        name: Save results for approval and end execution
         env:
           GH_TOKEN: ${{ github.token }}
           PYTHONPATH: ${{ github.workspace }}/kit

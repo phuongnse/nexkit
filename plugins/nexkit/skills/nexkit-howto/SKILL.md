@@ -1,6 +1,6 @@
 ---
 name: nexkit-howto
-description: Explain installation, setup, the first requirement, configured human decisions and where to find NexKit results in the current host.
+description: Explain installation, setup, the first requirement, configured approval steps and where to find NexKit results in the current host.
 ---
 
 # NexKit howto
@@ -13,11 +13,13 @@ consult the kit compatibility matrix. Skills installed locally do not install th
 
 Explain the relevant next user action in the current project: setup, submit a
 requirement, review its issue, inspect delivery, or select a release candidate.
-The default human decisions are requirement approval and release. Read the
+Address the reader directly; name actions such as "requirement approval" and
+"PR review" instead of labeling them "human" steps.
+The default approval steps are requirement approval and release. Read the
 project's actual approval settings before explaining any additional stage gates.
 After requirement approval, Actions drives implementation, independent review,
 verification, repairs and merge without the local session, pausing at configured
-human decisions. For issue gates, show the bot's exact command for that checkpoint;
+approval steps. For issue gates, show the bot's exact command for that checkpoint;
 for PR gates, explain GitHub Approve and Request changes. Ordinary "approved"
 comments do not grant authority. Waiting retains no runner or model call.
 See `docs/stage-approvals.md` for the configuration and event flow. Setup permissions and

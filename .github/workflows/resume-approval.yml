@@ -16,7 +16,7 @@ on:
         required: true
     outputs:
       ready:
-        description: An exact human approval authorized this continuation
+        description: An approval for this exact result authorized continuation
         value: ${{ jobs.resume.outputs.ready }}
       status:
         description: Approved, waiting, retry, blocked or idle
@@ -69,7 +69,7 @@ jobs:
           path: kit
           persist-credentials: false
       - id: resume
-        name: Re-read human authority and claim one continuation without another agent reservation
+        name: Recheck approval and resume the remaining work
         env:
           GH_TOKEN: ${{ github.token }}
           PYTHONPATH: ${{ github.workspace }}/kit

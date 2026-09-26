@@ -159,9 +159,9 @@ def parser():
     for name in ("approval", "status", "cancel", "resume"):
         c = sub.add_parser(name)
         c.add_argument("issue", type=int)
-    sub.add_parser("howto", help="Show human decisions and the configured workflow")
+    sub.add_parser("howto", help="Show approval steps and the configured workflow")
     sub.add_parser("knowledge", help="List this consumer's accepted knowledge sources")
-    c = sub.add_parser("release", help="Prepare a specific unreleased candidate for human decision")
+    c = sub.add_parser("release", help="Prepare a specific unreleased candidate for approval")
     c.add_argument("--commit", required=True)
     c.add_argument("--version", required=True)
     c.add_argument("--notes-file", required=True)
@@ -178,7 +178,7 @@ def main(argv=None):
                 "nexkit-request creates an issue and clarifies its spec.\n"
                 "Requirement approval: post the exact /nexkit approve HASH comment on that issue.\n"
                 "Actions implements, verifies, independently reviews, repairs and merges within limits.\n"
-                "Additional human approvals may be configured for selected stages during setup.\n"
+                "Additional stage approvals may be configured for selected stages during setup.\n"
                 "Track the issue, PR and Actions; nexkit status/cancel/resume manage interrupted work.\n"
                 "Release decision: post /nexkit release HASH on a prepared release candidate issue.\n"
                 "A merge never starts a release. Credentials and policy changes belong to setup."
@@ -239,7 +239,7 @@ def main(argv=None):
                     result = {
                         "issue": issue["html_url"],
                         "human_comment": f"/nexkit {verb} {spec_hash(issue)}",
-                        "note": "The authorized human posts this on GitHub; agents cannot approve requirements.",
+                        "note": "An authorized collaborator posts this on GitHub; agents cannot approve requirements.",
                     }
                 elif args.command == "status":
                     state, _ = gh.get_state(args.issue)
@@ -279,7 +279,7 @@ def main(argv=None):
                                     {
                                         "queued": True,
                                         "gate": gate["gate"],
-                                        "note": "An existing valid human approval is still required.",
+                                        "note": "An existing valid approval is still required.",
                                     },
                                     indent=2,
                                 )

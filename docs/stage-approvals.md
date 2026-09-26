@@ -1,7 +1,7 @@
-# Optional human approvals
+# Optional stage approvals
 
-Requirement and release approvals remain the default human decisions. During
-setup, a consumer may add human decisions at selected boundaries in its composed
+Requirement and release approvals remain the default decisions. During
+setup, a consumer may add approval steps at selected boundaries in its composed
 delivery workflow. Native YAML owns the job order and the jobs that run after a
 decision. NexKit checks authorization and preserves the exact result being reviewed.
 
@@ -14,7 +14,7 @@ requirement approval, independent AI reviewer, required checks or release decisi
 flowchart LR
   S[Stage completes] --> C[Persist exact checkpoint]
   C --> W[Workflow ends while waiting]
-  W --> E[Human issue command or PR review]
+  W --> E[Issue approval command or PR review]
   E --> V[Continuation rechecks authority]
   V -->|Approved| N[Remaining configured jobs]
   V -->|Changes requested| R[Bounded repair or blocked outcome]
@@ -23,15 +23,15 @@ flowchart LR
 ## Configure a gate
 
 Add `approvals` beside a pipeline's `invocations`. Identifiers are chosen by the
-consumer. This example adds a human review before merge:
+consumer. This example adds a PR review before merge:
 
 ```json
 {
-  "human-review": {
+  "pr-review": {
     "enabled": true,
     "mode": "pull_request",
     "subject": "candidate",
-    "reviewers": ["project-owner"],
+    "reviewers": "repository",
     "minimum": 1,
     "wait_minutes": 2880,
     "on_rejection": "retry",
@@ -46,9 +46,9 @@ consumer. This example adds a human review before merge:
 | `enabled` | Explicit boolean. A disabled gate forwards its context without waiting. |
 | `mode` | `issue` uses exact commands on the requirement issue; `pull_request` uses native GitHub reviews. |
 | `subject` | `stage` freezes the supplied stage results and source; `candidate` also requires the current PR head/base. PR mode requires `candidate`. |
-| `reviewers` | Explicit, unique human GitHub logins. They must currently have write, maintain or admin access. |
-| `minimum` | Number of distinct configured humans required, from 1 to the reviewer count. |
-| `wait_minutes` | Human continuation window, from 1 to 43,200 minutes, separate from execution time. |
+| `reviewers` | `"repository"` accepts any collaborator with current write, maintain or admin access. An explicit list such as `["alice", "bob"]` restricts approvals to those logins, who must also retain that access. Bot reviews do not count. |
+| `minimum` | Positive number of distinct eligible reviewers required. For a login list, it cannot exceed that list's size. Native PR rules must use the same count. |
+| `wait_minutes` | Configurable continuation window, from 1 to 43,200 minutes, separate from execution time. The example's 2,880 minutes means 48 hours; it is not a fixed default. |
 | `on_rejection` | `retry` passes feedback into a bounded delivery round; `block` stops until deliberate recovery. |
 | `continuation` | Exact default-branch workflow included in the accepted control-file manifest. |
 | `protects` | Capabilities requiring this decision: `invocation:<id>`, `check:<name>`, `publish` or `merge`. |
@@ -57,6 +57,13 @@ All enabled gates must have valid decisions before merge, even if YAML accidenta
 skips them. A protected capability also checks its own prerequisite before it can
 run. An early stage decision remains attached to that original stage result after
 an authorized edit. A candidate decision becomes stale when its candidate changes.
+
+Use `reviewers: "repository"` for ordinary team review. Membership is checked again
+when a decision is consumed and before merge, so new collaborators can review and
+removed permissions invalidate an earlier approval. A repeated approval from the
+same person counts once. Existing login-list configurations keep their original
+meaning until setup explicitly changes them. The setting applies to issue-mode
+approvals as well as PR reviews.
 
 For example, a planning decision can use `mode: issue`, `subject: stage` and
 `protects: ["invocation:change-source"]`. Place the request after a completed
@@ -97,7 +104,7 @@ agent; a finish-only continuation and the event relay do not need a VPS runner.
 Use the same native `nexkit-work` concurrency group for the originating delivery
 and continuation workflows. End the originating run after `waiting_for_approval`;
 its finalizer recognizes that state and does not dispatch repair for skipped jobs.
-The queue and runner are then available while the human considers the result.
+The queue and runner are then available while reviewers consider the result.
 The PR relay does not join that queue; its dispatched continuation does.
 
 A continuation contains only the remaining jobs. It does not call `prepare-work`
@@ -112,12 +119,12 @@ inputs. The controller retrieves and revalidates the frozen checks and review.
 For a continuation that runs more jobs, pass their actual results and current
 artifact IDs; do not treat resume success as success of those later jobs.
 
-On `retry`, the declared delivery entrypoint receives the human feedback through
+On `retry`, the declared delivery entrypoint receives the reviewer feedback through
 its normal context. `prepare-work.outputs.repair` identifies a repair round, so
 consumer YAML can select its intended repair path. NexKit does not interpret a
 stage graph or jump to job names. Attempts and model-call reservations still count.
 
-## Human experience
+## Reviewing and approving
 
 Issue-mode notices include the reviewed source, checkpoint hash, stage summaries
 and links to the originating run and persisted evidence. Approve with the exact
@@ -134,7 +141,7 @@ To request changes, post:
 Explain the requested changes here.
 ```
 
-Each command is an unedited comment from a configured human. Free-form comments
+Each command is an unedited comment from an eligible reviewer. Free-form comments
 are not decisions. The issue continuation should listen for created, edited and
 deleted comments and issue edits/closure. One person's repeated comments do not
 satisfy a multi-person quorum.
@@ -151,15 +158,15 @@ gain permission to trigger NexKit repair merely by being outside the configured 
 
 PR-mode gates require native rules on the target branch with the accepted review
 count and stale-review dismissal, in addition to current NexKit verification and
-AI-review checks. No bypass is granted. Configured login/quorum validation is also
+AI-review checks. No bypass is granted. Configured reviewer/quorum validation is also
 performed by NexKit; GitHub's numeric review-count rule does not itself enforce
-those exact identities. Unintegrated code-owner, last-push, required-thread and
+an optional login list. Unintegrated code-owner, last-push, required-thread and
 additional required-reviewer rules are rejected during setup rather than silently
 removed. Inspect classic protection and inherited rules as well.
 
 Branch rules affect every delivery pipeline targeting that branch. Such pipelines
 must accept the same native required-review count; setup rejects a mix that would
-silently add a human gate to an ungated pipeline. Issue-mode stage decisions can
+silently add an approval gate to an ungated pipeline. Issue-mode stage decisions can
 vary by pipeline without changing the native PR review count.
 
 Policy and workflow edits are administrative setup changes. Preview the config,
@@ -174,14 +181,14 @@ when the full state is at most 750,000 UTF-8 bytes. Source bundles remain in the
 publication flow; they are not stored to hold an uncommitted editor open.
 All state writes are capped at 900,000 bytes to stay within the Contents reader's
 size contract. GitHub documents its [Contents response limits](https://docs.github.com/en/rest/repos/contents#get-repository-content).
-Decision receipts retain reviewer identities and verdicts; human
+Decision receipts retain reviewer identities and verdicts; reviewer
 repair feedback is bounded to 24,000 UTF-8 bytes rather than copied per reviewer.
 Checkpoint evidence survives the original seven-day Actions artifact retention.
 A resumed run uploads a fresh context artifact. Full state and evidence are visible
 to repository readers, so they must contain no secrets or sensitive runtime data.
 
 Waiting makes no CLI reservation and retains no runner or native workflow run.
-Only recorded human-wait intervals are excluded from the delivery elapsed budget;
+Only recorded approval-wait intervals are excluded from the delivery elapsed budget;
 active execution, calls and rounds retain their original accounting. Expiry is
 checked on the next event/resume, and `nexkit status` reports an expired pending
 wait. No background timer is installed to update an idle issue at the exact expiry.

@@ -28,11 +28,15 @@ consumer workflow before claiming live readiness.
 Keep existing schema-1 consumers on their accepted settings until migration is
 explicitly part of the proposed setup change.
 
-Choose additional human decisions with the consumer. Requirement and release
+Choose additional approval steps with the consumer. Requirement and release
 remain the defaults; do not impose a review or planning gate on every project.
 Read `docs/stage-approvals.md` for optional approvals in composed delivery. Record
 each gate's subject, authorized reviewers, quorum, waiting limit, rejection policy
-and protected capabilities. Wire request and continuation jobs in accepted native
+and protected capabilities. For team review, use `reviewers: "repository"` so any
+collaborator with current write, maintain or admin access can count toward the
+quorum. Use a login list only when the project requests named reviewers. Choose
+`wait_minutes` with the project; example values are not mandatory defaults.
+Wire request and continuation jobs in accepted native
 YAML; a JSON entry alone does not create the event path. End the originating run
 while waiting, preserve its evidence and budgets, and use exact issue commands or
 native PR reviews. Include continuation paths in runner admission only if they
@@ -50,7 +54,7 @@ runner admission, isolation and login before claiming the pipeline is ready.
 Prepare a project JSON using the installed NexKit `docs/configuration.md` field
 reference. Its decisions, commands and knowledge paths belong to this consumer.
 For new setup, record `clarification.agent_minutes` and the owner's optional
-`clarification.max_calls`. An omitted or null `max_calls` allows further human
+`clarification.max_calls`. An omitted or null `max_calls` allows further collaborator
 comments without a conversation-count cap; delivery retains its own limits.
 Existing configurations without `clarification` keep their shared budget until
 the owner accepts a migration. Show the effective accounting in the setup proposal.

@@ -10,7 +10,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import PurePosixPath
 
-from .common import Blocked, digest
+from .common import Blocked, digest, short_summary
 from .pipelines import IDENTIFIER, composed_agents, load_run_config
 from .policy import (
     agent_result,
@@ -265,6 +265,10 @@ def prepare(gh, context, name, input_reports=(), check_reports=()):
         state.update(
             agent_calls=state.get("agent_calls", 0) + 1, delivery_calls=delivery_calls(state) + 1
         )
+        action = {"deliver": "Implementing", "review": "Reviewing", "task": "Working on"}[
+            definition["contract"]
+        ]
+        state["activity"] = short_summary(f"{action} {name}: {context['issue']['title']}")
         try:
             gh.save_state(context["issue"]["number"], state, revision)
             return prepared
@@ -352,5 +356,9 @@ def _record(gh, context, report):
         require(saved.get("result") == digest(report), "Invocation result changed after recording")
         return {"recorded": True, "duplicate": True}
     saved.update(status="completed", result=digest(report))
+    outcome = report["result"].get("verdict") or report["result"].get("status", "completed")
+    state["activity"] = short_summary(
+        f"{context['invocation']['id']} ({outcome}): {report['result']['summary']}"
+    )
     gh.save_state(context["issue"]["number"], state, revision)
     return {"recorded": True, "duplicate": False}

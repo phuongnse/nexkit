@@ -1,5 +1,5 @@
 # Metadata relay only: never load PR source or select the credential runner here.
-name: Forward human PR review events
+name: Forward PR review events
 on:
   pull_request_review:
     types: [submitted, edited, dismissed]

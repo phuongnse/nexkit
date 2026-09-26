@@ -19,7 +19,7 @@ on:
         description: Immutable artifact ID for this delivery round
         value: ${{ jobs.prepare.outputs.context_artifact_id }}
       repair:
-        description: Whether this bounded round carries prior failure or human feedback
+        description: Whether this bounded round carries prior failure or reviewer feedback
         value: ${{ jobs.prepare.outputs.repair }}
 permissions: {}
 jobs:

@@ -36,8 +36,9 @@ See [configuration and permissions](docs/configuration.md).
 Setup defines the project's pipelines and native workflow structure. Compose
 the [reusable capabilities](docs/agent-invocations.md) with consumer-chosen tasks,
 skills, models and limits; pipeline count and job order are not fixed by NexKit.
-Setup can also add [human approval at selected stages](docs/stage-approvals.md),
-including native PR review, with project-specific reviewers and rejection behavior.
+Setup can also add [approval at selected stages](docs/stage-approvals.md),
+including native PR review, with a configurable approval count, review window and
+reviewer selection by repository permissions or an explicit login list.
 
 Each project selects its own runner and authentication. API mode uses an Actions
 secret; [subscription mode](docs/self-hosted.md) uses a dedicated runner and an
@@ -51,17 +52,17 @@ continues requirement clarification after the local host closes. The CLI returns
 an intake key and an `intake-status` command to find the issue. Ask questions or
 give feedback in ordinary issue comments; the bot replies and updates the
 requirement when needed, within the conversation settings selected during setup.
-An authorized human reviews the specification and posts the exact
+An authorized collaborator reviews the specification and posts the exact
 `/nexkit approve <hash>` comment shown by `nexkit approval <issue>`.
 The hash identifies the requirement content; it is not the issue number.
 
 Track the issue, PR and Actions with `nexkit status <issue>`. Use `nexkit cancel
 <issue>` or `nexkit resume <issue>` when needed. Delivery runs without your local
-terminal. By default, requirement and release are the human decisions. Additional
+terminal. By default, requirement and release are the approval steps. Additional
 stage approvals follow the policy chosen during project setup.
 
 To prepare a release, run `nexkit release --commit <sha> --version <version>
---notes-file <file>`. An authorized human chooses that candidate and posts
+--notes-file <file>`. An authorized maintainer chooses that candidate and posts
 `/nexkit release <hash>` on its issue. Merging never starts a release.
 
 [Architecture](docs/architecture.md) · [Verification and recovery](docs/operations.md) ·

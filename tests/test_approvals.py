@@ -17,6 +17,7 @@ from nexkit.checks import combine_checks
 from nexkit.ci import main, prepare_check
 from nexkit.common import Blocked, canonical, read_json, write_json
 from nexkit.delivery import failed, finish, prepare, publish, revalidate
+from nexkit.github import state_message
 from nexkit.pipelines import effective_config
 from nexkit.policy import config, now
 from tests.test_invocations import InvocationGitHub, check_reports, report
@@ -132,8 +133,14 @@ class ApprovalTests(unittest.TestCase):
         invocations.record(self.gh, editor, output)
         return publish(self.gh, editor, output)
 
-    def pr_checkpoint(self):
+    def pr_checkpoint(self, *, reviewers=None, minimum=1):
+        os.environ["GITHUB_WORKFLOW_REF"] = (
+            "owner/project/.github/workflows/changes.yml@refs/heads/main"
+        )
+        os.environ["GITHUB_RUN_ID"] = "100"
         self.gh = ApprovalGitHub("pull_request", subject="candidate", protects=["merge"])
+        definition = self.gh.cfg["pipelines"]["maintenance"]["approvals"]["owner-check"]
+        definition.update(reviewers=["owner"] if reviewers is None else reviewers, minimum=minimum)
         self.context = self.start()
         candidate = self.candidate()
         checks = check_reports(candidate)
@@ -171,6 +178,10 @@ class ApprovalTests(unittest.TestCase):
             ("wait_minutes", 0),
             ("enabled", "yes"),
             ("reviewers", ["owner", "OWNER"]),
+            ("reviewers", "anyone"),
+            ("reviewers", []),
+            ("reviewers", None),
+            ("reviewers", {"permission": "write"}),
             ("protects", ["invocation:missing"]),
             ("continuation", ".github/workflows/unaccepted.yml"),
         ):
@@ -180,6 +191,124 @@ class ApprovalTests(unittest.TestCase):
                 with self.assertRaises(Blocked):
                     config(value)
         self.assertEqual(approvals.pr_review_count(effective_config(original, "maintenance")), 0)
+
+    def test_repository_reviewers_require_positive_integer_quorum(self):
+        definition = self.gh.cfg["pipelines"]["maintenance"]["approvals"]["owner-check"]
+        definition["reviewers"] = "repository"
+        for minimum in (0, -1, True, 1.5, "2"):
+            with self.subTest(minimum=minimum):
+                definition["minimum"] = minimum
+                with self.assertRaises(Blocked):
+                    config(self.gh.cfg)
+        definition["minimum"] = 2
+        config(self.gh.cfg)
+
+    def test_repository_issue_approval_accepts_distinct_current_collaborators(self):
+        definition = self.gh.cfg["pipelines"]["maintenance"]["approvals"]["owner-check"]
+        definition.update(reviewers="repository", minimum=2)
+        self.context = self.start("101.1")
+        self.request()
+        self.command(login="second")
+        self.command(login="second", number=2001)
+        self.assertFalse(self.resume()["ready"])
+        self.command(number=2002)
+        resumed = self.resume()["context"]
+        with patch.object(
+            self.gh, "permission", side_effect=lambda login: "admin" if login == "owner" else "read"
+        ):
+            with self.assertRaisesRegex(Blocked, "revoked"):
+                revalidate(self.gh, resumed)
+
+    def test_repository_pr_quorum_excludes_bots_readers_and_duplicate_reviewers(self):
+        candidate, checks, reviewed = self.pr_checkpoint(reviewers="repository", minimum=2)
+        self.review(candidate, login="outsider", number=20)
+        bot = self.review(candidate, login="owner", number=21)
+        bot["user"]["type"] = "Bot"
+        self.assertFalse(self.resume()["ready"])
+        self.review(candidate, login="second", number=22)
+        self.review(candidate, login="second", number=23)
+        self.assertFalse(self.resume()["ready"])
+        self.review(candidate, login="owner", number=24)
+        result = self.resume()
+        self.assertTrue(result["ready"])
+        outcome = finish(self.gh, result["context"], combine_checks(candidate, checks), reviewed)
+        self.assertEqual(outcome["status"], "merged")
+        self.assertEqual(self.gh.state["agent_calls"], 2)
+
+    def test_repository_policy_accepts_new_collaborators_by_current_permission(self):
+        for permission in ("write", "maintain", "admin"):
+            with self.subTest(permission=permission):
+                candidate, _, _ = self.pr_checkpoint(reviewers="repository")
+                self.review(candidate, login="new-member")
+                self.assertFalse(self.resume()["ready"])
+                with patch.object(
+                    self.gh,
+                    "permission",
+                    side_effect=lambda login: permission if login == "new-member" else "admin",
+                ):
+                    resumed = self.resume()["context"]
+                with self.assertRaisesRegex(Blocked, "revoked"):
+                    revalidate(self.gh, resumed)
+
+    def test_repository_policy_retains_exact_head_time_and_dismissal_rules(self):
+        for change in ("stale", "early", "dismissed"):
+            with self.subTest(change=change):
+                candidate, _, _ = self.pr_checkpoint(reviewers="repository")
+                review = self.review(candidate, login="second")
+                if change == "stale":
+                    review["commit_id"] = "f" * 40
+                elif change == "early":
+                    review["submitted_at"] = "2020-01-01T00:00:00Z"
+                else:
+                    self.review(candidate, status="DISMISSED", login="second", number=21)
+                self.assertFalse(self.resume()["ready"])
+                self.assertFalse(self.gh.merges)
+
+    def test_repository_reviewer_changes_trigger_bounded_repair(self):
+        candidate, _, _ = self.pr_checkpoint(reviewers="repository")
+        self.review(candidate, status="CHANGES_REQUESTED", login="second")
+        result = self.resume()
+        self.assertEqual(result["status"], "retry")
+        self.assertIn("Check the boundary case", self.gh.state["feedback"]["reason"])
+        self.assertEqual(self.gh.state["agent_calls"], 2)
+        self.assertEqual(len(self.gh.dispatches), 1)
+        self.assertFalse(self.gh.merges)
+
+    def test_interrupted_review_followup_does_not_repeat_previous_ai_approval(self):
+        candidate, _, _ = self.pr_checkpoint(reviewers="repository")
+        self.review(candidate, status="CHANGES_REQUESTED", login="second")
+        with patch("nexkit.approvals.repair", side_effect=Blocked("Interrupted before repair")):
+            with self.assertRaisesRegex(Blocked, "Interrupted before repair"):
+                self.resume()
+        self.assertEqual(self.gh.state["approval_repair"]["status"], "pending")
+        message = state_message(1, self.gh.state)
+        self.assertIn("Review follow-up pending", message)
+        self.assertIn("Check the boundary case", message)
+        self.assertNotIn("audit (approve)", message)
+
+    def test_approved_continuation_reports_the_next_step(self):
+        candidate, _, _ = self.pr_checkpoint(reviewers="repository")
+        self.review(candidate, login="second")
+        self.assertTrue(self.resume()["ready"])
+        self.assertIn("Approval received; continuing", state_message(1, self.gh.state))
+
+    def test_named_reviewers_remain_an_explicit_restriction(self):
+        candidate, _, _ = self.pr_checkpoint()
+        self.review(candidate, login="second")
+        self.assertFalse(self.resume()["ready"])
+        self.review(candidate, login="owner", number=21)
+        self.assertTrue(self.resume()["ready"])
+
+    def test_review_notice_has_concise_result_and_configured_policy(self):
+        self.pr_checkpoint(reviewers="repository")
+        body = self.gh.messages[-1]
+        self.assertIn("Awaiting PR review", body)
+        self.assertIn("Implemented and checked signed integer sum", body)
+        self.assertIn("Required checks passed", body)
+        self.assertIn("1 from repository collaborators with write, maintain or admin access", body)
+        self.assertIn("24 hours (1,440 minutes), configured for this project", body)
+        self.assertIn("<summary>Approval details</summary>", body)
+        self.assertNotIn("human", body)
 
     def test_skipping_the_gate_cannot_reserve_its_protected_agent(self):
         with self.assertRaisesRegex(Blocked, "required before"):

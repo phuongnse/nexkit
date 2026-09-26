@@ -331,3 +331,16 @@ checkpoint, wait start, budgets, candidate, main and issue comments were unchang
 PR #6 remained open with no human reviews; no continuation dispatch appeared.
 The record correctly claims duplicate admission only. No discrepancy was found,
 and the independent audit performed no dispatch, test rerun or model invocation.
+
+## Repository reviewers and progress messages — 2026-09-26
+
+The independent reviewer examined repository-permission eligibility, optional
+named lists, quorum and notice claims. It identified two inaccurate progress
+cases: failed clarification retained its earlier activity, and interrupted
+review follow-up retained the preceding AI approval summary. Both were corrected
+and covered by regressions. The reviewer reran 100 focused local tests and
+additional mocked permission-revocation checks, then reported no remaining
+blocker. Revoked access prevents merge without another model reservation or
+retry dispatch; bot exclusion and exact-candidate checks remain enforced.
+This review used local/static and simulated GitHub evidence only. It performed
+no GitHub access, consumer update, model invocation or approval.

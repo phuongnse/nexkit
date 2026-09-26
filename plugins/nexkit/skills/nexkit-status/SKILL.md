@@ -18,7 +18,7 @@ remain in effect across retries. Do not reset counters or create another issue
 to evade exhausted limits. A limit change is an administrative setup decision.
 
 For a pending stage approval, identify the gate, exact checkpoint, configured
-reviewers, deadline and requested human action. Check `approval_wait_expired`;
+reviewers, deadline and requested approval action. Check `approval_wait_expired`;
 expiry is observed on the next event or inspection, without a background timer.
 Resuming wakes the recorded continuation or interrupted repair dispatch; it does
 not approve anything. Preserve request-changes feedback after a blocked decision.

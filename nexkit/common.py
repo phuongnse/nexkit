@@ -18,6 +18,14 @@ def canonical(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def short_summary(value, limit=240):
+    """Keep progress text on one bounded, printable line."""
+    text = " ".join("".join(c if c.isprintable() else " " for c in value).split())
+    if len(text) <= limit:
+        return text
+    return text[:limit] if limit < 4 else text[: limit - 3].rstrip() + "..."
+
+
 def digest(value) -> str:
     return hashlib.sha256(canonical(value).encode()).hexdigest()
 

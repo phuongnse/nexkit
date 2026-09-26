@@ -1,5 +1,5 @@
 # Connection example only. Replace the zero SHA and all consumer identifiers.
-name: Consumer delivery with optional human review
+name: Consumer delivery with optional PR review
 on:
   issue_comment:
     types: [created, edited]
@@ -87,7 +87,7 @@ jobs:
       check_artifact_ids: ${{ needs.unit.outputs.report_artifact_id }},${{ needs.journey.outputs.report_artifact_id }}
     secrets:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  human-review:
+  pr-review:
     needs: [publish, unit, journey, evaluate]
     if: needs.evaluate.outputs.status == 'done'
     uses: phuongnse/nexkit/.github/workflows/request-approval.yml@0000000000000000000000000000000000000000
@@ -95,11 +95,11 @@ jobs:
       kit_repository: phuongnse/nexkit
       kit_ref: '0000000000000000000000000000000000000000'
       context_artifact_id: ${{ needs.publish.outputs.candidate_artifact_id }}
-      gate: human-review
+      gate: pr-review
       check_artifact_ids: ${{ needs.unit.outputs.report_artifact_id }},${{ needs.journey.outputs.report_artifact_id }}
       review_artifact_id: ${{ needs.evaluate.outputs.report_artifact_id }}
   complete:
-    needs: [admit, investigate, change, publish, unit, journey, evaluate, human-review]
+    needs: [admit, investigate, change, publish, unit, journey, evaluate, pr-review]
     if: always() && needs.admit.outputs.ready == 'true'
     uses: phuongnse/nexkit/.github/workflows/finish-work.yml@0000000000000000000000000000000000000000
     with:
@@ -109,4 +109,4 @@ jobs:
       candidate_artifact_id: ${{ needs.publish.outputs.candidate_artifact_id }}
       check_artifact_ids: ${{ needs.unit.outputs.report_artifact_id }},${{ needs.journey.outputs.report_artifact_id }}
       review_artifact_id: ${{ needs.evaluate.outputs.report_artifact_id }}
-      jobs_succeeded: ${{ needs.human-review.result == 'success' && needs.human-review.outputs.ready == 'true' && needs.investigate.result == 'success' && needs.investigate.outputs.status == 'done' && needs.change.result == 'success' && needs.change.outputs.status == 'done' && needs.publish.result == 'success' && needs.unit.result == 'success' && needs.journey.result == 'success' && needs.evaluate.result == 'success' && needs.evaluate.outputs.status == 'done' }}
+      jobs_succeeded: ${{ needs.pr-review.result == 'success' && needs.pr-review.outputs.ready == 'true' && needs.investigate.result == 'success' && needs.investigate.outputs.status == 'done' && needs.change.result == 'success' && needs.change.outputs.status == 'done' && needs.publish.result == 'success' && needs.unit.result == 'success' && needs.journey.result == 'success' && needs.evaluate.result == 'success' && needs.evaluate.outputs.status == 'done' }}

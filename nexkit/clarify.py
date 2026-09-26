@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 
 from .cli import SPEC_MARKER, set_spec
-from .common import Blocked, canonical, digest, read_json, write_json
+from .common import Blocked, canonical, digest, read_json, short_summary, write_json
 from .pipelines import bind_state, current_config, issue_pipeline, load_run_config
 from .policy import (
     agent_result,
@@ -124,6 +124,7 @@ def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
             )
         phase.update(
             status="clarifying",
+            activity=short_summary(f"Clarifying requirement: {issue['title']}"),
             run_key=run_key,
             calls=phase.get("calls", 0) + 1,
             reserved_minutes=phase.get("reserved_minutes", 0) + minutes,
@@ -265,7 +266,7 @@ def publish(gh, context, bundle):
         )
     else:
         message += (
-            "The specification is ready for human review. An authorized human may approve this exact version with:\n\n`"
+            "**Ready for requirement approval.** A collaborator with write, maintain or admin access can approve this version by commenting:\n\n`"
             + "/nexkit approve "
             + target
             + "`\n"
@@ -274,6 +275,7 @@ def publish(gh, context, bundle):
     # response or completion write can then be recovered without another CLI.
     phase.update(
         status="publishing",
+        activity=short_summary(f"Updating requirement: {reply}"),
         publication={
             "source": spec_hash(context["issue"]),
             "target": target,
@@ -348,6 +350,14 @@ def complete_publication(gh, number, cfg, state, revision):
     phase.pop("publication")
     phase.update(
         status="awaiting_answers" if pending["questions"] else "awaiting_approval",
+        activity=short_summary(
+            (
+                "Awaiting requirement answers: "
+                if pending["questions"]
+                else "Ready for requirement approval: "
+            )
+            + pending["reply"]
+        ),
         **{key: pending[key] for key in ("questions", "reply", "completed_input", "message")},
     )
     revision = gh.save_state(number, state, revision)

@@ -7,7 +7,7 @@ import re
 from copy import deepcopy
 from datetime import datetime
 
-from .common import Blocked, canonical, digest
+from .common import Blocked, canonical, digest, short_summary
 from .github import run_attempt
 from .pipelines import IDENTIFIER, composed_agents, load_run_config, workflow_path
 from .policy import human, merge_gate, now, positive, require
@@ -16,7 +16,7 @@ from .policy import human, merge_gate, now, positive, require
 class ApprovalRequired(Blocked):
     def __init__(self, gate, capability):
         self.gate, self.capability = gate, capability
-        super().__init__(f"Human approval {gate} is required before {capability}")
+        super().__init__(f"Approval {gate} is required before {capability}")
 
 
 def record_denial(gh, context, denial):
@@ -111,16 +111,24 @@ def validate_definitions(cfg):
         )
         reviewers = value["reviewers"]
         require(
-            isinstance(reviewers, list)
-            and reviewers
-            and all(
-                isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", x)
-                for x in reviewers
-            )
-            and len({x.lower() for x in reviewers}) == len(reviewers),
-            "Declare unique authorized human GitHub logins for each approval",
+            reviewers == "repository"
+            or (
+                isinstance(reviewers, list)
+                and reviewers
+                and all(
+                    isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", x)
+                    for x in reviewers
+                )
+                and len({x.lower() for x in reviewers}) == len(reviewers)
+            ),
+            "Choose repository reviewers or a list of unique authorized GitHub logins",
         )
-        positive(value["minimum"], "approval.minimum", len(reviewers))
+        require(
+            type(value["minimum"]) is int and value["minimum"] > 0,
+            "approval.minimum must be a positive integer",
+        )
+        if reviewers != "repository":
+            positive(value["minimum"], "approval.minimum", len(reviewers))
         positive(value["wait_minutes"], "approval.wait_minutes", 43200)
         require(
             value["on_rejection"] in {"retry", "block"},
@@ -174,9 +182,11 @@ def pr_review_count(cfg):
 
 
 def _eligible(value, definition, gh):
-    return value.get("user", {}).get("login", "").lower() in {
-        name.lower() for name in definition["reviewers"]
-    } and human(value, gh.permission)
+    return (
+        definition["reviewers"] == "repository"
+        or value.get("user", {}).get("login", "").lower()
+        in {name.lower() for name in definition["reviewers"]}
+    ) and human(value, gh.permission)
 
 
 def decision(gh, record):
@@ -292,9 +302,7 @@ def _current_subject(gh, state, record):
     require(record["origin"] == state["run_key"], "Approval belongs to another delivery round")
     if record["definition"]["subject"] == "candidate":
         candidate = context.get("candidate")
-        require(
-            candidate and state.get("candidate") == candidate, "Human approval candidate is stale"
-        )
+        require(candidate and state.get("candidate") == candidate, "Approval candidate is stale")
         pr = gh.pull(context["pr"])
         require(
             pr["head"]["sha"] == candidate["head"]
@@ -304,7 +312,7 @@ def _current_subject(gh, state, record):
             and pr["base"]["ref"] == context["config"]["default_branch"]
             and pr["state"] == "open"
             and not pr.get("merged_at"),
-            "Human approval PR changed or is no longer open",
+            "Approval PR changed or is no longer open",
         )
 
 
@@ -353,18 +361,18 @@ def request(gh, context, gate, *, inputs=(), checks=(), review=None):
 
     state, revision = revalidate(gh, context)
     values = definitions(context["config"])
-    require(gate in values, "Unknown configured human approval")
+    require(gate in values, "Unknown configured approval")
     definition = values[gate]
     if not definition["enabled"]:
         return {"status": "disabled", "ready": True, "context": context}
-    require(not state.get("writer"), "Publish source changes before requesting human approval")
+    require(not state.get("writer"), "Publish source changes before requesting approval")
     require(
         not any(
             x.get("status") == "reserved"
             for key, x in state.get("invocations", {}).items()
             if key.startswith(context["run_key"] + "/")
         ),
-        "Complete active agent invocations before entering a human wait",
+        "Complete active agent invocations before awaiting approval",
     )
     require(
         gate not in state.get("stage_approvals", {}),
@@ -388,7 +396,7 @@ def request(gh, context, gate, *, inputs=(), checks=(), review=None):
     if definition["mode"] == "pull_request":
         require(
             verification and review,
-            "Human PR review follows current checks and independent AI review",
+            "PR review follows current checks and independent AI review",
         )
         merge_gate(context["candidate"], verification, review, context["config"])
         receipt = state["invocations"][context["run_key"] + "/" + review["invocation"]["id"]]
@@ -448,23 +456,42 @@ def notice(gh, state):
         if record["definition"]["subject"] == "candidate"
         else f"Stage result from source `{context['source']}`"
     )
-    body = f"{marker}\nNexKit is waiting for human approval of **{record['gate']}**.\n\n{subject}. Checkpoint: `{record['digest']}`.\n\n"
-    body += f"[Originating Actions run](https://github.com/{gh.repository}/actions/runs/{record['origin'].split('.')[0]}).\n\n"
-    remaining = 18000
+    is_pr = record["definition"]["mode"] == "pull_request"
+    heading = f"Awaiting PR review: #{context['pr']}" if is_pr else "Ready for stage approval"
+    body = f"{marker}\n**{heading}**\n\n"
+    summary = context.get("implementation", {}).get("summary") or context["issue"]["title"]
+    body += f"> {short_summary(summary, 400)}\n\n"
+    if is_pr:
+        body += "Required checks passed and the independent AI review approved this candidate.\n\n"
+    remaining = 800
     for report in record["data"]["inputs"]:
-        summary = report.get("result", {}).get("summary", "")[: min(6000, remaining)]
-        if not summary:
+        if remaining <= 0:
             break
+        summary = short_summary(report.get("result", {}).get("summary", ""), min(400, remaining))
+        if not summary:
+            continue
         remaining -= len(summary)
-        body += (
-            "Stage result:\n\n" + "\n".join("> " + line for line in summary.splitlines()) + "\n\n"
-        )
-    body += f"[Full persisted checkpoint](https://github.com/{gh.repository}/blob/nexkit/state/issues/{context['issue']['number']}.json).\n\n"
-    if record["definition"]["mode"] == "pull_request":
+        body += "> " + summary + "\n\n"
+    if is_pr:
         body += f"Review PR #{context['pr']} using GitHub **Approve** or **Request changes**.\n"
     else:
         body += f"Approve this exact result with:\n\n`/nexkit approve-stage {record['gate']} {record['digest']}`\n\nTo request changes, post `/nexkit request-changes {record['gate']} {record['digest']}` followed by a newline and your feedback.\n"
-    body += f"\nRequired approvals: {record['definition']['minimum']} from {', '.join(record['definition']['reviewers'])}. Wait limit: {record['definition']['wait_minutes']} minutes. No runner or model remains active while awaiting this decision."
+    definition = record["definition"]
+    reviewers = (
+        "repository collaborators with write, maintain or admin access"
+        if definition["reviewers"] == "repository"
+        else ", ".join(definition["reviewers"])
+    )
+    minutes = definition["wait_minutes"]
+    duration = (
+        f"{minutes // 60} hours ({minutes:,} minutes)"
+        if minutes % 60 == 0
+        else f"{minutes:,} minutes"
+    )
+    body += f"\nRequired approvals: {definition['minimum']} from {reviewers}. Review window: {duration}, configured for this project.\n"
+    body += f"\n<details>\n<summary>Approval details</summary>\n\nGate: `{record['gate']}`. {subject}. Checkpoint: `{record['digest']}`.\n\n"
+    body += f"[Originating Actions run](https://github.com/{gh.repository}/actions/runs/{record['origin'].split('.')[0]}).\n\n"
+    body += f"[Full persisted checkpoint](https://github.com/{gh.repository}/blob/nexkit/state/issues/{context['issue']['number']}.json).\n\n</details>"
     gh.comment(context["issue"]["number"], body)
 
 
@@ -490,7 +517,7 @@ def stop(gh, number, state, revision, reason):
 
 
 def human_feedback(gh, record, verdict):
-    feedback = "Human requested changes at " + record["gate"] + ":\n"
+    feedback = "Reviewer requested changes at " + record["gate"] + ":\n"
     feedback += "\n".join(x["user"] + ": " + x["feedback"] for x in verdict["reviews"])
     if record["definition"]["mode"] == "pull_request":
         for item in verdict["reviews"]:
@@ -608,7 +635,7 @@ def resume(gh, number, pipeline, gate, kit_ref, run_key):
             context["continuation"] = execution
         return {"ready": True, "status": "approved", "context": context}
     if state.get("status") != "waiting_for_approval" or state["approval_wait"]["gate"] != gate:
-        return {"ready": False, "reason": "No matching pending human approval"}
+        return {"ready": False, "reason": "No matching pending approval"}
     record = state["stage_approvals"][gate]
     context = record["data"]["context"]
     cfg = context["config"]
@@ -638,7 +665,9 @@ def resume(gh, number, pipeline, gate, kit_ref, run_key):
         waited = (
             datetime.fromisoformat(now()) - datetime.fromisoformat(record["opened_at"])
         ).total_seconds()
-        require(waited < record["definition"]["wait_minutes"] * 60, "Human approval wait expired")
+        require(
+            waited < record["definition"]["wait_minutes"] * 60, "Approval review window expired"
+        )
     except Blocked as exc:
         return stop(gh, number, state, revision, str(exc))
     verdict = decision(gh, record)
@@ -647,7 +676,7 @@ def resume(gh, number, pipeline, gate, kit_ref, run_key):
         return {
             "ready": False,
             "status": "waiting_for_approval",
-            "reason": verdict.get("reason", "Awaiting the configured human reviewers"),
+            "reason": verdict.get("reason", "Awaiting eligible reviewers"),
         }
     _end_wait(state)
     record = state["stage_approvals"][gate]
@@ -682,7 +711,13 @@ def resume(gh, number, pipeline, gate, kit_ref, run_key):
     }
     if state.get("approval_denial", {}).get("gate") == gate:
         state.pop("approval_denial")
-    state.update(approval_execution=execution, updated_at=now())
+    state.update(
+        approval_execution=execution,
+        activity=short_summary(
+            f"Approval received; continuing {gate}: {context['issue']['title']}"
+        ),
+        updated_at=now(),
+    )
     gh.save_state(number, state, revision)
     resumed = deepcopy(context)
     resumed["continuation"] = execution

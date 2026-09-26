@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .common import Blocked, canonical, digest
+from .common import Blocked, canonical, digest, short_summary
 from .github import run_attempt
 from .pipelines import (
     bind_state,
@@ -35,7 +35,7 @@ def authorized(gh, number, *, release=False):
     comments = gh.comments(number)
     require(
         control_command(comments, gh.permission) != "cancel",
-        "Delivery cancelled by an authorized human",
+        "Delivery cancelled by an authorized collaborator",
     )
     approved = approval(issue, comments, gh.permission, release=release)
     return issue, approved
@@ -50,14 +50,14 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None, individual_agents=Fa
         return {"ready": False, "reason": "Work item belongs to another pipeline"}
     state, revision = gh.get_state(number)
     if state.get("status") == "waiting_for_approval":
-        return {"ready": False, "reason": "Waiting for a configured human approval", "state": state}
+        return {"ready": False, "reason": "Awaiting a configured approval", "state": state}
     if state.get("human_stop"):
         from .approvals import human_stop_released
 
         if not human_stop_released(gh, state, number):
             return {
                 "ready": False,
-                "reason": "A fresh human /nexkit resume is required after the approval stop",
+                "reason": "An authorized collaborator must post /nexkit resume after the approval stop",
             }
         state.pop("human_stop")
     if state.get("status") == "merged":
@@ -111,6 +111,9 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None, individual_agents=Fa
         state["stage_approvals"] = {}
         state.update(
             status="implementing",
+            activity=short_summary(
+                f"Preparing delivery: {issue['title']} (attempt {state['attempts']}/{cfg['limits']['attempts']})"
+            ),
             writer=None,
             run_key=run_key,
             issue=int(number),
@@ -346,6 +349,7 @@ def publish(gh, context, bundle):
             state.update(candidate_run=context["run_key"], writer=None)
         state.update(
             status="verifying",
+            activity=short_summary(f"Verifying PR #{pr['number']}: {result['summary']}"),
             candidate=key,
             pr=pr["number"],
             last_bundle=fingerprint,
@@ -477,7 +481,7 @@ def failed(gh, context, reason, *, verification=None, review=None, dispatch_retr
         retry = False
         state["human_stop"] = now()
         reason = (
-            "Required human approval was not requested or completed: "
+            "Required approval was not requested or completed: "
             + canonical(state["approval_denial"])
             + "\n"
             + reason

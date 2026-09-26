@@ -1,6 +1,6 @@
 ---
 name: nexkit-release
-description: Prepare a specific NexKit release candidate and request the authorized human's release decision, separately from feature delivery.
+description: Prepare a specific NexKit release candidate and request the authorized maintainer's release decision, separately from feature delivery.
 ---
 
 # NexKit release
@@ -15,8 +15,8 @@ Run `nexkit release --commit <full-sha> --version <version> --notes-file <file>`
 This queues an immutable commit, version, notes and configuration digest for a
 release issue. Use the returned `nexkit intake-status --operation release --key
 <key>` to find it, then `nexkit approval <issue>` to get the exact command. Show
-the human that issue and its `/nexkit release <hash>` command.
-Only the authorized human posts that approval; never post it for them.
+the maintainer that issue and its `/nexkit release <hash>` command.
+Only the authorized maintainer posts that approval; never post it for them.
 
 After that single decision, Actions verifies/builds the approved source, records
 artifact hashes, creates the matching tag and publishes by the configured flow.

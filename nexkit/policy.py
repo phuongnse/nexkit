@@ -93,7 +93,7 @@ def approval(issue, comments, permission, *, release=False):
         and (not issue.get("last_edited_at") or c.get("created_at", "") > issue["last_edited_at"])
         and human(c, permission)
     ]
-    require(matches, f"Awaiting an authorized human comment: {command}")
+    require(matches, f"Awaiting an authorized approval comment: {command}")
     chosen = max(matches, key=lambda c: c["id"])
     # The exact current comment is re-fetched at every consequential boundary.
     return {

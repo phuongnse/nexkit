@@ -18,6 +18,13 @@ simulated GitHub boundaries are distinct from live integration.
 
 ## Executed verification
 
+- Repository reviewer selection and concise progress messages: 209 local tests
+  pass, including current write/maintain/admin eligibility, bot and duplicate
+  exclusion, permission revocation, exact-head/expiry behavior, legacy named
+  reviewers and accurate failure/continuation summaries. Independent review
+  verified both progress corrections and found no remaining blocker. These are
+  local tests with simulated GitHub boundaries, not a live policy migration or
+  approval. The pending Python candidate retains its accepted kit pin and policy.
 - [Duplicate delivery during human wait, September 26](validation/actions-stage-wait-retry-2026-09-26.json):
   two native delivery dispatches for issue #5 each completed preparation and
   skipped all eight downstream jobs because the configured human approval was

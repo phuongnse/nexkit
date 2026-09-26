@@ -1,5 +1,5 @@
 # Install at the exact continuation path accepted in the gate configuration.
-name: Continue after human review
+name: Continue after PR review
 on:
   issue_comment:
     types: [created, edited, deleted]
@@ -27,7 +27,7 @@ jobs:
       kit_repository: phuongnse/nexkit
       kit_ref: '0000000000000000000000000000000000000000'
       pipeline: maintenance
-      gate: human-review
+      gate: pr-review
   finish:
     needs: resume
     if: needs.resume.outputs.ready == 'true'

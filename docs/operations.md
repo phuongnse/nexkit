@@ -16,6 +16,13 @@ Consumer tests execute a real Node CLI and Python HTTP server in temporary
 repositories. They make no model calls and cannot prove a live GitHub workflow.
 Live acceptance records issue/PR/run links separately.
 
+The issue timeline links commits on `nexkit/state`. Their short messages describe
+the current requirement, agent task, published change or next approval step.
+Summaries come from recorded work and validated agent reports, with no extra
+model call. They are progress updates; passing checks and review decisions still
+come from the corresponding reports. Approval notices keep the requested action
+and a short result visible, with technical identifiers under "Approval details".
+
 `nexkit status <issue>` reads persistent GitHub state. `cancel` posts an
 authority-checked command; controllers prevent consequential operations that
 have not started when they revalidate. Already-created commits, PRs or tags are

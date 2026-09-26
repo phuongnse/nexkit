@@ -5,6 +5,11 @@ manifests. The setup skill combines this evidence with user decisions; the core
 has no language, framework or project-type presets. Consumer configuration lives
 in `.nexkit/project.json`.
 
+The table below documents schema 1 and the shared execution settings. Schema 2
+adds consumer-defined pipeline bindings and accepted native workflow bundles;
+see [workflow composition](workflow-composition.md) for its contract and current
+implementation limits.
+
 | Field | Required decision |
 |---|---|
 | `schema` | `1` |

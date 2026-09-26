@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from .common import Blocked, canonical, digest
+from .pipelines import (
+    bind_state,
+    current_config,
+    dispatch,
+    issue_pipeline,
+    load_run_config,
+)
 from .policy import (
     agent_result,
     approval,
     candidate_key,
-    config,
     control_command,
     delivery_budget_used,
     merge_gate,
@@ -32,11 +38,13 @@ def authorized(gh, number, *, release=False):
     return issue, approved
 
 
-def prepare(gh, number, run_key, kit_ref):
+def prepare(gh, number, run_key, kit_ref, *, pipeline=None):
     """Read live authority and reserve a bounded run before any model invocation."""
     issue = gh.issue(number)
     if (issue.get("body") or "").startswith(RELEASE_MARKER) or issue.get("pull_request"):
         return {"ready": False, "reason": "Not a delivery work item"}
+    if issue_pipeline(issue) != pipeline:
+        return {"ready": False, "reason": "Work item belongs to another pipeline"}
     state, revision = gh.get_state(number)
     if state.get("status") == "merged":
         return {"ready": False, "reason": "Already merged", "state": state}
@@ -53,7 +61,8 @@ def prepare(gh, number, run_key, kit_ref):
         issue, approved = authorized(gh, number)
         repository = gh.repo()
         base = gh.ref(repository["default_branch"])
-        cfg = config(gh.read_config(base))
+        cfg = load_run_config(gh, base, pipeline, "delivery")
+        bind_state(state, cfg)
         require(cfg["repository"] == gh.repository, "Configuration belongs to another repository")
         require(cfg["default_branch"] == repository["default_branch"], "Default branch changed")
         require(cfg["kit"]["ref"] == kit_ref, "Caller and configured kit revisions differ")
@@ -83,7 +92,8 @@ def prepare(gh, number, run_key, kit_ref):
         )
         revision = gh.save_state(number, state, revision)
         source = base
-        branch = f"nexkit/issue-{int(number)}"
+        prefix = f"nexkit/{pipeline}/" if pipeline else "nexkit/"
+        branch = f"{prefix}issue-{int(number)}"
         pr = gh.pull_for_branch(branch)
         if pr:
             require(pr["state"] == "open" and not pr.get("merged_at"), "Prior PR is no longer open")
@@ -124,8 +134,9 @@ def revalidate(gh, context):
         gh.ref(cfg["default_branch"]) == context["base"],
         "Base changed; rebuild and reverify integration",
     )
-    require(digest(gh.read_config(context["base"])) == digest(cfg), "Verification policy changed")
+    current_config(gh, context["base"], cfg)
     state, revision = gh.get_state(number)
+    bind_state(state, cfg)
     require(state.get("run_key") == context["run_key"], "Superseded delivery run")
     require(state.get("status") in ("implementing", "verifying"), "Delivery is no longer active")
     from datetime import datetime
@@ -140,7 +151,7 @@ def revalidate(gh, context):
     return state, revision
 
 
-def validate_changes(changes):
+def validate_changes(changes, cfg=None):
     require(
         isinstance(changes, list) and 0 < len(changes) <= 200,
         "No changes, or too many changed files",
@@ -150,7 +161,9 @@ def validate_changes(changes):
     for item in changes:
         require(isinstance(item, dict), "Invalid change record")
         path = item.get("path")
-        require(not protected_path(path), f"Administrative policy change requires setup: {path}")
+        require(
+            not protected_path(path, cfg), f"Administrative policy change requires setup: {path}"
+        )
         require(path not in names, "Duplicate changed path")
         names.add(path)
         require(
@@ -181,7 +194,7 @@ def publish(gh, context, bundle):
     )
     result = agent_result(bundle.get("result"), "deliver")
     require(result["status"] == "done", "Implementer is blocked: " + result["summary"])
-    entries = validate_changes(bundle.get("changes"))
+    entries = validate_changes(bundle.get("changes"), context["config"])
     base_commit = gh.api(f"{gh.root}/git/commits/{context['base']}")
     tree = gh.api(
         f"{gh.root}/git/trees", "POST", {"base_tree": base_commit["tree"]["sha"], "tree": entries}
@@ -348,5 +361,5 @@ def failed(gh, context, reason, *, verification=None, review=None):
         "See Actions logs and `nexkit status` for details.",
     )
     if retry:
-        gh.dispatch("nexkit-delivery.yml", cfg["default_branch"], {"issue": number})
+        dispatch(gh, cfg, "delivery", {"issue": number})
     return state

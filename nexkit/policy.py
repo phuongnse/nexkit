@@ -133,6 +133,10 @@ def command(value):
 
 
 def config(value):
+    if isinstance(value, dict) and value.get("schema") == 2:
+        from .pipelines import validate_project
+
+        return validate_project(value)
     require(isinstance(value, dict) and value.get("schema") == 1, "Expected project schema 1")
     require(REPO.fullmatch(value.get("repository", "")), "Set repository as owner/name")
     branch = value.get("default_branch", "")
@@ -146,13 +150,24 @@ def config(value):
         "Pin kit.repository and kit.ref to a full commit SHA",
     )
     require(VERSION.fullmatch(kit.get("version", "")), "Set the exact kit version")
+    scoped = "binding" in value
+    hooks = set(value["binding"]["entrypoints"]) if scoped else {"clarify", "delivery", "release"}
+    needs_agent = bool(hooks & {"clarify", "delivery"})
     engine = value.get("engine", {})
-    require(engine.get("name") == "codex", "This version provides the Codex CI engine")
-    require(VERSION.fullmatch(engine.get("version", "")), "Pin the Codex CLI version")
-    require(
-        authentication(value) in ("api-key", "chatgpt"), "Choose engine.auth: api-key or chatgpt"
+    require(isinstance(engine, dict), "Declare engine as an object")
+    if needs_agent or "engine" in value:
+        require(engine.get("name") == "codex", "This version provides the Codex CI engine")
+        require(VERSION.fullmatch(engine.get("version", "")), "Pin the Codex CLI version")
+        require(
+            authentication(value) in ("api-key", "chatgpt"),
+            "Choose engine.auth: api-key or chatgpt",
+        )
+    roles = (
+        {"implement", "review"} if "delivery" in hooks else {"implement"} if needs_agent else set()
     )
-    for role in ("implement", "review"):
+    models = value.get("models", {})
+    require(isinstance(models, dict), "Declare models as a mapping")
+    for role in roles | set(models):
         model = value.get("models", {}).get(role)
         require(
             isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9._:/-]{1,100}", model),
@@ -161,8 +176,8 @@ def config(value):
     if "reasoning_effort" in value:
         efforts = value["reasoning_effort"]
         require(
-            isinstance(efforts, dict) and set(efforts) == {"implement", "review"},
-            "reasoning_effort must declare implement and review",
+            isinstance(efforts, dict) and roles <= set(efforts) <= set(models),
+            "reasoning_effort must match configured model roles",
         )
         for role, effort in efforts.items():
             require(
@@ -170,13 +185,26 @@ def config(value):
                 f"Choose a supported reasoning_effort for {role}",
             )
     limits = value.get("limits", {})
+    require(isinstance(limits, dict), "Declare limits as an object")
+    if scoped:
+        require(
+            set(limits) <= {"attempts", "agent_calls", "minutes", "command_seconds"},
+            "Unknown execution limit",
+        )
+    needs_limits = (
+        not scoped
+        or bool(hooks & {"delivery", "release"})
+        or ("clarify" in hooks and "clarification" not in value)
+    )
     for key, maximum in (
         ("attempts", 20),
         ("agent_calls", 40),
         ("minutes", 1440),
         ("command_seconds", 3600),
     ):
-        positive(limits.get(key), f"limits.{key}", maximum)
+        required = needs_limits and (key != "agent_calls" or not scoped or needs_agent)
+        if required or key in limits:
+            positive(limits.get(key), f"limits.{key}", maximum)
     if "clarification" in value:
         clarification = value["clarification"]
         require(
@@ -190,16 +218,19 @@ def config(value):
             maximum is None or (type(maximum) is int and maximum > 0),
             "clarification.max_calls must be a positive integer or null for no conversation cap",
         )
-    require(
-        limits["agent_calls"] >= (2 if "clarification" in value else 3),
-        "Reserve at least implementation and independent review, plus clarification when shared",
-    )
+    if not scoped or "delivery" in hooks:
+        require(
+            limits["agent_calls"] >= (2 if "clarification" in value else 3),
+            "Reserve at least implementation and independent review, plus clarification when shared",
+        )
     environment = value.get("environment", {})
-    require(
-        environment.get("runner") == "ubuntu-24.04",
-        "Controller, verification and release jobs require GitHub-hosted ubuntu-24.04",
-    )
-    runner = agent_runner(value)
+    require(isinstance(environment, dict), "Declare environment as an object")
+    if needs_agent or needs_limits or environment:
+        require(
+            environment.get("runner") == "ubuntu-24.04",
+            "Controller, verification and release jobs require GitHub-hosted ubuntu-24.04",
+        )
+    runner = agent_runner(value) if environment else None
     if isinstance(runner, list):
         require(
             4 <= len(runner) <= 8
@@ -213,9 +244,9 @@ def config(value):
             len(set(runner)) == len(runner) and {"self-hosted", "linux", "x64"} < set(runner),
             "Use self-hosted, linux, x64 and at least one project-specific runner label",
         )
-    else:
+    elif environment:
         require(runner == "ubuntu-24.04", "Unsupported agent runner")
-    if authentication(value) == "chatgpt":
+    if engine and authentication(value) == "chatgpt":
         require(
             isinstance(runner, list),
             "ChatGPT CI authentication requires an explicitly configured self-hosted agent runner",
@@ -224,8 +255,11 @@ def config(value):
             engine["version"] == "0.156.1",
             "ChatGPT isolation is integrated with Codex 0.156.1; verify other versions before upgrading",
         )
-    require(isinstance(environment.get("setup"), list), "Declare environment.setup commands")
-    for item in environment["setup"]:
+    if environment:
+        require(isinstance(environment.get("setup"), list), "Declare environment.setup commands")
+        if environment["setup"]:
+            positive(limits.get("command_seconds"), "limits.command_seconds for setup", 3600)
+    for item in environment.get("setup", []):
         command(item)
     require(
         isinstance(value.get("decisions"), list) and value["decisions"],
@@ -235,11 +269,15 @@ def config(value):
     require(isinstance(value.get("knowledge"), list), "Declare knowledge source paths")
     for path in value["knowledge"]:
         safe_path(path)
-    checks = value.get("checks")
+    checks = value.get("checks", [] if scoped and not hooks & {"delivery", "release"} else None)
     require(isinstance(checks, list), "Declare checks, including explicit test and E2E commands")
+    if checks:
+        require(environment, "Checks need an explicit environment")
+        positive(limits.get("command_seconds"), "limits.command_seconds for checks", 3600)
     names = set()
     kinds = set()
     for check in checks:
+        require(isinstance(check, dict), "Declare each check as an object")
         name = check.get("name", "")
         require(
             re.fullmatch(r"[a-z][a-z0-9-]{0,47}", name) and name not in names,
@@ -250,7 +288,11 @@ def config(value):
         require(kind in ("build", "lint", "test", "e2e"), "Invalid check kind")
         kinds.add(kind)
         command(check.get("argv"))
-        positive(check.get("timeout_seconds"), "check.timeout_seconds", limits["command_seconds"])
+        positive(
+            check.get("timeout_seconds"),
+            "check.timeout_seconds",
+            limits.get("command_seconds", 3600),
+        )
         if kind in ("test", "e2e"):
             report = check.get("report", {})
             require(
@@ -260,12 +302,15 @@ def config(value):
             if report["format"] == "junit":
                 safe_path(report.get("path"))
     # A new repository may be configured before the app exists, but cannot be ready.
-    require(value.get("application") in ("present", "absent"), "Declare whether an app exists")
-    if value["application"] == "present":
+    if not scoped or hooks & {"delivery", "release"} or "application" in value:
+        require(value.get("application") in ("present", "absent"), "Declare whether an app exists")
+    if value.get("application") == "present" and (not scoped or hooks & {"delivery", "release"}):
         require({"test", "e2e"} <= kinds, "Application requires test and E2E commands")
     release = value.get("release", {})
-    require(type(release.get("enabled")) is bool, "Explicitly configure release.enabled")
-    if release["enabled"]:
+    require(isinstance(release, dict), "Declare release as an object")
+    if not scoped or "release" in hooks or release:
+        require(type(release.get("enabled")) is bool, "Explicitly configure release.enabled")
+    if release.get("enabled"):
         command(release.get("build"))
         require(
             isinstance(release.get("artifacts"), list) and release["artifacts"],
@@ -277,7 +322,8 @@ def config(value):
             re.fullmatch(r"[A-Za-z0-9._-]{0,30}", release.get("tag_prefix", "")) is not None,
             "Invalid tag prefix",
         )
-    require(value.get("merge_method") in ("squash", "merge", "rebase"), "Choose merge_method")
+    if not scoped or "delivery" in hooks or "merge_method" in value:
+        require(value.get("merge_method") in ("squash", "merge", "rebase"), "Choose merge_method")
     return value
 
 
@@ -313,10 +359,15 @@ def candidate_key(issue, cfg, base, head):
     }
 
 
-def protected_path(path):
+def protected_path(path, cfg=None):
     safe_path(path)
     return (
         path in PROTECTED
+        or path in (cfg or {}).get("binding", {}).get("files", {})
+        or (
+            "binding" in (cfg or {})
+            and path.startswith((".github/workflows/", ".github/actions/", ".nexkit/controls/"))
+        )
         or path.startswith(".github/workflows/nexkit")
         or path.startswith(".github/skills/nexkit-")
         or any(path == p or path.startswith(p + "/") for p in HOST_DIRS)

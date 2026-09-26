@@ -10,13 +10,14 @@ from pathlib import Path
 from . import __version__
 from .common import Blocked, canonical, consumer_path, digest, read_json, write_json
 from .github import GitHub
+from .pipelines import dispatch, effective_config, entrypoint, issue_pipeline, pipeline_id
 from .policy import config, require, spec_hash
 from .project import HOSTS, doctor, install, survey, uninstall
 
 SPEC_MARKER = "\n<!-- nexkit:spec -->\n"
 
 
-def create_request(gh, title, original, key=None):
+def create_request(gh, title, original, key=None, *, pipeline=None):
     """Called by the serialized intake workflow, never directly by user commands."""
     key = key or digest({"repository": gh.repository, "title": title, "request": original})
     require(
@@ -25,7 +26,11 @@ def create_request(gh, title, original, key=None):
         and key.replace("-", "").replace("_", "").isalnum(),
         "Idempotency key must be a short identifier",
     )
-    marker = f"<!-- nexkit:request:{key} -->"
+    from .pipelines import IDENTIFIER
+
+    require(pipeline is None or IDENTIFIER.fullmatch(pipeline), "Invalid request pipeline")
+    scoped_key = f"{pipeline}:{key}" if pipeline else key
+    marker = f"<!-- nexkit:request:{scoped_key} -->"
     issues = gh.api(f"{gh.root}/issues?state=all&per_page=100", pages=True)
     matches = [
         i
@@ -37,6 +42,7 @@ def create_request(gh, title, original, key=None):
         return {"created": False, "issue": matches[0]}
     body = (
         marker
+        + (f"\n<!-- nexkit:pipeline:{pipeline} -->" if pipeline else "")
         + "\n## Original request\n\n"
         + "\n".join("> " + line for line in original.splitlines())
     )
@@ -52,21 +58,21 @@ def submit(gh, cfg, operation, payload):
     require(operation in ("request", "release"), "Invalid intake operation")
     encoded = canonical(payload)
     require(len(encoded.encode()) <= 50000, "Intake payload exceeds 50 KB")
-    gh.dispatch(
-        "nexkit-intake.yml", cfg["default_branch"], {"operation": operation, "payload": encoded}
-    )
+    dispatch(gh, cfg, "intake", {"operation": operation, "payload": encoded})
     key = payload.get("key", digest(payload))
+    selection = f" --pipeline {pipeline_id(cfg)}" if pipeline_id(cfg) else ""
     return {
         "queued": True,
         "operation": operation,
         "key": key,
-        "lookup": f"nexkit intake-status --operation {operation} --key {key}",
-        "actions": f"https://github.com/{gh.repository}/actions/workflows/nexkit-intake.yml",
+        "lookup": f"nexkit{selection} intake-status --operation {operation} --key {key}",
+        "pipeline": pipeline_id(cfg),
+        "actions": f"https://github.com/{gh.repository}/actions/workflows/{Path(entrypoint(cfg, 'intake')).name}",
         "note": "The serialized GitHub intake run creates/reuses the issue; closing this terminal does not stop it.",
     }
 
 
-def intake_status(gh, operation, key):
+def intake_status(gh, operation, key, *, pipeline=None):
     from .release import RELEASE_MARKER, parse_candidate
 
     matches = []
@@ -75,10 +81,14 @@ def intake_status(gh, operation, key):
             continue
         body = issue.get("body") or ""
         if operation == "request":
-            matched = body.startswith(f"<!-- nexkit:request:{key} -->\n")
+            scoped_key = f"{pipeline}:{key}" if pipeline else key
+            matched = body.startswith(f"<!-- nexkit:request:{scoped_key} -->\n")
         elif body.startswith(RELEASE_MARKER):
             value = parse_candidate(issue)
-            matched = digest({k: value[k] for k in ("commit", "version", "notes")}) == key
+            matched = (
+                value.get("pipeline") == pipeline
+                and digest({k: value[k] for k in ("commit", "version", "notes")}) == key
+            )
         else:
             matched = False
         if matched:
@@ -87,7 +97,7 @@ def intake_status(gh, operation, key):
     return {
         "found": bool(matches),
         "issue": matches[0] if matches else None,
-        "actions": f"https://github.com/{gh.repository}/actions/workflows/nexkit-intake.yml",
+        "actions": f"https://github.com/{gh.repository}/actions",
     }
 
 
@@ -110,6 +120,7 @@ def parser():
     p = argparse.ArgumentParser(prog="nexkit", description="NexKit — Agents. Skills. One workflow.")
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--root", default=".", help="Consumer repository directory")
+    p.add_argument("--pipeline", help="Explicit consumer pipeline for schema 2 operations")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("survey", help="Read repository context for the setup agent")
     for name in ("setup", "install"):
@@ -118,6 +129,7 @@ def parser():
         c.add_argument("--host", action="append", choices=HOSTS, required=True)
         c.add_argument("--apply", action="store_true")
         c.add_argument("--online", action="store_true")
+        c.add_argument("--bundle", help="Directory containing the accepted workflow/control files")
     c = sub.add_parser("doctor", help="Verify local configuration and optional live setup")
     c.add_argument("--online", action="store_true")
     c.add_argument("--checks", action="store_true")
@@ -167,21 +179,36 @@ def main(argv=None):
             result = survey(root)
         elif args.command in ("setup", "install"):
             cfg = config(read_json(args.config))
-            result = install(root, cfg, args.host, apply=args.apply)
+            result = install(root, cfg, args.host, apply=args.apply, bundle=args.bundle)
             if args.apply and args.command == "setup":
                 write_json(consumer_path(root, ".nexkit/project.json"), cfg)
                 result["verification"] = doctor(root, cfg, online=args.online, checks=True)
         elif args.command == "uninstall":
             result = uninstall(root)
         else:
-            cfg = config(read_json(consumer_path(root, ".nexkit/project.json")))
+            project_cfg = config(read_json(consumer_path(root, ".nexkit/project.json")))
             if args.command == "doctor":
-                result = doctor(root, cfg, online=args.online, checks=args.checks)
-            elif args.command == "knowledge":
-                result = {"decisions": cfg["decisions"], "sources": cfg["knowledge"]}
+                result = doctor(root, project_cfg, online=args.online, checks=args.checks)
             else:
-                gh = GitHub(cfg["repository"])
-                if args.command == "request":
+                gh = GitHub(project_cfg["repository"])
+                selected = args.pipeline
+                if project_cfg["schema"] == 2 and hasattr(args, "issue"):
+                    issue = gh.issue(args.issue)
+                    if (issue.get("body") or "").startswith("<!-- nexkit:release -->"):
+                        from .release import parse_candidate
+
+                        recorded = parse_candidate(issue).get("pipeline")
+                    else:
+                        recorded = issue_pipeline(issue)
+                    require(
+                        selected is None or selected == recorded,
+                        "Work item belongs to another pipeline",
+                    )
+                    selected = recorded
+                cfg = effective_config(project_cfg, selected)
+                if args.command == "knowledge":
+                    result = {"decisions": cfg["decisions"], "sources": cfg["knowledge"]}
+                elif args.command == "request":
                     original = Path(args.body_file).read_text()
                     key = args.key or digest(
                         {"repository": gh.repository, "title": args.title, "request": original}
@@ -192,7 +219,7 @@ def main(argv=None):
                 elif args.command == "spec":
                     result = set_spec(gh, args.issue, Path(args.body_file).read_text())
                 elif args.command == "intake-status":
-                    result = intake_status(gh, args.operation, args.key)
+                    result = intake_status(gh, args.operation, args.key, pipeline=pipeline_id(cfg))
                 elif args.command == "approval":
                     issue = gh.issue(args.issue)
                     verb = (
@@ -227,9 +254,7 @@ def main(argv=None):
                             and not state.get("approval")
                         ):
                             workflow = "clarify"
-                        gh.dispatch(
-                            f"nexkit-{workflow}.yml", cfg["default_branch"], {"issue": args.issue}
-                        )
+                        dispatch(gh, cfg, workflow, {"issue": args.issue})
                 elif args.command == "release":
                     from .policy import SHA, VERSION
 

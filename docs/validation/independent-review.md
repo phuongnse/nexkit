@@ -92,3 +92,20 @@ One recovery boundary still needs follow-up: interruption after the issue body
 PATCH but before saving clarification completion. Recovery of a missing bot
 comment after completion has been saved is already covered. Neither test is a
 claim of a new live Actions run.
+
+## Consumer workflow bindings — 2026-09-26
+
+The independent session reviewed schema-2 settings resolution, workflow/control
+hashes, executing-workflow provenance, ownership/removal, pipeline-specific
+routing and schema-1 compatibility. It reproduced three defects: an unnecessary
+agent-call budget on release-only pipelines, missing preview entries for empty
+file additions/removals, and an explicitly null agent runner passing validation.
+All three were corrected and covered by regression tests.
+
+The final focused pass ran **82 local tests** and `git diff --check`, finding no
+remaining concrete blocker within this slice. A mocked release-only round trip
+also exercised preparation, one publication, idempotent retry and wrong-pipeline
+rejection. No live Actions runs, model calls, credentials, private logs or GitHub
+writes were involved in this review. This establishes scoped configuration,
+installation and controller behavior; it does not establish variable-stage agent
+delivery or live schema-2 acceptance.

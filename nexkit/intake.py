@@ -6,7 +6,8 @@ import os
 from .cli import create_request
 from .common import canonical, read_json
 from .github import GitHub
-from .policy import HUMAN_PERMISSIONS, config, require
+from .pipelines import dispatch, load_run_config, pipeline_id
+from .policy import HUMAN_PERMISSIONS, require
 from .release import candidate
 
 
@@ -25,15 +26,24 @@ def main():
     require(
         os.environ["GITHUB_REF"] == "refs/heads/" + branch, "Intake must run on the default branch"
     )
-    cfg = config(gh.read_config(gh.ref(branch)))
     inputs = event["inputs"]
+    base = gh.ref(branch)
+    selected = os.environ.get("NEXKIT_PIPELINE") or inputs.get("pipeline") or None
+    require(
+        not inputs.get("pipeline") or inputs["pipeline"] == selected,
+        "Dispatched pipeline differs from the caller binding",
+    )
+    cfg = load_run_config(gh, base, selected, "intake")
     payload = json.loads(inputs["payload"])
     require(isinstance(payload, dict), "Invalid intake payload")
     if inputs["operation"] == "request":
         require(set(payload) == {"title", "request", "key"}, "Invalid request fields")
         require(all(isinstance(v, str) and v for v in payload.values()), "Invalid request values")
-        result = create_request(gh, payload["title"], payload["request"], payload["key"])
-        gh.dispatch("nexkit-clarify.yml", branch, {"issue": result["issue"]["number"]})
+        result = create_request(
+            gh, payload["title"], payload["request"], payload["key"], pipeline=pipeline_id(cfg)
+        )
+        if "binding" not in cfg or "clarify" in cfg["binding"]["entrypoints"]:
+            dispatch(gh, cfg, "clarify", {"issue": result["issue"]["number"]})
     else:
         require(
             inputs["operation"] == "release" and set(payload) == {"commit", "version", "notes"},

@@ -21,7 +21,8 @@ from .common import (
     write_json,
 )
 from .delivery import RELEASE_MARKER, authorized
-from .policy import SHA, VERSION, config, now, require, spec_hash
+from .pipelines import bind_state, current_config, load_run_config, pipeline_id
+from .policy import SHA, VERSION, now, require, spec_hash
 
 
 def parse_candidate(issue):
@@ -35,15 +36,24 @@ def parse_candidate(issue):
     except ValueError as exc:
         raise Blocked("Invalid release candidate JSON") from exc
     require(
-        set(value) == {"schema", "commit", "version", "notes", "config", "repository"},
+        set(value)
+        == {"schema", "commit", "version", "notes", "config", "repository"}
+        | ({"pipeline"} if value.get("schema") == 2 else set()),
         "Invalid release candidate fields",
     )
     require(
-        value["schema"] == 1
+        value["schema"] in (1, 2)
         and SHA.fullmatch(value["commit"])
         and VERSION.fullmatch(value["version"]),
         "Invalid release identity",
     )
+    if value["schema"] == 2:
+        from .pipelines import IDENTIFIER
+
+        require(
+            isinstance(value["pipeline"], str) and IDENTIFIER.fullmatch(value["pipeline"]),
+            "Invalid release pipeline",
+        )
     require(
         isinstance(value["notes"], str) and value["notes"].strip(), "Release notes are required"
     )
@@ -62,10 +72,7 @@ def candidate(gh, cfg, commit, version, notes):
         comparison["status"] in ("ahead", "identical"),
         "Candidate is not merged into the default branch",
     )
-    require(
-        digest(gh.read_config(base)) == digest(cfg),
-        "Local config differs from the trusted project config",
-    )
+    current_config(gh, base, cfg)
     value = {
         "schema": 1,
         "commit": commit,
@@ -74,6 +81,8 @@ def candidate(gh, cfg, commit, version, notes):
         "config": digest(cfg),
         "repository": gh.repository,
     }
+    if pipeline_id(cfg) is not None:
+        value.update(schema=2, pipeline=pipeline_id(cfg))
     body = (
         RELEASE_MARKER + "\n```json\n" + json.dumps(value, ensure_ascii=False, indent=2) + "\n```\n"
     )
@@ -97,10 +106,12 @@ def candidate(gh, cfg, commit, version, notes):
     }
 
 
-def prepare_release(gh, number, run_key, kit_ref):
+def prepare_release(gh, number, run_key, kit_ref, *, pipeline=None):
     issue = gh.issue(number)
     if not (issue.get("body") or "").startswith(RELEASE_MARKER):
         return {"ready": False, "reason": "Not a release candidate"}
+    if parse_candidate(issue).get("pipeline") != pipeline:
+        return {"ready": False, "reason": "Candidate belongs to another pipeline"}
     state, revision = gh.get_state(number)
     if state.get("status") == "released":
         return {"ready": False, "reason": "Already released", "state": state}
@@ -108,7 +119,8 @@ def prepare_release(gh, number, run_key, kit_ref):
         issue, approved = authorized(gh, number, release=True)
         value = parse_candidate(issue)
         base = gh.ref(gh.repo()["default_branch"])
-        cfg = config(gh.read_config(base))
+        cfg = load_run_config(gh, base, pipeline, "release")
+        bind_state(state, cfg)
         require(cfg["release"]["enabled"], "Release is disabled")
         require(cfg["kit"]["ref"] == kit_ref, "Release kit revision changed")
         require(
@@ -176,7 +188,8 @@ def revalidate_release(gh, context):
         "Release approval/candidate changed",
     )
     base = gh.ref(cfg["default_branch"])
-    require(digest(gh.read_config(base)) == value["config"], "Release policy drift")
+    current_config(gh, base, cfg)
+    require(digest(cfg) == value["config"], "Release policy drift")
     comparison = gh.api(f"{gh.root}/compare/{value['commit']}...{base}")
     require(
         comparison["status"] in ("ahead", "identical"), "Release source left the default branch"
@@ -401,7 +414,13 @@ def main():
             )
             key = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
             result = (
-                prepare_release(gh, event_issue(), key, args.kit_ref)
+                prepare_release(
+                    gh,
+                    event_issue(),
+                    key,
+                    args.kit_ref,
+                    pipeline=os.environ.get("NEXKIT_PIPELINE") or None,
+                )
                 if authorized_event(gh)
                 else {"ready": False, "reason": "Event actor cannot authorize or resume release"}
             )

@@ -8,11 +8,11 @@ from datetime import datetime
 
 from .cli import SPEC_MARKER, set_spec
 from .common import Blocked, canonical, digest, read_json, write_json
+from .pipelines import bind_state, current_config, issue_pipeline, load_run_config
 from .policy import (
     agent_result,
     approval,
     clarification_limits,
-    config,
     control_command,
     human,
     now,
@@ -53,7 +53,7 @@ def unapproved(gh, number):
     raise Blocked("Requirement is approved; clarification cannot edit it")
 
 
-def prepare(gh, number, run_key, kit_ref, event):
+def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
     if event.get("comment"):
         comment = event["comment"]
         if not human(comment, gh.permission) or comment["body"].strip().startswith(
@@ -63,6 +63,8 @@ def prepare(gh, number, run_key, kit_ref, event):
     issue = gh.issue(number)
     if SPEC_MARKER not in (issue.get("body") or "") or issue.get("pull_request"):
         return {"ready": False, "reason": "Not a NexKit request"}
+    if issue_pipeline(issue) != pipeline:
+        return {"ready": False, "reason": "Work item belongs to another pipeline"}
     state, revision = gh.get_state(number)
     phase = state.get("clarification", {})
     try:
@@ -73,7 +75,8 @@ def prepare(gh, number, run_key, kit_ref, event):
         )
         repo = gh.repo()
         base = gh.ref(repo["default_branch"])
-        cfg = config(gh.read_config(base))
+        cfg = load_run_config(gh, base, pipeline, "clarify")
+        bind_state(state, cfg)
         require(
             cfg["repository"] == gh.repository and cfg["default_branch"] == repo["default_branch"],
             "Project identity changed",
@@ -154,8 +157,9 @@ def revalidate(gh, context):
     require(
         gh.ref(cfg["default_branch"]) == context["base"], "Repository changed during clarification"
     )
-    require(digest(gh.read_config(context["base"])) == digest(cfg), "Setup configuration changed")
+    current_config(gh, context["base"], cfg)
     state, revision = gh.get_state(issue["number"])
+    bind_state(state, cfg)
     phase = state.get("clarification", {})
     require(
         phase.get("run_key") == context["run_key"] and phase.get("status") == "clarifying",
@@ -287,6 +291,7 @@ def main():
                 os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
                 args.kit_ref,
                 read_json(os.environ["GITHUB_EVENT_PATH"]),
+                pipeline=os.environ.get("NEXKIT_PIPELINE") or None,
             )
             write_json(args.context, context)
             output(ready=context["ready"])

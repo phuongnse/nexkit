@@ -17,7 +17,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from nexkit.common import read_json  # noqa: E402
-from nexkit.policy import agent_runner, authentication, config, require  # noqa: E402
+from nexkit.pipelines import effective_config  # noqa: E402
+from nexkit.policy import agent_runner, authentication, require  # noqa: E402
 
 
 def run(args, *, data=None):
@@ -48,9 +49,12 @@ def root_file(path, data, mode="644"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
+    parser.add_argument(
+        "--pipeline", help="Explicit schema 2 pipeline whose runner is being provisioned"
+    )
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
-    cfg = config(read_json(args.config))
+    cfg = effective_config(read_json(args.config), args.pipeline)
     require(
         authentication(cfg) == "chatgpt", "Select the consumer's ChatGPT authentication explicitly"
     )
@@ -58,19 +62,27 @@ def main():
     custom = [label for label in labels if label not in ("self-hosted", "linux", "x64")]
     require(len(custom) == 1, "This provisioning command takes one project-specific runner label")
     label = custom[0]
-    name = "nexkit-" + hashlib.sha256(cfg["repository"].encode()).hexdigest()[:12]
+    identity = cfg["repository"] + (":" + label if "binding" in cfg else "")
+    name = "nexkit-" + hashlib.sha256(identity.encode()).hexdigest()[:12]
     root = Path("/var/lib/nexkit-runners", name)
     binding = {
         "repository": cfg["repository"],
         "default_branch": cfg["default_branch"],
         "auth": "chatgpt",
         "isolation": "container-v1",
-        "workflows": ["nexkit-delivery.yml", "nexkit-clarify.yml", "nexkit-runner-probe.yml"],
+        "workflows": [Path(path).name for path in cfg["binding"]["agent_workflows"]]
+        if "binding" in cfg
+        else ["nexkit-delivery.yml", "nexkit-clarify.yml", "nexkit-runner-probe.yml"],
     }
+    require(
+        binding["workflows"],
+        "Explicitly accept the workflows allowed to use this credential-bearing runner",
+    )
     plan = {
         "repository": cfg["repository"],
         "container": name,
         "agent_runner": labels,
+        "allowed_workflows": binding["workflows"],
         "login": "A separate Codex ChatGPT login must be completed inside this consumer runner",
         "host_state": str(root),
         "network": "Dedicated bridge; host/private/link-local access blocked",

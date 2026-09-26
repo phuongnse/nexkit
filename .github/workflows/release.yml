@@ -2,6 +2,10 @@ name: NexKit release engine
 on:
   workflow_call:
     inputs:
+      pipeline:
+        type: string
+        required: false
+        default: ''
       kit_repository:
         type: string
         required: true
@@ -12,6 +16,8 @@ on:
       OPENAI_API_KEY:
         required: false
 permissions: {}
+env:
+  NEXKIT_PIPELINE: ${{ inputs.pipeline }}
 concurrency:
   group: nexkit-release
   queue: max

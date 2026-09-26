@@ -14,6 +14,15 @@ ask only about consequential missing choices: architecture for a new app,
 model access and usage limits, costs, credentials, permissions and release scope.
 Do not select a stack from a project catalog or add a preset to NexKit.
 
+Derive the workflow structure from this consumer's needs. Native GitHub Actions
+YAML owns jobs, dependencies and matrices; do not invent a JSON graph or assume
+four pipeline stages fit every project. Read `docs/workflow-composition.md` for
+schema 2, accepted workflow bundles and its current implementation boundary.
+Compatibility adapters still have fixed internal jobs; do not claim arbitrary
+agent-stage composition is implemented until the required capabilities exist.
+Keep existing schema-1 consumers on their accepted settings until migration is
+explicitly part of the proposed setup change.
+
 Select the agent runner and authentication for this consumer during setup.
 Inspect its registered runners before requesting new infrastructure. A plugin
 installation grants no access to the plugin author's runners or accounts.
@@ -38,6 +47,13 @@ permissions. Apply only the setup choices authorized by the user. Use
 `nexkit setup --config <file> --host <host> --apply --online` to install and run
 verification. Diagnose any non-ready capability; do not turn missing secrets,
 permissions, runners or test data into a passing check.
+
+For schema 2, preview the exact workflow/control bundle with `--bundle <dir>`.
+List ownership and removals as well as additions. Hash accepted control files,
+pin external workflow/action references, inspect job permissions and validate
+native YAML before applying. Do not treat consumer-owned files as installer-owned
+just because they are part of verification. Select the pipeline explicitly for
+new work and declare credential-bearing runner workflow paths without wildcards.
 
 GitHub must allow Actions to create PRs and enforce current NexKit checks without
 mandatory human PR approvals. Inspect existing required checks, rulesets and

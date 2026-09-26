@@ -54,7 +54,9 @@ def prepare_job(destination, kit_ref):
         output(ready=False)
         return context
     run_key = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
-    context = prepare(gh, event_issue(), run_key, kit_ref)
+    context = prepare(
+        gh, event_issue(), run_key, kit_ref, pipeline=os.environ.get("NEXKIT_PIPELINE") or None
+    )
     write_json(destination, context)
     if context["ready"]:
         cfg = context["config"]

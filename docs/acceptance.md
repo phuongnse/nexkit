@@ -172,6 +172,22 @@ skipped the agent because no new requirement input existed. There was one issue,
 one clarification notice and still one model reservation. These expected skips
 demonstrate guard behavior, not application verification.
 
+## Local composition follow-up
+
+The owner approved consumer-defined native workflow composition. Schema 2 now
+implements pipeline-specific settings, explicit workflow routing and a hashed
+installation bundle, with ownership-preserving update/removal. **105 local tests
+pass**; the independent reviewer ran 82 focused tests and verified three fixes.
+These controller boundaries are mocked. Native-only and clarification-only
+pipelines do not require unused delivery fields. Smaller reusable execution
+capabilities and arbitrary agent invocation composition remain unfinished; see
+the [implementation boundary](workflow-composition.md).
+
+The separate issue-conversation update passed [GitHub CI at c621443](https://github.com/phuongnse/nexkit/actions/runs/36208620238),
+including 88 tests, Ruff and the installation archive build. This is core CI,
+not another live consumer model invocation. Both live consumer pins, pending
+requirement approvals and accepted usage limits remain at their prior setup.
+
 ## External prerequisites still missing
 
 - Both consumers still need approved live delivery with independent review,

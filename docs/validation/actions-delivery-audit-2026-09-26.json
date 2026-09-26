@@ -1,0 +1,285 @@
+{
+  "checked_at": "2026-09-26T14:05:30.185274+00:00",
+  "scope": "Audit of real delivered artifacts and merged application behavior; local checks and independent probes are additional verification, not new model calls.",
+  "consumers": [
+    {
+      "repository": "phuongnse/nexkit-validation-new",
+      "issue": "https://github.com/phuongnse/nexkit-validation-new/issues/1",
+      "run": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721",
+      "candidate": {
+        "base": "515d19cbd7011e7c48d1635e8fbd9e03168d7296",
+        "config": "cdd2cdb2ebaefc41dc2038194bad33d4efc9a4c042621909a0cc4e60ee88ead4",
+        "head": "ca2a839e907616ee96f2ec86cab58b5fb45e8abc",
+        "kit": "3963c1c10b07ff4bfc8d08c735d713141710497f",
+        "spec": "ae9bacc77e5643e2b998e2354a33eeddc63966d9022889956d5bc9bcdbb7a028"
+      },
+      "merge_sha": "34db8784a502ef41bbbb85b73ed65a43c3502aa9",
+      "original_pr_head_fetched_and_tree_equals_merge": true,
+      "artifact_sha256": {
+        "nexkit-candidate-1/candidate.json": "4eec98718e3b6d83436a5315875af06a0160b900dc8858f0b352a696283589c1",
+        "nexkit-changes-1/bundle.json": "983f12934856cb30beeae3fcb86bf5f13fda60d29f2a4c4e0959a6e16fcf37e2",
+        "nexkit-context-1/context.json": "9d2443ebd38436ac4588b98e41545c349891308b070b4e356ee75f71acbe9a30",
+        "nexkit-review-1/review.json": "8875b146c5c76c3b1268a37c6e82e36fe677b94bb53231c51e0f558fb1639438",
+        "nexkit-verification-1/verification.json": "b05defc29d414e28c295038620767aceb93a1f4d9091cdbe5388b7551d8eef7b"
+      },
+      "implementation_paths": [
+        "README.md",
+        "sum-core.mjs",
+        "sum.mjs",
+        "tests/e2e.test.mjs",
+        "tests/test.test.mjs"
+      ],
+      "implementation_skills_reported": [
+        "nexkit-deliver"
+      ],
+      "review_skills_reported": [
+        "nexkit-review"
+      ],
+      "review_independent": true,
+      "review_unchanged": true,
+      "review_verdict": "approve",
+      "review_acceptance": [
+        {
+          "criterion": "Accept one or more signed base-10 integers with an optional leading sign and ASCII digits; reject missing or invalid operands.",
+          "evidence": "sum-core.mjs validates operands with /^[+-]?[0-9]+$/ and rejects an empty list. The five unit cases pass, including whitespace, newline, exponent, decimal, and non-ASCII digit inputs.",
+          "passed": true
+        },
+        {
+          "criterion": "Sum with arbitrary precision and print only the normalized decimal result plus a newline, exiting 0 on valid input.",
+          "evidence": "sum-core.mjs uses BigInt and toString(); sum.mjs writes the result and newline. Direct smoke cases produced -2, 0, and the exact large sum. The supplied E2E report confirms four subprocess cases passed.",
+          "passed": true
+        },
+        {
+          "criterion": "For no operands or invalid input, leave stdout empty, emit an English diagnostic to stderr, and exit 2.",
+          "evidence": "sum.mjs catches validation errors, writes the diagnostic to stderr, and sets exitCode to 2. tests/e2e.test.mjs asserts these streams and status; the supplied matching-head E2E result reports success.",
+          "passed": true
+        },
+        {
+          "criterion": "Provide native node:test unit cases and actual subprocess E2E coverage for mixed signs, zero, single input, large values, and invalid input.",
+          "evidence": "tests/test.test.mjs and tests/e2e.test.mjs cover the required cases. The unit file passes all five tests locally; the supplied verification reports all four E2E cases passing.",
+          "passed": true
+        },
+        {
+          "criterion": "Document CLI usage and both configured test commands in README.",
+          "evidence": "README.md documents the invocation, accepted operands, output and exit behavior, and both configured commands.",
+          "passed": true
+        },
+        {
+          "criterion": "Use no third-party runtime dependency and leave NexKit workflow or policy files unchanged; no release or deployment.",
+          "evidence": "The base-to-head diff contains only README.md, sum.mjs, sum-core.mjs, tests/test.test.mjs, and tests/e2e.test.mjs. No dependency, workflow, policy, or release files changed.",
+          "passed": true
+        }
+      ],
+      "review_limitations": [
+        "Local E2E subprocess execution is blocked by the sandbox (spawnSync returns EPERM). The supplied verification record for this candidate head reports all four E2E cases passing.",
+        "The review checkout has 15 unstaged deletions under .agents/skills and .claude/skills; none are part of the reviewed base-to-head diff."
+      ],
+      "live_checks": [
+        {
+          "name": "test",
+          "kind": "test",
+          "passed": true,
+          "tests": 5,
+          "exit_code": 0,
+          "seconds": 0.332,
+          "timed_out": false
+        },
+        {
+          "name": "e2e",
+          "kind": "e2e",
+          "passed": true,
+          "tests": 4,
+          "exit_code": 0,
+          "seconds": 0.431,
+          "timed_out": false
+        }
+      ],
+      "local_checks": [
+        {
+          "argv": [
+            "node",
+            "--test",
+            "--test-reporter=tap",
+            "tests/test.test.mjs"
+          ],
+          "exit_code": 0
+        },
+        {
+          "argv": [
+            "node",
+            "--test",
+            "--test-reporter=tap",
+            "tests/e2e.test.mjs"
+          ],
+          "exit_code": 0
+        }
+      ],
+      "independent_additional_probes": {
+        "valid_integer_vectors": 71,
+        "invalid_strings_alone_and_in_mixed_arguments": 31,
+        "missing_operands": 1,
+        "additional_subprocess_probes": 134
+      },
+      "independent_conclusion": "Approved requirement fulfilled; no genuine behavioral defect found.",
+      "rounds": 1,
+      "total_reserved_calls_including_clarification": 3,
+      "human_interventions_during_delivery": 0
+    },
+    {
+      "repository": "phuongnse/nexkit-validation-existing",
+      "issue": "https://github.com/phuongnse/nexkit-validation-existing/issues/2",
+      "run": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36240340637",
+      "candidate": {
+        "base": "353e641f86e0b7057a7eda193bda5f088c19f6f7",
+        "config": "fb3490470d126ff8730c5cb1ed5cf4c52e8da3af10479957f5a3a4bad43581b3",
+        "head": "1ea334613b14c8dd24b4218c5097a18197ca0b6f",
+        "kit": "3963c1c10b07ff4bfc8d08c735d713141710497f",
+        "spec": "42e1a3ce3e044c6780aa148f667031efa8aeb74e6d324b283a9eca3deb61f997"
+      },
+      "merge_sha": "d2516347d796e0c3bc7bbd97de9a7ed52e9cd036",
+      "original_pr_head_fetched_and_tree_equals_merge": true,
+      "artifact_sha256": {
+        "nexkit-candidate-1/candidate.json": "5e7912b8cea66b303272c5d0d1b9d525c54c71d7924e5d1aeb6562d0a608327d",
+        "nexkit-changes-1/bundle.json": "9e2a64b13a062cf9d7127b65ed1deaa58f4aafe522f6a9c347540914ec3571bb",
+        "nexkit-context-1/context.json": "a7bcc350e0808591ba3cb8e432f0a5fa5aedb3b59d6796af845e7ff1b194084d",
+        "nexkit-review-1/review.json": "d4b2b1874e57dd66ff7af17a7b604f9429ea4f0df8b7aa13c2b9345bd46be333",
+        "nexkit-verification-1/verification.json": "8caaa1e4f1f6abe35b011cde4b6c3eeec48cab5f8294bff637f6fd3d2e689dde"
+      },
+      "implementation_paths": [
+        "README.md",
+        "service.py",
+        "tests/test_http.py",
+        "tests/test_package.py"
+      ],
+      "implementation_skills_reported": [
+        "nexkit-deliver"
+      ],
+      "review_skills_reported": [
+        "nexkit-review"
+      ],
+      "review_independent": true,
+      "review_unchanged": true,
+      "review_verdict": "approve",
+      "review_acceptance": [
+        {
+          "criterion": "GET /health uses the existing loopback listener and CLI port selection, and returns HTTP 200, application/json, and {\"status\":\"ok\"}.",
+          "evidence": "service.py adds the route before the existing fallback; main() still binds to 127.0.0.1 using args.port. tests/test_http.py exercises /health against a subprocess launched with --port 0. The supplied verification reports that test passed.",
+          "passed": true
+        },
+        {
+          "criterion": "Preserve normalization behavior for case, whitespace, Unicode, punctuation, and missing or blank text.",
+          "evidence": "The normalize function and existing unit assertions are unchanged. The supplied unit and HTTP verification logs report all 6 tests in each suite passed; I independently ran the unit suite successfully.",
+          "passed": true
+        },
+        {
+          "criterion": "Preserve unknown routes returning HTTP 404 with {\"error\":\"not_found\"}.",
+          "evidence": "The existing unknown-route branch and HTTP assertion remain intact. The supplied HTTP verification reports test_unknown_route passed.",
+          "passed": true
+        },
+        {
+          "criterion": "Add real-service regression coverage for /health and document the endpoint.",
+          "evidence": "tests/test_http.py checks status, JSON content type, and parsed body through its live-service helper. README.md documents the endpoint and response. The supplied HTTP verification reports test_health_response passed.",
+          "passed": true
+        },
+        {
+          "criterion": "Keep the unit, HTTP, and package suites independently runnable with actual cases; ensure the packaged application still runs correctly.",
+          "evidence": "README.md retains all three separate commands. The supplied verification reports 6 unit, 6 HTTP, and 6 package tests passed, including test_extracted_archive_serves_real_http checking both normalization and /health. I independently ran the unit suite and five offline package-builder cases successfully.",
+          "passed": true
+        },
+        {
+          "criterion": "Add no third-party dependencies, external services, or authentication; do not modify NexKit workflow or policy files; do not release or deploy.",
+          "evidence": "The base-to-candidate diff changes only README.md, service.py, tests/test_http.py, and tests/test_package.py. The route uses the existing standard-library response path; no dependency, workflow, policy, release, or deployment changes appear in the candidate diff.",
+          "passed": true
+        }
+      ],
+      "review_limitations": [
+        "Local HTTP checks were unavailable because this runner disables local sockets. The supplied verification record for this candidate reports all 6 HTTP tests and all 6 package tests passed, including the live-service and extracted-package HTTP cases."
+      ],
+      "live_checks": [
+        {
+          "name": "test",
+          "kind": "test",
+          "passed": true,
+          "tests": 6,
+          "exit_code": 0,
+          "seconds": 0.132,
+          "timed_out": false
+        },
+        {
+          "name": "e2e",
+          "kind": "e2e",
+          "passed": true,
+          "tests": 6,
+          "exit_code": 0,
+          "seconds": 0.18,
+          "timed_out": false
+        },
+        {
+          "name": "package",
+          "kind": "test",
+          "passed": true,
+          "tests": 6,
+          "exit_code": 0,
+          "seconds": 0.331,
+          "timed_out": false
+        }
+      ],
+      "local_checks": [
+        {
+          "argv": [
+            "python3",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-p",
+            "test_unit.py",
+            "-v"
+          ],
+          "exit_code": 0
+        },
+        {
+          "argv": [
+            "python3",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-p",
+            "test_http.py",
+            "-v"
+          ],
+          "exit_code": 0
+        },
+        {
+          "argv": [
+            "python3",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-p",
+            "test_package.py",
+            "-v"
+          ],
+          "exit_code": 0
+        }
+      ],
+      "independent_additional_probes": {
+        "baseline_comparison_http_cases": 27,
+        "additional_health_variants": 3
+      },
+      "independent_conclusion": "Approved requirement fulfilled; no genuine behavioral defect found.",
+      "rounds": 1,
+      "total_reserved_calls_including_clarification": 3,
+      "human_interventions_during_delivery": 0
+    }
+  ],
+  "limitations": [
+    "No raw private CLI logs were inspected; no new model invocation was made.",
+    "These two schema-1 successes do not establish live repair, interruption/cancellation, release or stage-approval acceptance."
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "checked_at": "2026-09-26T14:17:36.746080+00:00",
+  "scope": "Draft administrative setup validation only; composed delivery and stage approval have not run live.",
+  "repository": "phuongnse/nexkit-validation-existing",
+  "pull_request": {
+    "number": 4,
+    "html_url": "https://github.com/phuongnse/nexkit-validation-existing/pull/4",
+    "draft": true,
+    "merged": false
+  },
+  "head": "41cf32c2c75faa19b591d7e61df92b9b36e1d67a",
+  "base": "d2516347d796e0c3bc7bbd97de9a7ed52e9cd036",
+  "run": {
+    "id": 36247864390,
+    "html_url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36247864390",
+    "event": "pull_request",
+    "head_sha": "41cf32c2c75faa19b591d7e61df92b9b36e1d67a",
+    "conclusion": "success",
+    "created_at": "2026-09-26T14:15:04Z",
+    "updated_at": "2026-09-26T14:15:15Z"
+  },
+  "jobs": [
+    {
+      "id": 108420297260,
+      "name": "NexKit setup validation",
+      "conclusion": "success",
+      "started_at": "2026-09-26T14:15:07Z",
+      "completed_at": "2026-09-26T14:15:14Z"
+    }
+  ],
+  "native_check_result": {
+    "scope": "accepted files and actual application checks; online audit remains required",
+    "checks": [
+      {
+        "name": "test",
+        "passed": true,
+        "tests": 6
+      },
+      {
+        "name": "e2e",
+        "passed": true,
+        "tests": 6
+      },
+      {
+        "name": "package",
+        "passed": true,
+        "tests": 6
+      }
+    ]
+  },
+  "local_check_counts": [
+    6,
+    6,
+    6
+  ],
+  "complete_migration_items": 20,
+  "git_changed_files_including_installation_ledger": 21,
+  "accepted_bundle_files": 9,
+  "independent_review": "Two packet findings resolved; no additional blocker in reviewed files and native policy deltas.",
+  "live_main_and_rules_unchanged": true,
+  "model_calls": 0,
+  "rollout_authorized": false,
+  "limitations": [
+    "The PR remains draft; no migration or human stage-approval event is claimed.",
+    "Online readiness remains pending the accepted live configuration and branch policy."
+  ]
+}

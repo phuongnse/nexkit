@@ -8,16 +8,43 @@ simulated GitHub boundaries are distinct from live integration.
 | Group | Evidence available | Still unverified |
 |---|---|---|
 | A — package/hosts | Native Codex 0.156.1 install/reinstall/update/remove and fresh discovery of 9 skills; Claude Code 2.1.282 validation and native loading of all 9 skills from the archive | Other target hosts have documentation checks only; no model-use claim from installation |
-| B — CLI on Actions | Both consumers completed live clarification with Codex 0.156.1 and Luna/max; their subsequent implement and independent review jobs also completed successfully on the dedicated runners | Delivery artifact-byte audit of skill/command reports; live schema-2 composition and stage approvals |
-| C — two consumers | Distinct Node CLI and existing Python HTTP configurations installed and audited; both approved delivery runs completed all six jobs and merged their PRs | Detailed audit of delivered behavior and native test reports against each requirement; live composed delivery |
+| B — CLI on Actions | Both consumers completed live clarification and separate implementation/review jobs with Codex 0.156.1 and Luna/max; collected source bundles, current verification and unchanged review reports were audited against actual merged source | Live schema-2 composition and stage approvals |
+| C — two consumers | Distinct Node CLI and existing Python HTTP projects fulfilled their real approved requirements; bundle bytes/modes and original candidate trees match the merges; actual CLI/HTTP/package behavior passed independent audit | Live composed delivery and the newly configured human gates |
 | D — success | Real owner requirement approvals, all delivery jobs successful, exact candidate/merge state matches GitHub for both consumers, and no consumer release exists | Full live acceptance remains incomplete in the other groups below |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
 | F — blocked | Live unapproved delivery stopped before any model call or PR; tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Remaining failure injection in the live environment and final guards |
-| G — durability | Live overlapping intake events for an existing request were serialized, reused one issue and made no additional model reservation; native Codex reinstall/update/uninstall preserved the package and consumer knowledge; local tests cover installer ownership, cancel/resume, orphan/merged recovery and base ancestry | Concurrent first creation and approved delivery, interruptions, cancellation and insufficient consumer permissions |
+| G — durability | Live overlapping intake events reused an existing issue; two overlapping delivery dispatches after a real approved merge skipped all agent/side-effect jobs and left state, counters, main and PR count unchanged; native host and local consumer update/removal checks passed | Concurrent first creation and active delivery, interruptions, cancellation and insufficient consumer permissions |
 | H — release | Tests cover wrong approver/drift/changed bytes or tags/cancel/deadline/retry/lost upload response with original artifact recovery | Real human release decision and publication within the authorized test scope |
 
 ## Executed verification
 
+- [Stage-approval setup preview, September 26](validation/actions-stage-setup-preview-2026-09-26.json):
+  [draft Python setup PR #4](https://github.com/phuongnse/nexkit-validation-existing/pull/4)
+  contains the consumer-defined pipeline and optional native human review gate.
+  Its read-only hosted setup job verified the accepted files and passed all
+  18 real application cases. A separate reviewer checked the complete migration,
+  nine accepted bundle hashes, precise branch-rule changes and interruption
+  recovery. At this checkpoint, main and its rules are unchanged; administrative
+  approval, online readiness and the live delivery/approval event path are pending.
+- [Delivery artifact and behavior audit, September 26](validation/actions-delivery-audit-2026-09-26.json):
+  reviewed all five artifacts from each successful run. Source bundle paths,
+  bytes and modes match the merge; the original PR heads were fetched, and both
+  candidate-to-merge tree diffs are empty. Candidate identities match across
+  context, verification and independent review. The actual Actions reports
+  contain 5 unit and 4 subprocess cases for Node; 6 unit, 6 HTTP and 6 package
+  cases for Python. All five declared suites passed again on the merged source.
+  A separate session ran 134 additional Node subprocess probes against an
+  independent integer oracle, plus 27 baseline-versus-delivered HTTP comparisons
+  and 3 health variants. Both approved requirements are fulfilled; no meaningful
+  defect was found to justify a repair work item. No raw private CLI log or
+  credential was inspected, and no additional model invocation was made.
+- [Merged-work retry check, September 26](validation/actions-merged-retry-2026-09-26.json):
+  two native delivery dispatches for the genuinely approved and merged Node
+  issue entered GitHub's queue together and ran preparation serially. Both
+  skipped implementation, publication, verification, review and finalization.
+  The state revision, main commit, one-PR count, three reserved calls and one
+  delivery round were unchanged; no release appeared. This proves duplicate
+  completion handling without new model work, not interrupted active delivery.
 - [Live delivery metadata, September 26](validation/actions-delivery-2026-09-26.json):
   the owner's real requirement comments triggered two successful schema-1 runs.
   [Node run 36240304721](https://github.com/phuongnse/nexkit-validation-new/actions/runs/36240304721)
@@ -290,8 +317,8 @@ recorded in the [review log](validation/independent-review.md).
 
 ## External prerequisites still missing
 
-- Both consumers' approved delivery runs merged, but their delivery reports and
-  assertion quality still need the detailed acceptance audit. Live repair,
+- Both consumers' approved delivery runs merged, and their delivery reports and
+  assertion quality have now passed the detailed acceptance audit. Live repair,
   interruption/cancellation and composed stage approvals remain unverified.
   Successful prior runs do not establish enough remaining subscription allowance
   for all further acceptance.

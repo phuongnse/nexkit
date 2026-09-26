@@ -204,3 +204,53 @@ edits, GitHub writes, credential access or model calls. The stage-approval event
 and continuation cycle remains unverified live, and neither consumer was migrated.
 The documented interval between final authorization reads and GitHub writes
 remains an external API boundary, not an atomic authorization guarantee.
+
+## Live delivered consumer audit — 2026-09-26
+
+The separate reviewer inspected both merged consumers, approved requirements,
+implementation bundles, native verification reports and independent AI review
+artifacts. It ran the five declared suites: Node 5 unit plus 4 subprocess cases;
+Python 6 unit, 6 real HTTP and 6 package cases. All passed.
+
+Its independent Node oracle exercised 71 valid integer vectors, including
+400-digit carries, 31 invalid strings both alone and within otherwise valid
+arguments, and missing operands: 134 subprocess probes in total. The Python
+audit compared 27 requests against baseline and delivered services, then checked
+3 health variants. Assertions examined exact results, status, output streams,
+JSON headers/content length and extracted-package behavior.
+
+Both approved requirements are fulfilled. The reviewer found no genuine
+behavioral defect to justify a third repair work item. Source bundles matched
+the merged files and modes, and all candidate identities agreed. Separate
+Actions jobs, fresh workspaces, native ephemeral CLI execution and unchanged
+review output support reviewer independence. The root agent subsequently fetched
+the original PR heads and verified empty diffs to their respective merged trees,
+resolving the reviewer's initial local-object availability limitation.
+
+This audit involved no application edits, GitHub writes, credential/raw-private-log
+access or new model invocation. Successful delivery and additional local probes
+do not establish live repair, interruption/cancellation, release or stage approvals.
+
+## Consumer stage-approval setup preview — 2026-09-26
+
+The separate reviewer examined the Python consumer's proposed composed pipeline,
+artifact producers, checkpoint continuation, failure finalizer and native PR
+event relay. It found two approval-packet defects: the preview still described an
+earlier setup command, and recovery omitted interruption after a successful merge
+but before restoring the target branch policy. Both were corrected and reviewed
+again from a fresh copy of the accepted starting commit.
+
+The complete preview and applied result now agree on 20 migration items; the Git
+diff has 21 files including the installation ledger. All nine accepted workflow
+and control hashes match. Bootstrap policy changes only the required check names;
+the target restores both NexKit checks and raises the native review count from
+zero to one. Strictness, main targeting, deletion/force-push protection, other PR
+options and the empty bypass list remain intact. Recovery accounts for ambiguous
+responses and concurrent administrative drift. No further blocker was found in
+this scoped review.
+
+The frozen draft setup is PR #4 at `41cf32c2c75faa19b591d7e61df92b9b36e1d67a`,
+based on `d2516347d796e0c3bc7bbd97de9a7ed52e9cd036`. The reviewer checked local
+6/6/6 results; the root agent separately collected the matching successful native
+setup report from run 36247864390. Main and branch policy remain unchanged at
+this checkpoint. Live migration and human stage-approval acceptance remain pending.

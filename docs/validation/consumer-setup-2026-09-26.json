@@ -1,0 +1,132 @@
+{
+  "recorded_at": "2026-09-26T00:34:44.464319+00:00",
+  "scope": "Authorized consumer setup, local application checks and live GitHub settings audit",
+  "kit_ref": "3963c1c10b07ff4bfc8d08c735d713141710497f",
+  "engine": {
+    "name": "codex",
+    "version": "0.156.1",
+    "auth": "chatgpt"
+  },
+  "models": {
+    "implement": "gpt-6-luna",
+    "review": "gpt-6-luna"
+  },
+  "reasoning_effort": {
+    "implement": "max",
+    "review": "max"
+  },
+  "limits": {
+    "attempts": 2,
+    "agent_calls": 6,
+    "minutes": 60,
+    "command_seconds": 120
+  },
+  "accepted_work_item_cap": 3,
+  "consumers": [
+    {
+      "repository": "phuongnse/nexkit-validation-existing",
+      "application_at_setup": "present",
+      "setup_commit": "353e641f86e0b7057a7eda193bda5f088c19f6f7",
+      "ruleset_id": 24025735,
+      "enforcement": "active",
+      "required_checks": [
+        "NexKit verification",
+        "NexKit review"
+      ],
+      "required_check_app_id": 15368,
+      "strict_checks": true,
+      "pull_request_required": true,
+      "human_pr_review_required": false,
+      "bypass_actors": [],
+      "ready": true,
+      "ready_scope": "configuration and declared checks; live model access is reported separately",
+      "problems": [],
+      "verified": [
+        "managed files inspected",
+        "consumer checks and E2E executed",
+        "project runner registration inspected; login and isolation require a live probe",
+        "GitHub settings inspected"
+      ],
+      "checks": [
+        {
+          "name": "test",
+          "kind": "test",
+          "passed": true,
+          "tests": 6,
+          "exit_code": 0
+        },
+        {
+          "name": "e2e",
+          "kind": "e2e",
+          "passed": true,
+          "tests": 5,
+          "exit_code": 0
+        },
+        {
+          "name": "package",
+          "kind": "test",
+          "passed": true,
+          "tests": 6,
+          "exit_code": 0
+        }
+      ],
+      "request": {
+        "issue": 2,
+        "intake_run": 36205223965,
+        "clarify_run": 36205233883,
+        "key": "acceptance-existing-health-20260926"
+      }
+    },
+    {
+      "repository": "phuongnse/nexkit-validation-new",
+      "application_at_setup": "absent",
+      "setup_commit": "515d19cbd7011e7c48d1635e8fbd9e03168d7296",
+      "ruleset_id": 24025736,
+      "enforcement": "active",
+      "required_checks": [
+        "NexKit verification",
+        "NexKit review"
+      ],
+      "required_check_app_id": 15368,
+      "strict_checks": true,
+      "pull_request_required": true,
+      "human_pr_review_required": false,
+      "bypass_actors": [],
+      "ready": false,
+      "ready_scope": "configuration and declared checks; live model access is reported separately",
+      "problems": [
+        "Consumer verification failed or is not yet possible",
+        "Initial repository has no verified application behavior"
+      ],
+      "verified": [
+        "managed files inspected",
+        "project runner registration inspected; login and isolation require a live probe",
+        "GitHub settings inspected"
+      ],
+      "checks": [
+        {
+          "name": "test",
+          "kind": "test",
+          "passed": false,
+          "tests": null,
+          "exit_code": 1
+        },
+        {
+          "name": "e2e",
+          "kind": "e2e",
+          "passed": false,
+          "tests": null,
+          "exit_code": 1
+        }
+      ],
+      "request": {
+        "issue": 1,
+        "intake_run": 36205225944,
+        "clarify_run": 36205236201,
+        "key": "acceptance-new-cli-20260926"
+      }
+    }
+  ],
+  "human_requirement_approval_exercised": false,
+  "live_ai_delivery_verified": false
+}

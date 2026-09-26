@@ -32,11 +32,12 @@ pinned action's handling of an empty effort, preserving the CLI default, and
 reproduced rejection of effort drift in delivery, clarification and release
 guards. **66 tests and Ruff passed.** No model calls or secret access were used.
 The selected model's `max` support was checked against official documentation;
-actual runner/model execution with this setting remains unverified.
+actual runner/model execution with this setting was unverified at that review.
 
-This is a scoped implementation review. Live AI Actions, delivery in both
-authorized consumer repositories, real approvals and test release remain unverified. It is not
-approval of the full product against those missing acceptance criteria.
+This is a scoped implementation review. At that point, live AI Actions, delivery
+in both authorized consumer repositories, real approvals and test release were
+unverified. It is not approval of the full product against those criteria; later
+integration results are tracked in the [acceptance report](../acceptance.md).
 
 ## Subscription runner follow-up
 
@@ -67,3 +68,12 @@ fixed with direct regression checks. The final pass ran all six package tests,
 including the extracted application's real HTTP response, and found no remaining
 blocker within that scope. This review made no credential access, model calls,
 GitHub writes or release-approval claim.
+
+## Consumer clarification preflight — 2026-09-26
+
+The separate reviewer inspected the first-clarification path at `3963c1c` and
+both accepted consumer configurations. It found no new blocker in workflow
+routing, workspace paths, ownership handoff, schema/output paths, Luna/max
+options or the 15-minute reservation. This was read-only inspection without
+credential access, private-log access or model calls. The later successful
+Actions runs are integration evidence recorded separately.

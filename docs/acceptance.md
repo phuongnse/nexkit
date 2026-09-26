@@ -8,12 +8,12 @@ simulated GitHub boundaries are distinct from live integration.
 | Group | Evidence available | Still unverified |
 |---|---|---|
 | A — package/hosts | Native Codex 0.156.1 install/list and Claude Code 2.1.282 install/details with 8 skills; extracted archive and validators | Other target hosts have documentation checks only; no model-use claim |
-| B — CLI on Actions | Live local Codex used skills/tools, changed code and ran a separate reviewer; GitHub platform and self-hosted admission probes passed; both consumer CLI logins completed | Live AI execution on Actions and delivery independent of the local chat session |
-| C — two consumers | Real local Node CLI and Python HTTP API tests with distinct configurations; two authorized public GitHub repositories prepared, one empty and one with a working HTTP baseline | NexKit setup and autonomous delivery in both GitHub consumers |
+| B — CLI on Actions | Both consumers completed live Actions clarification with Codex 0.156.1, Luna/max, installed request skills and actual terminal calls; separate local implementation/review evidence is also available | Code edits and independent review on Actions; autonomous delivery after the local host closes |
+| C — two consumers | Distinct Node CLI and existing Python HTTP configurations installed in two public GitHub repositories; runner, permissions and strict branch rules audited; existing app passed 17 local cases | Approved application delivery in both consumers; the initially empty consumer still has no application behavior to verify |
 | D — success | Simulated controller issue→approval→review/checks→merge; the kit's own CI ran on GitHub | Real human approval and autonomous consumer merge without release |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
-| F — blocked | Tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Failure injection in the live environment and final guards |
-| G — durability | Ownership, reinstall/uninstall, cancel/resume guards, duplicate intake/reservation, orphan/merged recovery, base ancestry; GitHub accepted native queue syntax | Live concurrent work, repeated events, interruptions, cancellation and insufficient consumer permissions |
+| F — blocked | Live unapproved delivery stopped before any model call or PR; tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Remaining failure injection in the live environment and final guards |
+| G — durability | Live repeated intake reused the issue and clarification result without another model reservation; local tests cover ownership, reinstall/uninstall, cancel/resume, orphan/merged recovery and base ancestry | Live concurrent work, interruptions, cancellation and insufficient consumer permissions |
 | H — release | Tests cover wrong approver/drift/changed bytes or tags/cancel/deadline/retry/lost upload response with original artifact recovery | Real human release decision and publication within the authorized test scope |
 
 ## Executed verification
@@ -50,12 +50,12 @@ simulated GitHub boundaries are distinct from live integration.
   At baseline `f22abc7`, six unit tests and five HTTP tests passed locally. The
   HTTP tests start the actual service process and make real TCP requests.
   `nexkit survey` read the existing conventions/commands and found no application
-  in the empty repository. Neither repository has completed NexKit setup.
+  in the empty repository. Their later setup is recorded below.
 - GitHub initially returned HTTP 403 for the rulesets API in both private consumers with
   the message "Upgrade to GitHub Pro or make this repository public to enable
   this feature." The owner then authorized public visibility for both consumers
   and the sample release. Both repositories are now public and ruleset listing
-  succeeds. Actual rules still need to be applied during consumer setup.
+  succeeds. Active rules were subsequently applied during the accepted setup.
 - The owner approved the test-release scope in
   `phuongnse/nexkit-validation-existing`, using tag `v0.1.0-test.1` for the sample
   application. This authorizes preparing and exercising that release flow.
@@ -71,7 +71,8 @@ simulated GitHub boundaries are distinct from live integration.
   a live approval or publication. See the [local build record](validation/consumer-package-2026-09-25.json).
 - The owner selected `gpt-6-luna` with `max` reasoning for implementation and
   independent review. The official model documentation confirms this effort
-  level. The kit forwards per-role effort to the pinned official Codex action.
+  level. The kit forwards per-role effort to the official Codex CLI, through
+  the pinned official action in API mode or the subscription wrapper.
 - A [local ChatGPT authentication probe](validation/chatgpt-luna-auth-2026-09-25.json)
   succeeded with Codex 0.156.1, `gpt-6-luna`, and `max` reasoning in 13.3 seconds.
   The CLI executed one terminal tool and returned the verified fixture marker
@@ -119,17 +120,69 @@ simulated GitHub boundaries are distinct from live integration.
   The extracted archive installed successfully through Codex's native marketplace
   and plugin commands in a fresh isolated host configuration; no model call was used.
 
+## Live consumer setup and clarification — 2026-09-26
+
+The owner accepted the concrete setup and invocation/time limits before they
+were applied. Both consumers now use trusted kit commit `3963c1c`, separate
+repo-scoped subscription runners, `gpt-6-luna` and `max` reasoning. Each work item
+has at most six CLI invocations shared by clarification and delivery, two
+clarification sessions and two delivery rounds. The authorized acceptance scope
+is three application work items across both repositories. Two have been submitted.
+See the [setup record](validation/consumer-setup-2026-09-26.json) and
+[limit semantics](configuration.md).
+
+Both `main` branches require a pull request, strict `NexKit verification` and
+`NexKit review` checks from GitHub Actions App 15368, with no bypass actors and
+no additional human PR-review gate. Default workflow permissions are read-only;
+the required jobs request their own permissions. The live settings audit passed.
+The existing consumer passed six unit, five real HTTP and six package cases locally.
+The new consumer's missing application/test files correctly kept application
+readiness false; missing suites were not counted as passing.
+
+Live intake created the [Python health work item](https://github.com/phuongnse/nexkit-validation-existing/issues/2)
+and the [Node CLI work item](https://github.com/phuongnse/nexkit-validation-new/issues/1).
+The [Python clarification run](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36205233883)
+and [Node clarification run](https://github.com/phuongnse/nexkit-validation-new/actions/runs/36205236201)
+both completed successfully. Each invoked the official CLI using its own
+ChatGPT login and reported using `nexkit-request`, with successful terminal
+commands referencing its installed skill path. Both used tools to inspect the
+repository. Trusted collection confirmed unchanged source and validated each
+structured result before publishing the specification.
+
+The CLI reported 12 successful terminal commands for Python and seven for Node.
+Input/output token totals were 92,159/3,918 and 79,815/4,388 respectively; input
+totals include cached input. No monetary cost was measured. Only selected
+numeric metadata and known skill-path matches were extracted from private CLI
+logs; raw logs and credentials were not exported. The
+[clarification record](validation/actions-clarification-2026-09-26.json) includes
+run/job identities, limitations and observed CLI error-item counts.
+
+These runs prove live requirement clarification, with one reserved model call
+per work item. They do not prove implementation, independent Actions review,
+autonomous merge or release. The actual requirement approvals remain human
+actions on the exact published specifications.
+
+Two additional [live guard probes](validation/actions-guards-2026-09-26.json)
+made no model calls. A [delivery dispatch without approval](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36205759010)
+recorded the missing-approval reason and skipped implementation, publication,
+verification, review and merge; the main commit and PR count were unchanged.
+A [duplicate intake](https://github.com/phuongnse/nexkit-validation-new/actions/runs/36205793228)
+reused the same issue. Its [clarification continuation](https://github.com/phuongnse/nexkit-validation-new/actions/runs/36205803914)
+skipped the agent because no new requirement input existed. There was one issue,
+one clarification notice and still one model reservation. These expected skips
+demonstrate guard behavior, not application verification.
+
 ## External prerequisites still missing
 
-- Each consumer still needs a live model run through its configured workflow.
-  Both independent CLI logins are complete; Actions model access remains unverified.
-  The subscription integration is implemented, while OpenAI's account-cache CI
+- Both consumers still need approved live delivery with independent review,
+  actual verification and merge. Successful clarification establishes Actions
+  model access, not enough remaining subscription allowance for all acceptance.
+  OpenAI's account-cache CI
   guide excludes public repositories. This custom deployment was explicitly
   selected by the owner and is not an officially recommended public CI setup.
-- Accepted invocation/time limits, available subscription allowance, consumer
-  setup and the required branch rules. The prior local usage-limit failure
-  remains part of the evidence. The later Luna/max probe succeeded, but it does
-  not establish sufficient remaining allowance for full live acceptance.
+- The prior local usage-limit failure remains part of the evidence. Approved
+  invocation/time limits remain in force; retries must not reset counters or
+  increase the accepted usage scope.
 - Real humans approving the requirement and exact release candidate in live
   acceptance; the approved test scope does not substitute for either event.
 

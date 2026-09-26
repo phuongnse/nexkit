@@ -1,0 +1,133 @@
+{
+  "recorded_at": "2026-09-26T00:43:58.382688+00:00",
+  "scope": "Live Actions guard and duplicate-intake probes without a human requirement approval",
+  "results": [
+    {
+      "repository": "phuongnse/nexkit-validation-existing",
+      "issue": 2,
+      "state": {
+        "agent_calls": 1,
+        "clarification": {
+          "calls": 1,
+          "completed_input": "3fc929ab6920e68e93c74a070b161fc79f1e76d48bc87c0d4d0d29ed52aecf48",
+          "input": "ca839378a607e8196e7a196df541a890c040e1abfa8c8d8a0825b07619f6bce5",
+          "message": "<!-- nexkit:clarification:933b340b573b09bc0e740c6077999c9376d1ec78197292e0dd3a77a16d5ffa29 -->\nThe specification is ready for human review. An authorized human may approve this exact version with:\n\n`/nexkit approve 42e1a3ce3e044c6780aa148f667031efa8aeb74e6d324b283a9eca3deb61f997`\n",
+          "questions": [],
+          "reserved_minutes": 15,
+          "run_key": "36205233883.1",
+          "started_at": "2026-09-26T00:32:41.049817+00:00",
+          "status": "awaiting_approval"
+        },
+        "reason": "Awaiting an authorized human comment: /nexkit approve 42e1a3ce3e044c6780aa148f667031efa8aeb74e6d324b283a9eca3deb61f997",
+        "status": "blocked",
+        "updated_at": "2026-09-26T00:41:28.195875+00:00"
+      },
+      "runs": [
+        {
+          "id": 36205759010,
+          "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36205759010",
+          "event": "workflow_dispatch",
+          "status": "completed",
+          "conclusion": "success",
+          "jobs": [
+            {
+              "name": "nexkit / prepare",
+              "conclusion": "success"
+            },
+            {
+              "name": "nexkit / implement",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "nexkit / verify",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "nexkit / publish",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "nexkit / review",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "nexkit / finish",
+              "conclusion": "skipped"
+            }
+          ]
+        }
+      ],
+      "issue_comment_ids": [
+        5841563396
+      ],
+      "open_pull_requests": [],
+      "main": "353e641f86e0b7057a7eda193bda5f088c19f6f7"
+    },
+    {
+      "repository": "phuongnse/nexkit-validation-new",
+      "issue": 1,
+      "state": {
+        "agent_calls": 1,
+        "clarification": {
+          "calls": 1,
+          "completed_input": "ef6b2eacd9f6a72d6c2597c30b98d1b416d5cb82b45d4e47656a79c0037fed40",
+          "input": "13cd6d802667339aad043f0c94016570a8e44eb236e2508c05010fd67d622b8a",
+          "message": "<!-- nexkit:clarification:6d31dbd45dcc97170987e7ea4f638d4714cba21fef22333563430d93eb969947 -->\nThe specification is ready for human review. An authorized human may approve this exact version with:\n\n`/nexkit approve ae9bacc77e5643e2b998e2354a33eeddc63966d9022889956d5bc9bcdbb7a028`\n",
+          "questions": [],
+          "reserved_minutes": 15,
+          "run_key": "36205236201.1",
+          "started_at": "2026-09-26T00:32:44.181195+00:00",
+          "status": "awaiting_approval"
+        }
+      },
+      "runs": [
+        {
+          "id": 36205793228,
+          "url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36205793228",
+          "event": "workflow_dispatch",
+          "status": "completed",
+          "conclusion": "success",
+          "jobs": [
+            {
+              "name": "nexkit / receive",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 36205803914,
+          "url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36205803914",
+          "event": "workflow_dispatch",
+          "status": "completed",
+          "conclusion": "success",
+          "jobs": [
+            {
+              "name": "nexkit / prepare",
+              "conclusion": "success"
+            },
+            {
+              "name": "nexkit / clarify",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "nexkit / publish",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "nexkit / interrupted",
+              "conclusion": "skipped"
+            }
+          ]
+        }
+      ],
+      "issue_comment_ids": [
+        5841564530
+      ],
+      "open_pull_requests": [],
+      "main": "515d19cbd7011e7c48d1635e8fbd9e03168d7296",
+      "matching_work_items": [
+        1
+      ]
+    }
+  ]
+}

@@ -11,8 +11,9 @@ has not yet been demonstrated.** See the [acceptance report](docs/acceptance.md)
 
 ## Install and set up
 
-Requirements: Python 3.11+, Git, and an authenticated GitHub CLI. From the source
-checkout or an extracted installation archive:
+Requirements: Python 3.11+, Git, and an authenticated GitHub CLI with
+`gh api --slurp` support (verified with 2.101.0). From the source checkout or an
+extracted installation archive:
 
 ```sh
 python3 scripts/build.py

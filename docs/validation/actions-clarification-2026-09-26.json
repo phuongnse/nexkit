@@ -1,0 +1,166 @@
+{
+  "recorded_at": "2026-09-26T00:41:55.140447+00:00",
+  "scope": "Live GitHub Actions intake and requirement clarification with the official Codex subscription CLI",
+  "kit_ref": "3963c1c10b07ff4bfc8d08c735d713141710497f",
+  "cli_version": "0.156.1",
+  "authentication": "ChatGPT login in each consumer runner; no API key",
+  "consumers": [
+    {
+      "repository": "phuongnse/nexkit-validation-existing",
+      "issue": 2,
+      "base": "353e641f86e0b7057a7eda193bda5f088c19f6f7",
+      "workflow_run": 36205233883,
+      "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36205233883",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "nexkit / prepare",
+          "conclusion": "success",
+          "started_at": "2026-09-26T00:32:34Z",
+          "completed_at": "2026-09-26T00:32:46Z"
+        },
+        {
+          "name": "nexkit / clarify",
+          "conclusion": "success",
+          "started_at": "2026-09-26T00:32:49Z",
+          "completed_at": "2026-09-26T00:34:47Z"
+        },
+        {
+          "name": "nexkit / publish",
+          "conclusion": "success",
+          "started_at": "2026-09-26T00:34:49Z",
+          "completed_at": "2026-09-26T00:35:02Z"
+        },
+        {
+          "name": "nexkit / interrupted",
+          "conclusion": "skipped",
+          "started_at": "2026-09-26T00:35:03Z",
+          "completed_at": "2026-09-26T00:35:02Z"
+        }
+      ],
+      "model": "gpt-6-luna",
+      "reasoning_effort": "max",
+      "timeout_minutes": 15,
+      "agent_calls_after_clarification": 1,
+      "clarification_calls": 1,
+      "ready_for_approval": true,
+      "source_unchanged": true,
+      "result_skills_used": [
+        "nexkit-request"
+      ],
+      "result_limitations": [
+        "Local TCP is disabled on this runner, so the real-process HTTP and package E2E suites were not run here; the separate verification job handles those checks."
+      ],
+      "cli_metadata": {
+        "event_counts": {
+          "thread.started": 1,
+          "item.completed": 19,
+          "turn.started": 1,
+          "item.started": 12,
+          "turn.completed": 1
+        },
+        "completed_item_counts": {
+          "error": 4,
+          "agent_message": 3,
+          "command_execution": 12
+        },
+        "command_exit_counts": {
+          "0": 12
+        },
+        "skill_paths_in_successful_commands": [
+          "nexkit-request"
+        ],
+        "cli_reported_usage": [
+          {
+            "input_tokens": 92159,
+            "cached_input_tokens": 66560,
+            "output_tokens": 3918
+          }
+        ]
+      }
+    },
+    {
+      "repository": "phuongnse/nexkit-validation-new",
+      "issue": 1,
+      "base": "515d19cbd7011e7c48d1635e8fbd9e03168d7296",
+      "workflow_run": 36205236201,
+      "url": "https://github.com/phuongnse/nexkit-validation-new/actions/runs/36205236201",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "nexkit / prepare",
+          "conclusion": "success",
+          "started_at": "2026-09-26T00:32:37Z",
+          "completed_at": "2026-09-26T00:32:49Z"
+        },
+        {
+          "name": "nexkit / clarify",
+          "conclusion": "success",
+          "started_at": "2026-09-26T00:32:52Z",
+          "completed_at": "2026-09-26T00:34:53Z"
+        },
+        {
+          "name": "nexkit / publish",
+          "conclusion": "success",
+          "started_at": "2026-09-26T00:34:56Z",
+          "completed_at": "2026-09-26T00:35:10Z"
+        },
+        {
+          "name": "nexkit / interrupted",
+          "conclusion": "skipped",
+          "started_at": "2026-09-26T00:35:11Z",
+          "completed_at": "2026-09-26T00:35:11Z"
+        }
+      ],
+      "model": "gpt-6-luna",
+      "reasoning_effort": "max",
+      "timeout_minutes": 15,
+      "agent_calls_after_clarification": 1,
+      "clarification_calls": 1,
+      "ready_for_approval": true,
+      "source_unchanged": true,
+      "result_skills_used": [
+        "nexkit-request"
+      ],
+      "result_limitations": [
+        "The repository has no CLI or test files yet, so there is no implemented behavior to verify during requirement clarification.",
+        "The supplied working tree reports tracked NexKit skill files as deleted; this run made no file changes."
+      ],
+      "cli_metadata": {
+        "event_counts": {
+          "thread.started": 1,
+          "item.completed": 13,
+          "turn.started": 1,
+          "item.started": 7,
+          "turn.completed": 1
+        },
+        "completed_item_counts": {
+          "error": 4,
+          "agent_message": 2,
+          "command_execution": 7
+        },
+        "command_exit_counts": {
+          "0": 7
+        },
+        "skill_paths_in_successful_commands": [
+          "nexkit-request"
+        ],
+        "cli_reported_usage": [
+          {
+            "input_tokens": 79815,
+            "cached_input_tokens": 59392,
+            "output_tokens": 4388
+          }
+        ]
+      }
+    }
+  ],
+  "metadata_method": "Only whitelisted event counts, command exit codes, known skill path matches and numeric token usage were extracted from each private CLI log. Raw logs and authentication material were not exported. Skill path matches corroborate the structured output, but do not by themselves prove semantic adherence.",
+  "usage_note": "CLI-reported input totals include cached input tokens. No monetary cost measurement is available.",
+  "scope_limits": [
+    "Human requirement approvals were not posted by the agent.",
+    "No live implementation, independent review or merge has been demonstrated by these clarification runs.",
+    "Requirement-stage source snapshots remained unchanged.",
+    "Native CLI error items were observed; the structured results and all workflow jobs required for publication still succeeded. Their counts are retained without exporting message contents."
+  ]
+}

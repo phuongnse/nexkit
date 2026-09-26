@@ -431,11 +431,18 @@ def agent_result(value, role):
     return value
 
 
-def merge_gate(key, verification, review):
+def merge_gate(key, verification, review, cfg=None):
     for name, value in (("verification", verification), ("review", review)):
         require(value.get("candidate") == key, f"Stale or mismatched {name}")
     require(verification.get("passed") is True, "Verification failed or was skipped")
     require(verification.get("checks"), "No checks actually ran")
+    if cfg is not None:
+        from .checks import complete_checks
+
+        require(
+            key["config"] == digest(cfg), "Candidate configuration differs from the merge policy"
+        )
+        complete_checks(cfg, verification["checks"])
     require(
         {"test", "e2e"} <= {c.get("kind") for c in verification["checks"]},
         "Test and end-to-end checks are both required",

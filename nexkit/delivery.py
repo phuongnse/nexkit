@@ -294,7 +294,10 @@ def finish(gh, context, verification, review):
             "PR repository identity mismatch",
         )
         require(pr["base"]["ref"] == context["config"]["default_branch"], "PR target changed")
-        merge_gate(key, verification, review)
+        require(
+            state.get("candidate") == key, "Candidate differs from the published work item state"
+        )
+        merge_gate(key, verification, review, context["config"])
         gh.strict_protection(context["config"]["default_branch"])
         # Check runs are emitted only by this trusted controller, after validated
         # reports from the current workflow's isolated jobs.

@@ -18,6 +18,14 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements-dev.txt
       - run: ruff check . && ruff format --check .
+      - name: Check native workflow syntax with pinned upstream actionlint
+        run: |
+          curl --fail --location --silent --show-error https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          # This upstream version predates concurrency.queue. Its documented
+          # values and incompatibility with cancellation are checked in tests.
+          "$RUNNER_TEMP/actionlint" -shellcheck='' -pyflakes='' -ignore '^unexpected key "queue" for "concurrency" section\.' .github/workflows/*.yml
       - run: python -m unittest discover -v
       - run: python scripts/build.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -8,7 +8,7 @@ import shutil
 import stat
 from pathlib import Path
 
-from .checks import execute, verify
+from .checks import combine_checks, execute, verify
 from .common import Blocked, canonical, digest, file_hash, kit_root, read_json, run, write_json
 from .delivery import failed, finish, prepare, publish, revalidate
 from .github import GitHub
@@ -76,6 +76,25 @@ def prepare_job(destination, kit_ref):
     else:
         output(ready=False)
     return context
+
+
+def prepare_check(context, check_name, kit_ref):
+    gh = GitHub(os.environ["GITHUB_REPOSITORY"])
+    require(context["repository"] == gh.repository, "Check belongs to another repository")
+    run_key = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+    require(context["run_key"] == run_key, "Check belongs to another run attempt")
+    require(context["config"]["kit"]["ref"] == kit_ref, "Check kit revision changed")
+    state, _ = revalidate(gh, context)
+    require(
+        context.get("candidate") == state.get("candidate") and context.get("candidate"),
+        "Check must use the published candidate",
+    )
+    require(
+        check_name in {check["name"] for check in context["config"]["checks"]},
+        "Unknown configured check",
+    )
+    output(head=context["candidate"]["head"])
+    return {"authorized": True, "check": check_name, "head": context["candidate"]["head"]}
 
 
 def tracked_files(source, workspace):
@@ -253,6 +272,8 @@ def main():
             "collect",
             "publish",
             "verify",
+            "prepare-check",
+            "combine-checks",
             "finish",
             "failed",
         ),
@@ -268,6 +289,8 @@ def main():
     parser.add_argument("--initial", default="/tmp/nexkit/initial.json")
     parser.add_argument("--verification")
     parser.add_argument("--review")
+    parser.add_argument("--check", help="Run exactly one configured check in this native job")
+    parser.add_argument("--reports", nargs="+", help="Exact check result files from native jobs")
     parser.add_argument("--reason", default="A required job failed or produced no valid output")
     args = parser.parse_args()
     try:
@@ -306,7 +329,20 @@ def main():
                     args.initial,
                 )
             elif args.operation == "verify":
-                result = verify(context["config"], args.workspace, context["candidate"])
+                result = verify(
+                    context["config"],
+                    args.workspace,
+                    context["candidate"],
+                    check_names=[args.check] if args.check else None,
+                )
+                if args.check:
+                    result["producer"] = {"run_key": context["run_key"], "check": args.check}
+                write_json(args.out, result)
+                output(passed=result["passed"])
+            elif args.operation == "prepare-check":
+                result = prepare_check(context, args.check, args.kit_ref)
+            elif args.operation == "combine-checks":
+                result = combine_checks(context, [read_json(path) for path in args.reports or []])
                 write_json(args.out, result)
             else:
                 gh = GitHub(context["repository"])

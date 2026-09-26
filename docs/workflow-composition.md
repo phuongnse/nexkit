@@ -11,7 +11,8 @@ Schema 2 supports arbitrary pipeline names, per-pipeline settings, explicit
 entrypoint routing, accepted workflow/control files and installation bundles.
 The existing `intake.yml`, `clarify.yml`, `delivery.yml` and `release.yml` reusable
 workflows accept an optional `pipeline` input and remain compatibility adapters.
-Their internal job structures are still fixed. Extraction into smaller reusable
+Their internal job structures are still fixed. A standalone candidate-check job
+is available as described below. Further extraction into smaller reusable
 capabilities, arbitrary agent invocation definitions and per-invocation delivery
 reservations is ongoing. Selecting schema 2 does not by itself provide these
 unfinished capabilities. No schema-2 live delivery acceptance is claimed.
@@ -138,3 +139,40 @@ The caller and revision checks use GitHub's documented
 [workflow variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables).
 Reusable jobs follow GitHub's native
 [workflow reuse contract](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
+
+## Reusable candidate check
+
+`candidate-check.yml` runs one command selected by its accepted check name.
+The consumer chooses its job name, dependencies and placement in native YAML.
+It accepts `kit_repository`, `kit_ref`, `candidate_artifact_id` and `check`.
+The kit reference must match the project's immutable pin. Pass the artifact ID
+output directly from the trusted publication job that produced `candidate.json`;
+do not find a candidate by an artifact-name wildcard or by "latest run".
+
+The capability validates the current run attempt, approval, work-item candidate,
+configuration and selected command before checking out or executing candidate
+code. It uses a hosted runner, a separate unprivileged account, read-only GitHub
+permissions and no model credential. It returns `passed` and
+`report_artifact_id`. A successful artifact upload is not a passing check.
+Setup failures remain failed, explicitly unexecuted checks with their real logs.
+
+After downloading each report by the exact ID returned by the corresponding
+required job, aggregate its named files with:
+
+```sh
+python3 -m nexkit.ci combine-checks --context candidate.json --reports checks/unit.json checks/api.json checks/lint.json --out verification.json
+```
+
+Those filenames illustrate consumer-chosen check names. Every configured check
+must appear exactly once, with the current candidate, run attempt and declared
+kind. Missing, duplicate, unexpected or stale results block aggregation. Every
+matrix shard needs its own configured identity and report; one final matrix
+output cannot stand in for all shards. The caller must depend on all required
+producer jobs and consume their outputs, not outputs from an unrelated job.
+Additional advisory stages can stay outside the required report set.
+
+The merge guard also checks the complete configured set for the compatibility
+adapter, so passing test/E2E records cannot hide a missing lint/build command.
+The independent review gate remains mandatory for automatic merge. This
+capability has local command tests, mocked controller tests and static workflow
+validation; it has not yet been exercised as a live consumer job.

@@ -109,3 +109,12 @@ rejection. No live Actions runs, model calls, credentials, private logs or GitHu
 writes were involved in this review. This establishes scoped configuration,
 installation and controller behavior; it does not establish variable-stage agent
 delivery or live schema-2 acceptance.
+
+## Reusable check job — review in progress
+
+The separate reviewer found that a failed setup command produced no check record,
+so aggregation discarded its structured failure log. A real local regression now
+runs an exit-3 setup fixture and verifies that its output reaches delivery repair
+feedback while the selected check remains explicitly unexecuted and failed.
+The fix and 114-test suite pass locally. A concluding review of this second
+slice is still pending; no live check-job acceptance is claimed.

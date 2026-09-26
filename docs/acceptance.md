@@ -183,6 +183,18 @@ pipelines do not require unused delivery fields. Smaller reusable execution
 capabilities and arbitrary agent invocation composition remain unfinished; see
 the [implementation boundary](workflow-composition.md).
 
+The [core CI run at 68963cd](https://github.com/phuongnse/nexkit/actions/runs/36209633932)
+passed all 105 tests, Ruff and package creation for that first composition slice.
+The next slice provides an isolated reusable check job, exact configured-check
+completeness at merge and aggregation of individual job reports. **114 local
+tests pass**, including actual local commands and a setup failure with its log
+preserved for repair feedback. GitHub state in those tests is mocked. The
+independent review identified the lost setup-failure report; its regression is
+fixed, with the concluding review still pending at this snapshot. Static
+actionlint validation passes with only its documented `concurrency.queue`
+parser gap covered by a dedicated structural test. This is not live execution
+of the new reusable check job or complete agent-stage composition.
+
 The separate issue-conversation update passed [GitHub CI at c621443](https://github.com/phuongnse/nexkit/actions/runs/36208620238),
 including 88 tests, Ruff and the installation archive build. This is core CI,
 not another live consumer model invocation. Both live consumer pins, pending

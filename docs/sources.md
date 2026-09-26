@@ -14,6 +14,7 @@ GitHub CLI and the consumer's actual commands.
 | GitHub Agentic Workflows | v0.89.21 | MIT; no compiler/orchestrator dependency because Actions plus CLI supplies the required path |
 | Ruff | 0.16.9 | MIT; development formatting/linting only |
 | PyYAML | 6.0.3 | MIT; development workflow structure inspection only |
+| actionlint | 1.7.12; release archive SHA-256 in the core CI workflow | MIT; native Actions syntax, expression and reusable-workflow validation during development |
 | Claude Code CLI | 2.1.282 | Upstream commercial terms; installed for host verification, never redistributed |
 | GitHub Actions runner | 2.337.0; release archive SHA-256 in `runner/Dockerfile` | MIT; official repo-scoped listener and job hooks |
 | GitHub CLI | 2.101.0; release archive SHA-256 in `runner/Dockerfile` | MIT; official repository operations |
@@ -37,6 +38,14 @@ Evaluated upstreams: [Spec Kit](https://github.com/github/spec-kit),
 [Superpowers](https://github.com/obra/superpowers),
 [Agentic Workflows](https://github.com/github/gh-aw),
 [Ruff installation](https://docs.astral.sh/ruff/installation/).
+
+[actionlint](https://github.com/rhysd/actionlint/tree/v1.7.12) is an upstream
+development tool, not a runtime dependency or a workflow engine. Its 1.7.12
+parser predates GitHub's documented `concurrency.queue` field. CI suppresses only
+that exact unknown-field diagnostic; a separate YAML test enforces `queue: max`
+without cancellation for the kit's serialized workflows. Other syntax and
+expression diagnostics remain errors. The existing live queue probe remains
+separate evidence of GitHub platform behavior.
 
 Self-hosted integration sources:
 [Codex account authentication in CI](https://learn.chatgpt.com/docs/auth/ci-cd-auth),

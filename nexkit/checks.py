@@ -149,12 +149,24 @@ def test_count(report, root, output):
     raise Blocked("Unknown test report format")
 
 
-def verify(cfg, root, candidate=None, *, setup=True, command_home=None):
+def verify(cfg, root, candidate=None, *, setup=True, command_home=None, check_names=None):
     if command_home is None:
         with tempfile.TemporaryDirectory(prefix="nexkit-verification-") as home:
-            return verify(cfg, root, candidate, setup=setup, command_home=home)
+            return verify(
+                cfg, root, candidate, setup=setup, command_home=home, check_names=check_names
+            )
+    checks = cfg["checks"]
+    if check_names is not None:
+        require(
+            isinstance(check_names, list)
+            and check_names
+            and len(check_names) == len(set(check_names)),
+            "Choose distinct configured check names",
+        )
+        require(set(check_names) <= {check["name"] for check in checks}, "Unknown configured check")
+        checks = [check for check in checks if check["name"] in check_names]
     results = []
-    if not cfg["checks"]:
+    if not checks:
         return {
             "candidate": candidate,
             "passed": False,
@@ -170,11 +182,23 @@ def verify(cfg, root, candidate=None, *, setup=True, command_home=None):
                 return {
                     "candidate": candidate,
                     "passed": False,
-                    "checks": [],
+                    "checks": [
+                        {
+                            "name": check["name"],
+                            "kind": check["kind"],
+                            "passed": False,
+                            "executed": False,
+                            "reason": "Environment setup failed",
+                            "setup_failure": result,
+                        }
+                        for check in checks
+                    ]
+                    if check_names is not None
+                    else [],
                     "reason": "Environment setup failed",
                     "setup_failure": result,
                 }
-    for check in cfg["checks"]:
+    for check in checks:
         report = check.get("report")
         if report and report["format"] == "junit":
             path = consumer_path(root, report["path"])
@@ -198,6 +222,63 @@ def verify(cfg, root, candidate=None, *, setup=True, command_home=None):
     kinds = {r["kind"] for r in results if r["passed"]}
     return {
         "candidate": candidate,
-        "passed": bool(results) and all(r["passed"] for r in results) and {"test", "e2e"} <= kinds,
+        "passed": bool(results)
+        and all(r["passed"] for r in results)
+        and (check_names is not None or {"test", "e2e"} <= kinds),
         "checks": results,
+    }
+
+
+def complete_checks(cfg, results):
+    """Each configured command must appear exactly once with its declared kind."""
+    require(isinstance(results, list), "Missing check results")
+    expected = {check["name"]: check["kind"] for check in cfg["checks"]}
+    require(all(isinstance(item, dict) for item in results), "Invalid check record")
+    names = [item.get("name") for item in results]
+    require(all(isinstance(name, str) for name in names), "Missing check identity")
+    require(
+        len(names) == len(set(names)) and set(names) == set(expected),
+        "Missing, duplicate or unexpected configured checks",
+    )
+    require(
+        all(item.get("kind") == expected[item["name"]] for item in results),
+        "Check kind differs from the accepted configuration",
+    )
+
+
+def combine_checks(context, reports):
+    """Combine native job results; this function does not run or schedule jobs."""
+    results = []
+    for report in reports:
+        require(
+            isinstance(report, dict) and report.get("candidate") == context["candidate"],
+            "Check report belongs to another candidate",
+        )
+        producer = report.get("producer", {})
+        require(isinstance(producer, dict), "Invalid check producer")
+        require(
+            producer.get("run_key") == context["run_key"],
+            "Check report belongs to another run attempt",
+        )
+        items = report.get("checks")
+        require(
+            isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict),
+            "Each check job must report exactly one configured command",
+        )
+        require(
+            producer.get("check") == items[0].get("name"),
+            "Check producer identity differs from its result",
+        )
+        # Keep failures as feedback. Completeness is independent of success.
+        require(
+            type(report.get("passed")) is bool
+            and report["passed"] == (items[0].get("passed") is True),
+            "Check report contradicts its command result",
+        )
+        results.extend(items)
+    complete_checks(context["config"], results)
+    return {
+        "candidate": context["candidate"],
+        "checks": results,
+        "passed": bool(results) and all(item.get("passed") is True for item in results),
     }

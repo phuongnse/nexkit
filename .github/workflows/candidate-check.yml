@@ -1,0 +1,101 @@
+name: NexKit candidate check
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+      candidate_artifact_id:
+        type: string
+        required: true
+      check:
+        type: string
+        required: true
+    outputs:
+      passed:
+        description: Whether the selected check passed, independent of artifact collection success
+        value: ${{ jobs.check.outputs.passed }}
+      report_artifact_id:
+        description: Immutable artifact ID containing this configured check's result
+        value: ${{ jobs.check.outputs.report_artifact_id }}
+permissions: {}
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      passed: ${{ steps.execute.outputs.passed }}
+      report_artifact_id: ${{ steps.report.outputs.artifact-id }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate the kit pin before loading controller code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          artifact-ids: ${{ inputs.candidate_artifact_id }}
+          path: /tmp/nexkit
+          merge-multiple: true
+      - id: guard
+        name: Validate the current published candidate and configured command
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_CHECK: ${{ inputs.check }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: python3 -m nexkit.ci prepare-check --context /tmp/nexkit/candidate.json --check "$NEXKIT_CHECK" --kit-ref "$NEXKIT_REF"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ steps.guard.outputs.head }}
+          path: source
+          persist-credentials: false
+      - id: execute
+        name: Execute exactly one accepted check in an isolated account
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_EXEC_USER: nexkit-agent
+          NEXKIT_CHECK: ${{ inputs.check }}
+        run: |
+          sudo useradd --create-home --shell /bin/bash nexkit-agent
+          sudo chmod 755 /home/nexkit-agent
+          sudo cp -a source /home/nexkit-agent/work
+          sudo chown -R nexkit-agent:nexkit-agent /home/nexkit-agent/work
+          python3 -m nexkit.ci verify --context /tmp/nexkit/candidate.json --workspace /home/nexkit-agent/work --check "$NEXKIT_CHECK" --out "/tmp/nexkit/checks/$NEXKIT_CHECK.json"
+      - id: report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-check-${{ inputs.check }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/checks/*.json
+          retention-days: 7
+          if-no-files-found: error

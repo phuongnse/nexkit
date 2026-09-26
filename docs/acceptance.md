@@ -13,11 +13,19 @@ simulated GitHub boundaries are distinct from live integration.
 | D — success | Both consumers' earlier schema-1 deliveries merged after real owner requirement approval and successful jobs; exact candidate/merge state matches GitHub, and no consumer release exists | The later composed delivery is awaiting human PR review; full live acceptance remains incomplete in the other groups below |
 | E — repair | Live local agent reproduced/fixed a sign bug; independent reviewer verified regressions against the original function; controller passes feedback between rounds | Feedback→AI repair→fresh checks/review→merge on Actions |
 | F — blocked | Live unapproved delivery stopped before any model call or PR; tests cover unauthorized/edit-revert/stale identity/invalid output/missing review/zero-skipped-failed tests/exhausted budgets/control edits | Remaining failure injection in the live environment and final guards |
-| G — durability | Live overlapping intake events reused an existing issue; two overlapping delivery dispatches after a real approved merge skipped all agent/side-effect jobs and left state, counters, main and PR count unchanged; native host and local consumer update/removal checks passed | Concurrent first creation and active delivery, interruptions, cancellation and insufficient consumer permissions |
+| G — durability | Live duplicate intake reused an existing issue; duplicate delivery after merge and during a real human wait skipped downstream work and preserved state, budgets and source; native host and local consumer update/removal checks passed | Concurrent first creation and active delivery, interruptions, cancellation and insufficient consumer permissions |
 | H — release | Tests cover wrong approver/drift/changed bytes or tags/cancel/deadline/retry/lost upload response with original artifact recovery | Real human release decision and publication within the authorized test scope |
 
 ## Executed verification
 
+- [Duplicate delivery during human wait, September 26](validation/actions-stage-wait-retry-2026-09-26.json):
+  two native delivery dispatches for issue #5 each completed preparation and
+  skipped all eight downstream jobs because the configured human approval was
+  still pending. The complete state revision, original checkpoint and wait start,
+  candidate, main, issue comments and three-call/one-round budget were unchanged.
+  No model call or continuation dispatch occurred. This exercises duplicate
+  admission against a real pending gate; human continuation and active
+  interruption/cancellation remain separate acceptance boundaries.
 - [Composed delivery to human review, September 26](validation/actions-stage-delivery-2026-09-26.json):
   the owner's real requirement approval triggered
   [run 36251384216](https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36251384216).

@@ -320,3 +320,14 @@ successful jobs, PR #6 open with no human reviews, and three shared CLI calls in
 one round. Saved runner metadata showed it online and idle. Wording about merged
 deliveries was scoped to the earlier schema-1 runs so it does not include the
 new candidate. No provenance discrepancy was found.
+
+## Duplicate delivery admission during human wait — 2026-09-26
+
+The reviewer independently checked native delivery runs 36253178941 and
+36253181113. Each completed one hosted preparation job and skipped all eight
+downstream jobs. Filtered results from the job-log API confirmed the exact waiting
+reason and a returned state identical to the complete before/after state. The
+checkpoint, wait start, budgets, candidate, main and issue comments were unchanged.
+PR #6 remained open with no human reviews; no continuation dispatch appeared.
+The record correctly claims duplicate admission only. No discrepancy was found,
+and the independent audit performed no dispatch, test rerun or model invocation.

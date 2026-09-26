@@ -1,0 +1,97 @@
+{
+  "checked_at": "2026-09-26T15:50:30.705645+00:00",
+  "scope": "Live duplicate delivery admission while the real composed work item awaits human PR review. This did not dispatch a continuation or submit a human decision.",
+  "repository": "phuongnse/nexkit-validation-existing",
+  "issue": 5,
+  "pull_request": 6,
+  "runs": [
+    {
+      "id": 36253178941,
+      "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36253178941",
+      "event": "workflow_dispatch",
+      "head": "439ec14ccb0b2135be3bd9c50b2cd3996a2465b4",
+      "conclusion": "success",
+      "prepare": {
+        "job": 108434926970,
+        "started_at": "2026-09-26T15:47:49Z",
+        "completed_at": "2026-09-26T15:47:55Z",
+        "conclusion": "success"
+      },
+      "skipped_jobs": [
+        "change",
+        "complete",
+        "evaluate",
+        "human-review",
+        "journey",
+        "package",
+        "publish",
+        "unit"
+      ],
+      "controller_result": {
+        "ready": false,
+        "reason": "Waiting for a configured human approval",
+        "returned_state_matches_before_and_after": true
+      }
+    },
+    {
+      "id": 36253181113,
+      "url": "https://github.com/phuongnse/nexkit-validation-existing/actions/runs/36253181113",
+      "event": "workflow_dispatch",
+      "head": "439ec14ccb0b2135be3bd9c50b2cd3996a2465b4",
+      "conclusion": "success",
+      "prepare": {
+        "job": 108434952713,
+        "started_at": "2026-09-26T15:47:59Z",
+        "completed_at": "2026-09-26T15:48:05Z",
+        "conclusion": "success"
+      },
+      "skipped_jobs": [
+        "change",
+        "complete",
+        "evaluate",
+        "human-review",
+        "journey",
+        "package",
+        "publish",
+        "unit"
+      ],
+      "controller_result": {
+        "ready": false,
+        "reason": "Waiting for a configured human approval",
+        "returned_state_matches_before_and_after": true
+      }
+    }
+  ],
+  "unchanged_before_and_after": {
+    "state_revision": "7d9446a42cd5d4d4d069012c02b66154383dea66",
+    "state_status": "waiting_for_approval",
+    "checkpoint": "9ae07a8fe11daec91380a4dab0359435fae8d2d1f15293ccb2fa602fe8509228",
+    "gate_opened_at": "2026-09-26T15:31:16.558423+00:00",
+    "run_key": "36251384216.1",
+    "agent_calls": 3,
+    "delivery_calls": 2,
+    "attempts": 1,
+    "candidate": {
+      "base": "439ec14ccb0b2135be3bd9c50b2cd3996a2465b4",
+      "config": "c8474ba1462d0de39fdc591fa11476ce7b028deb9ff1563ebe88febd6cf98ab7",
+      "head": "24a961ac1b8f215ad17af975cd909aa24284c4c5",
+      "kit": "ace93ccb318091e2722042b2ac6e0f19b509ae3f",
+      "spec": "90e56f84eef49613ceba208d9cff54389efe5b2dedefced337597e01a41e6c2e"
+    },
+    "main": "439ec14ccb0b2135be3bd9c50b2cd3996a2465b4",
+    "pr_state": "open",
+    "human_pr_reviews": 0,
+    "issue_comment_ids": [
+      5847312038,
+      5847395248,
+      5847494386
+    ]
+  },
+  "new_model_calls": 0,
+  "metadata_source": "Live Actions run/job metadata and the hosted model-free preparation result; no raw private CLI logs or authentication files were read.",
+  "limitations": [
+    "The two runs establish preserved human-wait state across duplicate delivery events, not completed human continuation or merge.",
+    "Active interruption, cancellation, live AI repair and the exact human-approved release are not established by these guard runs."
+  ],
+  "independent_review": "Confirmed live run/job metadata, filtered hosted job-log results and complete saved before/after state. Checkpoint, wait start, budgets, candidate, main and comments matched; no discrepancy found."
+}

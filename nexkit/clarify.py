@@ -8,10 +8,20 @@ from datetime import datetime
 
 from .cli import SPEC_MARKER, set_spec
 from .common import Blocked, canonical, digest, read_json, write_json
-from .policy import agent_result, approval, config, control_command, human, now, require, spec_hash
+from .policy import (
+    agent_result,
+    approval,
+    clarification_limits,
+    config,
+    control_command,
+    human,
+    now,
+    require,
+    spec_hash,
+)
 
 
-def discussion(gh, number):
+def discussion(gh, number, *, include_resume=False):
     # Only authorized human answers can decide product scope. Other issue text
     # remains untrusted context and cannot consume model calls through comments.
     return [
@@ -22,7 +32,11 @@ def discussion(gh, number):
             "actor": c["user"]["login"],
         }
         for c in gh.comments(number)
-        if human(c, gh.permission) and not c.get("body", "").strip().startswith("/nexkit ")
+        if human(c, gh.permission)
+        and (
+            not c.get("body", "").strip().startswith("/nexkit ")
+            or (include_resume and c.get("body", "").strip() == "/nexkit resume")
+        )
     ]
 
 
@@ -65,26 +79,33 @@ def prepare(gh, number, run_key, kit_ref, event):
             "Project identity changed",
         )
         require(cfg["kit"]["ref"] == kit_ref, "Clarification kit pin changed")
-        answers = discussion(gh, number)
+        limits = clarification_limits(cfg)
+        answers = discussion(gh, number, include_resume=not limits["shared_delivery_budget"])
         fingerprint = digest({"spec": spec_hash(issue), "answers": answers})
         if phase.get("completed_input") == fingerprint:
             if phase.get("message"):
                 post_notice(gh, number, phase["message"])
             return {"ready": False, "reason": "No new requirement input"}
         require(phase.get("run_key") != run_key, "Duplicate clarification run")
+        if not limits["shared_delivery_budget"] and phase.get("input") == fingerprint:
+            return {
+                "ready": False,
+                "reason": "This input already reserved a clarification call; add a new comment or /nexkit resume",
+            }
         require(
-            phase.get("calls", 0) < cfg["limits"]["attempts"],
+            limits["max_calls"] is None or phase.get("calls", 0) < limits["max_calls"],
             "Requirement clarification attempts exhausted",
         )
-        require(
-            state.get("agent_calls", 0) + 1 <= cfg["limits"]["agent_calls"],
-            "Agent invocation budget exhausted",
-        )
-        minutes = max(1, min(15, cfg["limits"]["minutes"] // cfg["limits"]["attempts"]))
-        require(
-            phase.get("reserved_minutes", 0) + minutes <= cfg["limits"]["minutes"],
-            "Requirement clarification time budget exhausted",
-        )
+        minutes = limits["agent_minutes"]
+        if limits["shared_delivery_budget"]:
+            require(
+                state.get("agent_calls", 0) + 1 <= cfg["limits"]["agent_calls"],
+                "Agent invocation budget exhausted",
+            )
+            require(
+                phase.get("reserved_minutes", 0) + minutes <= cfg["limits"]["minutes"],
+                "Requirement clarification time budget exhausted",
+            )
         phase.update(
             status="clarifying",
             run_key=run_key,
@@ -102,6 +123,7 @@ def prepare(gh, number, run_key, kit_ref, event):
             "issue": issue,
             "answers": answers,
             "pending_questions": phase.get("questions", []),
+            "previous_reply": phase.get("reply", ""),
             "config": cfg,
             "base": base,
             "source": base,
@@ -124,7 +146,9 @@ def revalidate(gh, context):
         spec_hash(issue) == spec_hash(context["issue"]), "Requirement changed during clarification"
     )
     require(
-        discussion(gh, issue["number"]) == context["answers"], "New requirement answers arrived"
+        discussion(gh, issue["number"], include_resume="clarification" in context["config"])
+        == context["answers"],
+        "New requirement answers arrived",
     )
     cfg = context["config"]
     require(
@@ -156,6 +180,11 @@ def publish(gh, context, bundle):
     require(bundle.get("unchanged") is True, "Requirement agent changed the source")
     result = agent_result(bundle.get("result"), "request")
     require(result["status"] == "done", "Requirement agent blocked: " + result["summary"])
+    reply = result.get("reply")
+    require(
+        isinstance(reply, str) and reply.strip() and len(reply) <= 6000,
+        "Requirement reply must contain 1..6000 characters",
+    )
     require(
         isinstance(result.get("specification"), str) and result["specification"].strip(),
         "Missing requirement specification",
@@ -177,15 +206,34 @@ def publish(gh, context, bundle):
         len((prefix + SPEC_MARKER + result["specification"]).encode()) < 60000,
         "Requirement exceeds the issue size bound",
     )
-    updated = set_spec(gh, context["issue"]["number"], result["specification"])
+    if (
+        context["issue"]["body"].split(SPEC_MARKER, 1)[1].rstrip()
+        == result["specification"].rstrip()
+    ):
+        updated = {
+            "issue": context["issue"]["html_url"],
+            "spec": spec_hash(context["issue"]),
+            "human_approval_comment": "/nexkit approve " + spec_hash(context["issue"]),
+        }
+    else:
+        updated = set_spec(gh, context["issue"]["number"], result["specification"])
     current = gh.issue(context["issue"]["number"])
     # Record completion before the comment. On interruption the next run can
     # recover the missing comment without invoking another model.
     phase = state["clarification"]
     message = (
         "<!-- nexkit:clarification:"
-        + digest({"spec": updated["spec"], "questions": questions})
+        + digest(
+            {
+                "input": context["input"],
+                "spec": updated["spec"],
+                "questions": questions,
+                "reply": reply,
+            }
+        )
         + " -->\n"
+        + reply.strip()
+        + "\n\n"
     )
     if questions:
         message += "Please answer these requirement questions on this issue:\n\n" + "\n".join(
@@ -200,6 +248,7 @@ def publish(gh, context, bundle):
     phase.update(
         status="awaiting_answers" if questions else "awaiting_approval",
         questions=questions,
+        reply=reply,
         completed_input=digest({"spec": spec_hash(current), "answers": context["answers"]}),
         message=message,
     )

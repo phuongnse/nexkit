@@ -77,3 +77,18 @@ routing, workspace paths, ownership handoff, schema/output paths, Luna/max
 options or the 15-minute reservation. This was read-only inspection without
 credential access, private-log access or model calls. The later successful
 Actions runs are integration evidence recorded separately.
+
+## Issue conversation and separate limits — 2026-09-26
+
+The independent session statically reviewed the direct reply field, unchanged
+specification handling, optional clarification cap, reservation deduplication,
+legacy accounting and delivery retry calculation. It found no blocker in that
+change. The implementer also added a regression proving that many clarification
+calls do not prevent automatic repair when the project selects separate limits.
+These controller tests use a mocked GitHub boundary; the changed conversation
+behavior has not yet run on the live consumers.
+
+One recovery boundary still needs follow-up: interruption after the issue body
+PATCH but before saving clarification completion. Recovery of a missing bot
+comment after completion has been saved is already covered. Neither test is a
+claim of a new live Actions run.

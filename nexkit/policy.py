@@ -25,6 +25,35 @@ def agent_runner(cfg):
     return cfg["environment"].get("agent_runner", cfg["environment"]["runner"])
 
 
+def clarification_limits(cfg):
+    if "clarification" in cfg:
+        return {
+            "max_calls": cfg["clarification"].get("max_calls"),
+            "agent_minutes": cfg["clarification"]["agent_minutes"],
+            "shared_delivery_budget": False,
+        }
+    limits = cfg["limits"]
+    return {
+        "max_calls": limits["attempts"],
+        "agent_minutes": max(1, min(15, limits["minutes"] // limits["attempts"])),
+        "shared_delivery_budget": True,
+    }
+
+
+def delivery_calls(state):
+    # Older state only recorded total calls and the clarification subtotal.
+    count = state.get(
+        "delivery_calls",
+        state.get("agent_calls", 0) - state.get("clarification", {}).get("calls", 0),
+    )
+    require(type(count) is int and count >= 0, "Invalid delivery invocation accounting")
+    return count
+
+
+def delivery_budget_used(state, cfg):
+    return delivery_calls(state) if "clarification" in cfg else state.get("agent_calls", 0)
+
+
 def require(condition, message):
     if not condition:
         raise Blocked(message)
@@ -148,9 +177,22 @@ def config(value):
         ("command_seconds", 3600),
     ):
         positive(limits.get(key), f"limits.{key}", maximum)
+    if "clarification" in value:
+        clarification = value["clarification"]
+        require(
+            isinstance(clarification, dict)
+            and set(clarification) <= {"agent_minutes", "max_calls"},
+            "Clarification accepts agent_minutes and optional max_calls",
+        )
+        positive(clarification.get("agent_minutes"), "clarification.agent_minutes", 60)
+        maximum = clarification.get("max_calls")
+        require(
+            maximum is None or (type(maximum) is int and maximum > 0),
+            "clarification.max_calls must be a positive integer or null for no conversation cap",
+        )
     require(
-        limits["agent_calls"] >= 3,
-        "Reserve at least clarification, implementation and independent review",
+        limits["agent_calls"] >= (2 if "clarification" in value else 3),
+        "Reserve at least implementation and independent review, plus clarification when shared",
     )
     environment = value.get("environment", {})
     require(
@@ -250,11 +292,12 @@ def reserve(state, cfg, run_key, *, clock=None):
     require(run_key not in reservations, "This run attempt has already been reserved")
     require(state.get("attempts", 0) < cfg["limits"]["attempts"], "Delivery attempts exhausted")
     require(
-        state.get("agent_calls", 0) + 2 <= cfg["limits"]["agent_calls"],
+        delivery_budget_used(state, cfg) + 2 <= cfg["limits"]["agent_calls"],
         "Agent invocation budget exhausted",
     )
     state["reservations"] = [*reservations, run_key]
     state["attempts"] = state.get("attempts", 0) + 1
+    state["delivery_calls"] = delivery_calls(state) + 2
     state["agent_calls"] = state.get("agent_calls", 0) + 2
     return state
 

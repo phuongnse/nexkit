@@ -9,6 +9,7 @@ from .policy import (
     candidate_key,
     config,
     control_command,
+    delivery_budget_used,
     merge_gate,
     now,
     protected_path,
@@ -326,7 +327,7 @@ def failed(gh, context, reason, *, verification=None, review=None):
     cfg = context["config"]
     retry = (
         state.get("attempts", 0) < cfg["limits"]["attempts"]
-        and state.get("agent_calls", 0) + 2 <= cfg["limits"]["agent_calls"]
+        and delivery_budget_used(state, cfg) + 2 <= cfg["limits"]["agent_calls"]
     )
     try:
         issue, approved = authorized(gh, number)

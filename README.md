@@ -41,9 +41,12 @@ no access to another user's VPS, runner or account.
 
 Use the `nexkit-request` skill. GitHub intake creates an issue, and Actions
 continues requirement clarification after the local host closes. The CLI returns
-an intake key and an `intake-status` command to find the issue. Answer questions
-on GitHub. An authorized human reviews the specification and posts the exact
+an intake key and an `intake-status` command to find the issue. Ask questions or
+give feedback in ordinary issue comments; the bot replies and updates the
+requirement when needed, within the conversation settings selected during setup.
+An authorized human reviews the specification and posts the exact
 `/nexkit approve <hash>` comment shown by `nexkit approval <issue>`.
+The hash identifies the requirement content; it is not the issue number.
 
 Track the issue, PR and Actions with `nexkit status <issue>`. Use `nexkit cancel
 <issue>` or `nexkit resume <issue>` when needed. Delivery runs without your local

@@ -4,7 +4,7 @@ from copy import deepcopy
 from nexkit.clarify import prepare, publish
 from nexkit.cli import SPEC_MARKER
 from nexkit.common import Blocked
-from nexkit.policy import now
+from nexkit.policy import now, reserve, spec_hash
 from tests.support import FakeGitHub, agent, approve
 
 
@@ -46,6 +46,7 @@ class RequirementGitHub(FakeGitHub):
 def result(context, questions=None):
     value = agent("request")
     value.update(
+        reply="The specification is ready for review. The CLI will handle signed integers.",
         specification="## Goal\n\nSum signed integers.\n\n## Acceptance\n\n- CLI -2 -3 prints -5.\n- No arguments print 0.",
         questions=questions or [],
         ready_for_approval=not questions,
@@ -142,3 +143,76 @@ class ClarificationTests(unittest.TestCase):
         self.assertFalse(self.prepare("101.1")["ready"])
         self.assertIn("Choose behavior?", self.gh.messages[-1])
         self.assertEqual(self.gh.state["agent_calls"], 1)
+
+    def test_reply_answers_a_question_without_editing_an_unchanged_spec(self):
+        first = self.prepare()
+        publish(self.gh, first, result(first))
+        before = deepcopy(self.gh.work)
+        second = self.prepare("101.1", self.gh.answer("Why use arbitrary precision?"))
+        output = result(second)
+        output["result"]["reply"] = "It preserves exact sums above the safe integer range."
+        publish(self.gh, second, output)
+        self.assertEqual(self.gh.work, before)
+        self.assertIn(output["result"]["reply"], self.gh.messages[-1])
+        self.assertIn("/nexkit approve " + spec_hash(before), self.gh.messages[-1])
+        third = self.prepare("102.1", self.gh.answer("Can you give an example?"))
+        self.assertEqual(third["previous_reply"], output["result"]["reply"])
+
+    def test_missing_or_oversized_reply_cannot_publish(self):
+        context = self.prepare()
+        for reply in (None, "", " ", "x" * 6001):
+            output = result(context)
+            output["result"]["reply"] = reply
+            with (
+                self.subTest(reply_length=len(reply or "")),
+                self.assertRaisesRegex(Blocked, "reply"),
+            ):
+                publish(self.gh, context, output)
+        self.assertEqual(self.gh.messages, [])
+
+    def test_no_conversation_cap_does_not_spend_delivery_budget(self):
+        self.gh.cfg["clarification"] = {"agent_minutes": 10}
+        self.gh.cfg["limits"].update(attempts=1, agent_calls=2)
+        for index in range(8):
+            event = self.gh.answer(f"Explain example {index}.") if index else {}
+            context = self.prepare(f"{100 + index}.1", event)
+            self.assertTrue(context["ready"])
+            self.assertEqual(context["agent_minutes"], 10)
+            publish(self.gh, context, result(context))
+        self.assertEqual(self.gh.state["clarification"]["calls"], 8)
+        state = reserve(self.gh.state, self.gh.cfg, "200.1")
+        self.assertEqual(state["agent_calls"], 10)
+        self.assertEqual(state["delivery_calls"], 2)
+        with self.assertRaises(Blocked):
+            reserve(state, self.gh.cfg, "201.1")
+
+    def test_conversation_cap_is_independent_and_survives_retries(self):
+        self.gh.cfg["clarification"] = {"agent_minutes": 5, "max_calls": 1}
+        first = self.prepare()
+        publish(self.gh, first, result(first))
+        again = self.prepare("101.1", self.gh.answer("Another question"))
+        self.assertFalse(again["ready"])
+        self.assertIn("attempts exhausted", again["reason"])
+        self.assertEqual(self.gh.state["agent_calls"], 1)
+        self.assertEqual(reserve(self.gh.state, self.gh.cfg, "200.1")["delivery_calls"], 2)
+
+    def test_uncapped_failed_input_needs_new_human_input_to_reserve_again(self):
+        self.gh.cfg["clarification"] = {"agent_minutes": 5, "max_calls": None}
+        self.assertTrue(self.prepare()["ready"])
+        self.gh.state["clarification"]["status"] = "blocked"
+        self.assertFalse(self.prepare("101.1")["ready"])
+        self.assertEqual(self.gh.state["agent_calls"], 1)
+        event = self.gh.answer("/nexkit resume")
+        context = self.prepare("102.1", event)
+        self.assertTrue(context["ready"])
+        self.assertEqual(self.gh.state["agent_calls"], 2)
+        self.assertFalse(self.prepare("103.1", event)["ready"])
+
+    def test_bots_and_outsiders_cannot_trigger_uncapped_conversation(self):
+        self.gh.cfg["clarification"] = {"agent_minutes": 5}
+        outsider = self.gh.answer("Continue", login="outsider")
+        self.assertFalse(self.prepare(event=outsider)["ready"])
+        bot = self.gh.answer("Continue")
+        bot["comment"]["user"]["type"] = "Bot"
+        self.assertFalse(self.prepare(event=bot)["ready"])
+        self.assertNotIn("agent_calls", self.gh.state)

@@ -16,7 +16,7 @@ from .common import (
     safe_path,
     write_json,
 )
-from .policy import agent_runner, authentication, config, require
+from .policy import agent_runner, authentication, clarification_limits, config, require
 
 HOSTS = {
     "codex": ".agents/skills",
@@ -318,5 +318,6 @@ def doctor(root, cfg, *, online=False, checks=False):
         "authentication": authentication(cfg),
         "agent_runner": agent_runner(cfg),
         "limits": cfg["limits"],
+        "clarification": clarification_limits(cfg),
         "live_agent_verified": False,
     }

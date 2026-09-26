@@ -11,6 +11,10 @@
     "summary": {
       "type": "string"
     },
+    "reply": {
+      "type": "string",
+      "description": "A direct English reply to the owner's latest question or feedback, separate from the authoritative specification."
+    },
     "skills_used": {
       "type": "array",
       "items": {
@@ -45,6 +49,7 @@
   "required": [
     "status",
     "summary",
+    "reply",
     "skills_used",
     "commands",
     "limitations",

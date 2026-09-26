@@ -57,9 +57,13 @@ intake has its own queue to deduplicate submissions from concurrent hosts.
 Counters survive retries and resumes.
 
 Intake dispatches clarification automatically. Authorized human answers on the
-issue trigger a new bounded session with the previous questions and answers.
+issue trigger a new time-bounded session with the previous reply, questions and answers.
 The requirement agent reads source; the controller updates the issue and rejects
 changes if approval arrived while the agent was working.
+Direct replies are posted as comments. An explanation that preserves the
+specification does not rewrite the issue body. Conversation limits can be
+configured separately from the automatic delivery loop; duplicate inputs retain
+their reservation, including after a failed call.
 
 Checks and review bind to spec, config, kit, base and head. The controller checks
 approval, cancellation and the current PR again before merging. Strict required

@@ -133,6 +133,23 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(state["status"], "blocked")
         self.assertEqual(self.gh.dispatches, [])
 
+    def test_separate_conversation_budget_does_not_prevent_automatic_repair(self):
+        self.gh.cfg["clarification"] = {"agent_minutes": 5}
+        self.gh.cfg["limits"].update(attempts=2, agent_calls=4)
+        self.gh.state.update(agent_calls=12, clarification={"calls": 12})
+        first = prepare(self.gh, 1, "100.1", "a" * 40)
+        self.assertTrue(first["ready"])
+        status = failed(self.gh, first, "The negative-total test failed")
+        self.assertEqual(status["status"], "retry")
+        self.assertEqual(len(self.gh.dispatches), 1)
+        second = prepare(self.gh, 1, "101.1", "a" * 40)
+        self.assertTrue(second["ready"])
+        self.assertIn("negative-total", second["feedback"]["reason"])
+        self.assertEqual(self.gh.state["delivery_calls"], 4)
+        self.assertEqual(self.gh.state["agent_calls"], 16)
+        self.assertEqual(failed(self.gh, second, "Still failing")["status"], "blocked")
+        self.assertEqual(len(self.gh.dispatches), 1)
+
     def test_outsider_event_cannot_spend_an_existing_approval_budget(self):
         from nexkit.ci import prepare_job
 

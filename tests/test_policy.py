@@ -7,6 +7,7 @@ from nexkit.policy import (
     agent_result,
     approval,
     candidate_key,
+    clarification_limits,
     config,
     control_command,
     merge_gate,
@@ -72,6 +73,41 @@ class ApprovalTests(unittest.TestCase):
 
 
 class GuardTests(unittest.TestCase):
+    def test_separate_clarification_configuration(self):
+        cfg = project()
+        self.assertTrue(clarification_limits(config(cfg))["shared_delivery_budget"])
+        cfg["clarification"] = {"agent_minutes": 12}
+        cfg["limits"]["agent_calls"] = 2
+        self.assertEqual(
+            clarification_limits(config(cfg)),
+            {"agent_minutes": 12, "max_calls": None, "shared_delivery_budget": False},
+        )
+        for invalid in (
+            {},
+            None,
+            {"agent_minutes": 0},
+            {"agent_minutes": 61},
+            {"agent_minutes": True},
+            {"agent_minutes": 5, "max_calls": False},
+            {"agent_minutes": 5, "max_calls": 0},
+            {"agent_minutes": 5, "max_calls": -1},
+            {"agent_minutes": 5, "max_calls": "unlimited"},
+            {"agent_minutes": 5, "max_call": 3},
+        ):
+            cfg["clarification"] = invalid
+            with self.subTest(value=invalid), self.assertRaises(Blocked):
+                config(cfg)
+
+    def test_budget_migration_keeps_prior_delivery_reservations(self):
+        cfg = project()
+        old = {"agent_calls": 5, "clarification": {"calls": 1}, "attempts": 2}
+        cfg["clarification"] = {"agent_minutes": 5}
+        current = reserve(old, cfg, "30.1")
+        self.assertEqual(current["delivery_calls"], 6)
+        self.assertEqual(current["agent_calls"], 7)
+        with self.assertRaises(Blocked):
+            reserve(current, cfg, "31.1")
+
     def test_config_has_no_implicit_stack_or_model(self):
         self.assertEqual(config(project()), project())
         for mutate in (

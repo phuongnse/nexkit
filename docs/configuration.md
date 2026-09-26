@@ -13,7 +13,8 @@ in `.nexkit/project.json`.
 | `engine` | `name: codex`, exact CLI `version`, and `auth` set to `api-key` or `chatgpt` (omitted means `api-key`) |
 | `models` | Accessible models for `implement` and `review`; no implicit defaults |
 | `reasoning_effort` | Optional object declaring `implement` and `review`; forwarded to the official action or CLI |
-| `limits` | `attempts` (1–20), `agent_calls` (3–40), `minutes` (1–1440), `command_seconds` (1–3600) |
+| `limits` | `attempts` (1–20), `agent_calls` (2–40 with separate clarification, otherwise 3–40), `minutes` (1–1440), `command_seconds` (1–3600) |
+| `clarification` | Optional separate conversation settings: required `agent_minutes` (1–60), optional positive `max_calls`; omitted/null `max_calls` means no conversation-count cap |
 | `environment` | `runner: ubuntu-24.04` for controller/check/release jobs; optional `agent_runner` for CLI jobs; `setup` commands as argument arrays |
 | `application` | `present` or `absent` at setup; new repositories still declare intended checks before delivery |
 | `checks` | Actual commands, each with `name`, `kind`, `argv`, `timeout_seconds` |
@@ -144,12 +145,37 @@ container integration. A plugin installation never selects NexKit's own VPS.
 
 ## Budget accounting
 
-Clarification uses the `implement` model and reserves one invocation. Each
-delivery round reserves two for implementation and review. Failed runs consume
-reservations. At least three calls are needed for one clarification and one
-delivery round. Delivery elapsed time starts at its first attempt and survives
-retries. Clarification reserves each session's runtime; waiting for human answers
-does not consume that reserved runtime. `limits.minutes` applies separately to
-total clarification reservations, elapsed delivery time and elapsed release time;
-it is not one end-to-end wall-clock cap. These are invocation/time bounds, not
-measured tokens or a provider spending cap.
+New setup can give requirement conversation its own limits:
+
+```json
+{
+  "clarification": {"agent_minutes": 15, "max_calls": null},
+  "limits": {"attempts": 2, "agent_calls": 4, "minutes": 60, "command_seconds": 120}
+}
+```
+
+Each authorized human comment can trigger a time-bounded clarification call.
+Omitting `max_calls`, or setting it to `null`, allows further conversation without
+a total call-count cap. Set a positive integer to cap the total clarification
+calls for a work item. An unchanged successful input does not call the model
+again; failed input requires a new human comment or a fresh `/nexkit resume`
+comment before another reservation. Bot responses never trigger more agent calls.
+
+With this separate configuration, `limits.agent_calls` covers implementation and
+review. Each delivery round reserves two calls. At least two are required;
+failed runs still consume reservations. Total calls and the delivery subtotal
+remain recorded across retries and administrative migrations. Delivery elapsed
+time starts at its first attempt and survives retries. Release has its own
+elapsed window. Neither is reset by conversation or resume.
+
+Existing configurations **without the `clarification` object** retain their
+previous shared accounting: one call per clarification, two per delivery round,
+at least three available calls, and `limits.attempts` also caps clarification.
+Their clarification session duration remains capped at 15 minutes, with total
+reserved clarification minutes bounded by `limits.minutes`. Adding the separate
+object is an explicit administrative change; upgrading the kit alone does not
+raise an existing project's allowance. `doctor` reports the effective mode.
+
+Clarification uses the `implement` model. These are invocation/time bounds, not
+measured tokens or a provider spending cap. An uncapped conversation still uses
+the configured account's allowance when an authorized human submits new input.

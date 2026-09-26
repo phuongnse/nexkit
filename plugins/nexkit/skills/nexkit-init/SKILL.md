@@ -24,6 +24,11 @@ runner admission, isolation and login before claiming the pipeline is ready.
 
 Prepare a project JSON using the installed NexKit `docs/configuration.md` field
 reference. Its decisions, commands and knowledge paths belong to this consumer.
+For new setup, record `clarification.agent_minutes` and the owner's optional
+`clarification.max_calls`. An omitted or null `max_calls` allows further human
+comments without a conversation-count cap; delivery retains its own limits.
+Existing configurations without `clarification` keep their shared budget until
+the owner accepts a migration. Show the effective accounting in the setup proposal.
 Use native tools to enforce conventions. Use real test and E2E commands appropriate
 to the product (CLI/API/browser/integration) and their native test reports.
 An empty app cannot claim passing behavior checks.

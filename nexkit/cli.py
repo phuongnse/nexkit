@@ -101,10 +101,18 @@ def intake_status(gh, operation, key, *, pipeline=None):
     }
 
 
-def set_spec(gh, number, body):
+def set_spec(gh, number, body, *, expected=None, before_write=None):
     issue = gh.issue(number)
+    if expected is not None:
+        require(
+            spec_hash(issue) == spec_hash(expected)
+            and issue.get("last_edited_at") == expected.get("last_edited_at"),
+            "Requirement changed before publication",
+        )
     require(SPEC_MARKER in (issue.get("body") or ""), "Not a NexKit request work item")
     require(body.strip(), "Specification cannot be empty")
+    if before_write is not None:
+        before_write(issue)
     prefix = issue["body"].split(SPEC_MARKER, 1)[0]
     issue = gh.api(
         f"{gh.root}/issues/{number}", "PATCH", {"body": prefix + SPEC_MARKER + body.rstrip() + "\n"}

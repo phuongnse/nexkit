@@ -1,6 +1,8 @@
 import unittest
 from copy import deepcopy
+from unittest.mock import patch
 
+import nexkit.clarify as clarification
 from nexkit.clarify import prepare, publish
 from nexkit.cli import SPEC_MARKER
 from nexkit.common import Blocked
@@ -216,3 +218,141 @@ class ClarificationTests(unittest.TestCase):
         bot["comment"]["user"]["type"] = "Bot"
         self.assertFalse(self.prepare(event=bot)["ready"])
         self.assertNotIn("agent_calls", self.gh.state)
+
+    def interrupt_publication(self, *, applied):
+        context = self.prepare()
+        original = self.gh.api
+
+        def interrupt(path, method="GET", data=None, **kwargs):
+            if path.endswith("/issues/1") and method == "PATCH":
+                if applied:
+                    original(path, method, data, **kwargs)
+                raise Blocked("Interrupted issue publication")
+            return original(path, method, data, **kwargs)
+
+        with patch.object(self.gh, "api", side_effect=interrupt), self.assertRaises(Blocked):
+            publish(self.gh, context, result(context, ["Choose the empty-input behavior?"]))
+        self.assertIn("publication", self.gh.state["clarification"])
+        return context
+
+    def test_lost_patch_response_recovers_result_without_another_model_or_edit(self):
+        self.interrupt_publication(applied=True)
+        updated = deepcopy(self.gh.work)
+        outcome = self.prepare("101.1")
+        self.assertFalse(outcome["ready"])
+        self.assertEqual(self.gh.work, updated)
+        self.assertEqual(self.gh.state["agent_calls"], 1)
+        self.assertEqual(self.gh.state["clarification"]["calls"], 1)
+        self.assertNotIn("publication", self.gh.state["clarification"])
+        self.assertIn("Choose the empty-input behavior?", self.gh.messages[-1])
+        self.assertFalse(self.prepare("102.1")["ready"])
+        self.assertEqual(len(self.gh.messages), 1)
+
+    def test_persisted_output_can_finish_after_interruption_before_patch(self):
+        before = deepcopy(self.gh.work)
+        self.interrupt_publication(applied=False)
+        self.assertEqual(self.gh.work, before)
+        self.assertFalse(self.prepare("101.1")["ready"])
+        self.assertNotEqual(self.gh.work["body"], before["body"])
+        self.assertEqual(self.gh.state["agent_calls"], 1)
+
+    def test_completion_save_failure_recovers_from_the_persisted_publication(self):
+        context = self.prepare()
+        save = self.gh.save_state
+
+        def fail_completion(number, state, revision):
+            if state["clarification"]["status"] == "awaiting_approval":
+                raise Blocked("Completion state write interrupted")
+            return save(number, state, revision)
+
+        with (
+            patch.object(self.gh, "save_state", side_effect=fail_completion),
+            self.assertRaises(Blocked),
+        ):
+            publish(self.gh, context, result(context))
+        updated = deepcopy(self.gh.work)
+        self.assertFalse(self.prepare("101.1")["ready"])
+        self.assertEqual(self.gh.work, updated)
+        self.assertEqual(self.gh.state["agent_calls"], 1)
+
+    def test_fresh_answer_after_patch_recovers_old_reply_then_clarifies_new_input(self):
+        self.interrupt_publication(applied=True)
+        next_run = self.prepare("101.1", self.gh.answer("Print zero for no arguments."))
+        self.assertTrue(next_run["ready"])
+        self.assertEqual(next_run["pending_questions"], ["Choose the empty-input behavior?"])
+        self.assertEqual(next_run["answers"][-1]["body"], "Print zero for no arguments.")
+        self.assertEqual(self.gh.state["agent_calls"], 2)
+
+    def test_fresh_input_before_patch_supersedes_pending_output_without_overwrite(self):
+        for mutation in ("answer", "body", "setup"):
+            with self.subTest(mutation=mutation):
+                self.gh = RequirementGitHub()
+                self.interrupt_publication(applied=False)
+                if mutation == "answer":
+                    event = self.gh.answer("Reject empty input instead.")
+                elif mutation == "body":
+                    self.gh.work["body"] += "\nA human-added constraint."
+                    event = {}
+                else:
+                    self.gh.cfg["decisions"].append("Accepted setup change")
+                    event = {}
+                current = deepcopy(self.gh.work)
+                next_run = self.prepare("101.1", event)
+                self.assertTrue(next_run["ready"])
+                self.assertEqual(self.gh.work, current)
+                self.assertNotIn("publication", self.gh.state["clarification"])
+
+    def test_recovery_honors_cancellation_and_approval_without_more_calls(self):
+        for applied, command in ((False, "/nexkit cancel"), (True, "approve")):
+            with self.subTest(command=command):
+                self.gh = RequirementGitHub()
+                self.interrupt_publication(applied=applied)
+                if command == "approve":
+                    self.gh.discussion.append(approve(self.gh.work))
+                    event = {}
+                else:
+                    event = self.gh.answer(command)
+                current = deepcopy(self.gh.work)
+                self.assertFalse(self.prepare("101.1", event)["ready"])
+                self.assertEqual(self.gh.work, current)
+                self.assertEqual(self.gh.state["agent_calls"], 1)
+
+    def test_recovery_comment_failure_retries_without_stale_state_write(self):
+        self.interrupt_publication(applied=True)
+        with patch.object(self.gh, "comment", side_effect=Blocked("Lost comment response")):
+            pending = self.prepare("101.1")
+        self.assertFalse(pending["ready"])
+        self.assertIn("Lost comment response", pending["reason"])
+        self.assertFalse(self.prepare("102.1")["ready"])
+        self.assertEqual(self.gh.state["clarification"]["status"], "awaiting_answers")
+        self.assertEqual(self.gh.state["agent_calls"], 1)
+        self.assertEqual(len(self.gh.messages), 1)
+
+    def test_final_issue_read_and_authority_checks_reject_interleaved_human_changes(self):
+        for mutation in ("body", "answer", "approve", "cancel"):
+            with self.subTest(mutation=mutation):
+                self.gh = RequirementGitHub()
+                self.interrupt_publication(applied=False)
+                check = clarification.current_config
+                expected = []
+
+                def interleave(gh, base, cfg):
+                    value = check(gh, base, cfg)
+                    if mutation == "body":
+                        gh.work["body"] += "\nHuman change during recovery."
+                        gh.work["last_edited_at"] = now()
+                    elif mutation == "answer":
+                        gh.answer("A new constraint during recovery.")
+                    elif mutation == "approve":
+                        gh.discussion.append(approve(gh.work))
+                    else:
+                        gh.answer("/nexkit cancel")
+                    expected.append(deepcopy(gh.work))
+                    return value
+
+                with patch("nexkit.clarify.current_config", side_effect=interleave):
+                    outcome = self.prepare("101.1")
+                self.assertFalse(outcome["ready"])
+                self.assertEqual(self.gh.work, expected[0])
+                self.assertEqual(self.gh.state["agent_calls"], 1)
+                self.assertEqual(self.gh.messages, [])

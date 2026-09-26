@@ -42,14 +42,19 @@ def discussion(gh, number, *, include_resume=False):
 
 def unapproved(gh, number):
     issue = gh.issue(number)
+    require_unapproved(gh, issue)
+    return issue
+
+
+def require_unapproved(gh, issue):
     require(issue.get("state") == "open", "Work item is closed")
     require(SPEC_MARKER in (issue.get("body") or ""), "Not a NexKit request")
-    comments = gh.comments(number)
+    comments = gh.comments(issue["number"])
     require(control_command(comments, gh.permission) != "cancel", "Requirement work cancelled")
     try:
         approval(issue, comments, gh.permission)
     except Blocked:
-        return issue
+        return
     raise Blocked("Requirement is approved; clarification cannot edit it")
 
 
@@ -82,12 +87,20 @@ def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
             "Project identity changed",
         )
         require(cfg["kit"]["ref"] == kit_ref, "Clarification kit pin changed")
+        if phase.get("publication"):
+            state, revision, _ = complete_publication(gh, number, cfg, state, revision)
+            phase = state["clarification"]
+            issue = unapproved(gh, number)
         limits = clarification_limits(cfg)
         answers = discussion(gh, number, include_resume=not limits["shared_delivery_budget"])
         fingerprint = digest({"spec": spec_hash(issue), "answers": answers})
         if phase.get("completed_input") == fingerprint:
             if phase.get("message"):
                 post_notice(gh, number, phase["message"])
+            expected = "awaiting_answers" if phase.get("questions") else "awaiting_approval"
+            if phase.get("status") != expected:
+                phase.update(status=expected)
+                gh.save_state(number, state, revision)
             return {"ready": False, "reason": "No new requirement input"}
         require(phase.get("run_key") != run_key, "Duplicate clarification run")
         if not limits["shared_delivery_budget"] and phase.get("input") == fingerprint:
@@ -137,6 +150,11 @@ def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
     except Blocked as exc:
         # Never disturb an approved delivery merely because a delayed comment
         # event also reached this workflow.
+        saved, saved_revision = gh.get_state(number)
+        saved_phase = saved.get("clarification", {})
+        if saved_phase.get("run_key") != phase.get("run_key"):
+            return {"ready": False, "reason": str(exc)}
+        state, revision, phase = saved, saved_revision, saved_phase
         phase.update(status="waiting", reason=str(exc))
         state["clarification"] = phase
         gh.save_state(number, state, revision)
@@ -164,6 +182,12 @@ def revalidate(gh, context):
     require(
         phase.get("run_key") == context["run_key"] and phase.get("status") == "clarifying",
         "Superseded clarification run",
+    )
+    require(
+        phase.get("input")
+        == context["input"]
+        == digest({"spec": spec_hash(context["issue"]), "answers": context["answers"]}),
+        "Clarification input differs from its reservation",
     )
     require(
         (
@@ -210,27 +234,23 @@ def publish(gh, context, bundle):
         len((prefix + SPEC_MARKER + result["specification"]).encode()) < 60000,
         "Requirement exceeds the issue size bound",
     )
-    if (
+    unchanged = (
         context["issue"]["body"].split(SPEC_MARKER, 1)[1].rstrip()
         == result["specification"].rstrip()
-    ):
-        updated = {
-            "issue": context["issue"]["html_url"],
-            "spec": spec_hash(context["issue"]),
-            "human_approval_comment": "/nexkit approve " + spec_hash(context["issue"]),
-        }
-    else:
-        updated = set_spec(gh, context["issue"]["number"], result["specification"])
-    current = gh.issue(context["issue"]["number"])
-    # Record completion before the comment. On interruption the next run can
-    # recover the missing comment without invoking another model.
+    )
+    body = (
+        context["issue"]["body"]
+        if unchanged
+        else prefix + SPEC_MARKER + result["specification"].rstrip() + "\n"
+    )
+    target = spec_hash({**context["issue"], "body": body})
     phase = state["clarification"]
     message = (
         "<!-- nexkit:clarification:"
         + digest(
             {
                 "input": context["input"],
-                "spec": updated["spec"],
+                "spec": target,
                 "questions": questions,
                 "reply": reply,
             }
@@ -246,19 +266,93 @@ def publish(gh, context, bundle):
     else:
         message += (
             "The specification is ready for human review. An authorized human may approve this exact version with:\n\n`"
-            + updated["human_approval_comment"]
+            + "/nexkit approve "
+            + target
             + "`\n"
         )
+    # Persist the validated result before changing the issue. A lost PATCH
+    # response or completion write can then be recovered without another CLI.
     phase.update(
-        status="awaiting_answers" if questions else "awaiting_approval",
-        questions=questions,
-        reply=reply,
-        completed_input=digest({"spec": spec_hash(current), "answers": context["answers"]}),
-        message=message,
+        status="publishing",
+        publication={
+            "source": spec_hash(context["issue"]),
+            "target": target,
+            "body": body,
+            "base": context["base"],
+            "config": digest(context["config"]),
+            "answers": digest(context["answers"]),
+            "completed_input": digest({"spec": target, "answers": context["answers"]}),
+            "message": message,
+            "questions": questions,
+            "reply": reply,
+            "minutes": context["agent_minutes"],
+        },
     )
-    gh.save_state(current["number"], state, revision)
-    post_notice(gh, current["number"], message)
-    return {"issue": updated["issue"], "status": phase["status"]}
+    number = context["issue"]["number"]
+    revision = gh.save_state(number, state, revision)
+    _, _, outcome = complete_publication(gh, number, context["config"], state, revision)
+    require(outcome is not None, "Requirement publication was superseded by new input or setup")
+    return outcome
+
+
+def complete_publication(gh, number, cfg, state, revision):
+    """Recover one already validated result; never start a CLI or alter budgets."""
+    phase = state["clarification"]
+    pending = phase["publication"]
+    issue = unapproved(gh, number)
+    current = spec_hash(issue)
+    answers = discussion(gh, number, include_resume="clarification" in cfg)
+    fresh = (
+        pending["config"] == digest(cfg)
+        and pending["base"] == gh.ref(cfg["default_branch"])
+        and current in (pending["source"], pending["target"])
+    )
+    if current != pending["target"]:
+        fresh = (
+            fresh
+            and pending["answers"] == digest(answers)
+            and (
+                datetime.fromisoformat(now()) - datetime.fromisoformat(phase["started_at"])
+            ).total_seconds()
+            < pending["minutes"] * 60 + 300
+        )
+    if not fresh:
+        phase.pop("publication")
+        phase.update(status="waiting", reason="Pending requirement publication was superseded")
+        revision = gh.save_state(number, state, revision)
+        return state, revision, None
+    current_config(gh, pending["base"], cfg)
+    if current != pending["target"]:
+
+        def before_write(current_issue):
+            require_unapproved(gh, current_issue)
+            require(
+                digest(discussion(gh, number, include_resume="clarification" in cfg))
+                == pending["answers"],
+                "New requirement answers arrived before publication",
+            )
+            require(
+                gh.ref(cfg["default_branch"]) == pending["base"],
+                "Repository changed before publication",
+            )
+
+        updated = set_spec(
+            gh,
+            number,
+            pending["body"].split(SPEC_MARKER, 1)[1],
+            expected=issue,
+            before_write=before_write,
+        )
+        require(updated["spec"] == pending["target"], "Requirement changed during publication")
+    require(spec_hash(gh.issue(number)) == pending["target"], "Published requirement changed")
+    phase.pop("publication")
+    phase.update(
+        status="awaiting_answers" if pending["questions"] else "awaiting_approval",
+        **{key: pending[key] for key in ("questions", "reply", "completed_input", "message")},
+    )
+    revision = gh.save_state(number, state, revision)
+    post_notice(gh, number, phase["message"])
+    return state, revision, {"issue": issue["html_url"], "status": phase["status"]}
 
 
 def post_notice(gh, number, message):

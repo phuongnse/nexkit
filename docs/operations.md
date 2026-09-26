@@ -28,6 +28,21 @@ Existing branches, PRs and release drafts are recovered. No empty commits or
 artificial PR close/reopen cycles are used to retrigger checks. Results from a
 different spec/config/base/head are invalid for the current candidate.
 
+Clarification persists one validated pending result before updating the issue.
+A later preparation run can finish that publication and restore its bot notice
+without another model reservation. If the issue was already updated, recovery
+does not PATCH it again or change its edit timestamp. New input or accepted
+setup changes supersede an unapplied result; cancellation and approval are
+checked again before writing.
+
+The final issue read is checked against the expected source, and human answers
+and authority are rechecked immediately before PATCH. GitHub does not generally
+support conditional writes for unsafe REST methods, so this is not an atomic
+compare-and-swap against concurrent manual issue edits. Prefer comments while
+the bot clarifies; the current specification and edit time are revalidated for
+requirement approval and before delivery. See GitHub's
+[conditional request guidance](https://docs.github.com/rest/guides/best-practices-for-integrators).
+
 Artifacts are retained for seven days. Hosted jobs use ephemeral runners;
 subscription CLI jobs use a dedicated container with per-job workspace cleanup. State
 keeps recent feedback, reservations and candidate identity. Do not copy full

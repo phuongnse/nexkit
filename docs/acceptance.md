@@ -207,8 +207,20 @@ preview are exercised; GitHub and model boundaries are mocked. No additional
 live model calls, human approvals, merges or releases are implied.
 
 The [check-capability CI run at 7f38a99](https://github.com/phuongnse/nexkit/actions/runs/36210254042)
-passed all 114 tests, formatting/lint, actionlint and package creation. The later
-invocation slice requires its own CI and live-consumer verification.
+passed all 114 tests, formatting/lint, actionlint and package creation. The
+[individual-invocation CI run at 22dcffc](https://github.com/phuongnse/nexkit/actions/runs/36212376745)
+passed all 138 tests, Ruff, actionlint and package creation. Live composed
+consumer delivery is still unverified.
+
+A subsequent durability fix persists validated clarification output before
+PATCH and recovers interrupted publication without another model reservation.
+Eight new regressions cover lost responses/state writes, current human changes,
+approval/cancellation, input/config drift and notice recovery. **146 local tests
+pass**. The independent reviewer ran 40 focused tests and extra mocked recovery
+experiments, finding no remaining blocker in this slice. GitHub issue writes
+still do not have an atomic compare-and-swap guarantee; the documented final-read
+and authority guards are not represented as one. These are mocked failure
+injections, not additional live clarification sessions.
 
 The separate issue-conversation update passed [GitHub CI at c621443](https://github.com/phuongnse/nexkit/actions/runs/36208620238),
 including 88 tests, Ruff and the installation archive build. This is core CI,

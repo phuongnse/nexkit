@@ -88,10 +88,9 @@ calls do not prevent automatic repair when the project selects separate limits.
 These controller tests use a mocked GitHub boundary; the changed conversation
 behavior has not yet run on the live consumers.
 
-One recovery boundary still needs follow-up: interruption after the issue body
-PATCH but before saving clarification completion. Recovery of a missing bot
-comment after completion has been saved is already covered. Neither test is a
-claim of a new live Actions run.
+That review identified an outstanding recovery boundary after the issue body
+PATCH but before saving clarification completion. The follow-up below addresses
+it; recovery of a missing bot comment after completion was already covered.
 
 ## Consumer workflow bindings — 2026-09-26
 
@@ -143,3 +142,19 @@ GitHub and model boundaries remain mocked. The reviewer made no implementation
 edits, GitHub writes, credential access or model calls. Live composed delivery
 remains unverified, and artifact trust still requires accepted consumer YAML to
 use the trusted producers' exact outputs.
+
+## Interrupted clarification publication — 2026-09-26
+
+The independent session reviewed the pending publication record and recovery
+path. It reproduced a stale-write window: a human issue edit made during config
+revalidation was then overwritten by the helper's final issue read and PATCH.
+The helper now compares that final read with the expected issue hash/edit time
+and checks live approval, cancellation, authorized answers and source before
+writing. An interleaving regression covers each human change.
+
+The final scoped pass ran **40 local tests**, including 22 clarification cases,
+plus benign mocked experiments for lost state-save responses and unchanged-spec
+recovery. No additional code blocker was found. The full implementer suite has
+146 tests. The reviewer made no live GitHub writes, credential access or model
+calls. The final validation and PATCH remain separate operations, so this is
+not an atomic issue-update guarantee.

@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from nexkit.common import read_json  # noqa: E402
+from nexkit.invocations import definitions, execution_config  # noqa: E402
 from nexkit.pipelines import effective_config  # noqa: E402
 from nexkit.policy import agent_runner, authentication, require  # noqa: E402
 
@@ -53,8 +54,17 @@ def main():
         "--pipeline", help="Explicit schema 2 pipeline whose runner is being provisioned"
     )
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--invocation", help="Select an invocation's runner override within the pipeline"
+    )
     args = parser.parse_args()
     cfg = effective_config(read_json(args.config), args.pipeline)
+    if args.invocation:
+        values = definitions(cfg)
+        require(args.invocation in values, "Unknown invocation")
+        cfg = execution_config(
+            {"config": cfg, "invocation": {"definition": values[args.invocation]}}
+        )
     require(
         authentication(cfg) == "chatgpt", "Select the consumer's ChatGPT authentication explicitly"
     )
@@ -81,6 +91,7 @@ def main():
     plan = {
         "repository": cfg["repository"],
         "container": name,
+        "invocation": args.invocation,
         "agent_runner": labels,
         "allowed_workflows": binding["workflows"],
         "login": "A separate Codex ChatGPT login must be completed inside this consumer runner",

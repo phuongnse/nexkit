@@ -1,0 +1,41 @@
+name: NexKit exact data artifacts
+description: Download exact current-run artifact IDs and reject missing or colliding JSON data.
+inputs:
+  artifact-ids:
+    description: Exact IDs from required producer job outputs
+    required: true
+  path:
+    description: Fresh destination directory
+    required: true
+  multiple:
+    description: Allow several input artifact IDs
+    default: 'false'
+  optional:
+    description: Allow an empty list without downloading anything
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - id: validate
+      shell: bash
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_ARTIFACT_IDS: ${{ inputs.artifact-ids }}
+        NEXKIT_MULTIPLE: ${{ inputs.multiple }}
+        NEXKIT_OPTIONAL: ${{ inputs.optional }}
+        NEXKIT_DESTINATION: ${{ inputs.path }}
+      run: python3 -m nexkit.artifacts inputs --destination "$NEXKIT_DESTINATION"
+    - if: steps.validate.outputs.count != '0'
+      uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+      with:
+        artifact-ids: ${{ steps.validate.outputs.ids }}
+        path: ${{ inputs.path }}
+        merge-multiple: false
+    - shell: bash
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_ARTIFACT_IDS: ${{ steps.validate.outputs.ids }}
+        NEXKIT_MULTIPLE: ${{ inputs.multiple }}
+        NEXKIT_OPTIONAL: ${{ inputs.optional }}
+        NEXKIT_DESTINATION: ${{ inputs.path }}
+      run: python3 -m nexkit.artifacts downloaded --destination "$NEXKIT_DESTINATION"

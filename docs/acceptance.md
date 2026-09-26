@@ -177,11 +177,10 @@ demonstrate guard behavior, not application verification.
 The owner approved consumer-defined native workflow composition. Schema 2 now
 implements pipeline-specific settings, explicit workflow routing and a hashed
 installation bundle, with ownership-preserving update/removal. **105 local tests
-pass**; the independent reviewer ran 82 focused tests and verified three fixes.
+passed** for that slice; the independent reviewer ran 82 focused tests and verified three fixes.
 These controller boundaries are mocked. Native-only and clarification-only
-pipelines do not require unused delivery fields. Smaller reusable execution
-capabilities and arbitrary agent invocation composition remain unfinished; see
-the [implementation boundary](workflow-composition.md).
+pipelines do not require unused delivery fields. See the current
+[implementation boundary](workflow-composition.md).
 
 The [core CI run at 68963cd](https://github.com/phuongnse/nexkit/actions/runs/36209633932)
 passed all 105 tests, Ruff and package creation for that first composition slice.
@@ -190,10 +189,26 @@ completeness at merge and aggregation of individual job reports. **114 local
 tests pass**, including actual local commands and a setup failure with its log
 preserved for repair feedback. GitHub state in those tests is mocked. The
 independent review identified the lost setup-failure report; its regression is
-fixed, with the concluding review still pending at this snapshot. Static
+fixed, and the concluding review found no further blocker in that scope. Static
 actionlint validation passes with only its documented `concurrency.queue`
 parser gap covered by a dedicated structural test. This is not live execution
 of the new reusable check job or complete agent-stage composition.
+
+The next composition slice adds consumer-defined invocation tasks, accepted
+skills, per-call models/reasoning/time/runner settings and individual persistent
+call reservations. Five reusable capabilities can be wired through native YAML
+for preparation, isolated agents, publication, checks and completion/retry.
+The independent reviewer ran 103 focused local tests and verified fixes for
+empty optional arguments, repeated-check artifact naming and finalization after
+failed downloads. Root verification now includes **138 local tests**, Ruff,
+actionlint on workflows and the wiring example, plus both changed skill
+validators. Actual workspace restoration, local shell execution and runner
+preview are exercised; GitHub and model boundaries are mocked. No additional
+live model calls, human approvals, merges or releases are implied.
+
+The [check-capability CI run at 7f38a99](https://github.com/phuongnse/nexkit/actions/runs/36210254042)
+passed all 114 tests, formatting/lint, actionlint and package creation. The later
+invocation slice requires its own CI and live-consumer verification.
 
 The separate issue-conversation update passed [GitHub CI at c621443](https://github.com/phuongnse/nexkit/actions/runs/36208620238),
 including 88 tests, Ruff and the installation archive build. This is core CI,

@@ -110,11 +110,36 @@ writes were involved in this review. This establishes scoped configuration,
 installation and controller behavior; it does not establish variable-stage agent
 delivery or live schema-2 acceptance.
 
-## Reusable check job — review in progress
+## Reusable check job — 2026-09-26
 
 The separate reviewer found that a failed setup command produced no check record,
 so aggregation discarded its structured failure log. A real local regression now
 runs an exit-3 setup fixture and verifies that its output reaches delivery repair
 feedback while the selected check remains explicitly unexecuted and failed.
-The fix and 114-test suite pass locally. A concluding review of this second
-slice is still pending; no live check-job acceptance is claimed.
+The fix and 114-test suite passed locally. The concluding review ran all nine
+focused check tests and found no further blocker within the trusted producer
+and exact-artifact-ID contract. No live check-job acceptance is claimed.
+
+## Individual invocation composition — 2026-09-26
+
+The independent session reviewed invocation reservation, authority/source
+binding, per-call configuration, skills, result recording, candidate publication,
+review binding and the native reusable jobs. It reproduced three workflow defects:
+
+- Empty optional check arrays failed argument parsing before an editor could run.
+- Repeating the same check after another publication in one run reused its
+  artifact name and conflicted with the prior upload.
+- A rejected optional artifact download skipped the finalizer and lost retry
+  feedback.
+
+All three were fixed with regressions. The final focused pass ran **103 local
+tests** and `git diff --check`, and found no remaining code blocker in this scope.
+The wiring example was also checked for concurrency, exact producer outputs and
+`status == 'done'` gating of required task results. Subsequent implementer tests
+exercise the finalizer's real shell with partial files and all download-validity
+flags, and preview a selected runner override without provisioning it.
+
+GitHub and model boundaries remain mocked. The reviewer made no implementation
+edits, GitHub writes, credential access or model calls. Live composed delivery
+remains unverified, and artifact trust still requires accepted consumer YAML to
+use the trusted producers' exact outputs.

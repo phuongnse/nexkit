@@ -1,0 +1,234 @@
+name: NexKit individual agent invocation
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+      context_artifact_id:
+        type: string
+        required: true
+      invocation:
+        type: string
+        required: true
+      input_artifact_ids:
+        type: string
+        required: false
+        default: ''
+      check_artifact_ids:
+        type: string
+        required: false
+        default: ''
+    secrets:
+      OPENAI_API_KEY:
+        required: false
+    outputs:
+      context_artifact_id:
+        description: Immutable reservation context for this invocation
+        value: ${{ jobs.authorize.outputs.context_artifact_id }}
+      report_artifact_id:
+        description: Exact collected report, available only after trusted recording
+        value: ${{ jobs.record.outputs.report_artifact_id }}
+      status:
+        description: Agent result status, done or blocked
+        value: ${{ jobs.record.outputs.status }}
+permissions: {}
+defaults:
+  run:
+    shell: bash
+jobs:
+  authorize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: read
+    outputs:
+      role: ${{ steps.reserve.outputs.role }}
+      checkout: ${{ steps.reserve.outputs.checkout }}
+      model: ${{ steps.reserve.outputs.model }}
+      effort: ${{ steps.reserve.outputs.effort }}
+      sandbox: ${{ steps.reserve.outputs.sandbox }}
+      authentication: ${{ steps.reserve.outputs.authentication }}
+      agent_runner: ${{ steps.reserve.outputs.agent_runner }}
+      agent_minutes: ${{ steps.reserve.outputs.agent_minutes }}
+      codex_version: ${{ steps.reserve.outputs.codex_version }}
+      context_artifact_id: ${{ steps.context.outputs.artifact-id }}
+    steps:
+      - name: Validate the kit pin before loading controller code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.context_artifact_id }}
+          path: /tmp/nexkit/input
+      - if: inputs.input_artifact_ids != ''
+        uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.input_artifact_ids }}
+          path: /tmp/nexkit/input-reports
+          multiple: 'true'
+          optional: 'true'
+      - if: inputs.check_artifact_ids != ''
+        uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.check_artifact_ids }}
+          path: /tmp/nexkit/checks
+          multiple: 'true'
+          optional: 'true'
+      - id: reserve
+        name: Reserve this configured CLI call and bind its accepted inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+          NEXKIT_INVOCATION: ${{ inputs.invocation }}
+        run: |
+          shopt -s nullglob globstar
+          prior=(/tmp/nexkit/input-reports/**/*.json)
+          checks=(/tmp/nexkit/checks/**/*.json)
+          python3 -m nexkit.ci prepare-invocation --context /tmp/nexkit/input --invocation "$NEXKIT_INVOCATION" --inputs "${prior[@]}" --reports "${checks[@]}" --kit-ref "$NEXKIT_REF" --out /tmp/nexkit/invocation.json
+      - id: context
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-invocation-${{ inputs.invocation }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/invocation.json
+          retention-days: 7
+          if-no-files-found: error
+  execute:
+    needs: authorize
+    runs-on: ${{ fromJSON(needs.authorize.outputs.agent_runner) }}
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      report_artifact_id: ${{ steps.report.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.context_artifact_id }}
+          path: /tmp/nexkit
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.authorize.outputs.checkout }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./kit/actions/agent-workspace
+        with:
+          role: ${{ needs.authorize.outputs.role }}
+          context: /tmp/nexkit/invocation.json
+          source: ${{ github.workspace }}/source
+      - name: Recheck authority and reservation immediately before the CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: python3 -m nexkit.ci guard-invocation --context /tmp/nexkit/invocation.json --kit-ref "$NEXKIT_REF"
+      - name: Execute a fresh official Codex session
+        if: needs.authorize.outputs.authentication == 'api-key'
+        timeout-minutes: ${{ fromJSON(needs.authorize.outputs.agent_minutes) }}
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          codex-version: ${{ needs.authorize.outputs.codex_version }}
+          model: ${{ needs.authorize.outputs.model }}
+          effort: ${{ needs.authorize.outputs.effort }}
+          prompt-file: /tmp/nexkit/prompt.txt
+          output-schema-file: /tmp/nexkit/schema.json
+          output-file: /home/nexkit-agent/output/result.json
+          working-directory: /home/nexkit-agent/work
+          codex-home: /home/nexkit-agent/.codex
+          safety-strategy: unprivileged-user
+          codex-user: nexkit-agent
+          sandbox: ${{ needs.authorize.outputs.sandbox }}
+          codex-args: '["--ephemeral"]'
+          allow-bots: true
+      - name: Execute using this consumer runner's ChatGPT session
+        if: needs.authorize.outputs.authentication == 'chatgpt'
+        timeout-minutes: ${{ fromJSON(needs.authorize.outputs.agent_minutes) }}
+        uses: ./kit/actions/codex-subscription
+        with:
+          role: ${{ needs.authorize.outputs.role }}
+          context: /tmp/nexkit/invocation.json
+      - name: Collect the isolated result with trusted code
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_ROLE: ${{ needs.authorize.outputs.role }}
+          NEXKIT_INVOCATION: ${{ inputs.invocation }}
+        run: |
+          sudo pkill -KILL -u nexkit-agent || test "$?" = 1
+          python3 -m nexkit.ci collect --role "$NEXKIT_ROLE" --source "$GITHUB_WORKSPACE/source" --workspace /home/nexkit-agent/work --context /tmp/nexkit/invocation.json --result /home/nexkit-agent/output/result.json --out "/tmp/nexkit/reports/$NEXKIT_INVOCATION.json"
+      - id: report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-report-${{ inputs.invocation }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/reports/*.json
+          retention-days: 7
+          if-no-files-found: error
+  record:
+    needs: [authorize, execute]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: read
+    outputs:
+      status: ${{ steps.record.outputs.status }}
+      report_artifact_id: ${{ needs.execute.outputs.report_artifact_id }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.context_artifact_id }}
+          path: /tmp/nexkit
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ needs.execute.outputs.report_artifact_id }}
+          path: /tmp/nexkit/reports
+      - id: record
+        name: Validate and persist output provenance without executing consumer code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+          NEXKIT_INVOCATION: ${{ inputs.invocation }}
+        run: python3 -m nexkit.ci record-invocation --context /tmp/nexkit/invocation.json --result "/tmp/nexkit/reports/$NEXKIT_INVOCATION.json" --kit-ref "$NEXKIT_REF"

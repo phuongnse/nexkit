@@ -32,6 +32,10 @@ then describe your project goals and constraints. The agent surveys the actual
 repository, presents the setup decisions and verifies the accepted configuration.
 See [configuration and permissions](docs/configuration.md).
 
+Setup defines the project's pipelines and native workflow structure. Compose
+the [reusable capabilities](docs/agent-invocations.md) with consumer-chosen tasks,
+skills, models and limits; pipeline count and job order are not fixed by NexKit.
+
 Each project selects its own runner and authentication. API mode uses an Actions
 secret; [subscription mode](docs/self-hosted.md) uses a dedicated runner and an
 official Codex ChatGPT login owned by that project. Installing the plugin gives

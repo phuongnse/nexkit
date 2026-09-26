@@ -1,4 +1,4 @@
-name: NexKit candidate check
+name: NexKit publish recorded candidate
 on:
   workflow_call:
     inputs:
@@ -8,30 +8,31 @@ on:
       kit_ref:
         type: string
         required: true
-      candidate_artifact_id:
+      context_artifact_id:
         type: string
         required: true
-      check:
+      report_artifact_id:
         type: string
         required: true
     outputs:
-      passed:
-        description: Whether the selected check passed, independent of artifact collection success
-        value: ${{ jobs.check.outputs.passed }}
-      report_artifact_id:
-        description: Immutable artifact ID containing this configured check's result
-        value: ${{ jobs.check.outputs.report_artifact_id }}
+      candidate_artifact_id:
+        description: Exact published candidate context
+        value: ${{ jobs.publish.outputs.candidate_artifact_id }}
+      head:
+        description: Published candidate commit
+        value: ${{ jobs.publish.outputs.head }}
 permissions: {}
 jobs:
-  check:
+  publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 70
+    timeout-minutes: 10
     permissions:
-      contents: read
+      contents: write
       issues: read
+      pull-requests: write
     outputs:
-      passed: ${{ steps.execute.outputs.passed }}
-      report_artifact_id: ${{ steps.report.outputs.artifact-id }}
+      candidate_artifact_id: ${{ steps.candidate.outputs.artifact-id }}
+      head: ${{ steps.publish.outputs.head }}
     defaults:
       run:
         shell: bash
@@ -64,37 +65,27 @@ jobs:
           persist-credentials: false
       - uses: ./kit/actions/download-data
         with:
-          artifact-ids: ${{ inputs.candidate_artifact_id }}
-          path: /tmp/nexkit
-      - id: guard
-        name: Validate the current published candidate and configured command
+          artifact-ids: ${{ inputs.context_artifact_id }}
+          path: /tmp/nexkit/context
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.report_artifact_id }}
+          path: /tmp/nexkit/reports
+      - id: publish
+        name: Publish only the recorded source-editing result
         env:
           GH_TOKEN: ${{ github.token }}
           PYTHONPATH: ${{ github.workspace }}/kit
-          NEXKIT_CHECK: ${{ inputs.check }}
           NEXKIT_REF: ${{ inputs.kit_ref }}
-        run: python3 -m nexkit.ci prepare-check --context /tmp/nexkit --check "$NEXKIT_CHECK" --kit-ref "$NEXKIT_REF"
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: ${{ steps.guard.outputs.head }}
-          path: source
-          persist-credentials: false
-      - id: execute
-        name: Execute exactly one accepted check in an isolated account
-        env:
-          PYTHONPATH: ${{ github.workspace }}/kit
-          NEXKIT_EXEC_USER: nexkit-agent
-          NEXKIT_CHECK: ${{ inputs.check }}
         run: |
-          sudo useradd --create-home --shell /bin/bash nexkit-agent
-          sudo chmod 755 /home/nexkit-agent
-          sudo cp -a source /home/nexkit-agent/work
-          sudo chown -R nexkit-agent:nexkit-agent /home/nexkit-agent/work
-          python3 -m nexkit.ci verify --context /tmp/nexkit --workspace /home/nexkit-agent/work --check "$NEXKIT_CHECK" --out "/tmp/nexkit/checks/$NEXKIT_CHECK.json"
-      - id: report
+          shopt -s nullglob globstar
+          reports=(/tmp/nexkit/reports/*.json)
+          test "${#reports[@]}" = 1
+          python3 -m nexkit.ci publish --context /tmp/nexkit/context --result "${reports[0]}" --kit-ref "$NEXKIT_REF" --out /tmp/nexkit/candidate.json
+      - id: candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: nexkit-check-${{ inputs.candidate_artifact_id }}-${{ inputs.check }}-${{ github.run_attempt }}
-          path: /tmp/nexkit/checks/*.json
+          name: nexkit-published-${{ inputs.context_artifact_id }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/candidate.json
           retention-days: 7
           if-no-files-found: error

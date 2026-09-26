@@ -277,6 +277,8 @@ def combine_checks(context, reports):
         )
         results.extend(items)
     complete_checks(context["config"], results)
+    order = {check["name"]: index for index, check in enumerate(context["config"]["checks"])}
+    results.sort(key=lambda item: order[item["name"]])
     return {
         "candidate": context["candidate"],
         "checks": results,

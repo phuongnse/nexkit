@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {"type": "string", "enum": ["done", "blocked"]},
+    "summary": {"type": "string"},
+    "skills_used": {"type": "array", "items": {"type": "string"}},
+    "commands": {"type": "array", "items": {"type": "string"}},
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["status", "summary", "skills_used", "commands", "limitations"],
+  "additionalProperties": false
+}

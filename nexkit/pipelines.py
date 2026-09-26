@@ -98,7 +98,8 @@ def validate_project(value):
         require(isinstance(name, str) and IDENTIFIER.fullmatch(name), "Invalid pipeline identifier")
         require(
             isinstance(pipeline, dict)
-            and set(pipeline) == {"settings", "entrypoints", "agent_workflows"},
+            and {"settings", "entrypoints", "agent_workflows"} <= set(pipeline)
+            and set(pipeline) <= {"settings", "entrypoints", "agent_workflows", "invocations"},
             "A pipeline declares settings, entrypoints and agent_workflows; ordering belongs to Actions YAML",
         )
         settings = pipeline["settings"]
@@ -121,13 +122,17 @@ def validate_project(value):
             workflow_path(path)
             require(path in files, "Agent workflow is not in accepted files")
         require(len(set(agent_files)) == len(agent_files), "Duplicate agent workflow")
-        config(_effective(value, name))
+        effective = config(_effective(value, name))
+        if "invocations" in pipeline:
+            from .invocations import validate_definitions
+
+            validate_definitions(effective)
     return value
 
 
 def _effective(value, pipeline):
     settings = merge_settings(value["defaults"], value["pipelines"][pipeline]["settings"])
-    return {
+    result = {
         **settings,
         **{key: deepcopy(value[key]) for key in IDENTITY},
         "schema": 1,
@@ -139,6 +144,13 @@ def _effective(value, pipeline):
             "agent_workflows": list(value["pipelines"][pipeline]["agent_workflows"]),
         },
     }
+    if "invocations" in value["pipelines"][pipeline]:
+        result["binding"]["invocations"] = deepcopy(value["pipelines"][pipeline]["invocations"])
+    return result
+
+
+def composed_agents(cfg):
+    return "invocations" in cfg.get("binding", {})
 
 
 def effective_config(value, pipeline=None):

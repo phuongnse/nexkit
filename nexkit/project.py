@@ -362,6 +362,17 @@ def doctor(root, cfg, *, online=False, checks=False):
         }
     problems, verified = [], []
     binding = cfg.get("binding", {})
+    invocations = {}
+    if "invocations" in binding:
+        from .invocations import execution_config
+
+        for name, definition in binding["invocations"].items():
+            execution = execution_config({"config": cfg, "invocation": {"definition": definition}})
+            invocations[name] = {
+                **definition,
+                "agent_runner": agent_runner(execution),
+                "setup": execution["environment"]["setup"],
+            }
     if cfg["kit"]["version"] != __version__:
         problems.append("Local kit version differs from the CI kit version")
     ledger_path = consumer_path(root, ".nexkit/installation.json")
@@ -412,18 +423,25 @@ def doctor(root, cfg, *, online=False, checks=False):
                     "OPENAI_API_KEY Actions secret is missing (an org secret may require admin verification)",
                 )
                 verified.append("API secret metadata inspected")
-            if cfg.get("environment") and isinstance(agent_runner(cfg), list):
+            runner_labels = [value["agent_runner"] for value in invocations.values()]
+            if cfg.get("environment") and (not invocations or "clarify" in binding["entrypoints"]):
+                runner_labels.append(agent_runner(cfg))
+            runner_labels = [labels for labels in runner_labels if isinstance(labels, list)]
+            if runner_labels:
                 runners = gh.api(
                     f"{gh.root}/actions/runners?per_page=100", pages=True, collection="runners"
                 )
                 require(
-                    any(
-                        r.get("status") == "online"
-                        and set(agent_runner(cfg))
-                        <= {label["name"].lower() for label in r.get("labels", [])}
-                        for r in runners
+                    all(
+                        any(
+                            r.get("status") == "online"
+                            and set(labels)
+                            <= {label["name"].lower() for label in r.get("labels", [])}
+                            for r in runners
+                        )
+                        for labels in runner_labels
                     ),
-                    "No online runner matches this project's agent_runner labels",
+                    "An invocation has no online runner matching its agent_runner labels",
                 )
                 verified.append(
                     "project runner registration inspected; login and isolation require a live probe"
@@ -442,6 +460,7 @@ def doctor(root, cfg, *, online=False, checks=False):
         "engine": cfg.get("engine"),
         "models": cfg.get("models", {}),
         "reasoning_effort": cfg.get("reasoning_effort", {}),
+        "invocations": invocations,
         "authentication": authentication(cfg) if cfg.get("engine") else None,
         "agent_runner": agent_runner(cfg) if cfg.get("environment") else None,
         "limits": cfg.get("limits", {}),

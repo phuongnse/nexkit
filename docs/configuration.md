@@ -10,6 +10,12 @@ adds consumer-defined pipeline bindings and accepted native workflow bundles;
 see [workflow composition](workflow-composition.md) for its contract and current
 implementation limits.
 
+For individually composed delivery, a pipeline's `invocations` supplies each
+call's model, reasoning, task, skills, runner and timeout. Pipeline-level models
+are only needed for integrations that use them, such as clarification. See the
+[invocation reference](agent-invocations.md); `doctor` reports resolved values
+and checks all selected self-hosted runner labels.
+
 | Field | Required decision |
 |---|---|
 | `schema` | `1` |

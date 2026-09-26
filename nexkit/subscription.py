@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from .common import Blocked, canonical, read_json
+from .invocations import execution_config
 from .policy import authentication, config, require
 from .workspace import unchanged
 
@@ -240,7 +241,7 @@ def binding(cfg):
 
 
 def execute(context, role):
-    cfg = config(context["config"])
+    cfg = config(execution_config(context))
     require(authentication(cfg) == "chatgpt", "This job does not select ChatGPT authentication")
     binding(cfg)
     unchanged()
@@ -249,7 +250,7 @@ def execute(context, role):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         minutes = (
             context["agent_minutes"]
-            if role == "request"
+            if role == "request" or "invocation" in context
             else max(1, min(60, cfg["limits"]["minutes"] // 2))
         )
         require(isinstance(minutes, int) and 1 <= minutes <= 60, "Invalid session reservation")
@@ -350,7 +351,7 @@ def run_session(cfg, role, timeout):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--context")
-    parser.add_argument("--role", choices=("deliver", "review", "request"))
+    parser.add_argument("--role", choices=("deliver", "review", "request", "task"))
     parser.add_argument("--probe", action="store_true")
     args = parser.parse_args()
     try:

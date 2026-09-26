@@ -151,6 +151,7 @@ def config(value):
     )
     require(VERSION.fullmatch(kit.get("version", "")), "Set the exact kit version")
     scoped = "binding" in value
+    composed = "invocations" in value.get("binding", {})
     hooks = set(value["binding"]["entrypoints"]) if scoped else {"clarify", "delivery", "release"}
     needs_agent = bool(hooks & {"clarify", "delivery"})
     engine = value.get("engine", {})
@@ -163,7 +164,11 @@ def config(value):
             "Choose engine.auth: api-key or chatgpt",
         )
     roles = (
-        {"implement", "review"} if "delivery" in hooks else {"implement"} if needs_agent else set()
+        {"implement", "review"}
+        if "delivery" in hooks and not composed
+        else {"implement"}
+        if "clarify" in hooks
+        else set()
     )
     models = value.get("models", {})
     require(isinstance(models, dict), "Declare models as a mapping")
@@ -337,14 +342,17 @@ def reserve(state, cfg, run_key, *, clock=None):
     reservations = state.setdefault("reservations", [])
     require(run_key not in reservations, "This run attempt has already been reserved")
     require(state.get("attempts", 0) < cfg["limits"]["attempts"], "Delivery attempts exhausted")
+    from .pipelines import composed_agents
+
+    calls = 0 if composed_agents(cfg) else 2
     require(
-        delivery_budget_used(state, cfg) + 2 <= cfg["limits"]["agent_calls"],
+        delivery_budget_used(state, cfg) + max(1, calls) <= cfg["limits"]["agent_calls"],
         "Agent invocation budget exhausted",
     )
     state["reservations"] = [*reservations, run_key]
     state["attempts"] = state.get("attempts", 0) + 1
-    state["delivery_calls"] = delivery_calls(state) + 2
-    state["agent_calls"] = state.get("agent_calls", 0) + 2
+    state["delivery_calls"] = delivery_calls(state) + calls
+    state["agent_calls"] = state.get("agent_calls", 0) + calls
     return state
 
 

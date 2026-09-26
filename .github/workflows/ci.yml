@@ -25,7 +25,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
           # This upstream version predates concurrency.queue. Its documented
           # values and incompatibility with cancellation are checked in tests.
-          "$RUNNER_TEMP/actionlint" -shellcheck='' -pyflakes='' -ignore '^unexpected key "queue" for "concurrency" section\.' .github/workflows/*.yml
+          "$RUNNER_TEMP/actionlint" -shellcheck='' -pyflakes='' -ignore '^unexpected key "queue" for "concurrency" section\.' .github/workflows/*.yml docs/examples/*.yml
       - run: python -m unittest discover -v
       - run: python scripts/build.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

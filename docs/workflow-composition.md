@@ -11,11 +11,13 @@ Schema 2 supports arbitrary pipeline names, per-pipeline settings, explicit
 entrypoint routing, accepted workflow/control files and installation bundles.
 The existing `intake.yml`, `clarify.yml`, `delivery.yml` and `release.yml` reusable
 workflows accept an optional `pipeline` input and remain compatibility adapters.
-Their internal job structures are still fixed. A standalone candidate-check job
-is available as described below. Further extraction into smaller reusable
-capabilities, arbitrary agent invocation definitions and per-invocation delivery
-reservations is ongoing. Selecting schema 2 does not by itself provide these
-unfinished capabilities. No schema-2 live delivery acceptance is claimed.
+Their internal job structures are still fixed. For consumer-composed delivery,
+`prepare-work.yml`, `agent-invocation.yml`, `publish-candidate.yml`,
+`candidate-check.yml` and `finish-work.yml` supply individual reusable jobs.
+Consumer YAML selects their order, conditions and inputs. See
+[individual agent invocations](agent-invocations.md) for configuration and wiring.
+These capabilities have local controller, command and workspace tests plus
+static workflow validation. No schema-2 live delivery acceptance is claimed.
 
 Schema 1 continues to use its existing settings, accounting and four generated
 wrappers. Existing work items are not automatically migrated.
@@ -32,7 +34,8 @@ The root schema-2 object contains exactly:
 | `pipelines` | Map from consumer-chosen identifiers to the objects below |
 | `files` | Project-wide map of accepted repository paths to `{ "sha256": "…", "managed": true/false }` |
 
-Each pipeline contains exactly `settings`, `entrypoints` and `agent_workflows`:
+Each pipeline requires `settings`, `entrypoints` and `agent_workflows`, with an
+optional `invocations` map for individually reserved agent calls:
 
 ```json
 {
@@ -147,7 +150,9 @@ The consumer chooses its job name, dependencies and placement in native YAML.
 It accepts `kit_repository`, `kit_ref`, `candidate_artifact_id` and `check`.
 The kit reference must match the project's immutable pin. Pass the artifact ID
 output directly from the trusted publication job that produced `candidate.json`;
-do not find a candidate by an artifact-name wildcard or by "latest run".
+do not find a candidate by an artifact-name wildcard or by "latest run". The
+shared download action requires an exact numeric ID and one controller JSON
+file. Missing IDs and extra files block the job.
 
 The capability validates the current run attempt, approval, work-item candidate,
 configuration and selected command before checking out or executing candidate
@@ -157,7 +162,7 @@ permissions and no model credential. It returns `passed` and
 Setup failures remain failed, explicitly unexecuted checks with their real logs.
 
 After downloading each report by the exact ID returned by the corresponding
-required job, aggregate its named files with:
+required job, aggregate its files with:
 
 ```sh
 python3 -m nexkit.ci combine-checks --context candidate.json --reports checks/unit.json checks/api.json checks/lint.json --out verification.json

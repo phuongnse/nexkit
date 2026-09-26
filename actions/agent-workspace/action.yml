@@ -3,7 +3,7 @@ description: Prepare a fresh unprivileged coding-agent workspace from trusted in
 inputs:
   role:
     required: true
-    description: request, deliver or review
+    description: request, deliver, review or task
   context:
     required: true
     description: Controller context JSON path

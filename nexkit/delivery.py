@@ -5,6 +5,7 @@ from __future__ import annotations
 from .common import Blocked, canonical, digest
 from .pipelines import (
     bind_state,
+    composed_agents,
     current_config,
     dispatch,
     issue_pipeline,
@@ -38,7 +39,7 @@ def authorized(gh, number, *, release=False):
     return issue, approved
 
 
-def prepare(gh, number, run_key, kit_ref, *, pipeline=None):
+def prepare(gh, number, run_key, kit_ref, *, pipeline=None, individual_agents=False):
     """Read live authority and reserve a bounded run before any model invocation."""
     issue = gh.issue(number)
     if (issue.get("body") or "").startswith(RELEASE_MARKER) or issue.get("pull_request"):
@@ -62,6 +63,10 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None):
         repository = gh.repo()
         base = gh.ref(repository["default_branch"])
         cfg = load_run_config(gh, base, pipeline, "delivery")
+        require(
+            composed_agents(cfg) == individual_agents,
+            "Select individual agent capabilities for a pipeline with invocations",
+        )
         bind_state(state, cfg)
         require(cfg["repository"] == gh.repository, "Configuration belongs to another repository")
         require(cfg["default_branch"] == repository["default_branch"], "Default branch changed")
@@ -81,6 +86,7 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None):
         state = reserve(state, cfg, run_key)
         state.update(
             status="implementing",
+            writer=None,
             run_key=run_key,
             issue=int(number),
             repository=gh.repository,
@@ -104,6 +110,9 @@ def prepare(gh, number, run_key, kit_ref, *, pipeline=None):
             except Blocked as exc:
                 if "HTTP 404" not in str(exc):
                     raise
+        if individual_agents:
+            state["round_source"] = source
+            revision = gh.save_state(number, state, revision)
         return {
             "ready": True,
             "issue": issue,
@@ -138,6 +147,12 @@ def revalidate(gh, context):
     state, revision = gh.get_state(number)
     bind_state(state, cfg)
     require(state.get("run_key") == context["run_key"], "Superseded delivery run")
+    require(
+        state.get("config") == digest(cfg)
+        and state.get("base") == context["base"]
+        and state.get("approval") == context["approval"],
+        "Delivery context differs from its accepted reservation",
+    )
     require(state.get("status") in ("implementing", "verifying"), "Delivery is no longer active")
     from datetime import datetime
 
@@ -187,6 +202,24 @@ def validate_changes(changes, cfg=None):
 
 def publish(gh, context, bundle):
     state, revision = revalidate(gh, context)
+    if composed_agents(context["config"]):
+        from .invocations import guard, reservation_key
+
+        record = state.get("invocations", {}).get(reservation_key(context), {})
+        require(
+            record.get("context") == digest(context)
+            and record.get("role") == "deliver"
+            and record.get("result") == digest(bundle),
+            "Publication requires the recorded source-editing result",
+        )
+        if record.get("status") == "published":
+            require(record.get("candidate") == state.get("candidate"), "Publication was superseded")
+            require(
+                gh.ref(context["branch"]) == state["candidate"]["head"], "Published branch changed"
+            )
+            return publication_context(context, state["candidate"], state["pr"], bundle["result"])
+        state, revision = guard(gh, context, completed=True)
+        require(record.get("status") == "completed", "Source editing has not completed")
     require(bundle.get("run_key") == context["run_key"], "Bundle belongs to another run")
     require(
         bundle.get("source") == context["source"] and bundle.get("base") == context["base"],
@@ -267,15 +300,33 @@ def publish(gh, context, bundle):
             },
         )
     key = candidate_key(context["issue"], context["config"], context["base"], commit["sha"])
-    state.update(
-        status="verifying",
-        candidate=key,
-        pr=pr["number"],
-        last_bundle=fingerprint,
-        updated_at=now(),
-    )
-    gh.save_state(context["issue"]["number"], state, revision)
-    return {**context, "candidate": key, "pr": pr["number"], "implementation": result}
+    for attempt in range(3):
+        # Independent read-only invocations may record their result while this
+        # job publishes. Keep their reservations and reports on CAS retries.
+        if composed_agents(context["config"]):
+            state, revision = guard(gh, context, completed=True)
+            state["invocations"][reservation_key(context)].update(status="published", candidate=key)
+            state.update(candidate_run=context["run_key"], writer=None)
+        state.update(
+            status="verifying",
+            candidate=key,
+            pr=pr["number"],
+            last_bundle=fingerprint,
+            updated_at=now(),
+        )
+        try:
+            gh.save_state(context["issue"]["number"], state, revision)
+            break
+        except Blocked as exc:
+            if not composed_agents(context["config"]) or attempt == 2 or "HTTP 409" not in str(exc):
+                raise
+    return publication_context(context, key, pr["number"], result)
+
+
+def publication_context(context, key, pr, result):
+    value = {**context, "candidate": key, "pr": pr, "implementation": result}
+    value.pop("invocation", None)
+    return value
 
 
 def finish(gh, context, verification, review):
@@ -297,6 +348,27 @@ def finish(gh, context, verification, review):
         require(
             state.get("candidate") == key, "Candidate differs from the published work item state"
         )
+        if composed_agents(context["config"]):
+            receipt = review.get("invocation", {})
+            record = state.get("invocations", {}).get(
+                context["run_key"] + "/" + receipt.get("id", ""), {}
+            )
+            require(
+                record.get("role") == "review"
+                and record.get("status") == "completed"
+                and record.get("result") == digest(review)
+                and record.get("verification") == digest(verification),
+                "Merge requires a recorded independent review from this run",
+            )
+            require(
+                not state.get("writer")
+                and all(
+                    value["status"] != "reserved"
+                    for name, value in state.get("invocations", {}).items()
+                    if name.startswith(context["run_key"] + "/")
+                ),
+                "A started agent invocation has not completed",
+            )
         merge_gate(key, verification, review, context["config"])
         gh.strict_protection(context["config"]["default_branch"])
         # Check runs are emitted only by this trusted controller, after validated

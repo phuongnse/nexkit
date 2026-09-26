@@ -1,0 +1,78 @@
+name: NexKit prepare approved work
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+      pipeline:
+        type: string
+        required: true
+    outputs:
+      ready:
+        description: Whether an approved delivery round was reserved
+        value: ${{ jobs.prepare.outputs.ready }}
+      context_artifact_id:
+        description: Immutable artifact ID for this delivery round
+        value: ${{ jobs.prepare.outputs.context_artifact_id }}
+permissions: {}
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+      actions: read
+    outputs:
+      ready: ${{ steps.prepare.outputs.ready }}
+      context_artifact_id: ${{ steps.context.outputs.artifact-id }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate the kit pin before loading controller code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+          NEXKIT_PIPELINE: ${{ inputs.pipeline }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.ci prepare --individual-agents --kit-ref "$NEXKIT_REF" --out /tmp/nexkit/context.json
+      - id: context
+        if: steps.prepare.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-work-${{ inputs.pipeline }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/context.json
+          retention-days: 7
+          if-no-files-found: error

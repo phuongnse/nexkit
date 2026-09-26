@@ -12,6 +12,8 @@ from .checks import combine_checks, execute, verify
 from .common import Blocked, canonical, digest, file_hash, kit_root, read_json, run, write_json
 from .delivery import failed, finish, prepare, publish, revalidate
 from .github import GitHub
+from .invocations import execution_config
+from .pipelines import composed_agents
 from .policy import HOST_DIRS, agent_result, agent_runner, authentication, human, require, safe_path
 
 
@@ -32,6 +34,20 @@ def event_issue():
     return int(value)
 
 
+def load_context(path):
+    path = Path(path)
+    if path.is_dir():
+        paths = [
+            path / name
+            for name in ("context.json", "candidate.json", "invocation.json")
+            if (path / name).is_file()
+        ]
+        require(len(paths) == 1, "An exact context artifact must contain one controller context")
+        path = paths[0]
+    require(not path.is_symlink(), "Controller context cannot be a symlink")
+    return read_json(path)
+
+
 def authorized_event(gh):
     # GitHub itself restricts workflow_dispatch to accounts with write access;
     # this also permits explicit continuation dispatched by GITHUB_TOKEN.
@@ -41,7 +57,7 @@ def authorized_event(gh):
     return human({"user": event.get("sender", {})}, gh.permission)
 
 
-def prepare_job(destination, kit_ref):
+def prepare_job(destination, kit_ref, *, individual_agents=False):
     gh = GitHub(os.environ["GITHUB_REPOSITORY"])
     repository = gh.repo()
     require(
@@ -55,11 +71,19 @@ def prepare_job(destination, kit_ref):
         return context
     run_key = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
     context = prepare(
-        gh, event_issue(), run_key, kit_ref, pipeline=os.environ.get("NEXKIT_PIPELINE") or None
+        gh,
+        event_issue(),
+        run_key,
+        kit_ref,
+        pipeline=os.environ.get("NEXKIT_PIPELINE") or None,
+        individual_agents=individual_agents,
     )
     write_json(destination, context)
     if context["ready"]:
         cfg = context["config"]
+        if individual_agents:
+            output(ready=True, source=context["source"], base=context["base"])
+            return context
         output(
             ready=True,
             source=context["source"],
@@ -151,6 +175,9 @@ def file_snapshot(source, workspace):
 
 def materialize(source, workspace, context, role, data_dir):
     """Called before exposing the workspace to the unprivileged agent."""
+    invocation = context.get("invocation")
+    if invocation:
+        require(role == invocation["role"], "Workspace role differs from the reserved invocation")
     source, workspace, data_dir = (
         Path(source).resolve(),
         Path(workspace).resolve(),
@@ -192,10 +219,26 @@ def materialize(source, workspace, context, role, data_dir):
     require(skill.is_dir(), "Required runner skill is absent")
     target = workspace / ".agents/skills" / skill.name
     shutil.copytree(skill, target)
+    if invocation:
+        for relative, content in invocation["skills"].items():
+            safe_path(relative)
+            path = workspace / ".agents/skills" / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
     data_dir.mkdir(parents=True, exist_ok=True)
     write_json(data_dir / "initial.json", file_snapshot(source, workspace))
     write_json(data_dir / "context.json", context)
     method = skill.joinpath("SKILL.md").read_text()
+    if invocation:
+        method += (
+            "\nAccepted consumer task within the approved requirement and role contract:\n"
+            + invocation["task"]
+            + "\nRead and use these accepted consumer skills: "
+            + ", ".join(
+                Path(path).parent.name for path in invocation["definition"].get("skills", [])
+            )
+            + ".\n"
+        )
     prompt = (
         f"Use $nexkit-{role}. Read the installed SKILL.md before working.\n"
         f"Trusted method (also installed at {target}):\n{method}\n\n"
@@ -222,13 +265,18 @@ def materialize(source, workspace, context, role, data_dir):
 
 
 def collect(source, workspace, context, result_path, destination, role, initial):
+    receipt = {}
+    if "invocation" in context:
+        require(role == context["invocation"]["role"], "Collector role differs from reservation")
+        receipt = {"invocation": {"id": context["invocation"]["id"], "context": digest(context)}}
     result = agent_result(read_json(result_path), role)
     current = file_snapshot(Path(source).resolve(), Path(workspace).resolve())
-    if role in ("review", "request"):
+    if role in ("review", "request", "task"):
         before = read_json(initial)
         # Reviewer may create ignored build outputs, but cannot change the
         # candidate or introduce source files and then approve those edits.
         report = {
+            **receipt,
             "candidate": context.get("candidate"),
             "input": context.get("input"),
             "result": result,
@@ -250,6 +298,7 @@ def collect(source, workspace, context, result_path, destination, role, initial)
         else:
             changes.append({"path": name, **current[name]})
     bundle = {
+        **receipt,
         "run_key": context["run_key"],
         "source": context["source"],
         "base": context["base"],
@@ -274,6 +323,10 @@ def main():
             "verify",
             "prepare-check",
             "combine-checks",
+            "prepare-invocation",
+            "guard-invocation",
+            "record-invocation",
+            "finish-work",
             "finish",
             "failed",
         ),
@@ -281,23 +334,30 @@ def main():
     parser.add_argument("--context", default="/tmp/nexkit/context.json")
     parser.add_argument("--out", default="/tmp/nexkit/result.json")
     parser.add_argument("--kit-ref")
+    parser.add_argument("--individual-agents", action="store_true")
+    parser.add_argument(
+        "--invocation", help="Accepted invocation identifier selected by native YAML"
+    )
+    parser.add_argument("--inputs", nargs="*", help="Recorded outputs of preceding invocations")
     parser.add_argument("--source")
     parser.add_argument("--workspace")
     parser.add_argument("--data-dir", default="/tmp/nexkit")
-    parser.add_argument("--role", choices=("request", "deliver", "review"))
+    parser.add_argument("--role", choices=("request", "deliver", "review", "task"))
     parser.add_argument("--result")
     parser.add_argument("--initial", default="/tmp/nexkit/initial.json")
     parser.add_argument("--verification")
+    parser.add_argument("--candidate", help="Exact published candidate context")
+    parser.add_argument("--jobs-succeeded", action="store_true")
     parser.add_argument("--review")
     parser.add_argument("--check", help="Run exactly one configured check in this native job")
-    parser.add_argument("--reports", nargs="+", help="Exact check result files from native jobs")
+    parser.add_argument("--reports", nargs="*", help="Exact check result files from native jobs")
     parser.add_argument("--reason", default="A required job failed or produced no valid output")
     args = parser.parse_args()
     try:
         if args.operation == "prepare":
-            result = prepare_job(args.out, args.kit_ref)
+            result = prepare_job(args.out, args.kit_ref, individual_agents=args.individual_agents)
         else:
-            context = read_json(args.context)
+            context = load_context(args.context)
             if args.operation == "materialize":
                 result = materialize(args.source, args.workspace, context, args.role, args.data_dir)
             elif args.operation == "environment":
@@ -305,11 +365,12 @@ def main():
                 # The workspace persists, so dependencies installed in it are
                 # available to both the agent and its focused checks.
                 logs = []
-                for argv in context["config"]["environment"]["setup"]:
+                cfg = execution_config(context)
+                for argv in cfg["environment"]["setup"]:
                     step = execute(
                         argv,
                         args.workspace,
-                        context["config"]["limits"]["command_seconds"],
+                        cfg["limits"]["command_seconds"],
                         command_home="/home/nexkit-agent",
                     )
                     logs.append(step)
@@ -346,7 +407,82 @@ def main():
                 write_json(args.out, result)
             else:
                 gh = GitHub(context["repository"])
-                if args.operation == "guard":
+                if args.operation in (
+                    "prepare-invocation",
+                    "guard-invocation",
+                    "record-invocation",
+                    "finish-work",
+                ):
+                    require(
+                        composed_agents(context["config"]),
+                        "Individual capabilities require configured invocations",
+                    )
+                if composed_agents(context["config"]):
+                    from .invocations import runtime_guard
+
+                    runtime_guard(gh, context, args.kit_ref)
+                if args.operation == "finish-work":
+                    verification = None
+                    review = None
+                    try:
+                        if args.review:
+                            review = read_json(args.review)
+                        require(args.candidate, "No candidate was published")
+                        candidate = load_context(args.candidate)
+                        runtime_guard(gh, candidate, args.kit_ref)
+                        require(
+                            candidate["issue"]["number"] == context["issue"]["number"],
+                            "Candidate belongs to another work item",
+                        )
+                        verification = combine_checks(
+                            candidate, [read_json(path) for path in args.reports or []]
+                        )
+                        require(args.jobs_succeeded, args.reason)
+                        require(review is not None, "Independent review output is missing")
+                        result = finish(gh, candidate, verification, review)
+                    except Blocked as exc:
+                        result = failed(
+                            gh, context, str(exc), verification=verification, review=review
+                        )
+                    write_json(args.out, result)
+                    output(status=result["status"])
+                elif args.operation == "prepare-invocation":
+                    from .invocations import prepare as prepare_invocation
+
+                    result = prepare_invocation(
+                        gh,
+                        context,
+                        args.invocation,
+                        [read_json(path) for path in args.inputs or []],
+                        [read_json(path) for path in args.reports or []],
+                    )
+                    write_json(args.out, result)
+                    cfg = execution_config(result)
+                    role = result["invocation"]["role"]
+                    output(
+                        role=role,
+                        source=result["source"],
+                        checkout=result["base"] if role == "deliver" else result["source"],
+                        model=result["invocation"]["definition"]["model"],
+                        effort=result["invocation"]["definition"].get("reasoning_effort", ""),
+                        agent_runner=canonical(agent_runner(cfg)),
+                        authentication=authentication(cfg),
+                        codex_version=cfg["engine"]["version"],
+                        agent_minutes=result["agent_minutes"],
+                        sandbox="workspace-write" if role == "deliver" else "read-only",
+                    )
+                elif args.operation == "guard-invocation":
+                    from .invocations import guard
+
+                    guard(gh, context)
+                    result = {"authorized": True, "invocation": context["invocation"]["id"]}
+                elif args.operation == "record-invocation":
+                    from .invocations import record
+
+                    report = read_json(args.result)
+                    result = record(gh, context, report)
+                    output(status=report["result"]["status"])
+                elif args.operation == "guard":
                     revalidate(gh, context)
                     result = {"authorized": True, "run_key": context["run_key"]}
                 elif args.operation == "publish":

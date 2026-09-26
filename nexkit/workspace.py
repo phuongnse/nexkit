@@ -36,10 +36,19 @@ def snapshot(home=HOME, data=DATA):
     identities = {str(path): directory_identity(path) for path in (home, home / "work")}
     directory_identity(home / "work/.git")
     shutil.copytree(home / "work/.git", data / "trusted.git", symlinks=True)
+    skills = home / "work/.agents/skills"
+    if skills.is_dir():
+        require(
+            not any(path.is_symlink() for path in (skills, *skills.rglob("*"))),
+            "Trusted skills cannot contain symlinks",
+        )
+        shutil.copytree(skills, data / "trusted-skills")
     (data / "setup-directories.json").write_text(json.dumps(identities))
     for path in (data / "trusted.git", *(data / "trusted.git").rglob("*")):
         if not path.is_symlink():
             os.chmod(path, path.stat().st_mode & ~0o022)
+    for path in (data / "trusted-skills").rglob("*"):
+        os.chmod(path, path.stat().st_mode & ~0o022)
 
 
 def remove(path):
@@ -76,7 +85,14 @@ def restore(home=HOME, data=DATA, *, uid, gid, role):
         remove(work / name)
     skill = kit_root() / "plugins/nexkit/skills" / f"nexkit-{role}"
     require(skill.is_dir(), "The trusted role skill is absent")
-    shutil.copytree(skill, work / ".agents/skills" / skill.name)
+    if (data / "trusted-skills").is_dir():
+        require(
+            (data / "trusted-skills" / skill.name / "SKILL.md").is_file(),
+            "Reserved role skill is absent from the sealed snapshot",
+        )
+        shutil.copytree(data / "trusted-skills", work / ".agents/skills")
+    else:
+        shutil.copytree(skill, work / ".agents/skills" / skill.name)
     remove(home / "output")
     (home / "output").mkdir()
     os.chown(home / "output", uid, gid)
@@ -91,7 +107,7 @@ def restore(home=HOME, data=DATA, *, uid, gid, role):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("snapshot", "restore"))
-    parser.add_argument("--role", choices=("request", "deliver", "review"))
+    parser.add_argument("--role", choices=("request", "deliver", "review", "task"))
     parser.add_argument("--owner", type=int, default=0)
     args = parser.parse_args()
     require(os.geteuid() == 0, "Workspace sealing requires the runner administrator")

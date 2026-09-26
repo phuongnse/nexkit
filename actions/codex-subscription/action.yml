@@ -3,7 +3,7 @@ description: Run official Codex with this consumer runner's isolated ChatGPT log
 inputs:
   role:
     required: true
-    description: request, deliver or review
+    description: request, deliver, review or task
   context:
     required: true
     description: Trusted controller context JSON path

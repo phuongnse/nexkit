@@ -18,8 +18,13 @@ Derive the workflow structure from this consumer's needs. Native GitHub Actions
 YAML owns jobs, dependencies and matrices; do not invent a JSON graph or assume
 four pipeline stages fit every project. Read `docs/workflow-composition.md` for
 schema 2, accepted workflow bundles and its current implementation boundary.
-Compatibility adapters still have fixed internal jobs; do not claim arbitrary
-agent-stage composition is implemented until the required capabilities exist.
+Use the individual capabilities in `docs/agent-invocations.md` when the consumer
+needs its own agent job structure. Choose tasks, accepted skills, model, effort,
+runner and minutes for each invocation. Keep task/source-edit/review contracts
+and candidate checks intact. A configuration map does not schedule jobs; wire
+the actual native YAML, exact producer artifact outputs and failure finalizer.
+Serialize delivery workflows with native concurrency. Verify the resulting
+consumer workflow before claiming live readiness.
 Keep existing schema-1 consumers on their accepted settings until migration is
 explicitly part of the proposed setup change.
 

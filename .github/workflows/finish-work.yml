@@ -1,0 +1,122 @@
+name: NexKit finish approved work
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+      context_artifact_id:
+        type: string
+        required: true
+      candidate_artifact_id:
+        type: string
+        required: false
+        default: ''
+      check_artifact_ids:
+        type: string
+        required: false
+        default: ''
+      review_artifact_id:
+        type: string
+        required: false
+        default: ''
+      jobs_succeeded:
+        type: boolean
+        required: true
+    outputs:
+      status:
+        description: Persisted merged, retry or blocked outcome
+        value: ${{ jobs.finish.outputs.status }}
+permissions: {}
+jobs:
+  finish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      checks: write
+      actions: write
+    outputs:
+      status: ${{ steps.finish.outputs.status }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate the kit pin before loading controller code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: round-context
+        uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.context_artifact_id }}
+          path: /tmp/nexkit/context
+      - id: candidate-data
+        if: inputs.candidate_artifact_id != ''
+        uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.candidate_artifact_id }}
+          path: /tmp/nexkit/candidate
+      - id: check-data
+        if: inputs.check_artifact_ids != ''
+        uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.check_artifact_ids }}
+          path: /tmp/nexkit/checks
+          multiple: 'true'
+          optional: 'true'
+      - id: review-data
+        if: inputs.review_artifact_id != ''
+        uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.review_artifact_id }}
+          path: /tmp/nexkit/review
+      - id: finish
+        if: always() && steps.round-context.outcome == 'success'
+        name: Validate current evidence and merge or persist bounded retry feedback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+          NEXKIT_JOBS_OK: ${{ inputs.jobs_succeeded && steps.candidate-data.outcome == 'success' && steps.check-data.outcome == 'success' && steps.review-data.outcome == 'success' }}
+          NEXKIT_CANDIDATE_OK: ${{ steps.candidate-data.outcome == 'success' }}
+          NEXKIT_CHECKS_OK: ${{ steps.check-data.outcome == 'success' }}
+          NEXKIT_REVIEW_OK: ${{ steps.review-data.outcome == 'success' }}
+        run: |
+          shopt -s nullglob globstar
+          checks=()
+          reviews=()
+          if [ "$NEXKIT_CHECKS_OK" = true ]; then checks=(/tmp/nexkit/checks/**/*.json); fi
+          if [ "$NEXKIT_REVIEW_OK" = true ]; then reviews=(/tmp/nexkit/review/*.json); fi
+          args=()
+          if [ "$NEXKIT_JOBS_OK" = true ]; then args+=(--jobs-succeeded); fi
+          if [ "$NEXKIT_CANDIDATE_OK" = true ]; then args+=(--candidate /tmp/nexkit/candidate); fi
+          if [ "${#reviews[@]}" = 1 ]; then args+=(--review "${reviews[0]}"); fi
+          python3 -m nexkit.ci finish-work --context /tmp/nexkit/context --kit-ref "$NEXKIT_REF" --reports "${checks[@]}" "${args[@]}" --out /tmp/nexkit/outcome.json

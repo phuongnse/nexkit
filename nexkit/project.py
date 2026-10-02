@@ -42,7 +42,7 @@ def literal_concurrency_group(text):
     return group[1] if group else None
 
 
-def workflow_concurrency_problem(name, content, cfg):
+def workflow_concurrency_problem(name, content, cfg, *, kit=None):
     """Catch known adapter deadlocks without adding a YAML runtime or executor."""
     if not name.startswith(".github/workflows/"):
         return None
@@ -55,7 +55,7 @@ def workflow_concurrency_problem(name, content, cfg):
         if re.search(
             r"(?m)^    uses:[ \t]*['\"]?" + reference + r"[0-9a-f]{40}['\"]?[ \t]*(?:#.*)?$", text
         ):
-            child = (kit_root() / ".github/workflows" / f"{adapter}.yml").read_text(
+            child = ((kit or kit_root()) / ".github/workflows" / f"{adapter}.yml").read_text(
                 encoding="utf-8"
             )
             if group == literal_concurrency_group(child):
@@ -106,31 +106,33 @@ def survey(root):
     }
 
 
-def managed_files(cfg, hosts, *, root=None, bundle=None):
+def managed_files(cfg, hosts, *, root=None, bundle=None, kit=None, consumer_updates=None):
+    kit = Path(kit or kit_root())
+    consumer_updates = consumer_updates or {}
     payload = {}
     for host in hosts:
         require(host in HOSTS, f"Unknown host {host}")
-        for path in sorted((kit_root() / "plugins/nexkit/skills").rglob("*")):
+        for path in sorted((kit / "plugins/nexkit/skills").rglob("*")):
             if path.is_file():
-                rel = path.relative_to(kit_root() / "plugins/nexkit/skills")
+                rel = path.relative_to(kit / "plugins/nexkit/skills")
                 payload[f"{HOSTS[host]}/{rel.as_posix()}"] = path.read_bytes()
     for name, record in cfg["files"].items():
         # Accepted consumer files are inspected, never adopted implicitly.
         source = consumer_path(bundle if record["managed"] and bundle else root, name)
         require(source.is_file(), f"Accepted setup file is missing: {name}")
-        content = source.read_bytes()
+        content = consumer_updates.get(name, source.read_bytes())
         require(
             hashlib.sha256(content).hexdigest() == record["sha256"],
             f"Setup file hash mismatch: {name}",
         )
-        problem = workflow_concurrency_problem(name, content, cfg)
+        problem = workflow_concurrency_problem(name, content, cfg, kit=kit)
         require(problem is None, problem)
-        if record["managed"]:
+        if record["managed"] or name in consumer_updates:
             payload[name] = content
     return payload
 
 
-def installation_plan(root, cfg, hosts, *, bundle=None):
+def installation_plan(root, cfg, hosts, *, bundle=None, kit=None, consumer_updates=None):
     root = Path(root).resolve()
     config(cfg)
     ledger_path = consumer_path(root, ".nexkit/installation.json")
@@ -142,13 +144,35 @@ def installation_plan(root, cfg, hosts, *, bundle=None):
             prior is not None and digest(prior) == ledger["project"],
             "Installed project configuration was edited; reconcile it before applying a setup bundle",
         )
-    files = managed_files(cfg, hosts, root=root, bundle=bundle)
+    consumer_updates = consumer_updates or {}
+    for name in consumer_updates:
+        require(
+            name.startswith(".github/workflows/")
+            and (prior or {}).get("files", {}).get(name, {}).get("managed") is False
+            and cfg["files"].get(name, {}).get("managed") is False
+            and file_hash(consumer_path(root, name)) == prior["files"][name]["sha256"],
+            f"Consumer edits preserved: {name}. Reconcile the workflow before selecting a release",
+        )
+    files = managed_files(
+        cfg, hosts, root=root, bundle=bundle, kit=kit, consumer_updates=consumer_updates
+    )
     owned = {
         name
         for name, record in (prior or {}).get("files", {}).items()
         if record.get("managed") is True and name in ledger.get("bundle_files", [])
     }
     previous_bundle = set(ledger.get("bundle_files", []))
+    if kit is not None:
+        # A selected release may remove skills. Keep ownership across downgrade
+        # without leaving the newer kit's instructions active in the project.
+        for name, expected in ledger["files"].items():
+            if name not in files and any(
+                name.startswith(prefix + "/") for prefix in HOSTS.values()
+            ):
+                path = consumer_path(root, name)
+                if path.exists():
+                    require(file_hash(path) == expected, f"Consumer edits preserved: {name}")
+                    files[name] = None
     # The desired manifest is the full workflow set. Retire only previously
     # accepted managed files. Unrelated consumer files stay on disk.
     obsolete = previous_bundle - set(cfg["files"])
@@ -175,7 +199,8 @@ def installation_plan(root, cfg, hosts, *, bundle=None):
         after = content if content is not None else b""
         if path.exists() and before != after:
             require(
-                name in ledger["files"] and file_hash(path) == ledger["files"][name],
+                name in consumer_updates
+                or (name in ledger["files"] and file_hash(path) == ledger["files"][name]),
                 f"Consumer edits preserved: {name}. Reconcile the diff before updating",
             )
         if (
@@ -231,9 +256,12 @@ def installation_plan(root, cfg, hosts, *, bundle=None):
     return files, ledger, changes
 
 
-def install(root, cfg, hosts, *, apply=False, bundle=None):
+def install(root, cfg, hosts, *, apply=False, bundle=None, kit=None, consumer_updates=None):
     root = Path(root).resolve()
-    files, ledger, changes = installation_plan(root, cfg, hosts, bundle=bundle)
+    files, ledger, changes = installation_plan(
+        root, cfg, hosts, bundle=bundle, kit=kit, consumer_updates=consumer_updates
+    )
+    version = cfg["kit"]["version"] if kit is not None else __version__
     if apply:
         # All conflicts are detected before writing any managed file.
         for name, content in files.items():
@@ -244,17 +272,18 @@ def install(root, cfg, hosts, *, apply=False, bundle=None):
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
-            ledger["files"][name] = file_hash(path)
+            if name not in (consumer_updates or {}):
+                ledger["files"][name] = file_hash(path)
         ledger["bundle_files"] = [
             name for name, record in cfg["files"].items() if record["managed"]
         ]
         ledger["project"] = digest(cfg)
         write_json(root / ".nexkit/project.json", cfg)
-        ledger.update(version=__version__, hosts=sorted(set(ledger.get("hosts", []) + hosts)))
+        ledger.update(version=version, hosts=sorted(set(ledger.get("hosts", []) + hosts)))
         write_json(root / ".nexkit/installation.json", ledger)
     return {
         "applied": apply,
-        "version": __version__,
+        "version": version,
         "changes": changes,
         "ownership": "Only recorded kit files are managed. Config, knowledge and code belong to the consumer.",
     }

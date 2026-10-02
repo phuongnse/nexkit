@@ -90,7 +90,7 @@ default list. For example, a pipeline-specific `knowledge` list becomes that
 pipeline's complete list of knowledge files.
 
 The [workflow reference](workflow-composition.md) explains the complete format.
-See [versions](versions.md) for the `1.0.0` baseline and immutable project pins.
+See [versions](versions.md) for release selection and immutable project pins.
 
 ## Models and reasoning
 

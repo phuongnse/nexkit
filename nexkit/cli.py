@@ -201,6 +201,9 @@ def parser():
     p.add_argument("--pipeline", help="Explicit consumer pipeline for pipeline operations")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("survey", help="Read repository context for the setup agent")
+    c = sub.add_parser("use", help="Select an exact published NexKit release, higher or lower")
+    c.add_argument("--version", required=True, help="Release version, such as 1.1.0 or 1.0.0")
+    c.add_argument("--dry-run", action="store_true", help="Show changes without applying them")
     for name in ("setup", "install"):
         c = sub.add_parser(name, help="Preview/apply accepted setup or versioned kit update")
         c.add_argument("--config", required=True, help="User-approved project JSON")
@@ -263,6 +266,10 @@ def main(argv=None):
             return 0
         if args.command == "survey":
             result = survey(root)
+        elif args.command == "use":
+            from .versions import use
+
+            result = use(root, args.version, apply=not args.dry_run)
         elif args.command in ("setup", "install"):
             cfg = config(read_json(args.config))
             result = install(root, cfg, [args.host], apply=args.apply, bundle=args.bundle)

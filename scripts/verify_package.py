@@ -167,6 +167,7 @@ def verify(archive, *, source=None, codex=None):
                 kit,
                 "tests.test_consumers",
                 "tests.test_portability",
+                "tests.test_versions",
                 "-q",
             ],
             cwd=kit,

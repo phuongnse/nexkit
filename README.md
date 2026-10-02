@@ -10,7 +10,7 @@ result and merges when the required conditions pass.
 You choose the pipelines, models, usage limits and approval steps during setup.
 Each project has its own configuration, runner and model access.
 
-Get [NexKit 1.0.0](https://github.com/phuongnse/nexkit/releases/tag/v1.0.0).
+Get [NexKit 1.1.0](https://github.com/phuongnse/nexkit/releases/tag/v1.1.0).
 See the [verification guide](docs/acceptance.md) for checks and how to read their results.
 
 **New to NexKit? Start with the [setup roadmap](docs/setup-roadmap.md).**
@@ -82,7 +82,7 @@ Use the release tag when installing the toolkit. Project setup records its full
 commit SHA in the configuration and workflows.
 
 ```sh
-git clone --branch v1.0.0 https://github.com/phuongnse/nexkit.git
+git clone --branch v1.1.0 https://github.com/phuongnse/nexkit.git
 cd nexkit
 export PATH="$PWD/bin:$PATH"
 codex plugin marketplace add "$PWD"
@@ -96,7 +96,7 @@ the command available in new terminals.
 On Windows, use PowerShell and the bundled `nexkit.cmd` launcher:
 
 ```powershell
-git clone --branch v1.0.0 https://github.com/phuongnse/nexkit.git
+git clone --branch v1.1.0 https://github.com/phuongnse/nexkit.git
 Set-Location nexkit
 $nexkitSource = (Get-Location).Path
 $env:Path = "$nexkitSource\bin;$env:Path"
@@ -168,18 +168,31 @@ Use the setup skill again to change these choices. It prepares a reviewable
 update to the project configuration and workflows.
 [See examples and where each setting lives.](docs/project-setup.md)
 
+For an installed project, select a published NexKit release from its repository:
+
+```sh
+nexkit use --version 1.1.0 --dry-run
+nexkit use --version 1.1.0
+```
+
+The same command can select a lower version, such as `1.0.0`. It verifies the
+release and current configuration before updating workflow pins, accepted hashes
+and project skills. Commit the changes through your normal PR checks.
+See [release selection](docs/versions.md#select-a-project-release) for prerequisites
+and the supported workflow bindings.
+
 ### Extend a pipeline
 
 Skills guide the agents; reusable jobs run the work; your GitHub workflow connects
 the jobs. A project can add its own agent instructions, commands or GitHub Actions.
 
-NexKit 1.0.0 also supports standalone task pipelines and recorded project steps
+NexKit 1.1.0 also supports standalone task pipelines and recorded project steps
 with approval and completion. Read [Build a pipeline from steps](docs/project-steps.md)
 for the configuration, examples and current verification limits.
 
 ## Current support
 
-**NexKit 1.0.0** supports **GitHub and Codex**.
+**NexKit 1.1.0** supports **GitHub and Codex**.
 GitHub provides repositories,
 issues, PRs and Actions; the official Codex CLI runs the agents. Codex plugin
 installation and container tools support Linux and Windows/WSL.
@@ -193,7 +206,7 @@ The [verification guide](docs/acceptance.md) explains the checks and how to
 distinguish live integration evidence from tests that simulate services or model
 responses. Results belong to the corresponding run or release.
 
-The plugin, CLI and runner image use version `1.0.0`. Project configuration
+The plugin, CLI and runner image use version `1.1.0`. Project configuration
 and release candidate data use `schema: 1`. See [versions](docs/versions.md)
 for what each number means.
 

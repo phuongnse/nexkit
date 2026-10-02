@@ -73,11 +73,11 @@ by a CI runner are configured separately.
 
 Keep NexKit in a tools directory alongside your projects:
 
-Install version 1.0.0 from its release tag. Project setup records the full
+Install version 1.1.0 from its release tag. Project setup records the full
 commit SHA so each workflow uses the same immutable NexKit source.
 
 ```sh
-git clone --branch v1.0.0 https://github.com/phuongnse/nexkit.git
+git clone --branch v1.1.0 https://github.com/phuongnse/nexkit.git
 cd nexkit
 export PATH="$PWD/bin:$PATH"
 nexkit --version
@@ -86,7 +86,7 @@ nexkit --version
 On native Windows, use PowerShell:
 
 ```powershell
-git clone --branch v1.0.0 https://github.com/phuongnse/nexkit.git
+git clone --branch v1.1.0 https://github.com/phuongnse/nexkit.git
 Set-Location nexkit
 $nexkitSource = (Get-Location).Path
 $env:Path = "$nexkitSource\bin;$env:Path"

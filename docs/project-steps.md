@@ -286,8 +286,20 @@ and continuation workflows in the same concurrency group. A continuation that
 calls agents must appear in `agent_workflows`; a finish-only continuation does not.
 
 `finish-tasks.yml` verifies required results and decisions, records `completed`
-and posts a short summary with the Actions link. The issue stays open for
-follow-up; task completion does not imply a merge, release or source change.
+and posts every completed invocation and project step's full `result.summary`
+on the issue. Recorded summaries retain their paragraphs, Markdown and Unicode.
+In `nexkit status`, the `task_result` completion index references the full
+summaries in the original `invocations` and `steps` records, avoiding duplicate
+text within the persisted state size bound. Earlier completed state containing
+copied summaries remains readable.
+Long output is split into numbered continuation comments within GitHub's comment
+size limit, with workflow and result artifact links included. Results that define
+the same Markdown reference label with different targets use separate comments
+to preserve each link. If publication is interrupted, rerunning failed finalizer
+jobs or the complete task workflow posts only the missing comments without
+repeating the completed work. This also applies to approval continuation workflows.
+The issue stays open for follow-up; task completion
+does not imply a merge, release or source change.
 Delivery and release retain their [issue completion policy](issue-completion.md).
 
 ## Set up or change the pipeline

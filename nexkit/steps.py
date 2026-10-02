@@ -369,7 +369,11 @@ def record(gh, context, report):
             status="completed",
             result=digest(report),
             outcome=report["result"]["status"],
-            summary=short_summary(report["result"]["summary"], 2000),
+            summary=(
+                report["result"]["summary"]
+                if task_pipeline(context["config"])
+                else short_summary(report["result"]["summary"], 2000)
+            ),
         )
         state["activity"] = short_summary(f"{context['step']['id']}: {saved['summary']}")
         try:

@@ -28,13 +28,39 @@ def definitions(cfg):
     return cfg["binding"]["invocations"]
 
 
-def runtime_guard(gh, context, kit_ref):
+def runtime_guard(gh, context, kit_ref, *, completed_tasks=False):
     require(
         context["repository"] == os.environ["GITHUB_REPOSITORY"] == gh.repository,
         "Invocation belongs to another repository",
     )
     active = os.environ["GITHUB_RUN_ID"] + "." + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
     continuation = context.get("continuation")
+    cfg = context["config"]
+    execution = continuation["run_key"] if continuation else context["run_key"]
+    if completed_tasks and active != execution:
+        state, _ = gh.get_state(context["issue"]["number"])
+        require(
+            task_pipeline(cfg)
+            and state.get("status") == "completed"
+            and state.get("run_key") == context["run_key"]
+            and state.get("config") == digest(cfg)
+            and state.get("base") == context["base"]
+            and state.get("approval") == context["approval"],
+            "Only the recorded completed task can recover its publication",
+        )
+        recorded = state.get("approval_execution", {}).get("run_key", state["run_key"])
+        previous, current = recorded.split("."), active.split(".")
+        require(
+            recorded == execution
+            and len(previous) == len(current) == 2
+            and all(part.isdigit() for part in (*previous, *current))
+            and current[0] == previous[0]
+            and int(current[1]) > int(previous[1]),
+            "Publication recovery requires a later attempt of the same completed execution",
+        )
+        # This exception is selected only by the task finalizer. Invocation and
+        # step execution still require their original reservation and attempt.
+        active = recorded
     caller = None
     if continuation:
         state, _ = gh.get_state(context["issue"]["number"])
@@ -47,7 +73,6 @@ def runtime_guard(gh, context, kit_ref):
         caller = continuation["workflow"]
     else:
         require(context["run_key"] == active, "Invocation belongs to another run attempt")
-    cfg = context["config"]
     require(kit_ref == cfg["kit"]["ref"], "Invocation kit revision changed")
     require(
         load_run_config(
@@ -361,7 +386,11 @@ def _record(gh, context, report):
         status="completed",
         result=digest(report),
         outcome=report["result"]["status"],
-        summary=short_summary(report["result"]["summary"], 2000),
+        summary=(
+            report["result"]["summary"]
+            if task_pipeline(context["config"])
+            else short_summary(report["result"]["summary"], 2000)
+        ),
         source=context["source"],
     )
     outcome = report["result"].get("verdict") or report["result"].get("status", "completed")

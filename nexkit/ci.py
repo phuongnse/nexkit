@@ -549,7 +549,15 @@ def main():
                 if composed_work(context["config"]):
                     from .invocations import runtime_guard
 
-                    runtime_guard(gh, context, args.kit_ref)
+                    runtime_guard(
+                        gh,
+                        context,
+                        args.kit_ref,
+                        completed_tasks=(
+                            args.operation in {"finish-work", "finish-tasks"}
+                            and task_pipeline(context["config"])
+                        ),
+                    )
                 if args.operation in {"finish-work", "finish-tasks"}:
                     if args.operation == "finish-tasks":
                         require(

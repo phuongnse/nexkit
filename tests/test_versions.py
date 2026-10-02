@@ -207,11 +207,11 @@ class VersionTests(unittest.TestCase):
             "1.1.0",
             "2" * 40,
             {
-                "nexkit/policy.py": b"def config(value):\n    raise ValueError('unsupported configuration feature')\n"
+                "nexkit/policy.py": "def config(value):\n    raise ValueError('unsupported configuration feature caf\u00e9')\n".encode()
             },
         )
         before = self.snapshot()
-        with self.assertRaisesRegex(Blocked, "unsupported configuration feature"):
+        with self.assertRaisesRegex(Blocked, "unsupported configuration feature caf\u00e9"):
             use(self.root, "1.1.0", gh=self.gh)
         self.assertEqual(self.snapshot(), before)
 

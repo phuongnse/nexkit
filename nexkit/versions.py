@@ -193,7 +193,11 @@ def validate_selected(kit, cfg, destination):
         "cfg = config(json.load(open(sys.argv[2], encoding='utf-8'))); "
         "assert __version__ == cfg['kit']['version'], 'Packaged toolkit version differs'"
     )
-    run([sys.executable, "-I", "-B", "-c", script, kit, proposal], cwd=home, env=environment(home))
+    run(
+        [sys.executable, "-I", "-B", "-X", "utf8", "-c", script, kit, proposal],
+        cwd=home,
+        env=environment(home),
+    )
 
 
 def use(root, version, *, apply=True, gh=None):

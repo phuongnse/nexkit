@@ -149,6 +149,12 @@ sequenceDiagram
 
 Job order comes from your project's workflows. Checks, separate AI review,
 repair rounds and any additional approval steps follow that setup.
+Open **View current run** in the issue's **NexKit progress** comment to follow
+the exact Actions attempt. During execution, the agent step shows timestamped
+messages, commands, file changes and a process heartbeat. After the job ends,
+its summary links the full report and activity artifact, retained for seven days.
+See [reading activity and recovering a run](operations.md#read-progress-and-recover-a-run)
+for log contents and interrupted runs.
 After merge, NexKit closes the selected completed issues when enabled and
 posts a short summary. Release candidates close after successful publication.
 

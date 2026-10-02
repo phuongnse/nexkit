@@ -16,6 +16,7 @@ on:
         required: false
 permissions: {}
 env:
+  NEXKIT_PROGRESS: '1'
   NEXKIT_PIPELINE: ${{ inputs.pipeline }}
 concurrency:
   group: nexkit-release
@@ -29,6 +30,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: read
       issues: write
     outputs:
       ready: ${{ steps.prepare.outputs.ready }}
@@ -151,6 +153,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: read
       issues: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -181,6 +184,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: read
       issues: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09

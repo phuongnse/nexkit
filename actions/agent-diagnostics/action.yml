@@ -1,0 +1,65 @@
+name: NexKit agent diagnostics
+description: Stop the isolated session and upload public diagnostics after a timed agent step.
+inputs:
+  role:
+    required: true
+    description: request, deliver, review or task
+  context:
+    required: true
+    description: The accepted controller context used by this session
+  outcome:
+    required: true
+    description: Native agent step outcome, including failure or cancellation
+outputs:
+  artifact-id:
+    description: Best-effort activity artifact, separate from the validated agent report
+    value: ${{ steps.upload.outputs.artifact-id }}
+  artifact-url:
+    description: Download URL for this session's report and activity
+    value: ${{ steps.upload.outputs.artifact-url }}
+runs:
+  using: composite
+  steps:
+    - id: locations
+      name: Locate this session's diagnostic artifact
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        NEXKIT_ROLE: ${{ inputs.role }}
+      run: |
+        import os, subprocess, sys
+        subprocess.run([sys.executable, '-m', 'nexkit.agent_observability', 'locations', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE']], check=True)
+    - name: Stop the isolated account and finish diagnostics
+      if: always() && steps.locations.outcome == 'success'
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        NEXKIT_ROLE: ${{ inputs.role }}
+        NEXKIT_SESSION_OUTCOME: ${{ inputs.outcome }}
+      run: |
+        import os, subprocess, sys
+        command = [sys.executable, '-m', 'nexkit.agent_observability', 'finish', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE'], '--outcome', os.environ['NEXKIT_SESSION_OUTCOME']]
+        native = [key + '=' + os.environ.get(key, '') for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')]
+        subprocess.run(['sudo', '-n', 'env', 'PYTHONPATH=' + os.environ['PYTHONPATH'], *native, *command], check=True)
+    - id: upload
+      name: Upload the report and recorded activity
+      if: always() && steps.locations.outcome == 'success'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: ${{ steps.locations.outputs.diagnostic_name }}
+        path: ${{ steps.locations.outputs.diagnostic_directory }}
+        retention-days: 7
+        if-no-files-found: warn
+    - name: Add the report and artifact link to the job summary
+      if: always() && steps.upload.outcome == 'success' && steps.locations.outcome == 'success'
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        NEXKIT_ROLE: ${{ inputs.role }}
+        NEXKIT_DIAGNOSTIC_URL: ${{ steps.upload.outputs.artifact-url }}
+      run: |
+        import os, subprocess, sys
+        subprocess.run([sys.executable, '-m', 'nexkit.agent_observability', 'summary', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE'], '--artifact-url', os.environ['NEXKIT_DIAGNOSTIC_URL']], check=True)

@@ -115,6 +115,26 @@ class CodexAdapter:
 
         return execute(context, role, data=data)
 
+    def prepare_observation(self, engine, *, data):
+        if self.authentication(engine) == "api-key":
+            from .codex_events import prepare_api_observer
+
+            prepare_api_observer(data)
+
+    def stop_session(self, engine):
+        import pwd
+
+        users = ["nexkit-agent"]
+        if self.authentication(engine) == "chatgpt":
+            users.append("nexkit-codex")
+        for user in users:
+            try:
+                pwd.getpwnam(user)
+            except KeyError:
+                continue
+            result = subprocess.run(["pkill", "-KILL", "-u", user], capture_output=True)
+            require(result.returncode in (0, 1), "Could not stop the isolated agent account")
+
     def build_image(self, engine, toolkit_version, root):
         pin = engine.get("install", {}).get("version")
         image = f"nexkit-runner:{toolkit_version}-codex" + (f"-{pin}" if pin else "")

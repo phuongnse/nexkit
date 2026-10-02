@@ -34,13 +34,16 @@ on:
         description: Validated native command runner from the accepted configuration
         value: ${{ jobs.prepare.outputs.execution_runner }}
 permissions: {}
+env:
+  NEXKIT_PROGRESS: '1'
 jobs:
   prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
-      issues: read
+      actions: read
+      issues: write
       pull-requests: read
     outputs:
       context_artifact_id: ${{ steps.context.outputs.artifact-id }}

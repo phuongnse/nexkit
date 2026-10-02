@@ -25,6 +25,8 @@ on:
         description: Fresh artifact containing the recorded checkpoint context
         value: ${{ jobs.resume.outputs.context_artifact_id }}
 permissions: {}
+env:
+  NEXKIT_PROGRESS: '1'
 jobs:
   resume:
     runs-on: ubuntu-24.04

@@ -40,6 +40,12 @@ flowchart TD
 | Verification jobs | Execute your actual test, build, lint and end-to-end commands |
 | Issue and PR | Show the requirement, discussion, changes, results and next action |
 
+Trusted control jobs update one issue progress comment from persisted state,
+linking the actual Actions attempt. Agent activity streams through a bounded
+public event filter; a separate cleanup step uploads reports after the session.
+Diagnostics provide visibility without changing scheduling, approval authority
+or usage accounting. See [activity and recovery](operations.md#read-progress-and-recover-a-run).
+
 A runner is a machine executing an Actions job. In subscription mode, agent
 jobs use the project's dedicated runner. Control jobs, checks, merge and release
 use GitHub-hosted runners. In API mode, agent jobs can also use hosted runners.

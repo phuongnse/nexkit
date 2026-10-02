@@ -44,8 +44,8 @@ def read_json(path):
         raise Blocked(f"Cannot read JSON {path}: {exc}") from exc
 
 
-def read_regular_json(path, maximum=512000):
-    """Collect bounded JSON data only after isolated consumer processes have ended."""
+def read_regular_bytes(path, maximum=512000):
+    """Collect bounded data only after isolated consumer processes have ended."""
     path = Path(path).absolute()
     try:
         if os.name == "nt":
@@ -63,8 +63,16 @@ def read_regular_json(path, maximum=512000):
                 data = source.read(maximum + 1)
                 if len(data) > maximum:
                     raise Blocked("File exceeds the accepted size limit")
-        return json.loads(data)
+        return data
     except (OSError, ValueError) as exc:
+        raise Blocked(f"Cannot collect regular data {path}: {exc}") from exc
+
+
+def read_regular_json(path, maximum=512000):
+    """Read JSON through the same bounded, non-link file boundary."""
+    try:
+        return json.loads(read_regular_bytes(path, maximum))
+    except ValueError as exc:
         raise Blocked(f"Cannot collect regular JSON {path}: {exc}") from exc
 
 

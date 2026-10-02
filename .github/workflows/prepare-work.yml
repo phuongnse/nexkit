@@ -26,6 +26,8 @@ on:
         description: Whether this bounded round carries prior failure or reviewer feedback
         value: ${{ jobs.prepare.outputs.repair }}
 permissions: {}
+env:
+  NEXKIT_PROGRESS: '1'
 jobs:
   prepare:
     runs-on: ubuntu-24.04

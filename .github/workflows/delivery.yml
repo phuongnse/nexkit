@@ -16,6 +16,7 @@ on:
         required: false
 permissions: {}
 env:
+  NEXKIT_PROGRESS: '1'
   NEXKIT_PIPELINE: ${{ inputs.pipeline }}
 concurrency:
   group: nexkit-work
@@ -136,13 +137,23 @@ jobs:
         run: |
           import os, subprocess, sys
           subprocess.run([sys.executable, '-m', 'nexkit.ci', 'guard', '--context', os.environ['NEXKIT_CONTEXT']], check=True)
-      - name: Run the accepted Codex session
+      - id: session
+        name: Run the accepted Codex session
         timeout-minutes: ${{ fromJSON(needs.prepare.outputs.agent_minutes) }}
         uses: ./kit/actions/agent-session
         with:
           role: deliver
           context: /tmp/nexkit/context.json
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+      - id: diagnostics
+        name: Keep agent diagnostics after success or failure
+        continue-on-error: true
+        if: always()
+        uses: ./kit/actions/agent-diagnostics
+        with:
+          role: deliver
+          context: /tmp/nexkit/context.json
+          outcome: ${{ steps.session.outcome || 'skipped' }}
       - name: Collect data with trusted code (no candidate execution)
         shell: python
         env:
@@ -166,7 +177,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-      issues: read
+      actions: read
+      issues: write
       pull-requests: write
     outputs:
       head: ${{ steps.publish.outputs.head }}
@@ -311,13 +323,23 @@ jobs:
         run: |
           import os, subprocess, sys
           subprocess.run([sys.executable, '-m', 'nexkit.ci', 'guard', '--context', os.environ['NEXKIT_CONTEXT']], check=True)
-      - name: Run the accepted Codex session
+      - id: session
+        name: Run the accepted Codex session
         timeout-minutes: ${{ fromJSON(needs.prepare.outputs.agent_minutes) }}
         uses: ./kit/actions/agent-session
         with:
           role: review
           context: /tmp/nexkit/review-context.json
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+      - id: diagnostics
+        name: Keep agent diagnostics after success or failure
+        continue-on-error: true
+        if: always()
+        uses: ./kit/actions/agent-diagnostics
+        with:
+          role: review
+          context: /tmp/nexkit/review-context.json
+          outcome: ${{ steps.session.outcome || 'skipped' }}
       - name: Reject review of a modified candidate
         shell: python
         env:

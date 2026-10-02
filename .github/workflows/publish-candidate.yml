@@ -22,13 +22,16 @@ on:
         description: Published candidate commit
         value: ${{ jobs.publish.outputs.head }}
 permissions: {}
+env:
+  NEXKIT_PROGRESS: '1'
 jobs:
   publish:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
-      issues: read
+      actions: read
+      issues: write
       pull-requests: write
     outputs:
       candidate_artifact_id: ${{ steps.candidate.outputs.artifact-id }}

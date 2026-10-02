@@ -34,12 +34,15 @@ on:
         description: Forwarded context for a disabled gate
         value: ${{ jobs.request.outputs.context_artifact_id }}
 permissions: {}
+env:
+  NEXKIT_PROGRESS: '1'
 jobs:
   request:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: read
       issues: write
       pull-requests: read
       checks: write

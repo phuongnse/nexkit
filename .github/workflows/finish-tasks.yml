@@ -19,6 +19,8 @@ on:
         description: completed, waiting_for_approval, retry or blocked
         value: ${{ jobs.finish.outputs.status }}
 permissions: {}
+env:
+  NEXKIT_PROGRESS: '1'
 jobs:
   finish:
     runs-on: ubuntu-24.04

@@ -74,6 +74,7 @@ jobs:
           sudo chmod -R a+rX,go-w /opt/nexkit-test-kit
           cd /opt/nexkit-test-kit
           python -m unittest tests.test_step_isolation -v
+          python -m unittest tests.test_observability.NativeApiObserverTests -v
       - name: Verify native Linux agent workspace restoration
         if: runner.os == 'Linux'
         env:

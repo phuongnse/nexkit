@@ -20,11 +20,13 @@ if os.name != "nt":
     import fcntl
     import pwd
 
-from ..common import Blocked, canonical, read_json
+from ..common import Blocked, canonical, digest, read_json, read_regular_json
 from ..invocations import execution_config
+from ..observability import RunLog, run_observed, session_identity
 from ..policy import authentication, execution_settings, require
 from ..workspace import unchanged
 from .codex import CodexAdapter
+from .codex_events import event
 
 AUTH_HOME = Path("/var/lib/nexkit/codex")
 WORKSPACE = Path("/home/nexkit-agent/work")
@@ -310,10 +312,10 @@ def execute(context, role, *, data=Path("/tmp/nexkit")):
             else max(1, min(60, cfg["limits"]["minutes"] // 2))
         )
         require(isinstance(minutes, int) and 1 <= minutes <= 60, "Invalid session reservation")
-        return run_session(cfg, role, minutes * 60, data=data)
+        return run_session(cfg, role, minutes * 60, data=data, context=context)
 
 
-def run_session(cfg, role, timeout, *, data=Path("/tmp/nexkit")):
+def run_session(cfg, role, timeout, *, data=Path("/tmp/nexkit"), context=None):
     parent_git = Path("/opt/nexkit/parent-bin/git")
     require(
         parent_git.is_file()
@@ -372,23 +374,32 @@ def run_session(cfg, role, timeout, *, data=Path("/tmp/nexkit")):
         open(log_dir / "last-cli.log", "wb") as log,
     ):
         os.chmod(log.name, 0o600)
-        proc = subprocess.Popen(
-            cli_command(cfg, role, scratch, data=data),
-            env=env,
-            cwd=WORKSPACE,
-            stdin=prompt,
-            stdout=log,
-            stderr=log,
-            start_new_session=True,
-            **identity,
-        )
+        metadata = session_identity(context or {"config": cfg}, role)
+        if (Path(data) / "observation.json").exists():
+            metadata = read_regular_json(Path(data) / "observation.json", 48000)
+            require(
+                context is not None
+                and metadata.get("context") == digest(context)
+                and metadata.get("role") == role,
+                "Activity record differs from the accepted session",
+            )
+        metadata["timeout_seconds"] = timeout
+        metadata["agent_capabilities"] = capabilities
+        observation = RunLog(Path(data) / "diagnostics", metadata)
         try:
-            code = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            code = 124
+            code = run_observed(
+                cli_command(cfg, role, scratch, data=data),
+                observation,
+                event,
+                timeout=timeout,
+                env=env,
+                cwd=WORKSPACE,
+                stdin=prompt,
+                private_log=log,
+                **identity,
+            )
         finally:
             subprocess.run(["pkill", "-KILL", "-u", CLI_USER], capture_output=True, check=False)
-            proc.wait()
         require(code == 0, f"Codex exited with status {code}; inspect the runner's private CLI log")
     require(
         OUTPUT.is_file() and not OUTPUT.is_symlink(), "CLI did not produce a regular result file"

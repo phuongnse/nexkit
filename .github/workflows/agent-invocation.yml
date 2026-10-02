@@ -36,6 +36,8 @@ on:
         description: Agent result status, done or blocked
         value: ${{ jobs.record.outputs.status }}
 permissions: {}
+env:
+  NEXKIT_PROGRESS: '1'
 defaults:
   run:
     shell: bash
@@ -45,7 +47,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
-      issues: read
+      actions: read
+      issues: write
       pull-requests: read
     outputs:
       role: ${{ steps.reserve.outputs.role }}
@@ -177,13 +180,23 @@ jobs:
         run: |
           import os, subprocess, sys
           subprocess.run([sys.executable, '-m', 'nexkit.ci', 'guard-invocation', '--context', os.environ['NEXKIT_CONTEXT'], '--kit-ref', os.environ['NEXKIT_REF']], check=True)
-      - name: Run the accepted Codex session
+      - id: session
+        name: Run the accepted Codex session
         timeout-minutes: ${{ fromJSON(needs.authorize.outputs.agent_minutes) }}
         uses: ./kit/actions/agent-session
         with:
           role: ${{ needs.authorize.outputs.role }}
           context: /tmp/nexkit/invocation.json
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+      - id: diagnostics
+        name: Keep agent diagnostics after success or failure
+        continue-on-error: true
+        if: always()
+        uses: ./kit/actions/agent-diagnostics
+        with:
+          role: ${{ needs.authorize.outputs.role }}
+          context: /tmp/nexkit/invocation.json
+          outcome: ${{ steps.session.outcome || 'skipped' }}
       - name: Collect the isolated result with trusted code
         shell: python
         env:
@@ -208,7 +221,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
-      issues: read
+      actions: read
+      issues: write
       pull-requests: read
     outputs:
       status: ${{ steps.record.outputs.status }}

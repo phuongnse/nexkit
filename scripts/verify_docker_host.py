@@ -47,6 +47,7 @@ useradd --create-home --shell /bin/bash nexkit-test-controller
 printf '%s\n' 'nexkit-test-controller ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/nexkit-test-controller
 chmod 440 /etc/sudoers.d/nexkit-test-controller
 sudo -u nexkit-test-controller env NEXKIT_TEST_ISOLATION=1 /opt/nexkit-test-python/bin/python -m unittest tests.test_step_isolation -v
+sudo -u nexkit-test-controller env NEXKIT_TEST_ISOLATION=1 /opt/nexkit-test-python/bin/python -m unittest tests.test_observability.NativeApiObserverTests -v
 rm /etc/sudoers.d/nexkit-test-controller
 userdel --remove nexkit-test-controller
 userdel --remove nexkit-agent

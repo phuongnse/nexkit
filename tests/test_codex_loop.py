@@ -8,7 +8,6 @@ No account login, model inference or GitHub approval is supplied by this fixture
 import gzip
 import json
 import os
-import subprocess
 import tempfile
 import threading
 import unittest
@@ -358,8 +357,18 @@ class ContainerCodexLoopTests(unittest.TestCase):
                         "CODEX_API_KEY": "harmless-native-api-canary",
                         "LANG": "C.UTF-8",
                     }
+                    from nexkit.adapters.codex_events import event
+                    from nexkit.observability import Redactor, RunLog, read_trace, run_observed
+
+                    activity = []
+                    observation = RunLog(
+                        data / "diagnostics",
+                        {"role": role},
+                        redactor=Redactor(env),
+                        emit=activity.append,
+                    )
                     with (data / "prompt.txt").open("rb") as prompt:
-                        result = subprocess.run(
+                        code = run_observed(
                             cli_command(
                                 cfg,
                                 role,
@@ -369,19 +378,33 @@ class ContainerCodexLoopTests(unittest.TestCase):
                                 data=data,
                                 profile=profile,
                             ),
+                            observation,
+                            event,
                             env=env,
                             cwd=work,
                             stdin=prompt,
-                            capture_output=True,
-                            text=True,
                             timeout=90,
                             user=user.pw_uid,
                             group=user.pw_gid,
                             extra_groups=[],
                         )
-                    self.assertEqual(
-                        result.returncode, 0, result.stdout[-4000:] + result.stderr[-2000:]
+                    self.assertEqual(code, 0, "\n".join(activity)[-6000:])
+                    observed = read_trace(data / "diagnostics/events.jsonl")
+                    self.assertTrue(
+                        any(
+                            e["kind"] == "command" and e.get("status") == "started"
+                            for e in observed
+                        )
                     )
+                    self.assertTrue(
+                        any(
+                            e["kind"] == "command"
+                            and e.get("exit_code") == 0
+                            and "CONTAINER_TOOL_PASSED" in e.get("output", "")
+                            for e in observed
+                        )
+                    )
+                    self.assertNotIn(env["CODEX_API_KEY"], "\n".join(activity))
                     self.assertFalse(marker.exists(), "Consumer Git ran in the model parent")
                     self.assertEqual(server.errors, [])
                     self.assertEqual(len(server.requests), 2)

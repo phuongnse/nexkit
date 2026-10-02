@@ -23,7 +23,19 @@ runs:
       run: |
         import os, subprocess, sys
         subprocess.run([sys.executable, '-m', 'nexkit.agent_session', 'configuration', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE']], check=True)
-    - name: Run the Codex integration
+    - id: begin
+      name: Prepare public activity recording
+      if: steps.adapter.outputs.adapter == 'codex'
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        NEXKIT_ROLE: ${{ inputs.role }}
+      run: |
+        import os, subprocess, sys
+        subprocess.run([sys.executable, '-m', 'nexkit.agent_observability', 'begin', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE']], check=True)
+    - id: integration
+      name: Run the Codex integration
       if: steps.adapter.outputs.adapter == 'codex'
       uses: ./kit/actions/codex-agent
       with:

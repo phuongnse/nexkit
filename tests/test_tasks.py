@@ -14,7 +14,7 @@ import yaml
 
 from nexkit import approvals, invocations, steps, tasks
 from nexkit.ci import main
-from nexkit.common import Blocked, read_json, write_json
+from nexkit.common import Blocked, canonical, read_json, write_json
 from nexkit.delivery import failed, prepare
 from nexkit.pipelines import effective_config
 from nexkit.policy import config, now
@@ -448,6 +448,415 @@ class TaskTests(TaskCase):
                 0,
             )
             self.assertEqual(read_json(root / "final.json")["status"], "completed")
+
+
+class TaskPublicationTests(TaskCase):
+    def completion_messages(self):
+        return [body for body in self.gh.messages if "**Work completed" in body]
+
+    def test_completed_state_with_copied_summaries_can_still_publish_once(self):
+        state = {
+            "run_key": "100.1",
+            "task_result": [{"name": "inspect", "summary": "Recorded findings.\n\nFinal limit."}],
+        }
+        tasks.notice(self.gh, 1, state)
+        tasks.notice(self.gh, 1, state)
+        self.assertEqual(len(self.completion_messages()), 1)
+        self.assertIn(state["task_result"][0]["summary"], self.completion_messages()[0])
+
+    def test_full_agent_and_step_summaries_survive_recording_and_publication(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        content = (
+            "## Findings\n\n"
+            "- [Reference](https://example.com/guide)\n"
+            "- Tiếng Việt, 日本語 and 🧪\n\n"
+            "```python\nprint('checked')\n```\n\n"
+        )
+        agent_summary = content + "a" * (3521 - len(content) - len("\n\nFinal findings."))
+        agent_summary += "\n\nFinal findings."
+        step_summary = content + "b" * 4000 + "\n\nRemaining limitations."
+        reserved = steps.prepare(self.gh, context, "inspect-files")
+        step_output = command_report(reserved, summary=step_summary)
+        steps.record(self.gh, reserved, step_output)
+        call = invocations.prepare(self.gh, context, "inspect", [step_output])
+        agent_output = report(call)
+        agent_output["result"]["summary"] = agent_summary
+        invocations.record(self.gh, call, agent_output)
+        self.assertTrue(invocations.record(self.gh, call, agent_output)["duplicate"])
+        self.assertTrue(steps.record(self.gh, reserved, step_output)["duplicate"])
+        state = tasks.finish(self.gh, context, jobs_succeeded=True)
+        self.assertEqual(state["status"], "completed")
+        for group, name, summary in (
+            ("invocations", "inspect", agent_summary),
+            ("steps", "inspect-files", step_summary),
+        ):
+            with self.subTest(group=group):
+                self.assertEqual(state[group]["100.1/" + name]["summary"], summary)
+                self.assertIn(summary, self.completion_messages()[0])
+        self.assertNotIn("...", self.completion_messages()[0])
+        self.assertIn("/actions/runs/100", self.completion_messages()[0])
+        self.assertIn("Result artifacts:", self.completion_messages()[0])
+
+    def test_every_completed_result_is_published_beyond_twenty(self):
+        pipeline = self.gh.cfg["pipelines"]["maintenance"]
+        definition = pipeline["steps"].pop("inspect-files")
+        names = [f"inspect-{index}" for index in range(25)]
+        pipeline["steps"] = {name: deepcopy(definition) for name in names}
+        context = self.start()
+        summaries = {}
+        for name in names:
+            reserved = steps.prepare(self.gh, context, name)
+            summaries[name] = f"Result {name}.\n\n" + "Checked data. " * 280 + f"\n\nEnd {name}."
+            steps.record(self.gh, reserved, command_report(reserved, summary=summaries[name]))
+        state = tasks.finish(self.gh, context, jobs_succeeded=True)
+        self.assertEqual(len(state["task_result"]), len(names))
+        self.assertGreater(len(self.completion_messages()), 1)
+        published = "".join(body.split("\n\n", 1)[1] for body in self.completion_messages())
+        for summary in summaries.values():
+            self.assertIn(summary, published)
+        self.assertNotIn("more results", published)
+
+    def test_oversized_unicode_result_is_split_in_order_without_content_loss(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        paragraphs = [f"Paragraph {index}: " + "Tiếng Việt 日本語 🧪 " * 120 for index in range(60)]
+        summary = "\n\n".join(paragraphs) + "\n\nFinal limitations."
+        output["result"]["summary"] = summary
+        invocations.record(self.gh, call, output)
+        state = tasks.finish(self.gh, context, jobs_succeeded=True)
+        self.assertEqual(state["status"], "completed")
+        comments = self.completion_messages()
+        self.assertGreater(len(comments), 1)
+        for index, body in enumerate(comments, 1):
+            self.assertLessEqual(len(body.encode("utf-8")), 60000)
+            self.assertIn(f"part {index} of {len(comments)}", body)
+        published = "".join(body.split("\n\n", 1)[1] for body in comments)
+        self.assertIn(summary, published)
+        self.assertIn("Result artifacts:", published)
+        self.assertIn("/actions/runs/100", published)
+        before = deepcopy(self.gh.messages)
+        tasks.finish(self.gh, context, jobs_succeeded=True)
+        self.assertEqual(self.gh.messages, before)
+
+    def test_unicode_without_whitespace_is_split_only_between_complete_characters(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        summary = "🧪日本語" * 13000
+        output["result"]["summary"] = summary
+        invocations.record(self.gh, call, output)
+        tasks.finish(self.gh, context, jobs_succeeded=True)
+        comments = self.completion_messages()
+        self.assertGreater(len(comments), 1)
+        self.assertIn(summary, "".join(body.split("\n\n", 1)[1] for body in comments))
+        for body in comments:
+            self.assertLessEqual(len(body.encode()), 60000)
+            self.assertNotIn("\ufffd", body)
+
+    def test_code_fences_are_reopened_when_a_code_block_spans_comments(self):
+        for prefix in ("", "> ", "> > "):
+            with self.subTest(prefix=prefix):
+                self.gh = TaskGitHub(agents=True)
+                context = self.start()
+                self.step(context)
+                call = invocations.prepare(self.gh, context, "inspect")
+                output = report(call)
+                code = [
+                    prefix + f"print('Line {index}: " + "x" * 100 + "')\n" for index in range(1100)
+                ]
+                opening = prefix + "```python\n"
+                output["result"]["summary"] = (
+                    opening + "".join(code) + prefix + "```\n\nFinal finding."
+                )
+                invocations.record(self.gh, call, output)
+                tasks.finish(self.gh, context, jobs_succeeded=True)
+                comments = self.completion_messages()
+                self.assertGreater(len(comments), 1)
+                published = "".join(body.split("\n\n", 1)[1] for body in comments)
+                for line in code:
+                    self.assertEqual(published.count(line), 1)
+                for body in comments[1:]:
+                    self.assertTrue(body.split("\n\n", 1)[1].startswith(opening))
+                self.assertIn("```\n\nFinal finding.", published)
+                self.assertIn("Result artifacts:", published)
+
+    def test_reference_links_keep_their_definitions_in_each_comment_that_uses_them(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        definition = '[doc]: https://example.com/evidence "Evidence"'
+        output["result"]["summary"] = (
+            "[Evidence][doc]\n\n" + "Findings and verification.\n\n" * 3000 + definition
+        )
+        invocations.record(self.gh, call, output)
+        tasks.finish(self.gh, context, jobs_succeeded=True)
+        comments = self.completion_messages()
+        self.assertGreater(len(comments), 1)
+        self.assertIn("[Evidence][doc]", comments[0])
+        self.assertIn(definition, comments[0])
+        self.assertEqual("".join(comments).count("Findings and verification."), 3000)
+        for body in comments:
+            self.assertLessEqual(len(body.encode()), 60000)
+
+    def test_reference_definition_larger_than_a_comment_still_publishes_all_text(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        summary = "[a]\n\n[a]: https://example.com/" + "x" * 61000
+        output["result"]["summary"] = summary
+        invocations.record(self.gh, call, output)
+        tasks.finish(self.gh, context, jobs_succeeded=True)
+        comments = self.completion_messages()
+        self.assertGreater(len(comments), 1)
+        self.assertIn(summary, "".join(body.split("\n\n", 1)[1] for body in comments))
+        for body in comments:
+            self.assertLessEqual(len(body.encode()), 60000)
+
+    def test_a_link_crossing_a_size_boundary_stays_in_one_comment(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        link = "[the complete reference link](https://example.com/" + "y" * 1000 + ")"
+        output["result"]["summary"] = "x" * 59400 + " See " + link + " for details."
+        invocations.record(self.gh, call, output)
+        tasks.finish(self.gh, context, jobs_succeeded=True)
+        self.assertTrue(any(link in body for body in self.completion_messages()))
+
+    def test_conflicting_reference_labels_keep_each_results_original_target(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        step = steps.prepare(self.gh, context, "inspect-files")
+        step_summary = "[Step evidence][doc]\n\n[doc]: https://example.com/step"
+        steps.record(self.gh, step, command_report(step, summary=step_summary))
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        agent_summary = "[Agent evidence][doc]\n\n[doc]: https://example.com/agent"
+        output["result"]["summary"] = agent_summary
+        invocations.record(self.gh, call, output)
+        tasks.finish(self.gh, context, jobs_succeeded=True)
+        comments = self.completion_messages()
+        self.assertEqual(len(comments), 2)
+        self.assertIn(agent_summary, comments[0])
+        self.assertNotIn("https://example.com/step", comments[0])
+        self.assertIn(step_summary, comments[1])
+        self.assertNotIn("https://example.com/agent", comments[1])
+        for body in comments:
+            self.assertIn("Result artifacts:", body)
+
+    def test_completion_approval_restores_large_reports_without_duplicate_text(self):
+        self.gh = TaskGitHub(agents=True, gate=True)
+        context = self.start()
+        _, step_output = self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        summary = "x" * 380000 + "\n\nFull approved report."
+        output["result"]["summary"] = summary
+        invocations.record(self.gh, call, output)
+        requested = approvals.request(self.gh, context, "owner-check", inputs=[step_output, output])
+        self.assertEqual(requested["status"], "waiting_for_approval")
+        self.assertLess(len(canonical(self.gh.state).encode()), 750000)
+        self.approve_stage()
+        resumed = self.resume()["context"]
+        self.assertEqual(
+            approvals.restored_data(self.gh.state, resumed)["inputs"], [step_output, output]
+        )
+        state = tasks.finish(self.gh, resumed, jobs_succeeded=True)
+        self.assertEqual(state["status"], "completed")
+        self.assertIn(
+            summary, "".join(body.split("\n\n", 1)[1] for body in self.completion_messages())
+        )
+        altered = deepcopy(state)
+        altered["invocations"]["100.1/inspect"]["summary"] = "Substituted report"
+        with self.assertRaisesRegex(Blocked, "summary content changed"):
+            approvals.restored_data(altered, resumed)
+
+    def test_rerunning_approval_continuation_recovers_only_missing_comments(self):
+        self.gh = TaskGitHub(agents=True, gate=True)
+        context = self.start()
+        _, step_output = self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        output["result"]["summary"] = "x" * 130000 + "\n\nFinal finding."
+        invocations.record(self.gh, call, output)
+        approvals.request(self.gh, context, "owner-check", inputs=[step_output, output])
+        self.approve_stage()
+        resumed = self.resume()["context"]
+        original = self.gh.comment
+        posted = 0
+
+        def interrupted(number, body):
+            nonlocal posted
+            original(number, body)
+            posted += 1
+            if posted == 2:
+                raise Blocked("Publication interrupted")
+
+        with patch.object(self.gh, "comment", side_effect=interrupted):
+            with self.assertRaisesRegex(Blocked, "Publication interrupted"):
+                tasks.finish(self.gh, resumed, jobs_succeeded=True)
+        before = self.gh.get_state(1)
+        os.environ["GITHUB_RUN_ATTEMPT"] = "2"
+        recovered = self.resume("200.2")
+        self.assertFalse(recovered["ready"])
+        self.assertEqual(recovered["status"], "completed")
+        self.assertEqual(len(self.completion_messages()), 3)
+        self.assertEqual(self.gh.get_state(1), before)
+        self.resume("200.2")
+        self.assertEqual(len(self.completion_messages()), 3)
+        for change in ("pipeline", "kit", "caller"):
+            with self.subTest(change=change), patch.dict(os.environ):
+                if change == "caller":
+                    os.environ["GITHUB_WORKFLOW_REF"] = (
+                        "owner/project/.github/workflows/changes.yml@refs/heads/main"
+                    )
+                with self.assertRaises(Blocked):
+                    approvals.resume(
+                        self.gh,
+                        1,
+                        "wrong" if change == "pipeline" else "maintenance",
+                        "owner-check",
+                        "f" * 40 if change == "kit" else "a" * 40,
+                        "200.2",
+                    )
+
+    def test_completion_does_not_duplicate_large_summaries_in_bounded_state(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        summary = "Large complete result.\n\n" + "x" * 450000 + "\n\nFinal limitation."
+        output["result"]["summary"] = summary
+        original = self.gh.save_state
+
+        def bounded_save(number, state, revision):
+            if len(canonical(state).encode()) > 900000:
+                raise Blocked("Delivery state exceeds the bounded GitHub state size")
+            return original(number, state, revision)
+
+        with patch.object(self.gh, "save_state", side_effect=bounded_save):
+            invocations.record(self.gh, call, output)
+            state = tasks.finish(self.gh, context, jobs_succeeded=True)
+        self.assertEqual(state["status"], "completed")
+        self.assertLessEqual(len(canonical(state).encode()), 900000)
+        self.assertIn(
+            summary,
+            "".join(body.split("\n\n", 1)[1] for body in self.completion_messages()),
+        )
+
+    def test_a_copied_completion_body_from_a_user_cannot_suppress_publication(self):
+        context = self.start()
+        self.step(context)
+
+        def copied_comment(number, body):
+            self.gh.discussion.append({"body": body, "user": {"login": "owner", "type": "User"}})
+            raise Blocked("Publication interrupted")
+
+        with patch.object(self.gh, "comment", side_effect=copied_comment):
+            with self.assertRaisesRegex(Blocked, "Publication interrupted"):
+                tasks.finish(self.gh, context, jobs_succeeded=True)
+        tasks.finish(self.gh, context, jobs_succeeded=True)
+        self.assertEqual(len(self.completion_messages()), 1)
+        self.assertIn("Checked the project files.", self.completion_messages()[0])
+
+    def test_partial_publication_resumes_after_accepted_comment_and_lost_response(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        summary = "x" * 130000 + "\n\nComplete final finding."
+        output["result"]["summary"] = summary
+        invocations.record(self.gh, call, output)
+        original = self.gh.comment
+        posted = 0
+
+        def lose_response(number, body):
+            nonlocal posted
+            original(number, body)
+            posted += 1
+            if posted == 2:
+                raise Blocked("GitHub response interrupted after accepting the comment")
+
+        with patch.object(self.gh, "comment", side_effect=lose_response):
+            with self.assertRaisesRegex(Blocked, "response interrupted"):
+                tasks.finish(self.gh, context, jobs_succeeded=True)
+        self.assertEqual(self.gh.state["status"], "completed")
+        self.assertEqual(len(self.completion_messages()), 2)
+        before = self.gh.get_state(1)
+        tasks.finish(self.gh, context, jobs_succeeded=True)
+        comments = self.completion_messages()
+        self.assertEqual(len(comments), 3)
+        self.assertEqual(len(set(comments)), 3)
+        self.assertIn(summary, "".join(body.split("\n\n", 1)[1] for body in comments))
+        tasks.finish(self.gh, context, jobs_succeeded=True)
+        self.assertEqual(self.completion_messages(), comments)
+        self.assertEqual(self.gh.get_state(1), before)
+
+    def test_failed_finalizer_job_rerun_recovers_publication_without_replaying_work(self):
+        self.gh = TaskGitHub(agents=True)
+        context = self.start()
+        self.step(context)
+        call = invocations.prepare(self.gh, context, "inspect")
+        output = report(call)
+        output["result"]["summary"] = "x" * 130000 + "\n\nFinal finding."
+        invocations.record(self.gh, call, output)
+        original = self.gh.comment
+
+        def interrupted(number, body):
+            original(number, body)
+            raise Blocked("Publication response lost")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("nexkit.ci.GitHub", return_value=self.gh),
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            root = Path(directory)
+            write_json(root / "context.json", context)
+            arguments = [
+                "ci",
+                "finish-tasks",
+                "--context",
+                str(root / "context.json"),
+                "--kit-ref",
+                "a" * 40,
+                "--jobs-succeeded",
+                "--out",
+                str(root / "outcome.json"),
+            ]
+            with (
+                patch("sys.argv", arguments),
+                patch.object(self.gh, "comment", side_effect=interrupted),
+            ):
+                self.assertEqual(main(), 2)
+            self.assertEqual(len(self.completion_messages()), 1)
+            before = self.gh.get_state(1)
+            os.environ["GITHUB_RUN_ATTEMPT"] = "2"
+            with patch("sys.argv", arguments):
+                self.assertEqual(main(), 0)
+            self.assertEqual(len(self.completion_messages()), 3)
+            self.assertEqual(self.gh.get_state(1), before)
+            self.assertEqual(read_json(root / "outcome.json")["status"], "completed")
+            with self.assertRaisesRegex(Blocked, "another run attempt"):
+                invocations.runtime_guard(self.gh, context, "a" * 40)
+            os.environ["GITHUB_RUN_ID"] = "101"
+            with patch("sys.argv", arguments):
+                self.assertEqual(main(), 2)
+            self.assertEqual(len(self.completion_messages()), 3)
 
 
 class ProjectCommandTests(unittest.TestCase):

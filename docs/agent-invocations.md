@@ -151,8 +151,11 @@ ChatGPT runner remains owned, provisioned and authenticated by each consumer.
 
 `task` uses the installed `nexkit-task` skill and a small common result schema:
 status, summary, skills used, commands and limitations. Its summary supplies
-findings to later calls. Consumer tasks/skills cannot alter approval, publish
-controls or output contracts. This version accepts text skill assets only and
+findings to later calls. Standalone task completion publishes the full summary
+on the issue, preserving paragraphs and Markdown and continuing in numbered
+comments when needed. See [task completion](project-steps.md#add-approval-and-finish)
+for publication and retry behavior. Consumer tasks/skills cannot alter approval,
+publish controls or output contracts. This version accepts text skill assets only and
 does not load custom CLI engines or arbitrary output schema interpreters.
 
 These capabilities have local functional tests with mocked GitHub boundaries,

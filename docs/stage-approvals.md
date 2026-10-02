@@ -193,6 +193,9 @@ size contract. GitHub documents its [Contents response limits](https://docs.gith
 Decision receipts retain reviewer identities and verdicts; reviewer
 repair feedback is bounded to 24,000 UTF-8 bytes rather than copied per reviewer.
 Checkpoint evidence survives the original seven-day Actions artifact retention.
+Standalone task checkpoints reference the full summaries in their validated
+invocation and project-step records instead of copying that text. Restoring an
+input reconstructs the original report and checks its recorded digest before use.
 A resumed run uploads a fresh context artifact. Full state and evidence are visible
 to repository readers, so they must contain no secrets or sensitive runtime data.
 

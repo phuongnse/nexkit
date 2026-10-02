@@ -341,7 +341,49 @@ def restored_data(state, context):
         record["status"] == "approved" and record["digest"] == execution["checkpoint"],
         "Continuation checkpoint changed",
     )
-    return record["data"]
+    return checkpoint_data(state, record)
+
+
+def checkpoint_data(state, record):
+    """Restore full task inputs and verify their original recorded content."""
+    data = deepcopy(record["data"])
+    for report in data["inputs"]:
+        reference = report.get("result", {}).get("summary")
+        if not isinstance(reference, dict):
+            continue
+        require(
+            set(reference) == {"record", "result"}
+            and isinstance(reference["record"], list)
+            and len(reference["record"]) == 2
+            and all(isinstance(part, str) for part in reference["record"])
+            and reference["record"][0] in {"invocations", "steps"},
+            "Invalid checkpoint summary reference",
+        )
+        group, key = reference["record"]
+        saved = state.get(group, {}).get(key, {})
+        require(
+            saved.get("result") == reference["result"] and isinstance(saved.get("summary"), str),
+            "Checkpoint summary is no longer recorded",
+        )
+        report["result"]["summary"] = saved["summary"]
+        require(digest(report) == reference["result"], "Checkpoint summary content changed")
+    return data
+
+
+def checkpoint_inputs(state, context, reports):
+    inputs = deepcopy(list(reports))
+    if task_pipeline(context["config"]):
+        for report in inputs:
+            kind = "invocation" if "invocation" in report else "step"
+            group = "invocations" if kind == "invocation" else "steps"
+            key = context["run_key"] + "/" + report[kind]["id"]
+            saved = state[group][key]
+            require(
+                saved["summary"] == report["result"]["summary"],
+                "Checkpoint summary differs from its recorded task result",
+            )
+            report["result"]["summary"] = {"record": [group, key], "result": saved["result"]}
+    return inputs
 
 
 def recheck_approved(gh, context, state):
@@ -364,7 +406,7 @@ def require_complete(gh, context, state):
                 name, "complete" if task_pipeline(context["config"]) else "merge"
             )
         if "complete" in record["definition"]["protects"]:
-            _completion_inputs(state, context, record["data"]["inputs"])
+            _completion_inputs(state, context, checkpoint_data(state, record)["inputs"])
 
 
 def _completion_inputs(state, context, reports):
@@ -449,7 +491,12 @@ def request(gh, context, gate, *, inputs=(), checks=(), review=None):
     frozen.pop("invocation", None)
     frozen.pop("step", None)
     frozen["source"] = current_source(state, context)
-    data = {"context": frozen, "inputs": list(inputs), "checks": list(checks), "review": review}
+    data = {
+        "context": frozen,
+        "inputs": checkpoint_inputs(state, context, inputs),
+        "checks": list(checks),
+        "review": review,
+    }
     record = {
         "gate": gate,
         "origin": context["run_key"],
@@ -506,7 +553,7 @@ def notice(gh, state):
     if is_pr:
         body += "Required checks passed and the independent AI review approved this candidate.\n\n"
     remaining = 800
-    for report in record["data"]["inputs"]:
+    for report in checkpoint_data(state, record)["inputs"]:
         if remaining <= 0:
             break
         summary = short_summary(report.get("result", {}).get("summary", ""), min(400, remaining))
@@ -607,6 +654,29 @@ def resume(gh, number, pipeline, gate, kit_ref, run_key):
 
     state, revision = gh.get_state(number)
     if state.get("status") == "completed":
+        from .invocations import runtime_guard
+        from .tasks import notice as task_notice
+
+        record = state.get("stage_approvals", {}).get(gate)
+        execution = state.get("approval_execution", {})
+        require(
+            record
+            and record.get("status") == "approved"
+            and execution.get("gate") == gate
+            and execution.get("checkpoint") == record["digest"],
+            "Completed work has no matching approval continuation",
+        )
+        context = deepcopy(record["data"]["context"])
+        context["continuation"] = execution
+        require(
+            pipeline == context["config"]["binding"]["pipeline"],
+            "Completed task belongs to a different pipeline",
+        )
+        admit_continuation(gh, record)
+        runtime_guard(gh, context, kit_ref, completed_tasks=True)
+        _current_subject(gh, state, record)
+        require_complete(gh, context, state)
+        task_notice(gh, number, state)
         return {"ready": False, "status": "completed", "state": state}
     if state.get("status") == "merged":
         return {"ready": False, "status": "merged", "state": reconcile(gh, number)}

@@ -14,6 +14,8 @@ Return useful findings, file references and evidence in `summary`, together with
 the commands actually used, limitations and installed skills used. Distinguish
 observations from proposals. If the task cannot be completed within its scope
 or available tools, return `blocked` and the concrete missing condition.
+Standalone task completion publishes the full `summary` on the issue; use
+paragraphs and Markdown to make the result readable.
 
 This session cannot edit source or control files. Its output supplies context to
 subsequent jobs or completes its assigned reporting task. A standalone task needs

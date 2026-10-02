@@ -304,7 +304,9 @@ def materialize(source, workspace, context, role, data_dir):
         f"Work only in {workspace}. Read relevant code and knowledge sources. "
         "Use tools to inspect and verify the actual behavior. "
         "Do not commit, push, approve a requirement, merge, publish or modify host control files. "
-        "Return the JSON required by the supplied schema.\n"
+        "Publish brief progress messages when starting work and before long-running actions. "
+        "Describe current actions and findings without credentials or private reasoning. "
+        "Return the final JSON required by the supplied schema.\n"
     )
     prompt += adapter(context["config"]["engine"]).prompt_constraints(context["config"]["engine"])
     (data_dir / "prompt.txt").write_text(prompt, encoding="utf-8", newline="\n")

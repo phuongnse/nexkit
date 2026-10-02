@@ -130,6 +130,14 @@ approval, source, configuration, required check completeness and branch rules.
 
 ## Usage and isolation
 
+Each supplied invocation job streams public agent activity and runs a separate
+diagnostic collection step after the timed session, including failure paths.
+The artifact name includes the role, invocation ID and native run attempt.
+These diagnostic artifacts are separate from `report_artifact_id`; they do not
+become validated pipeline inputs. The issue's progress comment links the exact
+run attempt and available reports. See
+[activity and recovery](operations.md#read-progress-and-recover-a-run).
+
 Preparation reserves one delivery round. Each selected invocation reserves one
 CLI call before starting; unused optional calls cost no reservation. Failed
 calls retain their reservation. The same invocation ID can run once per run

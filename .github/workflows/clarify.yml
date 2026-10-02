@@ -16,6 +16,7 @@ on:
         required: false
 permissions: {}
 env:
+  NEXKIT_PROGRESS: '1'
   NEXKIT_PIPELINE: ${{ inputs.pipeline }}
 concurrency:
   group: nexkit-work
@@ -131,13 +132,23 @@ jobs:
         run: |
           import os, subprocess, sys
           subprocess.run([sys.executable, '-m', 'nexkit.clarify', 'guard', '--context', os.environ['NEXKIT_CONTEXT']], check=True)
-      - name: Run the accepted Codex session
+      - id: session
+        name: Run the accepted Codex session
         timeout-minutes: ${{ fromJSON(needs.prepare.outputs.agent_minutes) }}
         uses: ./kit/actions/agent-session
         with:
           role: request
           context: /tmp/nexkit/context.json
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+      - id: diagnostics
+        name: Keep agent diagnostics after success or failure
+        continue-on-error: true
+        if: always()
+        uses: ./kit/actions/agent-diagnostics
+        with:
+          role: request
+          context: /tmp/nexkit/context.json
+          outcome: ${{ steps.session.outcome || 'skipped' }}
       - name: Collect data with trusted code (no candidate execution)
         shell: python
         env:
@@ -161,6 +172,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: read
       issues: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -188,6 +200,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: read
+      issues: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:

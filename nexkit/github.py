@@ -184,6 +184,9 @@ class GitHub:
             self.ref(STATE_BRANCH)
 
     def save_state(self, number, value, previous):
+        from .progress import stamp, sync
+
+        stamp(self.repository, value)
         encoded = (canonical(value) + "\n").encode()
         require(len(encoded) <= 900000, "Delivery state exceeds the bounded GitHub state size")
         self.ensure_state_branch()
@@ -195,6 +198,7 @@ class GitHub:
         if previous:
             data["sha"] = previous
         result = self.api(f"{self.root}/contents/issues/{int(number)}.json", "PUT", data)
+        sync(self, number)
         return result["content"]["sha"]
 
     def dispatch(self, workflow, branch, inputs):

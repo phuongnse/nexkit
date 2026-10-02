@@ -25,11 +25,14 @@ on:
         description: Exact recorded project command report
         value: ${{ jobs.record.outputs.report_artifact_id }}
 permissions: {}
+env:
+  NEXKIT_PROGRESS: '1'
 jobs:
   prepare:
     permissions:
       contents: write
-      issues: read
+      actions: read
+      issues: write
       pull-requests: read
     uses: ./.github/workflows/prepare-step.yml
     with:
@@ -111,7 +114,7 @@ jobs:
     if: always() && needs.prepare.result == 'success' && needs.execute.outputs.report_artifact_id != ''
     permissions:
       contents: write
-      issues: read
+      issues: write
       pull-requests: read
       actions: read
     uses: ./.github/workflows/record-step.yml

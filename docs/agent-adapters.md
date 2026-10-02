@@ -25,6 +25,7 @@ Only adapters registered in trusted toolkit code can be selected.
 | Add provider execution constraints to the prompt | [ci.py](../nexkit/ci.py) |
 | Check CLI capabilities, choose an installation image and form a login command | [runner_host.py](../nexkit/runner_host.py), [runner administration](../scripts/manage_runner.py) |
 | Declare the required model secret | [project diagnostics](../nexkit/project.py) |
+| Prepare public activity observation and stop isolated session accounts before collection | [agent_observability.py](../nexkit/agent_observability.py) |
 
 `engine.name` selects the adapter. Authentication and optional `engine.install`
 fields belong to that integration. Core logic does not interpret CLI release
@@ -36,6 +37,24 @@ Its [native subscription integration](../nexkit/adapters/codex_subscription.py)
 also exercises sandbox behavior with harmless credentials before using a real
 login. The official API action validates its arguments and uses its unprivileged
 user strategy. A release label alone cannot establish either execution boundary.
+
+Codex public JSONL activity is translated in
+[codex_events.py](../nexkit/adapters/codex_events.py). Subscription execution drains
+stdout and stderr while retaining its existing private runner log. API mode
+retains the pinned official `openai/codex-action` for authentication and its
+unprivileged user strategy. A trusted `sudo` shim observes only its exact
+`-u nexkit-agent -- /absolute/codex exec` child, adds `--json`, and delegates
+other operations to `/usr/bin/sudo`. Prompt input, arguments, environment and
+execution identity remain those selected by the official action. The observer
+does not implement API authentication. Native tests verify the actual sudo
+account, prompt forwarding and timeout behavior.
+
+The shared logger selects public messages, commands, changes and usage, excludes
+reasoning and unknown payloads, redacts recognizable credentials, and bounds
+retained events and output. Cleanup runs outside the timed session before reading
+bounded regular files without links. These artifacts are diagnostics only; the
+normal result schema, reservation and candidate checks remain authoritative.
+See [operator guidance](operations.md#read-progress-and-recover-a-run).
 
 ## Add an integration
 
@@ -51,6 +70,8 @@ user strategy. A release label alone cannot establish either execution boundary.
    current action fails for an adapter without a registered Actions integration.
 4. Extend [the shared adapter contract tests](../tests/test_agent_adapters.py)
    with the new adapter, plus provider-specific translation and failure cases.
+   Exercise public activity filtering, account cleanup and diagnostic collection;
+   provider protocol parsing belongs to the adapter, not core scheduling.
    Run that suite in the existing CI jobs. Use one reproducible native CLI
    reference for the integration; do not create a release-version matrix.
 5. Update [support scope](support.md), setup examples and applicable

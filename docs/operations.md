@@ -44,6 +44,43 @@ another issue to reset an existing work item's limits.
 
 ## Read progress and recover a run
 
+Open the issue's **NexKit progress** comment and choose **View current run**.
+The bot updates that same comment from committed controller state, linking the
+exact Actions run attempt and available agent artifacts. It updates at recorded
+stages; the live details are in the run's job log. Notice publication is best
+effort and cannot undo work or spend another agent call.
+
+In a running agent job, open **Run the accepted Codex session**. Timestamped
+activity shows agent messages, commands and their outputs, file changes and
+reported token usage. A heartbeat every 30 seconds means the CLI process is
+still running; it does not establish model progress. Reasoning and raw provider
+payloads are excluded. Recognized credentials are redacted and output is bounded.
+
+When the job ends, its summary previews the result and links the downloadable
+`agent-diagnostics-<role>-<invocation>-<attempt>` artifact. It contains:
+
+| File | Contents |
+|---|---|
+| `report.md` | Full validated agent summary, reported commands and limitations, and observed command activity |
+| `result.json` | Complete sanitized fields from the role's result schema, when a valid final result exists; includes request specifications/questions and review findings/acceptance |
+| `events.jsonl` | Selected public activity with timestamps and bounded command output |
+| `activity.log` | Readable activity, also streamed to the job log |
+| `stderr.log` | Sanitized CLI diagnostics |
+| `run.json` | Session identity, native exit/status, elapsed time and reported usage |
+
+Artifacts are retained for seven days and require GitHub access to download.
+Diagnostics collection is a separate `always()` step after the timed session,
+so failure and timeout can retain partial activity and explain a missing final
+result. Cancellation is best effort; runner loss or forced job termination can
+prevent collection or upload. Recorded activity and the agent's report cannot
+satisfy checks, grant approval or authorize publication.
+
+The supplied workflows enable notices only on trusted state-writing controllers,
+with `issues: write` and `actions: read`. Agent and consumer command jobs keep
+their existing read permissions. Local CLI use does not create these bot notices.
+Existing consumers adopt this behavior by deliberately updating their accepted
+kit pin and reviewing the called workflows' permissions.
+
 The issue timeline links commits on `nexkit/state`. Their short messages describe
 the current requirement, agent task, published change or next approval step.
 Summaries come from recorded work and validated agent reports, with no extra

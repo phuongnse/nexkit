@@ -36,6 +36,8 @@ on:
         description: Persisted merged, retry or blocked outcome
         value: ${{ jobs.finish.outputs.status }}
 permissions: {}
+env:
+  NEXKIT_PROGRESS: '1'
 jobs:
   finish:
     runs-on: ubuntu-24.04

@@ -46,6 +46,12 @@ class ExampleAdapter:
     def execute(self, context, role, *, data):
         return {"adapter": self.name, "role": role}
 
+    def prepare_observation(self, engine, *, data):
+        pass
+
+    def stop_session(self, engine):
+        pass
+
     def prompt_constraints(self, engine):
         return "Example offline tool constraints"
 
@@ -95,6 +101,30 @@ class AgentAdapterTests(unittest.TestCase):
                         result = execute(context, "review", data="/prepared")
                     self.assertEqual(result, {"role": "review"})
                     run.assert_called_once_with(context, "review", data=Path("/prepared"))
+
+    def test_registered_adapters_own_observation_preparation_and_session_cleanup(self):
+        from nexkit.agent_observability import begin, finish
+
+        with patch.dict(ADAPTERS, {"example": ExampleAdapter()}):
+            for name, integration in ADAPTERS.items():
+                with self.subTest(adapter=name), tempfile.TemporaryDirectory() as temporary:
+                    data = Path(temporary)
+                    cfg = project()
+                    cfg["engine"] = {"name": name}
+                    context = {"config": cfg, "run_key": "101.1"}
+                    with (
+                        patch.object(integration, "prepare_observation") as prepare,
+                        patch.object(integration, "stop_session") as stop,
+                        patch(
+                            "nexkit.agent_observability.prepared",
+                            return_value=(cfg, "linux", data, data, data / "result.json"),
+                        ),
+                    ):
+                        begin(context, "review", data)
+                        value = finish(context, "review", data, "failure")
+                    prepare.assert_called_once_with(cfg["engine"], data=data)
+                    stop.assert_called_once_with(cfg["engine"])
+                    self.assertFalse(value["result_available"])
 
     def test_provider_specific_effort_and_authentication_do_not_change_core(self):
         with patch.dict(ADAPTERS, {"example": ExampleAdapter()}):

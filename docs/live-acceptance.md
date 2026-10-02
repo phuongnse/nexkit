@@ -72,6 +72,17 @@ kit identity, elapsed time, repair rounds and operator interventions. Report tok
 or cost only when measured. No release should exist. Repeat on the second
 consumer with different requirements/configuration without modifying the core.
 
+During an agent session, follow **View current run** from the issue's single
+progress comment. Confirm the exact run attempt, live timestamped command output
+and process heartbeat. After success, failure and timeout, inspect the job summary
+and download the `agent-diagnostics-*` artifact. Check the full report, selected
+events, metadata binding and sanitized diagnostics; reasoning and credential
+canaries must be absent. Repeat a native rerun and confirm the notice updates
+without another bot progress comment or reset of recorded usage. A runner that
+is forcibly lost can prevent upload; distinguish that interruption from agent
+success. Observability tests with a simulated model do not replace this live
+consumer check.
+
 ## Repair, blocked paths and durability
 
 Use a meaningful behavioral defect within the approved scope. Observe a check
@@ -227,6 +238,7 @@ for the boundary being verified:
 | Boundary | Required environment | How to verify |
 |---|---|---|
 | Linux command account, private results, credentials and hostile file paths | Linux with separate controller and command accounts and passwordless sudo | Container verifier, or opted-in `tests.test_step_isolation` on a prepared disposable runner |
+| API observation account, prompt forwarding, timeout and sudo delegation | Disposable Linux runner with passwordless sudo and `nexkit-agent` | Container verifier, or opted-in `tests.test_observability.NativeApiObserverTests` with `NEXKIT_TEST_ISOLATION=1` |
 | Linux agent setup and restoration of trusted controls | Linux with a fresh disposable command account and administrative access | Container verifier, or opted-in `tests.test_agent_workspace.LinuxAgentWorkspaceTests` |
 | Actual CLI tools, role permissions, credential and network isolation | Linux container built with the reference CLI, on a supported Docker host | `scripts/verify_docker_host.py` |
 | Native Windows directory handles and junction paths | Windows with permission to create the tested links | Shared suite on Windows |
@@ -242,6 +254,11 @@ CI uses one reference CLI and the shared adapter contract suite, without a
 release-version matrix. For a deliberate runtime investigation, `--codex-version`
 selects the CLI to install in the disposable test image. Runtime capability
 checks and isolation probes do not compare its release label.
+
+The actual container CLI checks also exercise the public event observer across
+request, task, delivery and review roles. They verify real command start/output
+events and preserve the existing credential, network and role boundaries; only
+model responses are simulated.
 
 The container verifier executes the pinned `actions/setup-python` implementation
 from the supplied runtime action, then executes the workspace action read from

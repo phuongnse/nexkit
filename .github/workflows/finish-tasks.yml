@@ -1,0 +1,77 @@
+name: NexKit finish standalone tasks
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+      context_artifact_id:
+        type: string
+        required: true
+      jobs_succeeded:
+        type: boolean
+        required: true
+    outputs:
+      status:
+        description: completed, waiting_for_approval, retry or blocked
+        value: ${{ jobs.finish.outputs.status }}
+permissions: {}
+jobs:
+  finish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: read
+      actions: write
+    outputs:
+      status: ${{ steps.finish.outputs.status }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate the kit pin before loading controller code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.context_artifact_id }}
+          path: /tmp/nexkit/context
+      - id: finish
+        name: Require recorded results and approvals before completing work
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+          NEXKIT_JOBS_OK: ${{ inputs.jobs_succeeded }}
+        run: |
+          args=()
+          if [ "$NEXKIT_JOBS_OK" = true ]; then args+=(--jobs-succeeded); fi
+          python3 -m nexkit.ci finish-tasks --context /tmp/nexkit/context --kit-ref "$NEXKIT_REF" "${args[@]}" --out /tmp/nexkit/outcome.json

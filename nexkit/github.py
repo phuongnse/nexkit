@@ -1,0 +1,326 @@
+"""GitHub operations via its official CLI; no token storage or custom auth loop."""
+
+from __future__ import annotations
+
+import base64
+import json
+from urllib.parse import quote
+
+from .common import Blocked, canonical, run, short_summary
+from .policy import REPO, STATE_BRANCH, require
+
+
+def run_attempt(gh, run_key):
+    """Inspect the recorded attempt, including when the same run is being rerun."""
+    parts = str(run_key).split(".")
+    require(
+        len(parts) == 2 and all(x.isdigit() and int(x) > 0 for x in parts),
+        "Unrecognized Actions run attempt",
+    )
+    return gh.api(f"{gh.root}/actions/runs/{parts[0]}/attempts/{parts[1]}")
+
+
+def state_message(number, value):
+    """Describe recorded progress in the commit linked from the issue timeline."""
+    status = value.get("status", "")
+    summary = value.get("activity", "")
+    if not status:
+        phase = value.get("clarification", {})
+        summary = phase.get("activity") or {
+            "clarifying": "Clarifying requirement",
+            "publishing": "Updating requirement",
+            "awaiting_answers": "Awaiting requirement answers",
+            "awaiting_approval": "Ready for requirement approval",
+        }.get(phase.get("status"), "Preparing work")
+        if phase.get("status") in {"waiting", "blocked"}:
+            label = (
+                "Requirement blocked: " if phase["status"] == "blocked" else "Requirement paused: "
+            )
+            summary = label + phase.get("reason", "Awaiting input")
+    if status in {"blocked", "retry"}:
+        summary = (
+            "Blocked: " if status == "blocked" else "Preparing another attempt: "
+        ) + value.get("reason", "See the work item for details")
+    elif status == "merged":
+        summary = f"Merged PR #{value['pr']}" if value.get("pr") else "Merged"
+    elif status == "waiting_for_approval":
+        gate = value.get("approval_wait", {}).get("gate")
+        definition = value.get("stage_approvals", {}).get(gate, {}).get("definition", {})
+        summary = (
+            f"Awaiting PR review: #{value['pr']}"
+            if definition.get("mode") == "pull_request"
+            else "Awaiting stage approval"
+        )
+    elif value.get("approval_repair", {}).get("status") == "pending":
+        summary = "Review follow-up pending: " + value["approval_repair"]["feedback"]
+    return f"NexKit #{int(number)}: {short_summary(summary or status.replace('_', ' ') or 'Preparing work')}"
+
+
+class GitHub:
+    def __init__(self, repository):
+        require(REPO.fullmatch(repository), "Invalid repository")
+        self.repository = repository
+        self.root = f"repos/{repository}"
+
+    def api(self, path, method="GET", data=None, *, pages=False, collection=None):
+        args = [
+            "gh",
+            "api",
+            "--method",
+            method,
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            "X-GitHub-Api-Version: 2022-11-28",
+            path,
+        ]
+        if data is not None:
+            args += ["--input", "-"]
+        if pages:
+            args += ["--paginate", "--slurp"]
+        result = run(args, data=canonical(data) if data is not None else None)
+        try:
+            value = json.loads(result.stdout) if result.stdout.strip() else None
+        except ValueError as exc:
+            raise Blocked("GitHub returned invalid JSON") from exc
+        if pages:
+            return [item for page in value for item in (page[collection] if collection else page)]
+        return value
+
+    def repo(self):
+        return self.api(self.root)
+
+    def issue(self, number):
+        value = self.api(f"{self.root}/issues/{int(number)}")
+        owner, name = self.repository.split("/")
+        query = (
+            "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name)"
+            "{issue(number:$number){lastEditedAt timelineItems(last:1,itemTypes:[RENAMED_TITLE_EVENT])"
+            "{nodes{... on RenamedTitleEvent{createdAt}}}}}}"
+        )
+        edit = self.api(
+            "graphql",
+            "POST",
+            {"query": query, "variables": {"owner": owner, "name": name, "number": int(number)}},
+        )
+        require(not edit.get("errors"), "Cannot verify requirement edit history")
+        detail = edit["data"]["repository"]["issue"]
+        stamps = [
+            detail["lastEditedAt"],
+            *[x.get("createdAt") for x in detail["timelineItems"]["nodes"]],
+        ]
+        value["last_edited_at"] = max((s for s in stamps if s), default=None)
+        return value
+
+    def comments(self, number):
+        return self.api(f"{self.root}/issues/{int(number)}/comments?per_page=100", pages=True)
+
+    def permission(self, login):
+        if not login:
+            return "none"
+        return self.api(f"{self.root}/collaborators/{quote(login, safe='')}/permission")[
+            "permission"
+        ]
+
+    def comment(self, number, body):
+        return self.api(f"{self.root}/issues/{int(number)}/comments", "POST", {"body": body})
+
+    def content(self, path, ref):
+        return self.api(f"{self.root}/contents/{quote(path, safe='/')}?ref={quote(ref, safe='')}")
+
+    def read_config(self, ref):
+        value = self.content(".nexkit/project.json", ref)
+        return json.loads(base64.b64decode(value["content"]))
+
+    def ref(self, branch):
+        return self.api(f"{self.root}/git/ref/heads/{quote(branch, safe='/')}")["object"]["sha"]
+
+    def get_state(self, number):
+        # A missing state is different from insufficient permissions/network failure.
+        path = f"{self.root}/contents/issues/{int(number)}.json?ref={quote(STATE_BRANCH, safe='')}"
+        try:
+            value = self.api(path)
+        except Blocked as exc:
+            if "HTTP 404" in str(exc):
+                return {}, None
+            raise
+        return json.loads(base64.b64decode(value["content"])), value["sha"]
+
+    def ensure_state_branch(self):
+        try:
+            self.ref(STATE_BRANCH)
+            return
+        except Blocked as exc:
+            if "HTTP 404" not in str(exc):
+                raise
+        tree = self.api(
+            f"{self.root}/git/trees",
+            "POST",
+            {
+                "tree": [
+                    {
+                        "path": "README.md",
+                        "mode": "100644",
+                        "type": "blob",
+                        "content": "NexKit bounded delivery state. No application source or secrets.\n",
+                    }
+                ]
+            },
+        )
+        commit = self.api(
+            f"{self.root}/git/commits",
+            "POST",
+            {"message": "Initialize NexKit state", "tree": tree["sha"], "parents": []},
+        )
+        try:
+            self.api(
+                f"{self.root}/git/refs",
+                "POST",
+                {"ref": f"refs/heads/{STATE_BRANCH}", "sha": commit["sha"]},
+            )
+        except Blocked as exc:
+            if "HTTP 422" not in str(exc):
+                raise
+            self.ref(STATE_BRANCH)
+
+    def save_state(self, number, value, previous):
+        encoded = (canonical(value) + "\n").encode()
+        require(len(encoded) <= 900000, "Delivery state exceeds the bounded GitHub state size")
+        self.ensure_state_branch()
+        data = {
+            "message": state_message(number, value),
+            "content": base64.b64encode(encoded).decode(),
+            "branch": STATE_BRANCH,
+        }
+        if previous:
+            data["sha"] = previous
+        result = self.api(f"{self.root}/contents/issues/{int(number)}.json", "PUT", data)
+        return result["content"]["sha"]
+
+    def dispatch(self, workflow, branch, inputs):
+        self.api(
+            f"{self.root}/actions/workflows/{quote(workflow, safe='')}/dispatches",
+            "POST",
+            {"ref": branch, "inputs": {k: str(v) for k, v in inputs.items()}},
+        )
+
+    def pull(self, number):
+        return self.api(f"{self.root}/pulls/{int(number)}")
+
+    def pull_for_branch(self, branch):
+        owner = self.repository.split("/")[0]
+        result = self.api(
+            f"{self.root}/pulls?state=all&head={quote(owner + ':' + branch, safe='')}"
+        )
+        require(len(result) <= 1, "Multiple pull requests found for the delivery branch")
+        return result[0] if result else None
+
+    def check(self, name, sha, passed, summary):
+        return self.api(
+            f"{self.root}/check-runs",
+            "POST",
+            {
+                "name": name,
+                "head_sha": sha,
+                "status": "completed",
+                "conclusion": "success" if passed else "failure",
+                "output": {"title": name, "summary": summary[:60000]},
+            },
+        )
+
+    def strict_protection(self, branch, cfg=None):
+        # This endpoint needs Metadata:read. The classic branch-protection
+        # endpoint needs Administration:read, which GITHUB_TOKEN cannot have.
+        # NexKit uses an active native ruleset, audited for bypasses at setup.
+        rules = self.api(
+            f"{self.root}/rules/branches/{quote(branch, safe='')}?per_page=100", pages=True
+        )
+        names, strict = set(), False
+        from .approvals import pr_review_count
+
+        expected_reviews = pr_review_count(cfg or {})
+        review_rule = False
+        actions_id = self.api("apps/github-actions")["id"]
+        for rule in rules:
+            params = rule.get("parameters", {})
+            if rule.get("type") == "required_status_checks":
+                strict = strict or params.get("strict_required_status_checks_policy") is True
+                for check in params.get("required_status_checks", []):
+                    names.add(check["context"])
+                    require(
+                        check.get("integration_id") == actions_id,
+                        "Required NexKit checks must be bound to the GitHub Actions App",
+                    )
+            if rule.get("type") == "pull_request":
+                review_rule = True
+                require(
+                    (params.get("required_approving_review_count") or 0) == expected_reviews
+                    and not params.get("require_code_owner_review")
+                    and not params.get("require_last_push_approval")
+                    and not params.get("required_review_thread_resolution")
+                    and not params.get("required_reviewers")
+                    and (
+                        not expected_reviews or params.get("dismiss_stale_reviews_on_push") is True
+                    ),
+                    "PR review rules differ from the accepted approval policy",
+                )
+            require(
+                rule.get("type")
+                not in ("required_deployments", "merge_queue", "required_signatures", "workflows"),
+                "Repository rules need an explicit compatible setup integration",
+            )
+        require(
+            strict and names == {"NexKit verification", "NexKit review"},
+            "An active strict ruleset requiring exactly NexKit verification/review is needed; migrate other checks into declared commands during setup",
+        )
+        require(
+            not expected_reviews or review_rule,
+            "The configured PR approval gate needs a native review ruleset",
+        )
+        return rules
+
+    def audit_settings(self, branch, cfg=None):
+        """Administrator-only setup inspection. Never called in delivery jobs."""
+        self.strict_protection(branch, cfg)
+        entries = self.api(f"{self.root}/rulesets?includes_parents=true&per_page=100", pages=True)
+        for entry in entries:
+            if entry.get("enforcement") != "active":
+                continue
+            url = entry.get("_links", {}).get("self", {}).get("href")
+            require(
+                url and url.startswith("https://api.github.com/"),
+                "Cannot inspect inherited ruleset",
+            )
+            rule = self.api(url)
+            require("bypass_actors" in rule, "Setup account cannot audit ruleset bypass actors")
+            require(
+                not rule["bypass_actors"],
+                "Remove blanket bypasses only through an approved administrative setup decision",
+            )
+        try:
+            classic = self.api(f"{self.root}/branches/{quote(branch, safe='')}/protection")
+        except Blocked as exc:
+            if "HTTP 404" not in str(exc):
+                raise
+            classic = {}
+        reviews = classic.get("required_pull_request_reviews") or {}
+        from .approvals import pr_review_count
+
+        count = reviews.get("required_approving_review_count") or 0
+        require(
+            count in (0, pr_review_count(cfg or {}))
+            and not reviews.get("require_code_owner_reviews")
+            and not reviews.get("require_last_push_approval")
+            and (not count or reviews.get("dismiss_stale_reviews") is True),
+            "Classic branch protection differs from the accepted PR review policy",
+        )
+        require(
+            not (classic.get("required_conversation_resolution") or {}).get("enabled"),
+            "Required review-thread resolution needs an explicit compatible integration",
+        )
+        extra = (classic.get("required_status_checks") or {}).get("contexts", [])
+        require(
+            set(extra) <= {"NexKit verification", "NexKit review"},
+            "Classic protection has additional required checks without an automatic dispatch integration",
+        )
+        return {"ruleset_bypasses_audited": True, "classic_protection_audited": True}

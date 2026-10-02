@@ -1,0 +1,91 @@
+name: NexKit publish recorded candidate
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+      context_artifact_id:
+        type: string
+        required: true
+      report_artifact_id:
+        type: string
+        required: true
+    outputs:
+      candidate_artifact_id:
+        description: Exact published candidate context
+        value: ${{ jobs.publish.outputs.candidate_artifact_id }}
+      head:
+        description: Published candidate commit
+        value: ${{ jobs.publish.outputs.head }}
+permissions: {}
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    outputs:
+      candidate_artifact_id: ${{ steps.candidate.outputs.artifact-id }}
+      head: ${{ steps.publish.outputs.head }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate the kit pin before loading controller code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.context_artifact_id }}
+          path: /tmp/nexkit/context
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.report_artifact_id }}
+          path: /tmp/nexkit/reports
+      - id: publish
+        name: Publish only the recorded source-editing result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          shopt -s nullglob globstar
+          reports=(/tmp/nexkit/reports/*.json)
+          test "${#reports[@]}" = 1
+          python3 -m nexkit.ci publish --context /tmp/nexkit/context --result "${reports[0]}" --kit-ref "$NEXKIT_REF" --out /tmp/nexkit/candidate.json
+      - id: candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-published-${{ inputs.context_artifact_id }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/candidate.json
+          retention-days: 7
+          if-no-files-found: error

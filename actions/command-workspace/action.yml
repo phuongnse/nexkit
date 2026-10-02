@@ -1,0 +1,25 @@
+name: NexKit Linux command workspace
+description: Prepare the shared Linux runtime and separate consumer command identity.
+inputs:
+  context:
+    required: true
+    description: Accepted controller context path
+  source:
+    required: true
+    description: Immutable source checkout path
+  data:
+    required: true
+    description: Controller-owned data directory
+runs:
+  using: composite
+  steps:
+    - name: Prepare the Linux command account and protected data paths
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        NEXKIT_SOURCE: ${{ inputs.source }}
+        NEXKIT_DATA: ${{ inputs.data }}
+      run: |
+        import os, subprocess, sys
+        subprocess.run([sys.executable, '-m', 'nexkit.command_workspace', '--context', os.environ['NEXKIT_CONTEXT'], '--source', os.environ['NEXKIT_SOURCE'], '--data-dir', os.environ['NEXKIT_DATA']], check=True)

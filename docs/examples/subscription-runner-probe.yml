@@ -1,0 +1,15 @@
+# Administrative example for the pre-login checks in docs/self-hosted.md.
+# Copy as .github/workflows/nexkit-runner-probe.yml and accept it in setup.
+name: NexKit runner admission probe
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  marker:
+    # Copy the complete environment.agent_runner array chosen for your project.
+    runs-on: ${{ fromJSON('["self-hosted", "linux", "x64", "your-project-runner"]') }}
+    timeout-minutes: 3
+    steps:
+      - name: Record that the runner admitted this job
+        shell: python
+        run: print("NexKit runner admission probe executed")

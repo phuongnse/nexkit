@@ -1,0 +1,34 @@
+# Connection example only. Replace the zero SHA and select this file during setup.
+name: Consumer issue intake
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        required: true
+        options: [request, start, spec, release]
+      payload:
+        description: JSON produced by the NexKit CLI
+        type: string
+        required: true
+      pipeline:
+        description: Configured consumer pipeline
+        type: string
+        required: true
+permissions: {}
+jobs:
+  receive:
+    if: github.event_name == 'workflow_dispatch' || (!github.event.issue.pull_request && startsWith(github.event.comment.body, '/nexkit start'))
+    uses: phuongnse/nexkit/.github/workflows/intake.yml@0000000000000000000000000000000000000000
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      # Comments select their pipeline in the controller. Dispatches carry the
+      # CLI's explicit selection. Both must use an accepted intake entrypoint.
+      pipeline: ${{ inputs.pipeline || '' }}

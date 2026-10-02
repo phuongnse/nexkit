@@ -1,0 +1,31 @@
+name: NexKit isolated workspace
+description: Prepare a fresh unprivileged coding-agent workspace from trusted input.
+inputs:
+  role:
+    required: true
+    description: request, deliver, review or task
+  context:
+    required: true
+    description: Controller context JSON path
+  source:
+    required: true
+    description: Trusted source checkout path
+runs:
+  using: composite
+  steps:
+    - shell: python
+      env:
+        NEXKIT_ROLE: ${{ inputs.role }}
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        NEXKIT_SOURCE: ${{ inputs.source }}
+        PYTHONPATH: ${{ github.workspace }}/kit
+      run: |
+        import os
+        import subprocess
+        import sys
+        subprocess.run([
+            sys.executable, '-m', 'nexkit.agent_workspace',
+            '--role', os.environ['NEXKIT_ROLE'],
+            '--context', os.environ['NEXKIT_CONTEXT'],
+            '--source', os.environ['NEXKIT_SOURCE'],
+        ], check=True)

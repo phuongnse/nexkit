@@ -1,0 +1,37 @@
+# Connection example for approvals.report-review in the inspection pipeline.
+name: Continue after report approval
+on:
+  issue_comment:
+    types: [created, edited, deleted]
+  issues:
+    types: [edited, closed]
+  workflow_dispatch:
+    inputs:
+      issue:
+        type: string
+        required: true
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+  actions: write
+concurrency:
+  group: nexkit-work
+  queue: max
+jobs:
+  resume:
+    uses: phuongnse/nexkit/.github/workflows/resume-approval.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      pipeline: inspection
+      gate: report-review
+  finish:
+    needs: resume
+    if: needs.resume.outputs.ready == 'true'
+    uses: phuongnse/nexkit/.github/workflows/finish-tasks.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.resume.outputs.context_artifact_id }}
+      jobs_succeeded: true

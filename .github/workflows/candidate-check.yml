@@ -1,0 +1,161 @@
+name: NexKit candidate check
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+      candidate_artifact_id:
+        type: string
+        required: true
+      check:
+        type: string
+        required: true
+    outputs:
+      passed:
+        description: Whether the selected check passed, independent of artifact collection success
+        value: ${{ jobs.check.outputs.passed || jobs.route.outputs.passed }}
+      report_artifact_id:
+        description: Immutable artifact ID containing this configured check's result
+        value: ${{ jobs.check.outputs.report_artifact_id || jobs.route.outputs.report_artifact_id }}
+permissions: {}
+jobs:
+  route:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      authorized: ${{ steps.guard.outputs.authorized }}
+      execution_runner: ${{ steps.guard.outputs.execution_runner }}
+      passed: ${{ steps.guard.outputs.passed }}
+      report_artifact_id: ${{ steps.report.outputs.artifact-id }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate the kit pin before loading controller code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - name: Prepare the toolkit Python runtime
+        uses: ./kit/actions/python-runtime
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.candidate_artifact_id }}
+          path: /tmp/nexkit
+      - id: guard
+        name: Validate the current published candidate and configured command
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_CHECK: ${{ inputs.check }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: python3 -m nexkit.ci prepare-check --context /tmp/nexkit --check "$NEXKIT_CHECK" --kit-ref "$NEXKIT_REF" --out "/tmp/nexkit/checks/$NEXKIT_CHECK.json"
+      - id: report
+        if: steps.guard.outputs.authorized != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-check-denied-${{ inputs.candidate_artifact_id }}-${{ inputs.check }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/checks/*.json
+          retention-days: 7
+          if-no-files-found: error
+  check:
+    needs: route
+    if: needs.route.outputs.authorized == 'true'
+    runs-on: ${{ fromJSON(needs.route.outputs.execution_runner) }}
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      passed: ${{ steps.execute.outputs.passed || steps.guard.outputs.passed }}
+      report_artifact_id: ${{ steps.report.outputs.artifact-id }}
+    defaults:
+      run:
+        shell: python
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - name: Prepare the toolkit Python runtime
+        uses: ./kit/actions/python-runtime
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ inputs.candidate_artifact_id }}
+          path: /tmp/nexkit
+      - id: guard
+        name: Recheck the candidate and approval on the selected native runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_CHECK: ${{ inputs.check }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+          NEXKIT_CONTEXT: /tmp/nexkit
+        run: |
+          import os, subprocess, sys
+          from pathlib import Path
+          data = os.environ['NEXKIT_CONTEXT']
+          subprocess.run([sys.executable, '-m', 'nexkit.ci', 'prepare-check', '--context', data, '--check', os.environ['NEXKIT_CHECK'], '--kit-ref', os.environ['NEXKIT_REF'], '--out', str(Path(data) / 'checks' / (os.environ['NEXKIT_CHECK'] + '.json'))], check=True)
+      - if: steps.guard.outputs.authorized == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ steps.guard.outputs.head }}
+          path: source
+          persist-credentials: false
+      - if: steps.guard.outputs.authorized == 'true'
+        uses: ./kit/actions/command-workspace
+        with:
+          context: /tmp/nexkit
+          source: ${{ github.workspace }}/source
+          data: /tmp/nexkit
+      - id: execute
+        if: steps.guard.outputs.authorized == 'true'
+        name: Execute exactly one accepted check in an isolated account
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_EXEC_USER: nexkit-agent
+          NEXKIT_CHECK: ${{ inputs.check }}
+        run: |
+          import os, subprocess, sys
+          from pathlib import Path
+          data = os.environ['NEXKIT_DATA_DIR']
+          subprocess.run([sys.executable, '-m', 'nexkit.ci', 'verify', '--context', data, '--workspace', os.environ['NEXKIT_WORKSPACE'], '--check', os.environ['NEXKIT_CHECK'], '--out', str(Path(data) / 'checks' / (os.environ['NEXKIT_CHECK'] + '.json'))], check=True)
+      - id: report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-check-${{ inputs.candidate_artifact_id }}-${{ inputs.check }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/checks/*.json
+          retention-days: 7
+          if-no-files-found: error

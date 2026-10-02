@@ -1,0 +1,149 @@
+name: NexKit checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      codex_version:
+        description: Optional consumer-selected CLI for the same container checks
+        type: string
+        required: false
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m ruff check .
+      - run: python -m ruff format --check .
+      - name: Check native workflow syntax with pinned upstream actionlint
+        if: runner.os == 'Linux'
+        run: |
+          curl --fail --location --silent --show-error https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          # This upstream version predates concurrency.queue. Its documented
+          # values and incompatibility with cancellation are checked in tests.
+          "$RUNNER_TEMP/actionlint" -shellcheck='' -pyflakes='' -ignore '^unexpected key "queue" for "concurrency" section\.' .github/workflows/*.yml docs/examples/*.yml
+      - run: python -m unittest discover -v
+      - name: Install the checksum-verified reference CLI for plugin verification
+        shell: python
+        run: |
+          import os, subprocess, sys
+          from pathlib import Path
+          subprocess.run([sys.executable, 'scripts/install_codex.py', '--destination', str(Path(os.environ['RUNNER_TEMP']) / 'codex-package')], check=True)
+      - run: python scripts/build.py
+      - name: Verify the extracted package and native Codex plugin
+        shell: python
+        run: |
+          import os, subprocess, sys
+          subprocess.run([sys.executable, 'scripts/verify_package.py', 'dist/nexkit-1.0.0.tar.gz', '--source-commit', os.environ['GITHUB_SHA'], '--codex', os.environ['NEXKIT_CODEX_PATH']], check=True)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-installation-candidate-${{ runner.os }}
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Verify the Linux account adapter with real commands
+        if: runner.os == 'Linux'
+        env:
+          NEXKIT_TEST_ISOLATION: '1'
+        run: |
+          sudo useradd --create-home --shell /bin/bash nexkit-agent
+          # The command account needs to read the trusted helper. Hosted
+          # checkout parents can be private to the Actions runner account.
+          # Install a separate readable copy rather than opening that HOME.
+          sudo mkdir /opt/nexkit-test-kit
+          sudo cp -a . /opt/nexkit-test-kit/
+          sudo chmod -R a+rX,go-w /opt/nexkit-test-kit
+          cd /opt/nexkit-test-kit
+          python -m unittest tests.test_step_isolation -v
+      - name: Verify native Linux agent workspace restoration
+        if: runner.os == 'Linux'
+        env:
+          NEXKIT_TEST_AGENT_WORKSPACE: '1'
+        run: |
+          # The preceding command tests used this disposable job account.
+          # Start agent preparation with the fresh identity it requires.
+          sudo userdel --remove nexkit-agent
+          python -m unittest tests.test_agent_workspace.LinuxAgentWorkspaceTests -v
+  docker-runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Prepare Docker Engine in WSL 2 without Docker Desktop
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/prepare_wsl.ps1
+      - name: Verify the shared container runtime on Linux
+        if: runner.os == 'Linux'
+        run: python scripts/verify_docker_host.py
+      - name: Verify a consumer-selected CLI with the same image and Actions inputs
+        if: runner.os == 'Linux' && inputs.codex_version != ''
+        env:
+          NEXKIT_TEST_CODEX_VERSION: ${{ inputs.codex_version }}
+        run: python scripts/verify_docker_host.py --codex-version "$NEXKIT_TEST_CODEX_VERSION"
+      - name: Verify the shared runtime on Windows through WSL 2
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python scripts/verify_docker_host.py --wsl-distribution Ubuntu-24.04
+      - name: Verify a consumer-selected CLI through the same Windows host
+        if: runner.os == 'Windows' && inputs.codex_version != ''
+        env:
+          NEXKIT_TEST_CODEX_VERSION: ${{ inputs.codex_version }}
+        shell: pwsh
+        run: python scripts/verify_docker_host.py --wsl-distribution Ubuntu-24.04 --codex-version $env:NEXKIT_TEST_CODEX_VERSION
+      - name: Verify Windows parent termination and WSL heartbeat timeout
+        if: runner.os == 'Windows'
+        env:
+          NEXKIT_TEST_WSL_LIFECYCLE: '1'
+        run: python -m unittest tests.test_runner_lifecycle -v
+  package-comparison:
+    needs: test
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: nexkit-installation-candidate-*
+          path: packages
+      - name: Compare the Linux and Windows installation archives
+        shell: python
+        run: |
+          import hashlib, json, os
+          from pathlib import Path
+          packages = Path('packages')
+          linux = packages / 'nexkit-installation-candidate-Linux'
+          windows = packages / 'nexkit-installation-candidate-Windows'
+          for name in ('candidate.json', 'SHA256SUMS', 'nexkit-1.0.0.tar.gz'):
+              assert (linux / name).read_bytes() == (windows / name).read_bytes(), name
+          manifest = json.loads((linux / 'candidate.json').read_bytes())
+          assert manifest['source_commit'] == os.environ['GITHUB_SHA']
+          assert manifest['source_dirty'] is False
+          digest = hashlib.sha256((linux / 'nexkit-1.0.0.tar.gz').read_bytes()).hexdigest()
+          print(json.dumps({'identical_native_packages': True, 'source_commit': manifest['source_commit'], 'sha256': digest, 'published': False}))

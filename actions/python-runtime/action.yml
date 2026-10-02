@@ -1,0 +1,15 @@
+name: NexKit controller Python
+description: Install and verify the same Python for controller and isolated subprocesses.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - name: Verify Python through sudo without loader environment variables
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+      run: |
+        from nexkit.python_runtime import prepare
+        print(prepare())

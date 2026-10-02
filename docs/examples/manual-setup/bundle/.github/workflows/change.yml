@@ -1,0 +1,34 @@
+# Editable example. Follow docs/manual-setup.md before installing.
+name: Deliver a maintenance request
+on:
+  issue_comment:
+    types: [created, edited, deleted]
+  issues:
+    types: [edited, closed]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: GitHub issue number
+        required: true
+        type: string
+      pipeline:
+        description: Configured project pipeline
+        required: true
+        type: string
+permissions: {}
+jobs:
+  deliver:
+    if: github.event_name == 'workflow_dispatch' || !github.event.issue.pull_request
+    uses: phuongnse/nexkit/.github/workflows/delivery.yml@0000000000000000000000000000000000000000
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      checks: write
+      actions: write
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      pipeline: maintenance
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

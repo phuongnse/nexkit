@@ -1,0 +1,17 @@
+{
+  "name": "nexkit",
+  "version": "1.0.0",
+  "description": "Set up and operate coding workflows from your project's decisions.",
+  "author": {"name": "NexKit contributors"},
+  "repository": "https://github.com/phuongnse/nexkit",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "NexKit",
+    "shortDescription": "Agents. Skills. One workflow.",
+    "longDescription": "Configure a project from your requirements, approve its specification, and run the accepted pipeline with independent review and verification. Publishing a release requires a separate approval.",
+    "developerName": "NexKit contributors",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": ["Use NexKit to set up this project from my goals.", "Use NexKit to submit a new requirement.", "Show NexKit delivery status."]
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "repository": "OWNER/REPO",
+  "default_branch": "main",
+  "kit": {
+    "repository": "phuongnse/nexkit",
+    "ref": "0000000000000000000000000000000000000000",
+    "version": "1.0.0"
+  },
+  "defaults": {
+    "engine": {
+      "name": "codex",
+      "auth": "api-key"
+    },
+    "models": {
+      "implement": "gpt-6-luna",
+      "review": "gpt-6-luna"
+    },
+    "reasoning_effort": {
+      "implement": "max",
+      "review": "max"
+    },
+    "limits": {
+      "attempts": 2,
+      "agent_calls": 4,
+      "minutes": 60,
+      "command_seconds": 120
+    },
+    "clarification": {
+      "agent_minutes": 10,
+      "max_calls": 3
+    },
+    "environment": {
+      "runner": "ubuntu-24.04",
+      "agent_runner": "ubuntu-24.04",
+      "setup": []
+    },
+    "application": "present",
+    "checks": [
+      {
+        "name": "unit",
+        "kind": "test",
+        "argv": ["python3", "-m", "unittest", "discover", "-s", "tests/unit", "-v"],
+        "timeout_seconds": 120,
+        "report": {"format": "unittest"}
+      },
+      {
+        "name": "e2e",
+        "kind": "e2e",
+        "argv": ["python3", "-m", "unittest", "discover", "-s", "tests/e2e", "-v"],
+        "timeout_seconds": 120,
+        "report": {"format": "unittest"}
+      }
+    ],
+    "merge_method": "squash",
+    "release": {"enabled": false},
+    "decisions": [
+      "Use the project's real test and end-to-end commands before merging.",
+      "Require approval of the specification and a separate AI review of the code.",
+      "Use the selected clarification and delivery limits for each request."
+    ],
+    "knowledge": ["README.md"]
+  },
+  "pipelines": {
+    "maintenance": {
+      "settings": {},
+      "entrypoints": {
+        "intake": ".github/workflows/capture.yml",
+        "clarify": ".github/workflows/discuss.yml",
+        "delivery": ".github/workflows/change.yml"
+      },
+      "agent_workflows": [
+        ".github/workflows/discuss.yml",
+        ".github/workflows/change.yml"
+      ]
+    }
+  },
+  "files": {}
+}

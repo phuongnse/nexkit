@@ -1,0 +1,35 @@
+name: NexKit read-only platform probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: nexkit-platform-probe
+  queue: max
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Probe the exact read APIs used by the controller
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from nexkit.github import GitHub
+          gh = GitHub(os.environ['GITHUB_REPOSITORY'])
+          branch = gh.repo()['default_branch']
+          rules = gh.api(gh.root + '/rules/branches/' + branch + '?per_page=100', pages=True)
+          app = gh.api('apps/github-actions')
+          issues = gh.api(gh.root + '/issues?state=all&per_page=10')
+          original = next((i for i in issues if not i.get('pull_request')), None)
+          history = gh.issue(original['number'])['last_edited_at'] if original else None
+          print(json.dumps({'active_rules': len(rules), 'actions_app_id': app['id'],
+                            'issue_edit_history_read': original is not None,
+                            'last_edited_at': history, 'writes': 0}))
+          PY

@@ -1,0 +1,104 @@
+# Connection example. The accepted step binds job_name: Project package audit.
+# Replace the script with the project's actual action or command during setup.
+name: Run a project-owned job
+on:
+  issue_comment:
+    types: [created, edited]
+  workflow_dispatch:
+    inputs:
+      issue:
+        type: string
+        required: true
+      pipeline:
+        type: string
+        required: true
+        default: package-inspection
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+  actions: write
+concurrency:
+  group: nexkit-work
+  queue: max
+jobs:
+  work:
+    uses: phuongnse/nexkit/.github/workflows/prepare-work.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      pipeline: package-inspection
+      work_type: tasks
+  reserve:
+    needs: work
+    if: needs.work.outputs.ready == 'true'
+    uses: phuongnse/nexkit/.github/workflows/prepare-step.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.work.outputs.context_artifact_id }}
+      step: package-audit
+  audit:
+    name: Project package audit
+    needs: reserve
+    if: needs.reserve.outputs.kind == 'workflow'
+    # Use windows-2025 here when this project step needs Windows behavior.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: phuongnse/nexkit
+          ref: '0000000000000000000000000000000000000000'
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ needs.reserve.outputs.context_artifact_id }}
+          path: ${{ runner.temp }}/nexkit-step
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.reserve.outputs.source }}
+          path: source
+          persist-credentials: false
+      - name: Recheck the accepted step immediately before project work
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_REF: '0000000000000000000000000000000000000000'
+        run: |
+          import os, subprocess, sys
+          from pathlib import Path
+          subprocess.run([sys.executable, '-m', 'nexkit.ci', 'guard-step', '--context', str(Path(os.environ['RUNNER_TEMP']) / 'nexkit-step'), '--kit-ref', os.environ['NEXKIT_REF']], check=True)
+      - name: Run the project's accepted audit script
+        working-directory: source
+        shell: python
+        run: |
+          import subprocess, sys
+          subprocess.run([sys.executable, '.nexkit/controls/package_audit.py'], check=True)
+  record:
+    needs: [reserve, audit]
+    if: always() && needs.reserve.result == 'success'
+    uses: phuongnse/nexkit/.github/workflows/record-step.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.reserve.outputs.context_artifact_id }}
+  finish:
+    needs: [work, reserve, audit, record]
+    if: always() && needs.work.outputs.ready == 'true'
+    uses: phuongnse/nexkit/.github/workflows/finish-tasks.yml@0000000000000000000000000000000000000000
+    with:
+      kit_repository: phuongnse/nexkit
+      kit_ref: '0000000000000000000000000000000000000000'
+      context_artifact_id: ${{ needs.work.outputs.context_artifact_id }}
+      jobs_succeeded: ${{ needs.reserve.result == 'success' && needs.audit.result == 'success' && needs.record.result == 'success' && needs.record.outputs.status == 'done' }}

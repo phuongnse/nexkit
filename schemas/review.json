@@ -1,0 +1,98 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "done",
+        "blocked"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "skills_used": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "changes_requested",
+        "blocked"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "suggestion"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "detail"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "criterion": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "criterion",
+          "evidence",
+          "passed"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "status",
+    "summary",
+    "skills_used",
+    "commands",
+    "limitations",
+    "verdict",
+    "findings",
+    "acceptance"
+  ],
+  "additionalProperties": false
+}

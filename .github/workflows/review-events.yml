@@ -1,0 +1,56 @@
+name: NexKit relay a native PR review event
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+permissions: {}
+jobs:
+  relay:
+    if: github.event_name == 'pull_request_review' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate the kit pin before loading controller code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REPOSITORY: ${{ inputs.kit_repository }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          from urllib.parse import quote
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = api('repos/' + repo)['default_branch']
+          data = api('repos/' + repo + '/contents/.nexkit/project.json?ref=' + quote(branch, safe=''))
+          pin = json.loads(base64.b64decode(data['content']))['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF']
+          assert pin['repository'] == os.environ['NEXKIT_REPOSITORY']
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - name: Dispatch only the configured default-branch approval continuation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: python3 -m nexkit.ci review-event --kit-ref "$NEXKIT_REF"

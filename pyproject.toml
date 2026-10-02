@@ -1,0 +1,12 @@
+[project]
+name = "nexkit"
+version = "1.0.0"
+description = "Agents. Skills. One workflow."
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

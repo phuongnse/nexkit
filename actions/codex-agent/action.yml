@@ -1,0 +1,56 @@
+name: NexKit native Codex session
+description: Run the accepted model and role with the consumer's configured authentication.
+inputs:
+  role:
+    required: true
+    description: request, deliver, review or task
+  context:
+    required: true
+    description: Accepted controller context JSON path
+  openai-api-key:
+    required: false
+    description: API credential used only when the accepted configuration selects API access
+runs:
+  using: composite
+  steps:
+    - id: session
+      name: Read the accepted model and prepared native workspace
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        NEXKIT_ROLE: ${{ inputs.role }}
+      run: |
+        import os, subprocess, sys
+        subprocess.run([sys.executable, '-m', 'nexkit.agent_session', 'configuration', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE']], check=True)
+    - name: Run the official Linux API action
+      if: steps.session.outputs.authentication == 'api-key'
+      uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e
+      with:
+        openai-api-key: ${{ inputs.openai-api-key }}
+        codex-version: ${{ steps.session.outputs.install_version }}
+        model: ${{ steps.session.outputs.model }}
+        effort: ${{ steps.session.outputs.effort }}
+        prompt-file: ${{ steps.session.outputs.prompt }}
+        output-schema-file: ${{ steps.session.outputs.schema }}
+        output-file: ${{ steps.session.outputs.output }}
+        working-directory: ${{ steps.session.outputs.workspace }}
+        codex-home: ${{ steps.session.outputs.home }}/.codex
+        safety-strategy: unprivileged-user
+        codex-user: nexkit-agent
+        sandbox: ${{ steps.session.outputs.sandbox }}
+        codex-args: '["--ignore-user-config", "--ignore-rules", "--strict-config", "--ephemeral", "--skip-git-repo-check"]'
+        allow-bots: true
+    - name: Run Codex with the consumer subscription
+      if: steps.session.outputs.authentication == 'chatgpt'
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        NEXKIT_ROLE: ${{ inputs.role }}
+        OPENAI_API_KEY: ${{ steps.session.outputs.authentication == 'api-key' && inputs.openai-api-key || '' }}
+      run: |
+        import os, subprocess, sys
+        command = [sys.executable, '-m', 'nexkit.agent_session', 'execute', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE']]
+        command = ['sudo', '-n', 'env', 'PYTHONPATH=' + os.environ['PYTHONPATH'], *command]
+        subprocess.run(command, check=True)

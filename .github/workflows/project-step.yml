@@ -1,0 +1,122 @@
+name: NexKit run a project command
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+      context_artifact_id:
+        type: string
+        required: true
+      step:
+        type: string
+        required: true
+      input_artifact_ids:
+        type: string
+        default: ''
+    outputs:
+      status:
+        description: Recorded done or blocked outcome
+        value: ${{ jobs.record.outputs.status }}
+      report_artifact_id:
+        description: Exact recorded project command report
+        value: ${{ jobs.record.outputs.report_artifact_id }}
+permissions: {}
+jobs:
+  prepare:
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+    uses: ./.github/workflows/prepare-step.yml
+    with:
+      kit_repository: ${{ inputs.kit_repository }}
+      kit_ref: ${{ inputs.kit_ref }}
+      context_artifact_id: ${{ inputs.context_artifact_id }}
+      step: ${{ inputs.step }}
+      input_artifact_ids: ${{ inputs.input_artifact_ids }}
+  execute:
+    needs: prepare
+    runs-on: ${{ fromJSON(needs.prepare.outputs.execution_runner) }}
+    timeout-minutes: ${{ fromJSON(needs.prepare.outputs.timeout_minutes) }}
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      report_artifact_id: ${{ steps.report.outputs.artifact-id }}
+    defaults:
+      run:
+        shell: python
+    steps:
+      - name: Require a configured command step
+        env:
+          NEXKIT_STEP_KIND: ${{ needs.prepare.outputs.kind }}
+        run: |
+          import os
+          if os.environ['NEXKIT_STEP_KIND'] != 'command':
+              raise SystemExit('The selected step is not a command')
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - name: Prepare the toolkit Python runtime
+        uses: ./kit/actions/python-runtime
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.context_artifact_id }}
+          path: /tmp/nexkit
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          path: source
+          persist-credentials: false
+      - name: Prepare the isolated command workspace
+        uses: ./kit/actions/command-workspace
+        with:
+          context: /tmp/nexkit
+          source: ${{ github.workspace }}/source
+          data: /tmp/nexkit
+      - name: Recheck authority before executing the project command
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: |
+          import os, subprocess, sys
+          subprocess.run([sys.executable, '-m', 'nexkit.ci', 'guard-step', '--context', os.environ['NEXKIT_DATA_DIR'], '--kit-ref', os.environ['NEXKIT_REF']], check=True)
+      - name: Execute the accepted command without model or write credentials
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_EXEC_USER: nexkit-agent
+        run: |
+          import os, subprocess, sys
+          from pathlib import Path
+          data = os.environ['NEXKIT_DATA_DIR']
+          subprocess.run([sys.executable, '-m', 'nexkit.ci', 'execute-step', '--context', data, '--workspace', os.environ['NEXKIT_WORKSPACE'], '--out', str(Path(data) / 'report.json')], check=True)
+      - id: report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-step-raw-${{ inputs.step }}-${{ github.run_attempt }}
+          path: /tmp/nexkit/report.json
+          retention-days: 7
+          if-no-files-found: error
+  record:
+    needs: [prepare, execute]
+    if: always() && needs.prepare.result == 'success' && needs.execute.outputs.report_artifact_id != ''
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+      actions: read
+    uses: ./.github/workflows/record-step.yml
+    with:
+      kit_repository: ${{ inputs.kit_repository }}
+      kit_ref: ${{ inputs.kit_ref }}
+      context_artifact_id: ${{ needs.prepare.outputs.context_artifact_id }}
+      result_artifact_id: ${{ needs.execute.outputs.report_artifact_id }}

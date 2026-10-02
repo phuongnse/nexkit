@@ -1,0 +1,36 @@
+name: NexKit agent session
+description: Dispatch the accepted session to its registered agent integration.
+inputs:
+  role:
+    required: true
+    description: request, deliver, review or task
+  context:
+    required: true
+    description: Accepted controller context JSON path
+  openai-api-key:
+    required: false
+    description: Credential for the Codex API integration
+runs:
+  using: composite
+  steps:
+    - id: adapter
+      name: Validate the prepared session and select its adapter
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        NEXKIT_ROLE: ${{ inputs.role }}
+      run: |
+        import os, subprocess, sys
+        subprocess.run([sys.executable, '-m', 'nexkit.agent_session', 'configuration', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE']], check=True)
+    - name: Run the Codex integration
+      if: steps.adapter.outputs.adapter == 'codex'
+      uses: ./kit/actions/codex-agent
+      with:
+        role: ${{ inputs.role }}
+        context: ${{ inputs.context }}
+        openai-api-key: ${{ inputs.openai-api-key }}
+    - name: Refuse an adapter without an Actions integration
+      if: steps.adapter.outputs.adapter != 'codex'
+      shell: python
+      run: raise SystemExit('The selected adapter has no registered Actions integration')

@@ -52,9 +52,10 @@ jobs:
       - name: Verify the extracted package and native Codex plugin
         shell: python
         run: |
-          import os, subprocess, sys
-          from nexkit import __version__
-          subprocess.run([sys.executable, 'scripts/verify_package.py', f'dist/nexkit-{__version__}.tar.gz', '--source-commit', os.environ['GITHUB_SHA'], '--codex', os.environ['NEXKIT_CODEX_PATH']], check=True)
+          import json, os, subprocess, sys
+          from pathlib import Path
+          version = json.loads(Path('dist/candidate.json').read_bytes())['version']
+          subprocess.run([sys.executable, 'scripts/verify_package.py', f'dist/nexkit-{version}.tar.gz', '--source-commit', os.environ['GITHUB_SHA'], '--codex', os.environ['NEXKIT_CODEX_PATH']], check=True)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: nexkit-installation-candidate-${{ runner.os }}

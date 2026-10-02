@@ -1,6 +1,8 @@
 name: NexKit checks
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
     inputs:

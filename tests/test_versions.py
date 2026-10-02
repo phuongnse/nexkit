@@ -269,6 +269,22 @@ class VersionTests(unittest.TestCase):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_script_block_header_indicators_are_not_copied_bindings(self):
+        import yaml
+
+        old = {"repository": REPO, "ref": "1" * 40, "version": "1.0.0"}
+        selected = {**old, "ref": "2" * 40, "version": "1.1.0"}
+        for header in ("|2-", "|-2", ">2-", ">-2", "|+"):
+            with self.subTest(header=header):
+                content = wrapper("intake", old["ref"]).replace(
+                    b"      - run: |\n          echo 'uses: keep this literal text'",
+                    f"      - run: {header}\n          repository: {REPO}\n          ref: {old['ref']}".encode(),
+                )
+                updated, _ = update_workflow(content, "caller.yml", old, selected, kit_root())
+                script = yaml.safe_load(updated)["jobs"]["native"]["steps"][1]["run"]
+                self.assertIn("repository: " + REPO, script)
+                self.assertIn("ref: " + old["ref"], script)
+
     def test_permission_insertion_uses_actual_property_indentation(self):
         import yaml
 
@@ -300,6 +316,15 @@ class ArchiveTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(Blocked, "copied NexKit job needs setup"):
             update_workflow(content, "caller.yml", old, selected, kit_root())
+        flow = (
+            wrapper("intake", old["ref"])
+            + (
+                "  copied:\n    runs-on: ubuntu-24.04\n"
+                f"    steps: [{{uses: actions/checkout@{'a' * 40}, with: {{repository: {REPO}, ref: '{old['ref']}'}}}}]\n"
+            ).encode()
+        )
+        with self.assertRaisesRegex(Blocked, "copied NexKit job needs setup"):
+            update_workflow(flow, "caller.yml", old, selected, kit_root())
         script = wrapper("intake", old["ref"]).replace(
             b"          echo 'uses: keep this literal text'",
             f"          repository: {REPO}\n          ref: {old['ref']}".encode(),

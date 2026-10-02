@@ -128,14 +128,19 @@ class Workflow:
                     continue
                 scalar_block = None
             # Sequence entries can start the first key on the same line.
+            sequence = re.match(r"^( *)- +", text)
             match = KEY.fullmatch(re.sub(r"^( *)- +", r"\1", text))
             if match is None:
                 if kit["repository"] + "/" in text:
                     return True
                 continue
             key, value = match[2].strip("'\""), match[3] or ""
-            if re.match(r"[|>][+-]?[0-9]?(?:\s|$)", value):
-                scalar_block = indent
+            if value.lstrip().startswith(("[", "{", "&", "*")) and (
+                kit["repository"] in value or kit["ref"] in value
+            ):
+                return True
+            if re.match(r"[|>](?:[1-9][+-]?|[+-][1-9]?)?(?:\s|$)", value):
+                scalar_block = indent + (len(sequence[0]) - len(sequence[1]) if sequence else 0)
                 continue
             scalar = SCALAR.fullmatch(value.strip())
             if scalar is None:

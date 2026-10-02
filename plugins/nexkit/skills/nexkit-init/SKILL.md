@@ -135,6 +135,13 @@ administrator; never silently weaken protections or grant blanket bypass.
 
 Pin trusted kit source. A CLI installation pin is optional; compatibility
 follows adapter capabilities and native isolation checks, never version labels.
-For updates, preview `nexkit install` before `--apply`,
-reconcile consumer edits and run `nexkit doctor --online --checks`. Delivery uses
-these accepted choices until setup deliberately changes them.
+For an installed project's release selection, read `docs/versions.md` and preview
+`nexkit use --version <release> --dry-run`. The same command without `--dry-run`
+applies an authorized selection, including a lower release when its actual
+configuration and workflow capabilities match. It verifies published assets and
+updates the derived SHA, accepted hashes and project skills together. Review
+permission diffs and preserve consumer ownership. Copied jobs, computed pins or
+unsupported mappings need a deliberate setup proposal with `nexkit install`.
+Reconcile consumer edits and run `nexkit doctor --online --checks`. Keep local
+plugin updates and provisioned runner maintenance separate. Delivery uses these
+accepted choices until setup deliberately changes them.

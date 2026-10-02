@@ -67,5 +67,5 @@ them to the project and replaces the placeholder pins and identifiers.
 
 ## Versions
 
-[Version 1.0.0 and schema 1](versions.md) explains release numbers, project pins
+[Release selection and schema 1](versions.md) explains release numbers, project pins
 and the first stable format.

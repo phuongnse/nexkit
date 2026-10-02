@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from nexkit import runner_host
+from nexkit import __version__, runner_host
 from nexkit.adapters import adapter
 from nexkit.common import Blocked, read_json, write_json
 from tests.support import project, project_document
@@ -132,7 +132,7 @@ class RunnerHostTests(unittest.TestCase):
     def test_optional_install_pin_only_selects_the_build_dependency(self):
         cfg = configuration()
         image, argv = runner_host.image_build(cfg)
-        self.assertEqual(image, "nexkit-runner:1.0.0-codex")
+        self.assertEqual(image, f"nexkit-runner:{__version__}-codex")
         self.assertNotIn("--build-arg", argv)
         cfg["engine"]["install"] = {"version": "1.2.3"}
         pinned_image, argv = runner_host.image_build(cfg)
@@ -175,7 +175,7 @@ class RunnerHostTests(unittest.TestCase):
                 self.assertFalse(value["docker_desktop_required"])
                 self.assertFalse(value["applied"])
                 self.assertFalse(value["credentials_copied"])
-                self.assertEqual(value["policy_files"], "/opt/nexkit-runner/1.0.0")
+                self.assertEqual(value["policy_files"], f"/opt/nexkit-runner/{__version__}")
                 self.assertNotIn("codex_version", value)
                 self.assertIn(value["image"], value["image_build"])
 

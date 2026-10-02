@@ -2,13 +2,13 @@
 
 [Documentation](README.md) / Versions
 
-NexKit is released as **1.0.0** with project and candidate **schema 1**.
-There is one current format. This release does not provide migrations or
-compatibility paths for earlier formats.
+NexKit **1.1.0** retains project and candidate **schema 1** from 1.0.0.
+Select a published release explicitly. Release numbers identify artifacts;
+configuration and workflow capabilities determine whether a project can use them.
 
 | Value | Purpose |
 |---|---|
-| NexKit `1.0.0` | Plugin, Python package, CLI and published archive identification |
+| NexKit `1.1.0` | Plugin, Python package, CLI and published archive identification |
 | Project `schema: 1` | Validate the accepted configuration structure |
 | `kit.ref` | Full commit SHA of the trusted toolkit code and reusable workflows |
 | `kit.version` | Identify the selected toolkit release in installation records |
@@ -16,11 +16,67 @@ compatibility paths for earlier formats.
 | Runner image ID | Bind administration to the immutable provisioned image |
 | Runner `policy_directory` | Locate the installed sandbox files |
 
+## Select a project release
+
+With a local NexKit CLI from 1.1.0 or later, run these commands in an installed
+consumer repository. Python 3.11+ and authenticated GitHub CLI (`gh`) are required
+to read the accepted toolkit repository's published release and assets.
+
+```sh
+nexkit use --version 1.1.0 --dry-run
+nexkit use --version 1.1.0
+```
+
+The first command shows file diffs; the second applies them locally. You can
+select a lower release with the same command:
+
+```sh
+nexkit use --version 1.0.0
+```
+
+`v1.0.0` is also accepted. There is no automatic selection of `latest`, `main`
+or an unreleased commit. The command reads the repository already recorded in
+`kit.repository`, resolves the exact release tag and verifies its archive,
+SHA-256 checksums, complete file manifest and clean source commit. Annotated tags
+are resolved to their commit.
+
+NexKit asks the selected toolkit to validate the project configuration in a
+fresh process without model or GitHub credentials. It checks that each called
+reusable workflow and its supplied/required inputs exist. A lower release can
+be selected whenever those actual capabilities support the current project;
+unsupported settings, missing workflows or unknown inputs stop before writes.
+This command does not migrate project schemas.
+
+The update records `kit.version` and the derived `kit.ref`, changes matching
+reusable-job `uses:` and `kit_ref` values, refreshes accepted file hashes and
+installs the selected release's project skills. Existing triggers, job order,
+models, budgets, checks, approvals and consumer source are retained. Required
+permissions are added only to the corresponding reusable-call job when the new
+workflow needs them; the dry run includes those changes. Existing permission
+grants remain in place when selecting a lower version.
+
+Version selection supports literal pins and block mappings in accepted workflow
+files. Computed pins, YAML aliases/flow mappings in inspected bindings, or copied
+controller jobs need deliberate reconciliation through [setup](project-setup.md).
+Run normal native workflow validation and PR checks before merging the update.
+Edited accepted files or managed skills are preserved: reconcile them with setup
+first. Consumer-owned workflows retain their ownership, including on uninstall.
+
+Commit the resulting configuration, workflow and skill changes together. Earlier
+run evidence and approvals do not authorize publication after a kit change;
+use the existing [recovery procedure](operations.md#read-progress-and-recover-a-run).
+Version selection does not reset work state or usage counters. Local plugin
+installation and provisioned runner images remain separate administrative steps;
+see [installation](getting-started.md) and
+[runner maintenance](self-hosted.md#runtime-and-workflow-maintenance).
+
 ## Pin trusted source
 
-Resolve `v1.0.0` to its full commit SHA before accepting setup. Both the
+Resolve `v1.1.0` to its full commit SHA before accepting initial setup. Both the
 workflow `uses:` references and `kit.ref` must name that SHA. Examples contain
-placeholders that setup must replace.
+placeholders that setup must replace. For an installed project, `nexkit use`
+performs that resolution and updates all literal reusable-job pins together;
+editing only `kit.version` cannot change the code Actions executes.
 
 Approvals, configuration, control files, checks and results belong to an exact
 candidate. Keep their hashes and revisions: changing a trusted input requires

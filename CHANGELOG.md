@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0
+
+- Select a published toolkit release with `nexkit use --version VERSION`, including
+  lower versions. Verify release assets and selected capabilities before updating
+  accepted workflow pins, hashes and project skills; preview with `--dry-run`.
+- Link issues to the current Actions attempt and result artifacts through one
+  maintained progress comment. Stream filtered public agent activity and preserve
+  bounded diagnostic reports, including failures and timeouts.
+- Preserve complete standalone task output within the validated result bound.
+- Run PR checks once per PR event; pushes to the default branch still run checks.
+- Keep project and release candidate formats at `schema: 1`; derive CI archive
+  paths from the package version.
+
 ## 1.0.0
 
 - A shared controller runtime action verifies the selected Python through sudo

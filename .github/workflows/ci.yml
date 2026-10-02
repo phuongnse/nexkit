@@ -53,7 +53,8 @@ jobs:
         shell: python
         run: |
           import os, subprocess, sys
-          subprocess.run([sys.executable, 'scripts/verify_package.py', 'dist/nexkit-1.0.0.tar.gz', '--source-commit', os.environ['GITHUB_SHA'], '--codex', os.environ['NEXKIT_CODEX_PATH']], check=True)
+          from nexkit import __version__
+          subprocess.run([sys.executable, 'scripts/verify_package.py', f'dist/nexkit-{__version__}.tar.gz', '--source-commit', os.environ['GITHUB_SHA'], '--codex', os.environ['NEXKIT_CODEX_PATH']], check=True)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: nexkit-installation-candidate-${{ runner.os }}
@@ -143,10 +144,11 @@ jobs:
           packages = Path('packages')
           linux = packages / 'nexkit-installation-candidate-Linux'
           windows = packages / 'nexkit-installation-candidate-Windows'
-          for name in ('candidate.json', 'SHA256SUMS', 'nexkit-1.0.0.tar.gz'):
-              assert (linux / name).read_bytes() == (windows / name).read_bytes(), name
           manifest = json.loads((linux / 'candidate.json').read_bytes())
+          archive = f"nexkit-{manifest['version']}.tar.gz"
+          for name in ('candidate.json', 'SHA256SUMS', archive):
+              assert (linux / name).read_bytes() == (windows / name).read_bytes(), name
           assert manifest['source_commit'] == os.environ['GITHUB_SHA']
           assert manifest['source_dirty'] is False
-          digest = hashlib.sha256((linux / 'nexkit-1.0.0.tar.gz').read_bytes()).hexdigest()
+          digest = hashlib.sha256((linux / archive).read_bytes()).hexdigest()
           print(json.dumps({'identical_native_packages': True, 'source_commit': manifest['source_commit'], 'sha256': digest, 'published': False}))

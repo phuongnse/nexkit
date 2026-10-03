@@ -122,6 +122,14 @@ permissions, runners or test data into a passing check.
 When publishing setup under required NexKit checks, read
 `docs/administration.md`. Prepare `nexkit administration` from the current
 committed default branch with proposed inputs outside the checkout. Review the
+publication App ID/slug/installation and actual repository-scoped token preflight. Follow the
+guide to install an App with only Contents/Workflows write and store its private
+key as `NEXKIT_ADMIN_APP_PRIVATE_KEY`; do not substitute a personal token or
+grant native bypass. Supply `--publisher-app-id`, `--publisher-app-slug` and
+`--publisher-installation-id`, and
+keep its key outside consumer/model workspaces. Missing capabilities stop before
+staging or model reservation. The App handles Git writes/merge while the Actions
+App remains the PR author and required-check producer. Review the
 actual installer diff, ledger, controls, preflight and runner impact before the
 authorized administrator pushes the exact bootstrap proposal. The controller
 creates a bot PR, scoped administrative verification and a fresh read-only review;

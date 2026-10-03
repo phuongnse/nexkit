@@ -2,7 +2,7 @@
 
 [Documentation](README.md) / Support scope
 
-NexKit **1.2.1** supports **GitHub and Codex**, using the single stable
+NexKit **1.2.2** supports **GitHub and Codex**, using the single stable
 [schema-1 format](versions.md).
 
 | Part | Supported choice |
@@ -41,7 +41,7 @@ experimental integration; its support boundary is documented there.
 
 ### Linux and Windows
 
-Version 1.2.1 uses one Linux runtime for managed jobs:
+Version 1.2.2 uses one Linux runtime for managed jobs:
 
 | Scope | Linux | Windows |
 |---|---|---|

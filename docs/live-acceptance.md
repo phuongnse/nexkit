@@ -120,6 +120,14 @@ owner's accepted integration scope:
   exact grant, inspect dry-run, then resume the same issue. Original consumption
   stays spent; no grant can approve a merge or override `retry: never`.
 - Run protected setup before any default-branch administration workflow exists.
+  Check initial installation and upgrades containing workflow changes with a
+  real publication App. Confirm the actual token is restricted to one repository
+  and Contents/Workflows write; PRs and required checks remain Actions-App-owned.
+  Reject missing/suspended/wrong App installations and permission denial before
+  staging or model reservation. Verify sanitized method/path/status diagnostics.
+  Interrupt tree, commit, ref and PR publication and reuse the exact candidate,
+  recorded review usage and native approval. Confirm App token revocation and
+  that neither App key nor token enters the agent/check workspace.
   Verify real bot PR authorship, actual scoped checks, separate CLI review and
   the administrator's native exact-head approval; retain native protection.
 - Verify temporary runner admission, expiry, post-merge rebind and preserved
@@ -245,7 +253,7 @@ a WSL container cannot establish native Windows application behavior.
    branch/PR jobs before adding a model login; a simulated Worker or fixture
    service is separate component evidence.
 5. Build the same clean source on both OSes. Compare archive and manifest bytes,
-   then run `python scripts/verify_package.py dist/nexkit-1.2.1.tar.gz
+   then run `python scripts/verify_package.py dist/nexkit-1.2.2.tar.gz
    --source-commit FULL_SHA --codex SELECTED_NATIVE_EXECUTABLE` on each OS. Verify
    native launchers, all packaged files and skills, reinstall and removal
    using fresh homes without login or inference.

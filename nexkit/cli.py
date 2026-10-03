@@ -228,6 +228,16 @@ def parser():
     c.add_argument("--review-calls", type=int, default=2)
     c.add_argument("--include-doc", action="append", default=[])
     c.add_argument(
+        "--publisher-app-id", type=int, required=True, help="Dedicated publication GitHub App ID"
+    )
+    c.add_argument("--publisher-app-slug", required=True, help="Exact publication GitHub App slug")
+    c.add_argument(
+        "--publisher-installation-id",
+        type=int,
+        required=True,
+        help="Exact publication App installation ID",
+    )
+    c.add_argument(
         "--online",
         action="store_true",
         help="Inspect current administrator authority, branch protection and Actions permissions",
@@ -313,6 +323,11 @@ def main(argv=None):
                 minutes=args.review_minutes,
                 calls=args.review_calls,
                 documents=args.include_doc,
+                publication={
+                    "app_id": args.publisher_app_id,
+                    "app_slug": args.publisher_app_slug,
+                    "installation_id": args.publisher_installation_id,
+                },
             )
             if args.online:
                 from .administration import preflight

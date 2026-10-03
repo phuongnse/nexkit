@@ -12,7 +12,7 @@ manifests. The setup skill combines this evidence with user decisions; the core
 has no language, framework or project-type presets. Consumer configuration lives
 in `.nexkit/project.json`.
 
-NexKit 1.2.1 uses one project format: `schema: 1`. The root contains identity,
+NexKit 1.2.2 uses one project format: `schema: 1`. The root contains identity,
 `defaults`, `pipelines` and accepted `files`. Execution settings belong in
 `defaults` or a pipeline's `settings`. See the
 [workflow contract](workflow-composition.md#configuration-contract) for the full
@@ -31,7 +31,7 @@ rejection behavior and exact continuation workflow during setup. See
 Reviewer selection can use current repository permissions or an explicit login
 list. Both the required count and waiting window belong to the consumer config.
 
-NexKit 1.2.1 supports `tasks` as an alternative work entrypoint and `steps`
+NexKit 1.2.2 supports `tasks` as an alternative work entrypoint and `steps`
 beside `invocations` for project commands or native jobs. Task pipelines use only
 read-only agent contracts and issue-mode approvals; `protects: ["complete"]`
 approves their final reports. See [project steps](project-steps.md) for the exact

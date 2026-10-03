@@ -6,6 +6,10 @@ This page is for the repository administrator. Guided and manual setup both
 need these settings. The NexKit installer writes local project files; it does
 not change GitHub settings.
 
+Protected administrative workflow updates also require the dedicated publication
+App and repository secret described in [administrative setup](administration.md#publication-authority).
+The workflow token's Contents/Actions permissions do not grant Workflows write.
+
 ## Enable the selected workflows
 
 In the repository's **Settings → Actions → General**, allow the pinned NexKit

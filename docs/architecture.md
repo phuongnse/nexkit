@@ -223,6 +223,10 @@ capacity without resetting consumption or authorizing publication.
 bootstrap proposal, metadata-only hosted publication, separate read-only agent
 review and a bot-authored PR with native exact-head administrator approval.
 Its state lives separately under `administration/` on `nexkit/state`.
+Workflow publication uses a dedicated GitHub App with repository-scoped
+Contents/Workflows write authority. GitHub Actions creates the PR and required
+checks; the independent agent receives no publication credential. Local
+preflight separately validates administrator inspection and an actual App token.
 
 ## Releases are a separate workflow
 

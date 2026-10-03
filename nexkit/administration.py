@@ -10,6 +10,7 @@ import tempfile
 from copy import deepcopy
 from pathlib import Path
 
+from .administrative_publisher import KEY_ENV, publisher, validate_publication
 from .common import Blocked, canonical, consumer_path, digest, kit_root, read_json, run, write_json
 from .criteria import coverage
 from .github import run_attempt
@@ -62,11 +63,21 @@ jobs:
       proposal_sha: ${{{{ github.sha }}}}
     secrets:
       OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
+      NEXKIT_ADMIN_APP_PRIVATE_KEY: ${{{{ secrets.NEXKIT_ADMIN_APP_PRIVATE_KEY }}}}
 """
 
 
 def plan(
-    root, project, pipeline, *, bundle=None, hosts=("codex",), minutes=10, calls=2, documents=()
+    root,
+    project,
+    pipeline,
+    *,
+    bundle=None,
+    hosts=("codex",),
+    minutes=10,
+    calls=2,
+    documents=(),
+    publication=None,
 ):
     """Prepare reviewable files; do not spend work budgets or write GitHub state."""
     import shutil
@@ -74,6 +85,7 @@ def plan(
     from .project import install
 
     root = Path(root).resolve()
+    validate_publication(publication)
     project = config(deepcopy(project))
     require(
         type(minutes) is int and 1 <= minutes <= 60 and type(calls) is int and 1 <= calls <= 5,
@@ -160,6 +172,7 @@ def plan(
         "pipeline": pipeline,
         "review": {"minutes": minutes, "calls": calls},
         "changes": changes,
+        "publication": deepcopy(publication),
     }
     validate(proposal)
     return {
@@ -179,6 +192,8 @@ def plan(
 
 
 def validate(proposal):
+    if isinstance(proposal, dict):
+        validate_publication(proposal.get("publication"))
     require(
         isinstance(proposal, dict)
         and set(proposal)
@@ -192,6 +207,7 @@ def validate(proposal):
             "pipeline",
             "review",
             "changes",
+            "publication",
         }
         and proposal["schema"] == 1,
         "Invalid administrative proposal",
@@ -394,6 +410,15 @@ def preflight(gh, proposal):
         permission.get("can_approve_pull_request_reviews") is True,
         "Allow Actions to create pull requests before administrative publication",
     )
+    try:
+        secret = gh.api(f"{gh.root}/actions/secrets/{KEY_ENV}")
+    except Blocked as exc:
+        if "HTTP 404" not in str(exc):
+            raise
+        raise Blocked(
+            f"Configure repository Actions secret {KEY_ENV} before staging administrative work"
+        ) from None
+    require(secret.get("name") == KEY_ENV, "Administrative Actions publication secret unavailable")
     review = review_settings(cfg)
     labels = agent_runner(review)
     if isinstance(labels, list):
@@ -408,10 +433,20 @@ def preflight(gh, proposal):
             ),
             "No online runner matches the accepted administrator reviewer settings",
         )
+    with publisher(gh, proposal) as publication:
+        binding = deepcopy(publication.binding)
     return {
         "default_branch_and_controls_verified": True,
         "rules": audit,
         "actions_can_create_pr": True,
+        "administrator_inspection_verified": True,
+        "publication": {
+            **binding,
+            "actions_secret_configured": True,
+            "actions_key_identity_verified": False,
+            "effective_token_verified": True,
+            "live_candidate_publication_verified": False,
+        },
         "live_model_access_verified": False,
         "subscription_bootstrap_admission": "An exact temporary host admission is required when the reviewer uses a subscription runner.",
     }
@@ -525,17 +560,37 @@ def prepare(gh, identifier, proposal_sha, kit_ref):
             return {"ready": False, "completed": True, "state": state}
         require(pr["state"] == "open", "Administrative PR was closed; do not recreate it")
     cfg = current(gh, proposal)
-    state.update(proposal=proposal, authority=state.get("authority", authority))
     branch = "nexkit/administration-" + identifier[:24]
-    if not state.get("head"):
+    # Credential inspection precedes any state/publication write or model
+    # reservation. Only Git object/ref writes use the scoped App credential.
+    with publisher(gh, proposal) as publication:
+        require(
+            not state.get("publication") or state["publication"] == publication.binding,
+            "Administrative App installation or publication authority changed; prepare a new proposal",
+        )
+        state.update(
+            proposal=proposal,
+            authority=state.get("authority", authority),
+            publication=deepcopy(publication.binding),
+            branch=branch,
+        )
+        revision = gh.save_administration(identifier, state, revision)
         try:
-            head = gh.ref(branch)
-            verify(gh, proposal, head)
+            existing = gh.ref(branch)
         except Blocked as exc:
             if "HTTP 404" not in str(exc):
                 raise
+            existing = None
+        if existing:
+            require(
+                not state.get("head") or state["head"] == existing,
+                "Administrative branch candidate changed",
+            )
+            verify(gh, proposal, existing)
+            state["head"] = existing
+        elif not state.get("head"):
             base = gh.api(f"{gh.root}/git/commits/{proposal['base']}")
-            tree = gh.api(
+            tree = publication.api(
                 f"{gh.root}/git/trees",
                 "POST",
                 {
@@ -555,32 +610,46 @@ def prepare(gh, identifier, proposal_sha, kit_ref):
                     ],
                 },
             )
-            commit = gh.api(
+            # Stable metadata makes an interrupted commit creation reproducible.
+            # Identity grants no authority; GitHub authenticates the App token.
+            author = {
+                "name": proposal["publication"]["app_slug"] + "[bot]",
+                "email": proposal["publication"]["app_slug"] + "[bot]@users.noreply.github.com",
+                "date": base["committer"]["date"],
+            }
+            commit = publication.api(
                 f"{gh.root}/git/commits",
                 "POST",
                 {
                     "message": "Apply accepted NexKit administrative setup " + identifier,
                     "tree": tree["sha"],
                     "parents": [proposal["base"]],
+                    "author": author,
+                    "committer": author,
                 },
             )
-            head = commit["sha"]
-            gh.api(f"{gh.root}/git/refs", "POST", {"ref": "refs/heads/" + branch, "sha": head})
-        state.update(head=head, branch=branch)
-        pr = gh.pull_for_branch(branch)
-        if not pr:
-            pr = gh.api(
-                f"{gh.root}/pulls",
-                "POST",
-                {
-                    "head": branch,
-                    "base": proposal["project"]["default_branch"],
-                    "title": "Apply accepted NexKit setup",
-                    "body": f"Administrative proposal `{identifier}` against `{proposal['base']}`.\n\nIndependent administrative review and an actual administrator PR approval are required. Existing work consumption is preserved. Changed inputs invalidate earlier work evidence; update affected runner admission before resuming pipelines.",
-                },
-            )
-        state.update(pr=pr["number"], status="reviewing")
+            state["head"] = commit["sha"]
         revision = gh.save_administration(identifier, state, revision)
+        if not existing:
+            verify(gh, proposal, state["head"])
+            publication.api(
+                f"{gh.root}/git/refs", "POST", {"ref": "refs/heads/" + branch, "sha": state["head"]}
+            )
+        if not state.get("pr"):
+            pr = gh.pull_for_branch(branch)
+            if not pr:
+                pr = gh.api(
+                    f"{gh.root}/pulls",
+                    "POST",
+                    {
+                        "head": branch,
+                        "base": proposal["project"]["default_branch"],
+                        "title": "Apply accepted NexKit setup",
+                        "body": f"Administrative proposal `{identifier}` against `{proposal['base']}`.\n\nIndependent administrative review and an actual administrator PR approval are required. Existing work consumption is preserved. Changed inputs invalidate earlier work evidence; update affected runner admission before resuming pipelines.",
+                    },
+                )
+            state.update(pr=pr["number"], status="reviewing")
+            revision = gh.save_administration(identifier, state, revision)
     pr = pull_subject(gh, state, proposal)
     require(
         pr["state"] == "open" and not pr.get("merged_at"), "Administrative PR is no longer open"
@@ -627,6 +696,7 @@ def prepare(gh, identifier, proposal_sha, kit_ref):
         "run_key": authority["run_key"],
         "candidate": candidate,
         "verification": verification,
+        "publication": deepcopy(state["publication"]),
         "agent_minutes": proposal["review"]["minutes"],
         "reused_review": not ready,
     }
@@ -654,7 +724,9 @@ def guard(gh, context):
     )
     state, revision = gh.get_administration(info["id"])
     require(
-        state.get("context") == digest(context) and state["head"] == context["source"],
+        state.get("context") == digest(context)
+        and state["head"] == context["source"]
+        and state.get("publication") == context.get("publication"),
         "Administrative session was superseded",
     )
     current(gh, proposal)
@@ -732,15 +804,21 @@ def finish(gh, context, report=None):
         }
     # Revalidate immediately before publication. Native protection also retains
     # its required review count and all GitHub approval restrictions.
-    guard(gh, context)
-    require(
-        administrator_review(gh, state) == approvals, "Administrative approval changed before merge"
-    )
-    result = gh.api(
-        f"{gh.root}/pulls/{state['pr']}/merge",
-        "PUT",
-        {"sha": state["head"], "merge_method": "squash"},
-    )
+    with publisher(gh, context["administration"]["proposal"]) as publication:
+        require(
+            publication.binding == state["publication"],
+            "Administrative publication authority changed before merge",
+        )
+        guard(gh, context)
+        require(
+            administrator_review(gh, state) == approvals,
+            "Administrative approval changed before merge",
+        )
+        result = publication.api(
+            f"{gh.root}/pulls/{state['pr']}/merge",
+            "PUT",
+            {"sha": state["head"], "merge_method": "squash"},
+        )
     require(
         result.get("merged") is True,
         "Native protection did not accept the administrative candidate",

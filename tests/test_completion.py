@@ -72,7 +72,9 @@ class CompletionTests(unittest.TestCase):
 
     def review(self, context, *, extra=True):
         value = reviewed(context["candidate"])
-        if extra:
+        if extra and any(
+            item["number"] == 3 for item in context.get("completion_plan", {}).get("targets", [])
+        ):
             value["result"]["acceptance"].append(
                 {
                     "criterion": "Issue #3 completion",

@@ -30,6 +30,12 @@
       "agent_minutes": 10,
       "max_calls": 3
     },
+    "recovery": {
+      "enabled": true,
+      "checkpoint_seconds": 60,
+      "max_checkpoints": 6,
+      "retention_days": 7
+    },
     "environment": {
       "runner": "ubuntu-24.04",
       "agent_runner": "ubuntu-24.04",

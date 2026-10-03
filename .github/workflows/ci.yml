@@ -153,3 +153,34 @@ jobs:
           assert manifest['source_dirty'] is False
           digest = hashlib.sha256((linux / archive).read_bytes()).hexdigest()
           print(json.dumps({'identical_native_packages': True, 'source_commit': manifest['source_commit'], 'sha256': digest, 'published': False}))
+  checkpoint-transport:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/python-runtime
+      - name: Prepare sealed source fixture without credentials or model access
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 kit/tests/checkpoint_transport_probe.py prepare
+      - name: Start the trusted live artifact transport
+        uses: ./kit/actions/agent-checkpoint
+        with:
+          role: deliver
+          context: /tmp/nexkit/context.json
+          source: /tmp/nexkit-transport-fixture/source
+      - name: Force a process timeout with no final result
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: sudo -n env PYTHONPATH="$PYTHONPATH" python3 kit/tests/checkpoint_transport_probe.py interrupt
+      - name: Download completed artifacts and recover after removing the old agent disk
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 kit/tests/checkpoint_transport_probe.py finish

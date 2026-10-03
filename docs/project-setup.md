@@ -272,6 +272,12 @@ default branch. Then run `nexkit doctor --online --checks` against the installed
 configuration. A `ready` result describes configuration and checks; live model
 access needs its own verification.
 
+For a protected default branch, use [administrative setup](administration.md)
+from an unchanged committed base. It previews the installer, creates a bot PR,
+performs scoped administrative verification and independent review, and requires
+the actual administrator's exact-head native approval. It also supports the
+first installation before a default-branch administration workflow exists.
+
 ## Change settings later
 
 Open the project and use `nexkit-init` again. For example:
@@ -288,6 +294,9 @@ Or:
 The agent prepares a separate proposed config and bundle. Preview and apply
 them through the installer so recorded hashes and managed files stay in sync.
 Editing the installed config directly can cause an installation mismatch.
+Use the protected administrative path when publishing those changes under
+required NexKit checks. Inspect old candidate/checkpoint evidence and preserved
+usage, then update affected runner admission before resuming work.
 Changing accepted settings can invalidate earlier run evidence; review any
 in-progress work as part of the update.
 

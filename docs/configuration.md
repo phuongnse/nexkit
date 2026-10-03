@@ -55,6 +55,7 @@ audit pipeline does not need dummy model or release settings.
 | `reasoning_effort` | Optional object declaring `implement` and `review`; forwarded to the official action or CLI |
 | `limits` | `attempts` (1–20), `agent_calls` (1–40; delivery requires at least 2 with separate clarification or 3 with shared clarification), `minutes` (1–1440), `command_seconds` (1–3600). Tasks without agents may omit `agent_calls` |
 | `clarification` | Optional separate conversation settings: required `agent_minutes` (1–60), optional positive `max_calls`; omitted/null `max_calls` means no conversation-count cap |
+| `recovery` | Optional checkpoint settings: `enabled` (default true), `checkpoint_seconds` (10–3600, default 60), `max_checkpoints` (2–8, default 6), `retention_days` (1–90, default 7); see [work recovery](recovery.md) |
 | `environment` | Explicit Ubuntu release label for controller/check/release jobs, with Linux/x64 and Python 3.11+; `ubuntu-24.04` is the CI reference. Optional `agent_runner` for CLI jobs; `setup` commands as argument arrays |
 | `application` | `present` or `absent` at setup; new repositories still declare intended checks before delivery |
 | `checks` | Actual commands, each with `name`, `kind`, `argv`, `timeout_seconds` |
@@ -231,6 +232,12 @@ failed runs still consume reservations. Total calls and the delivery subtotal
 remain recorded across retries. Delivery elapsed
 time starts at its first attempt and survives retries. Release has its own
 elapsed window. Neither is reset by conversation or resume.
+
+An actual administrator can grant bounded, issue-scoped additions with
+`nexkit budget`; [work recovery](recovery.md#continue-after-exhaustion) explains
+the exact native decision, revalidation and preserved usage. Only recorded
+waiting on budget exhaustion is excluded from delivery elapsed time. Additional
+capacity does not extend the configured timeout of an individual call.
 
 To use one shared budget, **omit the `clarification` object**. This mode reserves
 one call per clarification and two per delivery round. At least three available

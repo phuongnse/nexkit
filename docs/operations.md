@@ -29,7 +29,9 @@ declared application checks.
 | Every tool fails with `bwrap: Can't mkdir parents` / `Read-only file system` | Check the private directory profile and controller path. Supplied workflows use `/tmp/nexkit`; the adapter removes redundant denied children and tests source reads before login/model use |
 | `A session for this runner already exists` after restart | Use the supplied image with `RUNNER_MANUALLY_TRAP_SIG=1`; stop through the runner service so the listener gets its shutdown signal. Verify a job after stop/start |
 | Model login or allowance failed | Ask the runner/account administrator to repair the configured authentication or available allowance, then inspect the saved usage before resuming |
-| A call, round or time limit was reached | Review the consumed usage and decide whether to change setup; resume keeps the same counters |
+| A call, round or time limit was reached | Review usage and remaining scope; an administrator can approve [bounded extra issue capacity](recovery.md#continue-after-exhaustion); resume keeps spent usage |
+| An agent timed out before returning JSON | Inspect [public checkpoints](recovery.md), retention and `resume --dry-run`; fresh execution must recheck restored work |
+| A setup PR lacks required NexKit checks or its sole author cannot approve it | Prepare [protected administrative setup](administration.md) for a bot PR and actual independent administrative checks/review |
 | Installed config or file hashes differ | Prepare an update through `nexkit-init` and the installer; reconcile local edits with its recorded files |
 | A check or review failed | Read the actual result. An allowed repair round may follow; a stopped run needs its stated blocker resolved |
 | A release is partly published | Inspect the same candidate and its original artifacts; use the recovery procedure below |

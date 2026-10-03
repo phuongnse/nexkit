@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Publish protected setup through exact administrator proposals, bot PRs,
+  scoped verification, independent review and native administrator approval.
+- Persist public partial source/drafts independently of final agent results,
+  discover completed checkpoints after interruption and restore fresh sessions.
+- Allow exact administrator-approved additional issue capacity while preserving
+  all spent usage; inspect checkpoint retention and pending decisions with dry-run.
+- Require independent review to cover the approved acceptance criterion inventory.
+
 ## 1.1.0
 
 - Select a published toolkit release with `nexkit use --version VERSION`, including

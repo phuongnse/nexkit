@@ -28,6 +28,7 @@ SETTINGS = {
     "issue_completion",
     "release",
     "checks",
+    "recovery",
 }
 
 

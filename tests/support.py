@@ -109,7 +109,7 @@ def issue():
     return {
         "number": 1,
         "title": "Handle negative integers",
-        "body": "<!-- nexkit:request:maintenance:change -->\n<!-- nexkit:pipeline:maintenance -->\nCLI must sum negative and positive integers.",
+        "body": "<!-- nexkit:request:maintenance:change -->\n<!-- nexkit:pipeline:maintenance -->\nCLI must sum negative and positive integers.\n\n## Acceptance criteria\n- [AC1] Signed integers are summed.\n",
         "state": "open",
         "html_url": "https://github.com/owner/project/issues/1",
         "last_edited_at": None,
@@ -141,7 +141,7 @@ def agent(role="deliver"):
             findings=[],
             acceptance=[
                 {
-                    "criterion": "Signed integers are summed",
+                    "criterion": "AC1",
                     "evidence": "CLI -2 5 returns 3",
                     "passed": True,
                 }
@@ -159,9 +159,19 @@ def verified(key):
 
 
 def reviewed(key):
+    result = agent("review")
+    if isinstance(key.get("criteria"), list):
+        result["acceptance"] = [
+            {
+                "criterion": item["id"],
+                "evidence": "Simulated evidence: " + item["text"],
+                "passed": True,
+            }
+            for item in key["criteria"]
+        ]
     return {
         "candidate": deepcopy(key),
-        "result": agent("review"),
+        "result": result,
         "unchanged": True,
         "independent": True,
     }
@@ -265,6 +275,8 @@ class FakeGitHub:
         self.branches[self.pr["base"]["ref"]] = sha
 
     def api(self, path, method="GET", data=None, **kwargs):
+        if "/actions/runs/" in path and "/artifacts?" in path:
+            return []
         if path.endswith("/timeline?per_page=100"):
             return []
         if path == f"{self.root}/issues/{self.work['number']}" and method == "PATCH":

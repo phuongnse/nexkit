@@ -8,6 +8,7 @@ from datetime import datetime
 
 from .cli import MANUAL_SPEC_NOTICE, SPEC_MARKER, requirement_approval_text, set_spec
 from .common import Blocked, canonical, digest, read_json, short_summary, write_json
+from .github import run_attempt
 from .pipelines import bind_state, current_config, issue_pipeline, load_run_config
 from .policy import (
     agent_result,
@@ -79,6 +80,12 @@ def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
     if issue.get("state") == "closed" or state.get("status") in {"merged", "released", "completed"}:
         return {"ready": False, "reason": "Work item is closed or already completed"}
     phase = state.get("clarification", {})
+    if (
+        phase.get("status") == "clarifying"
+        and phase.get("run_key")
+        and run_attempt(gh, phase["run_key"]).get("status") != "completed"
+    ):
+        return {"ready": False, "reason": "Previous clarification run is still active"}
     try:
         issue = unapproved(gh, number)
         require(
@@ -90,6 +97,15 @@ def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
         base = gh.ref(repo["default_branch"])
         cfg = load_run_config(gh, base, pipeline, "clarify")
         bind_state(state, cfg)
+        from .checkpoints import discover
+
+        state, revision = discover(gh, number)
+        bind_state(state, cfg)
+        phase = state.get("clarification", {})
+        from .budgets import limit
+        from .budgets import reconcile as reconcile_budget
+
+        extended = reconcile_budget(gh, issue, cfg, state)
         require(
             cfg["repository"] == gh.repository and cfg["default_branch"] == repo["default_branch"],
             "Project identity changed",
@@ -111,25 +127,48 @@ def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
                 gh.save_state(number, state, revision)
             return {"ready": False, "reason": "No new requirement input"}
         require(phase.get("run_key") != run_key, "Duplicate clarification run")
-        if not limits["shared_delivery_budget"] and phase.get("input") == fingerprint:
+        if (
+            not limits["shared_delivery_budget"]
+            and phase.get("input") == fingerprint
+            and not extended
+        ):
             return {
                 "ready": False,
                 "reason": "This input already reserved a clarification call; add a new comment or /nexkit resume",
             }
+        from .checkpoints import select
+
+        select(
+            state,
+            {
+                "issue": issue,
+                "config": cfg,
+                "base": base,
+                "source": base,
+                "run_key": run_key,
+                "answers": answers,
+            },
+            "request",
+        )
         require(
-            limits["max_calls"] is None or phase.get("calls", 0) < limits["max_calls"],
+            limits["max_calls"] is None
+            or phase.get("calls", 0)
+            < limit(state, cfg, "clarification_calls", limits["max_calls"]),
             "Requirement clarification attempts exhausted",
         )
         minutes = limits["agent_minutes"]
         if limits["shared_delivery_budget"]:
             require(
-                state.get("agent_calls", 0) + 1 <= cfg["limits"]["agent_calls"],
+                state.get("agent_calls", 0) + 1 <= limit(state, cfg, "agent_calls"),
                 "Agent invocation budget exhausted",
             )
             require(
-                phase.get("reserved_minutes", 0) + minutes <= cfg["limits"]["minutes"],
+                phase.get("reserved_minutes", 0) + minutes <= limit(state, cfg, "minutes"),
                 "Requirement clarification time budget exhausted",
             )
+        from .budgets import end_wait
+
+        end_wait(state)
         phase.update(
             status="clarifying",
             activity=short_summary(f"Clarifying requirement: {issue['title']}"),
@@ -140,8 +179,7 @@ def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
             input=fingerprint,
         )
         state.update(clarification=phase, agent_calls=state.get("agent_calls", 0) + 1)
-        gh.save_state(number, state, revision)
-        return {
+        context = {
             "ready": True,
             "stage": "requirement",
             "repository": gh.repository,
@@ -156,6 +194,9 @@ def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
             "agent_minutes": minutes,
             "input": fingerprint,
         }
+        phase["checkpoint_context"] = digest(context)
+        gh.save_state(number, state, revision)
+        return context
     except Blocked as exc:
         # Never disturb an approved delivery merely because a delayed comment
         # event also reached this workflow.
@@ -163,8 +204,14 @@ def prepare(gh, number, run_key, kit_ref, event, *, pipeline=None):
         saved_phase = saved.get("clarification", {})
         if saved_phase.get("run_key") != phase.get("run_key"):
             return {"ready": False, "reason": str(exc)}
-        state, revision, phase = saved, saved_revision, saved_phase
+        if saved_revision != revision:
+            state = saved
+        revision = saved_revision
+        phase = state.get("clarification", {})
         phase.update(status="waiting", reason=str(exc))
+        from .budgets import mark_wait
+
+        mark_wait(state, str(exc))
         state["clarification"] = phase
         gh.save_state(number, state, revision)
         return {"ready": False, "reason": str(exc)}
@@ -187,6 +234,9 @@ def revalidate(gh, context):
     current_config(gh, context["base"], cfg)
     state, revision = gh.get_state(issue["number"])
     bind_state(state, cfg)
+    from .budgets import validate as validate_budget
+
+    validate_budget(gh, issue, cfg, state)
     phase = state.get("clarification", {})
     require(
         phase.get("run_key") == context["run_key"] and phase.get("status") == "clarifying",
@@ -252,8 +302,15 @@ def publish(gh, context, bundle):
         if unchanged
         else prefix + SPEC_MARKER + result["specification"].rstrip() + "\n"
     )
+    if result["ready_for_approval"]:
+        from .criteria import specification_criteria
+
+        specification_criteria({**context["issue"], "body": body})
     target = spec_hash({**context["issue"], "body": body})
     phase = state["clarification"]
+    from .checkpoints import consume
+
+    consume(state, context, "request", bundle)
     message = (
         "<!-- nexkit:clarification:"
         + digest(
@@ -421,6 +478,12 @@ def main():
             elif args.operation == "publish":
                 result = publish(gh, context, read_json(args.result))
             else:
+                from .checkpoints import record as record_checkpoint
+
+                try:
+                    record_checkpoint(gh, context, "request")
+                except (Blocked, OSError, ValueError):
+                    pass
                 state, revision = gh.get_state(context["issue"]["number"])
                 phase = state.get("clarification", {})
                 if (

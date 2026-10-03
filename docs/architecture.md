@@ -213,6 +213,17 @@ original artifact bytes. The [recovery guide](operations.md) explains those
 limits. State and reports are visible to repository readers. Model credentials
 belong in the configured secret store or runner login directory.
 
+[Work checkpoints](recovery.md) persist public partial source/drafts independently
+of final result collection. The controller binds artifacts to native attempts
+and reservations, discovers them after interruption and treats restoration as
+untrusted input to fresh execution. An exact administrator grant can add issue
+capacity without resetting consumption or authorizing publication.
+
+[Administrative setup](administration.md) uses an exact administrator-owned
+bootstrap proposal, metadata-only hosted publication, separate read-only agent
+review and a bot-authored PR with native exact-head administrator approval.
+Its state lives separately under `administration/` on `nexkit/state`.
+
 ## Releases are a separate workflow
 
 When you choose to release, prepare a candidate with an exact commit, version

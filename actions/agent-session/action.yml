@@ -34,6 +34,11 @@ runs:
       run: |
         import os, subprocess, sys
         subprocess.run([sys.executable, '-m', 'nexkit.agent_observability', 'begin', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE']], check=True)
+    - name: Begin durable checkpoints before the timed native session
+      uses: ./kit/actions/agent-checkpoint
+      with:
+        role: ${{ inputs.role }}
+        context: ${{ inputs.context }}
     - id: integration
       name: Run the Codex integration
       if: steps.adapter.outputs.adapter == 'codex'

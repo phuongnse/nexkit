@@ -138,6 +138,11 @@ become validated pipeline inputs. The issue's progress comment links the exact
 run attempt and available reports. See
 [activity and recovery](operations.md#read-progress-and-recover-a-run).
 
+[Public checkpoints](recovery.md) can preserve unfinished source or task/review
+drafts before a final report exists. Only exact complete artifacts are restored
+as untrusted input. A successful resumed call still needs normal recording,
+fresh checks and independent review; checkpoint text cannot approve later work.
+
 Preparation reserves one delivery round. Each selected invocation reserves one
 CLI call before starting; unused optional calls cost no reservation. Failed
 calls retain their reservation. The same invocation ID can run once per run

@@ -1,0 +1,42 @@
+name: NexKit agent checkpoints
+description: Install the pinned artifact transport and start an isolated trusted monitor.
+inputs:
+  role:
+    required: true
+    description: Accepted agent role
+  context:
+    required: true
+    description: Accepted session context
+  source:
+    required: false
+    default: ${{ github.workspace }}/source
+    description: Trusted source checkout for this session
+runs:
+  using: composite
+  steps:
+    - id: sdk
+      name: Prepare the locked artifact SDK without installation scripts
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}/kit
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+      run: |
+        import os, shutil, subprocess
+        from pathlib import Path
+        from nexkit.common import read_json
+        from nexkit.checkpoints import settings
+        if settings(read_json(os.environ['NEXKIT_CONTEXT']))['enabled']:
+            folder = Path(os.environ['RUNNER_TEMP']) / 'nexkit-artifact-sdk'
+            folder.mkdir(exist_ok=True)
+            for name in ('package.json', 'package-lock.json'):
+                shutil.copyfile(Path(os.environ['GITHUB_WORKSPACE']) / 'kit/actions/checkpoint-artifact' / name, folder / name)
+            subprocess.run(['npm', 'ci', '--prefix', str(folder), '--ignore-scripts', '--no-audit', '--no-fund'], check=True)
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                output.write('enabled=true\nsdk=' + str(folder) + '\n')
+    - uses: ./kit/actions/checkpoint-artifact
+      if: steps.sdk.outputs.enabled == 'true'
+      with:
+        role: ${{ inputs.role }}
+        context: ${{ inputs.context }}
+        source: ${{ inputs.source }}
+        sdk: ${{ steps.sdk.outputs.sdk }}

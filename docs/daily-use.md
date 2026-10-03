@@ -90,6 +90,14 @@ read the new version and submit the specification again.
 The issue keeps the original request in a collapsed section. Open it when you
 need that history; the visible specification is the requirement being reviewed.
 
+A ready specification includes one `## Acceptance criteria` section containing
+an explicit Markdown list. Give criteria stable IDs, for example
+`- [AC1] Negative integers are summed correctly.` The controller derives IDs
+from criterion text for existing lists without IDs. An approving reviewer must
+cover every candidate criterion ID exactly once with current evidence; omitted,
+duplicate or invented criteria block acceptance. Old specifications without an
+explicit list need a reviewed specification update and fresh approval.
+
 ## 3. Approve the specification
 
 Read the current specification and acceptance criteria. When the bot says it is
@@ -193,6 +201,11 @@ You can also comment `/nexkit cancel` or `/nexkit resume` on the issue.
 Cancellation does not undo commits or a completed merge. Resume does not grant
 approval or refill the usage budget. Inspect the latest Actions run before
 retrying a failure. See [troubleshooting](operations.md) for common cases.
+
+For interrupted work, inspect `nexkit recovery 42` and
+`nexkit resume 42 --dry-run`. After reviewing exhausted work, an actual
+administrator may approve bounded extra capacity through `nexkit budget 42`.
+This preserves the same issue and all spent usage. See [work recovery](recovery.md).
 
 ## 6. Prepare a release when you choose
 

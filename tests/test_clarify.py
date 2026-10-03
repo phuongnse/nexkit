@@ -50,7 +50,7 @@ def result(context, questions=None):
     value = agent("request")
     value.update(
         reply="The specification is ready for review. The CLI will handle signed integers.",
-        specification="## Goal\n\nSum signed integers.\n\n## Acceptance\n\n- CLI -2 -3 prints -5.\n- No arguments print 0.",
+        specification="## Goal\n\nSum signed integers.\n\n## Acceptance criteria\n\n- [AC1] CLI -2 -3 prints -5.\n- [AC2] No arguments print 0.",
         questions=questions or [],
         ready_for_approval=not questions,
     )

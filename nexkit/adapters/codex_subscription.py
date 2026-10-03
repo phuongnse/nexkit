@@ -308,7 +308,7 @@ def execute(context, role, *, data=Path("/tmp/nexkit")):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         minutes = (
             context["agent_minutes"]
-            if role == "request" or "invocation" in context
+            if role == "request" or "invocation" in context or "administration" in context
             else max(1, min(60, cfg["limits"]["minutes"] // 2))
         )
         require(isinstance(minutes, int) and 1 <= minutes <= 60, "Invalid session reservation")

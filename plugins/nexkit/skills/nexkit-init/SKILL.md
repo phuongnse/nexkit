@@ -119,6 +119,19 @@ permissions. Apply only the setup choices authorized by the user. Use
 verification. Diagnose any non-ready capability; do not turn missing secrets,
 permissions, runners or test data into a passing check.
 
+When publishing setup under required NexKit checks, read
+`docs/administration.md`. Prepare `nexkit administration` from the current
+committed default branch with proposed inputs outside the checkout. Review the
+actual installer diff, ledger, controls, preflight and runner impact before the
+authorized administrator pushes the exact bootstrap proposal. The controller
+creates a bot PR, scoped administrative verification and a fresh read-only review;
+the actual administrator approves its exact head through native GitHub review.
+Never approve on their behalf or reuse application check claims for setup. Use
+temporary exact proposal/commit admission on a capable stopped subscription
+runner, and rebind after merge. Preserve issue usage and registration/login data;
+an older image needs explicit maintenance. Changed accepted inputs invalidate
+old candidate/checkpoint evidence.
+
 Preview the exact workflow/control bundle with `--bundle <dir>`.
 List ownership and removals as well as additions. Hash accepted control files,
 pin external workflow/action references, inspect job permissions and validate

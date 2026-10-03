@@ -23,7 +23,7 @@ class ManualSpecificationTests(unittest.TestCase):
     def setUp(self):
         self.gh = ExistingIssueGitHub()
         self.gh.work["body"] = RequirementGitHub().work["body"]
-        self.specification = "## Goal\n\nSum signed integers.\n"
+        self.specification = "## Goal\n\nSum signed integers.\n\n## Acceptance criteria\n- [AC1] The CLI sums signed integers.\n"
         self.enterContext(
             patch.dict(
                 os.environ,

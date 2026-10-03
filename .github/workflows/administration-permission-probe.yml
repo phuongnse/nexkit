@@ -31,7 +31,9 @@ jobs:
           outcomes = {}
           for case, path in [('ordinary', 'permission-probe.txt'), ('workflow', '.github/workflows/permission-probe.yml')]:
               tree = api(root + '/git/trees', 'POST', {'base_tree': base['tree']['sha'], 'tree': [{'path': path, 'mode': '100644', 'type': 'blob', 'content': '# isolated publication permission probe\n'}]})
-              assert tree
+              if tree is None:
+                  outcomes[case] = False
+                  continue
               commit = api(root + '/git/commits', 'POST', {'message': 'Isolated administrative permission probe ' + case, 'tree': tree['sha'], 'parents': [base['sha']]})
               assert commit
               branch = 'nexkit/permission-probe-' + os.environ['GITHUB_RUN_ID'] + '-' + case

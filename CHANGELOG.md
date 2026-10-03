@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
 - Publish protected setup through exact administrator proposals, bot PRs,
   scoped verification, independent review and native administrator approval.

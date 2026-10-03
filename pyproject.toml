@@ -1,6 +1,6 @@
 [project]
 name = "nexkit"
-version = "1.1.0"
+version = "1.2.0"
 description = "Agents. Skills. One workflow."
 requires-python = ">=3.11"
 

@@ -10,6 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
+from nexkit import __version__
 from nexkit.cli import create_request, intake_status, submit
 from nexkit.common import Blocked, digest, read_json, write_json
 from nexkit.delivery import failed, prepare, publish
@@ -343,11 +344,13 @@ class BundleTests(unittest.TestCase):
     def test_doctor_reports_a_different_local_toolkit_version_without_blocking_configuration(self):
         self.install()
         baseline = doctor(self.root, self.cfg)["pipelines"]["maintenance"]
-        self.cfg["kit"]["version"] = "1.2.0"
+        prefix, patch_version = __version__.rsplit(".", 1)
+        different_version = f"{prefix}.{int(patch_version) + 1}"
+        self.cfg["kit"]["version"] = different_version
         result = doctor(self.root, self.cfg)["pipelines"]["maintenance"]
         self.assertEqual(result["ready"], baseline["ready"])
         self.assertEqual(result["problems"], baseline["problems"])
-        self.assertEqual(result["kit"]["configured"]["version"], "1.2.0")
+        self.assertEqual(result["kit"]["configured"]["version"], different_version)
         self.assertEqual(len(result["warnings"]), 1)
         self.assertIn("accepted kit.ref", result["warnings"][0])
 

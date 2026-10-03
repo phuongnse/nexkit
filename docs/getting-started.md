@@ -73,11 +73,11 @@ by a CI runner are configured separately.
 
 Keep NexKit in a tools directory alongside your projects:
 
-Install version 1.1.0 from its release tag. Project setup records the full
+Install version 1.2.0 from its release tag. Project setup records the full
 commit SHA so each workflow uses the same immutable NexKit source.
 
 ```sh
-git clone --branch v1.1.0 https://github.com/phuongnse/nexkit.git
+git clone --branch v1.2.0 https://github.com/phuongnse/nexkit.git
 cd nexkit
 export PATH="$PWD/bin:$PATH"
 nexkit --version
@@ -86,7 +86,7 @@ nexkit --version
 On native Windows, use PowerShell:
 
 ```powershell
-git clone --branch v1.1.0 https://github.com/phuongnse/nexkit.git
+git clone --branch v1.2.0 https://github.com/phuongnse/nexkit.git
 Set-Location nexkit
 $nexkitSource = (Get-Location).Path
 $env:Path = "$nexkitSource\bin;$env:Path"
@@ -125,7 +125,21 @@ The bundled marketplace is named `personal`. Use the **NexKit repository root**
 for the first command; that directory contains the marketplace catalog and the
 plugin it points to. Use a Codex CLI with plugin support. The
 [official marketplace guide](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli)
-explains local sources.
+explains local and Git sources.
+
+Alternatively, add the released marketplace directly from GitHub instead of
+registering the local checkout:
+
+```sh
+codex plugin marketplace add phuongnse/nexkit --ref v1.2.0
+codex plugin add nexkit@personal
+```
+
+Either source installs the same nine plugin skills. Keep the toolkit CLI from
+step 2 available separately; plugin installation does not add `nexkit` to `PATH`
+or configure an application's GitHub workflows and model access. The repository
+marketplace is a distribution source; a GitHub release does not submit the plugin
+to OpenAI's public Plugins Directory.
 
 Now open a new session from your application repository:
 

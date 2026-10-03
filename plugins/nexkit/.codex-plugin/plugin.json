@@ -1,6 +1,6 @@
 {
   "name": "nexkit",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Set up and operate coding workflows from your project's decisions.",
   "author": {"name": "NexKit contributors"},
   "repository": "https://github.com/phuongnse/nexkit",

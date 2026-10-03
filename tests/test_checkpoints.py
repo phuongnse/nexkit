@@ -31,7 +31,7 @@ from nexkit.checkpoints import (
 from nexkit.ci import collect, materialize
 from nexkit.common import Blocked, digest, read_json, run, write_json
 from nexkit.policy import now
-from nexkit.workspace import snapshot
+from nexkit.workspace import remove, snapshot
 from runner.job_hook import stop_checkpoint_monitor
 from tests.support import FakeGitHub, issue
 from tests.test_agent_session import AcceptedSessionTests
@@ -39,6 +39,8 @@ from tests.test_agent_session import AcceptedSessionTests
 
 class CheckpointTests(unittest.TestCase):
     def setUp(self):
+        # Portable snapshot contracts; native OS enforcement has separate coverage.
+        self.enterContext(patch("nexkit.agent_session.require_native", return_value="linux"))
         self.temporary = tempfile.TemporaryDirectory(prefix="nexkit-checkpoints-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
@@ -99,12 +101,44 @@ class CheckpointTests(unittest.TestCase):
         folder, manifest = self.interrupted()
         self.assertTrue(manifest["untrusted_partial_work"])
         self.assertFalse((self.root / "collected.json").exists())
-        shutil.rmtree(self.home)  # Recovery has no dependence on retained agent disk.
+        remove(self.home)  # Recovery has no dependence on retained agent disk.
         _, fresh = self.restore_input(folder)
         self.assertIn("interrupted-edit", (fresh / "app.py").read_text())
         restored = read_json(self.root / "fresh-data/recovery-restored.json")
         self.assertEqual(restored["restored_paths"], ["app.py"])
+        self.assertNotIn("context_snapshot", restored["manifest"])
+        self.assertEqual(restored["manifest_sha256"], digest(manifest))
+        self.assertNotEqual(restored["manifest_sha256"], digest(restored["manifest"]))
         self.assertIn("Untrusted partial work", (self.root / "fresh-data/prompt.txt").read_text())
+        run(["git", "diff", "--check"], cwd=fresh)
+        final = self.root / "complete-result.json"
+        write_json(
+            final,
+            {
+                "status": "done",
+                "summary": "Rechecked recovered work",
+                "skills_used": ["nexkit-deliver"],
+                "commands": ["git diff --check"],
+                "limitations": [],
+            },
+        )
+        report = collect(
+            self.source,
+            fresh,
+            self.context,
+            final,
+            self.root / "collected.json",
+            "deliver",
+            self.root / "fresh-data/initial.json",
+        )
+        self.assertEqual(report["recovered_checkpoint"], digest(manifest))
+        state = {
+            "agent_calls": 4,
+            "recovery": {"deliver/deliver": {"manifest_sha256": digest(manifest)}},
+        }
+        consume(state, self.context, "deliver", report)
+        self.assertFalse(state["recovery"])
+        self.assertEqual(state["agent_calls"], 4)
 
     def test_prior_candidate_and_interrupted_new_file_are_both_restored(self):
         (self.work / "app.py").write_text("print('prior-published-candidate')\n")
@@ -128,8 +162,8 @@ class CheckpointTests(unittest.TestCase):
         run(["git", "commit", "-m", "prior published candidate"], cwd=self.source)
         candidate = run(["git", "rev-parse", "HEAD"], cwd=self.source).stdout.strip()
         run(["git", "checkout", "--detach", base], cwd=self.source)
-        shutil.rmtree(self.work)
-        shutil.rmtree(self.data)
+        remove(self.work)
+        remove(self.data)
         self.context.update(base=base, source=candidate)
         materialize(self.source, self.work, self.context, "deliver", self.data)
         self.seal(self.home, self.data)
@@ -155,8 +189,8 @@ class CheckpointTests(unittest.TestCase):
         second, _ = capture(self.source, home / "work", self.context, "deliver", data, 1)
         durable = self.root / "durable-second"
         shutil.copytree(second, durable)
-        shutil.rmtree(home)
-        shutil.rmtree(data)
+        remove(home)
+        remove(data)
         _, fresh = self.restore_input(durable)
         self.assertIn("second interrupted edit", (fresh / "app.py").read_text())
         self.assertIn("second addition", (fresh / "added.py").read_text())
@@ -247,6 +281,8 @@ class CheckpointTests(unittest.TestCase):
                 discover(gh, 1)
                 self.assertEqual(gh.state["recovery"]["deliver/deliver"]["artifact"], 1)
             receipt = record(gh, self.context, "deliver")
+            self.assertNotIn("context_snapshot", receipt["manifest"])
+            self.assertLess(len(json.dumps(receipt)), 6000)
             self.assertEqual(receipt["artifact"], 1)
             self.assertEqual(receipt["capture_failures"][0]["artifact"], 2)
             revision = gh.revision
@@ -266,7 +302,13 @@ class CheckpointTests(unittest.TestCase):
 
     def test_checkpoint_discard_requires_current_unedited_administrator_decision(self):
         _, manifest = self.interrupted()
-        receipt = {"artifact": 1, "manifest": manifest, "manifest_sha256": digest(manifest)}
+        scope = {name: value for name, value in manifest.items() if name != "context_snapshot"}
+        receipt = {
+            "artifact": 1,
+            "manifest": scope,
+            "manifest_scope_sha256": digest(scope),
+            "manifest_sha256": digest(manifest),
+        }
         original = {"recovery": {"deliver/deliver": receipt}, "agent_calls": 4}
         gh = FakeGitHub()
         for mutation in ("reader", "edited", "stale", "valid"):

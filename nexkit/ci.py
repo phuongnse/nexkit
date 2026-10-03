@@ -355,7 +355,7 @@ def collect(source, workspace, context, result_path, destination, role, initial)
     if recovery.exists():
         from .common import read_regular_json
 
-        receipt["recovered_checkpoint"] = digest(read_regular_json(recovery)["manifest"])
+        receipt["recovered_checkpoint"] = read_regular_json(recovery)["manifest_sha256"]
     if "invocation" in context:
         require(role == context["invocation"]["role"], "Collector role differs from reservation")
         receipt["invocation"] = {"id": context["invocation"]["id"], "context": digest(context)}

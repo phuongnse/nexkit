@@ -473,10 +473,12 @@ def record(
                 "Checkpoint artifact belongs to another native Actions run",
             )
             key = role + "/" + context.get("invocation", {}).get("id", role)
+            scope = {name: value for name, value in manifest.items() if name != "context_snapshot"}
             receipt = {
                 "artifact": artifact["id"],
                 "run_key": actual,
-                "manifest": manifest,
+                "manifest": scope,
+                "manifest_scope_sha256": digest(scope),
                 "manifest_sha256": digest(manifest),
                 "expires_at": artifact.get("expires_at"),
                 "restore_state": "available",
@@ -603,7 +605,7 @@ def select(state, context, role):
             "Invalid recovery receipt",
         )
         require(
-            receipt.get("manifest_sha256") == digest(receipt["manifest"])
+            receipt.get("manifest_scope_sha256") == digest(receipt["manifest"])
             and receipt["manifest"].get("binding") == binding(context, role),
             "Recovery checkpoint has stale inputs; inspect it before continuing from published source",
         )
@@ -641,7 +643,7 @@ def inspect(gh, issue, cfg, state):
             and all(scope.get(name) == value for name, value in common.items())
             and scope.get("source")
             == (base if scope.get("role") in {"task", "request"} else source)
-            and receipt.get("manifest_sha256") == digest(manifest)
+            and receipt.get("manifest_scope_sha256") == digest(manifest)
         )
         try:
             artifact = (
@@ -834,7 +836,8 @@ def restore(source, workspace, context, role, data):
         target.write_text(item["content"], encoding="utf-8", newline="")
         target.chmod(0o755 if item["mode"] == "100755" else 0o644)
     result = {
-        "manifest": manifest,
+        "manifest": {name: value for name, value in manifest.items() if name != "context_snapshot"},
+        "manifest_sha256": digest(manifest),
         "restored_paths": [item["path"] for item in payload["changes"]],
         "handover": payload["handover"],
         "untrusted_partial_work": True,

@@ -1,0 +1,9 @@
+name: Administrative publication fixture
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  fixture:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo 'Publication fixture; no application acceptance claimed.'

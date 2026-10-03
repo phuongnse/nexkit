@@ -199,6 +199,10 @@ def execution_settings(value):
             adapter(engine).validate_effort(effort, role)
     limits = value.get("limits", {})
     require(isinstance(limits, dict), "Declare limits as an object")
+    if "recovery" in value:
+        from .checkpoints import settings as recovery_settings
+
+        recovery_settings({"config": value})
     require(
         set(limits) <= {"attempts", "agent_calls", "minutes", "command_seconds"},
         "Unknown execution limit",
@@ -324,13 +328,20 @@ def execution_settings(value):
 def delivery_elapsed(state, *, clock=None, waiting=False):
     stamp = datetime.fromisoformat(clock or now())
     elapsed = (stamp - datetime.fromisoformat(state["started_at"])).total_seconds()
-    credit = state.get("human_wait_seconds", 0)
+    credit = state.get("human_wait_seconds", 0) + state.get("budget_wait_seconds", 0)
     require(
         type(credit) in (int, float) and 0 <= credit <= elapsed, "Invalid human wait accounting"
     )
     if waiting and state.get("status") == "waiting_for_approval":
         pending = state["approval_wait"]
         elapsed -= max(0, (stamp - datetime.fromisoformat(pending["opened_at"])).total_seconds())
+    if state.get("budget_wait"):
+        pending = datetime.fromisoformat(state["budget_wait"]["opened_at"])
+        require(
+            datetime.fromisoformat(state["started_at"]) <= pending <= stamp,
+            "Invalid budget wait accounting",
+        )
+        elapsed -= (stamp - pending).total_seconds()
     return elapsed - credit
 
 
@@ -339,12 +350,17 @@ def reserve(state, cfg, run_key, *, clock=None):
     stamp = clock or now()
     state = dict(state)
     prior_delivery_calls = delivery_calls(state)
+    from .budgets import end_wait, limit
+
+    if not state.get("started_at"):
+        end_wait(state, clock=stamp)
     state.setdefault("started_at", stamp)
     elapsed = delivery_elapsed(state, clock=stamp)
-    require(elapsed < cfg["limits"]["minutes"] * 60, "Total delivery time budget exhausted")
+
+    require(elapsed < limit(state, cfg, "minutes") * 60, "Total delivery time budget exhausted")
     reservations = state.setdefault("reservations", [])
     require(run_key not in reservations, "This run attempt has already been reserved")
-    require(state.get("attempts", 0) < cfg["limits"]["attempts"], "Delivery attempts exhausted")
+    require(state.get("attempts", 0) < limit(state, cfg, "attempts"), "Delivery attempts exhausted")
     from .pipelines import composed_agents, composed_work, task_pipeline
 
     calls = 0 if composed_work(cfg) else 2
@@ -357,9 +373,10 @@ def reserve(state, cfg, run_key, *, clock=None):
     )
     if required_calls:
         require(
-            delivery_budget_used(state, cfg) + required_calls <= cfg["limits"]["agent_calls"],
+            delivery_budget_used(state, cfg) + required_calls <= limit(state, cfg, "agent_calls"),
             "Agent invocation budget exhausted",
         )
+    end_wait(state, clock=stamp)
     state["reservations"] = [*reservations, run_key]
     state["attempts"] = state.get("attempts", 0) + 1
     state["delivery_calls"] = prior_delivery_calls + calls
@@ -368,6 +385,8 @@ def reserve(state, cfg, run_key, *, clock=None):
 
 
 def candidate_key(issue, cfg, base, head):
+    from .criteria import specification_criteria
+
     require(SHA.fullmatch(base) and SHA.fullmatch(head), "Candidate commits must be full SHAs")
     return {
         "spec": spec_hash(issue),
@@ -375,6 +394,7 @@ def candidate_key(issue, cfg, base, head):
         "base": base,
         "head": head,
         "kit": cfg["kit"]["ref"],
+        "criteria": specification_criteria(issue),
     }
 
 
@@ -473,6 +493,9 @@ def merge_gate(key, verification, review, cfg=None):
         "Test evidence contains no executed cases",
     )
     result = agent_result(review.get("result"), "review")
+    from .criteria import coverage
+
+    coverage(key, result)
     require(
         result["status"] == "done" and result["verdict"] == "approve", "Reviewer did not approve"
     )

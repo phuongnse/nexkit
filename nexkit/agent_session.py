@@ -64,7 +64,7 @@ def configuration(context, role, data):
 def minutes(context, cfg, role):
     value = (
         context["agent_minutes"]
-        if role == "request" or "invocation" in context
+        if role == "request" or "invocation" in context or "administration" in context
         else max(1, min(60, cfg["limits"]["minutes"] // 2))
     )
     require(type(value) is int and 1 <= value <= 60, "Invalid session reservation")

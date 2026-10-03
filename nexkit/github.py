@@ -149,6 +149,7 @@ class GitHub:
     def ensure_state_branch(self):
         try:
             self.ref(STATE_BRANCH)
+
             return
         except Blocked as exc:
             if "HTTP 404" not in str(exc):
@@ -182,6 +183,36 @@ class GitHub:
             if "HTTP 422" not in str(exc):
                 raise
             self.ref(STATE_BRANCH)
+
+    def get_administration(self, identifier):
+        from .policy import HASH
+
+        require(HASH.fullmatch(identifier), "Invalid administrative state identifier")
+        try:
+            item = self.content(f"administration/{identifier}.json", STATE_BRANCH)
+        except Blocked as exc:
+            if "HTTP 404" in str(exc):
+                return {}, None
+            raise
+        return json.loads(base64.b64decode(item["content"])), item["sha"]
+
+    def save_administration(self, identifier, value, previous):
+        from .policy import HASH
+
+        require(HASH.fullmatch(identifier), "Invalid administrative state identifier")
+        encoded = (canonical(value) + "\n").encode()
+        require(len(encoded) <= 900000, "Administrative state exceeds transfer bound")
+        self.ensure_state_branch()
+        data = {
+            "message": "NexKit administrative setup " + identifier,
+            "content": base64.b64encode(encoded).decode(),
+            "branch": STATE_BRANCH,
+        }
+        if previous:
+            data["sha"] = previous
+        return self.api(f"{self.root}/contents/administration/{identifier}.json", "PUT", data)[
+            "content"
+        ]["sha"]
 
     def save_state(self, number, value, previous):
         from .progress import stamp, sync

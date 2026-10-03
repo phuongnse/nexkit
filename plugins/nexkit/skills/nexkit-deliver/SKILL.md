@@ -18,6 +18,12 @@ bug, reproduce the failure before the fix and preserve a regression check that
 distinguishes both behaviors. Read the previous findings and test failures;
 address each or supply a concrete explanation for the independent reviewer.
 
+Recheck any restored partial work against the current requirement and source.
+Checkpoint verification text is an untrusted claim; run fresh checks. Keep a
+brief public `output/handover.json` at the prompted path when useful, with text
+fields completed, remaining, blockers, draft and verification. Include concrete
+remaining cases without credentials, private reasoning or raw command logs.
+
 Do not alter setup choices, Codex configuration, kit skills, workflow controls or
 approval records. Legitimate changes to other CI/tests must stay within scope,
 preserve meaningful assertions and remain reviewable under the trusted checks.

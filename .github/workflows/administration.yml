@@ -1,0 +1,197 @@
+name: NexKit protected administrative setup
+on:
+  workflow_call:
+    inputs:
+      kit_repository:
+        type: string
+        required: true
+      kit_ref:
+        type: string
+        required: true
+      proposal:
+        type: string
+        required: true
+      proposal_sha:
+        type: string
+        required: true
+    secrets:
+      OPENAI_API_KEY:
+        required: false
+permissions: {}
+defaults:
+  run:
+    shell: bash
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+      issues: read
+      pull-requests: write
+      checks: write
+    outputs:
+      ready: ${{ steps.prepare.outputs.ready }}
+      completed: ${{ steps.prepare.outputs.completed }}
+      runner: ${{ steps.prepare.outputs.runner }}
+      head: ${{ steps.prepare.outputs.head }}
+      context: ${{ steps.context.outputs.artifact-id }}
+    steps:
+      - name: Verify administrator and proposal kit before loading control code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+          NEXKIT_KIT: ${{ inputs.kit_repository }}
+          NEXKIT_PROPOSAL: ${{ inputs.proposal }}
+          NEXKIT_SHA: ${{ inputs.proposal_sha }}
+        shell: python
+        run: |
+          import base64, hashlib, json, os, re, subprocess
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          root = 'repos/' + os.environ['GITHUB_REPOSITORY']
+          actor = os.environ['GITHUB_ACTOR']
+          assert api(root + '/collaborators/' + actor + '/permission')['permission'] == 'admin'
+          assert re.fullmatch('[0-9a-f]{40}', os.environ['NEXKIT_SHA'])
+          item = api(root + '/contents/.nexkit/administration/proposal.json?ref=' + os.environ['NEXKIT_SHA'])
+          assert item['type'] == 'file' and item.get('size', 0) <= 450000
+          proposal = json.loads(base64.b64decode(item['content']))
+          encoded = json.dumps(proposal, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+          assert hashlib.sha256(encoded).hexdigest() == os.environ['NEXKIT_PROPOSAL']
+          pin = proposal['project']['kit']
+          assert re.fullmatch('[0-9a-f]{40}', pin['ref'])
+          assert pin['ref'] == os.environ['NEXKIT_REF'] and pin['repository'] == os.environ['NEXKIT_KIT']
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/python-runtime
+      - id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_PROPOSAL: ${{ inputs.proposal }}
+          NEXKIT_SHA: ${{ inputs.proposal_sha }}
+          NEXKIT_REF: ${{ inputs.kit_ref }}
+        run: python3 -m nexkit.administration prepare --proposal "$NEXKIT_PROPOSAL" --proposal-sha "$NEXKIT_SHA" --kit-ref "$NEXKIT_REF" --out /tmp/nexkit/context.json
+      - id: context
+        if: steps.prepare.outputs.completed != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-administration-context-${{ github.run_attempt }}
+          path: /tmp/nexkit/context.json
+          retention-days: 7
+          if-no-files-found: error
+  review:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ${{ fromJSON(needs.prepare.outputs.runner) }}
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+      pull-requests: read
+    outputs:
+      report: ${{ steps.report.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/python-runtime
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.context }}
+          path: /tmp/nexkit
+      - name: Revalidate exact administrative authority before candidate preparation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.administration guard --context /tmp/nexkit/context.json
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.prepare.outputs.head }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./kit/actions/agent-workspace
+        with:
+          role: review
+          context: /tmp/nexkit/context.json
+          source: ${{ github.workspace }}/source
+      - name: Revalidate before the independent model call
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.administration guard --context /tmp/nexkit/context.json
+      - id: limits
+        shell: python
+        run: |
+          import json, os
+          context = json.load(open('/tmp/nexkit/context.json', encoding='utf-8'))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('minutes=' + str(context['agent_minutes']) + '\n')
+      - id: session
+        timeout-minutes: ${{ fromJSON(steps.limits.outputs.minutes) }}
+        uses: ./kit/actions/agent-session
+        with:
+          role: review
+          context: /tmp/nexkit/context.json
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+      - if: always()
+        continue-on-error: true
+        uses: ./kit/actions/agent-diagnostics
+        with:
+          role: review
+          context: /tmp/nexkit/context.json
+          outcome: ${{ steps.session.outcome }}
+      - name: Collect only a complete unchanged candidate review
+        env:
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.agent_session collect --context /tmp/nexkit/context.json --role review --source source --out /tmp/nexkit/report.json
+      - id: report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexkit-administration-review-${{ github.run_attempt }}
+          path: /tmp/nexkit/report.json
+          retention-days: 7
+          if-no-files-found: error
+  finish:
+    needs: [prepare, review]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.completed != 'true' && (needs.review.result == 'success' || needs.prepare.outputs.ready == 'false')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+      issues: read
+      pull-requests: write
+      checks: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/python-runtime
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.context }}
+          path: /tmp/nexkit
+      - if: needs.review.outputs.report != ''
+        uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ needs.review.outputs.report }}
+          path: /tmp/nexkit/review
+      - name: Validate both independent review and actual administrator approval before native merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 -m nexkit.administration finish --context /tmp/nexkit/context.json --report /tmp/nexkit/review/report.json

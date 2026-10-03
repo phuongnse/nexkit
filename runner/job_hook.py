@@ -7,10 +7,13 @@ insufficient because a later workflow step may have an `always()` condition.
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 BINDING = Path("/etc/nexkit/runner.json")
@@ -21,12 +24,86 @@ def admitted(binding, env):
     repo = binding["repository"]
     branch = "refs/heads/" + binding["default_branch"]
     allowed = {f"{repo}/.github/workflows/{name}@{branch}" for name in binding["workflows"]}
-    return (
+    ordinary = (
         env.get("GITHUB_REPOSITORY") == repo
         and env.get("GITHUB_REF") == branch
         and env.get("GITHUB_EVENT_NAME") in ("workflow_dispatch", "issue_comment", "issues")
         and env.get("GITHUB_WORKFLOW_REF") in allowed
     )
+    if ordinary:
+        return True
+    for entry in binding.get("administration", []):
+        if not isinstance(entry, dict):
+            continue
+        try:
+            valid = datetime.fromisoformat(entry["expires_at"]) > datetime.now(timezone.utc)
+        except (KeyError, TypeError, ValueError):
+            continue
+        identifier = entry.get("proposal", "")
+        sha = entry.get("workflow_sha", "")
+        if not isinstance(identifier, str) or not isinstance(sha, str):
+            continue
+        ref = "refs/heads/nexkit/setup-" + identifier[:24]
+        if (
+            valid
+            and re.fullmatch(r"[0-9a-f]{64}", identifier)
+            and re.fullmatch(r"[0-9a-f]{40}", sha)
+            and env.get("GITHUB_REPOSITORY") == repo
+            and env.get("GITHUB_REF") == ref
+            and env.get("GITHUB_EVENT_NAME") == "push"
+            and env.get("GITHUB_WORKFLOW_REF")
+            == f"{repo}/.github/workflows/nexkit-administration.yml@{ref}"
+            and env.get("GITHUB_WORKFLOW_SHA") == sha
+            and env.get("GITHUB_SHA") == sha
+        ):
+            return True
+    return False
+
+
+def stop_checkpoint_monitor(data=Path("/tmp/nexkit")):
+    metadata = data / "checkpoint-monitor.json"
+    if not metadata.exists():
+        return
+    info = metadata.lstat()
+    if metadata.is_symlink() or info.st_uid != 0 or info.st_mode & 0o022 or info.st_size > 4000:
+        raise RuntimeError("Untrusted checkpoint monitor metadata")
+    value = json.loads(metadata.read_text())
+    deadline = time.monotonic() + 5
+    while (
+        isinstance(value, dict)
+        and value.get("status") == "starting"
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.02)
+        value = json.loads(metadata.read_text())
+    if not isinstance(value, dict) or value.get("status") == "starting":
+        raise RuntimeError("Checkpoint monitor did not establish an owned process")
+    if value.get("status") != "running":
+        return
+    pid = value.get("pid")
+    if type(pid) is not int or pid <= 1:
+        raise RuntimeError("Checkpoint monitor has no owned process")
+    process = Path("/proc", str(pid))
+    if not process.exists():
+        return
+    command = (process / "cmdline").read_bytes().split(b"\0")
+    if (
+        process.stat().st_uid != 0
+        or b"nexkit.checkpoints" not in command
+        or b"monitor" not in command
+        or os.getpgid(pid) != pid
+    ):
+        raise RuntimeError("Checkpoint process identity changed")
+    (data / "checkpoint-stop.json").write_text(
+        json.dumps({"stop": True, "deadline": time.time() + 45}) + "\n"
+    )
+    deadline = time.monotonic() + 50
+    while time.monotonic() < deadline and process.exists():
+        if json.loads(metadata.read_text()).get("status") != "running":
+            return
+        time.sleep(0.1)
+    if process.exists():
+        os.killpg(pid, signal.SIGKILL)
 
 
 def worker_ancestor():
@@ -59,6 +136,7 @@ def cleanup(workspace=None):
             stderr=subprocess.DEVNULL,
             check=False,
         )
+    stop_checkpoint_monitor()
     for path in (Path("/home/nexkit-agent"), Path("/home/nexkit-codex"), Path("/tmp/nexkit")):
         remove(path)
     Path("/home/nexkit-codex").mkdir(mode=0o755)

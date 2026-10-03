@@ -1,0 +1,8 @@
+{
+  "name": "nexkit-checkpoint-transport",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@actions/artifact": "2.3.2"
+  }
+}

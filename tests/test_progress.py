@@ -217,4 +217,4 @@ class ProgressTests(unittest.TestCase):
                     self.assertTrue(cleanup["continue-on-error"])
                     self.assertIn("timeout-minutes", step)
                     self.assertNotIn("write", job["permissions"].values())
-        self.assertEqual(sessions, 4)
+        self.assertEqual(sessions, 5)

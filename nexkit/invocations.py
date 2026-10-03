@@ -10,6 +10,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import PurePosixPath
 
+from .budgets import limit as budget_limit
 from .common import Blocked, digest, short_summary
 from .pipelines import IDENTIFIER, composed_agents, load_run_config, task_pipeline, work_entrypoint
 from .policy import (
@@ -269,13 +270,16 @@ def prepare(gh, context, name, input_reports=(), check_reports=()):
 
         recorded_inputs(state, context, input_reports)
         prepared["previous_outputs"] = list(input_reports)
+        from .checkpoints import select
+
+        select(state, prepared, definition["contract"])
         key = reservation_key(prepared)
         records = state.setdefault("invocations", {})
         require(
             key not in records, "This invocation already reserved a CLI call in this run attempt"
         )
         require(
-            delivery_budget_used(state, cfg) + 1 <= cfg["limits"]["agent_calls"],
+            delivery_budget_used(state, cfg) + 1 <= budget_limit(state, cfg, "agent_calls"),
             "Agent invocation budget exhausted",
         )
         if definition["contract"] == "deliver":
@@ -382,6 +386,10 @@ def _record(gh, context, report):
     if saved["status"] == "completed":
         require(saved.get("result") == digest(report), "Invocation result changed after recording")
         return {"recorded": True, "duplicate": True}
+    if role != "deliver" and report["result"]["status"] == "done":
+        from .checkpoints import consume
+
+        consume(state, context, role, report)
     saved.update(
         status="completed",
         result=digest(report),

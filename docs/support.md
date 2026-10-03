@@ -86,6 +86,12 @@ of releases. Verify plugin commands and runtime boundaries when updating a CLI. 
 Keep verification results with their run or release, outside the source tree.
 Each existing consumer keeps its accepted pin until a deliberate update.
 
+The current source adds [protected administrative proposals](administration.md),
+[public work checkpoints and issue budget grants](recovery.md). Their native
+runtime and integration verification is reported with the specific candidate
+run; an older published pin or runner image does not gain these capabilities
+from a local plugin update.
+
 Verify a small request after setting up each project. Installation and container
 tests do not establish a complete live delivery with your project's model access,
 workflow, checks and approvals. See the [verification procedure](live-acceptance.md).

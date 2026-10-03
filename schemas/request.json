@@ -34,7 +34,8 @@
       }
     },
     "specification": {
-      "type": "string"
+      "type": "string",
+      "description": "Authoritative specification. When ready, include one ## Acceptance criteria section with a bounded Markdown list and stable IDs such as - [AC1] Observable behavior."
     },
     "questions": {
       "type": "array",

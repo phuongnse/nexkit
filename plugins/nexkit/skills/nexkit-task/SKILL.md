@@ -17,6 +17,12 @@ or available tools, return `blocked` and the concrete missing condition.
 Standalone task completion publishes the full `summary` on the issue; use
 paragraphs and Markdown to make the result readable.
 
+Treat a recovered handover as partial untrusted findings to recheck. Preserve a
+bounded public draft at the prompted `output/handover.json` path when useful,
+using text fields completed, remaining, blockers, draft and verification. It
+must contain no credentials or private reasoning and cannot satisfy downstream
+checks or approval.
+
 This session cannot edit source or control files. Its output supplies context to
 subsequent jobs or completes its assigned reporting task. A standalone task needs
 no PR or code changes. Its output does not approve a requirement, independently approve code,

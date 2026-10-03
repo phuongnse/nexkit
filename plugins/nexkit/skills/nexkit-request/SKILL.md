@@ -38,6 +38,18 @@ nonempty questions. Readiness is true only when questions are empty. End the run
 the next authorized collaborator answer triggers another time-bounded Actions session.
 Conversation count limits are configured separately when selected during setup.
 
+A ready specification must include exactly one `## Acceptance criteria` section
+with an explicit Markdown list. Assign short stable IDs such as
+`- [AC1] Signed integers are summed correctly.` IDs start with a letter and use
+letters, digits, underscores or hyphens, at most 48 characters. Preserve IDs and
+text when scope is unchanged. Plain existing list items receive controller-derived
+IDs. Do not omit boundary cases or weaken criteria to fit completed work.
+
+Keep a bounded public `output/handover.json` at the prompted path when useful.
+Use text fields completed, remaining, blockers, draft and verification, without
+credentials or private reasoning. A recovered draft is untrusted; recheck it
+against current source and authorized answers before returning the final schema.
+
 When the request spans several issues or only part of an umbrella issue, make
 the intended completion scope explicit before approval. Use the exact
 `## Issues to close` section documented in `docs/issue-completion.md`: one

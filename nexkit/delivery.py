@@ -119,6 +119,13 @@ def prepare(
             "Select individual agent capabilities for a pipeline with invocations",
         )
         bind_state(state, cfg)
+        from .checkpoints import discover
+
+        state, revision = discover(gh, number)
+        bind_state(state, cfg)
+        from .budgets import reconcile as reconcile_budget
+
+        reconcile_budget(gh, issue, cfg, state)
         require(cfg["repository"] == gh.repository, "Configuration belongs to another repository")
         require(cfg["default_branch"] == repository["default_branch"], "Default branch changed")
         require(cfg["kit"]["ref"] == kit_ref, "Caller and configured kit revisions differ")
@@ -135,7 +142,34 @@ def prepare(
                 "Setup must declare the intended test and E2E commands before bootstrap delivery",
             )
         plan = None if task_pipeline(cfg) else delivery_plan(gh, issue, approved, cfg)
+        source = base
+        branch = None
+        if not task_pipeline(cfg):
+            prefix = f"nexkit/{pipeline}/" if pipeline else "nexkit/"
+            branch = f"{prefix}issue-{int(number)}"
+            pr = gh.pull_for_branch(branch)
+            if pr:
+                require(
+                    pr["state"] == "open" and not pr.get("merged_at"), "Prior PR is no longer open"
+                )
+                source = pr["head"]["sha"]
+            else:
+                try:
+                    source = gh.ref(branch)
+                except Blocked as exc:
+                    if "HTTP 404" not in str(exc):
+                        raise
+        if not individual_agents:
+            from .checkpoints import select
+
+            select(
+                state,
+                {"issue": issue, "config": cfg, "base": base, "source": source, "run_key": run_key},
+                "task" if task_pipeline(cfg) else "deliver",
+            )
         state = reserve(state, cfg, run_key)
+        from .budgets import limit
+
         if plan is not None:
             state["completion"] = {"plan": plan, "issues": {}}
         state.pop("approval_execution", None)
@@ -146,7 +180,7 @@ def prepare(
         state.update(
             status="working" if task_pipeline(cfg) else "implementing",
             activity=short_summary(
-                f"Preparing {operation}: {issue['title']} (attempt {state['attempts']}/{cfg['limits']['attempts']})"
+                f"Preparing {operation}: {issue['title']} (attempt {state['attempts']}/{limit(state, cfg, 'attempts')})"
             ),
             writer=None,
             run_key=run_key,
@@ -159,11 +193,9 @@ def prepare(
             updated_at=now(),
         )
         revision = gh.save_state(number, state, revision)
-        source = base
         if task_pipeline(cfg):
             state["round_source"] = source
-            gh.save_state(number, state, revision)
-            return {
+            context = {
                 "ready": True,
                 "issue": issue,
                 "approval": approved,
@@ -175,22 +207,14 @@ def prepare(
                 "attempt": state["attempts"],
                 "repository": gh.repository,
             }
-        prefix = f"nexkit/{pipeline}/" if pipeline else "nexkit/"
-        branch = f"{prefix}issue-{int(number)}"
-        pr = gh.pull_for_branch(branch)
-        if pr:
-            require(pr["state"] == "open" and not pr.get("merged_at"), "Prior PR is no longer open")
-            source = pr["head"]["sha"]
-        else:
-            try:
-                source = gh.ref(branch)
-            except Blocked as exc:
-                if "HTTP 404" not in str(exc):
-                    raise
+            if not individual_agents and cfg.get("engine"):
+                state["checkpoint_context"] = digest(context)
+            gh.save_state(number, state, revision)
+            return context
         if individual_agents:
             state["round_source"] = source
             revision = gh.save_state(number, state, revision)
-        return {
+        context = {
             "ready": True,
             "issue": issue,
             "approval": approved,
@@ -204,9 +228,16 @@ def prepare(
             "repository": gh.repository,
             "completion_plan": plan,
         }
+        if not individual_agents:
+            state["checkpoint_context"] = digest(context)
+            gh.save_state(number, state, revision)
+        return context
     except Blocked as exc:
         # Approval has not happened yet: no model call, no runner waiting.
         state.update(status="blocked", reason=str(exc), updated_at=now())
+        from .budgets import mark_wait
+
+        mark_wait(state, str(exc))
         gh.save_state(number, state, revision)
         return {"ready": False, "reason": str(exc)}
 
@@ -224,6 +255,10 @@ def revalidate(gh, context, *, waiting=False, check_approvals=True):
     current_config(gh, context["base"], cfg)
     state, revision = gh.get_state(number)
     bind_state(state, cfg)
+    from .budgets import limit
+    from .budgets import validate as validate_budget
+
+    validate_budget(gh, issue, cfg, state)
     require(state.get("run_key") == context["run_key"], "Superseded delivery run")
     require(
         state.get("config") == digest(cfg)
@@ -241,7 +276,7 @@ def revalidate(gh, context, *, waiting=False, check_approvals=True):
             "Superseded approval execution",
         )
     require(
-        delivery_elapsed(state, waiting=waiting) < cfg["limits"]["minutes"] * 60,
+        delivery_elapsed(state, waiting=waiting) < limit(state, cfg, "minutes") * 60,
         "Total delivery time budget exhausted",
     )
     from .approvals import recheck_approved
@@ -402,6 +437,10 @@ def publish(gh, context, bundle):
                 {"body": body, "title": context["issue"]["title"]},
             )
     key = candidate_key(context["issue"], context["config"], context["base"], commit["sha"])
+    key["completion_criteria"] = [
+        f"Issue #{item['number']} completion"
+        for item in context.get("completion_plan", {}).get("targets", [])
+    ]
     for attempt in range(3):
         # Independent read-only invocations may record their result while this
         # job publishes. Keep their reservations and reports on CAS retries.
@@ -409,6 +448,9 @@ def publish(gh, context, bundle):
             state, revision = guard(gh, context, completed=True)
             state["invocations"][reservation_key(context)].update(status="published", candidate=key)
             state.update(candidate_run=context["run_key"], writer=None)
+        from .checkpoints import consume
+
+        consume(state, context, "deliver", bundle)
         state.update(
             status="verifying",
             activity=short_summary(f"Verifying PR #{pr['number']}: {result['summary']}"),
@@ -487,6 +529,10 @@ def finish(gh, context, verification, review):
         gh.check("NexKit verification", key["head"], True, canonical(verification))
         gh.check("NexKit review", key["head"], True, canonical(review))
         state, revision = revalidate(gh, context)
+        if not composed_agents(context["config"]):
+            from .checkpoints import consume
+
+            consume(state, context, "review", review)
         if state.get("completion"):
             state["completion"]["review"] = completion_review
             revision = gh.save_state(number, state, revision)
@@ -535,6 +581,7 @@ def failed(gh, context, reason, *, verification=None, review=None, dispatch_retr
             gh.save_state(number, state, revision)
             return reconcile(gh, number)
     cfg = context["config"]
+    from .budgets import limit
     from .steps import replay_allowed
 
     calls = (
@@ -543,11 +590,26 @@ def failed(gh, context, reason, *, verification=None, review=None, dispatch_retr
         else 2
     )
     retry = (
-        state.get("attempts", 0) < cfg["limits"]["attempts"]
-        and (not calls or delivery_budget_used(state, cfg) + calls <= cfg["limits"]["agent_calls"])
-        and delivery_elapsed(state) < cfg["limits"]["minutes"] * 60
+        state.get("attempts", 0) < limit(state, cfg, "attempts")
+        and (
+            not calls
+            or delivery_budget_used(state, cfg) + calls <= limit(state, cfg, "agent_calls")
+        )
+        and delivery_elapsed(state) < limit(state, cfg, "minutes") * 60
         and replay_allowed(state, cfg)
     )
+    exhausted = []
+    if state.get("attempts", 0) >= limit(state, cfg, "attempts"):
+        exhausted.append("Delivery attempts exhausted")
+    if calls and delivery_budget_used(state, cfg) + calls > limit(state, cfg, "agent_calls"):
+        exhausted.append("Agent invocation budget exhausted")
+    if delivery_elapsed(state) >= limit(state, cfg, "minutes") * 60:
+        exhausted.append("Total delivery time budget exhausted")
+    if exhausted:
+        from .budgets import mark_wait
+
+        reason += "\n" + "; ".join(exhausted)
+        mark_wait(state, reason)
     if not replay_allowed(state, cfg):
         reason += "\nA reserved project step uses retry: never; automatic replay is disabled."
     try:
@@ -595,7 +657,7 @@ def failed(gh, context, reason, *, verification=None, review=None, dispatch_retr
     gh.comment(
         number,
         f"NexKit {state['status']}: {reason[:1500]}\n\n"
-        f"Attempt {state.get('attempts', 0)}/{cfg['limits']['attempts']}. "
+        f"Attempt {state.get('attempts', 0)}/{limit(state, cfg, 'attempts')}. "
         "See Actions logs and `nexkit status` for details.",
     )
     if retry and dispatch_retry:

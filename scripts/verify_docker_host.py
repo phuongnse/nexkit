@@ -52,6 +52,7 @@ rm /etc/sudoers.d/nexkit-test-controller
 userdel --remove nexkit-test-controller
 userdel --remove nexkit-agent
 NEXKIT_TEST_AGENT_WORKSPACE=1 /opt/nexkit-test-python/bin/python -m unittest tests.test_agent_workspace.LinuxAgentWorkspaceTests -v
+NEXKIT_TEST_CHECKPOINT_MONITOR=1 /opt/nexkit-test-python/bin/python -m unittest tests.test_checkpoints.NativeCheckpointMonitorTests -v
 """
 
 

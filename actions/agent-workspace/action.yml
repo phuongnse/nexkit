@@ -13,6 +13,16 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Revalidate and fetch the last complete checkpoint
+      shell: python
+      env:
+        GH_TOKEN: ${{ github.token }}
+        NEXKIT_ROLE: ${{ inputs.role }}
+        NEXKIT_CONTEXT: ${{ inputs.context }}
+        PYTHONPATH: ${{ github.workspace }}/kit
+      run: |
+        import os, subprocess, sys
+        subprocess.run([sys.executable, '-m', 'nexkit.checkpoints', 'fetch', '--context', os.environ['NEXKIT_CONTEXT'], '--role', os.environ['NEXKIT_ROLE']], check=True)
     - shell: python
       env:
         NEXKIT_ROLE: ${{ inputs.role }}

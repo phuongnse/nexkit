@@ -96,6 +96,13 @@ accept those changes through setup, then reprovision and repeat verification.
 Use [troubleshooting](operations.md) to distinguish runtime, sandbox, login and
 session failures.
 
+For protected setup, [administrative admission](administration.md#subscription-runner-admission)
+temporarily permits one exact bootstrap proposal/commit before expiry. Preview
+and apply it only with a stopped runner and a capable immutable image. After
+merge, `scripts/manage_runner.py rebind` refreshes workflow admission and removes
+that temporary entry while preserving registration and login. An older image
+still needs deliberate maintenance and verification.
+
 ## Linux runner
 
 The remaining commands in this guide are for the Linux container adapter.

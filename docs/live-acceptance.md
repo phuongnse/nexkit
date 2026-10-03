@@ -106,6 +106,32 @@ retry behavior alongside automated failure injection. The specification permits
 mocked negative and recovery cases; identify the simulated boundaries, preserve
 their assertions and report any native behavior that remains unverified.
 
+## Work recovery and administrative setup
+
+For checkpoint and administrative changes, also verify these cases within the
+owner's accepted integration scope:
+
+- Force a timeout before final JSON, observe an interval artifact on Actions,
+  remove the old agent disk and restore source/draft in a fresh session. Repeat
+  after a second interruption and when finalization is skipped; preserve usage.
+- Reject changed spec/edit/config/source/role, unsafe or corrupt artifacts and
+  stale/unauthorized discard decisions. Report retention and unavailable tail.
+- Exhaust capacity, have the actual administrator review and post a bounded
+  exact grant, inspect dry-run, then resume the same issue. Original consumption
+  stays spent; no grant can approve a merge or override `retry: never`.
+- Run protected setup before any default-branch administration workflow exists.
+  Verify real bot PR authorship, actual scoped checks, separate CLI review and
+  the administrator's native exact-head approval; retain native protection.
+- Verify temporary runner admission, expiry, post-merge rebind and preserved
+  login/registration. An unsupported old image must block instead of bypassing
+  host admission. Revalidate interrupted setup and changed default-branch cases.
+
+`checkpoint-transport` in CI exercises the real Actions artifact service with a
+forced fixture timeout and fresh restore, with zero model calls. The Docker
+monitor test executes real root/Node processes and native hook cleanup with a
+simulated transport. Neither establishes a live consumer model review or human
+approval; record those separately.
+
 ## Release approval
 
 Merge multiple changes and verify that no tag/release was created. Commit all

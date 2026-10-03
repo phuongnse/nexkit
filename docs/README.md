@@ -13,9 +13,11 @@ manual setup. The guides below link to technical details when you need them.
 | [Set up manually](manual-setup.md) | Copy and edit complete example files, then install them without an interactive agent |
 | [Setup questions](setup-faq.md) | Understand VPS needs, account access, multiple projects and daily use without a plugin |
 | [Configure your project](project-setup.md) | Choose pipelines, models, limits, checks and approval steps; change them later |
+| [Protected administrative setup](administration.md) | Publish an exact setup proposal through a bot PR, independent review and native administrator approval |
 | [Daily use](daily-use.md) | Create a request, discuss it, approve it, follow progress and prepare a release |
 | [How it works](architecture.md) | See what runs locally, on GitHub and on the agent runner |
 | [Troubleshooting](operations.md) | Understand a waiting or failed run and recover it |
+| [Interrupted work and budgets](recovery.md) | Restore public checkpoints and approve bounded additional capacity on the same issue |
 
 All diagrams are written directly in fenced `mermaid` blocks in these Markdown
 files. GitHub renders them when you open a page. Edit the block to update the

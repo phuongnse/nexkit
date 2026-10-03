@@ -34,6 +34,15 @@ Verify these capabilities with controller, command and workspace tests plus
 workflow validation. The [verification guide](acceptance.md) explains the
 required evidence and result boundaries.
 
+Protected configuration/workflow installation has a distinct
+[administrative proposal workflow](administration.md), with metadata-only
+publication, independent read-only review and actual native administrator
+approval. It does not run ordinary source delivery or claim application checks.
+For [public checkpoints and budget decisions](recovery.md), route
+`/nexkit budget …` and `/nexkit discard-checkpoint …` comments to the same
+accepted work entrypoint if the consumer uses a command filter. Broad created
+comment subscriptions already route these events; Python validates authority.
+
 Project configuration uses `schema: 1` with named pipelines. See the
 [configuration reference](configuration.md) for the complete format.
 

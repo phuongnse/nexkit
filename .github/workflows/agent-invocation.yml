@@ -134,6 +134,7 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
+      actions: read
     outputs:
       report_artifact_id: ${{ steps.report.outputs.artifact-id }}
     steps:
@@ -215,6 +216,34 @@ jobs:
           path: /tmp/nexkit/reports/*.json
           retention-days: 7
           if-no-files-found: error
+  recovery:
+    needs: [authorize, execute]
+    if: always() && needs.authorize.outputs.context_artifact_id != '' && needs.execute.result != 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ inputs.kit_repository }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+          persist-credentials: false
+      - uses: ./kit/actions/python-runtime
+      - uses: ./kit/actions/download-data
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.context_artifact_id }}
+          path: /tmp/nexkit
+      - name: Preserve a verified interrupted checkpoint without granting success
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/kit
+          NEXKIT_ROLE: ${{ needs.authorize.outputs.role }}
+        run: python3 -m nexkit.checkpoints record --context /tmp/nexkit/invocation.json --role "$NEXKIT_ROLE"
   record:
     needs: [authorize, execute]
     runs-on: ubuntu-24.04

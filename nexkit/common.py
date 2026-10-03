@@ -9,6 +9,7 @@ import re
 import stat
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -53,12 +54,9 @@ def read_regular_bytes(path, maximum=512000):
 
             data = read_file(path, maximum)
         else:
-            if any(is_link(parent) for parent in path.parents):
-                raise Blocked("Result path has a linked parent")
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-            with os.fdopen(descriptor, "rb") as source:
+            with regular_source(path) as source:
                 info = os.fstat(source.fileno())
-                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > maximum:
+                if info.st_size > maximum:
                     raise Blocked("Expected a bounded regular file without links or reparse points")
                 data = source.read(maximum + 1)
                 if len(data) > maximum:
@@ -66,6 +64,32 @@ def read_regular_bytes(path, maximum=512000):
         return data
     except (OSError, ValueError) as exc:
         raise Blocked(f"Cannot collect regular data {path}: {exc}") from exc
+
+
+@contextmanager
+def regular_source(path):
+    """Anchor every POSIX parent before reading a concurrently writable workspace."""
+    path = Path(path).absolute()
+    descriptor = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parts[1:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        leaf = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+        with os.fdopen(leaf, "rb") as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise Blocked("Expected a regular file without links")
+            yield source
+            after = os.fstat(source.fileno())
+            if after.st_nlink != 1 or (info.st_size, info.st_mtime_ns) != (
+                after.st_size,
+                after.st_mtime_ns,
+            ):
+                raise Blocked("File changed during collection")
+    finally:
+        os.close(descriptor)
 
 
 def read_regular_json(path, maximum=512000):
@@ -131,7 +155,7 @@ def is_link(path):
     """Include Windows junctions and other reparse points, not just symlinks."""
     try:
         info = Path(path).lstat()
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         return False
     return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
 

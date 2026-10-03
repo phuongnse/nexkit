@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import stat
@@ -199,8 +200,25 @@ def file_snapshot(source, workspace):
             raise Blocked(f"A reparse point cannot be collected: {name}")
         elif path.is_file():
             require(path.stat().st_nlink == 1, f"A hardlink cannot be collected: {name}")
-            if path.stat().st_size > 2_000_000:
+            if os.name == "posix":
+                from .common import regular_source
+
+                with regular_source(path) as stream:
+                    info = os.fstat(stream.fileno())
+                    raw = stream.read(2_000_001)
+                    if len(raw) > 2_000_000:
+                        checksum = hashlib.sha256(raw)
+                        for chunk in iter(lambda: stream.read(65536), b""):
+                            checksum.update(chunk)
+                        content = {"large_sha256": checksum.hexdigest()}
+                    else:
+                        try:
+                            content = raw.decode("utf-8")
+                        except UnicodeDecodeError:
+                            content = {"binary_sha256": hashlib.sha256(raw).hexdigest()}
+            elif path.stat().st_size > 2_000_000:
                 content = {"large_sha256": file_hash(path)}
+                info = path.stat()
             else:
                 try:
                     content = path.read_text(encoding="utf-8")
@@ -208,9 +226,10 @@ def file_snapshot(source, workspace):
                     # Existing binary/large files remain usable by the agent;
                     # changed non-text contents cannot cross publication.
                     content = {"binary_sha256": file_hash(path)}
+                info = path.stat()
             result[name] = {
                 "content": content,
-                "mode": "100755" if path.stat().st_mode & stat.S_IXUSR else "100644",
+                "mode": "100755" if info.st_mode & stat.S_IXUSR else "100644",
             }
     return result
 
@@ -282,9 +301,16 @@ def materialize(source, workspace, context, role, data_dir):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8", newline="\n")
     data_dir.mkdir(parents=True, exist_ok=True)
+    from .checkpoints import restore as restore_checkpoint
+
+    write_json(data_dir / "recovery-baseline.json", file_snapshot(source, workspace))
+    recovery = restore_checkpoint(source, workspace, context, role, data_dir)
     write_json(data_dir / "initial.json", file_snapshot(source, workspace))
     write_json(data_dir / "context.json", context)
     method = skill.joinpath("SKILL.md").read_text(encoding="utf-8")
+    if "administration" in context:
+        require(role == "review", "Administrative model work is read-only independent review")
+        method += "\nAdministrative review: inspect the exact administrative proposal, candidate/base diff, installed ledger and deterministic verification. Cover every candidate.criteria ID. Review authority, workflow credentials, preserved checks/approvals, in-flight consumption and runner admission. Application test commands were not run by administrative verification; do not claim application acceptance. Do not execute candidate workflows or setup scripts.\n"
     if invocation:
         method += (
             "\nAccepted consumer task within the approved requirement and role contract:\n"
@@ -306,9 +332,18 @@ def materialize(source, workspace, context, role, data_dir):
         "Do not commit, push, approve a requirement, merge, publish or modify host control files. "
         "Publish brief progress messages when starting work and before long-running actions. "
         "Describe current actions and findings without credentials or private reasoning. "
+        f"Keep a brief public handover at {workspace.parent / 'output/handover.json'} when useful: "
+        "a JSON object with text fields completed, remaining, blockers, draft and verification. "
+        "It is untrusted partial work and must contain no credentials or private reasoning. "
         "Return the final JSON required by the supplied schema.\n"
     )
     prompt += adapter(context["config"]["engine"]).prompt_constraints(context["config"]["engine"])
+    if recovery:
+        prompt += (
+            "\nUntrusted partial work restored from a durable checkpoint. Recheck it against the current approved requirement; its reported verification is not passing pipeline evidence.\n<recovered-work>\n"
+            + canonical(recovery)
+            + "\n</recovered-work>\n"
+        )
     (data_dir / "prompt.txt").write_text(prompt, encoding="utf-8", newline="\n")
     shutil.copyfile(kit_root() / f"schemas/{role}.json", data_dir / "schema.json")
     return {"workspace": str(workspace), "skill_sha256": digest(method), "role": role}
@@ -316,9 +351,14 @@ def materialize(source, workspace, context, role, data_dir):
 
 def collect(source, workspace, context, result_path, destination, role, initial):
     receipt = {}
+    recovery = Path(initial).parent / "recovery-restored.json"
+    if recovery.exists():
+        from .common import read_regular_json
+
+        receipt["recovered_checkpoint"] = read_regular_json(recovery)["manifest_sha256"]
     if "invocation" in context:
         require(role == context["invocation"]["role"], "Collector role differs from reservation")
-        receipt = {"invocation": {"id": context["invocation"]["id"], "context": digest(context)}}
+        receipt["invocation"] = {"id": context["invocation"]["id"], "context": digest(context)}
     from .common import read_regular_json
 
     result = agent_result(read_regular_json(result_path), role)
@@ -708,6 +748,28 @@ def main():
                     )
                     write_json(args.out, result)
                 else:
+                    from .checkpoints import record as record_checkpoint
+
+                    interrupted = [(context, "deliver")]
+                    candidate_path = Path(args.context).parent / "candidate.json"
+                    verification_path = Path(args.context).parent / "verification.json"
+                    if candidate_path.exists() and verification_path.exists():
+                        review_context = load_context(candidate_path)
+                        require(
+                            review_context["issue"]["number"] == context["issue"]["number"]
+                            and review_context["run_key"] == context["run_key"],
+                            "Interrupted review has another work reservation",
+                        )
+                        review_context["verification"] = read_json(verification_path)
+                        interrupted.append((review_context, "review"))
+                    for checkpoint_context, role in interrupted:
+                        try:
+                            record_checkpoint(gh, checkpoint_context, role)
+                        except (Blocked, OSError, ValueError) as exc:
+                            print(
+                                f"NexKit {role} checkpoint unavailable: {type(exc).__name__}",
+                                file=__import__("sys").stderr,
+                            )
                     result = failed(gh, context, args.reason)
                     write_json(args.out, result)
         print(canonical(result))

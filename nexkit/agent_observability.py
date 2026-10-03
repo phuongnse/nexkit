@@ -164,6 +164,13 @@ def finish(context, role, data, outcome):
     data = Path(data).absolute()
     cfg = execution_config(context)
     adapter(cfg["engine"]).stop_session(cfg["engine"])
+    from .checkpoints import stop_monitor
+
+    checkpoint_failure = None
+    try:
+        stop_monitor(data)
+    except (Blocked, OSError) as exc:
+        checkpoint_failure = str(exc)
     try:
         _, _, _, _, output = prepared(context, role, data)
     except (Blocked, OSError):
@@ -224,6 +231,8 @@ def finish(context, role, data, outcome):
     except (Blocked, OSError):
         pass
     identity["job_step_outcome"] = outcome
+    if checkpoint_failure:
+        identity["checkpoint_failure"] = checkpoint_failure
     identity["result_available"] = bool(result)
     if identity.get("status") == "running":
         identity["status"] = "interrupted"

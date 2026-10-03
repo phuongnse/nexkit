@@ -139,6 +139,9 @@ class ActionsRuntimeTests(unittest.TestCase):
             )
             (root / "fixture").mkdir()
             source, _, _, context = fixture(root / "fixture")
+            context["config"]["recovery"] = {
+                "enabled": False
+            }  # No live GitHub transport in this native runtime check.
             context_path = Path(workspace["with"]["context"])
             context_path.parent.mkdir(parents=True, exist_ok=True)
             context_path.write_text(json.dumps(context))
@@ -151,12 +154,13 @@ class ActionsRuntimeTests(unittest.TestCase):
                 }
             )
             try:
-                subprocess.run(
-                    [python, "-c", composite["runs"]["steps"][0]["run"]],
-                    env=env,
-                    check=True,
-                    timeout=90,
-                )
+                for step in composite["runs"]["steps"]:
+                    subprocess.run(
+                        [python, "-c", step["run"]],
+                        env=env,
+                        check=True,
+                        timeout=90,
+                    )
                 self.assertEqual(
                     Path("/home/nexkit-agent/work/app.py").read_text(), "print('fixture')\n"
                 )

@@ -28,6 +28,8 @@ from nexkit.runner_host import (  # noqa: E402
     security_args,
     supervise_windows,
     wsl_command,
+    wsl_path,
+    wsl_prefix,
 )
 
 
@@ -131,12 +133,21 @@ def operate(operation, cfg, *, supervised=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("run", "start", "stop", "status", "login"))
+    parser.add_argument(
+        "operation",
+        choices=("run", "start", "stop", "status", "login", "rebind", "admit-administration"),
+    )
     parser.add_argument("--config", required=True)
     parser.add_argument("--pipeline", required=True)
     parser.add_argument("--invocation")
     parser.add_argument("--wsl-distribution", help="Explicit WSL 2 Ubuntu distribution")
     parser.add_argument("--supervise-wsl", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--proposal", help="Exact administrative proposal JSON")
+    parser.add_argument("--proposal-sha", help="Committed staging workflow revision")
+    parser.add_argument("--expires-minutes", type=int, default=120)
+    parser.add_argument(
+        "--apply", action="store_true", help="Apply a reviewed runner binding update"
+    )
     args = parser.parse_args()
     cfg = selected(args.config, args.pipeline, args.invocation)
     if os.name == "nt":
@@ -148,11 +159,38 @@ def main():
             args.wsl_distribution, Path(__file__), args.config, args.pipeline, args.invocation
         )
         command.append(args.operation)
+        if args.operation in {"rebind", "admit-administration"}:
+            if args.proposal:
+                command.extend(
+                    ["--proposal", wsl_path(wsl_prefix(args.wsl_distribution), args.proposal)]
+                )
+            if args.proposal_sha:
+                command.extend(["--proposal-sha", args.proposal_sha])
+            command.extend(["--expires-minutes", str(args.expires_minutes)])
+            if args.apply:
+                command.append("--apply")
         if args.operation == "run":
             command.append("--supervise-wsl")
             return supervise_windows(command)
         return subprocess.run(command).returncode
     require(not args.wsl_distribution, "Run Windows administration from the Windows host")
+    if args.operation in {"rebind", "admit-administration"}:
+        from nexkit.runner_administration import operate as binding_operation
+
+        require(
+            args.operation != "admit-administration" or (args.proposal and args.proposal_sha),
+            "Administrative admission needs an exact proposal and staging commit",
+        )
+        result = binding_operation(
+            args.operation,
+            cfg,
+            proposal=read_json(args.proposal) if args.proposal else None,
+            sha=args.proposal_sha,
+            minutes=args.expires_minutes,
+            apply=args.apply,
+        )
+        print(json.dumps(result, indent=2))
+        return 0
     return operate(args.operation, cfg, supervised=args.supervise_wsl)
 
 

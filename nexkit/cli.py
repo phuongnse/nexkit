@@ -171,6 +171,9 @@ def set_spec(gh, number, body, *, expected=None, before_write=None):
             "Requirement changed before publication",
         )
     updated = specification_body(issue, body)
+    from .criteria import specification_criteria
+
+    specification_criteria({**issue, "body": updated})
     if before_write is not None:
         before_write(issue)
     if issue["body"] != updated:
@@ -214,6 +217,21 @@ def parser():
     c = sub.add_parser("doctor", help="Verify local configuration and optional live setup")
     c.add_argument("--online", action="store_true")
     c.add_argument("--checks", action="store_true")
+    c = sub.add_parser(
+        "administration",
+        help="Prepare a protected administrative setup proposal and bootstrap workflow",
+    )
+    c.add_argument("--config", required=True)
+    c.add_argument("--bundle")
+    c.add_argument("--out", required=True, help="Fresh directory outside the consumer checkout")
+    c.add_argument("--review-minutes", type=int, default=10)
+    c.add_argument("--review-calls", type=int, default=2)
+    c.add_argument("--include-doc", action="append", default=[])
+    c.add_argument(
+        "--online",
+        action="store_true",
+        help="Inspect current administrator authority, branch protection and Actions permissions",
+    )
     sub.add_parser("uninstall", help="Remove unchanged kit-managed files, preserve consumer data")
     c = sub.add_parser(
         "request", help="Create the GitHub work item before specification/implementation"
@@ -234,6 +252,23 @@ def parser():
     for name in ("approval", "status", "cancel", "resume"):
         c = sub.add_parser(name)
         c.add_argument("issue", type=int)
+        if name == "resume":
+            c.add_argument(
+                "--dry-run",
+                action="store_true",
+                help="Inspect recovery and capacity without dispatching work",
+            )
+    c = sub.add_parser(
+        "budget", help="Prepare an exact administrator decision for additional issue budget"
+    )
+    c.add_argument("issue", type=int)
+    for flag in ("agent-calls", "attempts", "minutes", "clarification-calls"):
+        c.add_argument("--" + flag, type=int)
+    c = sub.add_parser(
+        "recovery", help="Inspect durable checkpoints or prepare an explicit discard decision"
+    )
+    c.add_argument("issue", type=int)
+    c.add_argument("--discard", action="store_true")
     c = sub.add_parser("complete", help="Preview or retry issue closure for completed work")
     c.add_argument("issue", type=int)
     c.add_argument("--apply", action="store_true", help="Close only verified completed issues")
@@ -266,6 +301,38 @@ def main(argv=None):
             return 0
         if args.command == "survey":
             result = survey(root)
+        elif args.command == "administration":
+            from .administration import PROPOSAL_PATH, WORKFLOW_PATH, plan
+            from .common import write_json
+
+            result = plan(
+                root,
+                read_json(args.config),
+                args.pipeline,
+                bundle=args.bundle,
+                minutes=args.review_minutes,
+                calls=args.review_calls,
+                documents=args.include_doc,
+            )
+            if args.online:
+                from .administration import preflight
+
+                result["preflight"] = preflight(
+                    GitHub(result["proposal"]["repository"]), result["proposal"]
+                )
+            target = Path(args.out).resolve()
+            require(
+                not target.exists() and not target.is_relative_to(root),
+                "Use a fresh proposal directory outside the consumer checkout",
+            )
+            write_json(target / PROPOSAL_PATH, result.pop("proposal"))
+            workflow = target / WORKFLOW_PATH
+            workflow.parent.mkdir(parents=True, exist_ok=True)
+            workflow.write_text(result.pop("bootstrap"), encoding="utf-8", newline="\n")
+            result["files"] = str(target)
+            result["next"] = (
+                "Review the proposal and diff; an administrator pushes these two files on the displayed staging branch based on the recorded default-branch commit. Review the bot-authored PR, then rerun the bootstrap to merge through native protection."
+            )
         elif args.command == "use":
             from .versions import use
 
@@ -283,6 +350,16 @@ def main(argv=None):
                 result = doctor(root, project_cfg, online=args.online, checks=args.checks)
             else:
                 gh = GitHub(project_cfg["repository"])
+                if args.command in {"status", "budget", "recovery", "resume"}:
+                    # Operational decisions belong to current accepted GitHub
+                    # settings, even when the local checkout predates setup.
+                    repository = gh.repo()
+                    project_cfg = config(gh.read_config(gh.ref(repository["default_branch"])))
+                    require(
+                        project_cfg["repository"] == gh.repository
+                        and project_cfg["default_branch"] == repository["default_branch"],
+                        "Operational configuration belongs to another repository or default branch",
+                    )
                 selected = args.pipeline
                 if hasattr(args, "issue") and args.command != "start":
                     issue = gh.issue(args.issue)
@@ -349,12 +426,18 @@ def main(argv=None):
                         "completion": state["completion"],
                     }
                 elif args.command == "status":
-                    state, _ = gh.get_state(args.issue)
+                    from .checkpoints import discover
+
+                    state, _ = discover(gh, args.issue, persist=False)
                     result = {
                         "issue": gh.issue(args.issue)["html_url"],
                         "work" if task_pipeline(cfg) else "delivery": state
                         or {"status": "awaiting requirement approval"},
                     }
+                    from .budgets import status as budget_status
+
+                    result["budget"] = budget_status(issue, cfg, state)
+                    result["recovery"] = state.get("recovery", {})
                     if state.get("status") == "waiting_for_approval":
                         from datetime import datetime
 
@@ -365,6 +448,55 @@ def main(argv=None):
                             datetime.fromisoformat(now())
                             - datetime.fromisoformat(record["opened_at"])
                         ).total_seconds() >= record["definition"]["wait_minutes"] * 60
+                elif args.command == "budget":
+                    from .budgets import FIELDS, proposal
+                    from .checkpoints import discover
+
+                    state, _ = discover(gh, args.issue, persist=False)
+                    result = proposal(
+                        issue,
+                        cfg,
+                        state,
+                        {
+                            name: getattr(args, name)
+                            for name in FIELDS
+                            if getattr(args, name) is not None
+                        },
+                    )
+                elif args.command == "recovery":
+                    from .checkpoints import discard_proposal, discover
+
+                    state, _ = discover(gh, args.issue, persist=False)
+                    result = (
+                        discard_proposal(issue, cfg, state)
+                        if args.discard
+                        else {
+                            "checkpoints": state.get("recovery", {}),
+                            "history": state.get("recovery_history", []),
+                            "capture_failures": state.get("recovery_capture_failures", []),
+                        }
+                    )
+                elif args.command == "resume" and args.dry_run:
+                    from copy import deepcopy
+
+                    from .budgets import reconcile as reconcile_budget
+                    from .budgets import status as budget_status
+                    from .checkpoints import discover
+                    from .checkpoints import inspect as inspect_recovery
+
+                    state, _ = discover(gh, args.issue, persist=False)
+                    state = deepcopy(state)
+                    projected_decision = reconcile_budget(gh, issue, cfg, state)
+                    result = {
+                        "dry_run": True,
+                        "dispatch": False,
+                        "pending_decision_applies": projected_decision,
+                        "issue": issue["html_url"],
+                        "status": state.get("status", state.get("clarification", {}).get("status")),
+                        "budget": budget_status(issue, cfg, state),
+                        "recovery": inspect_recovery(gh, issue, cfg, state),
+                        "reason": state.get("reason", state.get("clarification", {}).get("reason")),
+                    }
                 elif args.command in ("cancel", "resume"):
                     result = gh.comment(args.issue, f"/nexkit {args.command}")
                     if args.command == "resume":

@@ -59,6 +59,12 @@ final upload, and slots remain for the normal report and diagnostics. Checkpoint
 transport receives artifact credentials only, without model or GitHub write
 credentials. Source commands do not receive artifact transport credentials.
 
+A monitor waits the effective cadence after each capture/upload attempt. Snapshot
+time and upload time add to this interval; each upload has at most 45 seconds.
+Work after the last captured snapshot remains at risk until a newer upload
+completes. Before the first complete upload, or if every capture/upload fails,
+the entire interrupted call's unpublished work can be lost.
+
 A hard runner loss can lose work since the last completed upload. Storage/network
 failure, unsafe/oversized data or expired/deleted artifacts can make recovery
 unavailable. Status reports that limitation; it cannot promise a final tail

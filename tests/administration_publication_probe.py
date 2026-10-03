@@ -89,7 +89,8 @@ def verify(gh, publication, environment, *, record=None):
             run["head_sha"] == result["source_commit"]
             and run["event"] == "workflow_dispatch"
             and run["path"].split("@", 1)[0] == ".github/workflows/ci.yml"
-            and gh.permission(run.get("actor", {}).get("login")) == "admin",
+            and gh.permission(run.get("actor", {}).get("login")) == "admin"
+            and gh.permission(run.get("triggering_actor", {}).get("login")) == "admin",
             "Probe must belong to this exact CI revision and an actual administrator",
         )
         repo = gh.repo()

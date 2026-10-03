@@ -37,6 +37,7 @@ class ProbeGitHub:
         self.revoke = True
         self.publisher_calls = 0
         self.truncated_tree = False
+        self.triggering_actor = "owner"
         self.binding = {
             **PUBLICATION,
             "repository_id": 50,
@@ -84,6 +85,7 @@ class ProbeGitHub:
                 "event": "workflow_dispatch",
                 "path": ".github/workflows/ci.yml",
                 "actor": {"login": "owner"},
+                "triggering_actor": {"login": self.triggering_actor},
             }
         if path.endswith("/git/commits/" + SOURCE):
             return {"tree": {"sha": "d" * 40}}
@@ -225,6 +227,13 @@ class PublicationProbeTests(unittest.TestCase):
     def test_partial_source_inventory_cannot_authorize_a_fixture_write(self):
         self.gh.truncated_tree = True
         self.assertFalse(self.verify()["passed"])
+        self.assertEqual(self.gh.publisher_calls, 0)
+        self.assertFalse(any(method != "GET" for _, _, method, _ in self.gh.requests))
+
+    def test_a_non_administrator_cannot_rerun_the_administrators_probe(self):
+        self.gh.triggering_actor = "collaborator"
+        report = self.verify({**ENVIRONMENT, "GITHUB_RUN_ATTEMPT": "2"})
+        self.assertFalse(report["passed"])
         self.assertEqual(self.gh.publisher_calls, 0)
         self.assertFalse(any(method != "GET" for _, _, method, _ in self.gh.requests))
 

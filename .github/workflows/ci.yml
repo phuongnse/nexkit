@@ -202,8 +202,9 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
+          path: kit
           persist-credentials: false
-      - uses: ./actions/python-runtime
+      - uses: ./kit/actions/python-runtime
       - name: Verify publication with an actual scoped App token
         env:
           GH_TOKEN: ${{ github.token }}
@@ -211,8 +212,8 @@ jobs:
           NEXKIT_ADMIN_APP_ID: ${{ vars.NEXKIT_ADMIN_APP_ID }}
           NEXKIT_ADMIN_APP_SLUG: ${{ vars.NEXKIT_ADMIN_APP_SLUG }}
           NEXKIT_ADMIN_APP_INSTALLATION_ID: ${{ vars.NEXKIT_ADMIN_APP_INSTALLATION_ID }}
-          PYTHONPATH: ${{ github.workspace }}
-        run: python3 tests/administration_publication_probe.py --out "$RUNNER_TEMP/administrative-publication.json"
+          PYTHONPATH: ${{ github.workspace }}/kit
+        run: python3 kit/tests/administration_publication_probe.py --out "$RUNNER_TEMP/administrative-publication.json"
       - name: Preserve the publication report even on failure
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

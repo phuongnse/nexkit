@@ -1,0 +1,41 @@
+name: Administrative publication permission probe
+on:
+  push:
+    branches: [diagnostics/issue10-token]
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Exercise Git database endpoints with the actual workflow token
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          import json, os, re, subprocess
+          root = 'repos/' + os.environ['GITHUB_REPOSITORY']
+          def api(path, method='GET', data=None):
+              args = ['gh', 'api', '--method', method, path]
+              if data is not None:
+                  args += ['--input', '-']
+              response = subprocess.run(args, input=json.dumps(data) if data is not None else None, capture_output=True, text=True)
+              status = re.search(r'HTTP (\d+)', response.stderr)
+              print(json.dumps({'method': method, 'path': path, 'success': response.returncode == 0, 'http_status': int(status[1]) if status else None}), flush=True)
+              if response.returncode:
+                  return None
+              return json.loads(response.stdout)
+          base = api(root + '/git/commits/' + os.environ['GITHUB_SHA'])
+          outcomes = {}
+          for case, path in [('ordinary', 'permission-probe.txt'), ('workflow', '.github/workflows/permission-probe.yml')]:
+              tree = api(root + '/git/trees', 'POST', {'base_tree': base['tree']['sha'], 'tree': [{'path': path, 'mode': '100644', 'type': 'blob', 'content': '# isolated publication permission probe\n'}]})
+              assert tree
+              commit = api(root + '/git/commits', 'POST', {'message': 'Isolated administrative permission probe ' + case, 'tree': tree['sha'], 'parents': [base['sha']]})
+              assert commit
+              branch = 'nexkit/permission-probe-' + os.environ['GITHUB_RUN_ID'] + '-' + case
+              reference = api(root + '/git/refs', 'POST', {'ref': 'refs/heads/' + branch, 'sha': commit['sha']})
+              outcomes[case] = reference is not None
+          print(json.dumps({'observed': outcomes, 'model_calls': 0, 'default_branch_changes': 0}), flush=True)
+          assert outcomes == {'ordinary': True, 'workflow': False}, outcomes

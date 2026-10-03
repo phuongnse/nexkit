@@ -94,8 +94,7 @@ nexkit --version
 ```
 
 The `PATH` setting applies to this terminal. The full guide explains how to keep
-the command available in new terminals and
-[switch an earlier `nexkit@personal` installation](docs/getting-started.md#3-install-the-plugin-in-codex).
+the command available in new terminals.
 
 On Windows, use PowerShell and the bundled `nexkit.cmd` launcher:
 

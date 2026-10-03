@@ -180,27 +180,18 @@ def verify(archive, *, source=None, codex=None):
         if codex is not None:
             binary = Path(codex).resolve()
             installed_version = cli_version(binary, cwd=kit, env=env)
-            installed_marketplace = json.loads(
-                (kit / ".agents/plugins/marketplace.json").read_bytes()
-            )["name"]
-            selector = "nexkit@" + installed_marketplace
+            installed_marketplace = "nexkit"
             expected = {
                 "nexkit:" + path.parent.name
                 for path in (kit / "plugins/nexkit/skills").glob("*/SKILL.md")
             }
             invoke([binary, "plugin", "marketplace", "add", kit], cwd=kit, env=env)
             for _ in range(2):
-                invoke([binary, "plugin", "add", selector], cwd=kit, env=env)
+                invoke([binary, "plugin", "add", "nexkit@nexkit"], cwd=kit, env=env)
                 actual = skills(binary, kit, env)
                 if not expected <= actual:
                     raise RuntimeError("Native Codex did not discover every packaged skill")
-                cache = (
-                    home
-                    / ".codex/plugins/cache"
-                    / installed_marketplace
-                    / "nexkit"
-                    / manifest["version"]
-                )
+                cache = home / ".codex/plugins/cache/nexkit/nexkit" / manifest["version"]
                 for path in (kit / "plugins/nexkit").rglob("*"):
                     if (
                         path.is_file()
@@ -208,7 +199,7 @@ def verify(archive, *, source=None, codex=None):
                         != (cache / path.relative_to(kit / "plugins/nexkit")).read_bytes()
                     ):
                         raise RuntimeError("An installed plugin file differs from the archive")
-            invoke([binary, "plugin", "remove", selector], cwd=kit, env=env)
+            invoke([binary, "plugin", "remove", "nexkit@nexkit"], cwd=kit, env=env)
             if expected & skills(binary, kit, env):
                 raise RuntimeError("Native Codex still discovers the removed plugin")
             installed_skills = sorted(expected)

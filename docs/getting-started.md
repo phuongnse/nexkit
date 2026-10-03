@@ -139,23 +139,7 @@ codex plugin add nexkit@nexkit
 
 Either source installs the same nine plugin skills. Keep the toolkit CLI from
 step 2 available separately; plugin installation does not add `nexkit` to `PATH`
-or configure an application's GitHub workflows and model access. The repository
-marketplace is a distribution source; a GitHub release does not submit the plugin
-to OpenAI's public Plugins Directory.
-
-If you installed NexKit 1.2.0 or an earlier release as `nexkit@personal`,
-switch the local plugin installation to the new marketplace:
-
-```sh
-codex plugin marketplace add phuongnse/nexkit --ref v1.2.1
-codex plugin remove nexkit@personal
-codex plugin add nexkit@nexkit
-```
-
-For a local source, add your 1.2.1 checkout or extracted archive directory in
-place of `phuongnse/nexkit --ref v1.2.1`. Start a new Codex session after switching.
-The plugin skills keep names such as `nexkit:nexkit-init`. To update an existing
-consumer's accepted toolkit pin, follow [release selection](versions.md#select-a-project-release).
+or configure an application's GitHub workflows and model access.
 
 Now open a new session from your application repository:
 

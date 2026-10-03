@@ -3,9 +3,9 @@
 ## 1.2.1
 
 - Name the bundled marketplace `nexkit`, displayed as NexKit, and install the
-  plugin as `nexkit@nexkit`. Document migration from the earlier `personal` source.
-- Verify native plugin installation using the packaged marketplace name,
-  including archives from earlier releases.
+  plugin as `nexkit@nexkit` in the installation guides.
+- Verify native plugin installation, repeated installation and removal through
+  the `nexkit` marketplace.
 
 ## 1.2.0
 

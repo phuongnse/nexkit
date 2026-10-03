@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.1
+
+- Name the bundled marketplace `nexkit`, displayed as NexKit, and install the
+  plugin as `nexkit@nexkit`. Document migration from the earlier `personal` source.
+- Verify native plugin installation using the packaged marketplace name,
+  including archives from earlier releases.
+
 ## 1.2.0
 
 - Publish protected setup through exact administrator proposals, bot PRs,

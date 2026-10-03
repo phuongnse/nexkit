@@ -2,13 +2,13 @@
 
 [Documentation](README.md) / Versions
 
-NexKit **1.2.0** retains project and candidate **schema 1** from 1.0.0.
+NexKit **1.2.1** retains project and candidate **schema 1** from 1.0.0.
 Select a published release explicitly. Release numbers identify artifacts;
 configuration and workflow capabilities determine whether a project can use them.
 
 | Value | Purpose |
 |---|---|
-| NexKit `1.2.0` | Plugin, Python package, CLI and published archive identification |
+| NexKit `1.2.1` | Plugin, Python package, CLI and published archive identification |
 | Project `schema: 1` | Validate the accepted configuration structure |
 | `kit.ref` | Full commit SHA of the trusted toolkit code and reusable workflows |
 | `kit.version` | Identify the selected toolkit release in installation records |
@@ -23,8 +23,8 @@ consumer repository. Python 3.11+ and authenticated GitHub CLI (`gh`) are requir
 to read the accepted toolkit repository's published release and assets.
 
 ```sh
-nexkit use --version 1.2.0 --dry-run
-nexkit use --version 1.2.0
+nexkit use --version 1.2.1 --dry-run
+nexkit use --version 1.2.1
 ```
 
 The first command shows file diffs; the second applies them locally. You can
@@ -72,7 +72,7 @@ see [installation](getting-started.md) and
 
 ## Pin trusted source
 
-Resolve `v1.2.0` to its full commit SHA before accepting initial setup. Both the
+Resolve `v1.2.1` to its full commit SHA before accepting initial setup. Both the
 workflow `uses:` references and `kit.ref` must name that SHA. Examples contain
 placeholders that setup must replace. For an installed project, `nexkit use`
 performs that resolution and updates all literal reusable-job pins together;

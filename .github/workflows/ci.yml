@@ -10,6 +10,11 @@ on:
         description: Optional consumer-selected CLI for the same container checks
         type: string
         required: false
+      administrative_publication:
+        description: Verify live App workflow publication in this repository
+        type: boolean
+        default: false
+        required: false
 permissions:
   contents: read
 jobs:
@@ -184,3 +189,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PYTHONPATH: ${{ github.workspace }}/kit
         run: python3 kit/tests/checkpoint_transport_probe.py finish
+  administrative-publication:
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && inputs.administrative_publication
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./actions/python-runtime
+      - name: Verify publication with an actual scoped App token
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXKIT_ADMIN_APP_PRIVATE_KEY: ${{ secrets.NEXKIT_ADMIN_APP_PRIVATE_KEY }}
+          NEXKIT_ADMIN_APP_ID: ${{ vars.NEXKIT_ADMIN_APP_ID }}
+          NEXKIT_ADMIN_APP_SLUG: ${{ vars.NEXKIT_ADMIN_APP_SLUG }}
+          NEXKIT_ADMIN_APP_INSTALLATION_ID: ${{ vars.NEXKIT_ADMIN_APP_INSTALLATION_ID }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: python3 tests/administration_publication_probe.py --out "$RUNNER_TEMP/administrative-publication.json"
+      - name: Preserve the publication report even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: administrative-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/administrative-publication.json
+          if-no-files-found: error

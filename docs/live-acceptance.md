@@ -45,6 +45,48 @@ to the default branch and run doctor --online --checks. Record unavailable
 capabilities honestly; an empty application must not receive fake passing tests.
 Secret metadata alone does not demonstrate model authentication.
 
+## Toolkit publication self-verification
+
+The toolkit owns its tests and repeatable integration probes. The administrative
+publication probe runs in the NexKit repository itself; it does not require a
+separately maintained consumer project or install the App in any consumer.
+Other consumer scenarios below verify complete delivery and adoption separately.
+
+Once per toolkit repository, an administrator follows
+[publication authority setup](administration.md#publication-authority), installs
+the dedicated App in that repository and saves `NEXKIT_ADMIN_APP_PRIVATE_KEY`.
+Save its public metadata as Actions variables:
+
+```sh
+gh variable set NEXKIT_ADMIN_APP_ID --repo OWNER/NEXKIT_REPO --body APP_ID
+gh variable set NEXKIT_ADMIN_APP_SLUG --repo OWNER/NEXKIT_REPO --body APP_SLUG
+gh variable set NEXKIT_ADMIN_APP_INSTALLATION_ID --repo OWNER/NEXKIT_REPO --body INSTALLATION_ID
+```
+
+Enable Actions PR creation in that repository. Then run its CI against the
+branch containing the selected candidate:
+
+```sh
+gh workflow run ci.yml --repo OWNER/NEXKIT_REPO --ref CANDIDATE_BRANCH --field administrative_publication=true
+```
+
+The job verifies the actual administrator and exact Actions source revision,
+uses the production publication client to mint a token scoped to this one
+repository, proves ordinary workflow-token writes succeed while workflow edits
+fail with HTTP 403, and publishes the same workflow fixture using the App.
+It verifies exact Git refs/content, Actions-authored draft PR and Actions-App
+check identity, closes the draft and deletes only its unchanged temporary refs.
+It also verifies native token revocation and that the default branch stayed at
+its original head. No model is called and no PR is merged.
+
+The `administrative-publication-RUN-ATTEMPT` artifact records source, scope,
+temporary resources, outcome and cleanup, including failures. Missing credentials
+fail the requested job; a skipped optional job is unverified. Interruption may
+leave resources recorded by that attempt; inspect their exact identities before
+cleanup. The shared suite tests changed resources and lost responses with
+simulated APIs. This live publication probe does not claim consumer application
+checks, independent consumer model review, human approval or protected merge.
+
 ## Prompt → issue → approval → merge
 
 Use the nexkit-request skill or:

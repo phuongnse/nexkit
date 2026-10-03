@@ -28,6 +28,12 @@ and exact slug from the App settings. Generate an App private key and store it
 outside every consumer checkout, runner login directory and model workspace.
 Also record the installation ID from its GitHub installation settings URL.
 
+Install this App in a consumer when that consumer adopts this protected
+administrative path. Publishing a new NexKit release does not install it in
+consumers or change their accepted version. Ordinary source delivery does not
+need this App. For toolkit verification, install it only in the NexKit
+repository running the [publication probe](live-acceptance.md#toolkit-publication-self-verification).
+
 Use `gh secret set NEXKIT_ADMIN_APP_PRIVATE_KEY --repo OWNER/REPO < /protected/app.pem`
 to store that key as a repository Actions secret. The bootstrap forwards it only
 to the reusable workflow's hosted publication steps. Local online preflight

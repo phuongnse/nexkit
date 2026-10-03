@@ -208,6 +208,10 @@ the [runner guide and support boundary](docs/self-hosted.md) before choosing it.
 The [verification guide](docs/acceptance.md) explains the checks and how to
 distinguish live integration evidence from tests that simulate services or model
 responses. Results belong to the corresponding run or release.
+The toolkit also has a [publication self-verification job](docs/live-acceptance.md#toolkit-publication-self-verification)
+that tests actual GitHub permissions in its own repository, using temporary
+branches and a draft PR. Consumers configure the administrative App only when
+they adopt that path; a toolkit release does not change their installation.
 
 The plugin, CLI and runner image use version `1.2.2`. Project configuration
 and release candidate data use `schema: 1`. See [versions](docs/versions.md)

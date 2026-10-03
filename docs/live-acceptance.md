@@ -45,6 +45,48 @@ to the default branch and run doctor --online --checks. Record unavailable
 capabilities honestly; an empty application must not receive fake passing tests.
 Secret metadata alone does not demonstrate model authentication.
 
+## Toolkit publication self-verification
+
+The toolkit owns its tests and repeatable integration probes. The administrative
+publication probe runs in the NexKit repository itself; it does not require a
+separately maintained consumer project or install the App in any consumer.
+Other consumer scenarios below verify complete delivery and adoption separately.
+
+Once per toolkit repository, an administrator follows
+[publication authority setup](administration.md#publication-authority), installs
+the dedicated App in that repository and saves `NEXKIT_ADMIN_APP_PRIVATE_KEY`.
+Save its public metadata as Actions variables:
+
+```sh
+gh variable set NEXKIT_ADMIN_APP_ID --repo OWNER/NEXKIT_REPO --body APP_ID
+gh variable set NEXKIT_ADMIN_APP_SLUG --repo OWNER/NEXKIT_REPO --body APP_SLUG
+gh variable set NEXKIT_ADMIN_APP_INSTALLATION_ID --repo OWNER/NEXKIT_REPO --body INSTALLATION_ID
+```
+
+Enable Actions PR creation in that repository. Then run its CI against the
+branch containing the selected candidate:
+
+```sh
+gh workflow run ci.yml --repo OWNER/NEXKIT_REPO --ref CANDIDATE_BRANCH --field administrative_publication=true
+```
+
+The job verifies the actual administrator and exact Actions source revision,
+uses the production publication client to mint a token scoped to this one
+repository, proves ordinary workflow-token writes succeed while workflow edits
+fail with HTTP 403, and publishes the same workflow fixture using the App.
+It verifies exact Git refs/content, Actions-authored draft PR and Actions-App
+check identity, closes the draft and deletes only its unchanged temporary refs.
+It also verifies native token revocation and that the default branch stayed at
+its original head. No model is called and no PR is merged.
+
+The `administrative-publication-RUN-ATTEMPT` artifact records source, scope,
+temporary resources, outcome and cleanup, including failures. Missing credentials
+fail the requested job; a skipped optional job is unverified. Interruption may
+leave resources recorded by that attempt; inspect their exact identities before
+cleanup. The shared suite tests changed resources and lost responses with
+simulated APIs. This live publication probe does not claim consumer application
+checks, independent consumer model review, human approval or protected merge.
+
 ## Prompt → issue → approval → merge
 
 Use the nexkit-request skill or:
@@ -120,6 +162,14 @@ owner's accepted integration scope:
   exact grant, inspect dry-run, then resume the same issue. Original consumption
   stays spent; no grant can approve a merge or override `retry: never`.
 - Run protected setup before any default-branch administration workflow exists.
+  Check initial installation and upgrades containing workflow changes with a
+  real publication App. Confirm the actual token is restricted to one repository
+  and Contents/Workflows write; PRs and required checks remain Actions-App-owned.
+  Reject missing/suspended/wrong App installations and permission denial before
+  staging or model reservation. Verify sanitized method/path/status diagnostics.
+  Interrupt tree, commit, ref and PR publication and reuse the exact candidate,
+  recorded review usage and native approval. Confirm App token revocation and
+  that neither App key nor token enters the agent/check workspace.
   Verify real bot PR authorship, actual scoped checks, separate CLI review and
   the administrator's native exact-head approval; retain native protection.
 - Verify temporary runner admission, expiry, post-merge rebind and preserved
@@ -245,7 +295,7 @@ a WSL container cannot establish native Windows application behavior.
    branch/PR jobs before adding a model login; a simulated Worker or fixture
    service is separate component evidence.
 5. Build the same clean source on both OSes. Compare archive and manifest bytes,
-   then run `python scripts/verify_package.py dist/nexkit-1.2.1.tar.gz
+   then run `python scripts/verify_package.py dist/nexkit-1.2.2.tar.gz
    --source-commit FULL_SHA --codex SELECTED_NATIVE_EXECUTABLE` on each OS. Verify
    native launchers, all packaged files and skills, reinstall and removal
    using fresh homes without login or inference.

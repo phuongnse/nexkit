@@ -17,6 +17,8 @@ on:
     secrets:
       OPENAI_API_KEY:
         required: false
+      NEXKIT_ADMIN_APP_PRIVATE_KEY:
+        required: true
 permissions: {}
 defaults:
   run:
@@ -72,6 +74,7 @@ jobs:
       - id: prepare
         env:
           GH_TOKEN: ${{ github.token }}
+          NEXKIT_ADMIN_APP_PRIVATE_KEY: ${{ secrets.NEXKIT_ADMIN_APP_PRIVATE_KEY }}
           PYTHONPATH: ${{ github.workspace }}/kit
           NEXKIT_PROPOSAL: ${{ inputs.proposal }}
           NEXKIT_SHA: ${{ inputs.proposal_sha }}
@@ -193,5 +196,6 @@ jobs:
       - name: Validate both independent review and actual administrator approval before native merge
         env:
           GH_TOKEN: ${{ github.token }}
+          NEXKIT_ADMIN_APP_PRIVATE_KEY: ${{ secrets.NEXKIT_ADMIN_APP_PRIVATE_KEY }}
           PYTHONPATH: ${{ github.workspace }}/kit
         run: python3 -m nexkit.administration finish --context /tmp/nexkit/context.json --report /tmp/nexkit/review/report.json

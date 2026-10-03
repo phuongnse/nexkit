@@ -3,6 +3,9 @@
 The links below document the integrated interfaces and pinned components.
 NexKit's Python runtime has no third-party dependency; it uses Git,
 GitHub CLI and the consumer's actual commands.
+Protected administrative publication also uses the host's OpenSSL command for
+RS256 App JWT signing. It is required on the hosted publication job and for
+local online App preflight; it adds no Python package dependency.
 
 | Component | Version or pin | License and decision |
 |---|---|---|
@@ -30,6 +33,8 @@ API and authentication sources:
 [GitHub event/token behavior](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow),
 [GitHub concurrency queue](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency),
 [active branch rules API](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch).
+[GitHub App JWT authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app),
+[repository-scoped installation tokens](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app).
 
 [actionlint](https://github.com/rhysd/actionlint/tree/v1.7.12) is an upstream
 development tool, not a runtime dependency or a workflow engine. Its 1.7.12

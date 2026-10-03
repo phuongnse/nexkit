@@ -73,11 +73,11 @@ by a CI runner are configured separately.
 
 Keep NexKit in a tools directory alongside your projects:
 
-Install version 1.2.1 from its release tag. Project setup records the full
+Install version 1.2.2 from its release tag. Project setup records the full
 commit SHA so each workflow uses the same immutable NexKit source.
 
 ```sh
-git clone --branch v1.2.1 https://github.com/phuongnse/nexkit.git
+git clone --branch v1.2.2 https://github.com/phuongnse/nexkit.git
 cd nexkit
 export PATH="$PWD/bin:$PATH"
 nexkit --version
@@ -86,7 +86,7 @@ nexkit --version
 On native Windows, use PowerShell:
 
 ```powershell
-git clone --branch v1.2.1 https://github.com/phuongnse/nexkit.git
+git clone --branch v1.2.2 https://github.com/phuongnse/nexkit.git
 Set-Location nexkit
 $nexkitSource = (Get-Location).Path
 $env:Path = "$nexkitSource\bin;$env:Path"
@@ -133,7 +133,7 @@ Alternatively, add the released marketplace directly from GitHub instead of
 registering the local checkout:
 
 ```sh
-codex plugin marketplace add phuongnse/nexkit --ref v1.2.1
+codex plugin marketplace add phuongnse/nexkit --ref v1.2.2
 codex plugin add nexkit@nexkit
 ```
 

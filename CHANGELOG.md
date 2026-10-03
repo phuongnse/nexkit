@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.2
+
+- Publish protected administrative workflow changes with a dedicated,
+  repository-scoped GitHub App token, while retaining Actions-owned PRs/checks
+  and actual native administrator approval under unchanged protection.
+- Verify App identity, installation and effective token permissions separately
+  from administrator preflight; revoke temporary credentials after use and keep
+  them out of model and consumer execution workspaces.
+- Report sanitized GitHub API method, endpoint, HTTP status and permission hints.
+- Recover interrupted administrative commit, ref and PR creation using the same
+  exact candidate, publication binding and recorded review consumption.
+
 ## 1.2.1
 
 - Name the bundled marketplace `nexkit`, displayed as NexKit, and install the

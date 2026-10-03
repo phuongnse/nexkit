@@ -37,10 +37,10 @@ An existing application keeps its source files and conventions.
 If you do not have a NexKit checkout yet, run this in your tools directory:
 
 ```sh
-git clone --branch v1.2.1 https://github.com/phuongnse/nexkit.git
+git clone --branch v1.2.2 https://github.com/phuongnse/nexkit.git
 ```
 
-This checks out version 1.2.1. The setup script uses its full commit SHA for
+This checks out version 1.2.2. The setup script uses its full commit SHA for
 the project's configuration and workflow references.
 
 Set these paths for the rest of this terminal session:

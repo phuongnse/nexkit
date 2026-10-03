@@ -5,6 +5,7 @@ import hashlib
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,10 +17,12 @@ from nexkit.administration import (
     bootstrap,
     finish,
     plan,
+    preflight,
     prepare,
     validate,
     verify,
 )
+from nexkit.administrative_publisher import PERMISSIONS
 from nexkit.clarify import prepare as prepare_clarification
 from nexkit.common import Blocked, canonical, digest, run
 from nexkit.pipelines import effective_config
@@ -29,6 +32,30 @@ from nexkit.runner_administration import operate as runner_operation
 from runner.job_hook import admitted as runner_admitted
 from tests.support import FakeGitHub, install_fixture, project_document, reviewed, workflow_files
 from tests.test_clarify import RequirementGitHub
+
+PUBLICATION = {"app_id": 12345, "app_slug": "nexkit-test-publisher", "installation_id": 90}
+
+
+class PublicationGitHub:
+    def __init__(self, gh):
+        self.gh = gh
+        self.binding = {
+            **PUBLICATION,
+            "installation_id": 90,
+            "repository_id": 50,
+            "permissions": dict(PERMISSIONS),
+        }
+        self.requests = []
+
+    def api(self, path, method="GET", data=None):
+        self.requests.append((path, method))
+        with patch.object(self.gh, "publication_active", True):
+            return self.gh.api(path, method, data)
+
+
+@contextmanager
+def simulated_publisher(client):
+    yield client
 
 
 class AdministrativeGitHub(FakeGitHub):
@@ -43,7 +70,14 @@ class AdministrativeGitHub(FakeGitHub):
         self.branches = {"main": self.base}
         self.files = {self.base: self.base_files}
         self.trees = {}
-        self.commits = {self.base: {"sha": self.base, "tree": {"sha": self.base}, "parents": []}}
+        self.commits = {
+            self.base: {
+                "sha": self.base,
+                "tree": {"sha": self.base},
+                "parents": [],
+                "committer": {"date": "2026-01-01T00:00:00Z"},
+            }
+        }
         self.stage = "e" * 40
         self.files[self.stage] = {
             PROPOSAL_PATH: canonical(proposal),
@@ -51,6 +85,7 @@ class AdministrativeGitHub(FakeGitHub):
         }
         self.administrative_state, self.admin_revision = {}, None
         self.reviews, self.requests = [], []
+        self.publication_active = False
 
     def get_administration(self, identifier):
         return deepcopy(self.administrative_state), self.admin_revision
@@ -79,6 +114,9 @@ class AdministrativeGitHub(FakeGitHub):
         }
 
     def api(self, path, method="GET", data=None, **kwargs):
+        if ("/git/" in path and method != "GET") or (path.endswith("/merge") and method == "PUT"):
+            if not self.publication_active:
+                raise AssertionError("Workflow Git writes must use the App credential")
         self.requests.append((path, method))
         if "/actions/runs/" in path:
             return {
@@ -178,8 +216,17 @@ class AdministrationTests(unittest.TestCase):
             path = self.bundle / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
-        self.result = plan(self.root, proposed, "maintenance", bundle=self.bundle)
+        self.result = plan(
+            self.root, proposed, "maintenance", bundle=self.bundle, publication=PUBLICATION
+        )
         self.gh = AdministrativeGitHub(self.root, self.result["proposal"])
+        self.publication = PublicationGitHub(self.gh)
+        self.publisher = self.enterContext(
+            patch(
+                "nexkit.administration.publisher",
+                side_effect=lambda *_: simulated_publisher(self.publication),
+            )
+        )
         self.enterContext(
             patch.dict(
                 os.environ,
@@ -471,6 +518,118 @@ class AdministrationTests(unittest.TestCase):
         self.assertTrue(all(method == "GET" for _, method in self.gh.requests))
         self.assertNotIn("application tests passed", canonical(report))
 
+    def test_publication_credential_denial_cannot_create_state_pr_or_consume_review_budget(self):
+        self.publisher.side_effect = Blocked("publication credential unavailable")
+        with self.assertRaisesRegex(Blocked, "credential unavailable"):
+            self.prepare()
+        self.assertEqual(self.gh.administrative_state, {})
+        self.assertEqual(self.publication.requests, [])
+        self.assertFalse(any(method != "GET" for _, method in self.gh.requests))
+
+    def test_local_preflight_requires_actions_secret_and_reports_hosted_identity_as_unverified(
+        self,
+    ):
+        missing = True
+
+        def inspect(path, *args, **kwargs):
+            if path == "user":
+                return {"login": "owner", "type": "User"}
+            if path.endswith("/actions/permissions/workflow"):
+                return {"can_approve_pull_request_reviews": True}
+            if "/actions/secrets/" in path:
+                if missing:
+                    raise Blocked("HTTP 404")
+                return {"name": "NEXKIT_ADMIN_APP_PRIVATE_KEY"}
+            raise AssertionError(path)
+
+        with (
+            patch.object(self.gh, "api", side_effect=inspect),
+            patch.object(self.gh, "audit_settings", create=True, return_value={}),
+        ):
+            with self.assertRaisesRegex(Blocked, "before staging"):
+                preflight(self.gh, self.result["proposal"])
+            self.publisher.assert_not_called()
+            missing = False
+            result = preflight(self.gh, self.result["proposal"])
+        self.assertTrue(result["publication"]["effective_token_verified"])
+        self.assertTrue(result["publication"]["actions_secret_configured"])
+        self.assertFalse(result["publication"]["actions_key_identity_verified"])
+        self.assertFalse(result["publication"]["live_candidate_publication_verified"])
+        self.assertEqual(self.gh.administrative_state, {})
+
+    def test_ref_publication_failure_reuses_recorded_commit_without_reserving_a_review(self):
+        original = self.publication.api
+
+        def fail_ref(path, method="GET", data=None):
+            if path.endswith("/git/refs"):
+                raise Blocked("HTTP 403: publication denied")
+            return original(path, method, data)
+
+        with patch.object(self.publication, "api", side_effect=fail_ref):
+            with self.assertRaisesRegex(Blocked, "HTTP 403"):
+                self.prepare()
+        head = self.gh.administrative_state["head"]
+        self.assertNotIn("pr", self.gh.administrative_state)
+        self.assertNotIn("review_calls", self.gh.administrative_state)
+        os.environ["GITHUB_RUN_ATTEMPT"] = "2"
+        context = self.prepare()["context"]
+        self.assertEqual(context["source"], head)
+        self.assertEqual(
+            sum(
+                path.endswith("/git/commits") and method == "POST"
+                for path, method in self.publication.requests
+            ),
+            1,
+        )
+        self.assertEqual(self.gh.administrative_state["review_calls"], 1)
+
+    def test_lost_commit_response_reuses_the_same_reproducible_git_object(self):
+        original = self.publication.api
+        created = []
+
+        def interrupt(path, method="GET", data=None):
+            result = original(path, method, data)
+            if path.endswith("/git/commits") and method == "POST":
+                created.append(result["sha"])
+                raise Blocked("Transport interrupted after commit creation")
+            return result
+
+        with patch.object(self.publication, "api", side_effect=interrupt):
+            with self.assertRaisesRegex(Blocked, "Transport interrupted"):
+                self.prepare()
+        self.assertNotIn("review_calls", self.gh.administrative_state)
+        os.environ["GITHUB_RUN_ATTEMPT"] = "2"
+        self.assertEqual(self.prepare()["context"]["source"], created[0])
+
+    def test_lost_pr_response_reuses_the_owned_bot_pr(self):
+        original = self.gh.api
+
+        def interrupt(path, method="GET", data=None, **kwargs):
+            result = original(path, method, data, **kwargs)
+            if path.endswith("/pulls") and method == "POST":
+                raise Blocked("Transport interrupted after PR creation")
+            return result
+
+        with patch.object(self.gh, "api", side_effect=interrupt):
+            with self.assertRaisesRegex(Blocked, "Transport interrupted"):
+                self.prepare()
+        self.assertNotIn("review_calls", self.gh.administrative_state)
+        os.environ["GITHUB_RUN_ATTEMPT"] = "2"
+        self.prepare()
+        self.assertEqual(
+            sum(path.endswith("/pulls") and method == "POST" for path, method in self.gh.requests),
+            1,
+        )
+
+    def test_changed_app_installation_cannot_reuse_review_or_merge(self):
+        context = self.prepare()["context"]
+        self.gh.approve_candidate()
+        self.publication.binding["installation_id"] = 91
+        with self.assertRaisesRegex(Blocked, "authority changed"):
+            finish(self.gh, context, self.review(context))
+        self.assertEqual(self.gh.merges, [])
+        self.assertEqual(self.gh.administrative_state["review_calls"], 1)
+
     def test_proposal_contract_rejects_source_delivery_and_ledger_drift(self):
         for mutation in ("source", "ledger", "control", "duplicate", "unbounded"):
             value = deepcopy(self.result["proposal"])
@@ -507,7 +666,11 @@ class AdministrationTests(unittest.TestCase):
             cwd=self.root,
         )
         result = plan(
-            self.root, self.result["proposal"]["project"], "maintenance", bundle=self.bundle
+            self.root,
+            self.result["proposal"]["project"],
+            "maintenance",
+            bundle=self.bundle,
+            publication=PUBLICATION,
         )
         self.assertIsNone(result["proposal"]["previous_project"])
         self.assertIn("push:", result["bootstrap"])

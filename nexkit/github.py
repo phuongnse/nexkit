@@ -1,10 +1,14 @@
-"""GitHub operations via its official CLI; no token storage or custom auth loop."""
+"""GitHub CLI operations and in-memory Bearer requests for short-lived App JWTs."""
 
 from __future__ import annotations
 
 import base64
 import json
-from urllib.parse import quote
+import os
+import re
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .common import Blocked, canonical, run, short_summary
 from .policy import REPO, STATE_BRANCH, require
@@ -56,13 +60,74 @@ def state_message(number, value):
     return f"NexKit #{int(number)}: {short_summary(summary or status.replace('_', ' ') or 'Preparing work')}"
 
 
+def api_failure(path, method, detail):
+    endpoint = re.sub(r"[^A-Za-z0-9/_.%~-]", "?", urlsplit(path).path)[:500]
+    hint = ""
+    if detail == "HTTP 403":
+        hint = " Check the actual credential's repository access and required permissions."
+        if any(
+            part in endpoint for part in ("/git/trees", "/git/refs", "/git/commits")
+        ) or endpoint.endswith("/merge"):
+            hint += " Workflow publication requires Contents:write and Workflows:write; GITHUB_TOKEN cannot grant Workflows:write."
+    return Blocked(f"GitHub API {method} /{endpoint.lstrip('/')} failed ({detail}).{hint}")
+
+
+class AppRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward an App JWT to a redirect target, including another host.
+        return None
+
+
 class GitHub:
-    def __init__(self, repository):
+    def __init__(self, repository, *, token=None, bearer=False):
         require(REPO.fullmatch(repository), "Invalid repository")
         self.repository = repository
         self.root = f"repos/{repository}"
+        self._environment = None
+        self._bearer = token if bearer else None
+        require(not bearer or token, "App Bearer authentication requires a credential")
+        if token is not None:
+            require(
+                isinstance(token, str) and token and not re.search(r"\s", token),
+                "Invalid GitHub credential",
+            )
+            self._environment = {**os.environ, "GH_TOKEN": token, "GH_HOST": "github.com"}
+            self._environment.pop("GITHUB_TOKEN", None)
 
     def api(self, path, method="GET", data=None, *, pages=False, collection=None):
+        if self._bearer:
+            require(not pages, "App JWT endpoints do not support paginated requests")
+            parsed = urlsplit(path)
+            require(
+                not parsed.netloc
+                or (parsed.scheme == "https" and parsed.netloc == "api.github.com"),
+                "Invalid App API host",
+            )
+            request = Request(
+                "https://api.github.com/"
+                + (parsed.path.lstrip("/") if parsed.netloc else path.lstrip("/")),
+                method=method,
+                data=canonical(data).encode() if data is not None else None,
+                headers={
+                    "Authorization": "Bearer " + self._bearer,
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "Content-Type": "application/json",
+                },
+            )
+            try:
+                with build_opener(AppRedirectHandler()).open(request, timeout=60) as response:
+                    body = response.read()
+            except HTTPError as exc:
+                status = exc.code
+                exc.close()
+                raise api_failure(path, method, f"HTTP {status}") from None
+            except (URLError, OSError):
+                raise api_failure(path, method, "transport error") from None
+            try:
+                return json.loads(body) if body.strip() else None
+            except ValueError as exc:
+                raise Blocked("GitHub returned invalid JSON") from exc
         args = [
             "gh",
             "api",
@@ -78,7 +143,18 @@ class GitHub:
             args += ["--input", "-"]
         if pages:
             args += ["--paginate", "--slurp"]
-        result = run(args, data=canonical(data) if data is not None else None)
+        result = run(
+            args,
+            data=canonical(data) if data is not None else None,
+            check=False,
+            env=self._environment,
+        )
+        if result.returncode:
+            # Request/response bodies and gh stderr can contain secrets. Retain
+            # only a bounded endpoint, numeric status and controller-owned hints.
+            status = re.search(r"HTTP (\d{3})", result.stderr)
+            detail = f"HTTP {status[1]}" if status else f"gh exit {result.returncode}"
+            raise api_failure(path, method, detail)
         try:
             value = json.loads(result.stdout) if result.stdout.strip() else None
         except ValueError as exc:

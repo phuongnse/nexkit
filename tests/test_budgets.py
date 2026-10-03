@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from nexkit.budgets import limit, mark_wait, proposal, reconcile, validate
+from nexkit.budgets import limit, mark_wait, proposal, reconcile, status, validate
 from nexkit.cli import main
 from nexkit.common import Blocked, write_json
 from nexkit.policy import delivery_elapsed, now, reserve
@@ -113,6 +113,34 @@ class BudgetTests(unittest.TestCase):
         reconcile(self.gh, work, self.cfg, self.state)
         self.assertEqual(limit(self.state, self.cfg, "agent_calls"), 2)
         self.assertEqual(self.state["delivery_calls"], 2)
+
+    def test_budget_preview_after_configuration_change_can_authorize_the_next_reservation(self):
+        self.approve({"attempts": 1, "agent_calls": 2})
+        reconcile(self.gh, self.gh.work, self.cfg, self.state)
+        cfg = deepcopy(self.cfg)
+        cfg["limits"]["minutes"] += 1
+        original = deepcopy(self.state)
+        capacity = status(self.gh.work, cfg, self.state)
+        self.assertEqual(capacity["remaining"]["agent_calls"], 0)
+        self.assertEqual(capacity["stale_grant_count"], 1)
+        decision = proposal(self.gh.work, cfg, self.state, {"attempts": 1, "agent_calls": 2})
+        self.assertEqual(self.state, original)  # Preview never expires persistent state.
+        stamp = now()
+        self.gh.discussion.append(
+            {
+                "id": 101,
+                "body": decision["human_comment"],
+                "created_at": stamp,
+                "updated_at": stamp,
+                "user": {"type": "User", "login": "owner"},
+            }
+        )
+        self.assertTrue(reconcile(self.gh, self.gh.work, cfg, self.state))
+        resumed = reserve(self.state, cfg, "101.1")
+        self.assertEqual((resumed["attempts"], resumed["agent_calls"]), (2, 4))
+        self.assertEqual(limit(resumed, cfg, "agent_calls"), 4)
+        self.assertEqual(len(resumed["budget_grant_history"]), 1)
+        self.assertEqual(len(resumed["budget_grants"]), 1)
 
     def test_only_the_blocked_wait_interval_is_excluded_after_resume(self):
         state = reserve({}, self.cfg, "100.1", clock="2026-10-03T08:00:00+00:00")

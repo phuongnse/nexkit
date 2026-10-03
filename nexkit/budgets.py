@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 
 from .common import canonical, digest
 from .policy import human, now, require, spec_hash
@@ -56,6 +57,8 @@ def proposal(issue, cfg, state, extra):
         state.get("status") not in {"merged", "released", "completed"},
         "Completed work cannot receive execution budget",
     )
+    state = deepcopy(state)
+    retire_changed_grants(issue, cfg, state)
     target = subject(issue, cfg, state)
     identifier = digest({"subject": target, "additions": extra})
     return {
@@ -132,24 +135,7 @@ def reconcile(gh, issue, cfg, state):
     from .checkpoints import reconcile_discard
 
     discarded = reconcile_discard(gh, issue, cfg, state)
-    active = []
-    for record in state.get("budget_grants", []):
-        require(
-            isinstance(record, dict) and isinstance(record.get("binding"), dict),
-            "Invalid budget receipt",
-        )
-        if record["binding"] == binding(issue, cfg):
-            active.append(record)
-        else:
-            state.setdefault("budget_grant_history", []).append(
-                {
-                    **record,
-                    "expired_at": now(),
-                    "reason": "Accepted specification/configuration changed",
-                }
-            )
-    if "budget_grants" in state:
-        state["budget_grants"] = active
+    retire_changed_grants(issue, cfg, state)
     validate(gh, issue, cfg, state)
     comments = gh.comments(issue["number"])
     used = {record["comment"] for record in state.get("budget_grants", [])}
@@ -191,6 +177,29 @@ def reconcile(gh, issue, cfg, state):
     return applied or discarded
 
 
+def retire_changed_grants(issue, cfg, state):
+    """Use the same current-input inventory for previews and reservations."""
+    require(isinstance(state.get("budget_grants", []), list), "Invalid budget grant inventory")
+    active = []
+    for record in state.get("budget_grants", []):
+        require(
+            isinstance(record, dict) and isinstance(record.get("binding"), dict),
+            "Invalid budget receipt",
+        )
+        if record["binding"] == binding(issue, cfg):
+            active.append(record)
+        else:
+            state.setdefault("budget_grant_history", []).append(
+                {
+                    **record,
+                    "expired_at": now(),
+                    "reason": "Accepted specification/configuration changed",
+                }
+            )
+    if "budget_grants" in state:
+        state["budget_grants"] = active
+
+
 def end_wait(state, *, clock=None):
     if state.get("budget_wait"):
         from datetime import datetime
@@ -224,6 +233,9 @@ def limit(state, cfg, name, default=None):
 def status(issue, cfg, state):
     from .policy import delivery_budget_used, delivery_elapsed
 
+    state = deepcopy(state)
+    previous_grants = len(state.get("budget_grants", []))
+    retire_changed_grants(issue, cfg, state)
     limits = {name: limit(state, cfg, name) for name in FIELDS}
     used = {
         "agent_calls": delivery_budget_used(state, cfg),
@@ -239,5 +251,6 @@ def status(issue, cfg, state):
             for name, cap in limits.items()
         },
         "grant_count": len(state.get("budget_grants", [])),
+        "stale_grant_count": previous_grants - len(state.get("budget_grants", [])),
         "subject": digest(subject(issue, cfg, state)),
     }

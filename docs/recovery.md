@@ -117,8 +117,10 @@ If discarding a checkpoint, apply that decision before preparing a budget grant
 for the new subject.
 
 Original calls, attempts and elapsed execution remain spent. Only the recorded
-interval waiting on exhausted budget is excluded from the delivery clock. A
-grant does not extend a call's timeout, alter configured models, authorize source
+interval waiting on exhausted budget is excluded from the delivery clock.
+Status and budget previews exclude grants tied to earlier accepted inputs without
+changing stored history, so a new decision can apply after a configuration update.
+A grant does not extend a call's timeout, alter configured models, authorize source
 scope changes or approve a merge. Use [administrative setup](administration.md)
 when changing the accepted per-call timeout or other configuration. Consumer
 comment workflows must route budget/discard commands to the same accepted work

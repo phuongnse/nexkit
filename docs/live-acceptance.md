@@ -245,7 +245,7 @@ a WSL container cannot establish native Windows application behavior.
    branch/PR jobs before adding a model login; a simulated Worker or fixture
    service is separate component evidence.
 5. Build the same clean source on both OSes. Compare archive and manifest bytes,
-   then run `python scripts/verify_package.py dist/nexkit-1.2.0.tar.gz
+   then run `python scripts/verify_package.py dist/nexkit-1.2.1.tar.gz
    --source-commit FULL_SHA --codex SELECTED_NATIVE_EXECUTABLE` on each OS. Verify
    native launchers, all packaged files and skills, reinstall and removal
    using fresh homes without login or inference.

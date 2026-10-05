@@ -3,8 +3,8 @@
 Start with `nexkit doctor` in the repository, then the NexKit run in the Actions tab. The
 summary of the `agent` and `review` jobs shows the result, the files changed and each
 command Claude ran; their logs have one collapsible group per tool call with its output.
-Each run uploads `nexkit-agent`, `nexkit-checks` and `nexkit-review` artifacts containing
-the exact prompt, the results and, unless `transcript` is off, Claude's redacted
+Each stage that runs uploads its artifact (`nexkit-agent`, `nexkit-checks`, `nexkit-review`)
+containing the exact prompt, the results and, unless `transcript` is off, Claude's redacted
 transcript: `transcript.md` to read, `transcript.jsonl` with every event.
 
 **Nothing happens after a `/nexkit` comment.**
@@ -33,6 +33,12 @@ path you added to `protected_paths`. Make those changes yourself, then use `/nex
 **Claude timed out or stopped on its budget.** The issue is probably too large. Ask for a
 new plan and use its suggested split, or raise `timeout_minutes` / `max_budget_usd` for
 the `implement` stage.
+
+**"Unable to download artifact(s): Artifact not found" on `report`.**
+`report` only downloads the artifacts of stages that ran, so this means a stage ran but
+stopped before its upload step, for example because the run was cancelled. Open that
+stage's log. The run's comment and statuses are still set, without that stage's results.
+See [which artifacts each command produces](how-it-works.md#logs-summary-and-artifacts).
 
 **Setup failed.** The `setup` commands must work on a fresh `ubuntu-24.04` runner without
 secrets. Run them in a clean container to reproduce.

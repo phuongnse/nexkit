@@ -267,17 +267,24 @@ class RunLog:
 def summary(result, calls):
     """The Markdown run summary for an agent or review job."""
     status = result.get("status") or "error"
-    lines = [f"### NexKit {result.get('stage', 'agent')}: {status}", "", "| | |", "|---|---|"]
-    lines.append(f"| Result | {status} |")
-    lines.append(f"| Turns | {result.get('turns') if result.get('turns') is not None else '-'} |")
-    lines.append(f"| Duration | {duration(result.get('seconds'))} |")
-    if result.get("cost") is not None:
-        lines.append(f"| Cost | ${result['cost']:.2f} |")
+    turns, cost = result.get("turns"), result.get("cost")
+    columns = {
+        "Result": status,
+        "Turns": turns if turns is not None else "-",
+        "Duration": duration(result.get("seconds")),
+        "Cost": f"${cost:.2f}" if cost is not None else "-",
+    }
     output = result.get("output") or {}
-    if result.get("stage") == "review" and output:
+    if result.get("stage") == "review":
         verdict = output.get("verdict")
-        verdict = verdict if verdict in ("approve", "request_changes") else "-"
-        lines.append(f"| Verdict | {verdict} |")
+        columns["Verdict"] = verdict if verdict in ("approve", "request_changes") else "-"
+    lines = [
+        f"### NexKit {result.get('stage', 'agent')}: {status}",
+        "",
+        "| " + " | ".join(columns) + " |",
+        "|" + "---|" * len(columns),
+        "| " + " | ".join(map(str, columns.values())) + " |",
+    ]
     if result.get("error"):
         lines += ["", "**Why it stopped**", "", _block(result["error"])]
     if result.get("changed_files") is not None:

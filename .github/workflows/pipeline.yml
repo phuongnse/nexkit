@@ -6,7 +6,7 @@
 # publish  post the plan, or commit the patch and open the PR; never runs repo code
 # verify   run setup and checks on the exact candidate; no secrets at all
 # review   independent read-only Claude review of that candidate
-# report   statuses, PR review, state comment, next automatic round
+# report   statuses, PR review, run and state comments, next automatic round
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # Claude Code version in nexkit/__init__.py.

@@ -1,8 +1,8 @@
-"""Show a run's progress where its command was given.
+"""Show each run in its own comment, posted where the run was started.
 
-`route` calls `start` once a command is accepted; `report` calls `finish` at the end.
-Nothing in between can write to GitHub, because the agent, verify and review jobs keep
-read-only tokens.
+`route` calls `start` once a command is accepted, which posts the run comment; `report`
+edits that comment with the outcome. Nothing in between can write to GitHub, because the
+agent, verify and review jobs keep read-only tokens.
 """
 
 from __future__ import annotations
@@ -12,16 +12,12 @@ import sys
 from .github import GitHubError, run_url
 from .state import (
     FAILURE,
-    MAX_RUNS,
     RUNNING,
     SUCCESS,
-    empty_state,
-    empty_status,
     find_run,
-    read_state,
-    read_status,
+    next_round,
+    render_run,
     render_state,
-    render_status,
 )
 
 COMMANDS = {"plan": "plan", "implement": "go", "fix": "fix", "review": "review"}
@@ -32,58 +28,59 @@ def trigger(decision):
     return decision["action"] + (" (auto)" if decision.get("auto") else "")
 
 
-def round_row(state, decision, url):
-    """The pull request round for this run, added to the table when it is not there yet."""
-    row = find_run(state["rounds"], url)
-    if row is None:
-        row = {"round": len(state["rounds"]) + 1, "url": url}
-        state["rounds"].append(row)
-    row["trigger"] = trigger(decision)
-    return row
-
-
-def save_state(gh, pr, comment_id, state):
-    body = render_state(state)
+def _save(gh, number, comment_id, body):
     if comment_id:
         gh.update_comment(comment_id, body)
     else:
-        gh.comment(pr, body)
+        gh.comment(number, body)
 
 
-def update_issue(gh, decision, status, text, url):
-    """Set this run's line in the issue's status comment, creating the comment if needed."""
+def find_round(comments, decision):
+    """(comment_id, round) for this run's round comment, or (None, a new round)."""
+    url = run_url()
+    comment_id, row = find_run(comments, url)
+    row = row or {"round": next_round(comments), "url": url}
+    row["trigger"] = trigger(decision)
+    return comment_id, row
+
+
+def save_round(gh, pr, comment_id, row, text=""):
+    """Edit the round's comment, or post it when there is none (for example, deleted)."""
+    _save(gh, pr, comment_id, render_run(row, text))
+
+
+def save_state(gh, pr, comment_id, state):
+    """Edit the state comment. A v1.1.0 state comment is left as it is; a new one replaces it."""
+    if "rounds" in state:
+        state = {key: value for key, value in state.items() if key != "rounds"}
+        state["version"] = 2
+        comment_id = None
+    _save(gh, pr, comment_id, render_state(state))
+
+
+def show_command(gh, decision, status, text=""):
+    """Post or edit the comment for this run of an issue command."""
     issue = decision["issue"]
-    comment_id, data = read_status(gh.comments(issue))
-    data = data or empty_status()
-    item = find_run(data["runs"], url)
-    if item is None:
-        item = {"url": url}
-        data["runs"].append(item)
-    item.update(command=COMMANDS[decision["action"]], status=status, text=text)
-    data["runs"] = data["runs"][-MAX_RUNS:]
-    if comment_id:
-        gh.update_comment(comment_id, render_status(data))
-    else:
-        gh.comment(issue, render_status(data))
+    url = run_url()
+    comment_id, _ = find_run(gh.comments(issue), url)
+    run = {"url": url, "command": COMMANDS[decision["action"]], "status": status}
+    _save(gh, issue, comment_id, render_run(run, text))
 
 
 def start(gh, decision):
     """Acknowledge an accepted command and link the run. Never stops the run."""
     if decision.get("comment_id"):
         gh.react(decision["comment_id"], "eyes")
-    url = run_url()
     try:
         if decision.get("pr"):
             description = f"NexKit {decision['action']} round in progress"
             for context in STATUS_CONTEXTS:
-                gh.set_status(decision["head"], context, "pending", description, url)
-            comment_id, state = read_state(gh.comments(decision["pr"]))
-            state = state or empty_state(decision["issue"])
-            row = round_row(state, decision, url)
+                gh.set_status(decision["head"], context, "pending", description, run_url())
+            comment_id, row = find_round(gh.comments(decision["pr"]), decision)
             row.update(status=RUNNING, head=decision["head"], checks="-", verdict="-", cost=None)
-            save_state(gh, decision["pr"], comment_id, state)
+            save_round(gh, decision["pr"], comment_id, row)
         else:
-            update_issue(gh, decision, RUNNING, "", url)
+            show_command(gh, decision, RUNNING)
     except GitHubError as exc:
         print(f"warning: could not show the run's progress: {exc}", file=sys.stderr)
 
@@ -91,6 +88,6 @@ def start(gh, decision):
 def finish(gh, decision, ok, text):
     """Show the outcome of an issue command and react to the command comment."""
     if not decision.get("pr"):
-        update_issue(gh, decision, SUCCESS if ok else FAILURE, text, run_url())
+        show_command(gh, decision, SUCCESS if ok else FAILURE, text)
     if decision.get("comment_id"):
         gh.react(decision["comment_id"], "rocket" if ok else "confused")

@@ -144,10 +144,9 @@ class ReportTests(unittest.TestCase):
         )
         self.assertEqual(self.gh.created_reviews[0]["commit_id"], HEAD)
         self.assertIn("✅ add works", self.gh.created_reviews[0]["body"])
-        self.assertTrue(self.gh.comments_matching(6, "ready for a human decision"))
-        _, state = read_state(self.gh.comments(6))
-        self.assertEqual(state["rounds"][0]["cost"], 1.25)
-        self.assertEqual(state["rounds"][0]["verdict"], "approve")
+        [row] = self.gh.run_comments(6)
+        self.assertIn("ready for a human decision", row["body"])
+        self.assertEqual((row["run"]["cost"], row["run"]["verdict"]), (1.25, "approve"))
         self.assertFalse(self.gh.dispatches)
         self.assertFalse(self.gh.merged)
 
@@ -188,8 +187,11 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(self.gh.dispatches), 1)
         state_comments = [c for c in self.gh.comments(6) if "nexkit:state" in c["body"]]
         self.assertEqual(len(state_comments), 1)  # updated in place
-        _, state = read_state(self.gh.comments(6))
-        self.assertEqual([r["trigger"] for r in state["rounds"]], ["implement", "fix (auto)"])
+        self.assertIn("Automatic fix rounds used: 1.", state_comments[0]["body"])
+        self.assertEqual(
+            [(c["run"]["round"], c["run"]["trigger"]) for c in self.gh.run_comments(6)],
+            [(1, "implement"), (2, "fix (auto)")],
+        )
 
     def test_missing_review(self):
         self.candidate(review=False)

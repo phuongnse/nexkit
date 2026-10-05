@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import stat
@@ -12,7 +13,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from nexkit.config import validate
-from nexkit.state import BOT_LOGIN
+from nexkit.state import BOT_LOGIN, RUN_PATTERN
 
 
 def make_config(**overrides):
@@ -159,6 +160,15 @@ class FakeGitHub:
 
     def comments_matching(self, number, text):
         return [c for c in self.issue_comments[number] if text in c["body"]]
+
+    def run_comments(self, number):
+        """NexKit run comments, oldest first, each with its decoded marker as `run`."""
+        found = []
+        for comment in self.issue_comments[number]:
+            match = RUN_PATTERN.search(comment["body"])
+            if match and comment["user"]["login"] == BOT_LOGIN:
+                found.append({**comment, "run": json.loads(base64.b64decode(match.group(1)))})
+        return found
 
 
 def git(cwd, *args):

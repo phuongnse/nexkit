@@ -90,9 +90,9 @@ workflows from there.
 
 Only people with write access can run commands. When checks fail or the review finds a
 blocking problem, NexKit starts up to `max_auto_fixes` repair rounds by itself (default 2),
-then stops and asks for a person. Each run links to its log from the start: a status
-comment on the issue or pull request shows it running and then its result, cost and next
-step. Pull requests also get `nexkit/checks` and `nexkit/review` commit statuses, which
+then stops and asks for a person. Each run links to its log from the start: its own
+NexKit comment, posted right after the command, shows it running and then its result, cost
+and next step. Pull requests also get `nexkit/checks` and `nexkit/review` commit statuses, which
 you can make required in branch protection.
 
 Merging is up to you unless you set `"auto_merge": true`.

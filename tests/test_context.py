@@ -1,7 +1,9 @@
+import base64
+import json
 import unittest
 
 from nexkit.context import NO_PLAN, gather
-from nexkit.state import empty_state, render_state
+from nexkit.state import empty_state, render_run, render_state
 from tests.support import FakeGitHub
 
 HEAD = "d" * 40
@@ -149,6 +151,43 @@ class ContextTests(unittest.TestCase):
         self.assertIn("Add floats", text)
         self.assertIn("Rejected the docs finding", text)
         self.assertLess(len(text), 4000)
+
+    def test_state_is_read_past_round_comments_and_v1_1_comments(self):
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        failing = {"name": "unit", "run": "t", "exit_code": 1, "passed": False, "output": ""}
+        review = {
+            "round": 1,
+            "head": "a" * 40,
+            "verdict": "request_changes",
+            "findings": [{"severity": "blocking", "file": "", "line": 0, "body": "Old"}],
+        }
+        old = {
+            "version": 1,
+            "issue": 5,
+            "auto_fixes": 0,
+            "rounds": [{"round": 1, "trigger": "implement", "status": "success"}],
+            "feedback": {"head": "a" * 40, "checks": [{**failing, "name": "v1"}]},
+            "last_review": review,
+        }
+        encoded = base64.b64encode(json.dumps(old).encode()).decode()
+        self.gh.comment(6, f"### NexKit\n\n<!-- nexkit:state {encoded} -->")
+        decision = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
+        self.assertIn("`v1`", gather(self.gh, decision)["feedback"])
+        self.assertIn(
+            "1. blocking, `general`: Old", gather(self.gh, decision, "review")["previous_round"]
+        )
+
+        state = {key: value for key, value in old.items() if key != "rounds"}
+        state["feedback"] = {"head": HEAD, "checks": [{**failing, "name": "v2"}]}
+        state["last_review"] = {**review, "round": 2, "findings": []}
+        self.gh.comment(6, render_state(state))
+        round_2 = {"round": 2, "trigger": "fix", "url": "u", "status": "success", "head": HEAD}
+        self.gh.comment(6, render_run(round_2, "Starting automatic fix round 1."))
+        self.gh.comment(6, render_run({**round_2, "round": 3, "status": "running"}))
+        feedback = gather(self.gh, decision)["feedback"]
+        self.assertIn("`v2`", feedback)
+        self.assertNotIn("`v1`", feedback)
+        self.assertIn("No findings.", gather(self.gh, decision, "review")["previous_round"])
 
 
 if __name__ == "__main__":

@@ -102,7 +102,7 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(out["agent_ref"], "main")
         self.assertEqual(out["agent_timeout"], "75")
         self.assertEqual(self.gh.reactions, [(3, "eyes")])
-        self.assertEqual(len(self.gh.comments_matching(5, "<!-- nexkit:status ")), 1)
+        self.assertEqual(len(self.gh.run_comments(5)), 1)
 
     def test_route_on_pull_request_marks_the_round_running(self):
         self.gh.add_pull(6, 5, head_sha="b" * 40)

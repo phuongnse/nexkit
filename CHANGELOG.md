@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Every run gets its own NexKit comment, posted when it starts, right after the command
+  or review that started it: one per `plan` or `go` run on an issue, one per round on a
+  pull request. `report` finds the comment by a hidden marker that holds the run URL and
+  edits it with the outcome, or posts a new one if it was deleted. Earlier runs' comments
+  are no longer edited.
+- A round's comment shows its commit, checks, AI review, cost and the next step, which
+  was a separate comment before. The pull request state stays in one state comment,
+  edited in place, that no longer has a rounds table.
+- Status comments from 1.1.0 are left as they are. NexKit reads the state of a 1.1.0 pull
+  request and continues it in a new state comment.
+
 ## 1.1.0
 
 - Every accepted command gets 👀, on pull requests too: `route` now has

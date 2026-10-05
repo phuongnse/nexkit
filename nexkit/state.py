@@ -1,7 +1,9 @@
 """Pipeline state lives in GitHub comments written by the Actions bot.
 
-Two comments carry state, each edited in place: a status comment on the issue for its
-`plan` and `go` runs, and a state comment on the pull request for its rounds.
+Every run has its own run comment, posted where the run was started: on the issue for
+`plan` and `go`, on the pull request for a round. A hidden marker in it holds the run URL,
+so `report` edits the comment its run started. The state that later rounds read lives in
+one state comment on the pull request, edited in place.
 """
 
 from __future__ import annotations
@@ -14,9 +16,8 @@ BOT_LOGIN = "github-actions[bot]"
 PLAN_MARKER = "<!-- nexkit:plan -->"
 STATE_PREFIX = "<!-- nexkit:state "
 STATE_PATTERN = re.compile(r"<!-- nexkit:state ([A-Za-z0-9+/=]+) -->")
-STATUS_PREFIX = "<!-- nexkit:status "
-STATUS_PATTERN = re.compile(r"<!-- nexkit:status ([A-Za-z0-9+/=]+) -->")
-MAX_RUNS = 10
+RUN_PREFIX = "<!-- nexkit:run "
+RUN_PATTERN = re.compile(r"<!-- nexkit:run ([A-Za-z0-9+/=]+) -->")
 
 RUNNING, SUCCESS, FAILURE = "running", "success", "failure"
 RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌"}
@@ -41,102 +42,105 @@ def plan_text(comment):
     return comment["body"].removeprefix(PLAN_MARKER).strip()
 
 
-def _find(comments, pattern):
+def _marked(comments, pattern):
+    """(comment_id, data) for each bot comment with the marker, newest first."""
     for comment in reversed(comments):
         if not by_bot(comment):
             continue
         match = pattern.search(comment.get("body", ""))
         if match:
-            return comment["id"], json.loads(base64.b64decode(match.group(1)))
-    return None, None
+            yield comment["id"], json.loads(base64.b64decode(match.group(1)))
+
+
+def _find(comments, pattern):
+    return next(_marked(comments, pattern), (None, None))
 
 
 def _encode(prefix, data):
     return f"{prefix}{base64.b64encode(json.dumps(data, sort_keys=True).encode()).decode()} -->"
 
 
-def find_run(items, url):
-    """The entry for the workflow run at `url`, or None."""
-    return next((item for item in items if url and item.get("url") == url), None)
+def run_link(run):
+    """`⏳ [running](url)`, `✅ [run log](url)` or `❌ [run log](url)`."""
+    icon = RUN_ICONS[run["status"]]
+    label = "running" if run["status"] == RUNNING else "run log"
+    return f"{icon} [{label}]({run['url']})" if run.get("url") else f"{icon} {label}"
 
 
-def run_link(item):
-    """`⏳ [running](url)` and the like; `-` for rounds recorded before runs were linked."""
-    status = item.get("status")
-    if status not in RUN_ICONS:
-        return "-"
-    label = "running" if status == RUNNING else "run log"
-    url = item.get("url")
-    return f"{RUN_ICONS[status]} " + (f"[{label}]({url})" if url else label)
+# -- run comments -------------------------------------------------------------------
 
 
-# -- pull request state -------------------------------------------------------------
+def find_run(comments, url):
+    """Return (comment_id, run) for the run comment of the workflow run at `url`."""
+    if url:
+        for comment_id, run in _marked(comments, RUN_PATTERN):
+            if run.get("url") == url:
+                return comment_id, run
+    return None, None
 
 
-def empty_state(issue):
-    return {"version": 1, "issue": issue, "auto_fixes": 0, "rounds": [], "feedback": None}
-
-
-def read_state(comments):
-    """Return (comment_id, state) for the PR's NexKit state comment, or (None, None)."""
-    return _find(comments, STATE_PATTERN)
+def next_round(comments):
+    """The number for a new pull request round, counting rounds of v1.1.0 state comments."""
+    numbers = [run.get("round") or 0 for _, run in _marked(comments, RUN_PATTERN)]
+    for _, state in _marked(comments, STATE_PATTERN):
+        numbers += [row.get("round") or 0 for row in state.get("rounds") or []]
+    return max(numbers, default=0) + 1
 
 
 def _cell(value):
     return str(value).replace("|", "\\|").replace("\n", " ")
 
 
+def render_run(run, text=""):
+    """A run comment: what started the run, its status and link, and the result text."""
+    if "round" in run:
+        cost = run.get("cost")
+        cells = (
+            (run.get("head") or "-")[:7],
+            run.get("checks", "-"),
+            run.get("verdict", "-"),
+            f"${cost:.2f}" if isinstance(cost, (int, float)) else "-",
+        )
+        lines = [
+            f"### NexKit round {run['round']}: {run['trigger']}",
+            "",
+            run_link(run),
+            "",
+            "| Commit | Checks | AI review | Cost |",
+            "|---|---|---|---|",
+            "| " + " | ".join(_cell(v) for v in cells) + " |",
+        ]
+    else:
+        lines = [f"### NexKit `/nexkit {run['command']}`", "", run_link(run)]
+    text = (text or "").strip()
+    if text:
+        lines += ["", text]
+    return "\n".join(lines) + "\n\n" + _encode(RUN_PREFIX, run)
+
+
+# -- pull request state -------------------------------------------------------------
+
+
+def empty_state(issue):
+    return {"version": 2, "issue": issue, "auto_fixes": 0, "feedback": None}
+
+
+def read_state(comments):
+    """Return (comment_id, state) for the PR's NexKit state comment, or (None, None).
+
+    Pull requests from v1.1.0 have a state comment with a rounds table. It is read like
+    any other, but `progress.save_state` leaves it unchanged and posts a new one."""
+    return _find(comments, STATE_PATTERN)
+
+
 def render_state(state):
     lines = [
         "### NexKit",
         "",
-        f"Working on #{state['issue']}. Automatic fix rounds used: {state['auto_fixes']}.",
-        "",
-        "| Round | Trigger | Run | Commit | Checks | AI review | Cost |",
-        "|---|---|---|---|---|---|---|",
-    ]
-    for item in state["rounds"]:
-        cost = item.get("cost")
-        lines.append(
-            "| "
-            + " | ".join(
-                _cell(v)
-                for v in (
-                    item["round"],
-                    item["trigger"],
-                    run_link(item),
-                    (item.get("head") or "-")[:7],
-                    item.get("checks", "-"),
-                    item.get("verdict", "-"),
-                    f"${cost:.2f}" if isinstance(cost, (int, float)) else "-",
-                )
-            )
-            + " |"
-        )
-    lines += [
+        f"Working on #{state['issue']}. Automatic fix rounds used: {state['auto_fixes']}. "
+        "Each round has its own NexKit comment with a link to its run.",
         "",
         "Comment `/nexkit fix <instructions>` to request another round, or `/nexkit review` "
         "to re-check the current commit.",
     ]
     return "\n".join(lines) + "\n\n" + _encode(STATE_PREFIX, state)
-
-
-# -- issue status -------------------------------------------------------------------
-
-
-def empty_status():
-    return {"version": 1, "runs": []}
-
-
-def read_status(comments):
-    """Return (comment_id, status) for the issue's NexKit status comment, or (None, None)."""
-    return _find(comments, STATUS_PATTERN)
-
-
-def render_status(status):
-    lines = ["### NexKit", ""]
-    for item in reversed(status["runs"]):
-        line = f"- {run_link(item)} `/nexkit {item['command']}`"
-        text = (item.get("text") or "").strip().replace("\n", "\n  ")
-        lines.append(f"{line}: {text}" if text else line)
-    return "\n".join(lines) + "\n\n" + _encode(STATUS_PREFIX, status)

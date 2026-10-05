@@ -27,11 +27,6 @@ def _load(path):
     return json.loads(path.read_text()) if path.is_file() else None
 
 
-def _link():
-    url = run_url()
-    return f" [Run log]({url})." if url else ""
-
-
 def _cost(*results):
     costs = [r.get("cost") for r in results if r and isinstance(r.get("cost"), (int, float))]
     return round(sum(costs), 4) if costs else None
@@ -122,15 +117,14 @@ def _stage_failure(action, agent, publish):
     return None
 
 
-def _stop_round(gh, decision, agent):
-    """Mark a pull request round that published nothing as failed."""
-    url = run_url()
-    comment_id, state = read_state(gh.comments(decision["pr"]))
-    state = state or empty_state(decision["issue"])
-    _restore_statuses(gh, decision["head"], state.get("feedback"), url)
-    row = progress.round_row(state, decision, url)
+def _stop_round(gh, decision, agent, message):
+    """Mark a pull request round that published nothing as failed, with the reason."""
+    comments = gh.comments(decision["pr"])
+    _, state = read_state(comments)
+    _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
+    comment_id, row = progress.find_round(comments, decision)
     row.update(status=FAILURE, head=decision["head"], cost=_cost(agent))
-    progress.save_state(gh, decision["pr"], comment_id, state)
+    progress.save_round(gh, decision["pr"], comment_id, row, message)
 
 
 def _record(state, decision, row, agent, review):
@@ -181,8 +175,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         if failure:
             outcome, message = failure
             if decision.get("pr"):
-                _stop_round(gh, decision, agent)
-                gh.comment(decision["pr"], message + _link())
+                _stop_round(gh, decision, agent, message)
             return {"outcome": outcome, "summary": message}
         if action == "plan":
             plan = publish.get("comment")
@@ -195,15 +188,16 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     review = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
     url = run_url()
 
-    comment_id, state = read_state(gh.comments(pr))
+    comments = gh.comments(pr)
+    comment_id, state = read_state(comments)
     state = state or empty_state(decision["issue"])
+    round_id, row = progress.find_round(comments, decision)
     if decision.get("head") and decision["head"] != head:
         _restore_statuses(gh, decision["head"], state.get("feedback"), url)
     checks_ok, verdict = _set_statuses(gh, head, checks, review, url)
     if review:
         gh.create_review(pr, head, review_body({"output": review}, checks))
 
-    row = progress.round_row(state, decision, url)
     row.update(
         head=head,
         checks="not run" if checks is None else ("passed" if checks_ok else "failed"),
@@ -244,7 +238,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
     row["status"] = SUCCESS if outcome in COMPLETED else FAILURE
     progress.save_state(gh, pr, comment_id, state)
-    gh.comment(pr, message + _link())
+    progress.save_round(gh, pr, round_id, row, message)
     if outcome == "auto_fix":
         gh.dispatch(
             workflow_file(workflow_ref),

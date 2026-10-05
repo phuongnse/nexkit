@@ -15,8 +15,8 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 | `agent.py`, `prompts/*.md` | `agent` and `review`: build prompt, run `claude -p`, collect patch |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py` | `verify` and agent setup: run configured commands |
-| `report.py`, `state.py` | `report`: statuses, review, status comment, next round |
-| `progress.py` | `route` and `report`: reactions, run links, running rounds |
+| `report.py`, `state.py` | `report`: statuses, review, state comment, next round |
+| `progress.py` | `route` and `report`: reactions, one comment per run with its link |
 | `config.py` | `.nexkit/config.json` schema and defaults |
 | `scaffold.py`, `templates/` | `nexkit init` and `nexkit doctor` |
 | `github.py`, `gitutil.py` | REST and git helpers |

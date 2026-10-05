@@ -12,7 +12,7 @@ Every command starts one run of the reusable workflow
 | `publish` | plan, go, fix | write | no | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the check results and the previous review round. |
-| `report` | every action | write | no | Sets commit statuses, posts the review and status comment, starts the next automatic round or asks for a person. |
+| `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -26,17 +26,22 @@ into a commit in a different job. As a result:
 GitHub cannot show a live run inside a comment, and only `route` and `report` hold write
 tokens, so NexKit updates the issue or pull request when a run starts and when it ends.
 
-| When | Command on an issue (`plan`, `go`) | Round on a pull request (`fix`, `review`, automatic) |
+Every run gets its own NexKit comment, posted by `route` when the run starts, so it appears
+right after the command or review that started it. `report` edits that comment with the
+outcome. Comments of earlier runs keep their final state.
+
+| When | Command on an issue (`plan`, `go`) | Round on a pull request (`fix`, `review`, automatic, *Request changes*) |
 |---|---|---|
-| Start (`route`) | 👀 on the command comment. The NexKit status comment on the issue gets a ⏳ line with a link to the run. | 👀 on the command comment. The status comment gets a new round marked ⏳ with a link to the run. `nexkit/checks` and `nexkit/review` turn `pending` on the current commit and link to the run. |
-| End (`report`) | The same line shows ✅ or ❌, the run log and the result: the plan, the pull request and its outcome, or why the run stopped. | The round shows ✅ or ❌, its commit, checks, review verdict and cost. Statuses are set on the new commit; a commit the round did not check gets its earlier statuses back. NexKit also comments the next step. |
+| Start (`route`) | 👀 on the command comment. A new NexKit comment names the command and shows ⏳ with a link to the run. | 👀 on the command comment. A new NexKit comment shows the round number, its trigger and ⏳ with a link to the run. `nexkit/checks` and `nexkit/review` turn `pending` on the current commit and link to the run. |
+| End (`report`) | The same comment shows ✅ or ❌, the run log and the result: the plan, the pull request and its outcome, or why the run stopped. | The same comment shows ✅ or ❌, the run log, the round's commit, checks, review verdict and cost, and the next step. Statuses are set on the new commit; a commit the round did not check gets its earlier statuses back. |
 
 ✅ means the run did its work, even when the checks fail or the review asks for changes
 (the round's columns show that). ❌ means it stopped on an error. A run started by a
 comment ends with 🚀 or 😕 on that comment. Runs started by a dispatch or by a
 *Request changes* review have no comment to react to.
 
-Each issue and each pull request has one NexKit status comment, edited in place.
+A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
+own run started. If that comment was deleted, `report` posts a new one.
 
 ## Stages
 
@@ -67,13 +72,17 @@ defects. The pull request review lists these resolutions.
 
 ## State
 
-All state is on GitHub: the plan comment and the NexKit status comment on the issue, the
-pull request, its commit statuses and one NexKit status comment on the pull request. The
-pull request's comment holds a table of rounds and a hidden JSON record of the latest
-feedback, how many automatic fix rounds were used, the last completed review (its commit
-and all its findings) and the recent fix rounds (summary and note). Recorded text is
-clipped so the comment and the prompts stay bounded. Nothing else is stored, so there is
-nothing to migrate or repair.
+All state is on GitHub: the plan comment and one NexKit comment per run on the issue, the
+pull request, its commit statuses, one NexKit comment per round and one NexKit state
+comment on the pull request. Run comments only show runs. The state comment, edited in
+place, says how many automatic fix rounds were used and holds a hidden JSON record of the
+latest feedback, that count, the last completed review (its commit and all its findings)
+and the recent fix rounds (summary and note). Recorded text is clipped so the comment and
+the prompts stay bounded. Nothing else is stored, so there is nothing to migrate or repair.
+
+Issues and pull requests from NexKit 1.1.0 have a single status comment. NexKit leaves it
+as it is. On a pull request it still reads that comment's state, then saves the state in a
+new state comment.
 
 ## Failure handling
 

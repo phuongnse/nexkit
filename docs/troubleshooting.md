@@ -1,8 +1,11 @@
 # Troubleshooting
 
-Start with `nexkit doctor` in the repository, then the NexKit run in the Actions tab.
+Start with `nexkit doctor` in the repository, then the NexKit run in the Actions tab. The
+summary of the `agent` and `review` jobs shows the result, the files changed and each
+command Claude ran; their logs have one collapsible group per tool call with its output.
 Each run uploads `nexkit-agent`, `nexkit-checks` and `nexkit-review` artifacts containing
-the exact prompt, Claude's full event transcript and the results.
+the exact prompt, the results and, unless `transcript` is off, Claude's redacted
+transcript: `transcript.md` to read, `transcript.jsonl` with every event.
 
 **Nothing happens after a `/nexkit` comment.**
 The workflow file must be on the default branch. The comment's first line must start with

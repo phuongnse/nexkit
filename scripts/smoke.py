@@ -80,6 +80,10 @@ def stage(name, work, out, claude, context=None, **kw):
     print(f"{name}: {json.dumps(summary)}", flush=True)
     if result["status"] != "done":
         raise SystemExit(f"{name} stage failed: {result.get('error')}")
+    # The readable transcript pairs every tool call with its result.
+    transcript = (Path(out) / "transcript.md").read_text()
+    if "\n### [" not in transcript or "Result: no result" in transcript:
+        raise SystemExit(f"{name}: transcript.md lacks tool calls with results")
     return result
 
 

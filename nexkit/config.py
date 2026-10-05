@@ -26,11 +26,15 @@ DEFAULTS = {
     "max_auto_fixes": 2,
     "auto_merge": False,
     "protected_paths": [".github/", ".nexkit/"],
+    "transcript": True,
+    "log": {"tool_output": "truncated"},
 }
 
 TOP_KEYS = set(DEFAULTS)
 STAGE_KEYS = {"model", "effort", "timeout_minutes", "max_budget_usd"}
 CHECK_KEYS = {"name", "run", "timeout_minutes"}
+LOG_KEYS = {"tool_output"}
+TOOL_OUTPUT = ("none", "truncated")
 
 
 class ConfigError(ValueError):
@@ -84,6 +88,13 @@ def validate(raw):
                 if extra:
                     _fail(f"Unknown keys in stages.{stage}: {', '.join(sorted(extra))}")
                 cfg["stages"][stage].update(settings)
+        elif key == "log":
+            if not isinstance(value, dict):
+                _fail("log must be an object")
+            extra = set(value) - LOG_KEYS
+            if extra:
+                _fail(f"Unknown keys in log: {', '.join(sorted(extra))}")
+            cfg["log"].update(value)
         else:
             cfg[key] = copy.deepcopy(value)
 
@@ -141,6 +152,10 @@ def validate(raw):
     for required in (".github/", ".nexkit/"):
         if required not in paths:
             _fail(f"protected_paths must include '{required}'")
+    if not isinstance(cfg["transcript"], bool):
+        _fail("transcript must be true or false")
+    if cfg["log"]["tool_output"] not in TOOL_OUTPUT:
+        _fail(f"log.tool_output must be one of {', '.join(TOOL_OUTPUT)}")
     return cfg
 
 

@@ -43,6 +43,76 @@ comment ends with 🚀 or 😕 on that comment. Runs started by a dispatch or by
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
 own run started. If that comment was deleted, `report` posts a new one.
 
+## Logs, summary and artifacts
+
+The run link opens the Actions run. The `agent` and `review` jobs show what Claude does
+while it works.
+
+**Log.** One line `· text` (first 240 characters) per message from Claude. Each tool call
+is a collapsible group, printed when its result arrives:
+
+```text
+[03:12 #14] ▸ Bash scripts/e2e.sh --timeout 600       <- group title; expand for the rest
+  Input:
+  command: scripts/e2e.sh --timeout 600
+  description: Run the end-to-end tests
+
+  Result: error
+  <first and last 20 lines of the output, at most 4,000 characters>
+Warning: Bash failed: 2 tests failed
+```
+
+The title has the time since Claude started, the turn number, the tool and a short
+detail. Inside are the input (long values, such as a file's new content, are shortened the
+same way as the output), whether the result is an error, and the output. A failed tool
+call also adds a warning annotation with its first line. A call still running when the
+session ends shows `no result`. Tool output is printed between `::stop-commands::` markers
+with a random token, so text from the repository or the agent cannot set outputs, add
+masks or create annotations. Claude's thinking is never printed. With
+`log.tool_output: "none"` the log has one line per message and per tool call instead
+(`▸ Tool detail`, 200 characters), as in earlier releases.
+
+**Run summary.** At the end of the `agent` and `review` jobs, the run's summary page shows
+the stage, its result (done, blocked or error), turns, duration and cost, why it stopped,
+the files changed, each command Claude ran and whether it failed, and for a review the
+verdict and findings.
+
+**Artifacts,** kept 14 days:
+
+| Artifact | Contains |
+|---|---|
+| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (Claude's event stream, including thinking) and `transcript.md` (the conversation in order: Claude's text, tool calls and results shortened as in the log, without thinking). |
+| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. |
+
+### What is redacted
+
+Everything NexKit prints or stores from the agent's session passes through one function,
+`nexkit/redact.py`: log lines, both transcripts, `result.json`, the run summary and the
+output of `setup` in the agent job, which runs with the Claude credential in its
+environment. It replaces with `***`:
+
+- the values of `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`,
+  `NEXKIT_PUSH_TOKEN` and of every environment variable whose name contains `TOKEN`,
+  `SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` (values of 8 characters or more), also
+  URL-encoded or base64-encoded;
+- Anthropic keys (`sk-ant-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+  `github_pat_`), JWTs, `Authorization:` and `Bearer` header values and PEM private key
+  blocks;
+- `password=` and `pwd=` values in connection strings and the password in
+  `scheme://user:password@host`, in any case.
+
+Git SHAs, UUIDs, hashes and other ordinary text stay as they are. Since `result.json` is
+redacted, so are plans, pull request text and review findings published from it. The patch
+is never changed.
+
+Redaction is best-effort. It cannot recognise every secret: a value split across lines,
+transformed in another way, or not shaped like a known token passes through. GitHub masks
+exact secret values in job logs, but not in artifacts. **On a public repository, anyone
+signed in to GitHub can read the logs and download the artifacts**, so keep real secrets out
+of the agent's environment, and consider `"transcript": false` there, which stops writing
+both transcripts. The real protection stays the job separation: the jobs that run Claude
+have no write token and no credentials besides Claude's.
+
 ## Stages
 
 **Plan.** Read-only tools (`Read`, `Grep`, `Glob`). Produces a summary, approach,
@@ -110,6 +180,8 @@ cannot fix.
 - The implement session can run any command on the runner, and Claude Code's credential is
   in its environment. Treat `/nexkit go` like running a script that the issue describes:
   approve plans only for issues whose content you trust.
+- Logs and artifacts can show anything the agent saw. NexKit redacts known secrets (see
+  [What is redacted](#what-is-redacted)), but on a public repository treat them as public.
 - Workflow and NexKit files (`.github/`, `.nexkit/`) are protected, so a NexKit change
   cannot alter its own pipeline or configuration. The default Actions token also cannot
   push workflow changes.

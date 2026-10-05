@@ -13,6 +13,14 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["checks"][0]["timeout_minutes"], 15)
         self.assertEqual(cfg["max_auto_fixes"], 2)
         self.assertFalse(cfg["auto_merge"])
+        self.assertTrue(cfg["transcript"])
+        self.assertEqual(cfg["log"], {"tool_output": "truncated"})
+
+    def test_log_settings(self):
+        cfg = config.validate({"transcript": False, "log": {"tool_output": "none"}})
+        self.assertFalse(cfg["transcript"])
+        self.assertEqual(cfg["log"]["tool_output"], "none")
+        self.assertEqual(config.validate({"log": {}})["log"]["tool_output"], "truncated")
 
     def test_stage_settings_fall_back_to_global_model(self):
         cfg = config.validate(
@@ -39,6 +47,10 @@ class ConfigTests(unittest.TestCase):
             ({"protected_paths": ["src/"]}, "must include"),
             ({"runner": "ubuntu-latest"}, "Unknown configuration keys"),
             ({"claude_version": "2.0.0"}, "Unknown configuration keys"),
+            ({"transcript": "no"}, "transcript must be true or false"),
+            ({"log": "none"}, "log must be an object"),
+            ({"log": {"tool_output": "full"}}, "log.tool_output"),
+            ({"log": {"thinking": True}}, "Unknown keys in log"),
         ]
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):

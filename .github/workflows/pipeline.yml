@@ -1,0 +1,301 @@
+# NexKit's reusable pipeline. Repositories call it from .github/workflows/nexkit.yml.
+#
+# route    decide the action from the event; read config from the default branch
+# agent    run Claude Code (plan / implement / fix); no GitHub write token
+# publish  post the plan, or commit the patch and open the PR; never runs repo code
+# verify   run setup and checks on the exact candidate; no secrets at all
+# review   independent read-only Claude review of that candidate
+# report   statuses, PR review, state comment, next automatic round
+#
+# Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
+# Claude Code version in nexkit/__init__.py.
+name: NexKit pipeline
+
+on:
+  workflow_call:
+    inputs:
+      nexkit_repository:
+        type: string
+        default: phuongnse/nexkit
+      nexkit_ref:
+        type: string
+        required: true
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      NEXKIT_PUSH_TOKEN:
+        required: false
+
+permissions: {}
+
+jobs:
+  route:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    outputs:
+      action: ${{ steps.route.outputs.action }}
+      decision: ${{ steps.route.outputs.decision }}
+      config: ${{ steps.route.outputs.config }}
+      head: ${{ steps.route.outputs.head }}
+      base: ${{ steps.route.outputs.base }}
+      agent_ref: ${{ steps.route.outputs.agent_ref }}
+      agent_timeout: ${{ steps.route.outputs.agent_timeout }}
+      review_timeout: ${{ steps.route.outputs.review_timeout }}
+      checks_timeout: ${{ steps.route.outputs.checks_timeout }}
+      claude_version: ${{ steps.route.outputs.claude_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false # repository commands keep their own Python
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: repo
+          sparse-checkout: .nexkit
+          persist-credentials: false
+      - id: route
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit route --repo repo
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  agent:
+    needs: route
+    if: contains(fromJSON('["plan","implement","fix"]'), needs.route.outputs.action)
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ fromJSON(needs.route.outputs.agent_timeout) }}
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false # repository commands keep their own Python
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.route.outputs.agent_ref }}
+          path: repo
+          persist-credentials: false
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        env:
+          CLAUDE_VERSION: ${{ needs.route.outputs.claude_version }}
+      - name: Collect issue context
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit context --out out
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+      - name: Run Claude Code
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit agent --repo repo --out out
+        env:
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: nexkit-agent
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    needs: [route, agent]
+    if: needs.agent.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      result: ${{ steps.publish.outputs.result }}
+      head: ${{ steps.publish.outputs.head }}
+      pr: ${{ steps.publish.outputs.pr }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false # repository commands keep their own Python
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.route.outputs.base }}
+          path: repo
+          fetch-depth: 0
+          token: ${{ secrets.NEXKIT_PUSH_TOKEN || github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nexkit-agent
+          path: artifacts
+      - id: publish
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit publish --repo repo --artifacts artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXKIT_PUSH_TOKEN: ${{ secrets.NEXKIT_PUSH_TOKEN }}
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+
+  verify:
+    needs: [route, publish]
+    if: >-
+      always() && needs.route.result == 'success' &&
+      (needs.route.outputs.action == 'review' ||
+       (contains(fromJSON('["implement","fix"]'), needs.route.outputs.action) &&
+        needs.publish.outputs.head != ''))
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ fromJSON(needs.route.outputs.checks_timeout) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false # repository commands keep their own Python
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.publish.outputs.head || needs.route.outputs.head }}
+          path: repo
+          persist-credentials: false
+      - name: Run setup and checks
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit checks --repo repo --out out
+        env:
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nexkit-checks
+          path: out/
+          retention-days: 14
+
+  review:
+    needs: [route, publish, verify]
+    if: always() && needs.verify.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ fromJSON(needs.route.outputs.review_timeout) }}
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false # repository commands keep their own Python
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.publish.outputs.head || needs.route.outputs.head }}
+          path: repo
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nexkit-checks
+          path: checks
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        env:
+          CLAUDE_VERSION: ${{ needs.route.outputs.claude_version }}
+      - name: Collect issue context
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit context --out out --pr "$PR"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          PR: ${{ needs.publish.outputs.pr }}
+      - name: Review with Claude Code
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit agent --stage review --repo repo --out out --checks checks/checks.json
+        env:
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: nexkit-review
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  report:
+    needs: [route, agent, publish, verify, review]
+    if: always() && needs.route.result == 'success' && needs.route.outputs.action != 'none'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false # repository commands keep their own Python
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          pattern: nexkit-*
+          path: artifacts
+      - name: Report
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit report --artifacts artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+          NEXKIT_NEEDS: ${{ toJSON(needs) }}
+          NEXKIT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

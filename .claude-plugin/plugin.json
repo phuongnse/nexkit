@@ -1,0 +1,11 @@
+{
+  "name": "nexkit",
+  "version": "1.0.0",
+  "description": "Set up and use a GitHub Actions pipeline that turns issues into reviewed, tested pull requests with Claude Code.",
+  "author": {
+    "name": "Phuong Nguyen"
+  },
+  "homepage": "https://github.com/phuongnse/nexkit",
+  "repository": "https://github.com/phuongnse/nexkit",
+  "keywords": ["github-actions", "pipeline", "code-review", "automation"]
+}

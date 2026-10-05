@@ -1,0 +1,178 @@
+"""Minimal GitHub REST client for the calls NexKit makes."""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
+
+WRITE_ROLES = {"admin", "maintain", "write"}
+TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+
+class GitHubError(RuntimeError):
+    def __init__(self, status, message):
+        super().__init__(f"GitHub API {status}: {message}")
+        self.status = status
+
+
+class GitHub:
+    def __init__(self, repository=None, token=None, api_url=None):
+        self.repository = repository or os.environ["GITHUB_REPOSITORY"]
+        self.token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        self.api_url = api_url or os.environ.get("GITHUB_API_URL") or "https://api.github.com"
+        self.api_url = self.api_url.rstrip("/")
+        self._roles = {}
+
+    # -- transport -----------------------------------------------------------------
+
+    def request(self, method, path, body=None, params=None):
+        url = path if path.startswith("http") else f"{self.api_url}{path}"
+        if params:
+            url += "?" + urlencode(params)
+        data = json.dumps(body).encode() if body is not None else None
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "nexkit",
+        }
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        for attempt in range(3):
+            try:
+                with urlopen(Request(url, data, headers, method=method), timeout=60) as resp:
+                    raw = resp.read()
+                    return json.loads(raw) if raw else None
+            except HTTPError as exc:
+                detail = exc.read().decode(errors="replace")[:500]
+                if exc.code >= 500 and attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                raise GitHubError(exc.code, detail) from None
+            except URLError as exc:
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                raise GitHubError(0, str(exc.reason)) from None
+        raise AssertionError("unreachable")
+
+    def paginate(self, path, params=None, limit=1000):
+        items, page = [], 1
+        while len(items) < limit:
+            batch = self.request(
+                "GET", path, params={**(params or {}), "per_page": 100, "page": page}
+            )
+            items.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return items[:limit]
+
+    @property
+    def _repo(self):
+        return f"/repos/{self.repository}"
+
+    # -- repository and people -----------------------------------------------------
+
+    def default_branch(self):
+        return self.request("GET", self._repo)["default_branch"]
+
+    def role(self, user):
+        """Repository role of a user: admin, maintain, write, triage, read or none."""
+        if user not in self._roles:
+            try:
+                data = self.request("GET", f"{self._repo}/collaborators/{quote(user)}/permission")
+                self._roles[user] = data.get("role_name") or data.get("permission") or "none"
+            except GitHubError as exc:
+                if exc.status != 404:
+                    raise
+                self._roles[user] = "none"
+        return self._roles[user]
+
+    def can_write(self, user):
+        return self.role(user) in WRITE_ROLES
+
+    # -- issues and comments -------------------------------------------------------
+
+    def issue(self, number):
+        return self.request("GET", f"{self._repo}/issues/{number}")
+
+    def comments(self, number):
+        return self.paginate(f"{self._repo}/issues/{number}/comments")
+
+    def comment(self, number, body):
+        return self.request("POST", f"{self._repo}/issues/{number}/comments", {"body": body})
+
+    def update_comment(self, comment_id, body):
+        return self.request("PATCH", f"{self._repo}/issues/comments/{comment_id}", {"body": body})
+
+    def react(self, comment_id, content="eyes"):
+        try:
+            self.request(
+                "POST", f"{self._repo}/issues/comments/{comment_id}/reactions", {"content": content}
+            )
+        except GitHubError:
+            pass  # A missing reaction is cosmetic.
+
+    # -- pull requests -------------------------------------------------------------
+
+    def pull(self, number):
+        return self.request("GET", f"{self._repo}/pulls/{number}")
+
+    def open_pulls(self, branch):
+        owner = self.repository.split("/")[0]
+        return self.request(
+            "GET", f"{self._repo}/pulls", params={"state": "open", "head": f"{owner}:{branch}"}
+        )
+
+    def create_pull(self, title, head, base, body):
+        return self.request(
+            "POST",
+            f"{self._repo}/pulls",
+            {"title": title, "head": head, "base": base, "body": body},
+        )
+
+    def reviews(self, number):
+        return self.paginate(f"{self._repo}/pulls/{number}/reviews")
+
+    def review_comments(self, number):
+        return self.paginate(f"{self._repo}/pulls/{number}/comments")
+
+    def create_review(self, number, commit_id, body):
+        return self.request(
+            "POST",
+            f"{self._repo}/pulls/{number}/reviews",
+            {"commit_id": commit_id, "body": body, "event": "COMMENT"},
+        )
+
+    def merge(self, number, sha, method="squash"):
+        return self.request(
+            "PUT", f"{self._repo}/pulls/{number}/merge", {"sha": sha, "merge_method": method}
+        )
+
+    # -- checks and workflows ------------------------------------------------------
+
+    def set_status(self, sha, context, state, description, target_url=None):
+        body = {"state": state, "context": context, "description": description[:140]}
+        if target_url:
+            body["target_url"] = target_url
+        return self.request("POST", f"{self._repo}/statuses/{sha}", body)
+
+    def dispatch(self, workflow, ref, inputs):
+        return self.request(
+            "POST",
+            f"{self._repo}/actions/workflows/{quote(workflow)}/dispatches",
+            {"ref": ref, "inputs": inputs},
+        )
+
+
+def run_url():
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    return f"{server}/{repo}/actions/runs/{run_id}" if run_id else None

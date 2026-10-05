@@ -1,0 +1,14 @@
+{
+  "name": "nexkit",
+  "description": "NexKit: GitHub issues to reviewed, tested pull requests with Claude Code.",
+  "owner": {
+    "name": "Phuong Nguyen"
+  },
+  "plugins": [
+    {
+      "name": "nexkit",
+      "source": "./",
+      "description": "Turn GitHub issues into reviewed, tested pull requests with Claude Code."
+    }
+  ]
+}

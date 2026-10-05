@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Run NexKit from a source checkout without installing it."""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import nexkit  # noqa: E402
+
+if not nexkit.python_supported(sys.version_info):
+    sys.exit(nexkit.python_error(sys.version_info))
+
+from nexkit.cli import main  # noqa: E402
+
+raise SystemExit(main())

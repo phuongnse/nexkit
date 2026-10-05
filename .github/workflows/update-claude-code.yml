@@ -1,0 +1,49 @@
+# Every week, propose the newest stable Claude Code. The pull request's CI runs the unit
+# tests and the live smoke test with that exact version; merge it when CI is green, then
+# release. Until then the pipeline keeps using the version it was tested with.
+name: Update Claude Code
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: update-claude-code
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - id: update
+        run: echo "version=$(python scripts/claude_code_version.py update)" >> "$GITHUB_OUTPUT"
+      - name: Open a pull request
+        if: steps.update.outputs.version != ''
+        run: |
+          branch="update/claude-code-$VERSION"
+          if gh pr list --head "$branch" --state open --json number -q '.[0].number' | grep -q .; then
+            echo "A pull request for Claude Code $VERSION is already open."
+            exit 0
+          fi
+          git switch -c "$branch"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -am "Support Claude Code $VERSION"
+          git push --force origin "$branch"
+          gh pr create --head "$branch" --title "Support Claude Code $VERSION" --body \
+            "Claude Code $VERSION is on the stable channel. CI on this branch runs the unit tests and the live smoke test with it. Merge when CI is green, then release."
+          # Pull requests opened with the Actions token do not start CI; dispatch it.
+          gh workflow run ci.yml --ref "$branch"
+        env:
+          VERSION: ${{ steps.update.outputs.version }}
+          GH_TOKEN: ${{ github.token }}

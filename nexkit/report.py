@@ -5,10 +5,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import progress
 from .github import GitHubError, run_url
-from .state import empty_state, read_state, render_state
+from .state import FAILURE, SUCCESS, clip, empty_state, read_state
 
 ICONS = {True: "✅", False: "❌"}
+RESOLUTIONS = {
+    "resolved": "✅ resolved",
+    "unresolved": "🛑 unresolved",
+    "rejection_accepted": "🤝 rejection accepted",
+}
+# Outcomes in which the run did its work. The others stopped on an error.
+COMPLETED = {"planned", "ready", "merged", "auto_fix", "needs_human"}
+# Bounds for what the state comment keeps for the next review.
+MAX_FINDINGS = 30
+MAX_FIXES = 5
 
 
 def _load(path):
@@ -34,6 +45,11 @@ def review_body(review, checks):
         "",
         output["summary"].strip(),
     ]
+    if output.get("previous_findings"):
+        lines += ["", "**Previous findings**", ""]
+        for item in output["previous_findings"]:
+            mark = RESOLUTIONS.get(item["resolution"], item["resolution"])
+            lines.append(f"- {mark}: {item['finding']}: {item['evidence']}")
     if output.get("criteria"):
         lines += ["", "**Acceptance criteria**", ""]
         for item in output["criteria"]:
@@ -57,38 +73,8 @@ def workflow_file(workflow_ref):
     return workflow_ref.split("@", 1)[0].rsplit("/", 1)[-1]
 
 
-def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch):
-    """Post the outcome. Returns a short machine-readable summary for logs and tests."""
-    action = decision["action"]
-    artifacts = Path(artifacts)
-    target = decision["target"]
-    agent = _load(artifacts / "nexkit-agent" / "result.json")
-    publish = json.loads(((needs.get("publish") or {}).get("outputs") or {}).get("result") or "{}")
-
-    if action in ("plan", "implement", "fix"):
-        if agent is None:
-            gh.comment(target, f"NexKit could not run the {action} agent.{_link()}")
-            return {"outcome": "agent_failed"}
-        if agent["status"] != "done":
-            cost = f" Cost: ${agent['cost']:.2f}." if agent.get("cost") else ""
-            gh.comment(target, f"NexKit stopped during {action}: {agent['error']}{cost}{_link()}")
-            return {"outcome": "agent_" + agent["status"]}
-        if not publish.get("published"):
-            reason = publish.get("error") or "the publish job failed"
-            gh.comment(target, f"NexKit could not publish the {action} result: {reason}{_link()}")
-            return {"outcome": "publish_failed"}
-        if action == "plan":
-            return {"outcome": "planned"}
-
-    pr = publish.get("pr") or decision["pr"]
-    head = publish.get("head") or decision["head"]
-    checks = _load(artifacts / "nexkit-checks" / "checks.json")
-    review = _load(artifacts / "nexkit-review" / "result.json")
-    url = run_url()
-
-    comments = gh.comments(pr)
-    comment_id, state = read_state(comments)
-    state = state or empty_state(decision["issue"])
+def _set_statuses(gh, head, checks, review, url):
+    """Set both commit statuses from check results and a review output (None: not run)."""
     checks_ok = checks is not None and all(c["passed"] for c in checks)
     gh.set_status(
         head,
@@ -99,10 +85,8 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         else ("Checks did not run" if checks is None else "Some checks failed"),
         url,
     )
-    verdict = None
-    if review and review.get("status") == "done":
-        verdict = review["output"]["verdict"]
-        gh.create_review(pr, head, review_body(review, checks))
+    verdict = review["verdict"] if review else None
+    if verdict:
         gh.set_status(
             head,
             "nexkit/review",
@@ -112,23 +96,122 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         )
     else:
         gh.set_status(head, "nexkit/review", "error", "AI review did not complete", url)
+    return checks_ok, verdict
 
-    trigger = action + (" (auto)" if decision.get("auto") else "")
-    state["rounds"].append(
-        {
-            "round": len(state["rounds"]) + 1,
-            "trigger": trigger,
-            "head": head,
-            "checks": "not run" if checks is None else ("passed" if checks_ok else "failed"),
-            "verdict": verdict or "not run",
-            "cost": _cost(agent if action != "review" else None, review),
+
+def _restore_statuses(gh, sha, feedback, url):
+    """Replace the pending statuses `route` set on a commit this run did not check."""
+    feedback = feedback or {}
+    if feedback.get("head") == sha:
+        _set_statuses(gh, sha, feedback.get("checks"), feedback.get("review"), url)
+        return
+    for context in progress.STATUS_CONTEXTS:
+        gh.set_status(sha, context, "error", "The NexKit round did not finish", url)
+
+
+def _stage_failure(action, agent, publish):
+    """(outcome, message) when the agent or publish stage stopped, otherwise None."""
+    if agent is None:
+        return "agent_failed", f"NexKit could not run the {action} agent."
+    if agent["status"] != "done":
+        cost = f" Cost: ${agent['cost']:.2f}." if agent.get("cost") else ""
+        return "agent_" + agent["status"], f"NexKit stopped during {action}: {agent['error']}{cost}"
+    if not publish.get("published"):
+        reason = publish.get("error") or "the publish job failed"
+        return "publish_failed", f"NexKit could not publish the {action} result: {reason}"
+    return None
+
+
+def _stop_round(gh, decision, agent):
+    """Mark a pull request round that published nothing as failed."""
+    url = run_url()
+    comment_id, state = read_state(gh.comments(decision["pr"]))
+    state = state or empty_state(decision["issue"])
+    _restore_statuses(gh, decision["head"], state.get("feedback"), url)
+    row = progress.round_row(state, decision, url)
+    row.update(status=FAILURE, head=decision["head"], cost=_cost(agent))
+    progress.save_state(gh, decision["pr"], comment_id, state)
+
+
+def _record(state, decision, row, agent, review):
+    """Keep what the next review needs: the last review's findings and the fixes since."""
+    if decision["action"] == "fix":
+        fixes = (state.get("fixes") or [])[-(MAX_FIXES - 1) :]
+        fixes.append(
+            {
+                "round": row["round"],
+                "head": row["head"],
+                "auto": bool(decision.get("auto")),
+                "summary": clip(agent.get("summary")),
+                "note": clip(decision.get("note"), 2000),
+            }
+        )
+        state["fixes"] = fixes
+    if review:
+        state["last_review"] = {
+            "round": row["round"],
+            "head": row["head"],
+            "verdict": review["verdict"],
+            "findings": [
+                {
+                    "severity": f["severity"],
+                    "file": f.get("file") or "",
+                    "line": f.get("line") or 0,
+                    "body": clip(f.get("body"), 1500),
+                }
+                for f in review.get("findings", [])[:MAX_FINDINGS]
+            ],
         }
+
+
+def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch):
+    """Post the outcome. Returns a short machine-readable summary for logs and tests."""
+    result = _report(gh, decision, cfg, needs, Path(artifacts), workflow_ref, default_branch)
+    progress.finish(gh, decision, result["outcome"] in COMPLETED, result["summary"])
+    return result
+
+
+def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
+    action = decision["action"]
+    agent = _load(artifacts / "nexkit-agent" / "result.json")
+    publish = json.loads(((needs.get("publish") or {}).get("outputs") or {}).get("result") or "{}")
+
+    if action in ("plan", "implement", "fix"):
+        failure = _stage_failure(action, agent, publish)
+        if failure:
+            outcome, message = failure
+            if decision.get("pr"):
+                _stop_round(gh, decision, agent)
+                gh.comment(decision["pr"], message + _link())
+            return {"outcome": outcome, "summary": message}
+        if action == "plan":
+            plan = publish.get("comment")
+            return {"outcome": "planned", "summary": f"[Plan]({plan}) posted." if plan else ""}
+
+    pr = publish.get("pr") or decision["pr"]
+    head = publish.get("head") or decision["head"]
+    checks = _load(artifacts / "nexkit-checks" / "checks.json")
+    reviewed = _load(artifacts / "nexkit-review" / "result.json")
+    review = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
+    url = run_url()
+
+    comment_id, state = read_state(gh.comments(pr))
+    state = state or empty_state(decision["issue"])
+    if decision.get("head") and decision["head"] != head:
+        _restore_statuses(gh, decision["head"], state.get("feedback"), url)
+    checks_ok, verdict = _set_statuses(gh, head, checks, review, url)
+    if review:
+        gh.create_review(pr, head, review_body({"output": review}, checks))
+
+    row = progress.round_row(state, decision, url)
+    row.update(
+        head=head,
+        checks="not run" if checks is None else ("passed" if checks_ok else "failed"),
+        verdict=verdict or "not run",
+        cost=_cost(agent if action != "review" else None, reviewed),
     )
-    state["feedback"] = {
-        "head": head,
-        "checks": checks or [],
-        "review": review["output"] if verdict else None,
-    }
+    _record(state, decision, row, agent or {}, review)
+    state["feedback"] = {"head": head, "checks": checks, "review": review}
 
     if checks_ok and verdict == "approve":
         outcome = "ready"
@@ -159,11 +242,8 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
             "Comment `/nexkit fix <instructions>`, push a commit yourself, or close the PR."
         )
 
-    body = render_state(state)
-    if comment_id:
-        gh.update_comment(comment_id, body)
-    else:
-        gh.comment(pr, body)
+    row["status"] = SUCCESS if outcome in COMPLETED else FAILURE
+    progress.save_state(gh, pr, comment_id, state)
     gh.comment(pr, message + _link())
     if outcome == "auto_fix":
         gh.dispatch(
@@ -171,4 +251,5 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
             default_branch,
             {"command": "fix", "number": str(pr), "note": "", "auto": "true"},
         )
-    return {"outcome": outcome, "pr": pr, "head": head}
+    summary = f"Pull request #{pr}: {message}" if action == "implement" else message
+    return {"outcome": outcome, "pr": pr, "head": head, "summary": summary}

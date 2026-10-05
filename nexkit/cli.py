@@ -70,6 +70,7 @@ def cmd_doctor(args):
 
 
 def cmd_route(args):
+    from . import progress
     from .github import GitHubError
     from .route import route
 
@@ -95,8 +96,7 @@ def cmd_route(args):
                 print(f"Could not reply: {exc}", file=sys.stderr)
         _output(action="none", decision=decision, config={})
         return 0
-    if decision.get("comment_id"):
-        gh.react(decision["comment_id"])
+    progress.start(gh, decision)
     agent_stage = configuration.stage(cfg, decision["action"])
     review_stage = configuration.stage(cfg, "review")
     checks_minutes = sum(c["timeout_minutes"] for c in cfg["checks"])
@@ -122,7 +122,10 @@ def cmd_context(args):
     decision = _decision()
     if args.pr:
         decision["pr"] = int(args.pr)
-    context = gather(_gh(), decision)
+    fix_result = None
+    if args.fix_result and Path(args.fix_result).is_file():
+        fix_result = json.loads(Path(args.fix_result).read_text())
+    context = gather(_gh(), decision, stage=args.stage, fix_result=fix_result)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "context.json").write_text(json.dumps(context, indent=2))
@@ -229,6 +232,8 @@ def build_parser():
     p = sub.add_parser("context", help="(pipeline) Collect GitHub context for an agent")
     p.add_argument("--out", required=True)
     p.add_argument("--pr", default="", help="Pull request number when it was just created")
+    p.add_argument("--stage", choices=["review"], help="Default: the decision's action")
+    p.add_argument("--fix-result", help="This run's fix result.json, for the review stage")
     p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("agent", help="(pipeline) Run a Claude Code stage")

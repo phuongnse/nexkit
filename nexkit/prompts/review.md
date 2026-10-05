@@ -30,7 +30,7 @@ $check_results
 $diff
 ```
 </untrusted>
-
+$previous
 ## How to review
 
 - Check each acceptance criterion in the plan against the code and its tests.
@@ -49,3 +49,6 @@ $diff
 - `summary`: two or three sentences for the pull request.
 - `criteria`: for each acceptance criterion, whether it is met and the evidence.
 - `findings`: each with `severity`, `file`, `line` (0 when not line-specific) and `body`.
+- `previous_findings`: one entry for each finding of the previous review, with `finding`
+  (a short restatement), `resolution` and `evidence`. Empty when there was no previous
+  review.

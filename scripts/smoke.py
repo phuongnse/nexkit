@@ -23,8 +23,9 @@ sys.path.insert(0, str(ROOT))
 import nexkit  # noqa: E402
 from nexkit.agent import run_stage  # noqa: E402
 from nexkit.config import validate  # noqa: E402
+from nexkit.context import previous_review  # noqa: E402
 from nexkit.publish import render_plan  # noqa: E402
-from nexkit.state import PLAN_MARKER  # noqa: E402
+from nexkit.state import BOT_LOGIN, PLAN_MARKER, empty_state, render_state  # noqa: E402
 
 CONFIG = validate({"model": "haiku", "checks": [{"name": "test", "run": "python3 -m unittest -v"}]})
 CONTEXT = {
@@ -63,8 +64,18 @@ def make_repo(root):
     return work
 
 
-def stage(name, work, out, claude, **kw):
-    result = run_stage(name, CONTEXT, CONFIG, work, out, claude=claude, **kw)
+class StateComments:
+    """Just enough of the GitHub client for `previous_review`."""
+
+    def __init__(self, state):
+        self.body = render_state(state)
+
+    def comments(self, number):
+        return [{"id": 1, "body": self.body, "user": {"login": BOT_LOGIN}}]
+
+
+def stage(name, work, out, claude, context=None, **kw):
+    result = run_stage(name, context or CONTEXT, CONFIG, work, out, claude=claude, **kw)
     summary = {k: result.get(k) for k in ("status", "error", "cost", "changed_files")}
     print(f"{name}: {json.dumps(summary)}", flush=True)
     if result["status"] != "done":
@@ -121,6 +132,50 @@ def main():
         review = stage("review", work, root / "review", args.claude, checks=checks, base="main")
         if review["output"]["verdict"] not in ("approve", "request_changes"):
             raise SystemExit("review: no verdict")
+
+        # A fix round, then a second review that gets the previous round as input.
+        reviewed = git(work, "rev-parse", "HEAD")
+        (work / "test_calc.py").write_text(
+            (work / "test_calc.py").read_text()
+            + "\n    def test_add_negative(self):\n        self.assertEqual(add(-2, -3), -5)\n"
+        )
+        git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "fix")
+        state = empty_state(1)
+        state["last_review"] = {
+            "round": 1,
+            "head": reviewed,
+            "verdict": "request_changes",
+            "findings": [
+                {
+                    "severity": "blocking",
+                    "file": "test_calc.py",
+                    "line": 0,
+                    "body": "No test covers negative numbers.",
+                },
+                {
+                    "severity": "suggestion",
+                    "file": "calc.py",
+                    "line": 1,
+                    "body": "Rename add() to add_numbers().",
+                },
+            ],
+        }
+        decision = {"action": "fix", "pr": 2, "auto": False, "note": "Keep the name add()."}
+        fix = {
+            "status": "done",
+            "summary": "Added test_add_negative. Kept the name add(), as the note asks.",
+        }
+        context = {**CONTEXT, "pr": 2, **previous_review(StateComments(state), decision, fix)}
+        second = stage(
+            "review", work, root / "second", args.claude, context, checks=checks, base="main"
+        )
+        previous = second["output"]["previous_findings"]
+        print(f"previous findings: {json.dumps(previous)}", flush=True)
+        if not previous:
+            raise SystemExit("second review: previous findings were not assessed")
+        resolutions = {"resolved", "unresolved", "rejection_accepted"}
+        if any(item["resolution"] not in resolutions for item in previous):
+            raise SystemExit(f"second review: bad resolution in {previous}")
     print("Smoke test passed.")
     return 0
 

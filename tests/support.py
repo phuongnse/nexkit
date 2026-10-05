@@ -220,9 +220,10 @@ for path, content in spec.get("write", {}).items():
     with open(path, "w") as f:
         f.write(content)
 print(json.dumps({"type": "system", "subtype": "init"}))
-print(json.dumps({"type": "assistant", "message": {"content": [
-    {"type": "text", "text": "Working on it"},
-    {"type": "tool_use", "name": "Bash", "input": {"command": "make test"}}]}}))
+for event in spec.get("events", [{"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "Working on it"},
+        {"type": "tool_use", "name": "Bash", "input": {"command": "make test"}}]}}]):
+    print(event if isinstance(event, str) else json.dumps(event))
 if "result" in spec:
     event = {"type": "result", "subtype": spec.get("subtype", "success"),
              "is_error": spec.get("is_error", False), "num_turns": 3,

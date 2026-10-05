@@ -18,6 +18,8 @@ the NexKit release and are not configurable. See [supported versions](../README.
 | `max_auto_fixes` | `2` | Repair rounds NexKit may start by itself on one pull request (0 to 10). Rounds requested by people do not count. |
 | `auto_merge` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
+| `transcript` | `true` | Write Claude's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See below. |
+| `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. See below. |
 
 ## Checks
 
@@ -54,6 +56,23 @@ Fix rounds use the `implement` settings. Each stage accepts:
 | `effort` | Overrides the top-level `effort`. |
 | `timeout_minutes` | Stop Claude after this long (plan 15, implement 45, review 20 by default). |
 | `max_budget_usd` | Passed to Claude Code as `--max-budget-usd`; `null` means no limit. |
+
+## Logs and transcripts
+
+```json
+"transcript": false,
+"log": {"tool_output": "none"}
+```
+
+- `transcript`: `false` stops writing the transcripts, so the artifacts hold only the
+  prompt, context, result and patch. Consider it for a public repository, where anyone
+  signed in to GitHub can download artifacts for 14 days.
+- `log.tool_output`: `"truncated"` (default) prints each tool call as a collapsible group
+  with its input and the first and last 20 lines of its output. `"none"` prints one line
+  per message and per tool call, without output.
+
+Both are redacted either way. [How it works](how-it-works.md#logs-summary-and-artifacts)
+shows what the log, run summary and artifacts contain and what is redacted.
 
 ## Secrets
 

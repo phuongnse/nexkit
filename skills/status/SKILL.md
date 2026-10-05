@@ -18,7 +18,11 @@ Use `gh` against the current repository and summarise, without changing anything
    remain.
 
 2. **Recent runs:** `gh run list --workflow nexkit.yml --limit 10`. For failed runs, read
-   the failing job with `gh run view <id> --log-failed` and explain the cause.
+   the failing job with `gh run view <id> --log-failed` and explain the cause. For a run
+   that stopped in the agent or review job, its log has one group per tool call titled
+   `[mm:ss #turn] ▸ Tool …` with the output, and failed tool calls appear as warnings;
+   the `transcript.md` in the `nexkit-agent` or `nexkit-review` artifact
+   (`gh run download <id> -n nexkit-agent`) has the whole conversation.
 
 3. **Issues waiting for a decision:** issues whose latest NexKit comment is a plan
    (`<!-- nexkit:plan -->`) with no `/nexkit go` after it. Each `plan` or `go` run has its

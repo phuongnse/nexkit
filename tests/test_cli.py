@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import re
@@ -7,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 import nexkit
+import nexkit.config
 from nexkit import cli, scaffold
 from tests.support import FakeGitHub, git
 
@@ -132,6 +135,29 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("issue_comment", event)
         self.assertEqual(out["action"], "none")
         self.assertTrue(self.gh.comments_matching(5, "configuration error"))
+
+    def test_agent_setup_failure_is_redacted_and_summarised(self):
+        cfg = nexkit.config.validate({"setup": ['echo "key $ANTHROPIC_API_KEY"; exit 4']})
+        out = self.root / "out"
+        out.mkdir()
+        (out / "context.json").write_text("{}")
+        summary = self.root / "summary.md"
+        env = {
+            "NEXKIT_DECISION": json.dumps({"action": "implement", "base": "main"}),
+            "NEXKIT_CONFIG": json.dumps(cfg),
+            "ANTHROPIC_API_KEY": "fake-api-key-0123456789",
+            "GITHUB_STEP_SUMMARY": str(summary),
+        }
+        stdout = io.StringIO()
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(stdout):
+            code = cli.main(["agent", "--repo", str(self.root), "--out", str(out)])
+        self.assertEqual(code, 0)
+        result = (out / "result.json").read_text()
+        self.assertIn("exit code 4", result)
+        for text in (stdout.getvalue(), result, summary.read_text()):
+            self.assertNotIn("fake-api-key-0123456789", text)
+            self.assertIn("key ***", text)
+        self.assertIn("### NexKit implement: error", summary.read_text())
 
 
 class SupportedVersionTests(unittest.TestCase):

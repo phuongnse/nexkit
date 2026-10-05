@@ -135,6 +135,8 @@ def cmd_context(args):
 def cmd_agent(args):
     from .agent import run_stage
     from .checks import setup
+    from .redact import Redactor
+    from .runlog import summary, write_summary
 
     decision = _decision()
     cfg = _config()
@@ -142,7 +144,8 @@ def cmd_agent(args):
     out = Path(args.out)
     context = json.loads((out / "context.json").read_text())
     if stage in ("implement", "fix"):
-        failed = setup(cfg, args.repo)
+        redact = Redactor()
+        failed = setup(cfg, args.repo, redact)
         if failed:
             result = {
                 "stage": stage,
@@ -152,6 +155,7 @@ def cmd_agent(args):
                 "cost": None,
             }
             (out / "result.json").write_text(json.dumps(result, indent=2))
+            write_summary(summary(result, []), redact)
             return 0
     checks = json.loads(Path(args.checks).read_text()) if args.checks else None
     result = run_stage(stage, context, cfg, args.repo, out, checks=checks, base=decision["base"])

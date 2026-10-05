@@ -15,6 +15,8 @@ from string import Template
 
 from . import config as configuration
 from .gitutil import GitError, git
+from .redact import Redactor
+from .runlog import RunLog, summary, write_summary
 
 READ_ONLY_TOOLS = "Read,Grep,Glob"
 CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
@@ -197,33 +199,14 @@ def claude_command(stage, cfg, claude="claude"):
     return cmd
 
 
-def _describe(event):
-    """One readable log line per assistant action, for the Actions log."""
-    lines = []
-    if event.get("type") == "assistant":
-        for block in event.get("message", {}).get("content", []):
-            if block.get("type") == "text" and block.get("text", "").strip():
-                lines.append("· " + block["text"].strip().replace("\n", " ")[:240])
-            elif block.get("type") == "tool_use":
-                data = block.get("input") or {}
-                detail = (
-                    data.get("command")
-                    or data.get("file_path")
-                    or data.get("pattern")
-                    or data.get("description")
-                    or ""
-                )
-                lines.append(f"▸ {block.get('name')} {str(detail).replace(chr(10), ' ')[:200]}")
-    return lines
-
-
-def run_claude(prompt, cmd, *, cwd, timeout_seconds, transcript):
-    """Run Claude Code, stream progress to stdout and return its final result event."""
+def run_claude(prompt, cmd, *, cwd, timeout_seconds, log):
+    """Run Claude Code, show its events through `log` and return its final result event."""
     started = time.monotonic()
     # Unset secrets arrive as empty strings; drop them so Claude picks the one that is set.
     env = {k: v for k, v in os.environ.items() if v or k not in CREDENTIALS}
     on_actions = os.environ.get("GITHUB_ACTIONS") == "true"
     if on_actions and not any(env.get(name) for name in CREDENTIALS):
+        log.close()
         return {
             "event": None,
             "returncode": None,
@@ -262,21 +245,15 @@ def run_claude(prompt, cmd, *, cwd, timeout_seconds, transcript):
     try:
         proc.stdin.write(prompt)
         proc.stdin.close()
-        with open(transcript, "w", encoding="utf-8") as log:
-            for line in proc.stdout:
-                log.write(line)
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if event.get("type") == "result":
-                    result = event
-                for text in _describe(event):
-                    print(text, flush=True)
+        for line in proc.stdout:
+            event = log.line(line)
+            if event and event.get("type") == "result":
+                result = event
         proc.wait()
     finally:
         timer.cancel()
         reader.join()
+        log.close()
     return {
         "event": result,
         "returncode": proc.returncode,
@@ -393,12 +370,19 @@ def run_stage(stage, context, cfg, repo, out_dir, *, claude="claude", checks=Non
     if stage in ("implement", "fix"):
         start, base_commit = baseline(repo)
     settings = configuration.stage(cfg, stage)
+    redact = Redactor()
+    log = RunLog(
+        redact,
+        title=f"NexKit {stage}",
+        tool_output=cfg["log"]["tool_output"],
+        transcript_dir=out if cfg["transcript"] else None,
+    )
     run = run_claude(
         prompt,
         claude_command(stage, cfg, claude),
         cwd=repo,
         timeout_seconds=settings["timeout_minutes"] * 60,
-        transcript=out / "transcript.jsonl",
+        log=log,
     )
     result = interpret(stage, run, settings["timeout_minutes"])
     result["start_head"] = start
@@ -409,5 +393,7 @@ def run_stage(stage, context, cfg, repo, out_dir, *, claude="claude", checks=Non
             result.update(status="error", error=f"The change is too large ({size} bytes).")
         elif not files:
             result.update(status="error", error="The agent finished without changing any files.")
+    result = redact.data(result)
     (out / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    write_summary(summary(result, log.calls), redact)
     return result

@@ -37,11 +37,15 @@ def _run(command, cwd, timeout_seconds):
 SETUP_SECONDS = 30 * 60
 
 
-def setup(cfg, cwd):
-    """Run setup commands in order. Return None, or a failed result for the first failure."""
+def setup(cfg, cwd, redact=str):
+    """Run setup commands in order. Return None, or a failed result for the first failure.
+
+    In the agent job the Claude credential is in the environment, so pass a redactor there.
+    """
     for command in cfg["setup"]:
         print(f"$ {command}", flush=True)
         code, output, seconds = _run(command, cwd, SETUP_SECONDS)
+        output = redact(output)
         print(output[-OUTPUT_TAIL:], flush=True)
         if code != 0:
             return {

@@ -13,6 +13,8 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 | `route.py` | `route`: event → action, authorization |
 | `context.py` | collects issue, plan and feedback text before an agent runs |
 | `agent.py`, `prompts/*.md` | `agent` and `review`: build prompt, run `claude -p`, collect patch |
+| `runlog.py` | `agent` and `review`: Actions log, transcripts, run summary |
+| `redact.py` | removes secrets from everything printed or stored from an agent session |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py` | `verify` and agent setup: run configured commands |
 | `report.py`, `state.py` | `report`: statuses, review, state comment, next round |
@@ -26,7 +28,9 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 - Keep the job separation in `pipeline.yml`: jobs that run Claude or repository code have
   read-only tokens; jobs with write tokens never run repository code and never receive the
   Claude credential. `tests/test_cli.py` checks this; extend it if you add jobs.
-- Agent output is untrusted. Python validates it before anything is published.
+- Agent output is untrusted. Python validates it before anything is published. Pass
+  anything printed or stored from an agent session through `redact.py`, and print tool
+  output only with workflow commands stopped.
 - State lives only on GitHub (comments, PRs, statuses). Do not add a state store.
 - Agent errors and `blocked` results never trigger automatic retries; only check failures
   and review findings do, up to `max_auto_fixes`.

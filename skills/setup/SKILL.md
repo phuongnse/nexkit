@@ -34,6 +34,9 @@ files or repository settings, and wait for confirmation.
 3. **Choose the model.** Default `sonnet` for every stage. Mention that `opus` gives
    stronger results at a higher cost, and that each stage can be set separately in the
    config (see the configuration reference in the NexKit repository).
+   If the repository is public, say that anyone signed in to GitHub can read NexKit's
+   logs and artifacts. NexKit redacts known secrets, but offer `"transcript": false` in
+   the config to stop storing Claude's transcripts.
 
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`

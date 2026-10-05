@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Secrets are redacted from everything NexKit prints or stores from an agent session: the
+  Actions log, transcripts, `result.json`, the run summary and `setup` output in the
+  agent job. Redacted: values of Claude and GitHub credentials and of environment
+  variables named like secrets, known token shapes (Anthropic, GitHub, JWT, bearer
+  headers, PEM private keys) and passwords in connection strings. Git SHAs, UUIDs and
+  hashes are kept.
+- New `transcript` setting (default `true`): `false` stops writing transcripts into the
+  `nexkit-agent` and `nexkit-review` artifacts.
+- The agent and review logs show each tool call as a collapsible group, titled with the
+  elapsed time and turn, holding its input, whether it failed and its output (first and
+  last 20 lines, at most 4,000 characters). Failed tool calls add a warning annotation.
+  Tool output is printed with workflow commands stopped, so it cannot set outputs, add
+  masks or create annotations. `log.tool_output: "none"` keeps the one-line log.
+- The agent and review jobs write a run summary: result, turns, duration, cost, files
+  changed, commands run and, for reviews, the verdict and findings.
+- The artifacts contain a readable `transcript.md` next to `transcript.jsonl`.
+
 ## 1.2.0
 
 - Every run gets its own NexKit comment, posted when it starts, right after the command

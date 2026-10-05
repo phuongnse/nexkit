@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0
 
 - Secrets are redacted from everything NexKit prints or stores from an agent session: the
   Actions log, transcripts, `result.json`, the run summary and `setup` output in the

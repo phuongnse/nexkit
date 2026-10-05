@@ -1,6 +1,6 @@
 """NexKit: turn GitHub issues into reviewed, tested pull requests with Claude Code."""
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # NexKit runs on Python 3.12 or newer. CI tests 3.12 only, and the pipeline installs 3.12.
 PYTHON = (3, 12)

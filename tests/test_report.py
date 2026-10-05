@@ -1,7 +1,10 @@
+import itertools
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from nexkit.github import GitHubError
 from nexkit.report import report, review_body, workflow_file
@@ -47,6 +50,11 @@ class ReportTests(unittest.TestCase):
         self.gh.add_pull(6, 5, head_sha=HEAD)
         self.tmp = tempfile.TemporaryDirectory()
         self.artifacts = Path(self.tmp.name)
+        # Each report is a separate workflow run, whatever the environment running the tests.
+        self.run_ids = itertools.count(1)
+        env = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"})
+        env.start()
+        self.addCleanup(env.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -74,12 +82,13 @@ class ReportTests(unittest.TestCase):
         if review is not False:
             self.write("nexkit-review", "result.json", review or review_result())
 
-    def run_report(self, d=None, cfg=None, published=True):
+    def run_report(self, d=None, cfg=None, published=True, head=HEAD):
         needs = {}
         if published:
             needs["publish"] = {
-                "outputs": {"result": json.dumps({"published": True, "pr": 6, "head": HEAD})}
+                "outputs": {"result": json.dumps({"published": True, "pr": 6, "head": head})}
             }
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
         return report(
             self.gh,
             d or decision(),
@@ -211,20 +220,7 @@ class ReportTests(unittest.TestCase):
         self.write("nexkit-agent", "result.json", {"status": "done", "summary": "Kept docs."})
         (self.artifacts / "nexkit-review" / "result.json").unlink()  # the review failed
         d = decision("fix", pr=6, target=6, head=HEAD, note="Also handle floats")
-        needs = {
-            "publish": {
-                "outputs": {"result": json.dumps({"published": True, "pr": 6, "head": new_head})}
-            }
-        }
-        report(
-            self.gh,
-            d,
-            make_config(),
-            needs,
-            self.artifacts,
-            workflow_ref=WORKFLOW,
-            default_branch="main",
-        )
+        self.run_report(d=d, head=new_head)
         _, state = read_state(self.gh.comments(6))
         self.assertEqual(state["last_review"]["head"], HEAD)  # unchanged without a review
         self.assertEqual(

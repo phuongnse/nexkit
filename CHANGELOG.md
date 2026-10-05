@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
 - Every run gets its own NexKit comment, posted when it starts, right after the command
   or review that started it: one per `plan` or `go` run on an issue, one per round on a

@@ -252,6 +252,20 @@ class WorkflowSafetyTests(unittest.TestCase):
         for name in ("nexkit-agent", "nexkit-checks", "nexkit-review"):
             self.assertIn(f"name: {name}\n          path: artifacts/{name}\n", self.jobs["report"])
 
+    def test_report_downloads_only_artifacts_of_stages_that_ran(self):
+        # A download of an artifact that cannot exist adds an error annotation to every run.
+        producers = {"nexkit-agent": "agent", "nexkit-checks": "verify", "nexkit-review": "review"}
+        steps = self.jobs["report"].split("\n      - ")
+        downloads = [step for step in steps if "actions/download-artifact@" in step]
+        self.assertEqual(len(downloads), len(producers))
+        for step in downloads:
+            name = re.search(r"^\s+name: (\S+)$", step, re.M).group(1)
+            self.assertIn(f"\n        if: needs.{producers[name]}.result != 'skipped'\n", step)
+        for name, job in producers.items():
+            upload = self.jobs[job].split("actions/upload-artifact@", 1)[1]
+            self.assertIn("\n        if: always()\n", upload.split("\n      - ", 1)[0], job)
+            self.assertIn(f"name: {name}\n", upload, job)
+
     def test_config_comes_from_default_branch(self):
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.jobs["route"])
 

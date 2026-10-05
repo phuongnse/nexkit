@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- The run summary table has a header with the column names (`Result`, `Turns`,
+  `Duration`, `Cost`, and `Verdict` for reviews) and one row of values, instead of an
+  empty first row.
+- `report` downloads only the artifacts of the stages that ran, so skipped stages no
+  longer add *Artifact not found* error annotations. `verify` uploads `nexkit-checks` even
+  when `nexkit checks` fails, so a missing-artifact error on `report` now always means a
+  stage stopped before its upload.
+
 ## 1.3.0
 
 - Secrets are redacted from everything NexKit prints or stores from an agent session: the

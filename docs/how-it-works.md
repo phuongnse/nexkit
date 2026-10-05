@@ -73,9 +73,18 @@ masks or create annotations. Claude's thinking is never printed. With
 (`▸ Tool detail`, 200 characters), as in earlier releases.
 
 **Run summary.** At the end of the `agent` and `review` jobs, the run's summary page shows
-the stage, its result (done, blocked or error), turns, duration and cost, why it stopped,
-the files changed, each command Claude ran and whether it failed, and for a review the
-verdict and findings.
+the stage and a one-row table of its result (done, blocked or error), turns, duration and
+cost, plus the verdict for a review; `-` marks a missing value. Below it are why the stage
+stopped, the files changed, each command Claude ran and whether it failed, and for a review
+the findings.
+
+```text
+### NexKit review: done
+
+| Result | Turns | Duration | Cost | Verdict |
+|---|---|---|---|---|
+| done | 12 | 3m 41s | $0.84 | approve |
+```
 
 **Artifacts,** kept 14 days:
 
@@ -83,6 +92,19 @@ verdict and findings.
 |---|---|
 | `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (Claude's event stream, including thinking) and `transcript.md` (the conversation in order: Claude's text, tool calls and results shortened as in the log, without thinking). |
 | `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. |
+
+Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
+artifacts of the stages that ran:
+
+| Command | Artifacts `report` reads |
+|---|---|
+| `plan` | `nexkit-agent` |
+| `go`, `fix` (and automatic rounds) | `nexkit-agent`; `nexkit-checks` and `nexkit-review` once a commit was published |
+| `review` | `nexkit-checks`, `nexkit-review` |
+
+A skipped stage adds no annotation. An *Artifact not found* error on `report` means a stage
+ran but stopped before its upload, for example because it was cancelled; `report` still
+sets the statuses and edits the comment without that stage's results.
 
 ### What is redacted
 

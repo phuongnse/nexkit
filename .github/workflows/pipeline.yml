@@ -202,6 +202,7 @@ jobs:
         env:
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
         with:
           name: nexkit-checks
           path: out/
@@ -296,17 +297,20 @@ jobs:
           python-version: "3.12"
           update-environment: false # repository commands keep their own Python
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true # absent when that stage did not run
+        if: needs.agent.result != 'skipped'
+        continue-on-error: true # stage crashed before uploading; report reads files as absent
         with:
           name: nexkit-agent
           path: artifacts/nexkit-agent
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true # absent when that stage did not run
+        if: needs.verify.result != 'skipped'
+        continue-on-error: true # stage crashed before uploading; report reads files as absent
         with:
           name: nexkit-checks
           path: artifacts/nexkit-checks
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true # absent when that stage did not run
+        if: needs.review.result != 'skipped'
+        continue-on-error: true # stage crashed before uploading; report reads files as absent
         with:
           name: nexkit-review
           path: artifacts/nexkit-review

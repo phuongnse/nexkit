@@ -22,7 +22,8 @@ Use `gh` against the current repository and summarise, without changing anything
    that stopped in the agent or review job, its log has one group per tool call titled
    `[mm:ss #turn] ▸ Tool …` with the output, and failed tool calls appear as warnings;
    the `transcript.md` in the `nexkit-agent` or `nexkit-review` artifact
-   (`gh run download <id> -n nexkit-agent`) has the whole conversation.
+   (`gh run download <id> -n nexkit-agent`) has the whole conversation. An *Artifact not
+   found* annotation on `report` means that stage ran but stopped before uploading.
 
 3. **Issues waiting for a decision:** issues whose latest NexKit comment is a plan
    (`<!-- nexkit:plan -->`) with no `/nexkit go` after it. Each `plan` or `go` run has its

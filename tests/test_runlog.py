@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nexkit import runlog
+from nexkit import runlog, state
 from nexkit.redact import Redactor
 
 FAKE_KEY = "fake-credential-0123456789"
@@ -189,8 +189,17 @@ class SummaryTests(unittest.TestCase):
             "changed_files": ["calc.py"],
         }
         text = runlog.summary(result, log.calls)
-        self.assertIn("### NexKit implement: done", text)
-        self.assertIn("| Turns | 3 |\n| Duration | 2m 05s |\n| Cost | $0.50 |", text)
+        self.assertEqual(
+            text.splitlines()[:5],
+            [
+                "### NexKit implement: done",
+                "",
+                "| Result | Turns | Duration | Cost |",
+                "|---|---|---|---|",
+                "| done | 3 | 2m 05s | $0.50 |",
+            ],
+        )
+        self.assertEqual(text.splitlines()[5], "")
         self.assertIn("**Files changed** (1)\n\n```\ncalc.py\n```", text)
         self.assertIn("```\n✗ scripts/e2e.sh --all\n… sleep 999\n```", text)
 
@@ -214,16 +223,62 @@ class SummaryTests(unittest.TestCase):
             },
         }
         text = runlog.summary(result, [])
-        self.assertIn("| Verdict | request_changes |", text)
+        self.assertIn(
+            "| Result | Turns | Duration | Cost | Verdict |\n"
+            "|---|---|---|---|---|\n"
+            "| done | 2 | 30s | - | request_changes |\n",
+            text,
+        )
         self.assertIn("**Findings** (1)\n\n- **blocking** `calc.py:2`: Subtracts. Fix", text)
-        self.assertNotIn("Cost", text)
         self.assertNotIn("Commands", text)
+
+    def test_review_summary_without_cost_turns_or_output(self):
+        text = runlog.summary({"stage": "review", "status": "error", "seconds": 4}, [])
+        self.assertIn(
+            "| Result | Turns | Duration | Cost | Verdict |\n"
+            "|---|---|---|---|---|\n"
+            "| error | - | 4s | - | - |\n",
+            text,
+        )
 
     def test_blocked_and_error_summaries(self):
         text = runlog.summary({"stage": "fix", "status": "blocked", "error": "Needs ```x```"}, [])
         self.assertIn("### NexKit fix: blocked", text)
         self.assertIn("**Why it stopped**\n\n````\nNeeds ```x```\n````", text)
-        self.assertIn("| Turns | - |", text)
+        self.assertIn("| Result | Turns | Duration | Cost |\n|---|---|---|---|\n", text)
+        self.assertIn("| blocked | - | 0s | - |\n", text)
+
+    def test_no_table_has_an_empty_header(self):
+        # GitHub always renders a header row, so an empty one shows as a blank first row.
+        _, log = run(EVENTS)
+        round_run = {
+            "round": 2,
+            "trigger": "/nexkit fix",
+            "status": "success",
+            "url": "https://example.test/run",
+            "head": "abc1234def",
+            "checks": "passed",
+            "verdict": "approve",
+            "cost": 1.25,
+        }
+        texts = [
+            runlog.summary({"stage": "implement", "status": "done", "cost": 0.5}, log.calls),
+            runlog.summary(
+                {"stage": "review", "status": "done", "output": {"verdict": "approve"}}, []
+            ),
+            state.render_run(round_run, "Approved."),
+            state.render_run({"command": "plan", "status": "running"}),
+            state.render_state(state.empty_state(5)),
+        ]
+        tables = 0
+        for text in texts:
+            lines = text.splitlines()
+            for header, separator in zip(lines, lines[1:], strict=False):
+                if re.fullmatch(r"\|(?:-+\|)+", separator):
+                    tables += 1
+                    cells = header.strip("|").split("|")
+                    self.assertTrue(all(cell.strip() for cell in cells), header)
+        self.assertEqual(tables, 3)
 
     def test_write_summary(self):
         with tempfile.TemporaryDirectory() as tmp:

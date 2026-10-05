@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Every accepted command gets 👀, on pull requests too: `route` now has
+  `pull-requests: write`. A failed reaction is logged instead of ignored.
+- Runs are visible while they run. A command on an issue gets one NexKit status comment,
+  edited in place, with a link to the run and then its outcome. A pull request round
+  appears in the status comment as running, with the run link, and `nexkit/checks` and
+  `nexkit/review` turn `pending` on the current commit.
+- The command comment gets 🚀 when the run finishes its work and 😕 when it stops on an
+  error.
+- A review after an earlier NexKit review gets the previous round: the earlier findings,
+  the fix rounds since (summary and note) and the diff since the reviewed commit. It
+  reports a `resolution` for each earlier finding (new `previous_findings` field in the
+  review result), accepts justified rejections, and treats changes asked for in a note as
+  in scope.
+- The review prompt names the base branch of its diff (it showed `$base`).
+
 ## 1.0.0
 
 First release.

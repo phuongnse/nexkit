@@ -7,11 +7,11 @@ Every command starts one run of the reusable workflow
 
 | Job | Runs for | Token permissions | Claude credential | Does |
 |---|---|---|---|---|
-| `route` | every event | read, issue comments | no | Checks the command and the author's write access, reads the config from the default branch, picks the action. |
+| `route` | every event | read; comments, reactions, statuses | no | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
 | `agent` | plan, go, fix | read only | yes | Installs Claude Code, runs `setup`, then one Claude session. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | no | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
-| `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan and the check results. |
+| `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the check results and the previous review round. |
 | `report` | every action | write | no | Sets commit statuses, posts the review and status comment, starts the next automatic round or asks for a person. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
@@ -20,6 +20,23 @@ into a commit in a different job. As a result:
 - The session that runs Claude never holds a token that can write to the repository.
 - Jobs that hold write tokens never run code from the repository or from the agent.
 - Checks run in a job with no secrets at all.
+
+## What you see during a run
+
+GitHub cannot show a live run inside a comment, and only `route` and `report` hold write
+tokens, so NexKit updates the issue or pull request when a run starts and when it ends.
+
+| When | Command on an issue (`plan`, `go`) | Round on a pull request (`fix`, `review`, automatic) |
+|---|---|---|
+| Start (`route`) | 👀 on the command comment. The NexKit status comment on the issue gets a ⏳ line with a link to the run. | 👀 on the command comment. The status comment gets a new round marked ⏳ with a link to the run. `nexkit/checks` and `nexkit/review` turn `pending` on the current commit and link to the run. |
+| End (`report`) | The same line shows ✅ or ❌, the run log and the result: the plan, the pull request and its outcome, or why the run stopped. | The round shows ✅ or ❌, its commit, checks, review verdict and cost. Statuses are set on the new commit; a commit the round did not check gets its earlier statuses back. NexKit also comments the next step. |
+
+✅ means the run did its work, even when the checks fail or the review asks for changes
+(the round's columns show that). ❌ means it stopped on an error. A run started by a
+comment ends with 🚀 or 😕 on that comment. Runs started by a dispatch or by a
+*Request changes* review have no comment to react to.
+
+Each issue and each pull request has one NexKit status comment, edited in place.
 
 ## Stages
 
@@ -38,12 +55,25 @@ nothing.
 acceptance criterion, and findings marked `blocking` or `suggestion`. The prompt tells the
 reviewer not to block on things the implementer cannot change, such as PR text or CI files.
 
+Every review is a fresh session, so the reviewer stays independent of the agent that wrote
+the code. When the pull request already has a NexKit review, the prompt adds a *Previous
+round* section: that review's findings, each fix round since then with the note that
+started it and the fix agent's summary (which may reject a finding with a reason), and the
+diff from the reviewed commit to the current one, next to the full diff. The reviewer
+first returns a `resolution` for each earlier finding (`resolved`, `unresolved` or
+`rejection_accepted`) with evidence, does not raise an accepted rejection again, treats
+changes asked for in a note as in scope, and adds new blocking findings only for real
+defects. The pull request review lists these resolutions.
+
 ## State
 
-All state is on GitHub: the plan comment on the issue, the pull request, its commit
-statuses and one NexKit status comment on the pull request. That comment holds a table of
-rounds and a hidden JSON record of the latest feedback and how many automatic fix rounds
-were used. Nothing else is stored, so there is nothing to migrate or repair.
+All state is on GitHub: the plan comment and the NexKit status comment on the issue, the
+pull request, its commit statuses and one NexKit status comment on the pull request. The
+pull request's comment holds a table of rounds and a hidden JSON record of the latest
+feedback, how many automatic fix rounds were used, the last completed review (its commit
+and all its findings) and the recent fix rounds (summary and note). Recorded text is
+clipped so the comment and the prompts stay bounded. Nothing else is stored, so there is
+nothing to migrate or repair.
 
 ## Failure handling
 

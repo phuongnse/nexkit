@@ -1,10 +1,13 @@
+import itertools
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from nexkit.github import GitHubError
-from nexkit.report import report, workflow_file
+from nexkit.report import report, review_body, workflow_file
 from nexkit.state import read_state
 from tests.support import FakeGitHub, make_config
 
@@ -47,6 +50,11 @@ class ReportTests(unittest.TestCase):
         self.gh.add_pull(6, 5, head_sha=HEAD)
         self.tmp = tempfile.TemporaryDirectory()
         self.artifacts = Path(self.tmp.name)
+        # Each report is a separate workflow run, whatever the environment running the tests.
+        self.run_ids = itertools.count(1)
+        env = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"})
+        env.start()
+        self.addCleanup(env.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -74,12 +82,13 @@ class ReportTests(unittest.TestCase):
         if review is not False:
             self.write("nexkit-review", "result.json", review or review_result())
 
-    def run_report(self, d=None, cfg=None, published=True):
+    def run_report(self, d=None, cfg=None, published=True, head=HEAD):
         needs = {}
         if published:
             needs["publish"] = {
-                "outputs": {"result": json.dumps({"published": True, "pr": 6, "head": HEAD})}
+                "outputs": {"result": json.dumps({"published": True, "pr": 6, "head": head})}
             }
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
         return report(
             self.gh,
             d or decision(),
@@ -193,6 +202,53 @@ class ReportTests(unittest.TestCase):
         (self.artifacts / "nexkit-agent" / "result.json").unlink()
         d = decision("review", pr=6, target=6, head=HEAD)
         self.assertEqual(self.run_report(d=d, published=False)["outcome"], "ready")
+
+    def test_state_keeps_the_previous_round_for_the_next_review(self):
+        blocking = {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Wrong sign"}
+        hint = {"severity": "suggestion", "file": "", "line": 0, "body": "Add docs"}
+        self.candidate(review=review_result("request_changes", [blocking, hint]))
+        self.run_report()
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["last_review"]["head"], HEAD)
+        self.assertEqual(state["last_review"]["round"], 1)
+        self.assertEqual(
+            [f["body"] for f in state["last_review"]["findings"]], ["Wrong sign", "Add docs"]
+        )
+        self.assertNotIn("fixes", state)
+
+        new_head = "e" * 40
+        self.write("nexkit-agent", "result.json", {"status": "done", "summary": "Kept docs."})
+        (self.artifacts / "nexkit-review" / "result.json").unlink()  # the review failed
+        d = decision("fix", pr=6, target=6, head=HEAD, note="Also handle floats")
+        self.run_report(d=d, head=new_head)
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["last_review"]["head"], HEAD)  # unchanged without a review
+        self.assertEqual(
+            state["fixes"],
+            [
+                {
+                    "round": 2,
+                    "head": new_head,
+                    "auto": False,
+                    "summary": "Kept docs.",
+                    "note": "Also handle floats",
+                }
+            ],
+        )
+
+    def test_review_body_shows_previous_findings(self):
+        review = review_result()
+        review["output"]["previous_findings"] = [
+            {"finding": "Wrong sign", "resolution": "resolved", "evidence": "calc.py:2 adds"},
+            {"finding": "Add docs", "resolution": "rejection_accepted", "evidence": "Internal"},
+            {"finding": "Floats", "resolution": "unresolved", "evidence": "Still int()"},
+        ]
+        body = review_body(review, [])
+        self.assertIn("**Previous findings**", body)
+        self.assertIn("- ✅ resolved: Wrong sign: calc.py:2 adds", body)
+        self.assertIn("- 🤝 rejection accepted: Add docs: Internal", body)
+        self.assertIn("- 🛑 unresolved: Floats: Still int()", body)
+        self.assertNotIn("Previous findings", review_body(review_result(), []))
 
     def test_workflow_file(self):
         self.assertEqual(workflow_file(WORKFLOW), "nexkit.yml")

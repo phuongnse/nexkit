@@ -150,7 +150,9 @@ class FakeGitHub:
         return {"merged": True}
 
     def set_status(self, sha, context, state, description, target_url=None):
-        self.statuses.append({"sha": sha, "context": context, "state": state})
+        self.statuses.append(
+            {"sha": sha, "context": context, "state": state, "target_url": target_url}
+        )
 
     def dispatch(self, workflow, ref, inputs):
         self.dispatches.append({"workflow": workflow, "ref": ref, "inputs": inputs})

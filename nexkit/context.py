@@ -7,16 +7,10 @@ from __future__ import annotations
 
 from .github import TRUSTED_ASSOCIATIONS
 from .route import parse_command
-from .state import by_bot, latest_plan, plan_text, read_state
+from .state import by_bot, clip, latest_plan, plan_text, read_state
 
-MAX_COMMENT = 4000
 MAX_COMMENTS = 30
 NO_PLAN = "No plan was posted. Implement the issue as described."
-
-
-def _clip(text, limit=MAX_COMMENT):
-    text = (text or "").strip()
-    return text if len(text) <= limit else text[:limit] + "\n[truncated]"
 
 
 def _trusted(item):
@@ -32,7 +26,7 @@ def _discussion(comments):
         if command:
             continue  # Command notes reach the agent through the decision instead.
         entries.append(
-            f"@{comment['user']['login']} ({comment['created_at']}):\n{_clip(comment['body'])}"
+            f"@{comment['user']['login']} ({comment['created_at']}):\n{clip(comment['body'])}"
         )
     entries = entries[-MAX_COMMENTS:]
     return "\n\n---\n\n".join(entries) if entries else "No discussion."
@@ -50,7 +44,7 @@ def _feedback(gh, decision):
             parts.append(
                 f"### Failing check `{check['name']}` (`{check['run']}`)\n\n"
                 f"Exit code {check.get('exit_code')}. End of output:\n\n```\n"
-                f"{_clip(check.get('output'), 6000)}\n```"
+                f"{clip(check.get('output'), 6000)}\n```"
             )
     review = saved.get("review") or {}
     findings = [f for f in review.get("findings") or [] if f.get("severity") == "blocking"]
@@ -64,19 +58,62 @@ def _feedback(gh, decision):
     human = []
     for review in gh.reviews(pr):
         if _trusted(review) and review.get("commit_id") == head and (review.get("body") or ""):
-            human.append(f"@{review['user']['login']} ({review['state']}): {_clip(review['body'])}")
+            human.append(f"@{review['user']['login']} ({review['state']}): {clip(review['body'])}")
     for comment in gh.review_comments(pr):
         if _trusted(comment) and comment.get("line") is not None:
             human.append(
                 f"@{comment['user']['login']} on `{comment['path']}:{comment['line']}`: "
-                f"{_clip(comment['body'])}"
+                f"{clip(comment['body'])}"
             )
     if human:
         parts.append("### Review comments from collaborators\n\n" + "\n\n".join(human))
     return "\n\n".join(parts) if parts else "No recorded feedback. Follow the note."
 
 
-def gather(gh, decision):
+def previous_review(gh, decision, fix_result):
+    """The last NexKit review of the pull request and the fix rounds since, or None."""
+    _, state = read_state(gh.comments(decision["pr"]))
+    last = (state or {}).get("last_review")
+    if not last:
+        return None
+    fixes = [f for f in state.get("fixes") or [] if f["round"] > last["round"]]
+    if decision["action"] == "fix" and (fix_result or {}).get("status") == "done":
+        fixes.append(
+            {
+                "auto": decision.get("auto"),
+                "summary": fix_result.get("summary"),
+                "note": decision.get("note"),
+            }
+        )
+    lines = [f"### Findings of the review of commit {last['head'][:7]} ({last['verdict']})", ""]
+    for number, f in enumerate(last["findings"], 1):
+        where = f"{f['file']}:{f['line']}" if f.get("file") else "general"
+        lines.append(f"{number}. {f['severity']}, `{where}`: {clip(f['body'], 1500)}")
+    if not last["findings"]:
+        lines.append("No findings.")
+    lines += ["", "### Fix rounds since that review"]
+    if not fixes:
+        lines += ["", "None. Any later commits were pushed without a NexKit fix round."]
+    for number, fix in enumerate(fixes, 1):
+        who = "automatic" if fix.get("auto") else "requested by a person"
+        lines += [
+            "",
+            f"#### Fix {number} ({who})",
+            "",
+            "Note from the person who requested it:",
+            "",
+            clip(fix.get("note")) or "None.",
+            "",
+            "Summary from the fix agent:",
+            "",
+            clip(fix.get("summary")) or "None.",
+        ]
+    return {"previous_head": last["head"], "previous_round": "\n".join(lines)}
+
+
+def gather(gh, decision, stage=None, fix_result=None):
+    """Context for an agent stage. `stage` defaults to the decision's action; the review
+    stage also gets the previous review round, with `fix_result` from this run's fix."""
     issue = gh.issue(decision["issue"])
     comments = gh.comments(decision["issue"])
     plan = latest_plan(comments)
@@ -84,13 +121,16 @@ def gather(gh, decision):
         "issue": decision["issue"],
         "pr": decision.get("pr") or "",
         "title": issue["title"],
-        "body": _clip(issue.get("body") or "No description.", 20000),
+        "body": clip(issue.get("body") or "No description.", 20000),
         "discussion": _discussion(comments),
         "plan": plan_text(plan) if plan else NO_PLAN,
         "note": decision.get("note") or "None.",
         "feedback": "",
     }
-    if decision["action"] == "fix":
+    stage = stage or decision["action"]
+    if stage == "review" and decision.get("pr"):
+        context.update(previous_review(gh, decision, fix_result) or {})
+    elif stage == "fix":
         context["feedback"] = _feedback(gh, decision)
         pr_comments = gh.comments(decision["pr"])
         context["discussion"] += "\n\n---\n\nOn the pull request:\n\n" + _discussion(pr_comments)

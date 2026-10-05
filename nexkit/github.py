@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -116,8 +117,9 @@ class GitHub:
             self.request(
                 "POST", f"{self._repo}/issues/comments/{comment_id}/reactions", {"content": content}
             )
-        except GitHubError:
-            pass  # A missing reaction is cosmetic.
+        except GitHubError as exc:
+            # A missing reaction is cosmetic, but say why so permission problems show up.
+            print(f"warning: could not add the {content} reaction: {exc}", file=sys.stderr)
 
     # -- pull requests -------------------------------------------------------------
 

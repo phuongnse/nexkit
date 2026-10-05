@@ -101,6 +101,21 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(out["agent_ref"], "main")
         self.assertEqual(out["agent_timeout"], "75")
         self.assertEqual(self.gh.reactions, [(3, "eyes")])
+        self.assertEqual(len(self.gh.comments_matching(5, "<!-- nexkit:status ")), 1)
+
+    def test_route_on_pull_request_marks_the_round_running(self):
+        self.gh.add_pull(6, 5, head_sha="b" * 40)
+        event = {
+            "action": "created",
+            "issue": {"number": 6, "pull_request": {}},
+            "comment": {"id": 4, "body": "/nexkit review", "user": {"login": "alice"}},
+        }
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app", "GITHUB_RUN_ID": "9"}):
+            out = self.run_route("issue_comment", event)
+        self.assertEqual(out["action"], "review")
+        self.assertEqual(self.gh.reactions, [(4, "eyes")])
+        self.assertEqual({s["state"] for s in self.gh.statuses}, {"pending"})
+        self.assertTrue(self.gh.comments_matching(6, "actions/runs/9"))
 
     def test_route_replies_with_configuration_errors(self):
         (self.root / "repo/.nexkit/config.json").write_text('{"model": 1}')
@@ -175,6 +190,28 @@ class WorkflowSafetyTests(unittest.TestCase):
         for name in ("publish", "report", "route"):
             self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", self.jobs[name], name)
             self.assertNotIn("ANTHROPIC_API_KEY", self.jobs[name], name)
+
+    def test_jobs_with_write_tokens_run_only_nexkit(self):
+        for name in ("route", "publish", "report"):
+            runs = re.findall(r"^\s+run: (.*)$", self.jobs[name], re.M)
+            self.assertTrue(runs, name)
+            for run in runs:
+                self.assertTrue(
+                    run.startswith("${{ steps.python.outputs.python-path }} kit/bin/nexkit "),
+                    f"{name}: {run}",
+                )
+
+    def test_route_acknowledges_commands_without_repository_code(self):
+        route = self.jobs["route"]
+        for permission in ("issues: write", "pull-requests: write", "statuses: write"):
+            self.assertIn(permission, route)
+        self.assertNotIn("contents: write", route)
+        self.assertIn("sparse-checkout: .nexkit", route)
+
+    def test_review_reads_the_fix_result(self):
+        review = self.jobs["review"]
+        self.assertIn("name: nexkit-agent\n          path: agent\n", review)
+        self.assertIn("--stage review --fix-result agent/result.json", review)
 
     def test_agent_step_has_no_github_token(self):
         step = self.jobs["agent"].split("- name: Run Claude Code", 1)[1].split("- uses:", 1)[0]

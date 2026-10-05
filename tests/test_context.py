@@ -109,6 +109,47 @@ class ContextTests(unittest.TestCase):
         self.assertNotIn("Inject", feedback)
         self.assertEqual(context["pr"], 6)
 
+    def test_first_review_has_no_previous_round(self):
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        self.gh.comment(6, render_state(empty_state(5)))
+        context = gather(self.gh, {"action": "fix", "issue": 5, "pr": 6, "head": HEAD}, "review")
+        self.assertNotIn("previous_head", context)
+        self.assertEqual(context["feedback"], "")
+
+    def test_review_after_a_fix_gets_the_previous_round(self):
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        state = empty_state(5)
+        state["last_review"] = {
+            "round": 1,
+            "head": "a" * 40,
+            "verdict": "request_changes",
+            "findings": [
+                {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Wrong sign"},
+                {"severity": "suggestion", "file": "", "line": 0, "body": "x" * 5000},
+            ],
+        }
+        state["fixes"] = [
+            {"round": 1, "head": "a" * 40, "auto": False, "summary": "Old", "note": "Old note"},
+            {"round": 2, "head": "b" * 40, "auto": True, "summary": "Fixed sign", "note": ""},
+        ]
+        self.gh.comment(6, render_state(state))
+        decision = {"action": "fix", "issue": 5, "pr": 6, "head": "b" * 40, "note": "Add floats"}
+        fix_result = {"status": "done", "summary": "Rejected the docs finding: internal API."}
+        context = gather(self.gh, decision, "review", fix_result)
+        self.assertEqual(context["previous_head"], "a" * 40)
+        text = context["previous_round"]
+        self.assertIn("review of commit aaaaaaa (request_changes)", text)
+        self.assertIn("1. blocking, `calc.py:2`: Wrong sign", text)
+        self.assertIn("2. suggestion, `general`: ", text)
+        self.assertIn("[truncated]", text)
+        self.assertNotIn("Old note", text)  # reviewed already
+        self.assertIn("#### Fix 1 (automatic", text)
+        self.assertIn("Fixed sign", text)
+        self.assertIn("#### Fix 2 (requested by a person)", text)
+        self.assertIn("Add floats", text)
+        self.assertIn("Rejected the docs finding", text)
+        self.assertLess(len(text), 4000)
+
 
 if __name__ == "__main__":
     unittest.main()

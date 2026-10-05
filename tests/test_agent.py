@@ -29,8 +29,23 @@ class PromptTests(unittest.TestCase):
         self.assertIn("`.github/`", prompt)
         self.assertNotIn("$plan", prompt)
 
+    def test_first_review_has_no_previous_round(self):
+        extra = {"diff": "+x", "check_results": "ok", "previous": ""}
+        prompt = agent.build_prompt("review", CONTEXT, make_config(), extra)
+        self.assertNotIn("Previous round", prompt)
+        self.assertIn("</untrusted>\n\n## How to review", prompt)
+
+    def test_review_schema_requires_previous_findings(self):
+        schema = agent.SCHEMAS["review"]
+        self.assertIn("previous_findings", schema["required"])
+        item = schema["properties"]["previous_findings"]["items"]
+        self.assertEqual(
+            item["properties"]["resolution"]["enum"],
+            ["resolved", "unresolved", "rejection_accepted"],
+        )
+
     def test_every_stage_template_is_complete(self):
-        extra = {"diff": "+x", "check_results": "ok"}
+        extra = {"diff": "+x", "check_results": "ok", "previous": ""}
         for stage in ("plan", "implement", "fix", "review"):
             prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
             for name in ("$issue", "$title", "$plan", "$checks", "$protected", "$diff"):
@@ -155,6 +170,54 @@ class RunStageTests(unittest.TestCase):
         prompt = self.claude.call()["prompt"]
         self.assertIn("+    return a + b", prompt)
         self.assertIn("`test` (`true`): passed", prompt)
+
+    def test_review_after_a_fix_gets_the_previous_round(self):
+        git(self.repo, "checkout", "-q", "-b", "nexkit/issue-5")
+        (self.repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+        git(self.repo, "add", "-A")
+        reviewed = self.repos.commit(self.repo, "fix")
+        (self.repo / "calc.py").write_text("def add(a, b):\n    return float(a) + b\n")
+        git(self.repo, "add", "-A")
+        self.repos.commit(self.repo, "floats")
+        context = {
+            **CONTEXT,
+            "previous_head": reviewed,
+            "previous_round": "1. blocking, `calc.py:2`: Use $floats",
+        }
+        verdict = {
+            "verdict": "approve",
+            "summary": "Good",
+            "criteria": [],
+            "findings": [],
+            "previous_findings": [],
+        }
+        self.claude.configure(result=verdict)
+        agent.run_stage(
+            "review",
+            context,
+            make_config(),
+            self.repo,
+            self.out,
+            claude=str(self.claude.path),
+            checks=[],
+            base="main",
+        )
+        prompt = self.claude.call()["prompt"]
+        previous = prompt.split("## Previous round", 1)[1].split("## How to review", 1)[0]
+        self.assertIn(f"commit {reviewed[:7]}", previous)
+        self.assertIn("Use $floats", previous)
+        full = prompt.split("## Diff against main", 1)[1].split("## Previous round", 1)[0]
+        self.assertIn("-    return a - b", full)
+        self.assertNotIn("-    return a + b", full)
+        self.assertIn("-    return a + b\n+    return float(a) + b", previous)
+        self.assertNotIn("-    return a - b", previous)
+
+    def test_previous_round_survives_a_missing_commit(self):
+        context = {**CONTEXT, "previous_head": "f" * 40, "previous_round": "x"}
+        self.assertIn("not in this checkout", agent.previous_round(self.repo, context))
+        context["previous_head"] = "--output=/tmp/x"
+        self.assertIn("unknown", agent.previous_round(self.repo, context))
+        self.assertEqual(agent.previous_round(self.repo, CONTEXT), "")
 
     def test_missing_credentials(self):
         self.claude.configure(result=DONE)

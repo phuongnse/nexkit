@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -13,7 +14,7 @@ from pathlib import Path
 from string import Template
 
 from . import config as configuration
-from .gitutil import git
+from .gitutil import GitError, git
 
 READ_ONLY_TOOLS = "Read,Grep,Glob"
 CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
@@ -90,8 +91,20 @@ SCHEMAS = {
                     "required": ["severity", "file", "line", "body"],
                 },
             },
+            "previous_findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "finding": {"type": "string"},
+                        "resolution": {"enum": ["resolved", "unresolved", "rejection_accepted"]},
+                        "evidence": {"type": "string"},
+                    },
+                    "required": ["finding", "resolution", "evidence"],
+                },
+            },
         },
-        "required": ["verdict", "summary", "criteria", "findings"],
+        "required": ["verdict", "summary", "criteria", "findings", "previous_findings"],
     },
 }
 
@@ -114,15 +127,40 @@ def check_results_text(results):
     return "\n".join(lines)
 
 
-def review_diff(repo, base):
-    diff = git(repo, "diff", f"origin/{base}...HEAD")
+def _clip_diff(diff):
     if len(diff) > MAX_DIFF:
         diff = diff[:MAX_DIFF] + "\n[diff truncated; read the changed files directly]"
-    return diff or "(no changes)"
+    return diff
+
+
+def review_diff(repo, base):
+    return _clip_diff(git(repo, "diff", f"origin/{base}...HEAD")) or "(no changes)"
+
+
+def previous_round(repo, context):
+    """The review prompt's section about the previous review round, or "" for the first."""
+    commit = context.get("previous_head") or ""
+    if not commit:
+        return ""
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        changes = "(the previously reviewed commit is unknown; use the full diff)"
+    else:
+        try:
+            changes = _clip_diff(git(repo, "diff", commit, "HEAD"))
+            changes = changes or "(no changes since the previous review)"
+        except GitError:
+            changes = f"(commit {commit[:7]} is not in this checkout; use the full diff)"
+    return Template(_template("review_previous")).safe_substitute(
+        previous_head=commit[:7], previous_round=context["previous_round"], changes=changes
+    )
+
+
+def _template(name):
+    return resources.files("nexkit").joinpath(f"prompts/{name}.md").read_text()
 
 
 def build_prompt(stage, context, cfg, extra=None):
-    template = resources.files("nexkit").joinpath(f"prompts/{stage}.md").read_text()
+    template = _template(stage)
     values = {
         **context,
         "checks": _checks_text(cfg),
@@ -342,7 +380,12 @@ def run_stage(stage, context, cfg, repo, out_dir, *, claude="claude", checks=Non
     out.mkdir(parents=True, exist_ok=True)
     extra = {}
     if stage == "review":
-        extra = {"diff": review_diff(repo, base), "check_results": check_results_text(checks)}
+        extra = {
+            "base": base,
+            "diff": review_diff(repo, base),
+            "check_results": check_results_text(checks),
+            "previous": previous_round(repo, context),
+        }
     prompt = build_prompt(stage, context, cfg, extra)
     (out / "prompt.md").write_text(prompt, encoding="utf-8")
 

@@ -135,3 +135,7 @@ python3 scripts/smoke.py   # real Claude Code, a few cents; needs a Claude login
 ```
 
 See [AGENTS.md](AGENTS.md) for the code layout and conventions.
+
+## License
+
+[MIT](LICENSE)

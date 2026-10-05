@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.1
 
 - The run summary table has a header with the column names (`Result`, `Turns`,
   `Duration`, `Cost`, and `Verdict` for reviews) and one row of values, instead of an

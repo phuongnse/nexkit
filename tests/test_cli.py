@@ -182,6 +182,12 @@ class WorkflowSafetyTests(unittest.TestCase):
         review = self.jobs["review"].split("- name: Review with Claude Code", 1)[1]
         self.assertNotIn("GITHUB_TOKEN", review.split("- uses:", 1)[0])
 
+    def test_report_downloads_each_artifact_into_its_own_directory(self):
+        # With `pattern`, a single match is extracted without its directory.
+        self.assertNotIn("pattern:", self.jobs["report"])
+        for name in ("nexkit-agent", "nexkit-checks", "nexkit-review"):
+            self.assertIn(f"name: {name}\n          path: artifacts/{name}\n", self.jobs["report"])
+
     def test_config_comes_from_default_branch(self):
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.jobs["route"])
 

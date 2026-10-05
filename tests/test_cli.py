@@ -30,8 +30,9 @@ class InitDoctorTests(unittest.TestCase):
         self.assertEqual(cfg["checks"], [{"name": "test", "run": "npm test"}])
         self.assertEqual(cfg["setup"], ["npm ci"])
         workflow = (self.root / ".github/workflows/nexkit.yml").read_text()
-        self.assertIn("uses: phuongnse/nexkit/.github/workflows/pipeline.yml@v1.0.0", workflow)
-        self.assertIn("nexkit_ref: v1.0.0", workflow)
+        tag = f"v{nexkit.__version__}"
+        self.assertIn(f"uses: phuongnse/nexkit/.github/workflows/pipeline.yml@{tag}", workflow)
+        self.assertIn(f"nexkit_ref: {tag}", workflow)
         self.assertNotIn("__KIT", workflow)
         self.assertEqual(cli.main(["init", "--repo", str(self.root)]), 2)  # refuses overwrite
         self.assertEqual(cli.main(["init", "--repo", str(self.root), "--force"]), 0)
@@ -45,7 +46,7 @@ class InitDoctorTests(unittest.TestCase):
         git(self.root, "init", "-q")
         findings = scaffold.doctor(self.root)
         self.assertIn((True, ".nexkit/config.json is valid"), findings)
-        self.assertTrue(any("pipeline at v1.0.0" in m for ok, m in findings if ok))
+        self.assertTrue(any(f"pipeline at v{nexkit.__version__}" in m for ok, m in findings if ok))
         self.assertIn((False, "The 'origin' remote is not a GitHub repository"), findings)
         self.assertEqual(cli.main(["doctor", "--repo", str(self.root)]), 1)
 

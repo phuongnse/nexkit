@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
 - Every accepted command gets 👀, on pull requests too: `route` now has
   `pull-requests: write`. A failed reaction is logged instead of ignored.

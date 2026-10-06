@@ -266,6 +266,15 @@ class WorkflowSafetyTests(unittest.TestCase):
             self.assertIn("\n        if: always()\n", upload.split("\n      - ", 1)[0], job)
             self.assertIn(f"name: {name}\n", upload, job)
 
+    def test_fix_rounds_check_out_the_history_they_merge(self):
+        checkout = self.jobs["agent"].split("ref: ${{ needs.route.outputs.agent_ref }}", 1)[1]
+        self.assertIn(
+            "fetch-depth: ${{ needs.route.outputs.action == 'fix' && '0' || '1' }}",
+            checkout.split("- name:", 1)[0],
+        )
+        self.assertIn("fetch-depth: 0", self.jobs["publish"])
+        self.assertIn("fetch-depth: 0", self.jobs["review"])
+
     def test_config_comes_from_default_branch(self):
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.jobs["route"])
 

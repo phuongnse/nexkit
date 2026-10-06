@@ -75,7 +75,8 @@ masks or create annotations. Claude's thinking is never printed. With
 **Run summary.** At the end of the `agent` and `review` jobs, the run's summary page shows
 the stage and a one-row table of its result (done, blocked or error), turns, duration and
 cost, plus the verdict for a review; `-` marks a missing value. Below it are why the stage
-stopped, the files changed, each command Claude ran and whether it failed, and for a review
+stopped, for a fix round that merged the base branch the files that had conflicts, the
+files changed (including what the merge brought), each command Claude ran and whether it failed, and for a review
 the findings.
 
 ```text
@@ -176,6 +177,44 @@ order: *Summary* (two or three sentences, also the commit message), *What change
 behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
 the reviewer*. A fix round's summary becomes its commit message.
 
+**Conflicts with the base branch.** `/nexkit fix` also brings a pull request that no longer
+merges cleanly back in line with its base branch. There is no separate command, and NexKit
+does not notice by itself when a pull request starts to conflict: a person comments
+`/nexkit fix`.
+
+1. At the start of every fix round, the `agent` job checks with `git merge-tree` whether
+   the branch conflicts with the base branch. Only then does it merge the base branch
+   into the working tree, without committing. A branch that merges cleanly is not
+   merged, so fix rounds stay small. Branch protection can require up-to-date branches
+   if a repository wants every round to include the latest base.
+2. The prompt lists the conflicted files. The agent resolves the conflict markers
+   together with the round's other feedback; when conflicts are the only problem, the
+   round only resolves them. It keeps the intent of both sides when a conflict has one
+   right answer: both sides added different lines, or one side renamed something the
+   other side uses.
+3. When a conflict needs a choice (both sides changed the same behaviour differently,
+   or one side deleted code the other side changed) and the plan, the issue, the
+   feedback and the note do not settle it, the agent does not guess. It returns
+   `blocked`, NexKit pushes nothing, and the round's comment lists each open conflict:
+   the file, what each side changed and the question to answer. The person answers with
+   a note on the same command, for example `/nexkit fix Keep main's validation in
+   Program.cs and add this PR's endpoint after it.` The next round merges again, follows
+   the note and resolves the rest itself.
+4. `publish` commits the result as a merge commit whose parents are the branch head and
+   the exact base commit the agent merged, never the base branch's newer tip. It pushes
+   normally, never with force, so the reviewed commits stay. A squash merge of the pull
+   request keeps the base branch's history clean.
+5. The checks and the review run on the merge commit, as after any fix round. The round's
+   comment says that the base branch was merged and which files had conflicts.
+
+Conflicts in protected paths stop the round before Claude runs, because the agent may not
+change those files. Changes that the base branch brings to protected paths are fine: the
+protected-path check compares the result with git's own merge of the two commits, so only
+the agent's edits count. GitHub refuses pushes from the default Actions token that change
+workflow files, and a merge that brings changes to `.github/workflows/` from the base
+branch is such a push. Without a `NEXKIT_PUSH_TOKEN`, NexKit stops before pushing and says
+that the pull request needs a manual merge or a push token that may update workflows.
+
 **Review.** Read-only tools. Returns `approve` or `request_changes`, a verdict for each
 acceptance criterion with the test that covers it and the evidence, and findings marked
 `blocking` or `suggestion`. The prompt tells the reviewer not to block on things the
@@ -216,6 +255,15 @@ list the resolutions with these marks:
 
 🛑 marks only blocking findings, in *Things to look at* and in *Previous findings*.
 
+After a fix round that merged the base branch, the diff since the reviewed commit
+leaves out the changes the merge brought from the base branch: it starts from git's own
+merge of the reviewed commit with the merged base commit.
+
+When this run's fix round merged the base branch, the prompt also has a *Merge* section:
+the conflicted files and what each side changed in them before the merge. The reviewer
+checks that both sides survived in each file. A dropped side is a blocking finding, unless
+a person's note asked for it.
+
 ## State
 
 All state is on GitHub: the plan comment and one NexKit comment per run on the issue, the
@@ -223,7 +271,8 @@ pull request, its commit statuses, one NexKit comment per round and one NexKit s
 comment on the pull request. Run comments only show runs. The state comment, edited in
 place, says how many automatic fix rounds were used and holds a hidden JSON record of the
 latest feedback, that count, the last completed review (its commit and all its findings)
-and the recent fix rounds (summary and note). Recorded text is clipped so the comment and
+and the recent fix rounds (summary, note and, after a merge, the files that had
+conflicts). Recorded text is clipped so the comment and
 the prompts stay bounded. Nothing else is stored, so there is nothing to migrate or repair.
 
 Issues and pull requests from NexKit 1.1.0 have a single status comment. NexKit leaves it
@@ -241,6 +290,9 @@ new state comment.
 | Agent returns `blocked` | Reports its reason; no automatic retry. A person decides. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |
 | The PR branch moved while a fix round was running | Refuses to publish; run `/nexkit fix` again. |
+| The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. |
+| The PR conflicts with its base branch in a protected path | Stops before Claude runs; merge the base branch yourself. |
+| The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or add a `NEXKIT_PUSH_TOKEN` that may update workflows. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `max_auto_fixes` remain, otherwise asks for a person. |
 | The review itself fails | Sets `nexkit/review` to error; comment `/nexkit review` to retry. |
 

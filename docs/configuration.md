@@ -80,7 +80,7 @@ shows what the log, run summary and artifacts contain and what is redacted.
 |---|---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | one of these two | Agent and review jobs. Create it with `claude setup-token` (Claude Pro or Max). |
 | `ANTHROPIC_API_KEY` | one of these two | Agent and review jobs. Takes precedence when both are set. |
-| `NEXKIT_PUSH_TOKEN` | no | Publish job only: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. |
+| `NEXKIT_PUSH_TOKEN` | no | Publish job only: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. Add Workflows write access if fix rounds should merge base branch changes to `.github/workflows/`; the default Actions token cannot push those. |
 
 ## Workflow file
 

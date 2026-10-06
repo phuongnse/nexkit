@@ -152,6 +152,43 @@ class ContextTests(unittest.TestCase):
         self.assertIn("Rejected the docs finding", text)
         self.assertLess(len(text), 4000)
 
+    def test_review_after_a_merge_gets_the_conflicted_files(self):
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        state = empty_state(5)
+        state["last_review"] = {"round": 1, "head": "a" * 40, "verdict": "approve", "findings": []}
+        state["fixes"] = [
+            {
+                "round": 2,
+                "head": "b" * 40,
+                "auto": False,
+                "summary": "Merged",
+                "note": "",
+                "conflicts": ["Program.cs"],
+            }
+        ]
+        self.gh.comment(6, render_state(state))
+        decision = {"action": "fix", "issue": 5, "pr": 6, "head": "b" * 40, "note": "Keep both"}
+        fix_result = {
+            "status": "done",
+            "summary": "Kept both endpoints.",
+            "start_head": "b" * 40,
+            "start_base": "c" * 40,
+            "conflicts": ["Axis.Server.csproj"],
+        }
+        context = gather(self.gh, decision, "review", fix_result)
+        self.assertEqual(
+            context["merged"],
+            {"head": "b" * 40, "base": "c" * 40, "conflicts": ["Axis.Server.csproj"]},
+        )
+        previous = context["previous_round"]
+        self.assertIn("resolved conflicts in `Program.cs`.", previous)
+        self.assertIn("resolved conflicts in `Axis.Server.csproj`.", previous)
+        # A fix round without a merge adds nothing.
+        no_merge = {**fix_result, "start_base": None}
+        context = gather(self.gh, decision, "review", no_merge)
+        self.assertNotIn("merged", context)
+        self.assertNotIn("Axis.Server.csproj", context["previous_round"])
+
     def test_state_is_read_past_round_comments_and_v1_1_comments(self):
         self.gh.add_pull(6, 5, head_sha=HEAD)
         failing = {"name": "unit", "run": "t", "exit_code": 1, "passed": False, "output": ""}

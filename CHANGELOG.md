@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0
 
 - Plans, reviews and pull request descriptions are written for people. Every prompt has
   the same writing guide: plain English, short sentences, one idea per bullet, and

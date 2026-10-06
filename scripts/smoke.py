@@ -24,7 +24,8 @@ import nexkit  # noqa: E402
 from nexkit.agent import run_stage  # noqa: E402
 from nexkit.config import validate  # noqa: E402
 from nexkit.context import previous_review  # noqa: E402
-from nexkit.publish import render_plan  # noqa: E402
+from nexkit.publish import pull_body, render_plan  # noqa: E402
+from nexkit.report import review_body  # noqa: E402
 from nexkit.state import BOT_LOGIN, PLAN_MARKER, empty_state, render_state  # noqa: E402
 
 CONFIG = validate({"model": "haiku", "checks": [{"name": "test", "run": "python3 -m unittest -v"}]})
@@ -104,13 +105,21 @@ def main():
         work = make_repo(root)
 
         plan = stage("plan", work, root / "plan", args.claude)
-        if not plan["output"]["acceptance_criteria"]:
-            raise SystemExit("plan: no acceptance criteria")
+        for field in ("changes", "acceptance_criteria", "implementation_notes"):
+            if not plan["output"][field]:
+                raise SystemExit(f"plan: no {field}")
         CONTEXT["plan"] = render_plan(plan["output"]).removeprefix(PLAN_MARKER).strip()
+        if "<summary>Implementation notes</summary>" not in CONTEXT["plan"]:
+            raise SystemExit("plan: the rendered plan lacks the implementation notes")
+        print(CONTEXT["plan"], flush=True)
 
         implement = stage("implement", work, root / "implement", args.claude)
         if "calc.py" not in implement["changed_files"]:
             raise SystemExit("implement: calc.py was not changed")
+        body = pull_body({"issue": 1}, implement)
+        if "## What changed" not in body or "## How it is tested" not in body:
+            raise SystemExit(f"implement: incomplete pull request description:\n{body}")
+        print(body, flush=True)
 
         # Publish from a fresh checkout, as the pipeline's publish job does, then review it.
         published = root / "published"
@@ -136,6 +145,9 @@ def main():
         review = stage("review", work, root / "review", args.claude, checks=checks, base="main")
         if review["output"]["verdict"] not in ("approve", "request_changes"):
             raise SystemExit("review: no verdict")
+        if not review["output"]["criteria"]:
+            raise SystemExit("review: no acceptance criteria assessed")
+        print(review_body(review, checks), flush=True)
 
         # A fix round, then a second review that gets the previous round as input.
         reviewed = git(work, "rev-parse", "HEAD")

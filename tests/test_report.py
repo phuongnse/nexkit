@@ -37,7 +37,14 @@ def review_result(verdict="approve", findings=()):
         "output": {
             "verdict": verdict,
             "summary": "Looks right.",
-            "criteria": [{"criterion": "add works", "met": True, "evidence": "test_add"}],
+            "criteria": [
+                {
+                    "criterion": "add works",
+                    "met": True,
+                    "test": "test_add",
+                    "evidence": "test_calc.py:5 asserts add(2, 3) == 5",
+                }
+            ],
             "findings": list(findings),
         },
     }
@@ -246,11 +253,55 @@ class ReportTests(unittest.TestCase):
             {"finding": "Floats", "resolution": "unresolved", "evidence": "Still int()"},
         ]
         body = review_body(review, [])
-        self.assertIn("**Previous findings**", body)
-        self.assertIn("- ✅ resolved: Wrong sign: calc.py:2 adds", body)
-        self.assertIn("- 🤝 rejection accepted: Add docs: Internal", body)
-        self.assertIn("- 🛑 unresolved: Floats: Still int()", body)
+        short, evidence = body.split("<details>", 1)
+        self.assertIn("**Previous findings**", short)
+        self.assertIn("- ✅ resolved: Wrong sign\n", short)
+        self.assertIn("- 🤝 rejection accepted: Add docs\n", short)
+        self.assertIn("- 🛑 unresolved: Floats\n", short)
+        self.assertIn("- ✅ resolved: Wrong sign: calc.py:2 adds", evidence)
+        self.assertIn("- 🤝 rejection accepted: Add docs: Internal", evidence)
+        self.assertIn("- 🛑 unresolved: Floats: Still int()", evidence)
         self.assertNotIn("Previous findings", review_body(review_result(), []))
+
+    def test_review_body_puts_findings_first_and_evidence_last(self):
+        findings = [
+            {"severity": "suggestion", "file": "calc.py", "line": 0, "body": "Add a docstring."},
+            {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Floats are cut."},
+        ]
+        review = review_result("request_changes", findings)
+        review["output"]["criteria"].append(
+            {"criterion": "floats add", "met": False, "test": "", "evidence": "No float test."}
+        )
+        checks = [{"name": "test", "passed": True}]
+        body = review_body(review, checks)
+        order = [
+            "### NexKit review: changes requested",
+            "Looks right.",
+            "**Things to look at**",
+            "- 🛑 Blocking: Floats are cut. (`calc.py:2`)",
+            "- 💡 Suggestion: Add a docstring. (`calc.py`)",
+            "**Acceptance criteria**",
+            "- ✅ add works (`test_add`)",
+            "- ❌ floats add (no test)",
+            "**Checks**: ✅ `test`",
+            "<details><summary>Evidence</summary>",
+            "- ✅ add works: test_calc.py:5 asserts add(2, 3) == 5",
+            "- ❌ floats add: No float test.",
+            "</details>",
+        ]
+        positions = [body.index(text) for text in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("<details><summary>Evidence</summary>\n\n", body)
+        short = body.split("<details>", 1)[0]
+        self.assertNotIn("asserts", short)
+
+    def test_review_body_without_findings_or_evidence(self):
+        review = review_result()
+        review["output"]["criteria"][0]["evidence"] = ""
+        body = review_body(review, [])
+        self.assertNotIn("Things to look at", body)
+        self.assertNotIn("<details>", body)
+        self.assertIn("- ✅ add works (`test_add`)", body)
 
     def test_workflow_file(self):
         self.assertEqual(workflow_file(WORKFLOW), "nexkit.yml")

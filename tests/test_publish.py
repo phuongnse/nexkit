@@ -5,12 +5,24 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from nexkit.context import gather
 from nexkit.gitutil import BOT_NAME
-from nexkit.publish import PublishError, publish, render_plan
+from nexkit.publish import PublishError, publish, pull_body, render_plan
 from nexkit.state import latest_plan, plan_text
 from tests.support import FakeGitHub, GitRepos, git, make_config
 
 CONTEXT = {"title": "Fix add", "issue": 5}
+PLAN = {
+    "summary": "add() returns the sum instead of the difference.",
+    "changes": ["add(a, b) returns a + b.", "Negative numbers add up too."],
+    "decisions": [{"decision": "add() keeps its name.", "reason": "Callers use it today."}],
+    "risks": ["Floats are out of scope."],
+    "acceptance_criteria": ["add(2, 3) returns 5."],
+    "implementation_notes": ["Edit `calc.py`: `return a + b`.", "Add `test_add_negative`."],
+    "questions": [],
+    "too_large": False,
+    "split": [],
+}
 
 
 def decision(action, **kw):
@@ -175,18 +187,10 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(outcome, {"published": False})
 
     def test_plan_comment(self):
-        output = {
-            "summary": "Fix add.",
-            "approach": "- Edit calc.py",
-            "acceptance_criteria": ["add(2, 3) == 5"],
-            "questions": [],
-            "too_large": False,
-            "split": [],
-        }
         outcome = publish(
             self.gh,
             decision("plan"),
-            {"status": "done", "output": output},
+            {"status": "done", "output": PLAN},
             CONTEXT,
             self.cfg,
             ".",
@@ -194,11 +198,53 @@ class PublishTests(unittest.TestCase):
         )
         self.assertTrue(outcome["published"])
         plan = latest_plan(self.gh.comments(5))
-        self.assertIn("- [ ] add(2, 3) == 5", plan_text(plan))
+        self.assertIn("- [ ] add(2, 3) returns 5.", plan_text(plan))
         self.assertIn("/nexkit go", plan["body"])
 
+    def test_full_plan_layout(self):
+        body = render_plan(PLAN)
+        order = [
+            "## Plan\n\nadd() returns the sum instead of the difference.",
+            "### What changes\n\n- add(a, b) returns a + b.\n- Negative numbers add up too.",
+            "### Decisions to check\n\n- **add() keeps its name.** Callers use it today.",
+            "### Risks and limits\n\n- Floats are out of scope.",
+            "### Acceptance criteria\n\n- [ ] add(2, 3) returns 5.",
+            "<details><summary>Implementation notes</summary>\n\n1. Edit `calc.py`: `return a + b`."
+            "\n2. Add `test_add_negative`.\n\n</details>",
+            "---\nComment `/nexkit go`",
+        ]
+        positions = [body.index(text) for text in order]
+        self.assertEqual(positions, sorted(positions))
+        # The notes appear only inside <details>.
+        self.assertEqual(body.count("calc.py"), 1)
+
+    def test_implementation_note_can_hold_a_code_block(self):
+        step = (
+            "Add the migration:\n\n```sh\ndotnet ef migrations add Orders\n"
+            "dotnet ef database update\n```"
+        )
+        body = render_plan({**PLAN, "implementation_notes": [step, "Run the tests."]})
+        self.assertIn(
+            "1. Add the migration:\n\n   ```sh\n   dotnet ef migrations add Orders\n"
+            "   dotnet ef database update\n   ```\n2. Run the tests.",
+            body,
+        )
+
+    def test_plan_without_decisions_or_risks(self):
+        body = render_plan({**PLAN, "decisions": [], "risks": [], "implementation_notes": []})
+        for heading in ("Decisions to check", "Risks and limits", "<details>", "Questions"):
+            self.assertNotIn(heading, body)
+        self.assertIn("### What changes", body)
+        self.assertIn("### Acceptance criteria", body)
+
+    def test_implementing_agent_receives_the_notes(self):
+        self.gh.comment(5, render_plan(PLAN))
+        context = gather(self.gh, decision("implement"))
+        self.assertIn("Add `test_add_negative`.", context["plan"])
+        self.assertIn("Implementation notes", context["plan"])
+
     def test_plan_rendering_variants(self):
-        base = {"summary": "S", "approach": "", "acceptance_criteria": [], "split": []}
+        base = {**PLAN, "decisions": [], "risks": [], "implementation_notes": []}
         questions = render_plan({**base, "questions": ["Which API?"], "too_large": False})
         self.assertIn("1. Which API?", questions)
         self.assertIn("Answer the questions", questions)
@@ -208,6 +254,33 @@ class PublishTests(unittest.TestCase):
         self.assertIn("1. **A**: a", large)
         self.assertIn("too large", large)
         json.dumps(large)
+
+    def test_pull_request_description_order(self):
+        output = {
+            "summary": "add() now returns the sum.",
+            "changes": ["add(a, b) returns a + b."],
+            "testing": "test_add_negative covers negative numbers.",
+            "outside_plan": ["Fixed a typo in the docstring."],
+            "reviewer_notes": ["Floats still round down."],
+        }
+        body = pull_body({"issue": 5}, {"summary": output["summary"], "output": output})
+        order = [
+            "Closes #5",
+            "## Summary\n\nadd() now returns the sum.",
+            "## What changed\n\n- add(a, b) returns a + b.",
+            "## How it is tested\n\ntest_add_negative covers negative numbers.",
+            "## Outside the plan\n\n- Fixed a typo in the docstring.",
+            "## Notes for the reviewer\n\n- Floats still round down.",
+            "---\nImplemented by NexKit",
+        ]
+        positions = [body.index(text) for text in order]
+        self.assertEqual(positions, sorted(positions))
+        plain = pull_body(
+            {"issue": 5},
+            {"summary": "S.", "output": {**output, "outside_plan": [], "reviewer_notes": []}},
+        )
+        self.assertNotIn("Outside the plan", plain)
+        self.assertNotIn("Notes for the reviewer", plain)
 
 
 if __name__ == "__main__":

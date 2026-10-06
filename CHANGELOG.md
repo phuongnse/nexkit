@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Plans, reviews and pull request descriptions are written for people. Every prompt has
+  the same writing guide: plain English, short sentences, one idea per bullet, and
+  behaviour before class and file names.
+- Plan comments show *What changes*, *Decisions to check*, *Risks and limits* and
+  *Acceptance criteria*, and keep the detail for the implementing agent in a collapsed
+  *Implementation notes* list. The plan result has the fields `changes`, `decisions`,
+  `risks` and `implementation_notes` instead of `approach`. The implementing agent still
+  receives the whole comment.
+- Reviews list the findings first, blocking ones before suggestions, then one line per
+  acceptance criterion with ✅ or ❌ and the test that covers it. The evidence is collapsed.
+  Review criteria have a new `test` field.
+- Pull request descriptions have a fixed order: *Summary*, *What changed*, *How it is
+  tested*, then *Outside the plan* and *Notes for the reviewer* when needed. The implement
+  result has the fields `changes`, `testing`, `outside_plan` and `reviewer_notes`.
+
 ## 1.3.1
 
 - The run summary table has a header with the column names (`Result`, `Turns`,

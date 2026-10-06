@@ -17,24 +17,60 @@ class PublishError(RuntimeError):
     pass
 
 
+def _section(title, lines, level="###"):
+    """A Markdown section, or nothing when it has no lines."""
+    return [f"{level} {title}", "", *lines, ""] if lines else []
+
+
+def _bullets(items):
+    return [f"- {item.strip()}" for item in items or [] if item.strip()]
+
+
+def _numbered(items):
+    """A numbered list. Later lines of an item are indented under it, so an item can hold a
+    code block without ending the list."""
+    lines = []
+    for number, item in enumerate(items or [], 1):
+        marker = f"{number}. "
+        first, *rest = item.strip().splitlines() or [""]
+        lines.append(marker + first)
+        lines += [" " * len(marker) + line if line.strip() else "" for line in rest]
+    return lines
+
+
 def render_plan(output):
+    """The plan comment: the part a person approves, then the agent's notes collapsed."""
     parts = [PLAN_MARKER, "## Plan", "", output["summary"].strip(), ""]
-    if output.get("approach", "").strip():
-        parts += ["### Approach", "", output["approach"].strip(), ""]
-    if output.get("acceptance_criteria"):
-        parts += ["### Acceptance criteria", ""]
-        parts += [f"- [ ] {item}" for item in output["acceptance_criteria"]]
-        parts.append("")
-    if output.get("questions"):
-        parts += ["### Questions", ""]
-        parts += [f"{i}. {q}" for i, q in enumerate(output["questions"], 1)]
-        parts.append("")
-    if output.get("too_large") and output.get("split"):
-        parts += ["### Suggested split", ""]
+    parts += _section("What changes", _bullets(output.get("changes")))
+    decisions = [
+        f"- **{item['decision'].strip()}** {item['reason'].strip()}"
+        for item in output.get("decisions") or []
+    ]
+    parts += _section("Decisions to check", decisions)
+    parts += _section("Risks and limits", _bullets(output.get("risks")))
+    parts += _section(
+        "Acceptance criteria", [f"- [ ] {item}" for item in output.get("acceptance_criteria", [])]
+    )
+    parts += _section(
+        "Questions", [f"{i}. {q}" for i, q in enumerate(output.get("questions") or [], 1)]
+    )
+    if output.get("too_large"):
+        split = output.get("split") or []
+        parts += _section(
+            "Suggested split",
+            [f"{i}. **{item['title']}**: {item['body']}" for i, item in enumerate(split, 1)],
+        )
+    notes = _numbered(output.get("implementation_notes"))
+    if notes:
+        # GitHub renders Markdown inside <details> only after a blank line.
         parts += [
-            f"{i}. **{item['title']}**: {item['body']}" for i, item in enumerate(output["split"], 1)
+            "<details><summary>Implementation notes</summary>",
+            "",
+            *notes,
+            "",
+            "</details>",
+            "",
         ]
-        parts.append("")
     parts.append("---")
     if output.get("too_large"):
         parts.append(
@@ -60,11 +96,21 @@ def publish_plan(gh, decision, result):
 
 
 def pull_body(decision, result):
-    return (
-        f"Closes #{decision['issue']}\n\n{result['summary'].strip()}\n\n---\n"
+    """Summary, what changed, how it is tested, then the optional sections."""
+    output = result.get("output") or {}
+    testing = (output.get("testing") or "").strip()
+    parts = [f"Closes #{decision['issue']}", ""]
+    parts += _section("Summary", [result["summary"].strip()], "##")
+    parts += _section("What changed", _bullets(output.get("changes")), "##")
+    parts += _section("How it is tested", [testing] if testing else [], "##")
+    parts += _section("Outside the plan", _bullets(output.get("outside_plan")), "##")
+    parts += _section("Notes for the reviewer", _bullets(output.get("reviewer_notes")), "##")
+    parts += [
+        "---",
         f"Implemented by NexKit from the plan in #{decision['issue']}. NexKit runs the project "
-        "checks and an AI review on every commit. A person decides whether to merge."
-    )
+        "checks and an AI review on every commit. A person decides whether to merge.",
+    ]
+    return "\n".join(parts)
 
 
 def apply_change(repo, decision, result, title, patch_path, cfg):

@@ -137,20 +137,64 @@ have no write token and no credentials besides Claude's.
 
 ## Stages
 
-**Plan.** Read-only tools (`Read`, `Grep`, `Glob`). Produces a summary, approach,
-acceptance criteria, questions and, for work that is too large, a suggested split into
-smaller issues. Posted as a comment marked `<!-- nexkit:plan -->`. The latest plan is the
-one `/nexkit go` implements.
+Every prompt contains the same writing guide, because people read what the agents write:
+write for a person who knows the project but not this change, in plain English with short
+sentences and one idea per bullet, and say what changes in behaviour, and why, before
+naming classes, files or methods. The agents return fields, and NexKit adds the headings,
+so plans, reviews and pull request descriptions always have the same layout.
+
+**Plan.** Read-only tools (`Read`, `Grep`, `Glob`). Posted as a comment marked
+`<!-- nexkit:plan -->`. The latest plan is the one `/nexkit go` implements. The part a
+person approves comes first; the detail for the implementing agent is collapsed:
+
+```markdown
+## Plan
+One or two sentences: what changes and why.
+
+### What changes          up to six bullets about behaviour
+### Decisions to check    choices the issue did not settle, each with a short reason
+### Risks and limits      what could go wrong or is left out
+### Acceptance criteria   one check each, at most about 30 words
+### Questions             only when answers would change the work
+### Suggested split       only when the work is too large for one session
+
+<details><summary>Implementation notes</summary>
+Files, signatures, commands: the detail the implementing agent needs.
+</details>
+```
+
+Empty sections are left out. The implementing agent, and the reviewer, receive the whole
+comment, including the implementation notes. Plans posted by earlier releases are read the
+same way.
 
 **Implement and fix.** Full Claude Code tools on a disposable runner. The prompt contains
 the plan, the issue, the discussion from collaborators, and for fix rounds the failing
 check output, blocking review findings and collaborators' review comments on the current
 commit. The agent must return `done` or `blocked`. A blocked or failed session publishes
-nothing.
+nothing. NexKit builds the pull request description from the implement result, in this
+order: *Summary* (two or three sentences, also the commit message), *What changed* (in
+behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
+the reviewer*. A fix round's summary becomes its commit message.
 
 **Review.** Read-only tools. Returns `approve` or `request_changes`, a verdict for each
-acceptance criterion, and findings marked `blocking` or `suggestion`. The prompt tells the
-reviewer not to block on things the implementer cannot change, such as PR text or CI files.
+acceptance criterion with the test that covers it and the evidence, and findings marked
+`blocking` or `suggestion`. The prompt tells the reviewer not to block on things the
+implementer cannot change, such as PR text or CI files. The pull request review starts
+with what a person must act on:
+
+```markdown
+### NexKit review: changes requested
+One or two sentences: the main reason for the verdict.
+
+**Things to look at**         findings, blocking first, with file and line
+**Previous findings**         resolved, unresolved or rejection accepted (later rounds)
+**Acceptance criteria**       ✅ or ❌ and the covering test, one line each
+**Checks**: ✅ `test`
+
+<details><summary>Evidence</summary>
+file:line references and assertions for each criterion and previous finding
+</details>
+```
 
 Every review is a fresh session, so the reviewer stays independent of the agent that wrote
 the code. When the pull request already has a NexKit review, the prompt adds a *Previous

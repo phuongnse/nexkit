@@ -32,34 +32,57 @@ def _cost(*results):
     return round(sum(costs), 4) if costs else None
 
 
+def _location(item):
+    if not item.get("file"):
+        return ""
+    line = f":{item['line']}" if item.get("line") else ""
+    return f" (`{item['file']}{line}`)"
+
+
+def _part(title, lines):
+    return ["", f"**{title}**", "", *lines] if lines else []
+
+
 def review_body(review, checks):
+    """What a person acts on comes first: verdict, findings, criteria. Evidence is collapsed."""
     output = review["output"]
     approved = output["verdict"] == "approve"
+    findings = []
+    for item in sorted(output.get("findings") or [], key=lambda f: f["severity"] != "blocking"):
+        mark = "🛑 Blocking" if item["severity"] == "blocking" else "💡 Suggestion"
+        findings.append(f"- {mark}: {item['body'].strip()}{_location(item)}")
+    previous, previous_evidence = [], []
+    for item in output.get("previous_findings") or []:
+        mark = RESOLUTIONS.get(item["resolution"], item["resolution"])
+        previous.append(f"- {mark}: {item['finding']}")
+        if item.get("evidence"):
+            previous_evidence.append(f"- {mark}: {item['finding']}: {item['evidence'].strip()}")
+    criteria, criteria_evidence = [], []
+    for item in output.get("criteria") or []:
+        mark = ICONS[bool(item["met"])]
+        test = f"`{item['test']}`" if item.get("test") else "no test"
+        criteria.append(f"- {mark} {item['criterion']} ({test})")
+        if item.get("evidence"):
+            criteria_evidence.append(f"- {mark} {item['criterion']}: {item['evidence'].strip()}")
+
     lines = [
         f"### NexKit review: {'approve' if approved else 'changes requested'}",
         "",
         output["summary"].strip(),
     ]
-    if output.get("previous_findings"):
-        lines += ["", "**Previous findings**", ""]
-        for item in output["previous_findings"]:
-            mark = RESOLUTIONS.get(item["resolution"], item["resolution"])
-            lines.append(f"- {mark}: {item['finding']}: {item['evidence']}")
-    if output.get("criteria"):
-        lines += ["", "**Acceptance criteria**", ""]
-        for item in output["criteria"]:
-            lines.append(f"- {ICONS[bool(item['met'])]} {item['criterion']}: {item['evidence']}")
-    if output.get("findings"):
-        lines += ["", "**Findings**", ""]
-        for item in output["findings"]:
-            mark = "🛑 blocking" if item["severity"] == "blocking" else "💡 suggestion"
-            where = f" `{item['file']}:{item['line']}`" if item.get("file") else ""
-            lines.append(f"- {mark}{where}: {item['body']}")
+    lines += _part("Things to look at", findings)
+    lines += _part("Previous findings", previous)
+    lines += _part("Acceptance criteria", criteria)
     if checks:
         lines += [
             "",
             "**Checks**: " + ", ".join(f"{ICONS[c['passed']]} `{c['name']}`" for c in checks),
         ]
+    evidence = _part("Acceptance criteria", criteria_evidence)
+    evidence += _part("Previous findings", previous_evidence)
+    if evidence:
+        # GitHub renders Markdown inside <details> only after a blank line.
+        lines += ["", "<details><summary>Evidence</summary>", *evidence, "", "</details>"]
     return "\n".join(lines)
 
 

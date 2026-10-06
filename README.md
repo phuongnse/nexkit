@@ -64,7 +64,7 @@ commands, writes the two NexKit files, helps you add the secret and runs `nexkit
 ### By hand
 
 ```sh
-pipx install git+https://github.com/phuongnse/nexkit@v1.5.0   # or run bin/nexkit from a clone
+pipx install git+https://github.com/phuongnse/nexkit@v1.5.1   # or run bin/nexkit from a clone
 cd your-repository
 nexkit init --check "test=npm test" --check "lint=npm run lint" --setup "npm ci"
 claude setup-token                       # copy the token it prints

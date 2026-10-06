@@ -43,12 +43,24 @@ $previous
 - Return `approve` when there are no blocking findings and every check passed. Otherwise
   return `request_changes`.
 
+$writing
 ## What to return
 
+A person reads the review to decide what to do next. NexKit shows the verdict and
+`summary` first, then the findings, then a short line for each criterion. It shows
+`evidence` collapsed.
+
 - `verdict`: `approve` or `request_changes`.
-- `summary`: two or three sentences for the pull request.
-- `criteria`: for each acceptance criterion, whether it is met and the evidence.
+- `summary`: one or two sentences: the main reason for the verdict.
 - `findings`: each with `severity`, `file`, `line` (0 when not line-specific) and `body`.
+  In `body`, say what goes wrong and when, then what to change, in one to three
+  sentences. NexKit shows the file and line.
+- `criteria`: one entry for each acceptance criterion in the plan:
+  - `criterion`: the criterion, shortened to about ten words.
+  - `met`: whether the code meets it.
+  - `test`: the name of the test that covers it, or an empty string when no test does.
+  - `evidence`: the detail behind your judgement, such as `file:line` references and the
+    assertions that check it.
 - `previous_findings`: one entry for each finding of the previous review, with `finding`
   (a short restatement), `resolution` and `evidence`. Empty when there was no previous
   review.

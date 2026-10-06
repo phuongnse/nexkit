@@ -38,6 +38,37 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("Previous round", prompt)
         self.assertIn("</untrusted>\n\n## How to review", prompt)
 
+    def test_every_prompt_has_the_writing_guide(self):
+        extra = {"diff": "+x", "check_results": "ok", "previous": ""}
+        for stage in ("plan", "implement", "fix", "review"):
+            prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
+            self.assertIn("## How to write", prompt, stage)
+            self.assertIn("Write for a person who knows the project", prompt, stage)
+            self.assertNotIn("$writing", prompt, stage)
+            guide = prompt.index("## How to write")
+            self.assertLess(guide, prompt.index("## What to return"), stage)
+
+    def test_plan_schema_separates_the_person_from_the_agent(self):
+        schema = agent.SCHEMAS["plan"]
+        for field in ("changes", "decisions", "risks", "implementation_notes"):
+            self.assertIn(field, schema["required"])
+            self.assertIn(f"`{field}`", agent._template("plan"))
+        decision = schema["properties"]["decisions"]["items"]
+        self.assertEqual(decision["required"], ["decision", "reason"])
+        self.assertNotIn("approach", schema["properties"])
+
+    def test_implement_schema_has_the_pull_request_sections(self):
+        implement, fix = agent.SCHEMAS["implement"], agent.SCHEMAS["fix"]
+        for field in ("summary", "changes", "testing", "outside_plan", "reviewer_notes"):
+            self.assertIn(field, implement["required"])
+            self.assertIn(f"`{field}`", agent._template("implement"))
+        self.assertNotIn("changes", fix["required"])
+        self.assertIn("status", fix["required"])
+
+    def test_review_schema_keeps_evidence_apart_from_the_criterion(self):
+        item = agent.SCHEMAS["review"]["properties"]["criteria"]["items"]
+        self.assertEqual(item["required"], ["criterion", "met", "test", "evidence"])
+
     def test_review_schema_requires_previous_findings(self):
         schema = agent.SCHEMAS["review"]
         self.assertIn("previous_findings", schema["required"])

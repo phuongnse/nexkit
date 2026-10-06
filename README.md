@@ -82,7 +82,7 @@ workflows from there.
 
 | Where | Comment | What happens |
 |---|---|---|
-| Issue | `/nexkit plan [notes]` | Claude reads the code and posts a plan with acceptance criteria and any questions. Run it again after answering questions. |
+| Issue | `/nexkit plan [notes]` | Claude reads the code and posts a plan for you to approve: what changes, the decisions it made, risks and acceptance criteria, with the implementation notes collapsed. Run it again after answering questions. |
 | Issue | `/nexkit go [notes]` | Claude implements the latest plan. NexKit opens a pull request, runs the checks and reviews it. |
 | NexKit PR | `/nexkit fix [instructions]` | Another implementation round using the failing checks, review findings and your instructions. |
 | NexKit PR | `/nexkit review` | Re-run the checks and the AI review, for example after you pushed a commit. |

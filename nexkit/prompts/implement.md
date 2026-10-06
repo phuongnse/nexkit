@@ -42,9 +42,20 @@ $checks
 - If you cannot finish (missing information, a contradictory requirement, a broken
   environment), stop and return `status: blocked` with the reason in `blocker`.
 
+$writing
 ## What to return
 
+NexKit builds the pull request description from `summary`, `changes`, `testing`,
+`outside_plan` and `reviewer_notes`, in that order.
+
 - `status`: `done` or `blocked`.
-- `summary`: a short Markdown description of what changed, for the pull request.
+- `summary`: two or three sentences: what the change does and why. NexKit also uses it as
+  the commit message.
+- `changes`: what changed in behaviour, one bullet each. Leave out how the code is written.
+- `testing`: one or two sentences on how the change is tested.
+- `outside_plan`: anything you did that the plan did not ask for, with the reason. Empty
+  when you followed the plan.
+- `reviewer_notes`: what a reviewer should know or check, such as a trade-off or a known
+  limit. Empty when there is nothing to add.
 - `blocker`: why you stopped, when `status` is `blocked`; otherwise an empty string.
 - `checks_run`: the commands you ran and whether each passed.

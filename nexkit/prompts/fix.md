@@ -42,9 +42,12 @@ $checks
 - Never skip, delete or weaken tests or checks to make them pass.
 - If you cannot make progress, stop and return `status: blocked` with the reason.
 
+$writing
 ## What to return
 
 - `status`: `done` or `blocked`.
-- `summary`: a short Markdown description of what you changed in this round.
+- `summary`: what you changed in this round and why, as a short Markdown list. Say which
+  finding or check each change answers. NexKit uses it as the commit message and shows it
+  to the next review.
 - `blocker`: why you stopped, when `status` is `blocked`; otherwise an empty string.
 - `checks_run`: the commands you ran and whether each passed.

@@ -34,13 +34,30 @@ _CHANGE_RESULT = {
     },
     "required": ["status", "summary", "blocker", "checks_run"],
 }
+# The pull request description is built from these, in this order, after `summary`.
+_PULL_FIELDS = {
+    "changes": _STRING_LIST,
+    "testing": {"type": "string"},
+    "outside_plan": _STRING_LIST,
+    "reviewer_notes": _STRING_LIST,
+}
 SCHEMAS = {
     "plan": {
         "type": "object",
         "properties": {
             "summary": {"type": "string"},
-            "approach": {"type": "string"},
+            "changes": _STRING_LIST,
+            "decisions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"decision": {"type": "string"}, "reason": {"type": "string"}},
+                    "required": ["decision", "reason"],
+                },
+            },
+            "risks": _STRING_LIST,
             "acceptance_criteria": _STRING_LIST,
+            "implementation_notes": _STRING_LIST,
             "questions": _STRING_LIST,
             "too_large": {"type": "boolean"},
             "split": {
@@ -54,14 +71,21 @@ SCHEMAS = {
         },
         "required": [
             "summary",
-            "approach",
+            "changes",
+            "decisions",
+            "risks",
             "acceptance_criteria",
+            "implementation_notes",
             "questions",
             "too_large",
             "split",
         ],
     },
-    "implement": _CHANGE_RESULT,
+    "implement": {
+        **_CHANGE_RESULT,
+        "properties": {**_CHANGE_RESULT["properties"], **_PULL_FIELDS},
+        "required": [*_CHANGE_RESULT["required"], *_PULL_FIELDS],
+    },
     "fix": _CHANGE_RESULT,
     "review": {
         "type": "object",
@@ -75,9 +99,10 @@ SCHEMAS = {
                     "properties": {
                         "criterion": {"type": "string"},
                         "met": {"type": "boolean"},
+                        "test": {"type": "string"},
                         "evidence": {"type": "string"},
                     },
-                    "required": ["criterion", "met", "evidence"],
+                    "required": ["criterion", "met", "test", "evidence"],
                 },
             },
             "findings": {
@@ -166,6 +191,7 @@ def build_prompt(stage, context, cfg, extra=None):
     values = {
         **context,
         "checks": _checks_text(cfg),
+        "writing": _template("writing"),
         "protected": ", ".join(f"`{p}`" for p in cfg["protected_paths"]),
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
         **(extra or {}),

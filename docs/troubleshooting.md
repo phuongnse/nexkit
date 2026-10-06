@@ -35,6 +35,15 @@ base branch, and some conflicts need a choice the plan, the issue and your notes
 settle. Answer every question in one comment: `/nexkit fix` followed by your decisions.
 The next round merges the base branch again and follows your note.
 
+**A new NexKit pull request is behind `main`.** Something was merged into the base branch
+while the agent worked. NexKit opens the pull request on the commit the agent started
+from, so the work is not lost. Comment `/nexkit fix` to merge the base branch and resolve
+any conflicts.
+
+**"The agent started from … which is no longer on `main`".** The base branch was rewritten
+(for example force-pushed) while the agent worked, so the commit the change is built on is
+gone from it. Comment `/nexkit go` to implement the plan again on the current base branch.
+
 **"conflicts with `main` in protected paths" or "brings changes to `.github/workflows/…`".**
 NexKit cannot publish this merge. Merge the base branch into the pull request yourself,
 push, and comment `/nexkit review`. For workflow files, a `NEXKIT_PUSH_TOKEN` with

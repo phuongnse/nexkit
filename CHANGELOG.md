@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- An implement round no longer fails when the base branch moves while the agent works.
+  `publish` opens the pull request on the base commit the agent started from, so the
+  patch always applies; the pull request may then be behind its base branch, and
+  `/nexkit fix` brings it up to date. When that commit is no longer on the base branch,
+  for example after a force push, publish stops with a clear message instead of a
+  `git apply` error.
+
 ## 1.5.0
 
 - 🛑 marks only blocking findings. In a follow-up review, a suggestion that is still open

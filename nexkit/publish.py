@@ -133,27 +133,52 @@ def _workflow_error(base, files):
     )
 
 
+def _on_base(repo, commit, base):
+    """Whether `commit` is a full SHA that the fetched base branch contains."""
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        return False
+    # A commit that is gone from the base branch, say after a force push, may not exist here.
+    if git(repo, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}", ok=(0, 1)) == "":
+        return False
+    return is_ancestor(repo, commit, f"origin/{base}")
+
+
 def _merged_base(repo, decision, result):
     """The base commit that the fix round merged into the branch, checked, or None."""
     commit = result.get("start_base")
     if decision["action"] != "fix" or not commit:
         return None
     base = decision["base"]
-    if not re.fullmatch(r"[0-9a-f]{40}", commit) or not is_ancestor(repo, commit, f"origin/{base}"):
+    if not _on_base(repo, commit, base):
         raise PublishError(f"The merged commit {str(commit)[:12]} is not on `{base}`.")
+    return commit
+
+
+def _implement_start(repo, decision, result):
+    """The base commit the implement agent started from, checked. The pull request starts
+    there, so the patch applies even when the base branch moved during the run."""
+    commit = result.get("start_head")
+    base = decision["base"]
+    if not _on_base(repo, commit, base):
+        raise PublishError(
+            f"The agent started from {str(commit)[:12]}, which is no longer on `{base}`. "
+            "Comment `/nexkit go` to run again on the current base branch."
+        )
     return commit
 
 
 def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_workflows=False):
     """Create the commit on the NexKit branch. Return the new head SHA.
 
-    When the fix round merged the base branch, the commit is a merge commit whose parents
-    are the branch head and the merged base commit."""
+    An implement round commits on the base commit the agent started from, which may be
+    behind the base branch by now; a fix round brings it up to date. When the fix round
+    merged the base branch, the commit is a merge commit whose parents are the branch head
+    and the merged base commit."""
     branch = decision["branch"]
     refs = [decision["base"]] + ([branch] if decision["action"] == "fix" else [])
     git(repo, "fetch", "--quiet", "origin", *refs)
     if decision["action"] == "implement":
-        git(repo, "checkout", "-q", "-B", branch, f"origin/{decision['base']}")
+        git(repo, "checkout", "-q", "-B", branch, _implement_start(repo, decision, result))
     else:
         git(repo, "checkout", "-q", "-B", branch, f"origin/{branch}")
         current = git(repo, "rev-parse", "HEAD").strip()

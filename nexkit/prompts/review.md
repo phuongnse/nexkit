@@ -62,5 +62,5 @@ A person reads the review to decide what to do next. NexKit shows the verdict an
   - `evidence`: the detail behind your judgement, such as `file:line` references and the
     assertions that check it.
 - `previous_findings`: one entry for each finding of the previous review, with `finding`
-  (a short restatement), `resolution` and `evidence`. Empty when there was no previous
-  review.
+  (a short restatement), `severity` (the severity that review gave it), `resolution` and
+  `evidence`. Empty when there was no previous review.

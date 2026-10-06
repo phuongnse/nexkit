@@ -248,20 +248,55 @@ class ReportTests(unittest.TestCase):
     def test_review_body_shows_previous_findings(self):
         review = review_result()
         review["output"]["previous_findings"] = [
-            {"finding": "Wrong sign", "resolution": "resolved", "evidence": "calc.py:2 adds"},
-            {"finding": "Add docs", "resolution": "rejection_accepted", "evidence": "Internal"},
-            {"finding": "Floats", "resolution": "unresolved", "evidence": "Still int()"},
+            {
+                "finding": "Wrong sign",
+                "severity": "blocking",
+                "resolution": "resolved",
+                "evidence": "calc.py:2 adds",
+            },
+            {
+                "finding": "Add docs",
+                "severity": "suggestion",
+                "resolution": "rejection_accepted",
+                "evidence": "Internal",
+            },
+            {
+                "finding": "Floats",
+                "severity": "blocking",
+                "resolution": "unresolved",
+                "evidence": "Still int()",
+            },
         ]
         body = review_body(review, [])
         short, evidence = body.split("<details>", 1)
         self.assertIn("**Previous findings**", short)
         self.assertIn("- ✅ resolved: Wrong sign\n", short)
         self.assertIn("- 🤝 rejection accepted: Add docs\n", short)
-        self.assertIn("- 🛑 unresolved: Floats\n", short)
+        self.assertIn("- 🛑 Blocking, unresolved: Floats\n", short)
         self.assertIn("- ✅ resolved: Wrong sign: calc.py:2 adds", evidence)
         self.assertIn("- 🤝 rejection accepted: Add docs: Internal", evidence)
-        self.assertIn("- 🛑 unresolved: Floats: Still int()", evidence)
+        self.assertIn("- 🛑 Blocking, unresolved: Floats: Still int()", evidence)
         self.assertNotIn("Previous findings", review_body(review_result(), []))
+
+    def test_only_blocking_findings_get_the_stop_sign(self):
+        review = review_result()
+        review["output"]["previous_findings"] = [
+            {"finding": "Null check", "severity": "blocking", "resolution": "unresolved"},
+            {"finding": "Rename x", "severity": "suggestion", "resolution": "unresolved"},
+            {"finding": "Add docs", "severity": "suggestion", "resolution": "resolved"},
+        ]
+        body = review_body(review, [])
+        previous = body.split("**Previous findings**", 1)[1].split("**Acceptance criteria**")[0]
+        lines = previous.strip().splitlines()
+        self.assertEqual(
+            lines,
+            [
+                "- 🛑 Blocking, unresolved: Null check",
+                "- 💡 Suggestion, still open: Rename x",
+                "- ✅ resolved: Add docs",
+            ],
+        )
+        self.assertEqual(body.count("🛑"), 1)
 
     def test_review_body_puts_findings_first_and_evidence_last(self):
         findings = [

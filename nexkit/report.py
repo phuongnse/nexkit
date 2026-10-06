@@ -10,11 +10,12 @@ from .github import GitHubError, run_url
 from .state import FAILURE, SUCCESS, clip, empty_state, read_state
 
 ICONS = {True: "✅", False: "❌"}
+# 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
 RESOLUTIONS = {
     "resolved": "✅ resolved",
-    "unresolved": "🛑 unresolved",
     "rejection_accepted": "🤝 rejection accepted",
 }
+OPEN = {"blocking": "🛑 Blocking, unresolved", "suggestion": "💡 Suggestion, still open"}
 # Outcomes in which the run did its work. The others stopped on an error.
 COMPLETED = {"planned", "ready", "merged", "auto_fix", "needs_human"}
 # Bounds for what the state comment keeps for the next review.
@@ -53,7 +54,10 @@ def review_body(review, checks):
         findings.append(f"- {mark}: {item['body'].strip()}{_location(item)}")
     previous, previous_evidence = [], []
     for item in output.get("previous_findings") or []:
-        mark = RESOLUTIONS.get(item["resolution"], item["resolution"])
+        if item["resolution"] == "unresolved":
+            mark = OPEN.get(item.get("severity"), "unresolved")
+        else:
+            mark = RESOLUTIONS.get(item["resolution"], item["resolution"])
         previous.append(f"- {mark}: {item['finding']}")
         if item.get("evidence"):
             previous_evidence.append(f"- {mark}: {item['finding']}: {item['evidence'].strip()}")

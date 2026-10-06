@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- 🛑 marks only blocking findings. In a follow-up review, a suggestion that is still open
+  shows as "💡 Suggestion, still open" instead of "🛑 unresolved", and a blocking finding
+  that is still open shows as "🛑 Blocking, unresolved". The review result has a new
+  `severity` field for each previous finding, copied from the previous review.
+
 ## 1.4.0
 
 - Plans, reviews and pull request descriptions are written for people. Every prompt has

@@ -192,6 +192,8 @@ def main():
         resolutions = {"resolved", "unresolved", "rejection_accepted"}
         if any(item["resolution"] not in resolutions for item in previous):
             raise SystemExit(f"second review: bad resolution in {previous}")
+        if {item["severity"] for item in previous} != {"blocking", "suggestion"}:
+            raise SystemExit(f"second review: severities not kept in {previous}")
     print("Smoke test passed.")
     return 0
 

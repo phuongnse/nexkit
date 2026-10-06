@@ -77,6 +77,9 @@ class PromptTests(unittest.TestCase):
             item["properties"]["resolution"]["enum"],
             ["resolved", "unresolved", "rejection_accepted"],
         )
+        self.assertIn("severity", item["required"])
+        self.assertEqual(item["properties"]["severity"]["enum"], ["blocking", "suggestion"])
+        self.assertIn("`severity` (the severity that review gave it)", agent._template("review"))
 
     def test_every_stage_template_is_complete(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": ""}

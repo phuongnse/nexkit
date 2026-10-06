@@ -124,10 +124,11 @@ SCHEMAS = {
                     "type": "object",
                     "properties": {
                         "finding": {"type": "string"},
+                        "severity": {"enum": ["blocking", "suggestion"]},
                         "resolution": {"enum": ["resolved", "unresolved", "rejection_accepted"]},
                         "evidence": {"type": "string"},
                     },
-                    "required": ["finding", "resolution", "evidence"],
+                    "required": ["finding", "severity", "resolution", "evidence"],
                 },
             },
         },

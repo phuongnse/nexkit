@@ -187,7 +187,7 @@ with what a person must act on:
 One or two sentences: the main reason for the verdict.
 
 **Things to look at**         findings, blocking first, with file and line
-**Previous findings**         resolved, unresolved or rejection accepted (later rounds)
+**Previous findings**         what happened to each earlier finding (later rounds)
 **Acceptance criteria**       ✅ or ❌ and the covering test, one line each
 **Checks**: ✅ `test`
 
@@ -204,7 +204,17 @@ diff from the reviewed commit to the current one, next to the full diff. The rev
 first returns a `resolution` for each earlier finding (`resolved`, `unresolved` or
 `rejection_accepted`) with evidence, does not raise an accepted rejection again, treats
 changes asked for in a note as in scope, and adds new blocking findings only for real
-defects. The pull request review lists these resolutions.
+defects. It also repeats each earlier finding's severity, so the pull request review can
+list the resolutions with these marks:
+
+| Mark | Meaning |
+|---|---|
+| 🛑 Blocking, unresolved | A blocking finding that is still open. It blocks the merge. |
+| 💡 Suggestion, still open | A suggestion that is still open. It does not block the merge. |
+| ✅ resolved | The code now handles the finding. |
+| 🤝 rejection accepted | A fix round rejected the finding, and the reviewer agrees. |
+
+🛑 marks only blocking findings, in *Things to look at* and in *Previous findings*.
 
 ## State
 

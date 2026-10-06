@@ -101,6 +101,48 @@ class PublishTests(unittest.TestCase):
         self.assertTrue(pull["body"].startswith("Closes #5"))
         self.assertEqual(pull["head"]["ref"], "nexkit/issue-5")
 
+    def test_implement_starts_where_the_agent_started_when_the_base_moved(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        # The base branch changes the same line while the agent works.
+        later = self.repos.push_commit(
+            "dev", "main", {"calc.py": "def add(a, b):\n    return b - a\n"}, "Swap"
+        )
+        outcome = publish(
+            self.gh,
+            decision("implement"),
+            self.result(start),
+            CONTEXT,
+            self.cfg,
+            self.repos.clone("publisher"),
+            self.out,
+        )
+        self.assertTrue(outcome["published"])
+        head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
+        self.assertEqual(git(self.repos.origin, "rev-parse", f"{head}^"), start)
+        self.assertEqual(
+            git(self.repos.origin, "show", f"{head}:calc.py"), "def add(a, b):\n    return a + b"
+        )
+        self.assertEqual(git(self.repos.origin, "rev-parse", "main"), later)
+        self.assertIn(outcome["pr"], self.gh.pulls)
+
+    def test_implement_start_must_be_on_the_base_branch(self):
+        self.make_patch({"calc.py": "x\n"})
+        other = self.repos.push_commit("dev", "other", {"x.py": "1\n"}, "Elsewhere")
+        for start in (other, "a" * 40, "main", None):
+            with self.subTest(start=start):
+                with self.assertRaisesRegex(PublishError, "no longer on `main`"):
+                    publish(
+                        self.gh,
+                        decision("implement"),
+                        self.result(start),
+                        CONTEXT,
+                        self.cfg,
+                        self.repos.clone(f"publisher-{start}"),
+                        self.out,
+                    )
+        self.assertEqual(git(self.repos.origin, "branch", "--list", "nexkit/*"), "")
+        self.assertFalse(self.gh.pulls)
+
     def test_pull_request_author_can_differ_from_bot(self):
         start = self.make_patch({"calc.py": "x\n"})
         author = FakeGitHub()

@@ -177,6 +177,12 @@ order: *Summary* (two or three sentences, also the commit message), *What change
 behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
 the reviewer*. A fix round's summary becomes its commit message.
 
+The pull request of an implement round starts at the base commit the agent started from,
+not at the base branch's tip when `publish` runs. So the patch always applies, even when
+someone merges into the base branch while the agent works. The pull request is then
+behind its base branch, which GitHub shows; `/nexkit fix` brings it up to date and resolves
+any conflict (see below).
+
 **Conflicts with the base branch.** `/nexkit fix` also brings a pull request that no longer
 merges cleanly back in line with its base branch. There is no separate command, and NexKit
 does not notice by itself when a pull request starts to conflict: a person comments
@@ -289,6 +295,8 @@ new state comment.
 | Claude times out, hits its budget, errors, or returns no result | Reports it; publishes nothing; no automatic retry. |
 | Agent returns `blocked` | Reports its reason; no automatic retry. A person decides. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |
+| The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. |
+| The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
 | The PR branch moved while a fix round was running | Refuses to publish; run `/nexkit fix` again. |
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. |
 | The PR conflicts with its base branch in a protected path | Stops before Claude runs; merge the base branch yourself. |

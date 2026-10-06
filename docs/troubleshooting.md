@@ -30,6 +30,16 @@ from forks.
 **"The change modifies protected paths".** The agent edited `.github/` or `.nexkit/`, or a
 path you added to `protected_paths`. Make those changes yourself, then use `/nexkit fix`.
 
+**"Conflicts with `main` that need your decision".** The pull request conflicts with its
+base branch, and some conflicts need a choice the plan, the issue and your notes do not
+settle. Answer every question in one comment: `/nexkit fix` followed by your decisions.
+The next round merges the base branch again and follows your note.
+
+**"conflicts with `main` in protected paths" or "brings changes to `.github/workflows/…`".**
+NexKit cannot publish this merge. Merge the base branch into the pull request yourself,
+push, and comment `/nexkit review`. For workflow files, a `NEXKIT_PUSH_TOKEN` with
+Workflows write access also lets NexKit push the merge.
+
 **Claude timed out or stopped on its budget.** The issue is probably too large. Ask for a
 new plan and use its suggested split, or raise `timeout_minutes` / `max_budget_usd` for
 the `implement` stage.

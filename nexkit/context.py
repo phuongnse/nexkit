@@ -77,12 +77,13 @@ def previous_review(gh, decision, fix_result):
     if not last:
         return None
     fixes = [f for f in state.get("fixes") or [] if f["round"] > last["round"]]
-    if decision["action"] == "fix" and (fix_result or {}).get("status") == "done":
+    if _fixed(decision, fix_result):
         fixes.append(
             {
                 "auto": decision.get("auto"),
                 "summary": fix_result.get("summary"),
                 "note": decision.get("note"),
+                "conflicts": fix_result.get("conflicts") if fix_result.get("start_base") else None,
             }
         )
     lines = [f"### Findings of the review of commit {last['head'][:7]} ({last['verdict']})", ""]
@@ -108,7 +109,14 @@ def previous_review(gh, decision, fix_result):
             "",
             clip(fix.get("summary")) or "None.",
         ]
+        if fix.get("conflicts"):
+            files = ", ".join(f"`{name}`" for name in fix["conflicts"])
+            lines += ["", f"This round merged the base branch and resolved conflicts in {files}."]
     return {"previous_head": last["head"], "previous_round": "\n".join(lines)}
+
+
+def _fixed(decision, fix_result):
+    return decision["action"] == "fix" and (fix_result or {}).get("status") == "done"
 
 
 def gather(gh, decision, stage=None, fix_result=None):
@@ -130,6 +138,12 @@ def gather(gh, decision, stage=None, fix_result=None):
     stage = stage or decision["action"]
     if stage == "review" and decision.get("pr"):
         context.update(previous_review(gh, decision, fix_result) or {})
+        if _fixed(decision, fix_result) and fix_result.get("start_base"):
+            context["merged"] = {
+                "head": fix_result.get("start_head"),
+                "base": fix_result["start_base"],
+                "conflicts": fix_result.get("conflicts") or [],
+            }
     elif stage == "fix":
         context["feedback"] = _feedback(gh, decision)
         pr_comments = gh.comments(decision["pr"])

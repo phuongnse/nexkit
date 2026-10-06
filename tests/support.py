@@ -202,8 +202,42 @@ class GitRepos:
         git(path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message)
         return git(path, "rev-parse", "HEAD")
 
+    def push_commit(self, name, branch, files, message):
+        """Commit `files` (None deletes) on `branch` of origin. Return the commit."""
+        work = self.root / name
+        if not work.exists():
+            self.clone(name)
+        git(work, "fetch", "-q", "origin")
+        exists = git(work, "ls-remote", "--heads", "origin", branch)
+        git(work, "checkout", "-q", "-B", branch, f"origin/{branch}" if exists else "origin/main")
+        for path, content in files.items():
+            target = work / path
+            if content is None:
+                target.unlink()
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        git(work, "add", "-A")
+        commit = self.commit(work, message)
+        git(work, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+        return commit
+
+    def diverge(self, base_files=None, branch="nexkit/issue-5"):
+        """A NexKit branch and a later base commit that both append a function to calc.py,
+        so they conflict there. Return (branch head, base commit)."""
+        head = self.push_commit("dev", branch, {"calc.py": CALC + SUB}, "Add sub")
+        base = self.push_commit(
+            "dev", "main", {"calc.py": CALC + MUL, **(base_files or {})}, "Add mul"
+        )
+        return head, base
+
     def cleanup(self):
         self._tmp.cleanup()
+
+
+CALC = "def add(a, b):\n    return a - b\n"
+SUB = "\n\ndef sub(a, b):\n    return a - b\n"
+MUL = "\n\ndef mul(a, b):\n    return a * b\n"
 
 
 FAKE_CLAUDE = """#!/usr/bin/env python3

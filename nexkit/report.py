@@ -131,13 +131,43 @@ def _restore_statuses(gh, sha, feedback, url):
         gh.set_status(sha, context, "error", "The NexKit round did not finish", url)
 
 
-def _stage_failure(action, agent, publish):
+def _text(item, key):
+    return str(item.get(key) or "").strip()
+
+
+def open_conflicts(agent, base):
+    """The conflicts with the base branch that a blocked fix round left for a person."""
+    items = [i for i in (agent.get("output") or {}).get("open_conflicts") or [] if i]
+    if agent.get("status") != "blocked" or not items:
+        return ""
+    lines = [f"**Conflicts with `{base}` that need your decision**", ""]
+    for item in items:
+        lines += [
+            f"- `{_text(item, 'file')}`",
+            f"  - `{base}`: {_text(item, 'base_change')}",
+            f"  - This pull request: {_text(item, 'pr_change')}",
+            f"  - **Question:** {_text(item, 'question')}",
+        ]
+    lines += [
+        "",
+        "Answer in one comment: `/nexkit fix` followed by your decisions, for example "
+        f"`/nexkit fix Keep the check from {base} and add this pull request's endpoint after "
+        f"it.` The next round merges `{base}` again, follows your note and resolves the "
+        "other conflicts itself.",
+    ]
+    return "\n".join(lines)
+
+
+def _stage_failure(decision, agent, publish):
     """(outcome, message) when the agent or publish stage stopped, otherwise None."""
+    action = decision["action"]
     if agent is None:
         return "agent_failed", f"NexKit could not run the {action} agent."
     if agent["status"] != "done":
         cost = f" Cost: ${agent['cost']:.2f}." if agent.get("cost") else ""
-        return "agent_" + agent["status"], f"NexKit stopped during {action}: {agent['error']}{cost}"
+        message = f"NexKit stopped during {action}: {agent['error']}{cost}"
+        conflicts = open_conflicts(agent, decision["base"])
+        return "agent_" + agent["status"], message + (f"\n\n{conflicts}" if conflicts else "")
     if not publish.get("published"):
         reason = publish.get("error") or "the publish job failed"
         return "publish_failed", f"NexKit could not publish the {action} result: {reason}"
@@ -167,6 +197,8 @@ def _record(state, decision, row, agent, review):
                 "note": clip(decision.get("note"), 2000),
             }
         )
+        if agent.get("start_base"):
+            fixes[-1]["conflicts"] = (agent.get("conflicts") or [])[:MAX_FINDINGS]
         state["fixes"] = fixes
     if review:
         state["last_review"] = {
@@ -198,7 +230,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     publish = json.loads(((needs.get("publish") or {}).get("outputs") or {}).get("result") or "{}")
 
     if action in ("plan", "implement", "fix"):
-        failure = _stage_failure(action, agent, publish)
+        failure = _stage_failure(decision, agent, publish)
         if failure:
             outcome, message = failure
             if decision.get("pr"):
@@ -263,6 +295,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             "Comment `/nexkit fix <instructions>`, push a commit yourself, or close the PR."
         )
 
+    if action == "fix" and agent and agent.get("start_base"):
+        files = ", ".join(f"`{name}`" for name in agent.get("conflicts") or [])
+        message = (
+            f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch and "
+            f"resolved conflicts in {files}.\n\n{message}"
+        )
     row["status"] = SUCCESS if outcome in COMPLETED else FAILURE
     progress.save_state(gh, pr, comment_id, state)
     progress.save_round(gh, pr, round_id, row, message)

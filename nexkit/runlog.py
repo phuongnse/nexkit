@@ -287,6 +287,16 @@ def summary(result, calls):
     ]
     if result.get("error"):
         lines += ["", "**Why it stopped**", "", _block(result["error"])]
+    if result.get("start_base"):
+        conflicts = result.get("conflicts") or []
+        lines += [
+            "",
+            f"**Merged the base branch** (`{str(result['start_base'])[:7]}`); "
+            f"files with conflicts ({len(conflicts)}):",
+            "",
+            _block("\n".join(conflicts)),
+        ]
+        # The files changed below include what the merge brought from the base branch.
     if result.get("changed_files") is not None:
         files = result["changed_files"]
         lines += ["", f"**Files changed** ({len(files)})"]

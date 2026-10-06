@@ -99,6 +99,8 @@ jobs:
         with:
           ref: ${{ needs.route.outputs.agent_ref }}
           path: repo
+          # A fix round needs the history of the branch and its base to merge them.
+          fetch-depth: ${{ needs.route.outputs.action == 'fix' && '0' || '1' }}
           persist-credentials: false
       - name: Install Claude Code
         run: |

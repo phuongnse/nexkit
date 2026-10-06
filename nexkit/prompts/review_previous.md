@@ -11,6 +11,8 @@ $previous_round
 
 ## Changes since commit $previous_head
 
+Changes that came from `$base` through a merge are left out.
+
 <untrusted>
 ```diff
 $changes

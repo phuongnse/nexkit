@@ -6,10 +6,11 @@ agent's patch with git and calls the GitHub API.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from . import config as configuration
-from .gitutil import BOT_EMAIL, BOT_NAME, git
+from .gitutil import BOT_EMAIL, BOT_NAME, GitError, git, is_ancestor, merge_tree, names
 from .state import PLAN_MARKER
 
 
@@ -113,8 +114,41 @@ def pull_body(decision, result):
     return "\n".join(parts)
 
 
-def apply_change(repo, decision, result, title, patch_path, cfg):
-    """Create the commit on the NexKit branch. Return the new head SHA."""
+WORKFLOWS = ".github/workflows/"
+# What GitHub answers when a push changes workflow files without the permission to.
+WORKFLOW_REFUSAL = re.compile(r"refusing to allow .* to create or update workflow")
+
+
+def _changed(repo, *args):
+    return names(git(repo, "diff", "--name-only", "--no-renames", "-z", *args))
+
+
+def _workflow_error(base, files):
+    listed = ", ".join(f"`{name}`" for name in files) if files else "workflow files"
+    return PublishError(
+        f"Merging `{base}` brings changes to {listed}, and the token NexKit pushes with may not "
+        "change workflow files. Merge the base branch into the pull request yourself and "
+        "comment `/nexkit review`, or set a `NEXKIT_PUSH_TOKEN` secret that may update "
+        "workflows."
+    )
+
+
+def _merged_base(repo, decision, result):
+    """The base commit that the fix round merged into the branch, checked, or None."""
+    commit = result.get("start_base")
+    if decision["action"] != "fix" or not commit:
+        return None
+    base = decision["base"]
+    if not re.fullmatch(r"[0-9a-f]{40}", commit) or not is_ancestor(repo, commit, f"origin/{base}"):
+        raise PublishError(f"The merged commit {str(commit)[:12]} is not on `{base}`.")
+    return commit
+
+
+def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_workflows=False):
+    """Create the commit on the NexKit branch. Return the new head SHA.
+
+    When the fix round merged the base branch, the commit is a merge commit whose parents
+    are the branch head and the merged base commit."""
     branch = decision["branch"]
     refs = [decision["base"]] + ([branch] if decision["action"] == "fix" else [])
     git(repo, "fetch", "--quiet", "origin", *refs)
@@ -128,53 +162,72 @@ def apply_change(repo, decision, result, title, patch_path, cfg):
                 f"The branch moved from {result['start_head'][:7]} to {current[:7]} while the "
                 "agent was working. Comment `/nexkit fix` to run again on the new commit."
             )
-    git(repo, "apply", "--index", "--whitespace=nowarn", str(patch_path))
-    names = git(repo, "diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD")
-    files = [name for name in names.split("\0") if name]
-    blocked = [name for name in files if configuration.is_protected(name, cfg)]
+    merged = _merged_base(repo, decision, result)
+    if Path(patch_path).stat().st_size:
+        git(repo, "apply", "--index", "--whitespace=nowarn", str(patch_path))
+    files = _changed(repo, "--cached", "HEAD")
+    edits = files
+    if merged:
+        # Only what differs from git's own merge result is the agent's work. Changes that
+        # merged cleanly from the base branch may touch protected paths.
+        edits = _changed(repo, "--cached", merge_tree(repo, "HEAD", merged)[0])
+    blocked = [name for name in edits if configuration.is_protected(name, cfg)]
     if blocked:
         raise PublishError(
             "The change modifies protected paths, which NexKit does not publish: "
             + ", ".join(f"`{name}`" for name in blocked)
         )
-    if not files:
+    if not files and not merged:
         raise PublishError("The agent's patch is empty after applying it to the branch.")
+    workflows = [name for name in files if name.startswith(WORKFLOWS)]
+    if merged and workflows and not can_push_workflows:
+        raise _workflow_error(decision["base"], workflows)
     if decision["action"] == "implement":
         message = f"{title} (#{decision['issue']})"
+    elif merged:
+        message = f"Merge {decision['base']} and address feedback on #{decision['pr']}"
     else:
         message = f"Address feedback on #{decision['pr']}"
-    git(
-        repo,
-        "-c",
-        f"user.name={BOT_NAME}",
-        "-c",
-        f"user.email={BOT_EMAIL}",
-        "commit",
-        "-q",
-        "--no-verify",
-        "-F",
-        "-",
-        input=f"{message}\n\n{result['summary'].strip()}\n",
-    )
+    message = f"{message}\n\n{result['summary'].strip()}\n"
+    bot = ("-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}")
+    if merged:
+        tree = git(repo, "write-tree").strip()
+        commit = git(
+            repo, *bot, "commit-tree", tree, "-p", "HEAD", "-p", merged, "-F", "-", input=message
+        ).strip()
+        git(repo, "reset", "-q", "--soft", commit)
+    else:
+        git(repo, *bot, "commit", "-q", "--no-verify", "-F", "-", input=message)
     push = ["push", "--quiet", "origin", f"HEAD:refs/heads/{branch}"]
     if decision["action"] == "implement":
         # No open PR uses this branch (checked when routing); replace any stale attempt.
         push.insert(1, "--force")
-    git(repo, *push)
+    try:
+        git(repo, *push)
+    except GitError as exc:
+        if merged and WORKFLOW_REFUSAL.search(str(exc)):
+            raise _workflow_error(decision["base"], workflows) from None
+        raise
     return git(repo, "rev-parse", "HEAD").strip()
 
 
-def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None):
+def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, push_token=False):
     """`gh` posts as the Actions bot. `author` opens pull requests; a personal or App token
-    there lets the repository's own CI run on NexKit pull requests."""
+    there lets the repository's own CI run on NexKit pull requests. `push_token` says that
+    git pushes with such a token rather than the Actions token, which may never change
+    workflow files."""
     if result.get("status") != "done":
         return {"published": False}
     if decision["action"] == "plan":
         return publish_plan(gh, decision, result)
     patch = (Path(out_dir) / "changes.patch").resolve()
-    if not patch.is_file() or not patch.stat().st_size:
+    # A merge whose resolution keeps this branch's side everywhere has an empty patch.
+    empty_ok = decision["action"] == "fix" and result.get("start_base")
+    if not patch.is_file() or not (patch.stat().st_size or empty_ok):
         raise PublishError("The agent result has no patch to publish.")
-    head = apply_change(repo, decision, result, context["title"], patch, cfg)
+    head = apply_change(
+        repo, decision, result, context["title"], patch, cfg, can_push_workflows=push_token
+    )
     pr = decision["pr"]
     if decision["action"] == "implement":
         pull = (author or gh).create_pull(

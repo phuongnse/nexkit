@@ -245,6 +245,66 @@ class ReportTests(unittest.TestCase):
             ],
         )
 
+    def test_blocked_conflicts_are_listed_for_a_person(self):
+        open_conflict = {
+            "file": "Program.cs",
+            "base_change": "Adds request validation before the endpoints.",
+            "pr_change": "Moves the endpoints above the middleware.",
+            "question": "Should validation run before this pull request's endpoint?",
+        }
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {
+                "status": "blocked",
+                "error": "Two conflicts need a decision.",
+                "cost": 0.4,
+                "start_base": "b" * 40,
+                "conflicts": ["Program.cs"],
+                "output": {"status": "blocked", "open_conflicts": [open_conflict]},
+            },
+        )
+        d = decision("fix", pr=6, target=6, head=HEAD)
+        outcome = self.run_report(d=d, published=False)
+        self.assertEqual(outcome["outcome"], "agent_blocked")
+        self.assertFalse(self.gh.dispatches)
+        [row] = self.gh.run_comments(6)
+        body = row["body"]
+        self.assertIn("Two conflicts need a decision.", body)
+        self.assertIn(
+            "**Conflicts with `main` that need your decision**\n\n- `Program.cs`\n"
+            "  - `main`: Adds request validation before the endpoints.\n"
+            "  - This pull request: Moves the endpoints above the middleware.\n"
+            "  - **Question:** Should validation run before this pull request's endpoint?",
+            body,
+        )
+        self.assertIn("`/nexkit fix` followed by your decisions", body)
+        self.assertEqual(row["run"]["status"], "failure")
+
+    def test_round_comment_says_the_base_was_merged(self):
+        self.candidate()
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {
+                "status": "done",
+                "summary": "Kept both.",
+                "cost": 1.0,
+                "start_base": "b" * 40,
+                "conflicts": ["Program.cs", "Axis.Server.csproj"],
+            },
+        )
+        d = decision("fix", pr=6, target=6, head="a" * 40)
+        self.assertEqual(self.run_report(d=d)["outcome"], "ready")
+        [row] = self.gh.run_comments(6)
+        self.assertIn(
+            "Merged `main` (`bbbbbbb`) into the branch and resolved conflicts in "
+            "`Program.cs`, `Axis.Server.csproj`.",
+            row["body"],
+        )
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["fixes"][-1]["conflicts"], ["Program.cs", "Axis.Server.csproj"])
+
     def test_review_body_shows_previous_findings(self):
         review = review_result()
         review["output"]["previous_findings"] = [

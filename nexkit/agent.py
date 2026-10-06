@@ -14,7 +14,7 @@ from pathlib import Path
 from string import Template
 
 from . import config as configuration
-from .gitutil import GitError, git
+from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, summary, write_summary
 
@@ -22,6 +22,9 @@ READ_ONLY_TOOLS = "Read,Grep,Glob"
 CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 MAX_DIFF = 80_000
 MAX_PATCH_BYTES = 5_000_000
+# A conflict marker at the start of a line: `<<<<<<< ours`, `>>>>>>> theirs`, `||||||| base`.
+CONFLICT_MARKER = re.compile(rb"^(<{7}|>{7}|\|{7})( |$)", re.M)
+BOT = ("-c", "user.name=nexkit", "-c", "user.email=nexkit@localhost")
 
 _STRING_LIST = {"type": "array", "items": {"type": "string"}}
 _CHANGE_RESULT = {
@@ -86,7 +89,27 @@ SCHEMAS = {
         "properties": {**_CHANGE_RESULT["properties"], **_PULL_FIELDS},
         "required": [*_CHANGE_RESULT["required"], *_PULL_FIELDS],
     },
-    "fix": _CHANGE_RESULT,
+    "fix": {
+        **_CHANGE_RESULT,
+        "properties": {
+            **_CHANGE_RESULT["properties"],
+            # Conflicts with the base branch that need a person's decision.
+            "open_conflicts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "file": {"type": "string"},
+                        "base_change": {"type": "string"},
+                        "pr_change": {"type": "string"},
+                        "question": {"type": "string"},
+                    },
+                    "required": ["file", "base_change", "pr_change", "question"],
+                },
+            },
+        },
+        "required": [*_CHANGE_RESULT["required"], "open_conflicts"],
+    },
     "review": {
         "type": "object",
         "properties": {
@@ -155,17 +178,34 @@ def check_results_text(results):
     return "\n".join(lines)
 
 
-def _clip_diff(diff):
-    if len(diff) > MAX_DIFF:
-        diff = diff[:MAX_DIFF] + "\n[diff truncated; read the changed files directly]"
+def _clip_diff(diff, limit=MAX_DIFF):
+    if len(diff) > limit:
+        diff = diff[:limit] + "\n[diff truncated; read the changed files directly]"
     return diff
+
+
+def _files(files):
+    return "\n".join(f"- `{name}`" for name in files)
+
+
+def _since(repo, commit, base):
+    """What the review diffs against for "changes since the previous review": the reviewed
+    commit, or, when base commits were merged in since, the automatic merge of the reviewed
+    commit with them, so that changes from the base branch stay out."""
+    try:
+        merged = git(repo, "merge-base", "HEAD", f"origin/{base}").strip()
+        if is_ancestor(repo, merged, commit):
+            return commit
+        return merge_tree(repo, commit, merged)[0]
+    except GitError:
+        return commit
 
 
 def review_diff(repo, base):
     return _clip_diff(git(repo, "diff", f"origin/{base}...HEAD")) or "(no changes)"
 
 
-def previous_round(repo, context):
+def previous_round(repo, context, base):
     """The review prompt's section about the previous review round, or "" for the first."""
     commit = context.get("previous_head") or ""
     if not commit:
@@ -174,13 +214,72 @@ def previous_round(repo, context):
         changes = "(the previously reviewed commit is unknown; use the full diff)"
     else:
         try:
-            changes = _clip_diff(git(repo, "diff", commit, "HEAD"))
+            changes = _clip_diff(git(repo, "diff", _since(repo, commit, base), "HEAD"))
             changes = changes or "(no changes since the previous review)"
         except GitError:
             changes = f"(commit {commit[:7]} is not in this checkout; use the full diff)"
     return Template(_template("review_previous")).safe_substitute(
-        previous_head=commit[:7], previous_round=context["previous_round"], changes=changes
+        previous_head=commit[:7],
+        previous_round=context["previous_round"],
+        changes=changes,
+        base=base,
     )
+
+
+def merge_review(repo, context, base):
+    """The review prompt's section about a merge of the base branch in this run's fix round,
+    with what each side changed in the conflicted files, or ""."""
+    merged = context.get("merged") or {}
+    head, commit, files = merged.get("head"), merged.get("base"), merged.get("conflicts")
+    if not files or not all(re.fullmatch(r"[0-9a-f]{40}", c or "") for c in (head, commit)):
+        return ""
+    try:
+        fork = git(repo, "merge-base", head, commit).strip()
+        sides = [
+            _clip_diff(git(repo, "diff", fork, side, "--", *files), MAX_DIFF // 4) or "(none)"
+            for side in (commit, head)
+        ]
+    except GitError:
+        sides = ["(not available in this checkout; read the files directly)"] * 2
+    return Template(_template("review_merge")).safe_substitute(
+        base=base,
+        base_commit=commit[:7],
+        files=_files(files),
+        base_side=sides[0],
+        pr_side=sides[1],
+    )
+
+
+def merge_base_branch(repo, base):
+    """When the branch conflicts with its base branch, start merging the base branch and
+    leave the conflicts in the working tree. Return (merged commit, conflicted files), or
+    (None, []) when the branch merges cleanly and nothing was changed."""
+    commit = git(repo, "rev-parse", "--verify", f"origin/{base}^{{commit}}").strip()
+    if not merge_tree(repo, "HEAD", commit)[1]:
+        return None, []
+    git(repo, *BOT, "merge", "--no-commit", "--no-ff", "-q", commit, ok=(0, 1))
+    conflicts = names(git(repo, "diff", "--name-only", "--diff-filter=U", "-z"))
+    return commit, list(dict.fromkeys(conflicts))
+
+
+def conflicts_text(base, commit, files):
+    """The fix prompt's section about a merge of the base branch, or ""."""
+    if not commit:
+        return ""
+    text = Template(_template("fix_conflicts")).safe_substitute(
+        base=base, base_commit=commit[:7], files=_files(files)
+    )
+    return text + "\n"
+
+
+def leftover_markers(repo, files):
+    """The conflicted files that still contain conflict markers."""
+    found = []
+    for name in files:
+        path = Path(repo) / name
+        if path.is_file() and CONFLICT_MARKER.search(path.read_bytes()):
+            found.append(name)
+    return found
 
 
 def _template(name):
@@ -356,10 +455,7 @@ def baseline(repo):
     git(repo, "add", "-A")
     git(
         repo,
-        "-c",
-        "user.name=nexkit",
-        "-c",
-        "user.email=nexkit@localhost",
+        *BOT,
         "commit",
         "-q",
         "--allow-empty",
@@ -383,21 +479,38 @@ def run_stage(stage, context, cfg, repo, out_dir, *, claude="claude", checks=Non
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     extra = {}
+    start = base_commit = merged = None
+    conflicts = []
+    if stage in ("implement", "fix"):
+        start, base_commit = baseline(repo)
+    if stage == "fix":
+        merged, conflicts = merge_base_branch(repo, base)
+        extra["conflicts"] = conflicts_text(base, merged, conflicts)
     if stage == "review":
         extra = {
             "base": base,
             "diff": review_diff(repo, base),
             "check_results": check_results_text(checks),
-            "previous": previous_round(repo, context),
+            "previous": previous_round(repo, context, base),
+            "merge": merge_review(repo, context, base),
         }
     prompt = build_prompt(stage, context, cfg, extra)
     (out / "prompt.md").write_text(prompt, encoding="utf-8")
 
-    start = base_commit = None
-    if stage in ("implement", "fix"):
-        start, base_commit = baseline(repo)
-    settings = configuration.stage(cfg, stage)
     redact = Redactor()
+    protected = [name for name in conflicts if configuration.is_protected(name, cfg)]
+    if protected:
+        result = {
+            "stage": stage,
+            "status": "error",
+            "cost": None,
+            "error": f"The pull request conflicts with `{base}` in protected paths, which NexKit "
+            f"does not change: {', '.join(f'`{name}`' for name in protected)}. Merge `{base}` "
+            "into the branch yourself, then comment `/nexkit review`.",
+        }
+        return _save(result, out, redact, [], start=start, merged=merged, conflicts=conflicts)
+
+    settings = configuration.stage(cfg, stage)
     log = RunLog(
         redact,
         title=f"NexKit {stage}",
@@ -412,15 +525,30 @@ def run_stage(stage, context, cfg, repo, out_dir, *, claude="claude", checks=Non
         log=log,
     )
     result = interpret(stage, run, settings["timeout_minutes"])
-    result["start_head"] = start
     if stage in ("implement", "fix") and result["status"] == "done":
+        left = leftover_markers(repo, conflicts)
         files, size = collect_changes(repo, base_commit, out)
         result["changed_files"] = files
-        if size > MAX_PATCH_BYTES:
+        if left:
+            result.update(
+                status="error",
+                error="The agent left conflict markers in "
+                + ", ".join(f"`{name}`" for name in left)
+                + ".",
+            )
+        elif size > MAX_PATCH_BYTES:
             result.update(status="error", error=f"The change is too large ({size} bytes).")
-        elif not files:
+        elif not files and not merged:
+            # After a merge an empty patch is valid: it keeps this branch's side everywhere.
             result.update(status="error", error="The agent finished without changing any files.")
+    return _save(result, out, redact, log.calls, start=start, merged=merged, conflicts=conflicts)
+
+
+def _save(result, out, redact, calls, *, start, merged, conflicts):
+    """Store the redacted result and write the run summary."""
+    # `start_base` is the base commit merged into the branch; publish makes it a parent.
+    result.update(start_head=start, start_base=merged, conflicts=conflicts)
     result = redact.data(result)
     (out / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-    write_summary(summary(result, log.calls), redact)
+    write_summary(summary(result, calls), redact)
     return result

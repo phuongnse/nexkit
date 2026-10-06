@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -75,17 +76,89 @@ class StateComments:
         return [{"id": 1, "body": self.body, "user": {"login": BOT_LOGIN}}]
 
 
-def stage(name, work, out, claude, context=None, **kw):
+def stage(name, work, out, claude, context=None, *, want="done", **kw):
     result = run_stage(name, context or CONTEXT, CONFIG, work, out, claude=claude, **kw)
-    summary = {k: result.get(k) for k in ("status", "error", "cost", "changed_files")}
+    keys = ("status", "error", "cost", "changed_files", "conflicts")
+    summary = {k: result.get(k) for k in keys}
     print(f"{name}: {json.dumps(summary)}", flush=True)
-    if result["status"] != "done":
+    if result["status"] != want:
         raise SystemExit(f"{name} stage failed: {result.get('error')}")
     # The readable transcript pairs every tool call with its result.
     transcript = (Path(out) / "transcript.md").read_text()
     if "\n### [" not in transcript or "Result: no result" in transcript:
         raise SystemExit(f"{name}: transcript.md lacks tool calls with results")
     return result
+
+
+def conflicted(root, name, path, start, base, pull):
+    """A checkout of branch nexkit/issue-1 whose change to `path` conflicts with main's.
+    `base` and `pull` are (content, commit message)."""
+    origin = root / name
+    origin.mkdir()
+    git(origin, "init", "-q", "-b", "main")
+    commit = ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam"]
+    (origin / path).write_text(start)
+    git(origin, "add", "-A")
+    git(origin, *commit, "init")
+    git(origin, "checkout", "-q", "-b", "nexkit/issue-1")
+    (origin / path).write_text(pull[0])
+    git(origin, *commit, pull[1])
+    git(origin, "checkout", "-q", "main")
+    (origin / path).write_text(base[0])
+    git(origin, *commit, base[1])
+    work = root / f"{name}-work"
+    git(root, "clone", "-q", "-b", "nexkit/issue-1", str(origin), str(work))
+    return work
+
+
+def conflicts(root, claude):
+    """Fix rounds on pull requests that conflict with main: one conflict has one right
+    answer, the other needs a person's decision, which a note then gives."""
+    context = {
+        **CONTEXT,
+        "pr": 2,
+        "title": "Add small helper functions",
+        "body": "Add the helper functions this project needs.",
+        "plan": "No plan was posted. Implement the issue as described.",
+        "feedback": "No recorded feedback. Follow the note.",
+    }
+    calc = "def add(a, b):\n    return a + b\n"
+    work = conflicted(
+        root,
+        "trivial",
+        "calc.py",
+        calc,
+        (calc + "\n\ndef mul(a, b):\n    return a * b\n", "Add mul()"),
+        (calc + "\n\ndef sub(a, b):\n    return a - b\n", "Add sub()"),
+    )
+    fix = stage("fix", work, root / "fix-trivial", claude, context, base="main")
+    merged = (work / "calc.py").read_text()
+    if fix["conflicts"] != ["calc.py"] or "def mul" not in merged or "def sub" not in merged:
+        raise SystemExit(f"fix: both sides were not kept:\n{merged}")
+
+    greet = "def greeting(name):\n    return {}\n"
+    choice = (
+        root,
+        "choice",
+        "greet.py",
+        greet.format('"Hello " + name'),
+        (greet.format('"Welcome, " + name + "!"'), "Greet visitors with Welcome"),
+        (greet.format('"Hi " + name'), "Greet visitors with Hi"),
+    )
+    work = conflicted(*choice)
+    blocked = stage("fix", work, root / "fix-choice", claude, context, base="main", want="blocked")
+    questions = blocked["output"]["open_conflicts"]
+    print(f"open conflicts: {json.dumps(questions)}", flush=True)
+    if not any(item["file"] == "greet.py" and item["question"] for item in questions):
+        raise SystemExit("fix: the open conflict in greet.py was not listed")
+
+    shutil.rmtree(root / "choice")
+    shutil.rmtree(root / "choice-work")
+    work = conflicted(*choice)
+    note = 'In greet.py, keep this pull request\'s greeting: "Hi " + name.'
+    stage("fix", work, root / "fix-note", claude, {**context, "note": note}, base="main")
+    if (work / "greet.py").read_text() != greet.format('"Hi " + name'):
+        raise SystemExit("fix: the note's decision was not followed")
 
 
 def main():
@@ -194,6 +267,7 @@ def main():
             raise SystemExit(f"second review: bad resolution in {previous}")
         if {item["severity"] for item in previous} != {"blocking", "suggestion"}:
             raise SystemExit(f"second review: severities not kept in {previous}")
+        conflicts(root, args.claude)
     print("Smoke test passed.")
     return 0
 

@@ -6,6 +6,23 @@
   shows as "💡 Suggestion, still open" instead of "🛑 unresolved", and a blocking finding
   that is still open shows as "🛑 Blocking, unresolved". The review result has a new
   `severity` field for each previous finding, copied from the previous review.
+- `/nexkit fix` resolves conflicts with the base branch. When the pull request no longer
+  merges cleanly, the fix round merges the base branch and the agent resolves the
+  conflicts, together with any other feedback. NexKit pushes a merge commit whose parents
+  are the branch head and the exact base commit merged, never with force. The round's
+  comment says that the base branch was merged and lists the files that had conflicts.
+- A conflict that needs a choice the plan, the issue and the feedback do not settle ends
+  the round as `blocked`. The round's comment lists each open conflict with what each side
+  changed and the question to answer; `/nexkit fix <your decision>` answers it. The fix
+  result has a new `open_conflicts` field.
+- The review after a merge gets the conflicted files and what each side changed in them,
+  and checks that both sides survived. Its "changes since the last review" diff leaves out
+  the changes the merge brought from the base branch.
+- The protected-path check ignores changes that the base branch brings through a merge.
+  Conflicts in protected paths stop the round before Claude runs. A merge that brings
+  workflow changes stops with a clear message when only the default Actions token can
+  push.
+- The `agent` job checks out the full history for fix rounds.
 
 ## 1.4.0
 

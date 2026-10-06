@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,7 @@ from unittest import mock
 
 from nexkit import agent, runlog
 from nexkit.redact import Redactor
-from tests.support import FakeClaude, GitRepos, git, make_config
+from tests.support import CALC, MUL, SUB, FakeClaude, GitRepos, git, make_config
 
 CONTEXT = {
     "issue": 5,
@@ -22,6 +23,7 @@ CONTEXT = {
     "feedback": "",
 }
 DONE = {"status": "done", "summary": "Fixed add.", "blocker": "", "checks_run": ["make test"]}
+FIX_DONE = {**DONE, "open_conflicts": []}
 
 
 class PromptTests(unittest.TestCase):
@@ -33,13 +35,13 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("$plan", prompt)
 
     def test_first_review_has_no_previous_round(self):
-        extra = {"diff": "+x", "check_results": "ok", "previous": ""}
+        extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         prompt = agent.build_prompt("review", CONTEXT, make_config(), extra)
         self.assertNotIn("Previous round", prompt)
         self.assertIn("</untrusted>\n\n## How to review", prompt)
 
     def test_every_prompt_has_the_writing_guide(self):
-        extra = {"diff": "+x", "check_results": "ok", "previous": ""}
+        extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("plan", "implement", "fix", "review"):
             prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
             self.assertIn("## How to write", prompt, stage)
@@ -82,7 +84,7 @@ class PromptTests(unittest.TestCase):
         self.assertIn("`severity` (the severity that review gave it)", agent._template("review"))
 
     def test_every_stage_template_is_complete(self):
-        extra = {"diff": "+x", "check_results": "ok", "previous": ""}
+        extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("plan", "implement", "fix", "review"):
             prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
             for name in ("$issue", "$title", "$plan", "$checks", "$protected", "$diff"):
@@ -265,10 +267,10 @@ class RunStageTests(StageCase):
 
     def test_previous_round_survives_a_missing_commit(self):
         context = {**CONTEXT, "previous_head": "f" * 40, "previous_round": "x"}
-        self.assertIn("not in this checkout", agent.previous_round(self.repo, context))
+        self.assertIn("not in this checkout", agent.previous_round(self.repo, context, "main"))
         context["previous_head"] = "--output=/tmp/x"
-        self.assertIn("unknown", agent.previous_round(self.repo, context))
-        self.assertEqual(agent.previous_round(self.repo, CONTEXT), "")
+        self.assertIn("unknown", agent.previous_round(self.repo, context, "main"))
+        self.assertEqual(agent.previous_round(self.repo, CONTEXT, "main"), "")
 
     def test_missing_credentials(self):
         self.claude.configure(result=DONE)
@@ -289,6 +291,159 @@ class RunStageTests(StageCase):
         )
         self.assertTrue(run["timed_out"])
         self.assertLess(run["seconds"], 15)
+
+
+class ConflictTests(StageCase):
+    """A fix round on a pull request that conflicts with its base branch."""
+
+    def checkout_branch(self):
+        git(self.repo, "fetch", "-q", "origin")
+        git(self.repo, "checkout", "-q", "-B", "nexkit/issue-5", "origin/nexkit/issue-5")
+
+    def run_fix(self, cfg=None, **spec):
+        self.claude.configure(**{"result": FIX_DONE, **spec})
+        return self.run_stage("fix", cfg, base="main")
+
+    def test_fix_merges_a_conflicting_base_branch(self):
+        head, base = self.repos.diverge({".nexkit/config.json": '{"model": "opus"}\n'})
+        self.checkout_branch()
+        result = self.run_fix(write={"calc.py": CALC + SUB + MUL})
+        self.assertEqual(result["status"], "done")
+        self.assertEqual((result["start_head"], result["start_base"]), (head, base))
+        self.assertEqual(result["conflicts"], ["calc.py"])
+        self.assertEqual(sorted(result["changed_files"]), [".nexkit/config.json", "calc.py"])
+        prompt = self.claude.call()["prompt"]
+        section = prompt.split("## Conflicts with `main`", 1)[1].split("## Approved plan")[0]
+        self.assertIn(f"`main` (commit {base[:7]})", section)
+        self.assertIn("- `calc.py`\n", section)
+        self.assertIn("`open_conflicts`", section)
+        patch = (self.out / "changes.patch").read_text()
+        self.assertIn("+def mul(a, b):", patch)
+        self.assertNotIn("<<<<<<<", patch)
+
+    def test_branch_that_merges_cleanly_is_not_merged(self):
+        self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
+        self.repos.push_commit("dev", "main", {"other.py": "x = 1\n"}, "Other")
+        self.checkout_branch()
+        result = self.run_fix(write={"calc.py": CALC + SUB + "# fixed\n"})
+        self.assertEqual(result["status"], "done")
+        self.assertIsNone(result["start_base"])
+        self.assertEqual(result["changed_files"], ["calc.py"])
+        self.assertNotIn("## Conflicts with", self.claude.call()["prompt"])
+        self.assertIn("\n</untrusted>\n\n## Approved plan", self.claude.call()["prompt"])
+
+    def test_leftover_conflict_markers_are_an_error(self):
+        self.repos.diverge()
+        self.checkout_branch()
+        result = self.run_fix(write={"README.md": "notes\n"})
+        self.assertEqual(result["status"], "error")
+        self.assertIn("conflict markers in `calc.py`", result["error"])
+
+    def test_blocked_on_a_conflict_publishes_nothing(self):
+        self.repos.diverge()
+        self.checkout_branch()
+        question = {
+            "file": "calc.py",
+            "base_change": "Adds mul().",
+            "pr_change": "Adds sub().",
+            "question": "Which one?",
+        }
+        blocked = {**FIX_DONE, "status": "blocked", "blocker": "Needs a decision"}
+        result = self.run_fix(result={**blocked, "open_conflicts": [question]})
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["output"]["open_conflicts"], [question])
+        self.assertEqual(result["conflicts"], ["calc.py"])
+        self.assertFalse((self.out / "changes.patch").exists())
+
+    def test_conflicts_in_protected_paths_stop_before_claude(self):
+        self.repos.push_commit("dev", "nexkit/issue-5", {".nexkit/config.json": "{}\n"}, "PR")
+        self.repos.push_commit("dev", "main", {".nexkit/config.json": "[]\n"}, "Base")
+        self.checkout_branch()
+        result = self.run_fix()
+        self.assertEqual(result["status"], "error")
+        self.assertIn("conflicts with `main` in protected paths", result["error"])
+        self.assertIn("`.nexkit/config.json`", result["error"])
+        self.assertFalse(self.claude.log.exists())
+        self.assertTrue((self.out / "result.json").exists())
+
+    def test_fix_schema_lists_open_conflicts(self):
+        schema = agent.SCHEMAS["fix"]
+        self.assertIn("open_conflicts", schema["required"])
+        item = schema["properties"]["open_conflicts"]["items"]
+        self.assertEqual(item["required"], ["file", "base_change", "pr_change", "question"])
+        self.assertNotIn("open_conflicts", agent.SCHEMAS["implement"]["required"])
+        for field in item["required"]:
+            self.assertIn(f"`{field}`", agent._template("fix"))
+
+    def test_fix_prompt_asks_for_a_decision_instead_of_a_guess(self):
+        section = agent.conflicts_text("main", "b" * 40, ["Program.cs"])
+        self.assertIn("whether it has one right answer or needs a choice", section)
+        self.assertIn("do not pick a side and do not guess", section)
+        self.assertIn("return `status: blocked` and list every\n  such conflict", section)
+        self.assertIn("A note from the person who requested this round settles the choice", section)
+        self.assertIn("only resolve the conflicts", section)
+        self.assertEqual(agent.conflicts_text("main", None, []), "")
+
+    def review_after_merge(self):
+        """Review a fix round that merged main, after an earlier review of the branch."""
+        head, base = self.repos.diverge()
+        self.checkout_branch()
+        # The merge stops on the conflict in calc.py; the fix round resolves it.
+        merge = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-commit"]
+        merge.append("origin/main")
+        self.assertEqual(subprocess.run(merge, cwd=self.repo, capture_output=True).returncode, 1)
+        (self.repo / "calc.py").write_text(CALC + SUB + MUL)
+        git(self.repo, "add", "-A")
+        self.repos.commit(self.repo, "Merge main")
+        context = {
+            **CONTEXT,
+            "previous_head": head,
+            "previous_round": "1. suggestion, `calc.py:4`: Document sub().",
+            "merged": {"head": head, "base": base, "conflicts": ["calc.py"]},
+        }
+        verdict = {
+            "verdict": "approve",
+            "summary": "Good",
+            "criteria": [],
+            "findings": [],
+            "previous_findings": [],
+        }
+        self.claude.configure(result=verdict)
+        agent.run_stage(
+            "review",
+            context,
+            make_config(),
+            self.repo,
+            self.out,
+            claude=str(self.claude.path),
+            checks=[],
+            base="main",
+        )
+        return self.claude.call()["prompt"], base
+
+    def test_review_checks_both_sides_of_a_merge(self):
+        prompt, base = self.review_after_merge()
+        section = prompt.split("## Merge with `main` in this round", 1)[1]
+        section = section.split("## Previous round", 1)[0]
+        self.assertIn(f"merged `main` (commit\n{base[:7]})", section)
+        self.assertIn("- `calc.py`", section)
+        main_side, pr_side = section.split("This pull request:", 1)
+        self.assertIn("+def mul(a, b):", main_side)
+        self.assertIn("+def sub(a, b):", pr_side)
+        self.assertNotIn("+def mul", pr_side)
+        self.assertIn("check that the current code keeps both sides", section)
+
+    def test_changes_since_the_last_review_leave_out_the_base(self):
+        prompt, _ = self.review_after_merge()
+        since = prompt.split("## Changes since commit", 1)[1].split("## How to use", 1)[0]
+        self.assertIn("Changes that came from `main` through a merge are left out.", since)
+        # The resolution shows; the clean part of main's change does not.
+        self.assertIn("def mul(a, b):", since)
+        self.assertNotIn("+def add", since)
+        self.assertIn(">>>>>>>", since)
+        full = prompt.split("## Diff against main", 1)[1].split("## Merge with", 1)[0]
+        self.assertNotIn("+def mul", full)
+        self.assertIn("+def sub(a, b):", full)
 
 
 class AgentLogTests(StageCase):

@@ -17,7 +17,7 @@ $feedback
 $note
 </untrusted>
 
-## Approved plan
+$conflicts## Approved plan
 
 <untrusted>
 $plan
@@ -51,3 +51,12 @@ $writing
   to the next review.
 - `blocker`: why you stopped, when `status` is `blocked`; otherwise an empty string.
 - `checks_run`: the commands you ran and whether each passed.
+- `open_conflicts`: only when you stop because conflicts with the base branch need a
+  person's decision; otherwise an empty list. One entry for each open conflict:
+  - `file`: the file.
+  - `base_change`: what the base branch changed there, in one sentence.
+  - `pr_change`: what this pull request changed there, in one sentence.
+  - `question`: the choice a person has to make, as one question.
+
+  Keep `blocker` short when you list open conflicts. NexKit shows the list to a person,
+  who answers with a note on `/nexkit fix`.

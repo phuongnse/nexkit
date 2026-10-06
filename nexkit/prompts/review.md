@@ -30,7 +30,7 @@ $check_results
 $diff
 ```
 </untrusted>
-$previous
+$merge$previous
 ## How to review
 
 - Check each acceptance criterion in the plan against the code and its tests.

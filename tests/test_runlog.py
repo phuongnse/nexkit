@@ -203,6 +203,20 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("**Files changed** (1)\n\n```\ncalc.py\n```", text)
         self.assertIn("```\n✗ scripts/e2e.sh --all\n… sleep 999\n```", text)
 
+    def test_fix_summary_after_a_merge(self):
+        result = {
+            "stage": "fix",
+            "status": "done",
+            "changed_files": ["Program.cs", "README.md"],
+            "start_base": "b" * 40,
+            "conflicts": ["Program.cs"],
+        }
+        text = runlog.summary(result, [])
+        merged = "**Merged the base branch** (`bbbbbbb`); files with conflicts (1):"
+        self.assertIn(f"{merged}\n\n```\nProgram.cs\n```", text)
+        self.assertLess(text.index(merged), text.index("**Files changed** (2)"))
+        self.assertNotIn("Merged the base branch", runlog.summary({"stage": "fix"}, []))
+
     def test_review_summary(self):
         result = {
             "stage": "review",

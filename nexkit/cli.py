@@ -185,7 +185,17 @@ def cmd_publish(args):
     push_token = os.environ.get("NEXKIT_PUSH_TOKEN")
     author = GitHub(token=push_token) if push_token else bot
     try:
-        outcome = publish(bot, decision, result, context, _config(), args.repo, out, author=author)
+        outcome = publish(
+            bot,
+            decision,
+            result,
+            context,
+            _config(),
+            args.repo,
+            out,
+            author=author,
+            push_token=bool(push_token),
+        )
     except (PublishError, GitError, GitHubError) as exc:
         outcome = {"published": False, "error": str(exc)}
     print(json.dumps(outcome, indent=2))

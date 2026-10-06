@@ -389,7 +389,8 @@ class ConflictTests(StageCase):
         head, base = self.repos.diverge()
         self.checkout_branch()
         # The merge stops on the conflict in calc.py; the fix round resolves it.
-        merge = ["git", "merge", "-q", "--no-commit", "origin/main"]
+        merge = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-commit"]
+        merge.append("origin/main")
         self.assertEqual(subprocess.run(merge, cwd=self.repo, capture_output=True).returncode, 1)
         (self.repo / "calc.py").write_text(CALC + SUB + MUL)
         git(self.repo, "add", "-A")

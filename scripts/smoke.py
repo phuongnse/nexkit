@@ -119,6 +119,7 @@ def conflicts(root, claude):
         "pr": 2,
         "title": "Add small helper functions",
         "body": "Add the helper functions this project needs.",
+        "plan": "No plan was posted. Implement the issue as described.",
         "feedback": "No recorded feedback. Follow the note.",
     }
     calc = "def add(a, b):\n    return a + b\n"

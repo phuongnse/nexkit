@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.0
 
 - 🛑 marks only blocking findings. In a follow-up review, a suggestion that is still open
   shows as "💡 Suggestion, still open" instead of "🛑 unresolved", and a blocking finding

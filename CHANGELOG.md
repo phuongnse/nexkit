@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.1
 
 - An implement round no longer fails when the base branch moves while the agent works.
   `publish` opens the pull request on the base commit the agent started from, so the

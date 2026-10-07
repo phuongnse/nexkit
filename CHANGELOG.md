@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0
 
 - The review sees why an implementation leaves the plan. Its prompt now has the
   collaborators' discussion on the issue and the pull request, including notes on

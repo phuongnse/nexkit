@@ -36,6 +36,7 @@ CONTEXT = {
     "title": "add() returns the wrong result",
     "body": "calc.add(2, 3) returns -1. It should return 5.",
     "discussion": "No discussion.",
+    "outside_plan": "None.",
     "plan": "No plan was posted. Implement the issue as described.",
     "note": "None.",
     "feedback": "",

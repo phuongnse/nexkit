@@ -11,7 +11,7 @@ Every command starts one run of the reusable workflow
 | `agent` | plan, go, fix | read only | yes | Installs Claude Code, runs `setup`, then one Claude session. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | no | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
-| `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the check results and the previous review round. |
+| `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
@@ -240,6 +240,15 @@ One or two sentences: the main reason for the verdict.
 file:line references and assertions for each criterion and previous finding
 </details>
 ```
+
+The reviewer judges the code against the same requests the implementing agent followed.
+Its prompt has the plan, the issue and the discussion from collaborators on the issue and
+the pull request, including the notes on `/nexkit` commands, such as `/nexkit go Use M6`.
+It also gets the *Outside the plan* section of the pull request description: what the
+implementing agent did that the plan did not ask for, and why. A deviation whose reason
+holds, such as a change a collaborator asked for while approving the plan, is not a
+finding. A deviation without a reason, or with a reason that the plan, the issue and the
+discussion do not support, is.
 
 Every review is a fresh session, so the reviewer stays independent of the agent that wrote
 the code. When the pull request already has a NexKit review, the prompt adds a *Previous

@@ -2,7 +2,8 @@ import base64
 import json
 import unittest
 
-from nexkit.context import NO_PLAN, gather
+from nexkit.context import NO_PLAN, gather, outside_plan
+from nexkit.publish import pull_body
 from nexkit.state import empty_state, render_run, render_state
 from tests.support import FakeGitHub
 
@@ -117,6 +118,61 @@ class ContextTests(unittest.TestCase):
         context = gather(self.gh, {"action": "fix", "issue": 5, "pr": 6, "head": HEAD}, "review")
         self.assertNotIn("previous_head", context)
         self.assertEqual(context["feedback"], "")
+
+    def test_review_gets_the_discussion_with_command_notes(self):
+        self.gh.human_comment(
+            5, "Planned for M6, not unplanned", login="olivia", association="OWNER"
+        )
+        self.gh.human_comment(5, "Use M7", login="eve", association="NONE")
+        self.gh.human_comment(5, "/nexkit go and keep the old name", login="olivia")
+        self.gh.human_comment(5, "/nexkit plan")
+        self.gh.comment(5, "Bot status")
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        self.gh.human_comment(6, "Also update the docs", login="alice")
+        self.gh.human_comment(6, "/nexkit fix use the new docs page", login="alice")
+        decision = {"action": "implement", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
+        context = gather(self.gh, decision, "review")
+        issue, pull = context["discussion"].split("On the pull request:")
+        self.assertIn("Planned for M6", issue)
+        self.assertIn("/nexkit go and keep the old name", issue)
+        self.assertNotIn("Use M7", issue)
+        self.assertNotIn("/nexkit plan", issue)
+        self.assertNotIn("Bot status", issue)
+        self.assertIn("Also update the docs", pull)
+        self.assertIn("/nexkit fix use the new docs page", pull)
+        # The implement agent gets command notes through the decision, not the discussion.
+        implement = gather(self.gh, {**decision, "pr": ""})
+        self.assertNotIn("/nexkit go", implement["discussion"])
+
+    def test_review_gets_what_the_implementation_did_outside_the_plan(self):
+        result = {
+            "summary": "Marked the item as planned.",
+            "output": {
+                "changes": ["The item is planned for M6."],
+                "testing": "Docs only.",
+                "outside_plan": ["Wrote M6: the owner asked for it when approving the plan."],
+                "reviewer_notes": ["Check the milestone table."],
+            },
+        }
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        self.gh.pulls[6]["body"] = pull_body({"issue": 5}, result)
+        decision = {"action": "implement", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
+        context = gather(self.gh, decision, "review")
+        self.assertEqual(
+            context["outside_plan"], "- Wrote M6: the owner asked for it when approving the plan."
+        )
+        # The section ends at the next heading or at the closing rule.
+        self.assertNotIn("milestone table", outside_plan({"body": pull_body({"issue": 5}, result)}))
+        result["output"]["reviewer_notes"] = []
+        self.assertNotIn(
+            "Implemented by NexKit", outside_plan({"body": pull_body({"issue": 5}, result)})
+        )
+        result["output"]["outside_plan"] = []
+        self.assertEqual(outside_plan({"body": pull_body({"issue": 5}, result)}), "None.")
+        self.assertEqual(outside_plan({"body": None}), "None.")
+        edited = "## Outside the plan\r\n\r\n- Wrote M6.\r\n\r\n## Notes\r\n"
+        self.assertEqual(outside_plan({"body": edited}), "- Wrote M6.")
+        self.assertEqual(outside_plan({"body": "## Outside the plan\n\n"}), "None.")
 
     def test_review_after_a_fix_gets_the_previous_round(self):
         self.gh.add_pull(6, 5, head_sha=HEAD)

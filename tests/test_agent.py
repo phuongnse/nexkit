@@ -18,6 +18,7 @@ CONTEXT = {
     "title": "Fix add",
     "body": "add() subtracts. Use $HOME and ${{ secrets.X }} literally.",
     "discussion": "No discussion.",
+    "outside_plan": "None.",
     "plan": "Change add to return a + b.",
     "note": "None.",
     "feedback": "",
@@ -39,6 +40,22 @@ class PromptTests(unittest.TestCase):
         prompt = agent.build_prompt("review", CONTEXT, make_config(), extra)
         self.assertNotIn("Previous round", prompt)
         self.assertIn("</untrusted>\n\n## How to review", prompt)
+
+    def test_review_sees_the_discussion_and_why_the_code_leaves_the_plan(self):
+        context = {
+            **CONTEXT,
+            "discussion": "@olivia: Planned for M6.",
+            "outside_plan": "- Wrote M6: the owner asked for it.",
+        }
+        extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
+        prompt = agent.build_prompt("review", context, make_config(), extra)
+        self.assertIn("## Discussion\n", prompt)
+        self.assertIn("@olivia: Planned for M6.", prompt)
+        self.assertIn("## Outside the plan\n", prompt)
+        self.assertIn("- Wrote M6: the owner asked for it.", prompt)
+        self.assertIn("against its reason under *Outside the plan*", prompt)
+        self.assertNotIn("$discussion", prompt)
+        self.assertNotIn("$outside_plan", prompt)
 
     def test_every_prompt_has_the_writing_guide(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}

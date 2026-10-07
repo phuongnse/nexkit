@@ -5,26 +5,34 @@ Gathering happens in its own step so the agent process never holds a GitHub toke
 
 from __future__ import annotations
 
+import re
+
 from .github import TRUSTED_ASSOCIATIONS
 from .route import parse_command
 from .state import by_bot, clip, latest_plan, plan_text, read_state
 
 MAX_COMMENTS = 30
 NO_PLAN = "No plan was posted. Implement the issue as described."
+# The section of a NexKit pull request description that `publish.pull_body` writes from the
+# implement result's `outside_plan`.
+OUTSIDE_PLAN = re.compile(r"^## Outside the plan\n(.*?)(?=^## |^---$|\Z)", re.M | re.S)
 
 
 def _trusted(item):
     return item.get("author_association") in TRUSTED_ASSOCIATIONS and not by_bot(item)
 
 
-def _discussion(comments):
+def _discussion(comments, notes=False):
+    """Collaborators' comments. Command comments are left out, or with `notes` kept when
+    they carry a note: the agent that acts on a command gets its note through the
+    decision, the reviewer only through the discussion."""
     entries = []
     for comment in comments:
         if not _trusted(comment):
             continue
-        command, _ = parse_command(comment.get("body"))
-        if command:
-            continue  # Command notes reach the agent through the decision instead.
+        command, note = parse_command(comment.get("body"))
+        if command and not (notes and note):
+            continue
         entries.append(
             f"@{comment['user']['login']} ({comment['created_at']}):\n{clip(comment['body'])}"
         )
@@ -115,6 +123,14 @@ def previous_review(gh, decision, fix_result):
     return {"previous_head": last["head"], "previous_round": "\n".join(lines)}
 
 
+def outside_plan(pull):
+    """What the implementation agent did outside the plan, and why, from the pull request
+    description that NexKit wrote."""
+    body = ((pull or {}).get("body") or "").replace("\r\n", "\n")
+    match = OUTSIDE_PLAN.search(body)
+    return clip(match.group(1)) if match and match.group(1).strip() else "None."
+
+
 def _fixed(decision, fix_result):
     return decision["action"] == "fix" and (fix_result or {}).get("status") == "done"
 
@@ -134,9 +150,16 @@ def gather(gh, decision, stage=None, fix_result=None):
         "plan": plan_text(plan) if plan else NO_PLAN,
         "note": decision.get("note") or "None.",
         "feedback": "",
+        "outside_plan": "None.",
     }
     stage = stage or decision["action"]
     if stage == "review" and decision.get("pr"):
+        context["discussion"] = _discussion(comments, notes=True)
+        pr_comments = gh.comments(decision["pr"])
+        context["discussion"] += "\n\n---\n\nOn the pull request:\n\n" + _discussion(
+            pr_comments, notes=True
+        )
+        context["outside_plan"] = outside_plan(gh.pull(decision["pr"]))
         context.update(previous_review(gh, decision, fix_result) or {})
         if _fixed(decision, fix_result) and fix_result.get("start_base"):
             context["merged"] = {

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- The review sees why an implementation leaves the plan. Its prompt now has the
+  collaborators' discussion on the issue and the pull request, including notes on
+  `/nexkit` commands, and the *Outside the plan* section of the pull request description.
+  A change a collaborator asked for after the plan, for example while approving it, is no
+  longer blocked as a deviation, so an automatic fix round no longer reverts it.
+
 ## 1.5.1
 
 - An implement round no longer fails when the base branch moves while the agent works.

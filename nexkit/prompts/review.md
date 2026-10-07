@@ -17,6 +17,24 @@ $plan
 $body
 </untrusted>
 
+## Discussion
+
+Comments from collaborators on the issue and the pull request, including notes on
+`/nexkit` commands. They can change what the plan says.
+
+<untrusted>
+$discussion
+</untrusted>
+
+## Outside the plan
+
+What the implementation agent did that the plan did not ask for, and why, as it wrote in
+the pull request description.
+
+<untrusted>
+$outside_plan
+</untrusted>
+
 ## Project checks, run by NexKit on this exact commit
 
 <untrusted>
@@ -36,6 +54,12 @@ $merge$previous
 - Check each acceptance criterion in the plan against the code and its tests.
 - Look for bugs, missing or meaningless tests, security problems, and changes outside the
   scope of the issue. Read surrounding code when the diff is not enough.
+- A collaborator can change the plan in the discussion, for example while approving it.
+  What a collaborator asked for there is in scope, and a later comment wins over the plan.
+  Judge whether such a change is correct, not whether the plan names it.
+- Check each deviation from the plan against its reason under *Outside the plan* and
+  against the discussion. Do not raise a deviation whose reason holds. Raise one that has
+  no reason, or whose reason the plan, the issue and the discussion do not support.
 - Mark a finding `blocking` only for a real defect that should stop the merge. Use
   `suggestion` for improvements and style.
 - Do not raise findings about things the implementation agent cannot change: the pull

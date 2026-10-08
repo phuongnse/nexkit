@@ -315,6 +315,36 @@ class PublishTests(unittest.TestCase):
         # The notes appear only inside <details>.
         self.assertEqual(body.count("calc.py"), 1)
 
+    def test_replan_says_what_changed_since_the_last_plan(self):
+        changed = ["The name limit is 2,000 characters again.", "`label` is accepted."]
+        revised = {**PLAN, "revision": {"started_over": False, "changes": changed}}
+        body = render_plan(revised, replan=True)
+        self.assertIn(
+            "### Since the last plan\n\nRevised the last plan.\n\n"
+            "- The name limit is 2,000 characters again.\n- `label` is accepted.\n\n"
+            "### What changes",
+            body,
+        )
+        same = render_plan({**PLAN, "revision": {"started_over": False, "changes": []}}, None, True)
+        self.assertIn("Revised the last plan.\n\nNo decision, acceptance criterion", same)
+        fresh = {**PLAN, "revision": {"started_over": True, "changes": []}}
+        self.assertIn(
+            "### Since the last plan\n\nPlanned again from scratch, as asked.\n\n### What",
+            render_plan(fresh, replan=True),
+        )
+        self.assertNotIn("Since the last plan", render_plan(revised))  # a first plan
+
+    def test_replan_comment(self):
+        result = {
+            "status": "done",
+            "output": {**PLAN, "revision": {"started_over": False, "changes": []}},
+        }
+        context = {**CONTEXT, "since_plan": "No discussion."}
+        publish(self.gh, decision("plan"), result, context, self.cfg, ".", self.out)
+        self.assertIn("Revised the last plan.", latest_plan(self.gh.comments(5))["body"])
+        publish(self.gh, decision("plan"), result, CONTEXT, self.cfg, ".", self.out)
+        self.assertNotIn("Since the last plan", latest_plan(self.gh.comments(5))["body"])
+
     def test_implementation_note_can_hold_a_code_block(self):
         step = (
             "Add the migration:\n\n```sh\ndotnet ef migrations add Orders\n"

@@ -73,6 +73,12 @@ SCHEMAS = {
                     "required": ["title", "body"],
                 },
             },
+            # How a re-plan relates to the latest plan; shown only on a re-plan.
+            "revision": {
+                "type": "object",
+                "properties": {"started_over": {"type": "boolean"}, "changes": _STRING_LIST},
+                "required": ["started_over", "changes"],
+            },
         },
         "required": [
             "summary",
@@ -84,6 +90,7 @@ SCHEMAS = {
             "questions",
             "too_large",
             "split",
+            "revision",
         ],
     },
     "implement": {
@@ -231,6 +238,15 @@ def previous_round(repo, context, base):
         previous_round=context["previous_round"],
         changes=changes,
         base=base,
+    )
+
+
+def previous_plan(context):
+    """The plan prompt's section about the latest plan, or "" for a first plan."""
+    if "since_plan" not in context:
+        return ""
+    return Template(_template("plan_previous")).safe_substitute(
+        plan=context["plan"], since_plan=context["since_plan"]
     )
 
 
@@ -557,6 +573,8 @@ def run_stage(
     if stage == "fix":
         merged, conflicts = merge_base_branch(repo, base)
         extra["conflicts"] = conflicts_text(base, merged, conflicts)
+    if stage == "plan":
+        extra["previous"] = previous_plan(context)
     if stage == "review":
         extra = {
             "base": base,

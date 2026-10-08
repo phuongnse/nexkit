@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A re-plan revises the latest plan instead of starting over. The plan agent gets the
+  latest plan and the discussion since it, keeps what nothing asks to change, and applies
+  what is asked. The plan comment's *Since the last plan* section lists what changed. A
+  note such as `/nexkit plan from scratch` plans again without the latest plan's choices.
 - A plain comment no longer cancels a waiting `/nexkit` command: `nexkit init` sets
   `concurrency` on the `nexkit` job. In repositories set up earlier, move that block in
   `.github/workflows/nexkit.yml` into the job; `nexkit doctor` reports it.

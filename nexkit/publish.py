@@ -66,12 +66,27 @@ def render_profile(result, cfg):
     return profile_record({"profile": name, "chosen_by": chosen_by}), profile_text(text)
 
 
-def render_plan(output, profile=None):
+def _revision(output):
+    """The lines of a re-plan's *Since the last plan* section."""
+    revision = output.get("revision") or {}
+    changes = _bullets(revision.get("changes"))
+    if revision.get("started_over"):
+        head = "Planned again from scratch, as asked."
+    else:
+        head = "Revised the last plan."
+        changes = changes or ["No decision, acceptance criterion or scope item changed."]
+    return [head, *(["", *changes] if changes else [])]
+
+
+def render_plan(output, profile=None, replan=False):
     """The plan comment: the part a person approves, then the agent's notes collapsed.
-    `profile` comes from `render_profile`, when profiles are configured."""
+    `profile` comes from `render_profile`, when profiles are configured. A re-plan says how
+    it differs from the latest plan."""
     record, text = profile or (None, None)
     parts = [PLAN_MARKER, *([record] if record else []), "## Plan", "", output["summary"].strip()]
     parts += ["", *([text, ""] if text else [])]
+    if replan:
+        parts += _section("Since the last plan", _revision(output))
     parts += _section("What changes", _bullets(output.get("changes")))
     decisions = [
         f"- **{item['decision'].strip()}** {item['reason'].strip()}"
@@ -121,9 +136,10 @@ def render_plan(output, profile=None):
     return "\n".join(parts)
 
 
-def publish_plan(gh, decision, result, cfg):
+def publish_plan(gh, decision, result, context, cfg):
     profile = render_profile(result, cfg) if cfg["profiles"] else None
-    comment = gh.comment(decision["issue"], render_plan(result["output"], profile))
+    body = render_plan(result["output"], profile, replan="since_plan" in context)
+    comment = gh.comment(decision["issue"], body)
     return {"published": True, "comment": comment.get("html_url")}
 
 
@@ -275,7 +291,7 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
     if result.get("status") != "done":
         return {"published": False}
     if decision["action"] == "plan":
-        return publish_plan(gh, decision, result, cfg)
+        return publish_plan(gh, decision, result, context, cfg)
     patch = (Path(out_dir) / "changes.patch").resolve()
     # A merge whose resolution keeps this branch's side everywhere has an empty patch.
     empty_ok = decision["action"] == "fix" and result.get("start_base")

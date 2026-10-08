@@ -212,6 +212,15 @@ def main():
             raise SystemExit("plan: the rendered plan lacks the implementation notes")
         print(CONTEXT["plan"], flush=True)
 
+        # A re-plan revises that plan with what was asked since it.
+        since = "@olivia: Also test that add(-2, -3) returns -5."
+        context = {**CONTEXT, "since_plan": since, "note": "Add the negative-number case."}
+        replan = stage("plan", work, root / "replan", args.claude, context)
+        revision = replan["output"]["revision"]
+        print(render_plan(replan["output"], replan=True), flush=True)
+        if revision["started_over"] or not revision["changes"]:
+            raise SystemExit(f"replan: wanted a revision with changes, got {revision}")
+
         implement = stage("implement", work, root / "implement", args.claude)
         if "calc.py" not in implement["changed_files"]:
             raise SystemExit("implement: calc.py was not changed")

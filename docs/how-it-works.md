@@ -161,6 +161,7 @@ One or two sentences: what changes and why.
 
 **Profile: hard** (models)  only with profiles: why, and how to change it
 
+### Since the last plan   only on a re-plan: revised or started over, and what changed
 ### What changes          up to six bullets about behaviour
 ### Decisions to check    choices the issue did not settle, each with a short reason
 ### Risks and limits      what could go wrong or is left out
@@ -176,6 +177,13 @@ Files, signatures, commands: the detail the implementing agent needs.
 Empty sections are left out. The implementing agent, and the reviewer, receive the whole
 comment, including the implementation notes, but not the profile lines. Plans posted by
 earlier releases are read the same way.
+
+A re-plan revises the latest plan. The agent gets that plan and the discussion since it,
+keeps what nothing asks to change, and applies what the discussion and the note ask for;
+where the issue now differs from the plan, the issue wins. A note that asks for a plan
+from scratch, such as `/nexkit plan from scratch`, makes it plan again without the latest
+plan's choices. *Since the last plan* says which happened and lists each decision,
+acceptance criterion or scope item that was added, changed or removed.
 
 **Implement and fix.** Full Claude Code tools on a disposable runner. The prompt contains
 the plan, the issue, the discussion from collaborators, and for fix rounds the failing

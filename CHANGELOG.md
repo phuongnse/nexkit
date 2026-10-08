@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.0
 
 - A re-plan revises the latest plan instead of starting over. The plan agent gets the
   latest plan and the discussion since it, keeps what nothing asks to change, and applies

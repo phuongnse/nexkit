@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 
-from .state import by_bot
+from . import config as configuration
+from .state import by_bot, latest_plan, plan_profile
 
 BRANCH_PREFIX = "nexkit/issue-"
 COMMAND = re.compile(r"^\s*/nexkit\s+([a-z]+)\b[ \t]*(.*)$", re.DOTALL)
@@ -141,3 +142,31 @@ def _decide(gh, command, number, on_pull, note, *, auto):
         "note": note,
         "auto": False,
     }
+
+
+def with_profile(gh, decision, cfg):
+    """Return the decision and configuration for the run's profile, or a refusal.
+
+    The profile comes from the latest plan. `/nexkit plan` gets it as `previous_profile`,
+    because triage chooses this plan's profile in the agent job. The other actions use it,
+    or `default_profile` when no plan names one. They never fall back from a profile that
+    is no longer configured, because that could move a hard issue to a weaker model.
+    """
+    if not cfg["profiles"] or decision["action"] == "none":
+        return decision, cfg
+    issue = decision["issue"]
+    plan = latest_plan(gh.comments(issue))
+    record = plan_profile(plan) if plan else None
+    name = record["profile"] if record else None
+    if decision["action"] == "plan":
+        # A profile that was only the fallback after a failed triage is not a choice to keep.
+        kept = name in cfg["profiles"] and record.get("chosen_by") != "default"
+        return {**decision, "previous_profile": name if kept else None}, cfg
+    name = name or cfg["default_profile"]
+    if name not in cfg["profiles"]:
+        reason = (
+            f"The plan on #{issue} uses the profile `{name}`, which is no longer in "
+            f".nexkit/config.json. Comment `/nexkit plan` on #{issue} to plan it again."
+        )
+        return _none(reason, decision["target"]), cfg
+    return {**decision, "profile": name}, configuration.with_profile(cfg, name)

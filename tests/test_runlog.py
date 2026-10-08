@@ -203,6 +203,12 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("**Files changed** (1)\n\n```\ncalc.py\n```", text)
         self.assertIn("```\n✗ scripts/e2e.sh --all\n… sleep 999\n```", text)
 
+    def test_triage_summary_names_the_profile(self):
+        result = {"stage": "triage", "status": "error", "profile": "hard", "error": "Timed out."}
+        text = runlog.summary(result, [])
+        self.assertIn("### NexKit triage: error", text)
+        self.assertIn("**Profile:** `hard`\n\n**Why it stopped**", text)
+
     def test_fix_summary_after_a_merge(self):
         result = {
             "stage": "fix",

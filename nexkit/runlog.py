@@ -285,6 +285,8 @@ def summary(result, calls):
         "|" + "---|" * len(columns),
         "| " + " | ".join(map(str, columns.values())) + " |",
     ]
+    if result.get("profile"):
+        lines += ["", f"**Profile:** {code(one_line(result['profile']))}"]
     if result.get("error"):
         lines += ["", "**Why it stopped**", "", _block(result["error"])]
     if result.get("start_base"):

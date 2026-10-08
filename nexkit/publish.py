@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import config as configuration
 from .gitutil import BOT_EMAIL, BOT_NAME, GitError, git, is_ancestor, merge_tree, names
-from .state import PLAN_MARKER
+from .state import PLAN_MARKER, profile_record, profile_text
 
 
 class PublishError(RuntimeError):
@@ -39,9 +39,39 @@ def _numbered(items):
     return lines
 
 
-def render_plan(output):
-    """The plan comment: the part a person approves, then the agent's notes collapsed."""
-    parts = [PLAN_MARKER, "## Plan", "", output["summary"].strip(), ""]
+def render_profile(result, cfg):
+    """(hidden record, lines for people) for a plan comment: the profile, its models and
+    why it was chosen."""
+    name = result.get("profile")
+    if name not in cfg["profiles"]:
+        raise PublishError(f"The plan names no configured profile: {name!r}")
+    triage = result.get("triage") or {}
+    chosen_by = triage.get("chosen_by") or "default"
+    settings = configuration.with_profile(cfg, name)
+    models = ", ".join(
+        f"{stage} `{configuration.stage(settings, stage)['model']}`"
+        for stage in configuration.STAGES
+    )
+    if chosen_by == "triage":
+        reason = (triage.get("reason") or "").strip()
+    else:
+        error = (triage.get("error") or "no result").strip().splitlines()[0][:300]
+        which = "the previous plan's profile" if chosen_by == "previous" else "the default profile"
+        reason = f"Triage failed ({error}), so this plan uses {which}."
+    text = (
+        f"**Profile: {name}** ({models}). {reason}\n\n"
+        "To use another profile, say which in a comment and comment `/nexkit plan`, or "
+        "comment `/nexkit plan <request>`."
+    )
+    return profile_record({"profile": name, "chosen_by": chosen_by}), profile_text(text)
+
+
+def render_plan(output, profile=None):
+    """The plan comment: the part a person approves, then the agent's notes collapsed.
+    `profile` comes from `render_profile`, when profiles are configured."""
+    record, text = profile or (None, None)
+    parts = [PLAN_MARKER, *([record] if record else []), "## Plan", "", output["summary"].strip()]
+    parts += ["", *([text, ""] if text else [])]
     parts += _section("What changes", _bullets(output.get("changes")))
     decisions = [
         f"- **{item['decision'].strip()}** {item['reason'].strip()}"
@@ -91,8 +121,9 @@ def render_plan(output):
     return "\n".join(parts)
 
 
-def publish_plan(gh, decision, result):
-    comment = gh.comment(decision["issue"], render_plan(result["output"]))
+def publish_plan(gh, decision, result, cfg):
+    profile = render_profile(result, cfg) if cfg["profiles"] else None
+    comment = gh.comment(decision["issue"], render_plan(result["output"], profile))
     return {"published": True, "comment": comment.get("html_url")}
 
 
@@ -244,7 +275,7 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
     if result.get("status") != "done":
         return {"published": False}
     if decision["action"] == "plan":
-        return publish_plan(gh, decision, result)
+        return publish_plan(gh, decision, result, cfg)
     patch = (Path(out_dir) / "changes.patch").resolve()
     # A merge whose resolution keeps this branch's side everywhere has an empty patch.
     empty_ok = decision["action"] == "fix" and result.get("start_base")

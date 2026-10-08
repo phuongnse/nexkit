@@ -11,7 +11,7 @@ from unittest import mock
 import nexkit
 import nexkit.config
 from nexkit import cli, scaffold
-from tests.support import FakeGitHub, git
+from tests.support import PROFILES, FakeGitHub, git
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -106,6 +106,26 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(out["agent_timeout"], "75")
         self.assertEqual(self.gh.reactions, [(3, "eyes")])
         self.assertEqual(len(self.gh.run_comments(5)), 1)
+
+    def test_route_allows_for_triage_and_the_longest_plan(self):
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw.update(profiles=PROFILES, default_profile="standard")
+        path.write_text(json.dumps(raw))
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 3, "body": "/nexkit plan", "user": {"login": "alice"}},
+        }
+        out = self.run_route("issue_comment", event)
+        self.assertEqual(out["agent_timeout"], str(5 + 40 + 30))
+        self.assertIsNone(json.loads(out["decision"])["previous_profile"])
+        # Other runs get the profile's settings in the configuration they pass on.
+        event["comment"]["body"] = "/nexkit go"
+        out = self.run_route("issue_comment", event)
+        self.assertEqual(json.loads(out["decision"])["profile"], "standard")
+        cfg = json.loads(out["config"])
+        self.assertEqual(nexkit.config.stage(cfg, "implement")["model"], "sonnet")
 
     def test_route_on_pull_request_marks_the_round_running(self):
         self.gh.add_pull(6, 5, head_sha="b" * 40)

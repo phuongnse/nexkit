@@ -21,6 +21,27 @@ def make_config(**overrides):
     return validate(raw)
 
 
+PROFILES = {
+    "standard": {
+        "when": "Clear spec, one layer.",
+        "stages": {"plan": {"model": "opus"}, "implement": {"model": "sonnet"}},
+    },
+    "hard": {
+        "when": "Touches security or storage.",
+        "stages": {
+            "plan": {"model": "fable", "timeout_minutes": 40},
+            "implement": {"model": "opus", "max_budget_usd": 20},
+            "review": {"model": "fable", "effort": "max"},
+        },
+    },
+}
+
+
+def profile_config(**overrides):
+    """A configuration with the `standard` and `hard` profiles."""
+    return make_config(profiles=PROFILES, default_profile="standard", **overrides)
+
+
 class FakeGitHub:
     def __init__(self, repository="acme/app"):
         self.repository = repository

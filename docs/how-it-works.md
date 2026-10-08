@@ -40,6 +40,13 @@ outcome. Comments of earlier runs keep their final state.
 comment ends with 🚀 or 😕 on that comment. Runs started by a dispatch or by a
 *Request changes* review have no comment to react to.
 
+### One run at a time
+
+Runs for one issue or pull request run one at a time, in order. Only commands, *Request
+changes* reviews and dispatches wait in this queue; other comments do not. GitHub keeps
+one waiting run, so a command posted while another waits replaces it. A command that
+never got 👀 did not run; post it again.
+
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
 own run started. If that comment was deleted, `report` posts a new one.
 

@@ -11,6 +11,13 @@ transcript: `transcript.md` to read, `transcript.jsonl` with every event.
 The workflow file must be on the default branch. The comment's first line must start with
 `/nexkit`. Edited comments are ignored; post a new one.
 
+**A command never got 👀.** Another command replaced it while it waited. Post it again
+once the running command finishes. See [one run at a time](how-it-works.md#one-run-at-a-time).
+
+**`nexkit doctor`: "Set 'concurrency' on the 'nexkit' job".** In workflows installed before
+NexKit 1.8, a plain comment can cancel a waiting command. Move the `concurrency` block in
+`.github/workflows/nexkit.yml` into the `nexkit` job, as `nexkit init` writes it.
+
 **"needs write access".** The commenter must be a collaborator with write, maintain or
 admin permission.
 

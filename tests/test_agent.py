@@ -44,6 +44,31 @@ class PromptTests(unittest.TestCase):
         self.assertIn("`.github/`", prompt)
         self.assertNotIn("$plan", prompt)
 
+    def test_first_plan_has_no_latest_plan(self):
+        extra = {"previous": agent.previous_plan(CONTEXT)}
+        prompt = agent.build_prompt("plan", CONTEXT, make_config(), extra)
+        self.assertNotIn("Latest plan", prompt)
+        self.assertIn("</untrusted>\n\n## Note from the person", prompt)
+        self.assertNotRegex(prompt, r"\$(previous|since_plan)\b")
+
+    def test_replan_revises_the_latest_plan(self):
+        context = {**CONTEXT, "since_plan": "@olivia: Also accept `label`."}
+        extra = {"previous": agent.previous_plan(context)}
+        prompt = agent.build_prompt("plan", context, make_config(), extra)
+        order = [
+            "## Discussion\n",
+            "## Latest plan\n",
+            "Change add to return a + b.",
+            "## Discussion since the latest plan\n",
+            "Also accept `label`.",
+            "## How to use the latest plan",
+            "## Note from the person",
+            "`revision`",
+        ]
+        positions = [prompt.index(text) for text in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("`revision.started_over`", prompt)
+
     def test_first_review_has_no_previous_round(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         prompt = agent.build_prompt("review", CONTEXT, make_config(), extra)
@@ -83,6 +108,9 @@ class PromptTests(unittest.TestCase):
             self.assertIn(f"`{field}`", agent._template("plan"))
         decision = schema["properties"]["decisions"]["items"]
         self.assertEqual(decision["required"], ["decision", "reason"])
+        self.assertIn("revision", schema["required"])
+        revision = schema["properties"]["revision"]
+        self.assertEqual(revision["required"], ["started_over", "changes"])
         self.assertNotIn("approach", schema["properties"])
 
     def test_implement_schema_has_the_pull_request_sections(self):

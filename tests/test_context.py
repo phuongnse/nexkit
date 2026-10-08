@@ -4,7 +4,13 @@ import unittest
 
 from nexkit.context import NO_PLAN, gather, outside_plan
 from nexkit.publish import pull_body
-from nexkit.state import empty_state, render_run, render_state
+from nexkit.state import (
+    empty_state,
+    profile_record,
+    profile_text,
+    render_run,
+    render_state,
+)
 from tests.support import FakeGitHub
 
 HEAD = "d" * 40
@@ -28,6 +34,28 @@ class ContextTests(unittest.TestCase):
         self.assertNotIn("/nexkit plan", context["discussion"])
         self.assertEqual(context["plan"], "new plan")
         self.assertEqual(context["note"], "go")
+
+    def test_plan_context_has_the_profile_requests_in_order(self):
+        self.gh.human_comment(5, "This needs the hard profile.")
+        self.gh.human_comment(5, "/nexkit plan Use the standard profile after all.")
+        self.gh.human_comment(5, "/nexkit plan")
+        self.gh.human_comment(5, "Use the expert profile", login="eve", association="NONE")
+        context = gather(self.gh, {"action": "plan", "issue": 5, "note": ""})
+        requests = context["requests"]
+        self.assertLess(requests.index("hard profile"), requests.index("standard profile"))
+        self.assertNotIn("expert", requests)
+        self.assertNotIn("standard profile", context["discussion"])
+        self.assertNotIn("requests", gather(self.gh, {"action": "implement", "issue": 5}))
+
+    def test_agents_get_the_plan_without_the_profile_lines(self):
+        record = profile_record({"profile": "hard", "chosen_by": "triage"})
+        self.gh.comment(
+            5,
+            f"<!-- nexkit:plan -->\n{record}\n## Plan\n\nAdd it.\n\n"
+            f"{profile_text('**Profile: hard**')}\n\n### What changes\n\n- It adds.",
+        )
+        plan = gather(self.gh, {"action": "implement", "issue": 5})["plan"]
+        self.assertEqual(plan, "## Plan\n\nAdd it.\n\n### What changes\n\n- It adds.")
 
     def test_missing_plan(self):
         context = gather(self.gh, {"action": "implement", "issue": 5})

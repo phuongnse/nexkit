@@ -34,6 +34,13 @@ files or repository settings, and wait for confirmation.
 3. **Choose the model.** Default `sonnet` for every stage. Mention that `opus` gives
    stronger results at a higher cost, and that each stage can be set separately in the
    config (see the configuration reference in the NexKit repository).
+   If the user wants to save cost on easy issues, offer `profiles`: for example a cheap
+   `standard` profile and a stronger `hard` one, each with a `when` text that describes
+   its issues in terms an issue shows (the parts of the system it touches). Set
+   `default_profile` to the cheapest one. A triage call then picks the profile at every
+   `/nexkit plan`, the plan comment shows it, and a collaborator changes it with
+   `/nexkit plan <request>`. `nexkit init` does not write profiles; add them to
+   `.nexkit/config.json` after step 4.
    If the repository is public, say that anyone signed in to GitHub can read NexKit's
    logs and artifacts. NexKit redacts known secrets, but offer `"transcript": false` in
    the config to stop storing Claude's transcripts.

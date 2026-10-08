@@ -18,6 +18,14 @@ STATE_PREFIX = "<!-- nexkit:state "
 STATE_PATTERN = re.compile(r"<!-- nexkit:state ([A-Za-z0-9+/=]+) -->")
 RUN_PREFIX = "<!-- nexkit:run "
 RUN_PATTERN = re.compile(r"<!-- nexkit:run ([A-Za-z0-9+/=]+) -->")
+# A plan's profile: a hidden record on the line after the plan marker, where agent text
+# cannot be, and lines for people that the agents do not receive.
+PROFILE_PREFIX = "<!-- nexkit:profile "
+PROFILE_RECORD = re.compile(r"\n<!-- nexkit:profile ([A-Za-z0-9+/=]+) -->")
+PROFILE_TEXT = ("<!-- nexkit:profile-text -->", "<!-- /nexkit:profile-text -->")
+PROFILE_TEXT_PATTERN = re.compile(
+    r"<!-- nexkit:profile-text -->.*?<!-- /nexkit:profile-text -->\n*", re.S
+)
 
 RUNNING, SUCCESS, FAILURE = "running", "success", "failure"
 RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌"}
@@ -38,8 +46,39 @@ def latest_plan(comments):
     return plans[-1] if plans else None
 
 
+def _profile_record(comment):
+    """The match of the hidden profile record on the line after the plan marker, or None."""
+    body = comment["body"]
+    return PROFILE_RECORD.match(body, len(PLAN_MARKER)) if body.startswith(PLAN_MARKER) else None
+
+
 def plan_text(comment):
-    return comment["body"].removeprefix(PLAN_MARKER).strip()
+    """The plan for the agents: without the profile, which is for people."""
+    record = _profile_record(comment)
+    body = comment["body"][record.end() if record else len(PLAN_MARKER) :]
+    return PROFILE_TEXT_PATTERN.sub("", body).strip()
+
+
+def profile_record(record):
+    """The hidden line after a plan's marker. `record` holds `profile` and `chosen_by`."""
+    return _encode(PROFILE_PREFIX, record)
+
+
+def profile_text(text):
+    """The profile lines of a plan comment, marked so the agents do not receive them."""
+    return f"{PROFILE_TEXT[0]}\n\n{text.strip()}\n\n{PROFILE_TEXT[1]}"
+
+
+def plan_profile(comment):
+    """The profile record of a plan comment, or None for a plan without profiles."""
+    match = _profile_record(comment)
+    if not match:
+        return None
+    try:
+        record = json.loads(base64.b64decode(match.group(1)))
+    except ValueError:
+        return None
+    return record if isinstance(record, dict) and isinstance(record.get("profile"), str) else None
 
 
 def _marked(comments, pattern):

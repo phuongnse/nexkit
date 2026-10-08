@@ -115,7 +115,8 @@ Merging is up to you unless you set `"auto_merge": true`.
 }
 ```
 
-Models, time and cost limits can be set per stage. See the
+Models, time and cost limits can be set per stage, and per profile: a triage step reads
+each issue and picks a profile, so hard issues get stronger models than easy ones. See the
 [configuration reference](docs/configuration.md).
 
 ## Learn more

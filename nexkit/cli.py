@@ -72,7 +72,7 @@ def cmd_doctor(args):
 def cmd_route(args):
     from . import progress
     from .github import GitHubError
-    from .route import route
+    from .route import route, with_profile
 
     gh = _gh()
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
@@ -87,6 +87,8 @@ def cmd_route(args):
                 "reason": f"NexKit configuration error: {exc}",
                 "reply_to": decision["target"],
             }
+        else:
+            decision, cfg = with_profile(gh, decision, cfg)
     print(json.dumps(decision, indent=2))
     if decision["action"] == "none":
         if decision.get("reply_to"):
@@ -97,7 +99,14 @@ def cmd_route(args):
         _output(action="none", decision=decision, config={})
         return 0
     progress.start(gh, decision)
-    agent_stage = configuration.stage(cfg, decision["action"])
+    agent_minutes = configuration.stage(cfg, decision["action"])["timeout_minutes"]
+    if decision["action"] == "plan" and cfg["profiles"]:
+        # Triage chooses the profile inside the job, so allow for the longest plan.
+        longest = max(
+            configuration.stage(configuration.with_profile(cfg, name), "plan")["timeout_minutes"]
+            for name in cfg["profiles"]
+        )
+        agent_minutes = configuration.stage(cfg, "triage")["timeout_minutes"] + longest
     review_stage = configuration.stage(cfg, "review")
     checks_minutes = sum(c["timeout_minutes"] for c in cfg["checks"])
     _output(
@@ -108,7 +117,7 @@ def cmd_route(args):
         base=decision["base"],
         branch=decision["branch"],
         agent_ref=decision["branch"] if decision["action"] == "fix" else decision["base"],
-        agent_timeout=str(agent_stage["timeout_minutes"] + 30),
+        agent_timeout=str(agent_minutes + 30),
         review_timeout=str(review_stage["timeout_minutes"] + 30),
         checks_timeout=str(checks_minutes + 40),
         claude_version=CLAUDE_CODE,
@@ -133,7 +142,7 @@ def cmd_context(args):
 
 
 def cmd_agent(args):
-    from .agent import run_stage
+    from .agent import run_stage, run_triage
     from .checks import setup
     from .redact import Redactor
     from .runlog import summary, write_summary
@@ -157,8 +166,14 @@ def cmd_agent(args):
             (out / "result.json").write_text(json.dumps(result, indent=2))
             write_summary(summary(result, []), redact)
             return 0
+    triage = None
+    if stage == "plan" and cfg["profiles"]:
+        triage = run_triage(context, cfg, decision.get("previous_profile"), out)
+        cfg = configuration.with_profile(cfg, triage["profile"])
     checks = json.loads(Path(args.checks).read_text()) if args.checks else None
-    result = run_stage(stage, context, cfg, args.repo, out, checks=checks, base=decision["base"])
+    result = run_stage(
+        stage, context, cfg, args.repo, out, checks=checks, base=decision["base"], triage=triage
+    )
     print(json.dumps({k: v for k, v in result.items() if k != "output"}, indent=2))
     return 0
 

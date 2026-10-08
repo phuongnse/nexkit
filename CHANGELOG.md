@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0
 
 - Profiles choose the models for each issue. A repository can define `profiles` in
   `.nexkit/config.json`, each with a `when` text that says which issues belong in it and

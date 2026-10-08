@@ -53,6 +53,22 @@ class InitDoctorTests(unittest.TestCase):
         self.assertIn((False, "The 'origin' remote is not a GitHub repository"), findings)
         self.assertEqual(cli.main(["doctor", "--repo", str(self.root)]), 1)
 
+    def test_concurrency_group_is_on_the_job(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".github/workflows/nexkit.yml"
+        text = path.read_text()
+        group = (
+            "concurrency:\n      group: nexkit-${{ github.event.issue.number || "
+            "github.event.pull_request.number || inputs.number }}\n"
+        )
+        self.assertIn("\n    " + group, text.split("\n  nexkit:\n", 1)[1])
+        self.assertNotRegex(text, r"(?m)^concurrency:|cancel-in-progress")
+        ok = (True, "Commands on one issue or pull request run one at a time")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        # A workflow from NexKit 1.7 or earlier sets it for the whole workflow.
+        path.write_text(text.replace("    " + group, "").replace("jobs:", "concurrency: x\njobs:"))
+        self.assertNotIn(ok, scaffold.doctor(self.root))
+
     def test_repository_of(self):
         git(self.root, "init", "-q")
         git(self.root, "remote", "add", "origin", "git@github.com:acme/app.git")

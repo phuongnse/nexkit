@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A plain comment no longer cancels a waiting `/nexkit` command: `nexkit init` sets
+  `concurrency` on the `nexkit` job. In repositories set up earlier, move that block in
+  `.github/workflows/nexkit.yml` into the job; `nexkit doctor` reports it.
+
 ## 1.7.0
 
 - Profiles choose the models for each issue. A repository can define `profiles` in

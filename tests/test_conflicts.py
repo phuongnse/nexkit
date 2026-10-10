@@ -59,9 +59,12 @@ class SweepTests(unittest.TestCase):
         self.assertIn("automatic conflict rounds are used up", line)
         self.assertFalse(self.gh.dispatches)
 
-    def test_a_paused_round_is_not_replaced(self):
+    def test_a_paused_or_running_round_is_not_replaced(self):
         self.round(6, 1, status="paused")
         self.assertEqual(self.sweep(), [])
+        self.round(6, 2, status="running")
+        self.assertEqual(self.sweep(), [])
+        self.assertFalse(self.gh.dispatches)
 
     def test_unknown_mergeability(self):
         self.gh.pulls[6]["mergeable"] = None

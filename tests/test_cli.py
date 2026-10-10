@@ -149,6 +149,41 @@ class InitDoctorTests(unittest.TestCase):
         findings = scaffold.doctor(self.root)
         self.assertTrue(any("has no 'push' trigger" in m for ok, m in findings if not ok))
 
+    def test_doctor_with_github(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["notify"] = ["owner", "reader"]
+        path.write_text(json.dumps(cfg))
+        answers = {
+            ".default_branch": "main\n",
+            "owner/permission": "admin\n",
+            "reader/permission": "read\n",
+        }
+
+        def fake_gh(*args):
+            if args[:2] == ("auth", "status"):
+                return "Logged in"
+            for key, value in answers.items():
+                if any(key in arg for arg in args):
+                    return value
+            return None
+
+        with (
+            mock.patch.object(scaffold, "repository_of", return_value="acme/app"),
+            mock.patch.object(scaffold, "_gh", side_effect=fake_gh),
+        ):
+            findings = scaffold.doctor(self.root)
+            self.assertIn((True, "notify: @owner has write access"), findings)
+            self.assertTrue(any("@reader has no write access" in m for ok, m in findings))
+            self.assertFalse(any("does not list the default branch" in m for _, m in findings))
+            answers[".default_branch"] = "trunk\n"
+            findings = scaffold.doctor(self.root)
+            self.assertTrue(any("does not list the default branch trunk" in m for _, m in findings))
+            cfg["notify"] = []
+            path.write_text(json.dumps(cfg))
+            scaffold.doctor(self.root)  # no notify: the rest of the checks still run
+
     def test_trigger(self):
         workflow = (
             "on:\n  push:\n    branches: [main] # x\n  schedule:\n    - cron: '1 * * * *'\njobs:\n"

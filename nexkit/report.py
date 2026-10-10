@@ -251,7 +251,7 @@ def _stop_round(gh, decision, agent, outcome, message, reason=None):
     progress.save_round(gh, decision["pr"], comment_id, row, message)
 
 
-def pause(result, cfg, command, number, note="", auto="resume"):
+def pause(result, cfg, command, number, note="", auto="resume", resumed=False):
     """(message, resume record or None) for a stage that stopped at the usage limit.
 
     The resume record goes into the run comment's marker; `maintain` starts the command
@@ -261,6 +261,10 @@ def pause(result, cfg, command, number, note="", auto="resume"):
     shown_command = f"`/nexkit {command}`" + (" with the same note" if note else "")
     message = f"⏸️ Claude stopped at the account's usage limit: {result.get('limit') or ''}"
     message = message.rstrip(": ") + "."
+    if resumed and not known:
+        # A run that was resumed blind and stopped again: a person decides, so a limit
+        # that never resets cannot start a run every hour.
+        at = None
     if not cfg["resume_after_usage_limit"] or not at:
         reset = f"It resets at {shown(at)}." if known and at else "The reset time is unknown."
         return f"{message} {reset} Comment {shown_command} after the reset to continue.", None
@@ -295,6 +299,7 @@ def _paused_agent(gh, decision, cfg, agent):
         decision["target"],
         decision.get("note"),
         auto_input(decision, resume=True),
+        resumed=bool(decision.get("resumed")),
     )
     reason = needs_person("paused", cfg, resume=resume)
     if not decision.get("pr"):
@@ -440,7 +445,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     resume = None
     if review_paused:
         # The commit is published and checked; only the review runs again after the reset.
-        message, resume = pause(reviewed, cfg, "review", pr)
+        message, resume = pause(reviewed, cfg, "review", pr, resumed=bool(decision.get("resumed")))
         _pause_statuses(gh, head, resume, url)
         checks_ok, verdict = checks is not None and all(c["passed"] for c in checks), None
     else:

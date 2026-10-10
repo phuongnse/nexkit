@@ -87,11 +87,11 @@ def usage_limit(texts, now=None, resets_at=None):
     stream; it wins over the text."""
     now = now or datetime.now(UTC)
     for text in texts:
-        text = str(text or "")
-        found = LIMIT.search(text)
-        if not found:
+        # Claude Code's message is short and says it first; longer text is something else.
+        text = str(text or "").strip()
+        line = text.splitlines()[0][:300] if text else ""
+        if not LIMIT.search(line) or len(text) > 1000:
             continue
-        line = next(row for row in text.splitlines() if LIMIT.search(row)).strip()[:300]
         when = None
         if isinstance(resets_at, (int, float)) and resets_at > 0:
             when = datetime.fromtimestamp(resets_at, UTC)

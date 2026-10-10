@@ -33,10 +33,11 @@
   NexKit's own merges, pushes to the default branch and the hourly schedule start the
   check, and an automatic merge refused because of a conflict starts the round too. A
   conflict that needs a choice still ends as `blocked`. Each pull request gets at most 3
-  such rounds, apart from `max_auto_fixes`, and one per base commit; a round whose branch
-  no longer conflicts ends without running Claude. **Upgrade:** add
-  `push: {branches: [<default branch>]}` to the triggers and `push` to the events in the
-  job's `if`, as `nexkit init` writes them.
+  such rounds, apart from `max_auto_fixes`, one per base commit, and none while a round is
+  running on it; a round whose branch no longer conflicts ends without running Claude.
+  **Upgrade:** add `push: {branches: [<default branch>]}` to the triggers and `push` to
+  the events in the job's `if`, as `nexkit init` writes them; `nexkit doctor` warns when
+  the trigger misses the default branch.
 - New `notify` key (default `[]`): GitHub logins that NexKit mentions when a run ends in a
   state that needs a person, such as a plan with questions, a blocked or failed run, no
   automatic fix rounds left, a pull request ready for a person while `auto_merge` is off,

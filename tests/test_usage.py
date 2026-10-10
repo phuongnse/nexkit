@@ -100,6 +100,34 @@ class InterpretTests(unittest.TestCase):
         )
         self.assertEqual(missing["resume_at"], "2030-01-01T00:00:00Z")
 
+    def test_the_models_own_words_never_pause_a_run(self):
+        prose = 'The handler now returns "Rate limit reached" when the usage limit is hit.'
+        stopped = {"subtype": "error_max_turns", "is_error": False, "result": prose}
+        result = agent.interpret("fix", self.run_result(stopped), 5)
+        self.assertEqual(result["status"], "error")
+        long = {
+            "subtype": "error_during_execution",
+            "is_error": True,
+            "result": "usage limit " + "x" * 2000,
+        }
+        self.assertEqual(agent.interpret("fix", self.run_result(long), 5)["status"], "error")
+        model = {
+            "type": "assistant",
+            "message": {
+                "model": "claude",
+                "content": [{"type": "text", "text": "Usage limit reached"}],
+            },
+        }
+        synthetic = {
+            "type": "assistant",
+            "message": {
+                "model": "<synthetic>",
+                "content": [{"type": "text", "text": "Usage limit reached"}],
+            },
+        }
+        self.assertEqual(agent._text_of(model), "")
+        self.assertEqual(agent._text_of(synthetic), "Usage limit reached")
+
     def test_a_finished_run_that_mentions_limits_is_not_paused(self):
         event = {
             "subtype": "success",

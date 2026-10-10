@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from .github import GitHubError
 from .route import issue_from_branch
-from .state import PAUSED, by_bot, run_comments, with_run
+from .state import PAUSED, RUNNING, by_bot, run_comments, with_run
 from .usage import iso, parse_iso
 
 # Each task runs only when one of its configuration keys is on.
@@ -24,6 +24,7 @@ TASKS = {
     "conflicts": ("auto_resolve_conflicts",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
+CLOSED = "<!-- nexkit:parent-closed -->"
 HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "duplicate"}
 # Usage limits reset within a week; paused runs older than this are not resumed.
 PAUSE_WINDOW = timedelta(days=8)
@@ -51,6 +52,8 @@ def close_parents(gh, number):
         parent = gh.parent_issue(number)
         if not parent or parent["number"] in seen or parent.get("state") != "open":
             return lines
+        if not _here(gh, parent):
+            return lines
         number = parent["number"]
         seen.add(number)
         subs = gh.sub_issues(number)
@@ -68,12 +71,25 @@ def close_parents(gh, number):
                 )
             lines.append(f"Left #{number} open: none of its sub-issues was completed.")
             return lines
-        gh.comment(
-            number,
-            f"NexKit closed this issue because all its sub-issues are closed:\n\n{listing}",
-        )
+        # Sub-issues closed together start one run each; only the first closes the parent.
+        if gh.issue(number).get("state") != "open":
+            return lines
+        latest = gh.comments(number)[-1:]
+        if not (latest and by_bot(latest[0]) and CLOSED in latest[0]["body"]):
+            gh.comment(
+                number,
+                f"{CLOSED}\nNexKit closed this issue because all its sub-issues are "
+                f"closed:\n\n{listing}",
+            )
         gh.close_issue(number, "completed")
         lines.append(f"Closed #{number} as completed: all its sub-issues are closed.")
+
+
+def _here(gh, issue):
+    """Whether an issue from the sub-issues API belongs to this repository: a parent can be
+    in another repository of the same owner, with a number that means another issue here."""
+    url = issue.get("repository_url")
+    return not url or url.lower().endswith(f"/repos/{gh.repository}".lower())
 
 
 def close_parents_safely(gh, number):
@@ -156,7 +172,9 @@ def start_conflict_round(gh, number, base, workflow, ref):
     sha = gh.branch_sha(base)
     if tried and tried[-1].get("base_sha") == sha:
         return ""
-    if rounds and rounds[-1].get("status") == PAUSED:
+    if rounds and rounds[-1].get("status") in (PAUSED, RUNNING):
+        # A running round merges the base branch itself when it conflicts, and a dispatch
+        # now would replace a command waiting behind it. A later check starts the round.
         return ""
     if len([run for run in tried if not run.get("resumed")]) >= MAX_CONFLICT_ROUNDS:
         return (

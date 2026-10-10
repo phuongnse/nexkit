@@ -29,7 +29,12 @@ def workflow_text(kit_repo, kit_ref, default_branch="main"):
 
 
 def default_branch_of(root):
-    """The default branch of `origin`, else the current branch, else `main`."""
+    """The default branch on GitHub, else of `origin` in the clone, else the current
+    branch, else `main`."""
+    repo = repository_of(root)
+    name = (_gh("api", f"repos/{repo}", "-q", ".default_branch") or "").strip() if repo else ""
+    if re.fullmatch(r"[\w./-]+", name):
+        return name
     for args in (
         ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
         ["symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -257,7 +262,17 @@ def doctor(root):
                     "them, but they cannot run commands",
                 )
             )
-        branch = (_gh("api", f"repos/{repo}", "-q", ".default_branch") or "").strip()
+    branch = (_gh("api", f"repos/{repo}", "-q", ".default_branch") or "").strip()
+    if branch and workflow.is_file():
+        push = trigger(workflow.read_text(), "push")
+        if push is not None and not re.search(rf"[\[\s,'\"]{re.escape(branch)}[\]\s,'\"]", push):
+            findings.append(
+                (
+                    False,
+                    f"The 'push' trigger in {WORKFLOW_PATH} does not list the default branch "
+                    f"{branch}, so merges into it do not start the conflict check",
+                )
+            )
     if branch:
         on_default = _gh("api", f"repos/{repo}/contents/{WORKFLOW_PATH}?ref={branch}", "-q", ".sha")
         findings.append(

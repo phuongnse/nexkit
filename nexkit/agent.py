@@ -450,9 +450,12 @@ def run_claude(prompt, cmd, *, cwd, timeout_seconds, log, base_sha=None):
 
 
 def _text_of(event):
-    """The text of an assistant message, or ""."""
+    """The text of a message that Claude Code wrote itself, such as an API or usage limit
+    error, or "". The model's own words are left out: they may mention limits."""
     message = event.get("message") if event.get("type") == "assistant" else None
-    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(message, dict) or message.get("model") != "<synthetic>":
+        return ""
+    content = message.get("content")
     if not isinstance(content, list):
         return ""
     texts = [b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text"]
@@ -516,8 +519,9 @@ def interpret(stage, run, timeout_minutes):
         else:
             result["status"] = "done"
     if result["status"] == "error" and not run["timed_out"]:
-        # Only the end of a failed run: Claude's own words elsewhere may mention limits.
-        texts = (event.get("result"), run["stderr"], run.get("last_text"))
+        # Only what Claude Code says about a failed run, never the model's own text.
+        said = event.get("result") if event.get("is_error") else None
+        texts = (said, run["stderr"], run.get("last_text"))
         limit = usage_limit(texts, resets_at=run.get("resets_at"))
         if limit:
             paused(result, limit)

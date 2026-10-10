@@ -586,6 +586,15 @@ class ReportTests(ReportCase):
         self.assertNotIn("resume", command["run"])
         self.assertFalse(self.gh.dispatches)
 
+    def test_a_resumed_run_with_an_unknown_reset_does_not_resume_again(self):
+        self.write("nexkit-agent", "result.json", {**LIMIT, "reset_known": False})
+        d = decision("fix", pr=6, target=6, head=HEAD, resumed=True)
+        self.assertEqual(self.run_report(d=d, published=False)["outcome"], "paused")
+        [row] = self.gh.run_comments(6)
+        self.assertNotIn("resume", row["run"])
+        self.assertIn("Comment `/nexkit fix` after the reset", row["body"])
+        self.assertIn("usage limit", row["run"]["attention"])
+
     def test_without_resume_the_comment_says_when_to_continue(self):
         self.write("nexkit-agent", "result.json", LIMIT)
         cfg = make_config(resume_after_usage_limit=False)

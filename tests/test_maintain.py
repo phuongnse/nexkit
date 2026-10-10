@@ -61,6 +61,23 @@ class CloseParentTests(unittest.TestCase):
         self.gh.add_issue(7)
         self.assertEqual(close_parents(self.gh, 7), [])  # no parent
 
+    def test_a_parent_in_another_repository_is_left_alone(self):
+        self.close(2)
+        self.close(3)
+        self.gh.issues[1]["repository_url"] = "https://api.github.com/repos/acme/other"
+        self.assertEqual(close_parents(self.gh, 3), [])
+        self.assertEqual(self.gh.issues[1]["state"], "open")
+        self.gh.issues[1]["repository_url"] = "https://api.github.com/repos/ACME/app"
+        self.assertEqual(len(close_parents(self.gh, 3)), 1)
+
+    def test_sub_issues_closed_together_close_the_parent_once(self):
+        self.close(2)
+        self.close(3)
+        close_parents(self.gh, 2)
+        self.gh.issues[1]["state"] = "open"  # the second run read it before the first closed it
+        close_parents(self.gh, 3)
+        self.assertEqual(len(self.gh.comments(1)), 1)
+
     def test_errors_become_a_line(self):
         self.close(2)
         self.close(3)

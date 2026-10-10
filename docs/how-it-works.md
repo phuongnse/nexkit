@@ -341,6 +341,7 @@ sub-issue, NexKit looks at its parent's sub-issues:
   and NexKit comments that a person should decide.
 - A parent that is already closed, or that still has an open sub-issue, stays as it is.
   Reopening a sub-issue does not reopen its parent.
+- A parent in another repository is left alone.
 
 A merge by a person closes the issue through GitHub, and the `issues: closed` event starts
 the check. When NexKit closes the issue itself after an automatic merge, the Actions token
@@ -362,8 +363,9 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
 - **Limits.** Each pull request gets at most 3 such rounds, apart from
   `max_auto_fixes`. A round is started once for each base commit, so a blocked round is
   not repeated until the base branch moves again. A pull request whose latest round is
-  paused at the usage limit is left alone. A pull request with a round running gets the
-  new round queued after it, as other commands are.
+  paused at the usage limit is left alone, and so is one with a round running: that
+  round merges the base branch itself when it conflicts, and a new run would replace a
+  command waiting behind it. The next check starts the round if it is still needed.
 - When the round starts and the branch no longer conflicts, for example because another
   round already merged the base branch, it ends at once without running Claude.
 
@@ -379,9 +381,11 @@ implement, fix or review), the run is paused, not failed:
   same note. A review that stopped after its round published a commit resumes as
   `/nexkit review`, because the commit is already there. A resumed round shows
   `(resumed)` and does not count toward `max_auto_fixes`. If it hits the limit again, it
-  pauses again.
+  pauses again. NexKit recognises the limit only from Claude Code's own message, never
+  from what the model wrote, so an issue about rate limits cannot pause a run.
 - When NexKit cannot read the reset time from Claude's message, it tries again after one
-  hour, and says so.
+  hour, and says so. If that run stops at the limit again, it waits for a person, so a
+  limit that does not reset cannot start a run every hour.
 - A new command on the same issue or pull request replaces the paused one: its comment
   then says so, and it is not resumed.
 - With `resume_after_usage_limit: false`, the comment still names the limit and the reset

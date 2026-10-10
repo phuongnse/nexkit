@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.0
 
 - `auto_merge: true` can now merge. The `report` job merges with the default Actions
   token, which needs `contents: write`; it had only read access, so every automatic merge

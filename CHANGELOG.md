@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Checks can tell which files a pull request changed, so a slow check can skip work that
+  the change cannot affect. Setup and check commands get `NEXKIT_BASE_SHA`, the merge
+  base of the commit being checked and the base branch, in the `verify` job and when
+  Claude runs the checks. `verify` now checks out the full history (with its read-only
+  token, as before), so this works in private repositories too. When the base is unknown
+  the variable is unset and the log says so: run everything then. See
+  [Configuration](docs/configuration.md#skipping-work-that-a-change-cannot-affect).
+
 ## 1.9.0
 
 - `auto_merge: true` can now merge. The `report` job merges with the default Actions

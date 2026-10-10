@@ -143,7 +143,7 @@ def cmd_context(args):
 
 def cmd_agent(args):
     from .agent import run_stage, run_triage
-    from .checks import setup
+    from .checks import find_base, setup
     from .redact import Redactor
     from .runlog import summary, write_summary
 
@@ -152,9 +152,11 @@ def cmd_agent(args):
     stage = args.stage or decision["action"]
     out = Path(args.out)
     context = json.loads((out / "context.json").read_text())
+    base_sha = None
     if stage in ("implement", "fix"):
+        base_sha = find_base(args.repo, decision["base"])
         redact = Redactor()
-        failed = setup(cfg, args.repo, redact)
+        failed = setup(cfg, args.repo, redact, base_sha)
         if failed:
             result = {
                 "stage": stage,
@@ -172,16 +174,25 @@ def cmd_agent(args):
         cfg = configuration.with_profile(cfg, triage["profile"])
     checks = json.loads(Path(args.checks).read_text()) if args.checks else None
     result = run_stage(
-        stage, context, cfg, args.repo, out, checks=checks, base=decision["base"], triage=triage
+        stage,
+        context,
+        cfg,
+        args.repo,
+        out,
+        checks=checks,
+        base=decision["base"],
+        base_sha=base_sha,
+        triage=triage,
     )
     print(json.dumps({k: v for k, v in result.items() if k != "output"}, indent=2))
     return 0
 
 
 def cmd_checks(args):
-    from .checks import run_checks
+    from .checks import find_base, run_checks
 
-    results = run_checks(_config(), args.repo, args.out)
+    base_sha = find_base(args.repo, _decision()["base"])
+    results = run_checks(_config(), args.repo, args.out, base_sha)
     passed = all(r["passed"] for r in results)
     print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
     return 0

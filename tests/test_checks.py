@@ -1,10 +1,14 @@
+import contextlib
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from nexkit import checks
-from tests.support import make_config
+from tests.support import GitRepos, git, make_config
 
 
 class ChecksTests(unittest.TestCase):
@@ -40,6 +44,49 @@ class ChecksTests(unittest.TestCase):
         code, output, _ = checks._run("sleep 30", self.root, 1)
         self.assertEqual(code, 124)
         self.assertIn("stopped the command", output)
+
+
+class BaseCommitTests(unittest.TestCase):
+    """NEXKIT_BASE_SHA: the merge base of the checked commit and the base branch."""
+
+    def setUp(self):
+        self.repos = GitRepos()
+        self.fork = git(self.repos.root / "seed", "rev-parse", "HEAD")
+        self.repos.push_commit("dev", "nexkit/issue-5", {"a.txt": "a\n"}, "A")
+        # A base branch change after the merge base, which must not count as changed.
+        self.repos.push_commit("dev", "main", {"b.txt": "b\n"}, "B")
+
+    def tearDown(self):
+        self.repos.cleanup()
+
+    def quietly(self, function, *args):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            return function(*args), stdout.getvalue()
+
+    def test_finds_the_merge_base_in_a_full_checkout(self):
+        repo = self.repos.clone("agent")
+        git(repo, "checkout", "-q", "nexkit/issue-5")
+        sha, log = self.quietly(checks.find_base, repo, "main")
+        self.assertEqual(sha, self.fork)
+        self.assertIn(f"NEXKIT_BASE_SHA={self.fork}", log)
+        # The base branch's own later commit does not count as changed.
+        self.assertEqual(git(repo, "diff", "--name-only", sha), "a.txt")
+        sha, log = self.quietly(checks.find_base, repo, "missing")
+        self.assertIsNone(sha)
+        self.assertIn("NEXKIT_BASE_SHA is not set", log)
+
+    def test_setup_and_checks_see_the_base_only_when_it_is_known(self):
+        repo = self.repos.clone("checks")
+        cfg = make_config(
+            setup=['echo "${NEXKIT_BASE_SHA-unset}" > setup.txt'],
+            checks=[{"name": "base", "run": 'cat setup.txt; echo "${NEXKIT_BASE_SHA-unset}"'}],
+        )
+        with mock.patch.dict(os.environ, {"NEXKIT_BASE_SHA": "stale"}):
+            known = checks.run_checks(cfg, repo, base_sha=self.fork)
+            unknown = checks.run_checks(cfg, repo)
+        self.assertEqual(known[0]["output"].split(), [self.fork, self.fork])
+        self.assertEqual(unknown[0]["output"].split(), ["unset", "unset"])
 
 
 if __name__ == "__main__":

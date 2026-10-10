@@ -41,6 +41,44 @@ Checks run in a separate job that has **no secrets and a read-only token**, on t
 commit NexKit published. A setup failure counts as a failed check. With no checks
 configured, NexKit can still run, but nothing verifies the change except the AI review.
 
+### Skipping work that a change cannot affect
+
+Setup and checks get `NEXKIT_BASE_SHA`: the merge base of the commit being checked and
+the base branch. The checkout has that commit, in public and private repositories alike.
+List the paths the pull request changed with both of these commands:
+
+```sh
+{ git diff --name-only "$NEXKIT_BASE_SHA"; git ls-files --others --exclude-standard; }
+```
+
+The first lists changed tracked files, committed or not. The second lists new files that
+are not committed yet: when Claude runs the checks while it works, the files it created are
+still untracked, and without that line a check would skip work it should run. Changes that
+the base branch made after the merge base are not listed. In a fix round that merges the
+base branch, the variable is the merged base commit.
+
+When NexKit cannot work out the base, it leaves `NEXKIT_BASE_SHA` unset and says so in
+the job log. Outside NexKit it is always unset, so the rule for a check is:
+
+- Skip work only when `NEXKIT_BASE_SHA` is set and none of the paths that work covers
+  changed. Otherwise run it in full.
+- Run every check in full on the base branch, for example in your own CI after a merge.
+
+```sh
+# Run the dev tooling smoke tests only when the change can affect them.
+changed() {
+  [ -n "${NEXKIT_BASE_SHA:-}" ] || return 0  # unknown base: run everything
+  files=$(git diff --name-only "$NEXKIT_BASE_SHA" &&
+          git ls-files --others --exclude-standard) || return 0
+  grep -qE "$1" <<< "$files"
+}
+if changed '^(docker/|compose\.yaml$|scripts/dev)'; then
+  ./scripts/smoke-dev.sh
+else
+  echo "Dev tooling unchanged since $NEXKIT_BASE_SHA: smoke tests skipped."
+fi
+```
+
 ## Automatic merge
 
 ```json

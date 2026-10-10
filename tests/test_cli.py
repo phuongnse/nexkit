@@ -11,7 +11,7 @@ from unittest import mock
 import nexkit
 import nexkit.config
 from nexkit import cli, scaffold
-from tests.support import PROFILES, FakeGitHub, git
+from tests.support import PROFILES, FakeGitHub, GitRepos, git
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -220,6 +220,48 @@ class PipelineCommandTests(unittest.TestCase):
             self.assertIn("key ***", text)
         self.assertIn("### NexKit implement: error", summary.read_text())
 
+    def test_agent_setup_gets_the_base_commit(self):
+        repos = GitRepos()
+        self.addCleanup(repos.cleanup)
+        repo = repos.clone("agent")  # implement starts on the base branch itself
+        cfg = nexkit.config.validate({"setup": ['echo "base=$NEXKIT_BASE_SHA"; exit 4']})
+        out = self.root / "out"
+        out.mkdir()
+        (out / "context.json").write_text("{}")
+        env = {
+            "NEXKIT_DECISION": json.dumps({"action": "implement", "base": "main"}),
+            "NEXKIT_CONFIG": json.dumps(cfg),
+            "GITHUB_STEP_SUMMARY": str(self.root / "summary.md"),
+        }
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["agent", "--repo", str(repo), "--out", str(out)])
+        result = json.loads((out / "result.json").read_text())
+        self.assertIn(f"base={git(repo, 'rev-parse', 'HEAD')}", result["error"])
+
+    def test_checks_get_the_merge_base_only_when_it_is_known(self):
+        repos = GitRepos()
+        self.addCleanup(repos.cleanup)
+        fork = git(repos.root / "seed", "rev-parse", "HEAD")
+        repos.push_commit("dev", "nexkit/issue-5", {"a.txt": "a\n"}, "A")
+        repos.push_commit("dev", "main", {"b.txt": "b\n"}, "B")
+        repo = repos.clone("verify")
+        git(repo, "checkout", "-q", "nexkit/issue-5")
+        cfg = nexkit.config.validate(
+            {"checks": [{"name": "base", "run": 'echo "${NEXKIT_BASE_SHA-unset}"'}]}
+        )
+        for base, seen in (("main", fork), ("gone", "unset")):
+            env = {
+                "NEXKIT_DECISION": json.dumps({"action": "review", "base": base}),
+                "NEXKIT_CONFIG": json.dumps(cfg),
+                "NEXKIT_BASE_SHA": "stale",
+            }
+            stdout = io.StringIO()
+            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(stdout):
+                cli.main(["checks", "--repo", str(repo), "--out", str(self.root / "out")])
+            checks = json.loads((self.root / "out" / "checks.json").read_text())
+            self.assertEqual(checks[0]["output"].strip(), seen)
+        self.assertIn("NEXKIT_BASE_SHA is not set", stdout.getvalue())
+
 
 class SupportedVersionTests(unittest.TestCase):
     """The workflows use the tested versions, and the Claude Code pin has one source."""
@@ -349,6 +391,10 @@ class WorkflowSafetyTests(unittest.TestCase):
         )
         self.assertIn("fetch-depth: 0", self.jobs["publish"])
         self.assertIn("fetch-depth: 0", self.jobs["review"])
+        # The merge base with the base branch, for NEXKIT_BASE_SHA in the checks.
+        self.assertIn("fetch-depth: 0", self.jobs["verify"])
+        checks = self.jobs["verify"].split("- name: Run setup and checks", 1)[1]
+        self.assertIn("NEXKIT_DECISION: ${{ needs.route.outputs.decision }}", checks)
 
     def test_config_comes_from_default_branch(self):
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.jobs["route"])

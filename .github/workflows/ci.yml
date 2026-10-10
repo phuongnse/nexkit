@@ -42,7 +42,6 @@ jobs:
         run: ~/.local/bin/claude plugin validate --strict .
 
   decide-smoke-test:
-    name: Decide smoke test
     # A pull request runs the smoke test only when it changes what the test covers, and only
     # from a branch of this repository: pull requests from forks do not receive secrets.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -63,7 +62,6 @@ jobs:
           fi
 
   smoke-test:
-    name: Smoke test
     # Real Claude Code against a tiny repository. Needs the CLAUDE_CODE_OAUTH_TOKEN secret.
     # Runs when started by hand or by update-claude-code.yml, and on pull requests that
     # change the agent, its prompts, the Claude Code pin or the smoke test.

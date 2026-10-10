@@ -45,7 +45,8 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
   `PYTHON` and `CLAUDE_CODE`; the local CLI accepts Python `PYTHON` or newer. Test only
   those versions: no matrices. The Claude Code pin is read from `nexkit/__init__.py`
   everywhere; never repeat it. `update-claude-code.yml` proposes new stable versions, and
-  the CI `live` job (`scripts/smoke.py`) must pass before one is merged.
+  the CI `live` job (`scripts/smoke.py`) must pass before one is merged. CI runs it on
+  pull requests that change `agent.py`, `prompts/`, `nexkit/__init__.py` or the smoke test.
 
 ## Verify
 

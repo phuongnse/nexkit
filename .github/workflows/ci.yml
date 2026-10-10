@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch: # also started by update-claude-code.yml; runs the live smoke test
+  workflow_dispatch: # also started by update-claude-code.yml; always runs the live smoke test
 
 permissions:
   contents: read
@@ -41,9 +41,34 @@ jobs:
       - name: Validate plugin
         run: ~/.local/bin/claude plugin validate --strict .
 
+  live-needed:
+    # A pull request runs the live test only when it changes what the test covers, and only
+    # from a branch of this repository: pull requests from forks do not receive secrets.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.diff.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: diff
+        # HEAD is the test merge commit; its first parent is the base branch.
+        run: |
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          if grep -qE '^(nexkit/agent\.py|nexkit/__init__\.py|nexkit/prompts/|scripts/smoke\.py)' <<< "$changed"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   live:
     # Real Claude Code against a tiny repository. Needs the CLAUDE_CODE_OAUTH_TOKEN secret.
-    if: github.event_name == 'workflow_dispatch'
+    # Runs when started by hand or by update-claude-code.yml, and on pull requests that
+    # change the agent, its prompts, the Claude Code pin or the smoke test.
+    needs: live-needed
+    if: >-
+      !cancelled() &&
+      (github.event_name == 'workflow_dispatch' || needs.live-needed.outputs.run == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

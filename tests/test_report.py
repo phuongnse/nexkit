@@ -230,8 +230,11 @@ class ReportTests(ReportCase):
     def test_auto_merge_blocked_by_branch_protection(self):
         self.candidate()
         self.gh.merge_error = GitHubError(405, "Required approving review")
-        self.assertEqual(self.run_report(cfg=make_config(auto_merge=True))["outcome"], "ready")
+        outcome = self.run_report(cfg=make_config(auto_merge=True))
+        self.assertEqual(outcome["outcome"], "merge_refused")
         self.assertTrue(self.gh.comments_matching(6, "Required approving review"))
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["status"], "success")
         self.assertFalse(self.gh.dispatches)
 
     def test_auto_merge_starts_the_base_branch_workflows(self):

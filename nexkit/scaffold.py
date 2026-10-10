@@ -238,7 +238,21 @@ def doctor(root):
                     "-F can_approve_pull_request_reviews=true",
                 )
             )
-    branch = (_gh("api", f"repos/{repo}", "-q", ".default_branch") or "").strip()
+    for login in (cfg or {}).get("notify") or []:
+        role = (
+            _gh("api", f"repos/{repo}/collaborators/{login}/permission", "-q", ".permission") or ""
+        ).strip()
+        if role in ("admin", "maintain", "write"):
+            findings.append((True, f"notify: @{login} has write access"))
+        else:
+            findings.append(
+                (
+                    False,
+                    f"notify: @{login} has no write access to {repo}; NexKit still mentions "
+                    "them, but they cannot run commands",
+                )
+            )
+        branch = (_gh("api", f"repos/{repo}", "-q", ".default_branch") or "").strip()
     if branch:
         on_default = _gh("api", f"repos/{repo}/contents/{WORKFLOW_PATH}?ref={branch}", "-q", ".sha")
         findings.append(

@@ -13,6 +13,7 @@ STAGES = ("plan", "implement", "review")
 TRIAGE = "triage"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 WORKFLOW_FILE = re.compile(r"^[A-Za-z0-9_.-]+\.ya?ml$")
 
 DEFAULTS = {
@@ -34,6 +35,7 @@ DEFAULTS = {
     "close_parent_issues": False,
     "resume_after_usage_limit": True,
     "auto_resolve_conflicts": False,
+    "notify": [],
     "protected_paths": [".github/", ".nexkit/"],
     "transcript": True,
     "log": {"tool_output": "truncated"},
@@ -218,6 +220,13 @@ def validate(raw):
         _fail("after_merge_workflows must be a list of workflow file names such as 'ci.yml'")
     if len(set(workflows)) != len(workflows):
         _fail("after_merge_workflows lists a workflow twice")
+    people = cfg["notify"]
+    if not isinstance(people, list) or not all(
+        isinstance(p, str) and LOGIN.match(p) for p in people
+    ):
+        _fail("notify must be a list of GitHub logins without '@', such as [\"octocat\"]")
+    if len({p.lower() for p in people}) != len(people):
+        _fail("notify lists a login twice")
     paths = cfg["protected_paths"]
     if not isinstance(paths, list) or not all(isinstance(p, str) and p for p in paths):
         _fail("protected_paths must be a list of path prefixes")

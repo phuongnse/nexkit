@@ -21,6 +21,7 @@ the NexKit release and are not configurable. See [supported versions](../README.
 | `auto_merge` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See below. |
 | `after_merge_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. See below. |
 | `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See below. |
+| `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`. See below. |
 | `auto_resolve_conflicts` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See below. |
 | `resume_after_usage_limit` | `true` | When Claude stops at the account's usage limit, run the same command again after the limit resets. See below. |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
@@ -145,6 +146,25 @@ whether a person or NexKit merged the work. See
 The workflow must listen to `issues: closed`, as `nexkit init` writes it; `nexkit doctor`
 warns when it does not. With the setting off, a closed issue starts a short run that ends
 at once.
+
+## Mentions
+
+```json
+"notify": ["owner"]
+```
+
+NexKit mentions the listed people when a run ends in a state that needs a person, so they
+get a GitHub notification without watching every run. Right after the run's comment, it
+posts one line such as `@owner a person is needed: the plan has questions.` on the issue,
+or on the pull request once there is one. The line is its own comment because GitHub
+notifies people mentioned in a new comment, but not in an edited one, and the run's
+comment is edited when the run ends.
+
+The choice follows the run's outcome only, never a judgment by Claude (see
+[How it works](how-it-works.md#when-a-person-is-needed)). A run mentions at most once;
+nobody outside `notify` is ever mentioned. Write logins without `@`. `nexkit doctor`
+warns about a listed login without write access, but NexKit still mentions it. With
+`[]`, nothing is posted.
 
 ## Conflicts with the base branch
 

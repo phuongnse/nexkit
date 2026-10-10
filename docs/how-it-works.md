@@ -49,6 +49,26 @@ comment ends with 🚀 or 😕 on that comment. Runs started by a dispatch or by
 account's usage limit; the run waits for the limit to reset (see
 [Usage limits](#usage-limits)), and its command comment keeps 👀.
 
+### When a person is needed
+
+`report` decides from the run's outcome and the agents' structured output whether a
+person is needed. It records the reason in the run comment's hidden marker, and with
+`notify` set it mentions those people in a new comment (see
+[Mentions](configuration.md#mentions)):
+
+| Run result | A person is needed |
+|---|---|
+| Plan posted, and it has questions or says the issue is too large | yes |
+| Plan posted without either | no |
+| The agent returned `blocked` | yes |
+| The agent failed or errored, publishing failed, or the review did not complete | yes |
+| Checks or review still fail and no automatic fix rounds remain | yes |
+| Ready, with `auto_merge` off | yes |
+| GitHub refused the automatic merge | yes |
+| Merged, or an automatic fix or conflict round started | no |
+| Paused at the usage limit, resuming by itself | no |
+| Paused at the usage limit, with `resume_after_usage_limit: false` | yes |
+
 ### One run at a time
 
 Runs for one issue or pull request run one at a time, in order. Only commands, *Request
@@ -449,7 +469,7 @@ new state comment.
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `auto_resolve_conflicts`, NexKit starts that round itself, at most 3 times per pull request. |
 | The PR conflicts with its base branch in a protected path | Stops before Claude runs; merge the base branch yourself. |
 | The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or add a `NEXKIT_PUSH_TOKEN` that may update workflows. |
-| GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person. |
+| GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `after_merge_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `max_auto_fixes` remain, otherwise asks for a person. |

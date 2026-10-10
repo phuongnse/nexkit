@@ -37,6 +37,14 @@
   no longer conflicts ends without running Claude. **Upgrade:** add
   `push: {branches: [<default branch>]}` to the triggers and `push` to the events in the
   job's `if`, as `nexkit init` writes them.
+- New `notify` key (default `[]`): GitHub logins that NexKit mentions when a run ends in a
+  state that needs a person, such as a plan with questions, a blocked or failed run, no
+  automatic fix rounds left, a pull request ready for a person while `auto_merge` is off,
+  or a refused automatic merge. The choice follows the run's outcome only. The mention is
+  one line in a new comment right after the run's comment, because GitHub does not notify
+  for mentions added by an edit. An automatic merge that GitHub refuses now ends as
+  `merge_refused` instead of `ready`. `nexkit doctor` warns about a listed login without
+  write access.
 
 ## 1.10.0
 

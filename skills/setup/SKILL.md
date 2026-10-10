@@ -72,6 +72,9 @@ files or repository settings, and wait for confirmation.
    after each merge; each one needs a `workflow_dispatch` trigger, which is a change the
    user makes to that workflow file.
 
+   Offer `"notify": ["<login>"]` so the user gets a GitHub notification when a run needs
+   a person, for example a plan with questions or a pull request ready to merge.
+
    With `auto_merge`, also offer `"auto_resolve_conflicts": true`: NexKit then merges the
    base branch into its pull requests that start to conflict, by itself.
 

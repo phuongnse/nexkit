@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch: # also started by update-claude-code.yml; always runs the live smoke test
+  workflow_dispatch: # also started by update-claude-code.yml; always runs the smoke test
 
 permissions:
   contents: read
@@ -41,8 +41,9 @@ jobs:
       - name: Validate plugin
         run: ~/.local/bin/claude plugin validate --strict .
 
-  live-needed:
-    # A pull request runs the live test only when it changes what the test covers, and only
+  decide-smoke-test:
+    name: Decide whether to run the smoke test
+    # A pull request runs the smoke test only when it changes what the test covers, and only
     # from a branch of this repository: pull requests from forks do not receive secrets.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
@@ -61,14 +62,15 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
-  live:
+  smoke-test:
+    name: Smoke test with real Claude Code
     # Real Claude Code against a tiny repository. Needs the CLAUDE_CODE_OAUTH_TOKEN secret.
     # Runs when started by hand or by update-claude-code.yml, and on pull requests that
     # change the agent, its prompts, the Claude Code pin or the smoke test.
-    needs: live-needed
+    needs: decide-smoke-test
     if: >-
       !cancelled() &&
-      (github.event_name == 'workflow_dispatch' || needs.live-needed.outputs.run == 'true')
+      (github.event_name == 'workflow_dispatch' || needs.decide-smoke-test.outputs.run == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

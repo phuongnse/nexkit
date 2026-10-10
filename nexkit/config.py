@@ -13,6 +13,7 @@ STAGES = ("plan", "implement", "review")
 TRIAGE = "triage"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+WORKFLOW_FILE = re.compile(r"^[A-Za-z0-9_.-]+\.ya?ml$")
 
 DEFAULTS = {
     "version": 1,
@@ -29,6 +30,7 @@ DEFAULTS = {
     "default_profile": None,
     "max_auto_fixes": 2,
     "auto_merge": False,
+    "after_merge_workflows": [],
     "protected_paths": [".github/", ".nexkit/"],
     "transcript": True,
     "log": {"tool_output": "truncated"},
@@ -203,6 +205,13 @@ def validate(raw):
         _fail("max_auto_fixes must be an integer from 0 to 10")
     if not isinstance(cfg["auto_merge"], bool):
         _fail("auto_merge must be true or false")
+    workflows = cfg["after_merge_workflows"]
+    if not isinstance(workflows, list) or not all(
+        isinstance(w, str) and WORKFLOW_FILE.match(w) for w in workflows
+    ):
+        _fail("after_merge_workflows must be a list of workflow file names such as 'ci.yml'")
+    if len(set(workflows)) != len(workflows):
+        _fail("after_merge_workflows lists a workflow twice")
     paths = cfg["protected_paths"]
     if not isinstance(paths, list) or not all(isinstance(p, str) and p for p in paths):
         _fail("protected_paths must be a list of path prefixes")

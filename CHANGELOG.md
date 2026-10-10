@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- `auto_merge: true` can now merge. The `report` job merges with the default Actions
+  token, which needs `contents: write`; it had only read access, so every automatic merge
+  was refused. Branch protection still applies: a refused merge is explained in the
+  round's comment, as before.
+- New `after_merge_workflows` key (default `[]`): workflow files, such as `["ci.yml"]`,
+  that NexKit starts on the base branch with `workflow_dispatch` after it merges. GitHub
+  starts no `push` workflow for a merge made with the Actions token, so the base branch's
+  CI did not run after an automatic merge. The round's comment links each started
+  workflow or says why a start failed; a failed start does not undo the merge.
+- `nexkit doctor` warns when a workflow in `after_merge_workflows` is missing or has no
+  `workflow_dispatch` trigger.
+
 ## 1.8.0
 
 - A re-plan revises the latest plan instead of starting over. The plan agent gets the

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from . import progress
-from .github import GitHubError, run_url
+from .github import GitHubError, dispatched_runs_url, run_url
 from .state import FAILURE, SUCCESS, clip, empty_state, read_state
 
 ICONS = {True: "✅", False: "❌"}
@@ -184,6 +184,23 @@ def _stop_round(gh, decision, agent, message):
     progress.save_round(gh, decision["pr"], comment_id, row, message)
 
 
+def after_merge(gh, workflows, base):
+    """Start each workflow on the base branch after NexKit merged into it.
+
+    GitHub starts no workflow for the merge's push, which uses the Actions token, but it does
+    for a dispatch. A dispatch that fails is reported; the merge stays.
+    """
+    lines = []
+    for workflow in workflows:
+        try:
+            run = gh.dispatch(workflow, base, {}, run_details=True) or {}
+            url = run.get("html_url") or dispatched_runs_url(workflow, base)
+            lines.append(f"- Started [`{workflow}`]({url})")
+        except GitHubError as exc:
+            lines.append(f"- Could not start `{workflow}`: {exc}")
+    return "\n".join([f"After the merge, on `{base}`:", *lines]) if lines else ""
+
+
 def _record(state, decision, row, agent, review):
     """Keep what the next review needs: the last review's findings and the fixes since."""
     if decision["action"] == "fix":
@@ -275,9 +292,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         if cfg["auto_merge"]:
             try:
                 gh.merge(pr, head)
-                outcome, message = "merged", f"✅ Checks and AI review passed; merged `{head[:7]}`."
             except GitHubError as exc:
                 message += f" Automatic merge was not possible: {exc}"
+            else:
+                outcome, message = "merged", f"✅ Checks and AI review passed; merged `{head[:7]}`."
+                started = after_merge(gh, cfg["after_merge_workflows"], decision["base"])
+                message += f"\n\n{started}" if started else ""
     elif verdict is None:
         outcome = "review_failed"
         message = "The AI review did not complete. Comment `/nexkit review` to try again."

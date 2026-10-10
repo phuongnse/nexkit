@@ -18,7 +18,8 @@ the NexKit release and are not configurable. See [supported versions](../README.
 | `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See below. |
 | `default_profile` | `null` | The profile to use when no plan chose one. Required with `profiles`. |
 | `max_auto_fixes` | `2` | Repair rounds NexKit may start by itself on one pull request (0 to 10). Rounds requested by people do not count. |
-| `auto_merge` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. |
+| `auto_merge` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See below. |
+| `after_merge_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. See below. |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
 | `transcript` | `true` | Write Claude's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See below. |
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. See below. |
@@ -39,6 +40,44 @@ the NexKit release and are not configurable. See [supported versions](../README.
 Checks run in a separate job that has **no secrets and a read-only token**, on the exact
 commit NexKit published. A setup failure counts as a failed check. With no checks
 configured, NexKit can still run, but nothing verifies the change except the AI review.
+
+## Automatic merge
+
+```json
+"auto_merge": true,
+"after_merge_workflows": ["ci.yml"]
+```
+
+With `auto_merge: false` (the default) a person decides every merge. With `true`, the
+`report` job squash-merges a NexKit pull request as soon as every check passes and the AI
+review approves. It merges with the default Actions token; no extra secret is needed.
+
+Branch protection and rulesets still apply, and the Actions token cannot bypass them. When
+a rule is not met, GitHub refuses the merge, the round's comment says why, and the pull
+request waits for a person. Before merging, NexKit sets the `nexkit/checks` and
+`nexkit/review` statuses, so you can require those two. Rules that block every automatic
+merge:
+
+- a required approval from a person;
+- a required check from your own CI, unless `NEXKIT_PUSH_TOKEN` is set, because without it
+  your CI does not run on NexKit pull requests (see
+  [Troubleshooting](troubleshooting.md));
+- a required merge queue, or squash merging turned off for the repository.
+
+`after_merge_workflows` lists workflow files in `.github/workflows/`. GitHub starts no
+workflow for a push made with the Actions token, so the merge by NexKit does not run your
+`push` CI on the base branch. Two pull requests that pass on their own can still break the
+base branch together. After each merge, NexKit starts every listed workflow on the base
+branch with `workflow_dispatch`:
+
+- Each workflow needs a `workflow_dispatch` trigger without required inputs, for example
+  `on: {push: {branches: [main]}, pull_request: {}, workflow_dispatch: {}}`.
+  `nexkit doctor` warns when a listed file is missing or has no such trigger.
+- The run uses the base branch's newest commit when it starts, normally the merge commit.
+  Its event is `workflow_dispatch`, so steps limited to `push` events are skipped.
+- The round's comment links each workflow it started, or says why a start failed. A
+  failed start does not undo the merge.
+- Nothing is started when `auto_merge` is `false` or the merge was refused.
 
 ## Stages
 

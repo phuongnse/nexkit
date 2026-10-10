@@ -167,6 +167,57 @@ class ReportTests(unittest.TestCase):
         self.gh.merge_error = GitHubError(405, "Required approving review")
         self.assertEqual(self.run_report(cfg=make_config(auto_merge=True))["outcome"], "ready")
         self.assertTrue(self.gh.comments_matching(6, "Required approving review"))
+        self.assertFalse(self.gh.dispatches)
+
+    def test_auto_merge_starts_the_base_branch_workflows(self):
+        self.candidate()
+        run = "https://github.com/acme/app/actions/runs/77"
+        self.gh.dispatch_runs["ci.yml"] = run
+        cfg = make_config(auto_merge=True, after_merge_workflows=["ci.yml", "e2e.yml"])
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"}):
+            outcome = self.run_report(d=decision(base="develop"), cfg=cfg)
+        self.assertEqual(outcome["outcome"], "merged")
+        self.assertEqual(
+            self.gh.dispatches,
+            [
+                {"workflow": "ci.yml", "ref": "develop", "inputs": {}},
+                {"workflow": "e2e.yml", "ref": "develop", "inputs": {}},
+            ],
+        )
+        [row] = self.gh.run_comments(6)
+        self.assertIn("After the merge, on `develop`:", row["body"])
+        self.assertIn(f"- Started [`ci.yml`]({run})", row["body"])
+        # Without run details, the link lists the workflow's dispatched runs on the branch.
+        url = "https://github.com/acme/app/actions/workflows/e2e.yml"
+        self.assertIn(
+            f"- Started [`e2e.yml`]({url}?query=branch%3Adevelop+event%3Aworkflow_dispatch)",
+            row["body"],
+        )
+
+    def test_failed_dispatch_after_merge_keeps_the_merge(self):
+        self.candidate()
+        self.gh.dispatch_errors["ci.yml"] = GitHubError(
+            422, "Workflow does not have 'workflow_dispatch' trigger"
+        )
+        cfg = make_config(auto_merge=True, after_merge_workflows=["ci.yml", "e2e.yml"])
+        outcome = self.run_report(cfg=cfg)
+        self.assertEqual(outcome["outcome"], "merged")
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+        self.assertEqual([d["workflow"] for d in self.gh.dispatches], ["e2e.yml"])
+        [row] = self.gh.run_comments(6)
+        self.assertIn(
+            "- Could not start `ci.yml`: GitHub API 422: "
+            "Workflow does not have 'workflow_dispatch' trigger",
+            row["body"],
+        )
+        self.assertIn("- Started [`e2e.yml`]", row["body"])
+        self.assertEqual(row["run"]["status"], "success")
+
+    def test_no_workflows_start_without_auto_merge(self):
+        self.candidate()
+        self.run_report(cfg=make_config(after_merge_workflows=["ci.yml"]))
+        self.assertFalse(self.gh.merged)
+        self.assertFalse(self.gh.dispatches)
 
     def test_failures_schedule_bounded_automatic_fixes(self):
         finding = {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Wrong sign"}

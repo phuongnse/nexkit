@@ -165,16 +165,28 @@ class GitHub:
             body["target_url"] = target_url
         return self.request("POST", f"{self._repo}/statuses/{sha}", body)
 
-    def dispatch(self, workflow, ref, inputs):
+    def dispatch(self, workflow, ref, inputs, run_details=False):
+        """Start a workflow. With run_details, returns the run's `html_url` among others."""
+        body = {"ref": ref, "inputs": inputs}
+        if run_details:
+            body["return_run_details"] = True
         return self.request(
-            "POST",
-            f"{self._repo}/actions/workflows/{quote(workflow)}/dispatches",
-            {"ref": ref, "inputs": inputs},
+            "POST", f"{self._repo}/actions/workflows/{quote(workflow)}/dispatches", body
         )
 
 
-def run_url():
+def _actions_url():
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
-    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    return f"{server}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions"
+
+
+def run_url():
     run_id = os.environ.get("GITHUB_RUN_ID")
-    return f"{server}/{repo}/actions/runs/{run_id}" if run_id else None
+    return f"{_actions_url()}/runs/{run_id}" if run_id else None
+
+
+def dispatched_runs_url(workflow, branch):
+    """The page listing a workflow's runs that were dispatched on a branch, for a dispatch
+    that returned no run (GitHub Enterprise Server versions without run details)."""
+    query = urlencode({"query": f"branch:{branch} event:workflow_dispatch"})
+    return f"{_actions_url()}/workflows/{quote(workflow)}?{query}"

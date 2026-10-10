@@ -68,6 +68,21 @@ def repository_of(root):
     return match.group(1) if match else None
 
 
+def _after_merge_workflow(root, name):
+    """Whether NexKit can start a workflow of after_merge_workflows with a dispatch."""
+    path = root / ".github/workflows" / name
+    if not path.is_file():
+        return (False, f"after_merge_workflows: {path.relative_to(root)} does not exist")
+    text = re.sub(r"(^|\s)#.*", "", path.read_text(errors="replace"))
+    if not re.search(r"\bworkflow_dispatch\b", text):
+        return (
+            False,
+            f"after_merge_workflows: {name} has no workflow_dispatch trigger, "
+            "so NexKit cannot start it after a merge",
+        )
+    return (True, f"after_merge_workflows: {name} can be started after a merge")
+
+
 def _concurrency(workflow):
     """A finding: the concurrency group must be on the job, so plain comments never join it."""
     if re.search(r"^    concurrency:", workflow, re.M) and not re.search(
@@ -90,6 +105,7 @@ def doctor(root):
         findings.append((True, f"{configuration.CONFIG_PATH} is valid"))
         if not cfg["checks"]:
             findings.append((False, "No checks configured; NexKit cannot verify changes"))
+        findings += [_after_merge_workflow(root, name) for name in cfg["after_merge_workflows"]]
     except configuration.ConfigError as exc:
         findings.append((False, str(exc)))
 

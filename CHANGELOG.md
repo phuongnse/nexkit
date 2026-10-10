@@ -14,6 +14,32 @@
 - `nexkit doctor` warns when a workflow in `after_merge_workflows` is missing or has no
   `workflow_dispatch` trigger.
 
+## 1.8.0
+
+- A re-plan revises the latest plan instead of starting over. The plan agent gets the
+  latest plan and the discussion since it, keeps what nothing asks to change, and applies
+  what is asked. The plan comment's *Since the last plan* section lists what changed. A
+  note such as `/nexkit plan from scratch` plans again without the latest plan's choices.
+- A plain comment no longer cancels a waiting `/nexkit` command: `nexkit init` sets
+  `concurrency` on the `nexkit` job. In repositories set up earlier, move that block in
+  `.github/workflows/nexkit.yml` into the job; `nexkit doctor` reports it.
+
+## 1.7.0
+
+- Profiles choose the models for each issue. A repository can define `profiles` in
+  `.nexkit/config.json`, each with a `when` text that says which issues belong in it and
+  the same stage settings as `stages`. At the start of `/nexkit plan`, a triage step, one
+  Claude call without tools, reads the issue and its discussion and chooses a profile. The
+  plan runs on that profile's settings, and implement, fix and review rounds use the
+  profile of the latest plan. A collaborator changes the profile with a comment and a
+  re-plan, for example `/nexkit plan Use the hard profile`. A re-plan keeps the profile
+  unless a collaborator asks for another one.
+- The plan comment shows the profile, its models and why it was chosen. When triage
+  fails, the plan runs on the previous plan's profile or on `default_profile`, and says
+  so. A round whose plan names a profile that is no longer configured stops and asks for
+  a re-plan.
+- A configuration without `profiles` works as before.
+
 ## 1.6.0
 
 - The review sees why an implementation leaves the plan. Its prompt now has the

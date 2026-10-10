@@ -8,7 +8,7 @@ Every command starts one run of the reusable workflow
 | Job | Runs for | Token permissions | Claude credential | Does |
 |---|---|---|---|---|
 | `route` | every event | read; comments, reactions, statuses | no | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
-| `agent` | plan, go, fix | read only | yes | Installs Claude Code, runs `setup`, then one Claude session. Uploads the result and a patch. |
+| `agent` | plan, go, fix | read only | yes | Installs Claude Code, runs `setup`, then one Claude session; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | no | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
@@ -43,6 +43,13 @@ outcome. Comments of earlier runs keep their final state.
 (the round's columns show that). ❌ means it stopped on an error. A run started by a
 comment ends with 🚀 or 😕 on that comment. Runs started by a dispatch or by a
 *Request changes* review have no comment to react to.
+
+### One run at a time
+
+Runs for one issue or pull request run one at a time, in order. Only commands, *Request
+changes* reviews and dispatches wait in this queue; other comments do not. GitHub keeps
+one waiting run, so a command posted while another waits replaces it. A command that
+never got 👀 did not run; post it again.
 
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
 own run started. If that comment was deleted, `report` posts a new one.
@@ -95,7 +102,7 @@ the findings.
 
 | Artifact | Contains |
 |---|---|
-| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (Claude's event stream, including thinking) and `transcript.md` (the conversation in order: Claude's text, tool calls and results shortened as in the log, without thinking). |
+| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (Claude's event stream, including thinking) and `transcript.md` (the conversation in order: Claude's text, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. |
 | `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
@@ -156,6 +163,9 @@ person approves comes first; the detail for the implementing agent is collapsed:
 ## Plan
 One or two sentences: what changes and why.
 
+**Profile: hard** (models)  only with profiles: why, and how to change it
+
+### Since the last plan   only on a re-plan: revised or started over, and what changed
 ### What changes          up to six bullets about behaviour
 ### Decisions to check    choices the issue did not settle, each with a short reason
 ### Risks and limits      what could go wrong or is left out
@@ -169,8 +179,15 @@ Files, signatures, commands: the detail the implementing agent needs.
 ```
 
 Empty sections are left out. The implementing agent, and the reviewer, receive the whole
-comment, including the implementation notes. Plans posted by earlier releases are read the
-same way.
+comment, including the implementation notes, but not the profile lines. Plans posted by
+earlier releases are read the same way.
+
+A re-plan revises the latest plan. The agent gets that plan and the discussion since it,
+keeps what nothing asks to change, and applies what the discussion and the note ask for;
+where the issue now differs from the plan, the issue wins. A note that asks for a plan
+from scratch, such as `/nexkit plan from scratch`, makes it plan again without the latest
+plan's choices. *Since the last plan* says which happened and lists each decision,
+acceptance criterion or scope item that was added, changed or removed.
 
 **Implement and fix.** Full Claude Code tools on a disposable runner. The prompt contains
 the plan, the issue, the discussion from collaborators, and for fix rounds the failing
@@ -283,9 +300,53 @@ the conflicted files and what each side changed in them before the merge. The re
 checks that both sides survived in each file. A dropped side is a blocking finding, unless
 a person's note asked for it.
 
+## Profiles
+
+With `profiles` in the configuration (see the
+[configuration reference](configuration.md#profiles)), each issue runs on one profile,
+which sets the models and limits of its stages.
+
+**Triage chooses the profile.** Every `/nexkit plan` starts with a triage call in the
+`agent` job: one Claude session with no tools, run in an empty directory so the
+repository's Claude settings do not load. It reads the issue, the collaborators'
+discussion including the notes on earlier `/nexkit` commands, the note on this command,
+each profile with its `when` text, and the previous plan's profile. It returns a profile
+name and a reason. It decides in this order:
+
+1. A collaborator's request in the discussion or the note wins; the latest one counts. A
+   request in the issue itself does not, because anyone can write the issue.
+2. Otherwise a re-plan keeps the previous plan's profile, so the profile does not change
+   unless someone asks.
+3. Otherwise triage picks the profile whose `when` text fits the issue.
+
+The plan then runs with the profile's settings. Triage's cost counts with the plan's.
+
+**Triage never stops the plan.** After an error, a timeout or an unknown profile name, the
+plan uses the previous plan's profile, or `default_profile` when there is none, and the
+plan comment says that triage failed. A profile chosen only as that default is not kept
+on the next re-plan: triage chooses again.
+
+**The plan comment shows the profile.** Below the summary: the profile, the models it uses
+for plan, implement and review, the reason, and how to change it. To change it, say which
+profile in a comment and comment `/nexkit plan`, or comment `/nexkit plan <request>`, for
+example `/nexkit plan Use the hard profile`. There is no other way to change a profile, so
+the plan comment always shows the profile its rounds run on.
+
+**Rounds use the latest plan's profile.** `route` reads it when the run starts and passes
+it, with the profile's settings, to every job of the run. `/nexkit go`, fix rounds,
+automatic rounds and `/nexkit review` use it; with no plan, or a plan from before profiles
+were configured, they use `default_profile`. `/nexkit go` without a plan does not run
+triage. When the plan names a profile that is no longer in the configuration, the round
+stops before any job runs and asks for a re-plan; it never falls back to another profile.
+A re-plan while the pull request is open applies from the next round.
+
+The job timeouts follow the profile. For a plan, `route` does not know the profile yet, so
+the `agent` job allows for the triage call and the longest plan of all profiles.
+
 ## State
 
-All state is on GitHub: the plan comment and one NexKit comment per run on the issue, the
+All state is on GitHub: the plan comment (with profiles, a hidden record of its profile on
+the line after its marker) and one NexKit comment per run on the issue, the
 pull request, its commit statuses, one NexKit comment per round and one NexKit state
 comment on the pull request. Run comments only show runs. The state comment, edited in
 place, says how many automatic fix rounds were used and holds a hidden JSON record of the
@@ -307,6 +368,8 @@ new state comment.
 | Setup command fails before the agent | Reports the failing command and output on the issue or PR. |
 | Claude times out, hits its budget, errors, or returns no result | Reports it; publishes nothing; no automatic retry. |
 | Agent returns `blocked` | Reports its reason; no automatic retry. A person decides. |
+| Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
+| The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |
 | The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. |
 | The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
@@ -331,6 +394,9 @@ cannot fix.
 - The implement session can run any command on the runner, and Claude Code's credential is
   in its environment. Treat `/nexkit go` like running a script that the issue describes:
   approve plans only for issues whose content you trust.
+- With profiles, an issue's text can steer triage towards a more expensive profile, for
+  example through prompt injection. Requests in the issue do not count as a person's
+  request, and the plan comment shows the profile before anyone comments `/nexkit go`.
 - Logs and artifacts can show anything the agent saw. NexKit redacts known secrets (see
   [What is redacted](#what-is-redacted)), but on a public repository treat them as public.
 - Workflow and NexKit files (`.github/`, `.nexkit/`) are protected, so a NexKit change

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from importlib import resources
@@ -71,6 +73,12 @@ SCHEMAS = {
                     "required": ["title", "body"],
                 },
             },
+            # How a re-plan relates to the latest plan; shown only on a re-plan.
+            "revision": {
+                "type": "object",
+                "properties": {"started_over": {"type": "boolean"}, "changes": _STRING_LIST},
+                "required": ["started_over", "changes"],
+            },
         },
         "required": [
             "summary",
@@ -82,6 +90,7 @@ SCHEMAS = {
             "questions",
             "too_large",
             "split",
+            "revision",
         ],
     },
     "implement": {
@@ -109,6 +118,12 @@ SCHEMAS = {
             },
         },
         "required": [*_CHANGE_RESULT["required"], "open_conflicts"],
+    },
+    # NexKit adds the configured profile names as an enum when it runs triage.
+    "triage": {
+        "type": "object",
+        "properties": {"profile": {"type": "string"}, "reason": {"type": "string"}},
+        "required": ["profile", "reason"],
     },
     "review": {
         "type": "object",
@@ -226,6 +241,15 @@ def previous_round(repo, context, base):
     )
 
 
+def previous_plan(context):
+    """The plan prompt's section about the latest plan, or "" for a first plan."""
+    if "since_plan" not in context:
+        return ""
+    return Template(_template("plan_previous")).safe_substitute(
+        plan=context["plan"], since_plan=context["since_plan"]
+    )
+
+
 def merge_review(repo, context, base):
     """The review prompt's section about a merge of the base branch in this run's fix round,
     with what each side changed in the conflicted files, or ""."""
@@ -301,6 +325,10 @@ def build_prompt(stage, context, cfg, extra=None):
 
 def claude_command(stage, cfg, claude="claude"):
     settings = configuration.stage(cfg, stage)
+    schema = SCHEMAS[stage]
+    if stage == "triage":
+        schema = copy.deepcopy(schema)
+        schema["properties"]["profile"]["enum"] = list(cfg["profiles"])
     cmd = [
         claude,
         "-p",
@@ -311,13 +339,15 @@ def claude_command(stage, cfg, claude="claude"):
         "--model",
         settings["model"],
         "--json-schema",
-        json.dumps(SCHEMAS[stage]),
+        json.dumps(schema),
     ]
     if settings["effort"]:
         cmd += ["--effort", settings["effort"]]
     if settings["max_budget_usd"]:
         cmd += ["--max-budget-usd", str(settings["max_budget_usd"])]
-    if stage in ("plan", "review"):
+    if stage == "triage":
+        cmd += ["--tools", ""]
+    elif stage in ("plan", "review"):
         cmd += ["--tools", READ_ONLY_TOOLS]
     else:
         # The job runs on a disposable runner without any GitHub write token.
@@ -475,7 +505,64 @@ def collect_changes(repo, base_commit, out_dir):
     return files, len(patch)
 
 
-def run_stage(stage, context, cfg, repo, out_dir, *, claude="claude", checks=None, base=None):
+def run_triage(context, cfg, previous, out_dir, *, claude="claude"):
+    """Choose the profile for a plan with one Claude call that has no tools.
+
+    Triage never stops the plan: after an error or an unknown name, the plan uses the
+    `previous` profile, or `default_profile` when there is none."""
+    out = Path(out_dir) / "triage"
+    out.mkdir(parents=True, exist_ok=True)
+    profiles = cfg["profiles"]
+    extra = {
+        "requests": context.get("requests") or context["discussion"],
+        "profiles": "\n".join(f"- `{name}`: {p['when'].strip()}" for name, p in profiles.items()),
+        "previous": f"The latest plan of this issue used the profile `{previous}`."
+        if previous
+        else "None. This is the first plan of this issue with a profile.",
+    }
+    prompt = build_prompt("triage", context, cfg, extra)
+    (out / "prompt.md").write_text(prompt, encoding="utf-8")
+    settings = configuration.stage(cfg, "triage")
+    redact = Redactor()
+    log = RunLog(
+        redact,
+        title="NexKit triage",
+        tool_output=cfg["log"]["tool_output"],
+        transcript_dir=out if cfg["transcript"] else None,
+    )
+    # An empty directory, so the repository's Claude settings and instructions do not load.
+    with tempfile.TemporaryDirectory() as empty:
+        run = run_claude(
+            prompt,
+            claude_command("triage", cfg, claude),
+            cwd=empty,
+            timeout_seconds=settings["timeout_minutes"] * 60,
+            log=log,
+        )
+    result = interpret("triage", run, settings["timeout_minutes"])
+    output = result.pop("output") or {}
+    del result["summary"]
+    name = output.get("profile")
+    if result["status"] == "done" and name in profiles:
+        result.update(profile=name, chosen_by="triage", reason=str(output.get("reason") or ""))
+    else:
+        if result["status"] == "done":
+            result.update(status="error", error=f"Triage chose an unknown profile: {name!r}.")
+        fallback = "previous" if previous in profiles else "default"
+        result.update(
+            profile=previous if fallback == "previous" else cfg["default_profile"],
+            chosen_by=fallback,
+            reason="",
+        )
+    result = redact.data(result)
+    write_summary(summary(result, log.calls), redact)
+    return result
+
+
+def run_stage(
+    stage, context, cfg, repo, out_dir, *, claude="claude", checks=None, base=None, triage=None
+):
+    """Run one stage. A plan's `triage` result is stored with it, and its cost counts."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     extra = {}
@@ -486,6 +573,8 @@ def run_stage(stage, context, cfg, repo, out_dir, *, claude="claude", checks=Non
     if stage == "fix":
         merged, conflicts = merge_base_branch(repo, base)
         extra["conflicts"] = conflicts_text(base, merged, conflicts)
+    if stage == "plan":
+        extra["previous"] = previous_plan(context)
     if stage == "review":
         extra = {
             "base": base,
@@ -541,6 +630,9 @@ def run_stage(stage, context, cfg, repo, out_dir, *, claude="claude", checks=Non
         elif not files and not merged:
             # After a merge an empty patch is valid: it keeps this branch's side everywhere.
             result.update(status="error", error="The agent finished without changing any files.")
+    if triage:
+        costs = [c for c in (result["cost"], triage.get("cost")) if isinstance(c, (int, float))]
+        result.update(profile=triage["profile"], triage=triage, cost=sum(costs) if costs else None)
     return _save(result, out, redact, log.calls, start=start, merged=merged, conflicts=conflicts)
 
 

@@ -1,8 +1,9 @@
 import unittest
 
-from nexkit.route import parse_command, route
-from nexkit.state import BOT_LOGIN
-from tests.support import FakeGitHub
+from nexkit import config
+from nexkit.route import parse_command, route, with_profile
+from nexkit.state import BOT_LOGIN, PLAN_MARKER, profile_record, profile_text
+from tests.support import FakeGitHub, make_config, profile_config
 
 
 def comment_event(number, body, login="alice", on_pull=False, user_type="User"):
@@ -134,6 +135,72 @@ class RouteTests(unittest.TestCase):
 
     def test_other_events_are_ignored(self):
         self.assertEqual(route(self.gh, "push", {})["action"], "none")
+
+
+class ProfileTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.cfg = profile_config()
+
+    def plan(self, profile=None, chosen_by="triage"):
+        record = profile_record({"profile": profile, "chosen_by": chosen_by}) if profile else ""
+        body = f"{PLAN_MARKER}\n{record}\n## Plan\n\nAdd it.\n\n{profile_text('Profile.')}"
+        self.gh.comment(5, body)
+
+    def test_a_profile_record_in_agent_text_does_not_count(self):
+        fake = profile_record({"profile": "hard", "chosen_by": "triage"})
+        self.gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\n{fake}\nAdd it.")
+        self.assertEqual(self.resolve("go")[0]["profile"], "standard")
+
+    def resolve(self, command, number=5):
+        if number == 9 and 9 not in self.gh.pulls:
+            self.gh.add_pull(9, 5)
+        event = comment_event(number, f"/nexkit {command}", on_pull=number == 9)
+        return with_profile(self.gh, route(self.gh, "issue_comment", event), self.cfg)
+
+    def test_rounds_use_the_latest_plans_profile(self):
+        self.plan("standard")
+        self.plan("hard")
+        for command, number in (("go", 5), ("fix", 9), ("review", 9)):
+            decision, cfg = self.resolve(command, number)
+            self.assertEqual(decision["profile"], "hard", command)
+            self.assertEqual(config.stage(cfg, "review")["model"], "fable", command)
+            self.assertEqual(config.stage(cfg, "fix")["max_budget_usd"], 20, command)
+
+    def test_rounds_without_a_profile_use_the_default(self):
+        decision, cfg = self.resolve("go")
+        self.assertEqual(decision["profile"], "standard")
+        self.assertEqual(config.stage(cfg, "implement")["model"], "sonnet")
+        self.plan()  # a plan from before profiles
+        self.assertEqual(self.resolve("fix", 9)[0]["profile"], "standard")
+
+    def test_rounds_stop_when_the_profile_is_gone(self):
+        self.plan("expert")
+        decision, _ = self.resolve("fix", 9)
+        self.assertEqual(decision["action"], "none")
+        self.assertEqual(decision["reply_to"], 9)
+        self.assertIn("`expert`, which is no longer", decision["reason"])
+        self.assertIn("`/nexkit plan` on #5", decision["reason"])
+
+    def test_plan_gets_the_profile_to_keep(self):
+        decision, cfg = self.resolve("plan")
+        self.assertIsNone(decision["previous_profile"])
+        self.assertNotIn("profile", decision)
+        self.assertEqual(cfg, self.cfg)
+        self.plan("hard", chosen_by="previous")
+        self.assertEqual(self.resolve("plan")[0]["previous_profile"], "hard")
+        # A fallback after a failed triage, or a removed profile, is not kept.
+        self.plan("standard", chosen_by="default")
+        self.assertIsNone(self.resolve("plan")[0]["previous_profile"])
+        self.plan("expert")
+        self.assertIsNone(self.resolve("plan")[0]["previous_profile"])
+
+    def test_without_profiles_nothing_changes(self):
+        self.plan("hard")
+        decision = route(self.gh, "issue_comment", comment_event(5, "/nexkit go"))
+        cfg = make_config()
+        self.assertEqual(with_profile(self.gh, decision, cfg), (decision, cfg))
 
 
 if __name__ == "__main__":

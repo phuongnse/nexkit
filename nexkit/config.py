@@ -9,6 +9,8 @@ from pathlib import Path
 
 CONFIG_PATH = ".nexkit/config.json"
 STAGES = ("plan", "implement", "review")
+# Triage chooses a profile before the plan, so only the top-level `stages` can set it.
+TRIAGE = "triage"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 WORKFLOW_FILE = re.compile(r"^[A-Za-z0-9_.-]+\.ya?ml$")
@@ -24,6 +26,8 @@ DEFAULTS = {
         "implement": {"timeout_minutes": 45, "max_budget_usd": None},
         "review": {"timeout_minutes": 20, "max_budget_usd": None},
     },
+    "profiles": {},
+    "default_profile": None,
     "max_auto_fixes": 2,
     "auto_merge": False,
     "after_merge_workflows": [],
@@ -34,6 +38,8 @@ DEFAULTS = {
 
 TOP_KEYS = set(DEFAULTS)
 STAGE_KEYS = {"model", "effort", "timeout_minutes", "max_budget_usd"}
+PROFILE_KEYS = {"when", "stages"}
+TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
 CHECK_KEYS = {"name", "run", "timeout_minutes"}
 LOG_KEYS = {"tool_output"}
 TOOL_OUTPUT = ("none", "truncated")
@@ -69,6 +75,67 @@ def _effort(value, where):
         _fail(f"{where} must be one of {', '.join(EFFORTS)} or null")
 
 
+def _stage_keys(settings, where):
+    if not isinstance(settings, dict):
+        _fail(f"{where} must be an object")
+    extra = set(settings) - STAGE_KEYS
+    if extra:
+        _fail(f"Unknown keys in {where}: {', '.join(sorted(extra))}")
+
+
+def _stage_values(settings, where, max_minutes):
+    if "model" in settings:
+        _model(settings["model"], f"{where}.model")
+    if "effort" in settings:
+        _effort(settings["effort"], f"{where}.effort")
+    _positive_int(settings.get("timeout_minutes"), f"{where}.timeout_minutes", max_minutes)
+    _optional_budget(settings.get("max_budget_usd"), f"{where}.max_budget_usd")
+
+
+def _profiles(cfg):
+    """Check `profiles` and `default_profile`. A profile's stage settings are optional:
+    what a profile leaves out comes from the top-level `stages`."""
+    profiles, default = cfg["profiles"], cfg["default_profile"]
+    if not isinstance(profiles, dict):
+        _fail("profiles must be an object")
+    for name, profile in profiles.items():
+        where = f"profiles.{name}"
+        if not NAME.match(name):
+            _fail(f"Profile name '{name}' must be a short lowercase identifier")
+        if not isinstance(profile, dict):
+            _fail(f"{where} must be an object")
+        extra = set(profile) - PROFILE_KEYS
+        if extra:
+            _fail(f"Unknown keys in {where}: {', '.join(sorted(extra))}")
+        if not isinstance(profile.get("when"), str) or not profile["when"].strip():
+            _fail(f"{where}.when must say which issues belong in this profile")
+        stages = profile.setdefault("stages", {})
+        if not isinstance(stages, dict):
+            _fail(f"{where}.stages must be an object")
+        for stage, settings in stages.items():
+            if stage == TRIAGE:
+                _fail(
+                    f"{where}.stages cannot set triage: triage runs before there is a profile, "
+                    "so set it in the top-level stages"
+                )
+            if stage not in STAGES:
+                _fail(f"Unknown stage '{stage}' in {where}; stages are {', '.join(STAGES)}")
+            _stage_keys(settings, f"{where}.stages.{stage}")
+            # Without its own timeout, the stage keeps the one from `stages`.
+            _stage_values({"timeout_minutes": 1, **settings}, f"{where}.stages.{stage}", 340)
+    if not profiles:
+        if default is not None:
+            _fail("default_profile needs profiles")
+        if TRIAGE in cfg["stages"]:
+            _fail("stages.triage needs profiles: triage chooses one of them")
+        return
+    if default is None:
+        _fail("default_profile is required when profiles are set")
+    if not isinstance(default, str) or default not in profiles:
+        _fail(f"default_profile must name one of the profiles: {', '.join(profiles)}")
+    cfg["stages"][TRIAGE] = {**TRIAGE_DEFAULTS, **cfg["stages"].get(TRIAGE, {})}
+
+
 def validate(raw):
     """Return a complete configuration with defaults applied, or raise ConfigError."""
     if not isinstance(raw, dict):
@@ -82,14 +149,10 @@ def validate(raw):
             if not isinstance(value, dict):
                 _fail("stages must be an object")
             for stage, settings in value.items():
-                if stage not in STAGES:
-                    _fail(f"Unknown stage '{stage}'; stages are {', '.join(STAGES)}")
-                if not isinstance(settings, dict):
-                    _fail(f"stages.{stage} must be an object")
-                extra = set(settings) - STAGE_KEYS
-                if extra:
-                    _fail(f"Unknown keys in stages.{stage}: {', '.join(sorted(extra))}")
-                cfg["stages"][stage].update(settings)
+                if stage not in (*STAGES, TRIAGE):
+                    _fail(f"Unknown stage '{stage}'; stages are {', '.join((*STAGES, TRIAGE))}")
+                _stage_keys(settings, f"stages.{stage}")
+                cfg["stages"].setdefault(stage, {}).update(settings)
         elif key == "log":
             if not isinstance(value, dict):
                 _fail("log must be an object")
@@ -130,15 +193,9 @@ def validate(raw):
         check.setdefault("timeout_minutes", 15)
         _positive_int(check["timeout_minutes"], f"{where}.timeout_minutes", 360)
 
-    for stage in STAGES:
-        settings = cfg["stages"][stage]
-        where = f"stages.{stage}"
-        if "model" in settings:
-            _model(settings["model"], f"{where}.model")
-        if "effort" in settings:
-            _effort(settings["effort"], f"{where}.effort")
-        _positive_int(settings.get("timeout_minutes"), f"{where}.timeout_minutes", 340)
-        _optional_budget(settings.get("max_budget_usd"), f"{where}.max_budget_usd")
+    _profiles(cfg)
+    for stage, settings in cfg["stages"].items():
+        _stage_values(settings, f"stages.{stage}", 30 if stage == TRIAGE else 340)
 
     if (
         not isinstance(cfg["max_auto_fixes"], int)
@@ -177,6 +234,14 @@ def load(root="."):
     except json.JSONDecodeError as exc:
         raise ConfigError(f"{CONFIG_PATH} is not valid JSON: {exc}") from None
     return validate(raw)
+
+
+def with_profile(cfg, name):
+    """The configuration with a profile's stage settings layered over `stages`."""
+    cfg = copy.deepcopy(cfg)
+    for stage, settings in cfg["profiles"][name]["stages"].items():
+        cfg["stages"][stage].update(settings)
+    return cfg
 
 
 def stage(cfg, name):

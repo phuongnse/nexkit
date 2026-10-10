@@ -65,6 +65,67 @@ class ConfigTests(unittest.TestCase):
         cfg = config.validate({"auto_merge": True, "after_merge_workflows": ["ci.yml", "e2e.yaml"]})
         self.assertEqual(cfg["after_merge_workflows"], ["ci.yml", "e2e.yaml"])
 
+    def test_profiles_layer_over_stages(self):
+        cfg = config.validate(
+            {
+                "model": "sonnet",
+                "effort": "high",
+                "stages": {"implement": {"timeout_minutes": 60}, "triage": {"model": "fable"}},
+                "default_profile": "easy",
+                "profiles": {
+                    "easy": {"when": "Small changes."},
+                    "hard": {
+                        "when": "Security.",
+                        "stages": {"implement": {"model": "opus", "max_budget_usd": 20}},
+                    },
+                },
+            }
+        )
+        self.assertEqual(config.stage(cfg, "triage")["model"], "fable")
+        self.assertEqual(config.stage(cfg, "triage")["timeout_minutes"], 5)
+        easy = config.with_profile(cfg, "easy")
+        self.assertEqual(config.stage(easy, "implement")["model"], "sonnet")
+        hard = config.with_profile(cfg, "hard")
+        self.assertEqual(
+            config.stage(hard, "fix"),
+            {"model": "opus", "effort": "high", "timeout_minutes": 60, "max_budget_usd": 20},
+        )
+        self.assertEqual(config.stage(hard, "plan")["model"], "sonnet")
+        # The configuration passes between jobs and is validated again there.
+        self.assertEqual(config.validate(json.loads(json.dumps(hard))), hard)
+        self.assertNotIn("triage", config.validate({})["stages"])
+
+    def test_rejects_invalid_profiles(self):
+        good = {"when": "Small changes."}
+
+        def easy(profile, **raw):
+            return {"profiles": {"easy": profile}, "default_profile": "easy", **raw}
+
+        def stages(**settings):
+            return easy({**good, "stages": settings})
+
+        cases = [
+            ({"profiles": {"easy": good}}, "default_profile is required"),
+            ({"profiles": {"easy": good}, "default_profile": "hard"}, "must name one of"),
+            ({"default_profile": "easy"}, "default_profile needs profiles"),
+            ({"stages": {"triage": {"model": "opus"}}}, "stages.triage needs profiles"),
+            (easy({}), "profiles.easy.when"),
+            (easy({**good, "model": "x"}), "Unknown keys in profiles.easy"),
+            ({"profiles": {"Easy": good}, "default_profile": "Easy"}, "lowercase identifier"),
+            (stages(triage={}), "cannot set triage"),
+            (stages(deploy={}), "Unknown stage 'deploy' in profiles.easy"),
+            (stages(plan={"tools": "x"}), "Unknown keys in profiles.easy.stages.plan"),
+            (stages(plan={"timeout_minutes": 0}), "profiles.easy.stages.plan.timeout_minutes"),
+            (stages(plan={"effort": "huge"}), "profiles.easy.stages.plan.effort"),
+            (
+                easy(good, stages={"triage": {"timeout_minutes": 31}}),
+                "stages.triage.timeout_minutes",
+            ),
+        ]
+        for raw, message in cases:
+            with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
+                config.validate(raw)
+
     def test_protected_paths(self):
         cfg = config.validate({})
         self.assertTrue(config.is_protected(".github/workflows/ci.yml", cfg))

@@ -15,6 +15,8 @@ the NexKit release and are not configurable. See [supported versions](../README.
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable. See below. |
 | `stages` | see below | Per-stage overrides. |
+| `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See below. |
+| `default_profile` | `null` | The profile to use when no plan chose one. Required with `profiles`. |
 | `max_auto_fixes` | `2` | Repair rounds NexKit may start by itself on one pull request (0 to 10). Rounds requested by people do not count. |
 | `auto_merge` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See below. |
 | `after_merge_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. See below. |
@@ -87,14 +89,62 @@ branch with `workflow_dispatch`:
 }
 ```
 
-Fix rounds use the `implement` settings. Each stage accepts:
+Fix rounds use the `implement` settings. `triage` is a fourth stage, allowed only with
+`profiles` (see below). Each stage accepts:
 
 | Key | Meaning |
 |---|---|
 | `model` | Overrides the top-level `model`. |
 | `effort` | Overrides the top-level `effort`. |
-| `timeout_minutes` | Stop Claude after this long (plan 15, implement 45, review 20 by default). |
+| `timeout_minutes` | Stop Claude after this long (plan 15, implement 45, review 20 and triage 5 by default; triage at most 30). |
 | `max_budget_usd` | Passed to Claude Code as `--max-budget-usd`; `null` means no limit. |
+
+## Profiles
+
+Profiles let a repository use cheaper models on easy issues and stronger models on hard
+ones, without choosing by hand on every issue.
+
+```json
+"stages": {
+  "triage": {"model": "claude-fable-5-1"}
+},
+"default_profile": "standard",
+"profiles": {
+  "standard": {
+    "when": "Clear spec, one layer, follows an existing pattern.",
+    "stages": {
+      "plan":      {"model": "claude-opus-5-5"},
+      "implement": {"model": "claude-sonnet-5-5"},
+      "review":    {"model": "claude-opus-5-5"}
+    }
+  },
+  "hard": {
+    "when": "Touches security or access control, storage schema or execution.",
+    "stages": {
+      "plan":      {"model": "claude-fable-5-1"},
+      "implement": {"model": "claude-opus-5-5", "timeout_minutes": 60},
+      "review":    {"model": "claude-fable-5-1"}
+    }
+  }
+}
+```
+
+- A profile name is a short lowercase identifier. Each profile has a `when` text, which
+  triage reads to decide which issues belong in it, and optional `stages` with the same
+  keys as the top-level `stages`, for `plan`, `implement` and `review`.
+- Settings are layered: the top-level `model` and `effort`, then `stages.<stage>`, then
+  `profiles.<profile>.stages.<stage>`. What a profile leaves out comes from `stages`.
+- `stages.triage` sets the model, effort, timeout and budget of the triage call. It takes
+  the top-level `model` and `effort` unless it sets its own. A profile cannot set it,
+  because triage runs before there is a profile.
+- `default_profile` is used when no plan chose a profile: `/nexkit go` without a plan, a
+  plan from before profiles were configured, and a plan whose triage failed. The cheapest
+  profile is a safe choice, so a failure never costs more.
+- Write `when` in terms that an issue shows: the parts of the system it touches, how
+  clear the request is. Triage reads only the issue and its discussion, not the code.
+
+[How it works](how-it-works.md#profiles) describes how triage chooses and how to change a
+plan's profile.
 
 ## Logs and transcripts
 

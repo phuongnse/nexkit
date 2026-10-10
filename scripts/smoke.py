@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import nexkit  # noqa: E402
-from nexkit.agent import run_stage  # noqa: E402
+from nexkit.agent import run_stage, run_triage  # noqa: E402
 from nexkit.config import validate  # noqa: E402
 from nexkit.context import previous_review  # noqa: E402
 from nexkit.publish import pull_body, render_plan  # noqa: E402
@@ -89,6 +89,30 @@ def stage(name, work, out, claude, context=None, *, want="done", **kw):
     if "\n### [" not in transcript or "Result: no result" in transcript:
         raise SystemExit(f"{name}: transcript.md lacks tool calls with results")
     return result
+
+
+def triage(root, claude):
+    """Triage picks a profile from the issue text, and a collaborator's request wins."""
+    cfg = validate(
+        {
+            "model": "haiku",
+            "default_profile": "standard",
+            "profiles": {
+                "standard": {"when": "A small, clear change to one function."},
+                "hard": {"when": "Changes authentication, permissions or the storage format."},
+            },
+        }
+    )
+    cases = [
+        ({**CONTEXT, "requests": "No discussion."}, "standard"),
+        ({**CONTEXT, "requests": "@olivia: Plan this with the hard profile."}, "hard"),
+    ]
+    for number, (context, want) in enumerate(cases, 1):
+        result = run_triage(context, cfg, None, root / f"triage-{number}", claude=claude)
+        keys = ("status", "profile", "chosen_by", "reason", "error", "cost")
+        print(f"triage: {json.dumps({k: result.get(k) for k in keys})}", flush=True)
+        if result["chosen_by"] != "triage" or result["profile"] != want or not result["reason"]:
+            raise SystemExit(f"triage: wanted {want}, got {result}")
 
 
 def conflicted(root, name, path, start, base, pull):
@@ -178,6 +202,7 @@ def main():
         root = Path(tmp)
         work = make_repo(root)
 
+        triage(root, args.claude)
         plan = stage("plan", work, root / "plan", args.claude)
         for field in ("changes", "acceptance_criteria", "implementation_notes"):
             if not plan["output"][field]:
@@ -186,6 +211,15 @@ def main():
         if "<summary>Implementation notes</summary>" not in CONTEXT["plan"]:
             raise SystemExit("plan: the rendered plan lacks the implementation notes")
         print(CONTEXT["plan"], flush=True)
+
+        # A re-plan revises that plan with what was asked since it.
+        since = "@olivia: Also test that add(-2, -3) returns -5."
+        context = {**CONTEXT, "since_plan": since, "note": "Add the negative-number case."}
+        replan = stage("plan", work, root / "replan", args.claude, context)
+        revision = replan["output"]["revision"]
+        print(render_plan(replan["output"], replan=True), flush=True)
+        if revision["started_over"] or not revision["changes"]:
+            raise SystemExit(f"replan: wanted a revision with changes, got {revision}")
 
         implement = stage("implement", work, root / "implement", args.claude)
         if "calc.py" not in implement["changed_files"]:

@@ -64,7 +64,7 @@ commands, writes the two NexKit files, helps you add the secret and runs `nexkit
 ### By hand
 
 ```sh
-pipx install git+https://github.com/phuongnse/nexkit@v1.6.0   # or run bin/nexkit from a clone
+pipx install git+https://github.com/phuongnse/nexkit@v1.8.0   # or run bin/nexkit from a clone
 cd your-repository
 nexkit init --check "test=npm test" --check "lint=npm run lint" --setup "npm ci"
 claude setup-token                       # copy the token it prints
@@ -82,7 +82,7 @@ workflows from there.
 
 | Where | Comment | What happens |
 |---|---|---|
-| Issue | `/nexkit plan [notes]` | Claude reads the code and posts a plan for you to approve: what changes, the decisions it made, risks and acceptance criteria, with the implementation notes collapsed. Run it again after answering questions. |
+| Issue | `/nexkit plan [notes]` | Claude reads the code and posts a plan for you to approve: what changes, the decisions it made, risks and acceptance criteria, with the implementation notes collapsed. Run it again after answering questions or asking for changes: it revises the latest plan and says what changed. |
 | Issue | `/nexkit go [notes]` | Claude implements the latest plan. NexKit opens a pull request, runs the checks and reviews it. |
 | NexKit PR | `/nexkit fix [instructions]` | Another implementation round using the failing checks, review findings and your instructions. When the pull request conflicts with its base branch, the round merges the base branch and resolves the conflicts, or asks you to decide the ones that need a choice. |
 | NexKit PR | `/nexkit review` | Re-run the checks and the AI review, for example after you pushed a commit. |
@@ -117,7 +117,8 @@ pull requests itself and can start your CI on the base branch afterwards; see
 }
 ```
 
-Models, time and cost limits can be set per stage. See the
+Models, time and cost limits can be set per stage, and per profile: a triage step reads
+each issue and picks a profile, so hard issues get stronger models than easy ones. See the
 [configuration reference](docs/configuration.md).
 
 ## Learn more

@@ -10,7 +10,16 @@ from unittest import mock
 
 from nexkit import agent, runlog
 from nexkit.redact import Redactor
-from tests.support import CALC, MUL, SUB, FakeClaude, GitRepos, git, make_config
+from tests.support import (
+    CALC,
+    MUL,
+    SUB,
+    FakeClaude,
+    GitRepos,
+    git,
+    make_config,
+    profile_config,
+)
 
 CONTEXT = {
     "issue": 5,
@@ -34,6 +43,31 @@ class PromptTests(unittest.TestCase):
         self.assertIn("`test`: `true`", prompt)
         self.assertIn("`.github/`", prompt)
         self.assertNotIn("$plan", prompt)
+
+    def test_first_plan_has_no_latest_plan(self):
+        extra = {"previous": agent.previous_plan(CONTEXT)}
+        prompt = agent.build_prompt("plan", CONTEXT, make_config(), extra)
+        self.assertNotIn("Latest plan", prompt)
+        self.assertIn("</untrusted>\n\n## Note from the person", prompt)
+        self.assertNotRegex(prompt, r"\$(previous|since_plan)\b")
+
+    def test_replan_revises_the_latest_plan(self):
+        context = {**CONTEXT, "since_plan": "@olivia: Also accept `label`."}
+        extra = {"previous": agent.previous_plan(context)}
+        prompt = agent.build_prompt("plan", context, make_config(), extra)
+        order = [
+            "## Discussion\n",
+            "## Latest plan\n",
+            "Change add to return a + b.",
+            "## Discussion since the latest plan\n",
+            "Also accept `label`.",
+            "## How to use the latest plan",
+            "## Note from the person",
+            "`revision`",
+        ]
+        positions = [prompt.index(text) for text in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("`revision.started_over`", prompt)
 
     def test_first_review_has_no_previous_round(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
@@ -74,6 +108,9 @@ class PromptTests(unittest.TestCase):
             self.assertIn(f"`{field}`", agent._template("plan"))
         decision = schema["properties"]["decisions"]["items"]
         self.assertEqual(decision["required"], ["decision", "reason"])
+        self.assertIn("revision", schema["required"])
+        revision = schema["properties"]["revision"]
+        self.assertEqual(revision["required"], ["started_over", "changes"])
         self.assertNotIn("approach", schema["properties"])
 
     def test_implement_schema_has_the_pull_request_sections(self):
@@ -121,6 +158,17 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(fix[fix.index("--effort") + 1], "high")
         schema = json.loads(fix[fix.index("--json-schema") + 1])
         self.assertIn("status", schema["required"])
+
+    def test_triage_command_has_no_tools_and_names_the_profiles(self):
+        cfg = profile_config(stages={"triage": {"model": "fable", "max_budget_usd": 1}})
+        cmd = agent.claude_command("triage", cfg)
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "")
+        self.assertNotIn("bypassPermissions", cmd)
+        self.assertEqual(cmd[cmd.index("--model") + 1], "fable")
+        self.assertEqual(cmd[cmd.index("--max-budget-usd") + 1], "1")
+        schema = json.loads(cmd[cmd.index("--json-schema") + 1])
+        self.assertEqual(schema["properties"]["profile"]["enum"], ["standard", "hard"])
+        self.assertNotIn("enum", agent.SCHEMAS["triage"]["properties"]["profile"])
 
 
 class InterpretTests(unittest.TestCase):
@@ -211,6 +259,66 @@ class RunStageTests(StageCase):
         call = self.claude.call()
         self.assertEqual(Path(call["cwd"]).resolve(), self.repo.resolve())
         self.assertIn("Change add to return a + b.", call["prompt"])
+
+    def triage(self, previous=None, **spec):
+        self.claude.configure(**spec)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            return agent.run_triage(
+                {**CONTEXT, "requests": "@olivia: Use the hard profile."},
+                profile_config(),
+                previous,
+                self.out,
+                claude=str(self.claude.path),
+            )
+
+    def test_triage_chooses_the_profile_from_the_issue_text(self):
+        result = self.triage(result={"profile": "hard", "reason": "Touches the login code."})
+        self.assertEqual(
+            {k: result[k] for k in ("status", "profile", "chosen_by", "reason", "cost")},
+            {
+                "status": "done",
+                "profile": "hard",
+                "chosen_by": "triage",
+                "reason": "Touches the login code.",
+                "cost": 0.5,
+            },
+        )
+        call = self.claude.call()
+        self.assertNotEqual(Path(call["cwd"]).resolve(), self.repo.resolve())
+        prompt = call["prompt"]
+        self.assertIn("- `hard`: Touches security or storage.", prompt)
+        self.assertIn("None. This is the first plan", prompt)
+        self.assertIn("@olivia: Use the hard profile.", prompt)
+        self.assertIn("Use $HOME and ${{ secrets.X }} literally.", prompt)
+        self.assertIn("## How to write", prompt)
+        self.assertNotRegex(prompt.replace("$HOME", ""), r"\$[a-z_]+")
+        self.assertEqual(prompt, (self.out / "triage/prompt.md").read_text())
+        self.assertTrue((self.out / "triage/transcript.md").exists())
+
+    def test_triage_failure_falls_back_to_the_kept_or_default_profile(self):
+        unknown = self.triage(result={"profile": "expert", "reason": "x"})
+        self.assertEqual((unknown["status"], unknown["profile"]), ("error", "standard"))
+        self.assertEqual(unknown["chosen_by"], "default")
+        self.assertIn("unknown profile: 'expert'", unknown["error"])
+        crashed = self.triage("hard", exit=1)
+        self.assertEqual((crashed["profile"], crashed["chosen_by"]), ("hard", "previous"))
+        self.assertIn("without a result", crashed["error"])
+        prompt = self.claude.call()["prompt"]
+        self.assertIn("The latest plan of this issue used the profile `hard`.", prompt)
+
+    def test_plan_keeps_the_triage_result_and_its_cost(self):
+        triage = self.triage(result={"profile": "hard", "reason": "Auth."})
+        cfg = agent.configuration.with_profile(profile_config(), "hard")
+        self.claude.configure(result={"summary": "Plan."})
+        result, _ = self.run_quietly("plan", cfg, triage=triage)
+        self.assertEqual(result["profile"], "hard")
+        self.assertEqual(result["triage"]["reason"], "Auth.")
+        self.assertEqual(result["cost"], 1.0)
+        args = self.claude.call()["args"]
+        self.assertEqual(args[args.index("--model") + 1], "fable")
+        saved = json.loads((self.out / "result.json").read_text())
+        self.assertEqual(saved["triage"]["chosen_by"], "triage")
 
     def test_no_change_is_an_error(self):
         self.claude.configure(result=DONE)

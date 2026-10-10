@@ -11,7 +11,7 @@ from unittest import mock
 import nexkit
 import nexkit.config
 from nexkit import cli, scaffold
-from tests.support import FakeGitHub, git
+from tests.support import PROFILES, FakeGitHub, git
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -78,6 +78,22 @@ class InitDoctorTests(unittest.TestCase):
             (False, "after_merge_workflows: .github/workflows/e2e.yml does not exist"), findings
         )
 
+    def test_concurrency_group_is_on_the_job(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".github/workflows/nexkit.yml"
+        text = path.read_text()
+        group = (
+            "concurrency:\n      group: nexkit-${{ github.event.issue.number || "
+            "github.event.pull_request.number || inputs.number }}\n"
+        )
+        self.assertIn("\n    " + group, text.split("\n  nexkit:\n", 1)[1])
+        self.assertNotRegex(text, r"(?m)^concurrency:|cancel-in-progress")
+        ok = (True, "Commands on one issue or pull request run one at a time")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        # A workflow from NexKit 1.7 or earlier sets it for the whole workflow.
+        path.write_text(text.replace("    " + group, "").replace("jobs:", "concurrency: x\njobs:"))
+        self.assertNotIn(ok, scaffold.doctor(self.root))
+
     def test_repository_of(self):
         git(self.root, "init", "-q")
         git(self.root, "remote", "add", "origin", "git@github.com:acme/app.git")
@@ -131,6 +147,26 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(out["agent_timeout"], "75")
         self.assertEqual(self.gh.reactions, [(3, "eyes")])
         self.assertEqual(len(self.gh.run_comments(5)), 1)
+
+    def test_route_allows_for_triage_and_the_longest_plan(self):
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw.update(profiles=PROFILES, default_profile="standard")
+        path.write_text(json.dumps(raw))
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 3, "body": "/nexkit plan", "user": {"login": "alice"}},
+        }
+        out = self.run_route("issue_comment", event)
+        self.assertEqual(out["agent_timeout"], str(5 + 40 + 30))
+        self.assertIsNone(json.loads(out["decision"])["previous_profile"])
+        # Other runs get the profile's settings in the configuration they pass on.
+        event["comment"]["body"] = "/nexkit go"
+        out = self.run_route("issue_comment", event)
+        self.assertEqual(json.loads(out["decision"])["profile"], "standard")
+        cfg = json.loads(out["config"])
+        self.assertEqual(nexkit.config.stage(cfg, "implement")["model"], "sonnet")
 
     def test_route_on_pull_request_marks_the_round_running(self):
         self.gh.add_pull(6, 5, head_sha="b" * 40)

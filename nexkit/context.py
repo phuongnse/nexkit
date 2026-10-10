@@ -153,6 +153,15 @@ def gather(gh, decision, stage=None, fix_result=None):
         "outside_plan": "None.",
     }
     stage = stage or decision["action"]
+    if stage == "plan":
+        # Triage reads the notes on earlier commands too: a later note can change the
+        # profile that an earlier comment asked for.
+        context["requests"] = _discussion(comments, notes=True)
+        if plan:
+            # A re-plan revises the latest plan with what was said since it.
+            at = comments.index(plan)
+            context["discussion"] = _discussion(comments[:at])
+            context["since_plan"] = _discussion(comments[at + 1 :], notes=True)
     if stage == "review" and decision.get("pr"):
         context["discussion"] = _discussion(comments, notes=True)
         pr_comments = gh.comments(decision["pr"])

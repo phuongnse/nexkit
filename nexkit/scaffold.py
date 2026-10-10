@@ -83,6 +83,19 @@ def _after_merge_workflow(root, name):
     return (True, f"after_merge_workflows: {name} can be started after a merge")
 
 
+def _concurrency(workflow):
+    """A finding: the concurrency group must be on the job, so plain comments never join it."""
+    if re.search(r"^    concurrency:", workflow, re.M) and not re.search(
+        r"^concurrency:", workflow, re.M
+    ):
+        return (True, "Commands on one issue or pull request run one at a time")
+    return (
+        False,
+        f"Set 'concurrency' on the 'nexkit' job in {WORKFLOW_PATH}, as 'nexkit init' writes "
+        "it (see docs/troubleshooting.md)",
+    )
+
+
 def doctor(root):
     """Return a list of (ok, message) findings."""
     root = Path(root)
@@ -100,13 +113,13 @@ def doctor(root):
     if not workflow.is_file():
         findings.append((False, f"Missing {WORKFLOW_PATH}; run 'nexkit init'"))
     else:
-        match = re.search(
-            r"uses:\s*(\S+)/\.github/workflows/pipeline\.yml@(\S+)", workflow.read_text()
-        )
+        text = workflow.read_text()
+        match = re.search(r"uses:\s*(\S+)/\.github/workflows/pipeline\.yml@(\S+)", text)
         if match:
             findings.append((True, f"Workflow uses {match.group(1)} pipeline at {match.group(2)}"))
         else:
             findings.append((False, f"{WORKFLOW_PATH} does not call the NexKit pipeline"))
+        findings.append(_concurrency(text))
 
     repo = repository_of(root)
     if not repo:

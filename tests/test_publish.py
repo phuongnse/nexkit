@@ -9,8 +9,18 @@ from nexkit import agent
 from nexkit.context import gather
 from nexkit.gitutil import BOT_NAME, merge_tree
 from nexkit.publish import PublishError, publish, pull_body, render_plan
-from nexkit.state import latest_plan, plan_text
-from tests.support import CALC, MUL, SUB, FakeClaude, FakeGitHub, GitRepos, git, make_config
+from nexkit.state import latest_plan, plan_profile, plan_text
+from tests.support import (
+    CALC,
+    MUL,
+    SUB,
+    FakeClaude,
+    FakeGitHub,
+    GitRepos,
+    git,
+    make_config,
+    profile_config,
+)
 
 CONTEXT = {"title": "Fix add", "issue": 5}
 PLAN = {
@@ -244,6 +254,50 @@ class PublishTests(unittest.TestCase):
         self.assertIn("- [ ] add(2, 3) returns 5.", plan_text(plan))
         self.assertIn("/nexkit go", plan["body"])
 
+    def publish_plan(self, triage, profile=None):
+        result = {"status": "done", "output": PLAN, "triage": triage}
+        result["profile"] = profile or triage["profile"]
+        publish(self.gh, decision("plan"), result, CONTEXT, profile_config(), ".", self.out)
+        return latest_plan(self.gh.comments(5))
+
+    def test_plan_comment_shows_the_profile(self):
+        plan = self.publish_plan(
+            {"profile": "hard", "chosen_by": "triage", "reason": "Touches the login code."}
+        )
+        self.assertTrue(plan["body"].startswith("<!-- nexkit:plan -->\n<!-- nexkit:profile "))
+        self.assertIn(
+            "## Plan\n\nadd() returns the sum instead of the difference.\n\n"
+            "<!-- nexkit:profile-text -->\n\n**Profile: hard**",
+            plan["body"],
+        )
+        self.assertIn(
+            "**Profile: hard** (plan `fable`, implement `opus`, review `fable`). "
+            "Touches the login code.\n\nTo use another profile, say which in a comment and "
+            "comment `/nexkit plan`, or comment `/nexkit plan <request>`.",
+            plan["body"],
+        )
+        self.assertEqual(plan_profile(plan), {"profile": "hard", "chosen_by": "triage"})
+        self.assertNotIn("Profile", plan_text(plan))
+        self.assertIn("### What changes", plan_text(plan))
+
+    def test_plan_comment_says_when_triage_failed(self):
+        error = "Claude did not finish within 5 minutes.\nMore detail."
+        plan = self.publish_plan({"profile": "standard", "chosen_by": "default", "error": error})
+        self.assertIn(
+            "**Profile: standard** (plan `opus`, implement `sonnet`, review `sonnet`). "
+            "Triage failed (Claude did not finish within 5 minutes.), so this plan uses the "
+            "default profile.",
+            plan["body"],
+        )
+        plan = self.publish_plan({"profile": "hard", "chosen_by": "previous", "error": "x"})
+        self.assertIn("so this plan uses the previous plan's profile.", plan["body"])
+        self.assertEqual(plan_profile(plan)["chosen_by"], "previous")
+
+    def test_plan_with_an_unknown_profile_is_not_published(self):
+        with self.assertRaisesRegex(PublishError, "no configured profile: 'expert'"):
+            self.publish_plan({"profile": "standard", "chosen_by": "triage"}, profile="expert")
+        self.assertIsNone(latest_plan(self.gh.comments(5)))
+
     def test_full_plan_layout(self):
         body = render_plan(PLAN)
         order = [
@@ -260,6 +314,36 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         # The notes appear only inside <details>.
         self.assertEqual(body.count("calc.py"), 1)
+
+    def test_replan_says_what_changed_since_the_last_plan(self):
+        changed = ["The name limit is 2,000 characters again.", "`label` is accepted."]
+        revised = {**PLAN, "revision": {"started_over": False, "changes": changed}}
+        body = render_plan(revised, replan=True)
+        self.assertIn(
+            "### Since the last plan\n\nRevised the last plan.\n\n"
+            "- The name limit is 2,000 characters again.\n- `label` is accepted.\n\n"
+            "### What changes",
+            body,
+        )
+        same = render_plan({**PLAN, "revision": {"started_over": False, "changes": []}}, None, True)
+        self.assertIn("Revised the last plan.\n\nNo decision, acceptance criterion", same)
+        fresh = {**PLAN, "revision": {"started_over": True, "changes": []}}
+        self.assertIn(
+            "### Since the last plan\n\nPlanned again from scratch, as asked.\n\n### What",
+            render_plan(fresh, replan=True),
+        )
+        self.assertNotIn("Since the last plan", render_plan(revised))  # a first plan
+
+    def test_replan_comment(self):
+        result = {
+            "status": "done",
+            "output": {**PLAN, "revision": {"started_over": False, "changes": []}},
+        }
+        context = {**CONTEXT, "since_plan": "No discussion."}
+        publish(self.gh, decision("plan"), result, context, self.cfg, ".", self.out)
+        self.assertIn("Revised the last plan.", latest_plan(self.gh.comments(5))["body"])
+        publish(self.gh, decision("plan"), result, CONTEXT, self.cfg, ".", self.out)
+        self.assertNotIn("Since the last plan", latest_plan(self.gh.comments(5))["body"])
 
     def test_implementation_note_can_hold_a_code_block(self):
         step = (

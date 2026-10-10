@@ -23,6 +23,7 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 | `usage.py` | recognises Claude's usage limit and its reset time |
 | `config.py` | `.nexkit/config.json` schema and defaults |
 | `scaffold.py`, `templates/` | `nexkit init` and `nexkit doctor` |
+| `status.py` | `nexkit status`: open NexKit work from the comment markers |
 | `github.py`, `gitutil.py` | REST and git helpers |
 
 ## Rules to keep

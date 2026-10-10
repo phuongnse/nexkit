@@ -45,6 +45,15 @@
   for mentions added by an edit. An automatic merge that GitHub refuses now ends as
   `merge_refused` instead of `ready`. `nexkit doctor` warns about a listed login without
   write access.
+- New local command `nexkit status [--json]`: one line per open issue NexKit worked on
+  (planning, planned with the plan's link and profile, implementing, paused, failed) and
+  per open NexKit pull request (running with its round, ready, blocked, failing,
+  conflicting, merge refused, paused, failed), each with the link to its last round; the
+  pull requests NexKit merged recently, newest first by merge time, with the state of each
+  `after_merge_workflows` run; and a last section with only the items that need a person,
+  and why. States come from NexKit's markers, which now also record each run's outcome,
+  the reason a person is needed and the started after-merge runs. It reads GitHub with
+  the `gh` login or `GITHUB_TOKEN` and changes nothing.
 
 ## 1.10.0
 

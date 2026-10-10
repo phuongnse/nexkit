@@ -102,6 +102,16 @@ afterwards; see [Automatic merge](docs/configuration.md#automatic-merge). With
 that start to conflict. When Claude hits the account's usage limit, NexKit pauses and
 continues after the reset.
 
+## Local commands
+
+| Command | What it does |
+|---|---|
+| `nexkit init` | Writes `.nexkit/config.json` and `.github/workflows/nexkit.yml`. |
+| `nexkit doctor` | Checks the repository's setup: config, workflow triggers, secret, permissions. |
+| `nexkit status [--json]` | Lists the open NexKit work and what each item waits for: issues being planned, planned or implemented; pull requests running, ready, blocked, failing, conflicting, paused or refused a merge, each with the link to its last round; recent merges by NexKit with the state of each `after_merge_workflows` run; and, last, only the items that need a person and why. It reads NexKit's hidden markers, not the comment text, and changes nothing. |
+
+The commands use the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`.
+
 ## Configuration
 
 `.nexkit/config.json`, written by `nexkit init`:

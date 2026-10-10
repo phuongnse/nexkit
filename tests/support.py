@@ -61,6 +61,7 @@ class FakeGitHub:
         self.close_errors = {}
         self.parents = {}  # sub-issue number -> parent number
         self.branches = {}
+        self.runs = {}
         self.dispatch_runs = {}
         self._next = 1000
 
@@ -183,6 +184,15 @@ class FakeGitHub:
         return [
             p for p in self.pulls.values() if p["head"]["ref"] == branch and p["state"] == "open"
         ]
+
+    def open_issues(self):
+        return [i for i in self.issues.values() if i["state"] == "open"]
+
+    def list_pulls(self, state="open", limit=1000):
+        return [p for p in self.pulls.values() if state == "all" or p["state"] == state]
+
+    def workflow_run(self, run_id):
+        return self.runs[run_id]
 
     def pulls_into(self, base):
         return [p for p in self.pulls.values() if p["state"] == "open" and p["base"]["ref"] == base]

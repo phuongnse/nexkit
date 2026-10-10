@@ -1,6 +1,6 @@
 """Command line entry point.
 
-`init` and `doctor` are for people setting up a repository. The other commands are the
+`init`, `doctor` and `status` are for people working in a repository. The other commands are the
 steps of the reusable GitHub Actions pipeline and read their inputs from the environment.
 """
 
@@ -67,6 +67,34 @@ def cmd_doctor(args):
     for ok, message in findings:
         print(f"{'✓' if ok else '✗'} {message}")
     return 0 if all(ok for ok, _ in findings) else 1
+
+
+def cmd_status(args):
+    from .github import GitHub, GitHubError
+    from .status import collect, render, to_json
+
+    repository = args.repository or scaffold.repository_of(args.repo)
+    if not repository:
+        print(
+            "nexkit: cannot tell the GitHub repository; pass --repository OWNER/REPO",
+            file=sys.stderr,
+        )
+        return 2
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or scaffold.gh_token()
+    if not token:
+        print("nexkit: sign in with 'gh auth login' or set GITHUB_TOKEN", file=sys.stderr)
+        return 2
+    try:
+        cfg = configuration.load(args.repo)
+    except configuration.ConfigError:
+        cfg = {}
+    try:
+        data = collect(GitHub(repository=repository, token=token), cfg, merges=args.merges)
+    except GitHubError as exc:
+        print(f"nexkit: {exc}", file=sys.stderr)
+        return 1
+    print(to_json(data) if args.json else render(data))
+    return 0
 
 
 def cmd_route(args):
@@ -302,6 +330,13 @@ def build_parser():
     p = sub.add_parser("doctor", help="Check a repository's NexKit setup")
     p.add_argument("--repo", default=".")
     p.set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser("status", help="List open NexKit work and what each item waits for")
+    p.add_argument("--repo", default=".", help="Repository root (default: current directory)")
+    p.add_argument("--repository", help="OWNER/REPO (default: the 'origin' remote)")
+    p.add_argument("--json", action="store_true", help="Print JSON")
+    p.add_argument("--merges", type=int, default=5, help="Recent merges to show (default 5)")
+    p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("route", help="(pipeline) Decide the action for the current event")
     p.add_argument("--repo", required=True, help="Checkout of the default branch")

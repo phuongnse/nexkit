@@ -307,20 +307,24 @@ def _paused_agent(gh, decision, cfg, agent):
     return {"outcome": "paused", "summary": message, "attention": reason}
 
 
-def after_merge(gh, workflows, base):
+def after_merge(gh, workflows, base, records=None):
     """Start each workflow on the base branch after NexKit merged into it.
 
     GitHub starts no workflow for the merge's push, which uses the Actions token, but it does
-    for a dispatch. A dispatch that fails is reported; the merge stays.
+    for a dispatch. A dispatch that fails is reported; the merge stays. Each start is added
+    to `records`, for the round's marker.
     """
     lines = []
+    records = [] if records is None else records
     for workflow in workflows:
         try:
             run = gh.dispatch(workflow, base, {}, run_details=True) or {}
             url = run.get("html_url") or dispatched_runs_url(workflow, base)
             lines.append(f"- Started [`{workflow}`]({url})")
+            records.append({"workflow": workflow, "run_id": run.get("workflow_run_id"), "url": url})
         except GitHubError as exc:
             lines.append(f"- Could not start `{workflow}`: {exc}")
+            records.append({"workflow": workflow, "error": str(exc)[:300]})
     return "\n".join([f"After the merge, on `{base}`:", *lines]) if lines else ""
 
 
@@ -485,7 +489,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 if closed and cfg["close_parent_issues"]:
                     # Closing with the Actions token starts no workflow for `issues: closed`.
                     lines += close_parents_safely(gh, decision["issue"])
-                started = after_merge(gh, cfg["after_merge_workflows"], decision["base"])
+                runs = []
+                started = after_merge(gh, cfg["after_merge_workflows"], decision["base"], runs)
+                if runs:
+                    row["after_merge"] = runs
                 if cfg["auto_resolve_conflicts"]:
                     # The merge's push starts no workflow, so look for new conflicts here.
                     workflow = workflow_file(workflow_ref)

@@ -81,6 +81,11 @@ def _gh(*args):
     return proc.stdout if proc.returncode == 0 else None
 
 
+def gh_token():
+    """The GitHub CLI's token, or None."""
+    return (_gh("auth", "token") or "").strip() or None
+
+
 def repository_of(root):
     proc = subprocess.run(
         ["git", "remote", "get-url", "origin"], cwd=root, capture_output=True, text=True

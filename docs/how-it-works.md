@@ -446,6 +446,13 @@ and the recent fix rounds (summary, note and, after a merge, the files that had
 conflicts). Recorded text is clipped so the comment and
 the prompts stay bounded. Nothing else is stored, so there is nothing to migrate or repair.
 
+Each run comment's hidden marker is machine-readable: the command or round, its trigger,
+status (running, success, failure, paused), the outcome (for example `planned`, `ready`,
+`merged`, `merge_refused`, `agent_blocked`, `paused`), the reason a person is needed when
+one is, the resume record of a paused run, and after an automatic merge each started
+`after_merge_workflows` run. `nexkit status` reads these markers, not the text people
+read, to list the open NexKit work and what each item waits for.
+
 Issues and pull requests from NexKit 1.1.0 have a single status comment. NexKit leaves it
 as it is. On a pull request it still reads that comment's state, then saves the state in a
 new state comment.

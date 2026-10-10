@@ -155,6 +155,17 @@ class GitHub:
             "GET", f"{self._repo}/pulls", params={"state": "open", "head": f"{owner}:{branch}"}
         )
 
+    def open_issues(self):
+        """Open issues and pull requests; pull requests have a `pull_request` key."""
+        return self.paginate(f"{self._repo}/issues", {"state": "open"})
+
+    def list_pulls(self, state="open", limit=1000):
+        params = {"state": state, "sort": "updated", "direction": "desc"}
+        return self.paginate(f"{self._repo}/pulls", params, limit)
+
+    def workflow_run(self, run_id):
+        return self.request("GET", f"{self._repo}/actions/runs/{run_id}")
+
     def pulls_into(self, base):
         """Open pull requests whose base branch is `base`."""
         return self.paginate(f"{self._repo}/pulls", {"state": "open", "base": base})

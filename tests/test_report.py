@@ -253,6 +253,13 @@ class ReportTests(ReportCase):
             ],
         )
         [row] = self.gh.run_comments(6)
+        self.assertEqual(
+            row["run"]["after_merge"],
+            [
+                {"workflow": "ci.yml", "run_id": 1, "url": run},
+                {"workflow": "e2e.yml", "run_id": None, "url": row["run"]["after_merge"][1]["url"]},
+            ],
+        )
         self.assertIn("After the merge, on `develop`:", row["body"])
         self.assertIn(f"- Started [`ci.yml`]({run})", row["body"])
         # Without run details, the link lists the workflow's dispatched runs on the branch.

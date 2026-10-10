@@ -17,9 +17,28 @@ WORKFLOW_PATH = ".github/workflows/nexkit.yml"
 SECRETS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 
 
-def workflow_text(kit_repo, kit_ref):
+def workflow_text(kit_repo, kit_ref, default_branch="main"):
     template = resources.files("nexkit").joinpath("templates/workflow.yml").read_text()
-    return template.replace("__KIT_REPO__", kit_repo).replace("__KIT_REF__", kit_ref)
+    for name, value in (
+        ("__KIT_REPO__", kit_repo),
+        ("__KIT_REF__", kit_ref),
+        ("__DEFAULT_BRANCH__", default_branch),
+    ):
+        template = template.replace(name, value)
+    return template
+
+
+def default_branch_of(root):
+    """The default branch of `origin`, else the current branch, else `main`."""
+    for args in (
+        ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        ["symbolic-ref", "--quiet", "--short", "HEAD"],
+    ):
+        proc = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+        name = proc.stdout.strip().removeprefix("origin/")
+        if proc.returncode == 0 and re.fullmatch(r"[\w./-]+", name):
+            return name
+    return "main"
 
 
 def parse_check(value):
@@ -49,7 +68,9 @@ def init(root, *, checks, setup, model, kit_repo, kit_ref, force):
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")
     workflow_path.parent.mkdir(parents=True, exist_ok=True)
-    workflow_path.write_text(workflow_text(kit_repo, kit_ref or f"v{__version__}"))
+    workflow_path.write_text(
+        workflow_text(kit_repo, kit_ref or f"v{__version__}", default_branch_of(root))
+    )
     return [configuration.CONFIG_PATH, WORKFLOW_PATH]
 
 
@@ -124,6 +145,18 @@ def _triggers(cfg, workflow):
             )
         else:
             findings.append((True, "Closed issues start NexKit, for close_parent_issues"))
+    if cfg.get("auto_resolve_conflicts"):
+        if trigger(workflow, "push") is None:
+            findings.append(
+                (
+                    False,
+                    f"auto_resolve_conflicts is on, but {WORKFLOW_PATH} has no 'push' trigger "
+                    "for the default branch, so merges by people are noticed only by the "
+                    "hourly schedule; add it as 'nexkit init' writes it",
+                )
+            )
+        else:
+            findings.append((True, "Pushes to the default branch start the conflict check"))
     if cfg.get("resume_after_usage_limit"):
         if trigger(workflow, "schedule") is None:
             findings.append(

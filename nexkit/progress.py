@@ -53,6 +53,9 @@ def find_round(comments, decision):
     comment_id, row = find_run(comments, url)
     row = row or {"round": next_round(comments), "url": url}
     row["trigger"] = trigger(decision)
+    for key in ("conflicts", "resumed", "base_sha"):
+        if decision.get(key):
+            row[key] = decision[key]
     return comment_id, row
 
 

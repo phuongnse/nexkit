@@ -276,6 +276,24 @@ def merge_review(repo, context, base):
     )
 
 
+def conflicts_with_base(repo, base):
+    """Whether HEAD conflicts with `origin/<base>`, decided by git without changing anything."""
+    commit = git(repo, "rev-parse", "--verify", f"origin/{base}^{{commit}}").strip()
+    return bool(merge_tree(repo, "HEAD", commit)[1])
+
+
+def up_to_date(base):
+    """The result of an automatic conflict round whose branch no longer conflicts: nothing
+    to do, so Claude does not run."""
+    return {
+        "stage": "fix",
+        "status": "up_to_date",
+        "cost": None,
+        "summary": "",
+        "error": f"The pull request no longer conflicts with `{base}`.",
+    }
+
+
 def merge_base_branch(repo, base):
     """When the branch conflicts with its base branch, start merging the base branch and
     leave the conflicts in the working tree. Return (merged commit, conflicted files), or

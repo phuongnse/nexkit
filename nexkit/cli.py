@@ -149,7 +149,7 @@ def cmd_context(args):
 
 
 def cmd_agent(args):
-    from .agent import run_stage, run_triage
+    from .agent import conflicts_with_base, run_stage, run_triage, up_to_date
     from .checks import find_base, setup
     from .redact import Redactor
     from .runlog import summary, write_summary
@@ -157,9 +157,16 @@ def cmd_agent(args):
     decision = _decision()
     cfg = _config()
     stage = args.stage or decision["action"]
+    base = decision["base"]
     out = Path(args.out)
     context = json.loads((out / "context.json").read_text())
     base_sha = None
+    if stage == "fix" and decision.get("conflicts") and not conflicts_with_base(args.repo, base):
+        # Another round or a person resolved it since this round was started.
+        result = up_to_date(base)
+        (out / "result.json").write_text(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2))
+        return 0
     if stage in ("implement", "fix"):
         base_sha = find_base(args.repo, decision["base"])
         redact = Redactor()

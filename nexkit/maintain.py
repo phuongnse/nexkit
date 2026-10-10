@@ -9,21 +9,27 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 
 from .github import GitHubError
+from .route import issue_from_branch
 from .state import PAUSED, by_bot, run_comments, with_run
 from .usage import iso, parse_iso
 
 # Each task runs only when one of its configuration keys is on.
 TASKS = {
     "parents": ("close_parent_issues",),
-    "schedule": ("resume_after_usage_limit",),
+    "schedule": ("resume_after_usage_limit", "auto_resolve_conflicts"),
+    "conflicts": ("auto_resolve_conflicts",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "duplicate"}
 # Usage limits reset within a week; paused runs older than this are not resumed.
 PAUSE_WINDOW = timedelta(days=8)
+# Automatic rounds that merge the base branch, per pull request, apart from max_auto_fixes,
+# so a busy base branch cannot start rounds forever.
+MAX_CONFLICT_ROUNDS = 3
 
 
 def enabled(task, cfg):
@@ -121,11 +127,74 @@ def resume_paused(gh, workflow, ref, now=None):
     return lines
 
 
+def conflict_note(base):
+    return (
+        f"Merge `{base}` into this branch and resolve the conflicts. Keep the intent of both "
+        "sides; change nothing else."
+    )
+
+
+def is_conflicting(gh, number, tries=6, delay=5):
+    """Whether GitHub says the pull request conflicts with its base branch. GitHub works
+    this out in the background after the base branch moves; None when it has not yet."""
+    for attempt in range(tries):
+        mergeable = gh.pull(number).get("mergeable")
+        if mergeable is not None:
+            return mergeable is False
+        if attempt < tries - 1:
+            time.sleep(delay)
+    return None
+
+
+def start_conflict_round(gh, number, base, workflow, ref):
+    """Start an automatic fix round that merges `base` into the pull request, unless one
+    already tried this base commit, its limit is used up, or its latest round is paused.
+    Returns a line saying what happened, or "" when nothing was started for a known reason
+    that needs no line."""
+    rounds = [run for _, run in run_comments(gh.comments(number)) if "round" in run]
+    tried = [run for run in rounds if run.get("conflicts")]
+    sha = gh.branch_sha(base)
+    if tried and tried[-1].get("base_sha") == sha:
+        return ""
+    if rounds and rounds[-1].get("status") == PAUSED:
+        return ""
+    if len([run for run in tried if not run.get("resumed")]) >= MAX_CONFLICT_ROUNDS:
+        return (
+            f"#{number} conflicts with `{base}`, but its {MAX_CONFLICT_ROUNDS} automatic "
+            "conflict rounds are used up."
+        )
+    inputs = {"command": "fix", "number": str(number), "note": conflict_note(base)}
+    gh.dispatch(workflow, ref, {**inputs, "auto": "conflicts"})
+    return f"Started an automatic round on #{number} to merge `{base}`."
+
+
+def resolve_conflicts(gh, base, workflow, ref, skip=(), delay=5):
+    """Start a conflict round for each open NexKit pull request into `base` that conflicts
+    with it. Returns lines for a log or comment."""
+    lines = []
+    for pull in gh.pulls_into(base):
+        number = pull["number"]
+        nexkit = issue_from_branch(pull["head"]["ref"]) is not None
+        if number in skip or not nexkit or pull["head"]["repo"]["full_name"] != gh.repository:
+            continue
+        try:
+            conflicting = is_conflicting(gh, number, delay=delay)
+            if conflicting is None:
+                lines.append(f"GitHub has not worked out yet whether #{number} conflicts.")
+            elif conflicting:
+                lines.append(start_conflict_round(gh, number, base, workflow, ref))
+        except GitHubError as exc:
+            lines.append(f"Could not check #{number} for conflicts with `{base}`: {exc}")
+    return [line for line in lines if line]
+
+
 def maintain(gh, decision, cfg, *, workflow="", ref=""):
     """Run the decision's task. Returns lines for the job log."""
     task = decision["task"]
     if task == "parents":
         return close_parents_safely(gh, decision["issue"])
+    if task == "conflicts":
+        return resolve_conflicts(gh, decision["base"], workflow, ref)
     if task == "schedule":
         lines = []
         if cfg["resume_after_usage_limit"]:
@@ -133,5 +202,8 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
                 lines += resume_paused(gh, workflow, ref)
             except GitHubError as exc:
                 print(f"warning: could not resume paused runs: {exc}", file=sys.stderr)
+        if cfg["auto_resolve_conflicts"]:
+            # Also catches base branch moves whose push started no run.
+            lines += resolve_conflicts(gh, ref, workflow, ref)
         return lines
     raise ValueError(f"Unknown maintenance task: {task}")

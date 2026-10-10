@@ -15,7 +15,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `auto_merge`, merges an approved pull request, closes its issue and starts the `after_merge_workflows` on the base branch. Never checks out or executes repository code. |
-| `maintain` | closed issues, the schedule | read; issues, comments, workflows | no | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | closed issues, pushes to the default branch, the schedule | read; issues, comments, workflows | no | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -210,9 +210,9 @@ behind its base branch, which GitHub shows; `/nexkit fix` brings it up to date a
 any conflict (see below).
 
 **Conflicts with the base branch.** `/nexkit fix` also brings a pull request that no longer
-merges cleanly back in line with its base branch. There is no separate command, and NexKit
-does not notice by itself when a pull request starts to conflict: a person comments
-`/nexkit fix`.
+merges cleanly back in line with its base branch. There is no separate command. By
+default a person comments `/nexkit fix`; with `auto_resolve_conflicts`, NexKit starts such
+a round by itself (see [Work without a command](#work-without-a-command)).
 
 1. At the start of every fix round, the `agent` job checks with `git merge-tree` whether
    the branch conflicts with the base branch. Only then does it merge the base branch
@@ -326,6 +326,27 @@ A merge by a person closes the issue through GitHub, and the `issues: closed` ev
 the check. When NexKit closes the issue itself after an automatic merge, the Actions token
 starts no workflow, so `report` runs the same check in that run.
 
+**Resolving conflicts** (`auto_resolve_conflicts`). When the base branch moves, NexKit
+checks its open pull requests into it. GitHub's own mergeability check decides, so no
+code is checked out. A pull request that conflicts gets an automatic fix round, shown as
+`fix (auto, conflicts)`, with the note to merge the base branch and keep both sides; one
+that merges cleanly is left alone. The round then works as any fix round that merges the
+base branch, so a conflict that needs a choice ends as `blocked` with its questions.
+
+- **What starts the check.** A push to the default branch, such as a merge by a person,
+  starts it through the `push` trigger. A merge by NexKit starts no `push` workflow, so
+  `report` checks the other pull requests right after its merge. The hourly schedule
+  checks too, which catches anything the other two missed.
+- **Refused merge.** When GitHub refuses an automatic merge because the pull request
+  conflicts, the same round starts for it.
+- **Limits.** Each pull request gets at most 3 such rounds, apart from
+  `max_auto_fixes`. A round is started once for each base commit, so a blocked round is
+  not repeated until the base branch moves again. A pull request whose latest round is
+  paused at the usage limit is left alone. A pull request with a round running gets the
+  new round queued after it, as other commands are.
+- When the round starts and the branch no longer conflicts, for example because another
+  round already merged the base branch, it ends at once without running Claude.
+
 ### Usage limits
 
 When Claude stops because the account hit its usage limit, in any stage (triage, plan,
@@ -425,7 +446,7 @@ new state comment.
 | The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. |
 | The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
 | The PR branch moved while a fix round was running | Refuses to publish; run `/nexkit fix` again. |
-| The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. |
+| The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `auto_resolve_conflicts`, NexKit starts that round itself, at most 3 times per pull request. |
 | The PR conflicts with its base branch in a protected path | Stops before Claude runs; merge the base branch yourself. |
 | The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or add a `NEXKIT_PUSH_TOKEN` that may update workflows. |
 | GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person. |

@@ -96,8 +96,11 @@ and next step. Pull requests also get `nexkit/checks` and `nexkit/review` commit
 you can make required in branch protection.
 
 Merging is up to you unless you set `"auto_merge": true`. NexKit then merges approved
-pull requests itself and can start your CI on the base branch afterwards; see
-[Automatic merge](docs/configuration.md#automatic-merge).
+pull requests itself, closes their issues and can start your CI on the base branch
+afterwards; see [Automatic merge](docs/configuration.md#automatic-merge). With
+`"auto_resolve_conflicts": true` it also merges the base branch into its pull requests
+that start to conflict. When Claude hits the account's usage limit, NexKit pauses and
+continues after the reset.
 
 ## Configuration
 

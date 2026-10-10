@@ -7,7 +7,12 @@ from pathlib import Path
 
 from . import progress
 from .github import GitHubError, dispatched_runs_url, run_url
-from .maintain import close_parents_safely
+from .maintain import (
+    close_parents_safely,
+    is_conflicting,
+    resolve_conflicts,
+    start_conflict_round,
+)
 from .route import auto_input
 from .state import FAILURE, PAUSED, SUCCESS, clip, empty_state, read_state
 from .usage import shown
@@ -20,7 +25,7 @@ RESOLUTIONS = {
 }
 OPEN = {"blocking": "🛑 Blocking, unresolved", "suggestion": "💡 Suggestion, still open"}
 # Outcomes in which the run did its work. The others stopped on an error.
-COMPLETED = {"planned", "ready", "merged", "auto_fix", "needs_human"}
+COMPLETED = {"planned", "ready", "merged", "auto_fix", "needs_human", "up_to_date", "conflict_fix"}
 # Bounds for what the state comment keeps for the next review.
 MAX_FINDINGS = 30
 MAX_FIXES = 5
@@ -184,12 +189,13 @@ def run_status(outcome):
 
 
 def _stop_round(gh, decision, agent, outcome, message):
-    """Mark a pull request round that published nothing as failed, with the reason."""
+    """Show a pull request round that published nothing, with the reason."""
     comments = gh.comments(decision["pr"])
     _, state = read_state(comments)
     _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
     comment_id, row = progress.find_round(comments, decision)
-    row.update(status=FAILURE, head=decision["head"], cost=_cost(agent), outcome=outcome)
+    status = run_status(outcome)
+    row.update(status=status, head=decision["head"], cost=_cost(agent), outcome=outcome)
     progress.save_round(gh, decision["pr"], comment_id, row, message)
 
 
@@ -333,6 +339,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     if action in ("plan", "implement", "fix"):
         if agent and agent.get("status") == "paused":
             return _paused_agent(gh, decision, cfg, agent)
+        if agent and agent.get("status") == "up_to_date":
+            message = (
+                f"`{decision['base']}` merges cleanly into this pull request now; nothing to do."
+            )
+            _stop_round(gh, decision, agent, "up_to_date", message)
+            return {"outcome": "up_to_date", "summary": message}
         failure = _stage_failure(decision, agent, publish)
         if failure:
             outcome, message = failure
@@ -393,6 +405,15 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 merge = gh.merge(pr, head) or {}
             except GitHubError as exc:
                 message += f" Automatic merge was not possible: {exc}"
+                if cfg["auto_resolve_conflicts"] and is_conflicting(gh, pr):
+                    workflow = workflow_file(workflow_ref)
+                    started = start_conflict_round(
+                        gh, pr, decision["base"], workflow, default_branch
+                    )
+                    if started.startswith("Started"):
+                        outcome = "conflict_fix"
+                        started = f"It conflicts with `{decision['base']}`. {started}"
+                    message += f"\n\n{started}" if started else ""
             else:
                 outcome, message = "merged", f"✅ Checks and AI review passed; merged `{head[:7]}`."
                 closed, lines = close_merged_issue(gh, decision["issue"], pr, merge.get("sha"))
@@ -400,6 +421,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                     # Closing with the Actions token starts no workflow for `issues: closed`.
                     lines += close_parents_safely(gh, decision["issue"])
                 started = after_merge(gh, cfg["after_merge_workflows"], decision["base"])
+                if cfg["auto_resolve_conflicts"]:
+                    # The merge's push starts no workflow, so look for new conflicts here.
+                    workflow = workflow_file(workflow_ref)
+                    swept = resolve_conflicts(gh, decision["base"], workflow, default_branch, {pr})
+                    started = "\n".join(filter(None, [started, *swept]))
                 parts = ["\n".join(lines), started]
                 message += "".join(f"\n\n{part}" for part in parts if part)
     elif verdict is None:

@@ -21,6 +21,7 @@ the NexKit release and are not configurable. See [supported versions](../README.
 | `auto_merge` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See below. |
 | `after_merge_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. See below. |
 | `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See below. |
+| `auto_resolve_conflicts` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See below. |
 | `resume_after_usage_limit` | `true` | When Claude stops at the account's usage limit, run the same command again after the limit resets. See below. |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
 | `transcript` | `true` | Write Claude's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See below. |
@@ -145,6 +146,30 @@ The workflow must listen to `issues: closed`, as `nexkit init` writes it; `nexki
 warns when it does not. With the setting off, a closed issue starts a short run that ends
 at once.
 
+## Conflicts with the base branch
+
+```json
+"auto_resolve_conflicts": true
+```
+
+With `false` (the default), a person comments `/nexkit fix` on a pull request that
+conflicts with its base branch. With `true`, NexKit keeps its open pull requests
+mergeable: after the base branch moves, each one that now conflicts gets an automatic fix
+round that merges the base branch and keeps both sides. This matters most with
+`auto_merge` and several issues at once, where every merge can make the other pull
+requests conflict.
+
+- NexKit's own merges, pushes to the default branch (through the `push` trigger that
+  `nexkit init` writes) and the hourly schedule start the check. `nexkit doctor` warns when
+  the `push` trigger is missing; the schedule still notices within an hour.
+- When an automatic merge is refused because of a conflict, the same round starts.
+- A conflict that needs a choice ends the round as `blocked` with its questions; a person
+  answers with `/nexkit fix <decisions>`.
+- Each pull request gets at most 3 of these rounds, apart from `max_auto_fixes`, and one
+  per base commit.
+
+See [How it works](how-it-works.md#work-without-a-command).
+
 ## Usage limits
 
 ```json
@@ -260,7 +285,9 @@ shows what the log, run summary and artifacts contain and what is redacted.
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls
 `phuongnse/nexkit/.github/workflows/pipeline.yml` at a fixed release tag. It starts NexKit
 for `/nexkit` comments, *Request changes* reviews on NexKit pull requests, dispatches,
-closed issues (for `close_parent_issues`) and an hourly schedule (for
-`resume_after_usage_limit`). To upgrade,
+closed issues (for `close_parent_issues`), pushes to the default branch (for
+`auto_resolve_conflicts`) and an hourly schedule (for `resume_after_usage_limit` and
+`auto_resolve_conflicts`). With those settings off, these events start short runs that
+end at once; remove the triggers you do not use if you prefer. To upgrade,
 change both the `uses:` ref and `nexkit_ref` to the new tag (or rerun
 `nexkit init --force --kit-ref vX.Y.Z` and restore your config).

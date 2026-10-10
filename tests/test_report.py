@@ -60,7 +60,9 @@ LIMIT = {
 }
 
 
-class ReportTests(unittest.TestCase):
+class ReportCase(unittest.TestCase):
+    """A NexKit pull request and helpers to run `report` on it."""
+
     def setUp(self):
         self.gh = FakeGitHub()
         self.gh.add_issue(5)
@@ -119,6 +121,8 @@ class ReportTests(unittest.TestCase):
     def statuses(self):
         return {(s["context"], s["state"]) for s in self.gh.statuses}
 
+
+class ReportTests(ReportCase):
     def test_agent_failures_are_explained_on_the_issue(self):
         outcome = self.run_report(published=False)
         self.assertEqual(outcome["outcome"], "agent_failed")

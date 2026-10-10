@@ -59,6 +59,12 @@ base branch, and some conflicts need a choice the plan, the issue and your notes
 settle. Answer every question in one comment: `/nexkit fix` followed by your decisions.
 The next round merges the base branch again and follows your note.
 
+**A pull request still conflicts with `main` with `auto_resolve_conflicts` on.** Its
+latest round may be blocked on a conflict that needs your decision; answer it with
+`/nexkit fix`. NexKit also stops after 3 automatic conflict rounds on one pull request,
+and starts one round per commit of `main`. The `maintain` job's log lists what each check
+did.
+
 **A new NexKit pull request is behind `main`.** Something was merged into the base branch
 while the agent worked. NexKit opens the pull request on the commit the agent started
 from, so the work is not lost. Comment `/nexkit fix` to merge the base branch and resolve

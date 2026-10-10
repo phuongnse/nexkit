@@ -129,6 +129,26 @@ class InitDoctorTests(unittest.TestCase):
         path.write_text(json.dumps(cfg))
         self.assertFalse(any("schedule" in m for _, m in scaffold.doctor(self.root)))
 
+    def test_init_listens_to_pushes_to_the_default_branch(self):
+        git(self.root, "init", "-q", "-b", "trunk")
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        workflow = (self.root / ".github/workflows/nexkit.yml").read_text()
+        self.assertIn("branches: [trunk]", scaffold.trigger(workflow, "push"))
+        self.assertEqual(scaffold.default_branch_of(self.root / ".nexkit"), "trunk")
+
+    def test_doctor_checks_the_push_trigger_for_conflicts(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["auto_resolve_conflicts"] = True
+        path.write_text(json.dumps(cfg))
+        ok = (True, "Pushes to the default branch start the conflict check")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        workflow.write_text(re.sub(r"  push:\n.*\n", "", workflow.read_text()))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("has no 'push' trigger" in m for ok, m in findings if not ok))
+
     def test_trigger(self):
         workflow = (
             "on:\n  push:\n    branches: [main] # x\n  schedule:\n    - cron: '1 * * * *'\njobs:\n"

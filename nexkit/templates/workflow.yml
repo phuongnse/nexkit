@@ -9,8 +9,10 @@ on:
     types: [submitted]
   issues:
     types: [closed] # close_parent_issues
+  push:
+    branches: [__DEFAULT_BRANCH__] # auto_resolve_conflicts: the default branch moved
   schedule:
-    - cron: "23 * * * *" # resume runs paused at the Claude usage limit
+    - cron: "23 * * * *" # resume_after_usage_limit, auto_resolve_conflicts
   workflow_dispatch:
     inputs:
       command:
@@ -41,7 +43,7 @@ permissions:
 jobs:
   nexkit:
     if: >-
-      contains(fromJSON('["workflow_dispatch","issues","schedule"]'), github.event_name) ||
+      contains(fromJSON('["workflow_dispatch","issues","push","schedule"]'), github.event_name) ||
       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/nexkit')) ||
       (github.event_name == 'pull_request_review' &&
        github.event.review.state == 'changes_requested' &&

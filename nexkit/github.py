@@ -155,6 +155,13 @@ class GitHub:
             "GET", f"{self._repo}/pulls", params={"state": "open", "head": f"{owner}:{branch}"}
         )
 
+    def pulls_into(self, base):
+        """Open pull requests whose base branch is `base`."""
+        return self.paginate(f"{self._repo}/pulls", {"state": "open", "base": base})
+
+    def branch_sha(self, branch):
+        return self.request("GET", f"{self._repo}/commits/{quote(branch)}")["sha"]
+
     def create_pull(self, title, head, base, body):
         return self.request(
             "POST",

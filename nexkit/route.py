@@ -106,6 +106,13 @@ def route(gh, event_name, event, inputs=None):
     if event_name == "schedule":
         return {"action": "maintain", "task": "schedule"}
 
+    if event_name == "push":
+        # A person pushed or merged into a branch; NexKit's own merges start no push.
+        branch = (event.get("ref") or "").removeprefix("refs/heads/")
+        if branch != (event.get("repository") or {}).get("default_branch"):
+            return _none("Only pushes to the default branch are handled")
+        return {"action": "maintain", "task": "conflicts", "base": branch}
+
     if event_name == "workflow_dispatch":
         command = (inputs.get("command") or "").strip()
         number = str(inputs.get("number") or "").strip()
@@ -119,6 +126,9 @@ def route(gh, event_name, event, inputs=None):
         decision["actor"] = event.get("sender", {}).get("login")
         if decision["action"] != "none":
             decision.update({kind: True for kind in ("conflicts", "resumed") if kind in kinds})
+        if decision.get("conflicts"):
+            # Which base commit this round resolves, so the same conflict is tried once.
+            decision["base_sha"] = gh.branch_sha(decision["base"])
         return decision
 
     return _none(f"Event '{event_name}' is not handled")

@@ -60,6 +60,7 @@ class FakeGitHub:
         self.dispatch_errors = {}
         self.close_errors = {}
         self.parents = {}  # sub-issue number -> parent number
+        self.branches = {}
         self.dispatch_runs = {}
         self._next = 1000
 
@@ -103,6 +104,7 @@ class FakeGitHub:
                 "repo": {"full_name": repo or self.repository},
             },
             "base": {"ref": "main"},
+            "mergeable": True,
         }
         self.issues[number] = {
             "number": number,
@@ -181,6 +183,12 @@ class FakeGitHub:
         return [
             p for p in self.pulls.values() if p["head"]["ref"] == branch and p["state"] == "open"
         ]
+
+    def pulls_into(self, base):
+        return [p for p in self.pulls.values() if p["state"] == "open" and p["base"]["ref"] == base]
+
+    def branch_sha(self, branch):
+        return self.branches.get(branch, "f" * 40)
 
     def create_pull(self, title, head, base, body):
         number = max([*self.issues, *self.pulls, 0]) + 1

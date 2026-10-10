@@ -27,6 +27,16 @@
   hourly `schedule` trigger to `.github/workflows/nexkit.yml`, add `schedule` to the
   events in the job's `if`, and add `|| github.event_name` to its concurrency group, as
   `nexkit init` writes them; `nexkit doctor` warns when the trigger is missing.
+- New `auto_resolve_conflicts` key (default `false`): when the base branch moves, NexKit
+  starts an automatic fix round, `fix (auto, conflicts)`, for each of its open pull
+  requests that now conflicts, with the note to merge the base branch and keep both sides.
+  NexKit's own merges, pushes to the default branch and the hourly schedule start the
+  check, and an automatic merge refused because of a conflict starts the round too. A
+  conflict that needs a choice still ends as `blocked`. Each pull request gets at most 3
+  such rounds, apart from `max_auto_fixes`, and one per base commit; a round whose branch
+  no longer conflicts ends without running Claude. **Upgrade:** add
+  `push: {branches: [<default branch>]}` to the triggers and `push` to the events in the
+  job's `if`, as `nexkit init` writes them.
 
 ## 1.10.0
 

@@ -72,6 +72,9 @@ files or repository settings, and wait for confirmation.
    after each merge; each one needs a `workflow_dispatch` trigger, which is a change the
    user makes to that workflow file.
 
+   With `auto_merge`, also offer `"auto_resolve_conflicts": true`: NexKit then merges the
+   base branch into its pull requests that start to conflict, by itself.
+
    If the repository splits large issues into sub-issues and a parent means only the sum
    of its parts, offer `"close_parent_issues": true`: NexKit then closes a parent when its
    last sub-issue closes and at least one was completed.

@@ -171,7 +171,7 @@ class GitHub:
         return self.paginate(f"{self._repo}/pulls", {"state": "open", "base": base})
 
     def branch_sha(self, branch):
-        return self.request("GET", f"{self._repo}/commits/{quote(branch)}")["sha"]
+        return self.request("GET", f"{self._repo}/git/ref/heads/{quote(branch)}")["object"]["sha"]
 
     def create_pull(self, title, head, base, body):
         return self.request(

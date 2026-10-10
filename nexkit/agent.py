@@ -20,6 +20,7 @@ from .checks import environment, known_base
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, summary, write_summary
+from .usage import usage_limit
 
 READ_ONLY_TOOLS = "Read,Grep,Glob"
 CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
@@ -402,13 +403,18 @@ def run_claude(prompt, cmd, *, cwd, timeout_seconds, log, base_sha=None):
     reader = threading.Thread(target=lambda: stderr_chunks.append(proc.stderr.read()))
     reader.start()
     result = None
+    last_text, resets_at = "", None
     try:
         proc.stdin.write(prompt)
         proc.stdin.close()
         for line in proc.stdout:
             event = log.line(line)
-            if event and event.get("type") == "result":
+            if not event:
+                continue
+            if event.get("type") == "result":
                 result = event
+            last_text = _text_of(event) or last_text
+            resets_at = _rejected_until(event) or resets_at
         proc.wait()
     finally:
         timer.cancel()
@@ -420,7 +426,40 @@ def run_claude(prompt, cmd, *, cwd, timeout_seconds, log, base_sha=None):
         "timed_out": timed_out.is_set(),
         "stderr": "".join(stderr_chunks)[-4000:],
         "seconds": round(time.monotonic() - started, 1),
+        "last_text": last_text[-2000:],
+        "resets_at": resets_at,
     }
+
+
+def _text_of(event):
+    """The text of an assistant message, or ""."""
+    message = event.get("message") if event.get("type") == "assistant" else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return ""
+    texts = [b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+    return "\n".join(str(t) for t in texts if t)
+
+
+def _rejected_until(event):
+    """The reset time (Unix seconds) of a rate limit event that rejected the request."""
+    info = event.get("rate_limit_info") if event.get("type") == "rate_limit_event" else None
+    if not isinstance(info, dict) or info.get("status") != "rejected":
+        return None
+    value = info.get("resetsAt", info.get("resets_at"))
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def paused(result, limit):
+    """Mark a stage result as paused at the usage limit."""
+    result.update(
+        status="paused",
+        error=f"Claude hit the account's usage limit: {limit['message']}",
+        limit=limit["message"],
+        resume_at=limit["resume_at"],
+        reset_known=limit["reset_known"],
+    )
+    return result
 
 
 def interpret(stage, run, timeout_minutes):
@@ -458,6 +497,12 @@ def interpret(stage, run, timeout_minutes):
                 result["error"] = output.get("blocker") or "The agent reported it was blocked."
         else:
             result["status"] = "done"
+    if result["status"] == "error" and not run["timed_out"]:
+        # Only the end of a failed run: Claude's own words elsewhere may mention limits.
+        texts = (event.get("result"), run["stderr"], run.get("last_text"))
+        limit = usage_limit(texts, resets_at=run.get("resets_at"))
+        if limit:
+            paused(result, limit)
     return result
 
 

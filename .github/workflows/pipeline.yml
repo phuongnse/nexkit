@@ -8,8 +8,8 @@
 # review   independent read-only Claude review of that candidate
 # report   statuses, PR review, run and state comments, next automatic round; with
 #          auto_merge, the merge and the base branch's after_merge_workflows
-# maintain work that follows other events, such as closing a parent issue; no agent and
-#          no repository checkout
+# maintain work that follows other events: closing a parent issue, resuming commands
+#          paused at the usage limit; no agent and no repository checkout
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # Claude Code version in nexkit/__init__.py.
@@ -340,7 +340,9 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      issues: write # close parent issues
+      issues: write # close parent issues; mark paused runs as resumed
+      pull-requests: write # paused runs on pull requests
+      actions: write # resume paused commands
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -359,3 +361,4 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+          NEXKIT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

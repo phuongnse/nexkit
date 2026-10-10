@@ -15,7 +15,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `auto_merge`, merges an approved pull request, closes its issue and starts the `after_merge_workflows` on the base branch. Never checks out or executes repository code. |
-| `maintain` | closed issues | read; issues | no | Work that follows an event rather than a command, such as closing a parent issue. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | closed issues, the schedule | read; issues, comments, workflows | no | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -45,7 +45,9 @@ outcome. Comments of earlier runs keep their final state.
 ✅ means the run did its work, even when the checks fail or the review asks for changes
 (the round's columns show that). ❌ means it stopped on an error. A run started by a
 comment ends with 🚀 or 😕 on that comment. Runs started by a dispatch or by a
-*Request changes* review have no comment to react to.
+*Request changes* review have no comment to react to. ⏸️ means Claude stopped at the
+account's usage limit; the run waits for the limit to reset (see
+[Usage limits](#usage-limits)), and its command comment keeps 👀.
 
 ### One run at a time
 
@@ -324,6 +326,30 @@ A merge by a person closes the issue through GitHub, and the `issues: closed` ev
 the check. When NexKit closes the issue itself after an automatic merge, the Actions token
 starts no workflow, so `report` runs the same check in that run.
 
+### Usage limits
+
+When Claude stops because the account hit its usage limit, in any stage (triage, plan,
+implement, fix or review), the run is paused, not failed:
+
+- Its comment shows ⏸️, Claude's message with the reset time, and when NexKit runs the
+  command again. `nexkit/checks` and `nexkit/review` stay `pending`. Nothing is published
+  from the stage that stopped.
+- After the reset, the hourly `schedule` run starts the same command again, once, with the
+  same note. A review that stopped after its round published a commit resumes as
+  `/nexkit review`, because the commit is already there. A resumed round shows
+  `(resumed)` and does not count toward `max_auto_fixes`. If it hits the limit again, it
+  pauses again.
+- When NexKit cannot read the reset time from Claude's message, it tries again after one
+  hour, and says so.
+- A new command on the same issue or pull request replaces the paused one: its comment
+  then says so, and it is not resumed.
+- With `resume_after_usage_limit: false`, the comment still names the limit and the reset
+  time, and asks a person to comment the command again after it.
+
+The paused run's comment holds the command, its note and the resume time in its hidden
+marker; that is all the state there is. The schedule looks at run comments edited in the
+last eight days and runs no agent when nothing is due.
+
 ## Profiles
 
 With `profiles` in the configuration (see the
@@ -391,6 +417,7 @@ new state comment.
 | `/nexkit go` while a NexKit PR for the issue is open | Replies: use `/nexkit fix` there or close it. |
 | Setup command fails before the agent | Reports the failing command and output on the issue or PR. |
 | Claude times out, hits its budget, errors, or returns no result | Reports it; publishes nothing; no automatic retry. |
+| Claude stops at the account's usage limit | Pauses the run with the reset time; publishes nothing from that stage; runs the command again after the reset, unless `resume_after_usage_limit` is `false`. |
 | Agent returns `blocked` | Reports its reason; no automatic retry. A person decides. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
@@ -409,7 +436,8 @@ new state comment.
 
 Automatic rounds only follow concrete check failures or review findings. Agent errors and
 blocked results always stop, so model usage is never spent repeating a problem the agent
-cannot fix.
+cannot fix. A run paused at the usage limit is not a retry: it continues the same command
+once the limit has reset.
 
 ## Security notes
 

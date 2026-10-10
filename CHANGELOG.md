@@ -16,6 +16,17 @@
   `.github/workflows/nexkit.yml` and `github.event_name == 'issues'` to the job's `if`, as
   `nexkit init` writes them; `nexkit doctor` warns when the setting is on and the trigger
   is missing.
+- A run that stops at the Claude account's usage limit is paused instead of failed. Its
+  comment shows ⏸️, the reset time and when NexKit runs the command again;
+  `nexkit/checks` and `nexkit/review` stay pending. After the reset, NexKit runs the same
+  command again, once, with the same note (a review that stopped after its commit was
+  published resumes as `/nexkit review`). A resumed round does not count toward
+  `max_auto_fixes`, and a new command replaces a paused one. The comment used to blame
+  the stage, for example "The AI review did not complete". New key
+  `resume_after_usage_limit` (default `true`) turns the resume off. **Upgrade:** add the
+  hourly `schedule` trigger to `.github/workflows/nexkit.yml`, add `schedule` to the
+  events in the job's `if`, and add `|| github.event_name` to its concurrency group, as
+  `nexkit init` writes them; `nexkit doctor` warns when the trigger is missing.
 
 ## 1.10.0
 

@@ -123,6 +123,12 @@ class GitHub:
             "PATCH", f"{self._repo}/issues/{number}", {"state": "closed", "state_reason": reason}
         )
 
+    def recent_comments(self, since, limit=2000):
+        """Comments on any issue or pull request, edited or posted since `since` (ISO 8601),
+        newest first."""
+        params = {"since": since, "sort": "updated", "direction": "desc"}
+        return self.paginate(f"{self._repo}/issues/comments", params, limit)
+
     def comment(self, number, body):
         return self.request("POST", f"{self._repo}/issues/{number}/comments", {"body": body})
 

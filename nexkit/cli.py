@@ -91,7 +91,8 @@ def cmd_route(args):
         else:
             decision, cfg = with_profile(gh, decision, cfg)
     if decision["action"] == "maintain" and not enabled(decision["task"], cfg):
-        decision = {"action": "none", "reason": f"{TASKS[decision['task']]} is off"}
+        keys = " and ".join(TASKS[decision["task"]])
+        decision = {"action": "none", "reason": f"Nothing to do: {keys} off"}
     print(json.dumps(decision, indent=2))
     if decision["action"] == "maintain":
         _output(action="maintain", decision=decision, config=cfg)
@@ -177,6 +178,13 @@ def cmd_agent(args):
     triage = None
     if stage == "plan" and cfg["profiles"]:
         triage = run_triage(context, cfg, decision.get("previous_profile"), out)
+        if triage["status"] == "paused":
+            # The plan would stop at the same limit; it runs again after the reset.
+            keys = ("status", "error", "limit", "resume_at", "reset_known", "cost")
+            result = {"stage": stage, **{key: triage[key] for key in keys}}
+            (out / "result.json").write_text(json.dumps(result, indent=2))
+            print(json.dumps(result, indent=2))
+            return 0
         cfg = configuration.with_profile(cfg, triage["profile"])
     checks = json.loads(Path(args.checks).read_text()) if args.checks else None
     result = run_stage(
@@ -254,8 +262,17 @@ def cmd_report(args):
 
 def cmd_maintain(args):
     from .maintain import maintain
+    from .report import workflow_file
 
-    for line in maintain(_gh(), _decision(), _config()):
+    gh = _gh()
+    lines = maintain(
+        gh,
+        _decision(),
+        _config(),
+        workflow=workflow_file(os.environ.get("GITHUB_WORKFLOW_REF", "")),
+        ref=os.environ.get("NEXKIT_DEFAULT_BRANCH") or gh.default_branch(),
+    )
+    for line in lines:
         print(line)
     return 0
 

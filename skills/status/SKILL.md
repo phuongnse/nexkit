@@ -10,7 +10,8 @@ Use `gh` against the current repository and summarise, without changing anything
 1. **Open NexKit pull requests:**
    `gh pr list --search "head:nexkit/issue-" --json number,title,headRefName,url`.
    For each, read the NexKit comments (`gh pr view <n> --comments`): one per round, headed
-   `### NexKit round <n>: <trigger>`, showing ⏳ running, ✅ finished or ❌ stopped with a
+   `### NexKit round <n>: <trigger>`, showing ⏳ running, ✅ finished, ❌ stopped or ⏸️
+   paused at the Claude usage limit (with when it resumes) with a
    link to the run, the commit, checks, AI review, cost and next step; and the state
    comment, headed `### NexKit`, with the automatic fix rounds used. Read the commit
    statuses `nexkit/checks` and `nexkit/review` too (`gh pr checks <n>`). Report the round

@@ -9,6 +9,8 @@ on:
     types: [submitted]
   issues:
     types: [closed] # close_parent_issues
+  schedule:
+    - cron: "23 * * * *" # resume runs paused at the Claude usage limit
   workflow_dispatch:
     inputs:
       command:
@@ -39,14 +41,15 @@ permissions:
 jobs:
   nexkit:
     if: >-
-      github.event_name == 'workflow_dispatch' || github.event_name == 'issues' ||
+      contains(fromJSON('["workflow_dispatch","issues","schedule"]'), github.event_name) ||
       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/nexkit')) ||
       (github.event_name == 'pull_request_review' &&
        github.event.review.state == 'changes_requested' &&
        startsWith(github.event.pull_request.head.ref, 'nexkit/'))
     # One run at a time per issue or pull request. Set on the job, so only commands join.
+    # Runs for other events, such as the schedule, form a group per event.
     concurrency:
-      group: nexkit-${{ github.event.issue.number || github.event.pull_request.number || inputs.number }}
+      group: nexkit-${{ github.event.issue.number || github.event.pull_request.number || inputs.number || github.event_name }}
     uses: __KIT_REPO__/.github/workflows/pipeline.yml@__KIT_REF__
     with:
       nexkit_repository: __KIT_REPO__

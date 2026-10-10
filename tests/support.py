@@ -143,6 +143,14 @@ class FakeGitHub:
         self.issues[number].update(state="closed", state_reason=reason)
         return self.issues[number]
 
+    def recent_comments(self, since, limit=2000):
+        found = []
+        for number, comments in self.issue_comments.items():
+            for comment in comments:
+                url = f"https://api.github.com/repos/{self.repository}/issues/{number}"
+                found.append({**comment, "issue_url": url})
+        return found[::-1]
+
     def comment(self, number, body):
         comment = {
             "id": self._id(),

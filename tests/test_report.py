@@ -50,6 +50,16 @@ def review_result(verdict="approve", findings=()):
     }
 
 
+LIMIT = {
+    "status": "paused",
+    "cost": 0.2,
+    "error": "Claude hit the account's usage limit: You've hit your session limit",
+    "limit": "You've hit your session limit · resets 4:40am (UTC)",
+    "resume_at": "2026-10-11T04:40:00Z",
+    "reset_known": True,
+}
+
+
 class ReportTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()
@@ -499,6 +509,79 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("Things to look at", body)
         self.assertNotIn("<details>", body)
         self.assertIn("- ✅ add works (`test_add`)", body)
+
+    def test_a_plan_at_the_usage_limit_pauses_with_its_resume_record(self):
+        self.write("nexkit-agent", "result.json", LIMIT)
+        d = decision("plan", note="Use M6", comment_id=3)
+        outcome = self.run_report(d=d, published=False)
+        self.assertEqual(outcome["outcome"], "paused")
+        [run] = self.gh.run_comments(5)
+        self.assertEqual(run["run"]["status"], "paused")
+        self.assertEqual(
+            run["run"]["resume"],
+            {
+                "command": "plan",
+                "number": 5,
+                "note": "Use M6",
+                "auto": "resume",
+                "at": "2026-10-11T04:40:00Z",
+            },
+        )
+        self.assertIn("⏸️ [paused]", run["body"])
+        self.assertIn("You've hit your session limit · resets 4:40am (UTC)", run["body"])
+        self.assertIn(
+            "NexKit runs `/nexkit plan` with the same note again after it resets, at "
+            "04:40 UTC on 2026-10-11.",
+            run["body"],
+        )
+        self.assertEqual(self.gh.reactions, [])  # keeps 👀 until it finishes
+        self.assertFalse(self.gh.dispatches)
+
+    def test_a_fix_round_at_the_usage_limit_keeps_the_statuses_pending(self):
+        self.write("nexkit-agent", "result.json", {**LIMIT, "reset_known": False})
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
+        outcome = self.run_report(d=d, published=False)
+        self.assertEqual(outcome["outcome"], "paused")
+        self.assertEqual(
+            self.statuses(), {("nexkit/checks", "pending"), ("nexkit/review", "pending")}
+        )
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["status"], "paused")
+        self.assertEqual(row["run"]["resume"]["auto"], "true,resume")
+        self.assertIn("could not read when it resets", row["body"])
+        _, state = read_state(self.gh.comments(6))
+        self.assertIsNone(state)  # a paused round uses no automatic fix round
+
+    def test_a_review_at_the_usage_limit_resumes_only_the_review(self):
+        self.candidate(review=LIMIT)
+        outcome = self.run_report()
+        self.assertEqual(outcome["outcome"], "paused")
+        self.assertEqual(
+            self.statuses(), {("nexkit/checks", "pending"), ("nexkit/review", "pending")}
+        )
+        self.assertFalse(self.gh.created_reviews)
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["verdict"], "paused")
+        self.assertEqual(
+            {k: row["run"]["resume"][k] for k in ("command", "number", "auto")},
+            {"command": "review", "number": 6, "auto": "resume"},
+        )
+        # The issue's `/nexkit go` comment shows the pause, but only the round resumes.
+        [command] = self.gh.run_comments(5)
+        self.assertEqual(command["run"]["status"], "paused")
+        self.assertNotIn("resume", command["run"])
+        self.assertFalse(self.gh.dispatches)
+
+    def test_without_resume_the_comment_says_when_to_continue(self):
+        self.write("nexkit-agent", "result.json", LIMIT)
+        cfg = make_config(resume_after_usage_limit=False)
+        self.run_report(d=decision("implement"), cfg=cfg, published=False)
+        [run] = self.gh.run_comments(5)
+        self.assertNotIn("resume", run["run"])
+        self.assertIn(
+            "It resets at 04:40 UTC on 2026-10-11. Comment `/nexkit go` after the reset",
+            run["body"],
+        )
 
     def test_workflow_file(self):
         self.assertEqual(workflow_file(WORKFLOW), "nexkit.yml")

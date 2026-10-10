@@ -8,7 +8,9 @@ from pathlib import Path
 from . import progress
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import close_parents_safely
-from .state import FAILURE, SUCCESS, clip, empty_state, read_state
+from .route import auto_input
+from .state import FAILURE, PAUSED, SUCCESS, clip, empty_state, read_state
+from .usage import shown
 
 ICONS = {True: "✅", False: "❌"}
 # 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
@@ -175,14 +177,76 @@ def _stage_failure(decision, agent, publish):
     return None
 
 
-def _stop_round(gh, decision, agent, message):
+def run_status(outcome):
+    if outcome == "paused":
+        return PAUSED
+    return SUCCESS if outcome in COMPLETED else FAILURE
+
+
+def _stop_round(gh, decision, agent, outcome, message):
     """Mark a pull request round that published nothing as failed, with the reason."""
     comments = gh.comments(decision["pr"])
     _, state = read_state(comments)
     _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
     comment_id, row = progress.find_round(comments, decision)
-    row.update(status=FAILURE, head=decision["head"], cost=_cost(agent))
+    row.update(status=FAILURE, head=decision["head"], cost=_cost(agent), outcome=outcome)
     progress.save_round(gh, decision["pr"], comment_id, row, message)
+
+
+def pause(result, cfg, command, number, note="", auto="resume"):
+    """(message, resume record or None) for a stage that stopped at the usage limit.
+
+    The resume record goes into the run comment's marker; `maintain` starts the command
+    again once its time has passed."""
+    at = result.get("resume_at")
+    known = result.get("reset_known")
+    shown_command = f"`/nexkit {command}`" + (" with the same note" if note else "")
+    message = f"⏸️ Claude stopped at the account's usage limit: {result.get('limit') or ''}"
+    message = message.rstrip(": ") + "."
+    if not cfg["resume_after_usage_limit"] or not at:
+        reset = f"It resets at {shown(at)}." if known and at else "The reset time is unknown."
+        return f"{message} {reset} Comment {shown_command} after the reset to continue.", None
+    if known:
+        message += f" NexKit runs {shown_command} again after it resets, at {shown(at)}."
+    else:
+        message += (
+            f" NexKit could not read when it resets, so it runs {shown_command} again after "
+            f"{shown(at)}."
+        )
+    message += " A new command here replaces this."
+    resume = {"command": command, "number": number, "note": note or "", "auto": auto, "at": at}
+    return message, resume
+
+
+def _pause_statuses(gh, head, resume, url):
+    """Keep both statuses pending while the round waits for the usage limit to reset."""
+    description = "Paused at the Claude usage limit" + (
+        f"; resumes after {shown(resume['at'])}" if resume else ""
+    )
+    for context in progress.STATUS_CONTEXTS:
+        gh.set_status(head, context, "pending", description, url)
+
+
+def _paused_agent(gh, decision, cfg, agent):
+    """The outcome of a plan, implement or fix stage that stopped at the usage limit."""
+    command = progress.COMMANDS[decision["action"]]
+    message, resume = pause(
+        agent,
+        cfg,
+        command,
+        decision["target"],
+        decision.get("note"),
+        auto_input(decision, resume=True),
+    )
+    if not decision.get("pr"):
+        return {"outcome": "paused", "summary": message, "resume": resume}
+    _pause_statuses(gh, decision["head"], resume, run_url())
+    comment_id, row = progress.find_round(gh.comments(decision["pr"]), decision)
+    row.update(status=PAUSED, head=decision["head"], cost=_cost(agent), outcome="paused")
+    if resume:
+        row["resume"] = resume
+    progress.save_round(gh, decision["pr"], comment_id, row, message)
+    return {"outcome": "paused", "summary": message}
 
 
 def after_merge(gh, workflows, base):
@@ -254,7 +318,10 @@ def _record(state, decision, row, agent, review):
 def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch):
     """Post the outcome. Returns a short machine-readable summary for logs and tests."""
     result = _report(gh, decision, cfg, needs, Path(artifacts), workflow_ref, default_branch)
-    progress.finish(gh, decision, result["outcome"] in COMPLETED, result["summary"])
+    fields = {"outcome": result["outcome"]}
+    if result.get("resume"):
+        fields["resume"] = result["resume"]
+    progress.finish(gh, decision, run_status(result["outcome"]), result["summary"], **fields)
     return result
 
 
@@ -264,11 +331,13 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     publish = json.loads(((needs.get("publish") or {}).get("outputs") or {}).get("result") or "{}")
 
     if action in ("plan", "implement", "fix"):
+        if agent and agent.get("status") == "paused":
+            return _paused_agent(gh, decision, cfg, agent)
         failure = _stage_failure(decision, agent, publish)
         if failure:
             outcome, message = failure
             if decision.get("pr"):
-                _stop_round(gh, decision, agent, message)
+                _stop_round(gh, decision, agent, outcome, message)
             return {"outcome": outcome, "summary": message}
         if action == "plan":
             plan = publish.get("comment")
@@ -279,6 +348,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     checks = _load(artifacts / "nexkit-checks" / "checks.json")
     reviewed = _load(artifacts / "nexkit-review" / "result.json")
     review = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
+    review_paused = bool(reviewed) and reviewed.get("status") == "paused"
     url = run_url()
 
     comments = gh.comments(pr)
@@ -287,7 +357,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     round_id, row = progress.find_round(comments, decision)
     if decision.get("head") and decision["head"] != head:
         _restore_statuses(gh, decision["head"], state.get("feedback"), url)
-    checks_ok, verdict = _set_statuses(gh, head, checks, review, url)
+    resume = None
+    if review_paused:
+        # The commit is published and checked; only the review runs again after the reset.
+        message, resume = pause(reviewed, cfg, "review", pr)
+        _pause_statuses(gh, head, resume, url)
+        checks_ok, verdict = checks is not None and all(c["passed"] for c in checks), None
+    else:
+        checks_ok, verdict = _set_statuses(gh, head, checks, review, url)
     if review:
         gh.create_review(pr, head, review_body({"output": review}, checks))
 
@@ -300,7 +377,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     _record(state, decision, row, agent or {}, review)
     state["feedback"] = {"head": head, "checks": checks, "review": review}
 
-    if checks_ok and verdict == "approve":
+    if review_paused:
+        outcome = "paused"
+        row["verdict"] = "paused"
+        if resume:
+            row["resume"] = resume
+    elif checks_ok and verdict == "approve":
         outcome = "ready"
         message = (
             f"✅ Checks passed and the AI review approved `{head[:7]}`. "
@@ -343,7 +425,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch and "
             f"resolved conflicts in {files}.\n\n{message}"
         )
-    row["status"] = SUCCESS if outcome in COMPLETED else FAILURE
+    row.update(status=run_status(outcome), outcome=outcome)
     progress.save_state(gh, pr, comment_id, state)
     progress.save_round(gh, pr, round_id, row, message)
     if outcome == "auto_fix":

@@ -124,6 +124,18 @@ def _triggers(cfg, workflow):
             )
         else:
             findings.append((True, "Closed issues start NexKit, for close_parent_issues"))
+    if cfg.get("resume_after_usage_limit"):
+        if trigger(workflow, "schedule") is None:
+            findings.append(
+                (
+                    False,
+                    f"{WORKFLOW_PATH} has no 'schedule' trigger, so runs paused at the Claude "
+                    "usage limit cannot resume; add it as 'nexkit init' writes it, or set "
+                    "resume_after_usage_limit to false",
+                )
+            )
+        else:
+            findings.append((True, "A schedule resumes runs paused at the Claude usage limit"))
     return findings
 
 

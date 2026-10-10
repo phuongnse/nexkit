@@ -27,8 +27,9 @@ PROFILE_TEXT_PATTERN = re.compile(
     r"<!-- nexkit:profile-text -->.*?<!-- /nexkit:profile-text -->\n*", re.S
 )
 
-RUNNING, SUCCESS, FAILURE = "running", "success", "failure"
-RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌"}
+RUNNING, SUCCESS, FAILURE, PAUSED = "running", "success", "failure", "paused"
+RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️"}
+RUN_LABELS = {RUNNING: "running", PAUSED: "paused"}
 
 
 def by_bot(comment):
@@ -100,9 +101,9 @@ def _encode(prefix, data):
 
 
 def run_link(run):
-    """`⏳ [running](url)`, `✅ [run log](url)` or `❌ [run log](url)`."""
-    icon = RUN_ICONS[run["status"]]
-    label = "running" if run["status"] == RUNNING else "run log"
+    """`⏳ [running](url)`, `✅ [run log](url)`, `❌ [run log](url)` or `⏸️ [paused](url)`."""
+    icon = RUN_ICONS.get(run["status"], "❔")
+    label = RUN_LABELS.get(run["status"], "run log")
     return f"{icon} [{label}]({run['url']})" if run.get("url") else f"{icon} {label}"
 
 
@@ -116,6 +117,28 @@ def find_run(comments, url):
             if run.get("url") == url:
                 return comment_id, run
     return None, None
+
+
+def run_comments(comments):
+    """(comment, run) for each NexKit run comment, oldest first."""
+    for comment in comments:
+        if by_bot(comment):
+            match = RUN_PATTERN.search(comment.get("body", ""))
+            if match:
+                yield comment, json.loads(base64.b64decode(match.group(1)))
+
+
+def run_marker(run):
+    return _encode(RUN_PREFIX, run)
+
+
+def with_run(body, run, line=""):
+    """A run comment's `body` with its marker replaced by `run`'s and `line` added to its
+    text, for a change after the run ended."""
+    text = RUN_PATTERN.sub("", body).rstrip()
+    if line:
+        text += f"\n\n{line}"
+    return f"{text}\n\n{run_marker(run)}"
 
 
 def next_round(comments):

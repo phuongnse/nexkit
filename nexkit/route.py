@@ -29,6 +29,24 @@ def issue_from_branch(branch):
     return None
 
 
+# The `auto` dispatch input: `true` for an automatic fix round after failures, `conflicts`
+# for an automatic round that merges the base branch, `resume` for a command that NexKit
+# runs again after Claude's usage limit reset. Several are joined with commas.
+RESUME = "resume"
+
+
+def auto_kinds(value):
+    kinds = {kind.strip() for kind in str(value or "").lower().split(",")}
+    return {"resumed" if kind == RESUME else kind for kind in kinds if kind}
+
+
+def auto_input(decision, resume=False):
+    """The `auto` input that starts this decision's command again."""
+    kinds = ["conflicts" if decision.get("conflicts") else "true"] if decision.get("auto") else []
+    kinds += [RESUME] if resume else []
+    return ",".join(kinds) or "false"
+
+
 def parse_command(body):
     """Return (command, note) for a comment whose first line is a /nexkit command."""
     match = COMMAND.match(body or "")
@@ -85,6 +103,9 @@ def route(gh, event_name, event, inputs=None):
             return _none("Only closed issues are handled")
         return {"action": "maintain", "task": "parents", "issue": event["issue"]["number"]}
 
+    if event_name == "schedule":
+        return {"action": "maintain", "task": "schedule"}
+
     if event_name == "workflow_dispatch":
         command = (inputs.get("command") or "").strip()
         number = str(inputs.get("number") or "").strip()
@@ -92,9 +113,12 @@ def route(gh, event_name, event, inputs=None):
             return _none("Dispatch input 'number' must be an issue or PR number")
         issue = gh.issue(int(number))
         on_pull = "pull_request" in issue
-        auto = str(inputs.get("auto", "")).lower() == "true"
+        kinds = auto_kinds(inputs.get("auto"))
+        auto = bool(kinds & {"true", "conflicts"})
         decision = _decide(gh, command, int(number), on_pull, inputs.get("note") or "", auto=auto)
         decision["actor"] = event.get("sender", {}).get("login")
+        if decision["action"] != "none":
+            decision.update({kind: True for kind in ("conflicts", "resumed") if kind in kinds})
         return decision
 
     return _none(f"Event '{event_name}' is not handled")

@@ -84,7 +84,7 @@ class InitDoctorTests(unittest.TestCase):
         text = path.read_text()
         group = (
             "concurrency:\n      group: nexkit-${{ github.event.issue.number || "
-            "github.event.pull_request.number || inputs.number }}\n"
+            "github.event.pull_request.number || inputs.number || github.event_name }}\n"
         )
         self.assertIn("\n    " + group, text.split("\n  nexkit:\n", 1)[1])
         self.assertNotRegex(text, r"(?m)^concurrency:|cancel-in-progress")
@@ -113,6 +113,21 @@ class InitDoctorTests(unittest.TestCase):
         cfg["close_parent_issues"] = False
         path.write_text(json.dumps(cfg))
         self.assertFalse(any("issues: closed" in m for _, m in scaffold.doctor(self.root)))
+
+    def test_doctor_checks_the_schedule_that_resumes_paused_runs(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        ok = (True, "A schedule resumes runs paused at the Claude usage limit")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        text = workflow.read_text()
+        workflow.write_text(re.sub(r"  schedule:\n.*\n", "", text))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("has no 'schedule' trigger" in m for ok, m in findings if not ok))
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["resume_after_usage_limit"] = False
+        path.write_text(json.dumps(cfg))
+        self.assertFalse(any("schedule" in m for _, m in scaffold.doctor(self.root)))
 
     def test_trigger(self):
         workflow = (

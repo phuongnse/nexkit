@@ -20,6 +20,7 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 | `report.py`, `state.py` | `report`: statuses, review, state comment, next round |
 | `progress.py` | `route` and `report`: reactions, one comment per run with its link |
 | `maintain.py` | `maintain`: work that follows other events, without an agent |
+| `usage.py` | recognises Claude's usage limit and its reset time |
 | `config.py` | `.nexkit/config.json` schema and defaults |
 | `scaffold.py`, `templates/` | `nexkit init` and `nexkit doctor` |
 | `github.py`, `gitutil.py` | REST and git helpers |

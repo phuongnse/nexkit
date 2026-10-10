@@ -7,17 +7,27 @@ never receives the Claude credential.
 
 from __future__ import annotations
 
-from .github import GitHubError
-from .state import by_bot
+import re
+import sys
+from datetime import UTC, datetime, timedelta
 
-# Each task runs only when its configuration key is on.
-TASKS = {"parents": "close_parent_issues"}
+from .github import GitHubError
+from .state import PAUSED, by_bot, run_comments, with_run
+from .usage import iso, parse_iso
+
+# Each task runs only when one of its configuration keys is on.
+TASKS = {
+    "parents": ("close_parent_issues",),
+    "schedule": ("resume_after_usage_limit",),
+}
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "duplicate"}
+# Usage limits reset within a week; paused runs older than this are not resumed.
+PAUSE_WINDOW = timedelta(days=8)
 
 
 def enabled(task, cfg):
-    return bool(cfg.get(TASKS[task]))
+    return any(cfg.get(key) for key in TASKS[task])
 
 
 def _closed_as(issue):
@@ -68,9 +78,60 @@ def close_parents_safely(gh, number):
         return [f"Could not check the parent issue of #{number}: {exc}"]
 
 
-def maintain(gh, decision, cfg):
+def _number(comment):
+    match = re.search(r"/issues/(\d+)$", comment.get("issue_url") or "")
+    return int(match.group(1)) if match else None
+
+
+def resume_paused(gh, workflow, ref, now=None):
+    """Start each command that paused at the usage limit and whose reset time has passed,
+    once. Its run comment then says it was resumed and holds no resume record."""
+    now = now or datetime.now(UTC)
+    lines = []
+    for comment in gh.recent_comments(iso(now - PAUSE_WINDOW)):
+        number = _number(comment)
+        found = next(run_comments([comment]), None)
+        if not number or not found:
+            continue
+        run = found[1]
+        resume = run.get("resume")
+        if run.get("status") != PAUSED or not isinstance(resume, dict):
+            continue
+        at = parse_iso(resume.get("at"))
+        if not at or at > now:
+            continue
+        inputs = {
+            "command": str(resume.get("command") or ""),
+            "number": str(resume.get("number") or number),
+            "note": str(resume.get("note") or ""),
+            "auto": str(resume.get("auto") or "resume"),
+        }
+        try:
+            started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
+        except GitHubError as exc:
+            # The record stays, so the next scheduled run tries again.
+            lines.append(f"Could not resume /nexkit {inputs['command']} on #{number}: {exc}")
+            continue
+        del run["resume"]
+        link = f"[a new run]({started['html_url']})" if started.get("html_url") else "a new run"
+        target = "" if inputs["number"] == str(number) else f" on #{inputs['number']}"
+        note = f"Resumed `/nexkit {inputs['command']}`{target} in {link} after the usage limit."
+        gh.update_comment(comment["id"], with_run(comment["body"], run, note))
+        lines.append(f"Resumed /nexkit {inputs['command']} on #{inputs['number']}.")
+    return lines
+
+
+def maintain(gh, decision, cfg, *, workflow="", ref=""):
     """Run the decision's task. Returns lines for the job log."""
     task = decision["task"]
     if task == "parents":
         return close_parents_safely(gh, decision["issue"])
+    if task == "schedule":
+        lines = []
+        if cfg["resume_after_usage_limit"]:
+            try:
+                lines += resume_paused(gh, workflow, ref)
+            except GitHubError as exc:
+                print(f"warning: could not resume paused runs: {exc}", file=sys.stderr)
+        return lines
     raise ValueError(f"Unknown maintenance task: {task}")

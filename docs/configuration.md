@@ -21,6 +21,7 @@ the NexKit release and are not configurable. See [supported versions](../README.
 | `auto_merge` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See below. |
 | `after_merge_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. See below. |
 | `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See below. |
+| `resume_after_usage_limit` | `true` | When Claude stops at the account's usage limit, run the same command again after the limit resets. See below. |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
 | `transcript` | `true` | Write Claude's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See below. |
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. See below. |
@@ -144,6 +145,24 @@ The workflow must listen to `issues: closed`, as `nexkit init` writes it; `nexki
 warns when it does not. With the setting off, a closed issue starts a short run that ends
 at once.
 
+## Usage limits
+
+```json
+"resume_after_usage_limit": false
+```
+
+When Claude stops because the account hit its usage limit, NexKit pauses the run, shows
+the reset time in its comment and keeps `nexkit/checks` and `nexkit/review` pending.
+With `true` (the default), it runs the same command again after the reset, once, with
+the same note; when the reset time is unknown, after one hour. With `false`, the comment
+still names the limit and the reset time, and a person comments the command again. See
+[How it works](how-it-works.md#usage-limits).
+
+The resume needs the hourly `schedule` trigger that `nexkit init` writes;
+`nexkit doctor` warns when it is missing. A schedule run with nothing to resume runs
+only `route` and `maintain`, which take well under a minute and run no agent. To check
+less often, change the `cron` line, for example to `"23 */3 * * *"`.
+
 ## Stages
 
 ```json
@@ -240,7 +259,8 @@ shows what the log, run summary and artifacts contain and what is redacted.
 
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls
 `phuongnse/nexkit/.github/workflows/pipeline.yml` at a fixed release tag. It starts NexKit
-for `/nexkit` comments, *Request changes* reviews on NexKit pull requests, dispatches, and
-closed issues (for `close_parent_issues`). To upgrade,
+for `/nexkit` comments, *Request changes* reviews on NexKit pull requests, dispatches,
+closed issues (for `close_parent_issues`) and an hourly schedule (for
+`resume_after_usage_limit`). To upgrade,
 change both the `uses:` ref and `nexkit_ref` to the new tag (or rerun
 `nexkit init --force --kit-ref vX.Y.Z` and restore your config).

@@ -1,7 +1,7 @@
 import unittest
 
 from nexkit import config
-from nexkit.route import parse_command, route, with_profile
+from nexkit.route import auto_input, parse_command, route, with_profile
 from nexkit.state import BOT_LOGIN, PLAN_MARKER, profile_record, profile_text
 from tests.support import FakeGitHub, make_config, profile_config
 
@@ -132,6 +132,26 @@ class RouteTests(unittest.TestCase):
         self.assertFalse(manual["auto"])
         bad = route(self.gh, "workflow_dispatch", event, {"command": "go", "number": "x"})
         self.assertEqual(bad["action"], "none")
+
+    def test_dispatch_marks_resumed_and_conflict_rounds(self):
+        self.gh.add_pull(9, 5)
+        event = {"sender": {"login": BOT_LOGIN}}
+        inputs = {"command": "fix", "number": "9", "auto": "true,resume"}
+        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        self.assertEqual((decision["auto"], decision["resumed"]), (True, True))
+        self.assertNotIn("conflicts", decision)
+        self.assertEqual(auto_input(decision, resume=True), "true,resume")
+        inputs["auto"] = "resume"
+        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        self.assertEqual((decision["auto"], decision["resumed"]), (False, True))
+        self.assertEqual(auto_input(decision), "false")
+        inputs["auto"] = "conflicts"
+        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        self.assertEqual((decision["auto"], decision["conflicts"]), (True, True))
+        self.assertEqual(auto_input(decision, resume=True), "conflicts,resume")
+
+    def test_schedule_is_maintenance(self):
+        self.assertEqual(route(self.gh, "schedule", {}), {"action": "maintain", "task": "schedule"})
 
     def test_other_events_are_ignored(self):
         self.assertEqual(route(self.gh, "push", {})["action"], "none")

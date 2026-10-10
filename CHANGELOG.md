@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.0
 
 - **Breaking:** the settings for what NexKit does by itself are grouped by feature.
   `max_auto_fixes` is now `fix.max_auto_rounds`, `auto_merge` is now `merge.auto`, and

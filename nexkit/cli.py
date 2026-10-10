@@ -1,6 +1,6 @@
 """Command line entry point.
 
-`init` and `doctor` are for people setting up a repository. The other commands are the
+`init`, `doctor` and `status` are for people working in a repository. The other commands are the
 steps of the reusable GitHub Actions pipeline and read their inputs from the environment.
 """
 
@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import CLAUDE_CODE, __version__, python_error, python_supported, scaffold
 from . import config as configuration
+from .status import MERGES
 
 
 def _output(**values):
@@ -69,9 +70,38 @@ def cmd_doctor(args):
     return 0 if all(ok for ok, _ in findings) else 1
 
 
+def cmd_status(args):
+    from .github import GitHub, GitHubError
+    from .status import collect, render, to_json
+
+    repository = args.repository or scaffold.repository_of(args.repo)
+    if not repository:
+        print(
+            "nexkit: cannot tell the GitHub repository; pass --repository OWNER/REPO",
+            file=sys.stderr,
+        )
+        return 2
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or scaffold.gh_token()
+    if not token:
+        print("nexkit: sign in with 'gh auth login' or set GITHUB_TOKEN", file=sys.stderr)
+        return 2
+    try:
+        cfg = configuration.load(args.repo)
+    except configuration.ConfigError:
+        cfg = {}
+    try:
+        data = collect(GitHub(repository=repository, token=token), cfg, merges=args.merges)
+    except GitHubError as exc:
+        print(f"nexkit: {exc}", file=sys.stderr)
+        return 1
+    print(to_json(data) if args.json else render(data))
+    return 0
+
+
 def cmd_route(args):
     from . import progress
     from .github import GitHubError
+    from .maintain import TASKS, enabled
     from .route import route, with_profile
 
     gh = _gh()
@@ -85,11 +115,17 @@ def cmd_route(args):
             decision = {
                 "action": "none",
                 "reason": f"NexKit configuration error: {exc}",
-                "reply_to": decision["target"],
+                "reply_to": decision.get("target"),
             }
         else:
             decision, cfg = with_profile(gh, decision, cfg)
+    if decision["action"] == "maintain" and not enabled(decision["task"], cfg):
+        keys = " and ".join(TASKS[decision["task"]])
+        decision = {"action": "none", "reason": f"Nothing to do: {keys} off"}
     print(json.dumps(decision, indent=2))
+    if decision["action"] == "maintain":
+        _output(action="maintain", decision=decision, config=cfg)
+        return 0
     if decision["action"] == "none":
         if decision.get("reply_to"):
             try:
@@ -109,6 +145,7 @@ def cmd_route(args):
         agent_minutes = configuration.stage(cfg, "triage")["timeout_minutes"] + longest
     review_stage = configuration.stage(cfg, "review")
     checks_minutes = sum(c["timeout_minutes"] for c in cfg["checks"])
+    setup_minutes = cfg["limits"]["setup_timeout_minutes"]
     _output(
         action=decision["action"],
         decision=decision,
@@ -117,9 +154,10 @@ def cmd_route(args):
         base=decision["base"],
         branch=decision["branch"],
         agent_ref=decision["branch"] if decision["action"] == "fix" else decision["base"],
-        agent_timeout=str(agent_minutes + 30),
+        # Setup runs before the agent and before the checks; the rest is for the job's steps.
+        agent_timeout=str(agent_minutes + setup_minutes),
         review_timeout=str(review_stage["timeout_minutes"] + 30),
-        checks_timeout=str(checks_minutes + 40),
+        checks_timeout=str(checks_minutes + setup_minutes + 10),
         claude_version=CLAUDE_CODE,
     )
     return 0
@@ -142,7 +180,7 @@ def cmd_context(args):
 
 
 def cmd_agent(args):
-    from .agent import run_stage, run_triage
+    from .agent import conflicts_with_base, run_stage, run_triage, up_to_date
     from .checks import find_base, setup
     from .redact import Redactor
     from .runlog import summary, write_summary
@@ -150,9 +188,16 @@ def cmd_agent(args):
     decision = _decision()
     cfg = _config()
     stage = args.stage or decision["action"]
+    base = decision["base"]
     out = Path(args.out)
     context = json.loads((out / "context.json").read_text())
     base_sha = None
+    if stage == "fix" and decision.get("conflicts") and not conflicts_with_base(args.repo, base):
+        # Another round or a person resolved it since this round was started.
+        result = up_to_date(base)
+        (out / "result.json").write_text(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2))
+        return 0
     if stage in ("implement", "fix"):
         base_sha = find_base(args.repo, decision["base"])
         redact = Redactor()
@@ -171,6 +216,13 @@ def cmd_agent(args):
     triage = None
     if stage == "plan" and cfg["profiles"]:
         triage = run_triage(context, cfg, decision.get("previous_profile"), out)
+        if triage["status"] == "paused":
+            # The plan would stop at the same limit; it runs again after the reset.
+            keys = ("status", "error", "limit", "resume_at", "reset_known", "cost")
+            result = {"stage": stage, **{key: triage[key] for key in keys}}
+            (out / "result.json").write_text(json.dumps(result, indent=2))
+            print(json.dumps(result, indent=2))
+            return 0
         cfg = configuration.with_profile(cfg, triage["profile"])
     checks = json.loads(Path(args.checks).read_text()) if args.checks else None
     result = run_stage(
@@ -246,6 +298,23 @@ def cmd_report(args):
     return 0
 
 
+def cmd_maintain(args):
+    from .maintain import maintain
+    from .report import workflow_file
+
+    gh = _gh()
+    lines = maintain(
+        gh,
+        _decision(),
+        _config(),
+        workflow=workflow_file(os.environ.get("GITHUB_WORKFLOW_REF", "")),
+        ref=os.environ.get("NEXKIT_DEFAULT_BRANCH") or gh.default_branch(),
+    )
+    for line in lines:
+        print(line)
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="nexkit", description=__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"nexkit {__version__}")
@@ -264,6 +333,15 @@ def build_parser():
     p = sub.add_parser("doctor", help="Check a repository's NexKit setup")
     p.add_argument("--repo", default=".")
     p.set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser("status", help="List open NexKit work and what each item waits for")
+    p.add_argument("--repo", default=".", help="Repository root (default: current directory)")
+    p.add_argument("--repository", help="OWNER/REPO (default: the 'origin' remote)")
+    p.add_argument("--json", action="store_true", help="Print JSON")
+    p.add_argument(
+        "--merges", type=int, default=MERGES, help=f"Recent merges to show (default {MERGES})"
+    )
+    p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("route", help="(pipeline) Decide the action for the current event")
     p.add_argument("--repo", required=True, help="Checkout of the default branch")
@@ -292,6 +370,9 @@ def build_parser():
     p.add_argument("--repo", required=True)
     p.add_argument("--artifacts", required=True)
     p.set_defaults(func=cmd_publish)
+
+    p = sub.add_parser("maintain", help="(pipeline) Work that follows events, without an agent")
+    p.set_defaults(func=cmd_maintain)
 
     p = sub.add_parser("report", help="(pipeline) Report results and schedule the next round")
     p.add_argument("--artifacts", required=True)

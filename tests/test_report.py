@@ -50,7 +50,19 @@ def review_result(verdict="approve", findings=()):
     }
 
 
-class ReportTests(unittest.TestCase):
+LIMIT = {
+    "status": "paused",
+    "cost": 0.2,
+    "error": "Claude hit the account's usage limit: You've hit your session limit",
+    "limit": "You've hit your session limit · resets 4:40am (UTC)",
+    "resume_at": "2026-10-11T04:40:00Z",
+    "reset_known": True,
+}
+
+
+class ReportCase(unittest.TestCase):
+    """A NexKit pull request and helpers to run `report` on it."""
+
     def setUp(self):
         self.gh = FakeGitHub()
         self.gh.add_issue(5)
@@ -109,6 +121,8 @@ class ReportTests(unittest.TestCase):
     def statuses(self):
         return {(s["context"], s["state"]) for s in self.gh.statuses}
 
+
+class ReportTests(ReportCase):
     def test_agent_failures_are_explained_on_the_issue(self):
         outcome = self.run_report(published=False)
         self.assertEqual(outcome["outcome"], "agent_failed")
@@ -159,21 +173,77 @@ class ReportTests(unittest.TestCase):
 
     def test_auto_merge(self):
         self.candidate()
-        self.assertEqual(self.run_report(cfg=make_config(auto_merge=True))["outcome"], "merged")
+        self.assertEqual(
+            self.run_report(cfg=make_config(merge={"auto": True}))["outcome"], "merged"
+        )
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+
+    def test_auto_merge_closes_the_issue(self):
+        self.candidate()
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(
+            (self.gh.issues[5]["state"], self.gh.issues[5]["state_reason"]), ("closed", "completed")
+        )
+        [note] = self.gh.comments_matching(5, "NexKit merged #6")
+        self.assertIn("d" * 40, note["body"])
+        [row] = self.gh.run_comments(6)
+        self.assertIn("Closed #5 as completed.", row["body"])
+
+    def test_auto_merge_closes_the_parent_issue_with_close_parent_issues(self):
+        self.gh.add_issue(1, title="Epic")
+        self.gh.add_issue(2, state="closed", reason="completed")
+        self.gh.parents.update({2: 1, 5: 1})
+        self.candidate()
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.issues[1]["state"], "open")  # the setting is off
+        self.gh.issues[5]["state"] = "open"
+        self.run_report(cfg=make_config(merge={"auto": True}, close_parent_issues=True))
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+        row = self.gh.run_comments(6)[-1]
+        self.assertIn("Closed #5 as completed.\nClosed #1 as completed", row["body"])
+
+    def test_an_issue_that_is_already_closed_stays_as_it_is(self):
+        self.candidate()
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
+        self.assertFalse(self.gh.comments_matching(5, "NexKit merged"))
+        [row] = self.gh.run_comments(6)
+        self.assertNotIn("Closed #5", row["body"])
+
+    def test_failing_to_close_the_issue_keeps_the_merge(self):
+        self.candidate()
+        self.gh.close_errors[5] = GitHubError(403, "Resource not accessible by integration")
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(outcome["outcome"], "merged")
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+        [row] = self.gh.run_comments(6)
+        self.assertIn("Could not close #5: GitHub API 403", row["body"])
+        self.assertEqual(row["run"]["status"], "success")
+
+    def test_issue_stays_open_without_an_automatic_merge(self):
+        self.candidate()
+        self.run_report()
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+        self.gh.merge_error = GitHubError(405, "Required approving review")
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.issues[5]["state"], "open")
 
     def test_auto_merge_blocked_by_branch_protection(self):
         self.candidate()
         self.gh.merge_error = GitHubError(405, "Required approving review")
-        self.assertEqual(self.run_report(cfg=make_config(auto_merge=True))["outcome"], "ready")
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(outcome["outcome"], "merge_refused")
         self.assertTrue(self.gh.comments_matching(6, "Required approving review"))
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["status"], "success")
         self.assertFalse(self.gh.dispatches)
 
     def test_auto_merge_starts_the_base_branch_workflows(self):
         self.candidate()
         run = "https://github.com/acme/app/actions/runs/77"
         self.gh.dispatch_runs["ci.yml"] = run
-        cfg = make_config(auto_merge=True, after_merge_workflows=["ci.yml", "e2e.yml"])
+        cfg = make_config(merge={"auto": True, "after_workflows": ["ci.yml", "e2e.yml"]})
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"}):
             outcome = self.run_report(d=decision(base="develop"), cfg=cfg)
         self.assertEqual(outcome["outcome"], "merged")
@@ -185,6 +255,13 @@ class ReportTests(unittest.TestCase):
             ],
         )
         [row] = self.gh.run_comments(6)
+        self.assertEqual(
+            row["run"]["after_merge"],
+            [
+                {"workflow": "ci.yml", "run_id": 1, "url": run},
+                {"workflow": "e2e.yml", "run_id": None, "url": row["run"]["after_merge"][1]["url"]},
+            ],
+        )
         self.assertIn("After the merge, on `develop`:", row["body"])
         self.assertIn(f"- Started [`ci.yml`]({run})", row["body"])
         # Without run details, the link lists the workflow's dispatched runs on the branch.
@@ -199,7 +276,7 @@ class ReportTests(unittest.TestCase):
         self.gh.dispatch_errors["ci.yml"] = GitHubError(
             422, "Workflow does not have 'workflow_dispatch' trigger"
         )
-        cfg = make_config(auto_merge=True, after_merge_workflows=["ci.yml", "e2e.yml"])
+        cfg = make_config(merge={"auto": True, "after_workflows": ["ci.yml", "e2e.yml"]})
         outcome = self.run_report(cfg=cfg)
         self.assertEqual(outcome["outcome"], "merged")
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
@@ -215,14 +292,14 @@ class ReportTests(unittest.TestCase):
 
     def test_no_workflows_start_without_auto_merge(self):
         self.candidate()
-        self.run_report(cfg=make_config(after_merge_workflows=["ci.yml"]))
+        self.run_report(cfg=make_config(merge={"after_workflows": ["ci.yml"]}))
         self.assertFalse(self.gh.merged)
         self.assertFalse(self.gh.dispatches)
 
     def test_failures_schedule_bounded_automatic_fixes(self):
         finding = {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Wrong sign"}
         self.candidate(checks_pass=False, review=review_result("request_changes", [finding]))
-        cfg = make_config(max_auto_fixes=1)
+        cfg = make_config(fix={"max_auto_rounds": 1})
         first = self.run_report(cfg=cfg)
         self.assertEqual(first["outcome"], "auto_fix")
         self.assertEqual(
@@ -448,6 +525,88 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("Things to look at", body)
         self.assertNotIn("<details>", body)
         self.assertIn("- ✅ add works (`test_add`)", body)
+
+    def test_a_plan_at_the_usage_limit_pauses_with_its_resume_record(self):
+        self.write("nexkit-agent", "result.json", LIMIT)
+        d = decision("plan", note="Use M6", comment_id=3)
+        outcome = self.run_report(d=d, published=False)
+        self.assertEqual(outcome["outcome"], "paused")
+        [run] = self.gh.run_comments(5)
+        self.assertEqual(run["run"]["status"], "paused")
+        self.assertEqual(
+            run["run"]["resume"],
+            {
+                "command": "plan",
+                "number": 5,
+                "note": "Use M6",
+                "auto": "resume",
+                "at": "2026-10-11T04:40:00Z",
+            },
+        )
+        self.assertIn("⏸️ [paused]", run["body"])
+        self.assertIn("You've hit your session limit · resets 4:40am (UTC)", run["body"])
+        self.assertIn(
+            "NexKit runs `/nexkit plan` with the same note again after it resets, at "
+            "04:40 UTC on 2026-10-11.",
+            run["body"],
+        )
+        self.assertEqual(self.gh.reactions, [])  # keeps 👀 until it finishes
+        self.assertFalse(self.gh.dispatches)
+
+    def test_a_fix_round_at_the_usage_limit_keeps_the_statuses_pending(self):
+        self.write("nexkit-agent", "result.json", {**LIMIT, "reset_known": False})
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
+        outcome = self.run_report(d=d, published=False)
+        self.assertEqual(outcome["outcome"], "paused")
+        self.assertEqual(
+            self.statuses(), {("nexkit/checks", "pending"), ("nexkit/review", "pending")}
+        )
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["status"], "paused")
+        self.assertEqual(row["run"]["resume"]["auto"], "true,resume")
+        self.assertIn("could not read when it resets", row["body"])
+        _, state = read_state(self.gh.comments(6))
+        self.assertIsNone(state)  # a paused round uses no automatic fix round
+
+    def test_a_review_at_the_usage_limit_resumes_only_the_review(self):
+        self.candidate(review=LIMIT)
+        outcome = self.run_report()
+        self.assertEqual(outcome["outcome"], "paused")
+        self.assertEqual(
+            self.statuses(), {("nexkit/checks", "pending"), ("nexkit/review", "pending")}
+        )
+        self.assertFalse(self.gh.created_reviews)
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["verdict"], "paused")
+        self.assertEqual(
+            {k: row["run"]["resume"][k] for k in ("command", "number", "auto")},
+            {"command": "review", "number": 6, "auto": "resume"},
+        )
+        # The issue's `/nexkit go` comment shows the pause, but only the round resumes.
+        [command] = self.gh.run_comments(5)
+        self.assertEqual(command["run"]["status"], "paused")
+        self.assertNotIn("resume", command["run"])
+        self.assertFalse(self.gh.dispatches)
+
+    def test_a_resumed_run_with_an_unknown_reset_does_not_resume_again(self):
+        self.write("nexkit-agent", "result.json", {**LIMIT, "reset_known": False})
+        d = decision("fix", pr=6, target=6, head=HEAD, resumed=True)
+        self.assertEqual(self.run_report(d=d, published=False)["outcome"], "paused")
+        [row] = self.gh.run_comments(6)
+        self.assertNotIn("resume", row["run"])
+        self.assertIn("Comment `/nexkit fix` after the reset", row["body"])
+        self.assertIn("usage limit", row["run"]["attention"])
+
+    def test_without_resume_the_comment_says_when_to_continue(self):
+        self.write("nexkit-agent", "result.json", LIMIT)
+        cfg = make_config(usage_limit={"resume": False})
+        self.run_report(d=decision("implement"), cfg=cfg, published=False)
+        [run] = self.gh.run_comments(5)
+        self.assertNotIn("resume", run["run"])
+        self.assertIn(
+            "It resets at 04:40 UTC on 2026-10-11. Comment `/nexkit go` after the reset",
+            run["body"],
+        )
 
     def test_workflow_file(self):
         self.assertEqual(workflow_file(WORKFLOW), "nexkit.yml")

@@ -89,15 +89,28 @@ workflows from there.
 | NexKit PR | *Request changes* review | Same as `/nexkit fix`, with your review as the instructions. |
 
 Only people with write access can run commands. When checks fail or the review finds a
-blocking problem, NexKit starts up to `max_auto_fixes` repair rounds by itself (default 2),
+blocking problem, NexKit starts up to `fix.max_auto_rounds` repair rounds by itself (default 2),
 then stops and asks for a person. Each run links to its log from the start: its own
 NexKit comment, posted right after the command, shows it running and then its result, cost
 and next step. Pull requests also get `nexkit/checks` and `nexkit/review` commit statuses, which
 you can make required in branch protection.
 
-Merging is up to you unless you set `"auto_merge": true`. NexKit then merges approved
-pull requests itself and can start your CI on the base branch afterwards; see
-[Automatic merge](docs/configuration.md#automatic-merge).
+Merging is up to you unless you set `"merge": {"auto": true}`. NexKit then merges approved
+pull requests itself, closes their issues and can start your CI on the base branch
+afterwards; see [Automatic merge](docs/configuration.md#automatic-merge). With
+`"conflicts": {"auto_resolve": true}` it also merges the base branch into its pull requests
+that start to conflict. When Claude hits the account's usage limit, NexKit pauses and
+continues after the reset.
+
+## Local commands
+
+| Command | What it does |
+|---|---|
+| `nexkit init` | Writes `.nexkit/config.json` and `.github/workflows/nexkit.yml`. |
+| `nexkit doctor` | Checks the repository's setup: config, workflow triggers, secret, permissions. |
+| `nexkit status [--json]` | Lists the open NexKit work and what each item waits for: issues being planned, planned or implemented; pull requests running, ready, blocked, failing, conflicting, paused or refused a merge, each with the link to its last round; recent merges by NexKit with the state of each `merge.after_workflows` run; and, last, only the items that need a person and why. It reads NexKit's hidden markers, not the comment text, and changes nothing. |
+
+The commands use the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`.
 
 ## Configuration
 
@@ -112,8 +125,8 @@ pull requests itself and can start your CI on the base branch afterwards; see
     {"name": "test", "run": "npm test"},
     {"name": "lint", "run": "npm run lint"}
   ],
-  "max_auto_fixes": 2,
-  "auto_merge": false
+  "fix": {"max_auto_rounds": 2},
+  "merge": {"auto": false}
 }
 ```
 

@@ -11,13 +11,15 @@ import sys
 
 from .github import GitHubError, run_url
 from .state import (
-    FAILURE,
+    PAUSED,
     RUNNING,
     SUCCESS,
     find_run,
     next_round,
     render_run,
     render_state,
+    run_comments,
+    with_run,
 )
 
 COMMANDS = {"plan": "plan", "implement": "go", "fix": "fix", "review": "review"}
@@ -25,7 +27,17 @@ STATUS_CONTEXTS = ("nexkit/checks", "nexkit/review")
 
 
 def trigger(decision):
-    return decision["action"] + (" (auto)" if decision.get("auto") else "")
+    """`fix`, `fix (auto)`, `fix (auto, conflicts)`, `review (resumed)`, ..."""
+    labels = [
+        label
+        for label, on in (
+            ("auto", decision.get("auto")),
+            ("conflicts", decision.get("conflicts")),
+            ("resumed", decision.get("resumed")),
+        )
+        if on
+    ]
+    return decision["action"] + (f" ({', '.join(labels)})" if labels else "")
 
 
 def _save(gh, number, comment_id, body):
@@ -41,6 +53,9 @@ def find_round(comments, decision):
     comment_id, row = find_run(comments, url)
     row = row or {"round": next_round(comments), "url": url}
     row["trigger"] = trigger(decision)
+    for key in ("conflicts", "resumed", "base_sha"):
+        if decision.get(key):
+            row[key] = decision[key]
     return comment_id, row
 
 
@@ -58,13 +73,22 @@ def save_state(gh, pr, comment_id, state):
     _save(gh, pr, comment_id, render_state(state))
 
 
-def show_command(gh, decision, status, text=""):
-    """Post or edit the comment for this run of an issue command."""
+def show_command(gh, decision, status, text="", comments=None, **fields):
+    """Post or edit the comment for this run of an issue command. `fields` go into its
+    marker, such as the outcome."""
     issue = decision["issue"]
     url = run_url()
-    comment_id, _ = find_run(gh.comments(issue), url)
-    run = {"url": url, "command": COMMANDS[decision["action"]], "status": status}
+    comments = gh.comments(issue) if comments is None else comments
+    comment_id, _ = find_run(comments, url)
+    run = {"url": url, "command": COMMANDS[decision["action"]], "status": status, **fields}
     _save(gh, issue, comment_id, render_run(run, text))
+
+
+def replace_paused(gh, comments, why="Replaced by a later command."):
+    """Stop paused runs in `comments` from resuming: a new command replaces them."""
+    for comment, run in run_comments(comments):
+        if run.get("status") == PAUSED and run.pop("resume", None):
+            gh.update_comment(comment["id"], with_run(comment["body"], run, why))
 
 
 def start(gh, decision):
@@ -72,22 +96,26 @@ def start(gh, decision):
     if decision.get("comment_id"):
         gh.react(decision["comment_id"], "eyes")
     try:
+        number = decision.get("pr") or decision["issue"]
+        comments = gh.comments(number)
+        replace_paused(gh, comments)
         if decision.get("pr"):
             description = f"NexKit {decision['action']} round in progress"
             for context in STATUS_CONTEXTS:
                 gh.set_status(decision["head"], context, "pending", description, run_url())
-            comment_id, row = find_round(gh.comments(decision["pr"]), decision)
+            comment_id, row = find_round(comments, decision)
             row.update(status=RUNNING, head=decision["head"], checks="-", verdict="-", cost=None)
             save_round(gh, decision["pr"], comment_id, row)
         else:
-            show_command(gh, decision, RUNNING)
+            show_command(gh, decision, RUNNING, comments=comments)
     except GitHubError as exc:
         print(f"warning: could not show the run's progress: {exc}", file=sys.stderr)
 
 
-def finish(gh, decision, ok, text):
-    """Show the outcome of an issue command and react to the command comment."""
+def finish(gh, decision, status, text, **fields):
+    """Show the outcome of an issue command and react to the command comment. A paused
+    run keeps 👀: it has not finished."""
     if not decision.get("pr"):
-        show_command(gh, decision, SUCCESS if ok else FAILURE, text)
-    if decision.get("comment_id"):
-        gh.react(decision["comment_id"], "rocket" if ok else "confused")
+        show_command(gh, decision, status, text, **fields)
+    if decision.get("comment_id") and status != PAUSED:
+        gh.react(decision["comment_id"], "rocket" if status == SUCCESS else "confused")

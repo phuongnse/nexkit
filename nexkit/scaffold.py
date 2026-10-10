@@ -17,9 +17,33 @@ WORKFLOW_PATH = ".github/workflows/nexkit.yml"
 SECRETS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 
 
-def workflow_text(kit_repo, kit_ref):
+def workflow_text(kit_repo, kit_ref, default_branch="main"):
     template = resources.files("nexkit").joinpath("templates/workflow.yml").read_text()
-    return template.replace("__KIT_REPO__", kit_repo).replace("__KIT_REF__", kit_ref)
+    for name, value in (
+        ("__KIT_REPO__", kit_repo),
+        ("__KIT_REF__", kit_ref),
+        ("__DEFAULT_BRANCH__", default_branch),
+    ):
+        template = template.replace(name, value)
+    return template
+
+
+def default_branch_of(root):
+    """The default branch on GitHub, else of `origin` in the clone, else the current
+    branch, else `main`."""
+    repo = repository_of(root)
+    name = (_gh("api", f"repos/{repo}", "-q", ".default_branch") or "").strip() if repo else ""
+    if re.fullmatch(r"[\w./-]+", name):
+        return name
+    for args in (
+        ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        ["symbolic-ref", "--quiet", "--short", "HEAD"],
+    ):
+        proc = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+        name = proc.stdout.strip().removeprefix("origin/")
+        if proc.returncode == 0 and re.fullmatch(r"[\w./-]+", name):
+            return name
+    return "main"
 
 
 def parse_check(value):
@@ -42,14 +66,16 @@ def init(root, *, checks, setup, model, kit_repo, kit_ref, force):
         "model": model,
         "setup": setup,
         "checks": [parse_check(c) for c in checks],
-        "max_auto_fixes": configuration.DEFAULTS["max_auto_fixes"],
-        "auto_merge": False,
+        "fix": dict(configuration.DEFAULTS["fix"]),
+        "merge": {"auto": False},
     }
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")
     workflow_path.parent.mkdir(parents=True, exist_ok=True)
-    workflow_path.write_text(workflow_text(kit_repo, kit_ref or f"v{__version__}"))
+    workflow_path.write_text(
+        workflow_text(kit_repo, kit_ref or f"v{__version__}", default_branch_of(root))
+    )
     return [configuration.CONFIG_PATH, WORKFLOW_PATH]
 
 
@@ -60,6 +86,11 @@ def _gh(*args):
     return proc.stdout if proc.returncode == 0 else None
 
 
+def gh_token():
+    """The GitHub CLI's token, or None."""
+    return (_gh("auth", "token") or "").strip() or None
+
+
 def repository_of(root):
     proc = subprocess.run(
         ["git", "remote", "get-url", "origin"], cwd=root, capture_output=True, text=True
@@ -68,19 +99,23 @@ def repository_of(root):
     return match.group(1) if match else None
 
 
+def _uncommented(text):
+    return re.sub(r"(^|\s)#.*", "", text)
+
+
 def _after_merge_workflow(root, name):
-    """Whether NexKit can start a workflow of after_merge_workflows with a dispatch."""
+    """Whether NexKit can start a workflow of merge.after_workflows with a dispatch."""
     path = root / ".github/workflows" / name
     if not path.is_file():
-        return (False, f"after_merge_workflows: {path.relative_to(root)} does not exist")
-    text = re.sub(r"(^|\s)#.*", "", path.read_text(errors="replace"))
+        return (False, f"merge.after_workflows: {path.relative_to(root)} does not exist")
+    text = _uncommented(path.read_text(errors="replace"))
     if not re.search(r"\bworkflow_dispatch\b", text):
         return (
             False,
-            f"after_merge_workflows: {name} has no workflow_dispatch trigger, "
+            f"merge.after_workflows: {name} has no workflow_dispatch trigger, "
             "so NexKit cannot start it after a merge",
         )
-    return (True, f"after_merge_workflows: {name} can be started after a merge")
+    return (True, f"merge.after_workflows: {name} can be started after a merge")
 
 
 def _concurrency(workflow):
@@ -96,16 +131,68 @@ def _concurrency(workflow):
     )
 
 
+def trigger(workflow, event):
+    """The text under `event:` in the workflow's `on:` block, or None without that trigger."""
+    block = re.search(r"^on:[ \t]*\n((?:[ \t]+.*\n|[ \t]*\n)*)", _uncommented(workflow), re.M)
+    if not block:
+        return None
+    found = re.search(rf"^  {event}:(.*\n(?:    .*\n|[ \t]*\n)*)", block.group(1), re.M)
+    return found.group(1) if found else None
+
+
+def _triggers(cfg, workflow):
+    """Findings for the triggers that configuration keys need."""
+    findings = []
+    if cfg["close_parent_issues"]:
+        issues = trigger(workflow, "issues")
+        if issues is None or ("types" in issues and "closed" not in issues):
+            findings.append(
+                (
+                    False,
+                    f"close_parent_issues is on, but {WORKFLOW_PATH} does not listen to "
+                    "'issues: closed'; add it as 'nexkit init' writes it",
+                )
+            )
+        else:
+            findings.append((True, "Closed issues start NexKit, for close_parent_issues"))
+    if cfg["conflicts"]["auto_resolve"]:
+        if trigger(workflow, "push") is None:
+            findings.append(
+                (
+                    False,
+                    f"conflicts.auto_resolve is on, but {WORKFLOW_PATH} has no 'push' trigger "
+                    "for the default branch, so merges by people are noticed only by the "
+                    "hourly schedule; add it as 'nexkit init' writes it",
+                )
+            )
+        else:
+            findings.append((True, "Pushes to the default branch start the conflict check"))
+    if cfg["usage_limit"]["resume"]:
+        if trigger(workflow, "schedule") is None:
+            findings.append(
+                (
+                    False,
+                    f"{WORKFLOW_PATH} has no 'schedule' trigger, so runs paused at the Claude "
+                    "usage limit cannot resume; add it as 'nexkit init' writes it, or set "
+                    "usage_limit.resume to false",
+                )
+            )
+        else:
+            findings.append((True, "A schedule resumes runs paused at the Claude usage limit"))
+    return findings
+
+
 def doctor(root):
     """Return a list of (ok, message) findings."""
     root = Path(root)
     findings = []
+    cfg = None
     try:
         cfg = configuration.load(root)
         findings.append((True, f"{configuration.CONFIG_PATH} is valid"))
         if not cfg["checks"]:
             findings.append((False, "No checks configured; NexKit cannot verify changes"))
-        findings += [_after_merge_workflow(root, name) for name in cfg["after_merge_workflows"]]
+        findings += [_after_merge_workflow(root, name) for name in cfg["merge"]["after_workflows"]]
     except configuration.ConfigError as exc:
         findings.append((False, str(exc)))
 
@@ -120,6 +207,8 @@ def doctor(root):
         else:
             findings.append((False, f"{WORKFLOW_PATH} does not call the NexKit pipeline"))
         findings.append(_concurrency(text))
+        if cfg:
+            findings += _triggers(cfg, text)
 
     repo = repository_of(root)
     if not repo:
@@ -159,7 +248,31 @@ def doctor(root):
                     "-F can_approve_pull_request_reviews=true",
                 )
             )
+    for login in (cfg or {}).get("notify", []):
+        role = (
+            _gh("api", f"repos/{repo}/collaborators/{login}/permission", "-q", ".permission") or ""
+        ).strip()
+        if role in ("admin", "maintain", "write"):
+            findings.append((True, f"notify: @{login} has write access"))
+        else:
+            findings.append(
+                (
+                    False,
+                    f"notify: @{login} has no write access to {repo}; NexKit still mentions "
+                    "them, but they cannot run commands",
+                )
+            )
     branch = (_gh("api", f"repos/{repo}", "-q", ".default_branch") or "").strip()
+    if branch and workflow.is_file():
+        push = trigger(workflow.read_text(), "push")
+        if push is not None and not re.search(rf"[\[\s,'\"]{re.escape(branch)}[\]\s,'\"]", push):
+            findings.append(
+                (
+                    False,
+                    f"The 'push' trigger in {WORKFLOW_PATH} does not list the default branch "
+                    f"{branch}, so merges into it do not start the conflict check",
+                )
+            )
     if branch:
         on_default = _gh("api", f"repos/{repo}/contents/{WORKFLOW_PATH}?ref={branch}", "-q", ".sha")
         findings.append(

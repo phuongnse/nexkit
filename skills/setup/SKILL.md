@@ -66,11 +66,21 @@ files or repository settings, and wait for confirmation.
    store a fine-grained token with Contents and Pull requests write access as
    `NEXKIT_PUSH_TOKEN`.
 
-   If the user wants `"auto_merge": true`, say that branch protection still applies and
+   If the user wants `"merge": {"auto": true}`, say that branch protection still applies and
    that a merge by NexKit starts no `push` CI on the base branch. Offer to list those CI
-   workflows in `after_merge_workflows` (for example `["ci.yml"]`) so NexKit starts them
+   workflows in `merge.after_workflows` (for example `["ci.yml"]`) so NexKit starts them
    after each merge; each one needs a `workflow_dispatch` trigger, which is a change the
    user makes to that workflow file.
+
+   Offer `"notify": ["<login>"]` so the user gets a GitHub notification when a run needs
+   a person, for example a plan with questions or a pull request ready to merge.
+
+   With `merge.auto`, also offer `"conflicts": {"auto_resolve": true}`: NexKit then merges the
+   base branch into its pull requests that start to conflict, by itself.
+
+   If the repository splits large issues into sub-issues and a parent means only the sum
+   of its parts, offer `"close_parent_issues": true`: NexKit then closes a parent when its
+   last sub-issue closes and at least one was completed.
 
 8. **Commit to the default branch.** Comment events only run workflows from the default
    branch. Commit both files (directly or through a pull request, as the user prefers).

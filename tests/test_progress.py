@@ -5,13 +5,15 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
 from nexkit import progress
 from nexkit.github import GitHub, GitHubError
+from nexkit.maintain import maintain, resume_paused
 from nexkit.report import report
-from nexkit.state import empty_state, read_state, render_state
+from nexkit.state import empty_state, read_state, render_run, render_state
 from tests.support import FakeGitHub, make_config
 
 HEAD = "c" * 40
@@ -105,7 +107,10 @@ class ProgressTests(unittest.TestCase):
         comments = self.gh.run_comments(5)
         self.assertEqual(len(comments), 1)
         self.assertIn(f"✅ [run log]({RUN})\n\n[Plan](https://x/plan) posted.", comments[0]["body"])
-        self.assertEqual(comments[0]["run"], {"url": RUN, "command": "plan", "status": "success"})
+        self.assertEqual(
+            comments[0]["run"],
+            {"url": RUN, "command": "plan", "status": "success", "outcome": "planned"},
+        )
         self.assertEqual(self.gh.reactions, [(9, "eyes"), (9, "rocket")])
 
     def test_failed_issue_command(self):
@@ -270,6 +275,80 @@ class ProgressTests(unittest.TestCase):
         with redirect_stderr(stderr):
             progress.start(self.gh, decision("review"))
         self.assertIn("forbidden", stderr.getvalue())
+
+
+class PausedRunTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        patcher = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def paused(self, number, run_id, at="2026-10-11T04:40:00Z"):
+        resume = {"command": "plan", "number": number, "note": "", "auto": "resume", "at": at}
+        run = {"url": f"https://x/runs/{run_id}", "command": "plan", "status": "paused"}
+        return self.gh.comment(number, render_run({**run, "resume": resume}, "⏸️ Paused."))
+
+    def test_trigger_labels(self):
+        self.assertEqual(progress.trigger({"action": "fix", "auto": True}), "fix (auto)")
+        self.assertEqual(
+            progress.trigger({"action": "fix", "auto": True, "conflicts": True, "resumed": True}),
+            "fix (auto, conflicts, resumed)",
+        )
+        self.assertEqual(
+            progress.trigger({"action": "review", "resumed": True}), "review (resumed)"
+        )
+
+    def test_a_new_command_replaces_a_paused_one(self):
+        self.paused(5, 1)
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "2"}):
+            progress.start(self.gh, decision("plan"))
+        first, second = self.gh.run_comments(5)
+        self.assertEqual(first["run"]["status"], "paused")
+        self.assertNotIn("resume", first["run"])
+        self.assertIn("⏸️ Paused.\n\nReplaced by a later command.", first["body"])
+        self.assertEqual(second["run"]["status"], "running")
+
+    def test_resume_starts_due_commands_once(self):
+        now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+        due = self.paused(5, 1)
+        self.gh.add_issue(7)
+        self.paused(7, 2, at="2026-10-11T06:00:00Z")
+        self.gh.dispatch_runs["nexkit.yml"] = "https://x/runs/3"
+        lines = resume_paused(self.gh, "nexkit.yml", "main", now)
+        self.assertEqual(lines, ["Resumed /nexkit plan on #5."])
+        self.assertEqual(
+            self.gh.dispatches,
+            [
+                {
+                    "workflow": "nexkit.yml",
+                    "ref": "main",
+                    "inputs": {"command": "plan", "number": "5", "note": "", "auto": "resume"},
+                }
+            ],
+        )
+        [run] = self.gh.run_comments(5)
+        self.assertNotIn("resume", run["run"])
+        self.assertIn("Resumed `/nexkit plan` in [a new run](https://x/runs/3)", due["body"])
+        self.assertEqual(resume_paused(self.gh, "nexkit.yml", "main", now), [])  # once
+        self.assertEqual(len(self.gh.dispatches), 1)
+
+    def test_a_failed_resume_is_tried_again(self):
+        now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+        self.paused(5, 1)
+        self.gh.dispatch_errors["nexkit.yml"] = GitHubError(500, "Server error")
+        [line] = resume_paused(self.gh, "nexkit.yml", "main", now)
+        self.assertIn("Could not resume /nexkit plan on #5", line)
+        self.assertIn("resume", self.gh.run_comments(5)[0]["run"])
+
+    def test_the_schedule_resumes_only_when_enabled(self):
+        self.paused(5, 1, at="2026-01-01T00:00:00Z")
+        task = {"action": "maintain", "task": "schedule"}
+        maintain(self.gh, task, make_config(usage_limit={"resume": False}), workflow="n.yml")
+        self.assertFalse(self.gh.dispatches)
+        maintain(self.gh, task, make_config(), workflow="n.yml", ref="main")
+        self.assertEqual(len(self.gh.dispatches), 1)
 
 
 class ReactionTests(unittest.TestCase):

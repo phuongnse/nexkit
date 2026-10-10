@@ -58,6 +58,10 @@ class FakeGitHub:
         self.reactions = []
         self.merge_error = None
         self.dispatch_errors = {}
+        self.close_errors = {}
+        self.parents = {}  # sub-issue number -> parent number
+        self.branches = {}
+        self.runs = {}
         self.dispatch_runs = {}
         self._next = 1000
 
@@ -67,8 +71,16 @@ class FakeGitHub:
 
     # fixtures -------------------------------------------------------------------
 
-    def add_issue(self, number, title="Add a feature", body="Please add it.", state="open"):
-        self.issues[number] = {"number": number, "title": title, "body": body, "state": state}
+    def add_issue(
+        self, number, title="Add a feature", body="Please add it.", state="open", reason=None
+    ):
+        self.issues[number] = {
+            "number": number,
+            "title": title,
+            "body": body,
+            "state": state,
+            "state_reason": reason,
+        }
         return self.issues[number]
 
     def human_comment(self, number, body, login="alice", association="COLLABORATOR"):
@@ -93,6 +105,7 @@ class FakeGitHub:
                 "repo": {"full_name": repo or self.repository},
             },
             "base": {"ref": "main"},
+            "mergeable": True,
         }
         self.issues[number] = {
             "number": number,
@@ -119,6 +132,27 @@ class FakeGitHub:
 
     def comments(self, number):
         return list(self.issue_comments[number])
+
+    def parent_issue(self, number):
+        parent = self.parents.get(number)
+        return self.issues[parent] if parent else None
+
+    def sub_issues(self, number):
+        return [self.issues[n] for n, parent in self.parents.items() if parent == number]
+
+    def close_issue(self, number, reason="completed"):
+        if number in self.close_errors:
+            raise self.close_errors[number]
+        self.issues[number].update(state="closed", state_reason=reason)
+        return self.issues[number]
+
+    def recent_comments(self, since, limit=2000):
+        found = []
+        for number, comments in self.issue_comments.items():
+            for comment in comments:
+                url = f"https://api.github.com/repos/{self.repository}/issues/{number}"
+                found.append({**comment, "issue_url": url})
+        return found[::-1]
 
     def comment(self, number, body):
         comment = {
@@ -151,6 +185,21 @@ class FakeGitHub:
             p for p in self.pulls.values() if p["head"]["ref"] == branch and p["state"] == "open"
         ]
 
+    def open_issues(self):
+        return [i for i in self.issues.values() if i["state"] == "open"]
+
+    def list_pulls(self, state="open", limit=1000):
+        return [p for p in self.pulls.values() if state == "all" or p["state"] == state]
+
+    def workflow_run(self, run_id):
+        return self.runs[run_id]
+
+    def pulls_into(self, base):
+        return [p for p in self.pulls.values() if p["state"] == "open" and p["base"]["ref"] == base]
+
+    def branch_sha(self, branch):
+        return self.branches.get(branch, "f" * 40)
+
     def create_pull(self, title, head, base, body):
         number = max([*self.issues, *self.pulls, 0]) + 1
         pull = self.add_pull(number, int(head.rsplit("-", 1)[1]), branch=head)
@@ -171,7 +220,7 @@ class FakeGitHub:
         if self.merge_error:
             raise self.merge_error
         self.merged.append((number, sha, method))
-        return {"merged": True}
+        return {"merged": True, "sha": "d" * 40}
 
     def set_status(self, sha, context, state, description, target_url=None):
         self.statuses.append(

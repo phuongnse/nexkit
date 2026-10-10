@@ -19,8 +19,11 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 | `checks.py` | `verify` and agent setup: run configured commands |
 | `report.py`, `state.py` | `report`: statuses, review, state comment, next round |
 | `progress.py` | `route` and `report`: reactions, one comment per run with its link |
+| `maintain.py` | `maintain`: work that follows other events, without an agent |
+| `usage.py` | recognises Claude's usage limit and its reset time |
 | `config.py` | `.nexkit/config.json` schema and defaults |
 | `scaffold.py`, `templates/` | `nexkit init` and `nexkit doctor` |
+| `status.py` | `nexkit status`: open NexKit work from the comment markers |
 | `github.py`, `gitutil.py` | REST and git helpers |
 
 ## Rules to keep
@@ -33,7 +36,7 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
   output only with workflow commands stopped.
 - State lives only on GitHub (comments, PRs, statuses). Do not add a state store.
 - Agent errors and `blocked` results never trigger automatic retries; only check failures
-  and review findings do, up to `max_auto_fixes`.
+  and review findings do, up to `fix.max_auto_rounds`.
 - Prompts judge code behaviour. Never make an agent responsible for something it cannot
   change (PR text, approvals, workflows).
 - When a config key, command or prompt contract changes, update the code, tests, docs and
@@ -42,7 +45,8 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
   `PYTHON` and `CLAUDE_CODE`; the local CLI accepts Python `PYTHON` or newer. Test only
   those versions: no matrices. The Claude Code pin is read from `nexkit/__init__.py`
   everywhere; never repeat it. `update-claude-code.yml` proposes new stable versions, and
-  the CI `live` job (`scripts/smoke.py`) must pass before one is merged.
+  the CI `smoke-test` job (`scripts/smoke.py`) must pass before one is merged. CI runs it on
+  pull requests that change `agent.py`, `prompts/`, `nexkit/__init__.py` or the smoke test.
 
 ## Verify
 

@@ -70,9 +70,6 @@ def _run(command, cwd, timeout_seconds, env=None):
     return code, output, round(time.monotonic() - started, 1)
 
 
-SETUP_SECONDS = 30 * 60
-
-
 def setup(cfg, cwd, redact=str, base_sha=None):
     """Run setup commands in order. Return None, or a failed result for the first failure.
 
@@ -81,7 +78,8 @@ def setup(cfg, cwd, redact=str, base_sha=None):
     env = environment(base_sha)
     for command in cfg["setup"]:
         print(f"$ {command}", flush=True)
-        code, output, seconds = _run(command, cwd, SETUP_SECONDS, env)
+        timeout = cfg["limits"]["setup_timeout_minutes"] * 60
+        code, output, seconds = _run(command, cwd, timeout, env)
         output = redact(output)
         print(output[-OUTPUT_TAIL:], flush=True)
         if code != 0:

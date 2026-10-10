@@ -57,25 +57,25 @@ class InitDoctorTests(unittest.TestCase):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         path = self.root / ".nexkit/config.json"
         cfg = json.loads(path.read_text())
-        cfg["after_merge_workflows"] = ["ci.yml", "lint.yml", "e2e.yml"]
+        cfg["merge"]["after_workflows"] = ["ci.yml", "lint.yml", "e2e.yml"]
         path.write_text(json.dumps(cfg))
         workflows = self.root / ".github/workflows"
         (workflows / "ci.yml").write_text("on:\n  push:\n  workflow_dispatch:\n")
         (workflows / "lint.yml").write_text("# no workflow_dispatch yet\non: [push]\n")
         findings = scaffold.doctor(self.root)
         self.assertIn(
-            (True, "after_merge_workflows: ci.yml can be started after a merge"), findings
+            (True, "merge.after_workflows: ci.yml can be started after a merge"), findings
         )
         self.assertIn(
             (
                 False,
-                "after_merge_workflows: lint.yml has no workflow_dispatch trigger, "
+                "merge.after_workflows: lint.yml has no workflow_dispatch trigger, "
                 "so NexKit cannot start it after a merge",
             ),
             findings,
         )
         self.assertIn(
-            (False, "after_merge_workflows: .github/workflows/e2e.yml does not exist"), findings
+            (False, "merge.after_workflows: .github/workflows/e2e.yml does not exist"), findings
         )
 
     def test_concurrency_group_is_on_the_job(self):
@@ -84,7 +84,7 @@ class InitDoctorTests(unittest.TestCase):
         text = path.read_text()
         group = (
             "concurrency:\n      group: nexkit-${{ github.event.issue.number || "
-            "github.event.pull_request.number || inputs.number }}\n"
+            "github.event.pull_request.number || inputs.number || github.event_name }}\n"
         )
         self.assertIn("\n    " + group, text.split("\n  nexkit:\n", 1)[1])
         self.assertNotRegex(text, r"(?m)^concurrency:|cancel-in-progress")
@@ -93,6 +93,105 @@ class InitDoctorTests(unittest.TestCase):
         # A workflow from NexKit 1.7 or earlier sets it for the whole workflow.
         path.write_text(text.replace("    " + group, "").replace("jobs:", "concurrency: x\njobs:"))
         self.assertNotIn(ok, scaffold.doctor(self.root))
+
+    def test_doctor_checks_the_trigger_for_parent_issues(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["close_parent_issues"] = True
+        path.write_text(json.dumps(cfg))
+        ok = (True, "Closed issues start NexKit, for close_parent_issues")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        text = workflow.read_text()
+        workflow.write_text(
+            text.replace("  issues:\n    types: [closed]", "  issues:\n    types: [opened]")
+        )
+        findings = scaffold.doctor(self.root)
+        self.assertNotIn(ok, findings)
+        self.assertTrue(any("does not listen to 'issues: closed'" in m for _, m in findings))
+        cfg["close_parent_issues"] = False
+        path.write_text(json.dumps(cfg))
+        self.assertFalse(any("issues: closed" in m for _, m in scaffold.doctor(self.root)))
+
+    def test_doctor_checks_the_schedule_that_resumes_paused_runs(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        ok = (True, "A schedule resumes runs paused at the Claude usage limit")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        text = workflow.read_text()
+        workflow.write_text(re.sub(r"  schedule:\n.*\n", "", text))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("has no 'schedule' trigger" in m for ok, m in findings if not ok))
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["usage_limit"] = {"resume": False}
+        path.write_text(json.dumps(cfg))
+        self.assertFalse(any("schedule" in m for _, m in scaffold.doctor(self.root)))
+
+    def test_init_listens_to_pushes_to_the_default_branch(self):
+        git(self.root, "init", "-q", "-b", "trunk")
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        workflow = (self.root / ".github/workflows/nexkit.yml").read_text()
+        self.assertIn("branches: [trunk]", scaffold.trigger(workflow, "push"))
+        self.assertEqual(scaffold.default_branch_of(self.root / ".nexkit"), "trunk")
+
+    def test_doctor_checks_the_push_trigger_for_conflicts(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["conflicts"] = {"auto_resolve": True}
+        path.write_text(json.dumps(cfg))
+        ok = (True, "Pushes to the default branch start the conflict check")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        workflow.write_text(re.sub(r"  push:\n.*\n", "", workflow.read_text()))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("has no 'push' trigger" in m for ok, m in findings if not ok))
+
+    def test_doctor_with_github(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["notify"] = ["owner", "reader"]
+        path.write_text(json.dumps(cfg))
+        answers = {
+            ".default_branch": "main\n",
+            "owner/permission": "admin\n",
+            "reader/permission": "read\n",
+        }
+
+        def fake_gh(*args):
+            if args[:2] == ("auth", "status"):
+                return "Logged in"
+            for key, value in answers.items():
+                if any(key in arg for arg in args):
+                    return value
+            return None
+
+        with (
+            mock.patch.object(scaffold, "repository_of", return_value="acme/app"),
+            mock.patch.object(scaffold, "_gh", side_effect=fake_gh),
+        ):
+            findings = scaffold.doctor(self.root)
+            self.assertIn((True, "notify: @owner has write access"), findings)
+            self.assertTrue(any("@reader has no write access" in m for ok, m in findings))
+            self.assertFalse(any("does not list the default branch" in m for _, m in findings))
+            answers[".default_branch"] = "trunk\n"
+            findings = scaffold.doctor(self.root)
+            self.assertTrue(any("does not list the default branch trunk" in m for _, m in findings))
+            cfg["notify"] = []
+            path.write_text(json.dumps(cfg))
+            scaffold.doctor(self.root)  # no notify: the rest of the checks still run
+
+    def test_trigger(self):
+        workflow = (
+            "on:\n  push:\n    branches: [main] # x\n  schedule:\n    - cron: '1 * * * *'\njobs:\n"
+        )
+        self.assertIn("branches: [main]", scaffold.trigger(workflow, "push"))
+        self.assertIsNotNone(scaffold.trigger(workflow, "schedule"))
+        self.assertIsNone(scaffold.trigger(workflow, "issues"))
+        self.assertIsNone(scaffold.trigger("on:\n  # issues:\njobs:\n", "issues"))
 
     def test_repository_of(self):
         git(self.root, "init", "-q")
@@ -145,8 +244,25 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(json.loads(out["config"])["checks"][0]["name"], "test")
         self.assertEqual(out["agent_ref"], "main")
         self.assertEqual(out["agent_timeout"], "75")
+
         self.assertEqual(self.gh.reactions, [(3, "eyes")])
         self.assertEqual(len(self.gh.run_comments(5)), 1)
+
+    def test_route_allows_for_the_setup_timeout(self):
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 3, "body": "/nexkit go", "user": {"login": "alice"}},
+        }
+        out = self.run_route("issue_comment", event)
+        self.assertEqual(out["checks_timeout"], str(15 + 30 + 10))
+        # The setup timeout counts toward the jobs that run setup.
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["limits"] = {"setup_timeout_minutes": 10}
+        path.write_text(json.dumps(raw))
+        out = self.run_route("issue_comment", event)
+        self.assertEqual((out["agent_timeout"], out["checks_timeout"]), ("55", str(15 + 10 + 10)))
 
     def test_route_allows_for_triage_and_the_longest_plan(self):
         path = self.root / "repo/.nexkit/config.json"
@@ -181,6 +297,20 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(self.gh.reactions, [(4, "eyes")])
         self.assertEqual({s["state"] for s in self.gh.statuses}, {"pending"})
         self.assertTrue(self.gh.comments_matching(6, "actions/runs/9"))
+
+    def test_route_hands_closed_issues_to_maintain_only_when_enabled(self):
+        event = {"action": "closed", "issue": {"number": 5}}
+        out = self.run_route("issues", event)
+        self.assertEqual(out["action"], "none")
+        self.assertFalse(self.gh.issue_comments[5])
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["close_parent_issues"] = True
+        path.write_text(json.dumps(raw))
+        out = self.run_route("issues", event)
+        self.assertEqual(out["action"], "maintain")
+        self.assertEqual(json.loads(out["decision"])["task"], "parents")
+        self.assertFalse(self.gh.issue_comments[5])  # no run comment, no reaction
 
     def test_route_replies_with_configuration_errors(self):
         (self.root / "repo/.nexkit/config.json").write_text('{"model": 1}')
@@ -303,7 +433,8 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_jobs(self):
         self.assertEqual(
-            list(self.jobs), ["route", "agent", "publish", "verify", "review", "report"]
+            list(self.jobs),
+            ["route", "agent", "publish", "verify", "review", "report", "maintain"],
         )
 
     def test_jobs_that_run_agents_or_repository_code_cannot_write(self):
@@ -317,12 +448,12 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertNotIn("github.token", self.jobs["verify"])
 
     def test_jobs_with_write_tokens_never_receive_model_credentials(self):
-        for name in ("publish", "report", "route"):
+        for name in ("publish", "report", "route", "maintain"):
             self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", self.jobs[name], name)
             self.assertNotIn("ANTHROPIC_API_KEY", self.jobs[name], name)
 
     def test_jobs_with_write_tokens_run_only_nexkit(self):
-        for name in ("route", "publish", "report"):
+        for name in ("route", "publish", "report", "maintain"):
             runs = re.findall(r"^\s+run: (.*)$", self.jobs[name], re.M)
             self.assertTrue(runs, name)
             for run in runs:
@@ -344,6 +475,15 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("path: kit", report)
         self.assertNotIn("persist-credentials: true", report)
         self.assertNotIn("NEXKIT_PUSH_TOKEN", report)
+
+    def test_maintain_never_checks_out_the_repository(self):
+        maintain = self.jobs["maintain"]
+        self.assertIn("if: needs.route.outputs.action == 'maintain'", maintain)
+        self.assertEqual(maintain.count("actions/checkout@"), 1)
+        self.assertIn("path: kit", maintain)
+        self.assertNotIn("contents: write", maintain)
+        self.assertNotIn("secrets.", maintain)
+        self.assertIn('["none","maintain"]', self.jobs["report"])
 
     def test_route_acknowledges_commands_without_repository_code(self):
         route = self.jobs["route"]

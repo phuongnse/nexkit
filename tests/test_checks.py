@@ -89,5 +89,16 @@ class BaseCommitTests(unittest.TestCase):
         self.assertEqual(unknown[0]["output"].split(), ["unset", "unset"])
 
 
+class SetupTimeoutTests(unittest.TestCase):
+    def test_setup_uses_the_configured_timeout(self):
+        cfg = make_config(setup=["true"], limits={"setup_timeout_minutes": 7})
+        with (
+            mock.patch.object(checks, "_run", return_value=(0, "", 0.1)) as run,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertIsNone(checks.setup(cfg, "."))
+        self.assertEqual(run.call_args.args[2], 7 * 60)
+
+
 if __name__ == "__main__":
     unittest.main()

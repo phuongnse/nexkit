@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from . import progress
 from .github import GitHubError, dispatched_runs_url, run_url
-from .state import FAILURE, SUCCESS, clip, empty_state, read_state
+from .maintain import (
+    close_parents_safely,
+    is_conflicting,
+    resolve_conflicts,
+    start_conflict_round,
+)
+from .route import auto_input
+from .state import FAILURE, PAUSED, SUCCESS, clip, empty_state, read_state
+from .usage import shown
 
 ICONS = {True: "✅", False: "❌"}
 # 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
@@ -17,7 +26,27 @@ RESOLUTIONS = {
 }
 OPEN = {"blocking": "🛑 Blocking, unresolved", "suggestion": "💡 Suggestion, still open"}
 # Outcomes in which the run did its work. The others stopped on an error.
-COMPLETED = {"planned", "ready", "merged", "auto_fix", "needs_human"}
+COMPLETED = {
+    "planned",
+    "ready",
+    "merged",
+    "merge_refused",
+    "auto_fix",
+    "needs_human",
+    "up_to_date",
+    "conflict_fix",
+}
+# Why a person is needed after a run with this outcome. The other outcomes need nobody:
+# NexKit continues by itself (`auto_fix`, `conflict_fix`, a resumed pause) or is done.
+NEEDS_PERSON = {
+    "agent_blocked": "the agent is blocked and needs a decision",
+    "agent_error": "the run stopped on an error",
+    "agent_failed": "the agent could not run",
+    "publish_failed": "NexKit could not publish the result",
+    "review_failed": "the AI review did not complete",
+    "needs_human": "checks or review still need attention and no automatic fix rounds remain",
+    "merge_refused": "GitHub refused the automatic merge",
+}
 # Bounds for what the state comment keeps for the next review.
 MAX_FINDINGS = 30
 MAX_FIXES = 5
@@ -174,31 +203,150 @@ def _stage_failure(decision, agent, publish):
     return None
 
 
-def _stop_round(gh, decision, agent, message):
-    """Mark a pull request round that published nothing as failed, with the reason."""
+def needs_person(outcome, cfg, plan=None, resume=None):
+    """The reason a person is needed after a run, or None. It follows only the outcome and
+    the run's structured output, never a judgment by Claude."""
+    if outcome == "planned":
+        plan = plan or {}
+        if plan.get("too_large"):
+            return "the plan says the issue is too large for one session"
+        return "the plan has questions" if plan.get("questions") else None
+    if outcome == "ready":
+        return None if cfg["merge"]["auto"] else "the pull request is ready for a human decision"
+    if outcome == "paused":
+        return (
+            None if resume else "Claude hit the usage limit; run the command again after it resets"
+        )
+    return NEEDS_PERSON.get(outcome)
+
+
+def notify(gh, cfg, number, reason):
+    """Mention the people in `notify` once, in a new comment: GitHub notifies people
+    mentioned in a new comment, not in an edited one."""
+    if not reason or not cfg["notify"]:
+        return
+    people = " ".join(f"@{login}" for login in cfg["notify"])
+    try:
+        gh.comment(number, f"{people} a person is needed: {reason}.")
+    except GitHubError as exc:
+        print(f"warning: could not mention {people}: {exc}", file=sys.stderr)
+
+
+def run_status(outcome):
+    if outcome == "paused":
+        return PAUSED
+    return SUCCESS if outcome in COMPLETED else FAILURE
+
+
+def _stop_round(gh, decision, agent, outcome, message, reason=None):
+    """Show a pull request round that published nothing, with the reason."""
     comments = gh.comments(decision["pr"])
     _, state = read_state(comments)
     _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
     comment_id, row = progress.find_round(comments, decision)
-    row.update(status=FAILURE, head=decision["head"], cost=_cost(agent))
+    status = run_status(outcome)
+    row.update(status=status, head=decision["head"], cost=_cost(agent), outcome=outcome)
+    if reason:
+        row["attention"] = reason
     progress.save_round(gh, decision["pr"], comment_id, row, message)
 
 
-def after_merge(gh, workflows, base):
+def pause(result, cfg, command, number, note="", auto="resume", resumed=False):
+    """(message, resume record or None) for a stage that stopped at the usage limit.
+
+    The resume record goes into the run comment's marker; `maintain` starts the command
+    again once its time has passed."""
+    at = result.get("resume_at")
+    known = result.get("reset_known")
+    shown_command = f"`/nexkit {command}`" + (" with the same note" if note else "")
+    message = f"⏸️ Claude stopped at the account's usage limit: {result.get('limit') or ''}"
+    message = message.rstrip(": ") + "."
+    if resumed and not known:
+        # A run that was resumed blind and stopped again: a person decides, so a limit
+        # that never resets cannot start a run every hour.
+        at = None
+    if not cfg["usage_limit"]["resume"] or not at:
+        reset = f"It resets at {shown(at)}." if known and at else "The reset time is unknown."
+        return f"{message} {reset} Comment {shown_command} after the reset to continue.", None
+    if known:
+        message += f" NexKit runs {shown_command} again after it resets, at {shown(at)}."
+    else:
+        message += (
+            f" NexKit could not read when it resets, so it runs {shown_command} again after "
+            f"{shown(at)}."
+        )
+    message += " A new command here replaces this."
+    resume = {"command": command, "number": number, "note": note or "", "auto": auto, "at": at}
+    return message, resume
+
+
+def _pause_statuses(gh, head, resume, url):
+    """Keep both statuses pending while the round waits for the usage limit to reset."""
+    description = "Paused at the Claude usage limit" + (
+        f"; resumes after {shown(resume['at'])}" if resume else ""
+    )
+    for context in progress.STATUS_CONTEXTS:
+        gh.set_status(head, context, "pending", description, url)
+
+
+def _paused_agent(gh, decision, cfg, agent):
+    """The outcome of a plan, implement or fix stage that stopped at the usage limit."""
+    command = progress.COMMANDS[decision["action"]]
+    message, resume = pause(
+        agent,
+        cfg,
+        command,
+        decision["target"],
+        decision.get("note"),
+        auto_input(decision, resume=True),
+        resumed=bool(decision.get("resumed")),
+    )
+    reason = needs_person("paused", cfg, resume=resume)
+    if not decision.get("pr"):
+        return {"outcome": "paused", "summary": message, "resume": resume, "attention": reason}
+    _pause_statuses(gh, decision["head"], resume, run_url())
+    comment_id, row = progress.find_round(gh.comments(decision["pr"]), decision)
+    row.update(status=PAUSED, head=decision["head"], cost=_cost(agent), outcome="paused")
+    row.update({key: value for key, value in (("resume", resume), ("attention", reason)) if value})
+    progress.save_round(gh, decision["pr"], comment_id, row, message)
+    return {"outcome": "paused", "summary": message, "attention": reason}
+
+
+def after_merge(gh, workflows, base, records=None):
     """Start each workflow on the base branch after NexKit merged into it.
 
     GitHub starts no workflow for the merge's push, which uses the Actions token, but it does
-    for a dispatch. A dispatch that fails is reported; the merge stays.
+    for a dispatch. A dispatch that fails is reported; the merge stays. Each start is added
+    to `records`, for the round's marker.
     """
     lines = []
+    records = [] if records is None else records
     for workflow in workflows:
         try:
             run = gh.dispatch(workflow, base, {}, run_details=True) or {}
             url = run.get("html_url") or dispatched_runs_url(workflow, base)
             lines.append(f"- Started [`{workflow}`]({url})")
+            records.append({"workflow": workflow, "run_id": run.get("workflow_run_id"), "url": url})
         except GitHubError as exc:
             lines.append(f"- Could not start `{workflow}`: {exc}")
+            records.append({"workflow": workflow, "error": str(exc)[:300]})
     return "\n".join([f"After the merge, on `{base}`:", *lines]) if lines else ""
+
+
+def close_merged_issue(gh, issue, pr, sha):
+    """Close the issue a pull request implements after NexKit merged it.
+
+    GitHub closes it when a person merges, but not after a merge with the Actions token.
+    Returns (closed, lines for the round's comment). A failure leaves the merge as it is."""
+    try:
+        if gh.issue(issue).get("state") != "open":
+            return False, []
+        commit = f" in {sha}" if sha else ""
+        gh.comment(issue, f"NexKit merged #{pr}{commit}, which implements this issue.")
+        gh.close_issue(issue, "completed")
+    except GitHubError as exc:
+        return False, [f"Could not close #{issue}: {exc}. Close it yourself."]
+    return True, [f"Closed #{issue} as completed."]
 
 
 def _record(state, decision, row, agent, review):
@@ -237,7 +385,17 @@ def _record(state, decision, row, agent, review):
 def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch):
     """Post the outcome. Returns a short machine-readable summary for logs and tests."""
     result = _report(gh, decision, cfg, needs, Path(artifacts), workflow_ref, default_branch)
-    progress.finish(gh, decision, result["outcome"] in COMPLETED, result["summary"])
+    fields = {"outcome": result["outcome"]}
+    for key in ("resume", "attention"):
+        if result.get(key):
+            fields[key] = result[key]
+    progress.finish(gh, decision, run_status(result["outcome"]), result["summary"], **fields)
+    notify(
+        gh,
+        cfg,
+        result.get("pr") or decision.get("pr") or decision["issue"],
+        result.get("attention"),
+    )
     return result
 
 
@@ -247,21 +405,35 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     publish = json.loads(((needs.get("publish") or {}).get("outputs") or {}).get("result") or "{}")
 
     if action in ("plan", "implement", "fix"):
+        if agent and agent.get("status") == "paused":
+            return _paused_agent(gh, decision, cfg, agent)
+        if agent and agent.get("status") == "up_to_date":
+            message = (
+                f"`{decision['base']}` merges cleanly into this pull request now; nothing to do."
+            )
+            _stop_round(gh, decision, agent, "up_to_date", message)
+            return {"outcome": "up_to_date", "summary": message}
         failure = _stage_failure(decision, agent, publish)
         if failure:
             outcome, message = failure
+            reason = needs_person(outcome, cfg)
             if decision.get("pr"):
-                _stop_round(gh, decision, agent, message)
-            return {"outcome": outcome, "summary": message}
+                _stop_round(gh, decision, agent, outcome, message, reason)
+            return {"outcome": outcome, "summary": message, "attention": reason}
         if action == "plan":
             plan = publish.get("comment")
-            return {"outcome": "planned", "summary": f"[Plan]({plan}) posted." if plan else ""}
+            return {
+                "outcome": "planned",
+                "summary": f"[Plan]({plan}) posted." if plan else "",
+                "attention": needs_person("planned", cfg, plan=agent.get("output")),
+            }
 
     pr = publish.get("pr") or decision["pr"]
     head = publish.get("head") or decision["head"]
     checks = _load(artifacts / "nexkit-checks" / "checks.json")
     reviewed = _load(artifacts / "nexkit-review" / "result.json")
     review = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
+    review_paused = bool(reviewed) and reviewed.get("status") == "paused"
     url = run_url()
 
     comments = gh.comments(pr)
@@ -270,7 +442,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     round_id, row = progress.find_round(comments, decision)
     if decision.get("head") and decision["head"] != head:
         _restore_statuses(gh, decision["head"], state.get("feedback"), url)
-    checks_ok, verdict = _set_statuses(gh, head, checks, review, url)
+    resume = None
+    if review_paused:
+        # The commit is published and checked; only the review runs again after the reset.
+        message, resume = pause(reviewed, cfg, "review", pr, resumed=bool(decision.get("resumed")))
+        _pause_statuses(gh, head, resume, url)
+        checks_ok, verdict = checks is not None and all(c["passed"] for c in checks), None
+    else:
+        checks_ok, verdict = _set_statuses(gh, head, checks, review, url)
     if review:
         gh.create_review(pr, head, review_body({"output": review}, checks))
 
@@ -283,30 +462,70 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     _record(state, decision, row, agent or {}, review)
     state["feedback"] = {"head": head, "checks": checks, "review": review}
 
-    if checks_ok and verdict == "approve":
+    if review_paused:
+        outcome = "paused"
+        row["verdict"] = "paused"
+        if resume:
+            row["resume"] = resume
+    elif checks_ok and verdict == "approve":
         outcome = "ready"
         message = (
             f"✅ Checks passed and the AI review approved `{head[:7]}`. "
             "This pull request is ready for a human decision."
         )
-        if cfg["auto_merge"]:
+        if cfg["merge"]["auto"]:
             try:
-                gh.merge(pr, head)
+                merge = gh.merge(pr, head) or {}
             except GitHubError as exc:
+                outcome = "merge_refused"
                 message += f" Automatic merge was not possible: {exc}"
+                if cfg["conflicts"]["auto_resolve"] and is_conflicting(gh, pr):
+                    workflow = workflow_file(workflow_ref)
+                    started = start_conflict_round(
+                        gh,
+                        pr,
+                        decision["base"],
+                        workflow,
+                        default_branch,
+                        cfg["conflicts"]["max_rounds"],
+                    )
+                    if started.startswith("Started"):
+                        outcome = "conflict_fix"
+                        started = f"It conflicts with `{decision['base']}`. {started}"
+                    message += f"\n\n{started}" if started else ""
             else:
                 outcome, message = "merged", f"✅ Checks and AI review passed; merged `{head[:7]}`."
-                started = after_merge(gh, cfg["after_merge_workflows"], decision["base"])
-                message += f"\n\n{started}" if started else ""
+                closed, lines = close_merged_issue(gh, decision["issue"], pr, merge.get("sha"))
+                if closed and cfg["close_parent_issues"]:
+                    # Closing with the Actions token starts no workflow for `issues: closed`.
+                    lines += close_parents_safely(gh, decision["issue"])
+                runs = []
+                started = after_merge(gh, cfg["merge"]["after_workflows"], decision["base"], runs)
+                if runs:
+                    row["after_merge"] = runs
+                if cfg["conflicts"]["auto_resolve"]:
+                    # The merge's push starts no workflow, so look for new conflicts here.
+                    workflow = workflow_file(workflow_ref)
+                    swept = resolve_conflicts(
+                        gh,
+                        decision["base"],
+                        workflow,
+                        default_branch,
+                        cfg["conflicts"]["max_rounds"],
+                        {pr},
+                    )
+                    started = "\n".join(filter(None, [started, *swept]))
+                parts = ["\n".join(lines), started]
+                message += "".join(f"\n\n{part}" for part in parts if part)
     elif verdict is None:
         outcome = "review_failed"
         message = "The AI review did not complete. Comment `/nexkit review` to try again."
-    elif state["auto_fixes"] < cfg["max_auto_fixes"]:
+    elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"]:
         state["auto_fixes"] += 1
         outcome = "auto_fix"
         message = (
-            f"Starting automatic fix round {state['auto_fixes']} of {cfg['max_auto_fixes']} "
-            "for the failing checks and blocking findings."
+            f"Starting automatic fix round {state['auto_fixes']} of "
+            f"{cfg['fix']['max_auto_rounds']} for the failing checks and blocking findings."
         )
     else:
         outcome = "needs_human"
@@ -321,7 +540,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch and "
             f"resolved conflicts in {files}.\n\n{message}"
         )
-    row["status"] = SUCCESS if outcome in COMPLETED else FAILURE
+    row.update(status=run_status(outcome), outcome=outcome)
+    reason = needs_person(outcome, cfg, resume=resume)
+    if reason:
+        row["attention"] = reason
     progress.save_state(gh, pr, comment_id, state)
     progress.save_round(gh, pr, round_id, row, message)
     if outcome == "auto_fix":
@@ -331,4 +553,4 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             {"command": "fix", "number": str(pr), "note": "", "auto": "true"},
         )
     summary = f"Pull request #{pr}: {message}" if action == "implement" else message
-    return {"outcome": outcome, "pr": pr, "head": head, "summary": summary}
+    return {"outcome": outcome, "pr": pr, "head": head, "summary": summary, "attention": reason}

@@ -7,22 +7,81 @@ Unknown keys are rejected so typos fail loudly.
 The runner (`ubuntu-24.04`), Claude Code version and NexKit's Python version are set by
 the NexKit release and are not configurable. See [supported versions](../README.md#supported-versions).
 
+A complete configuration with every key at its default, except `setup` and `checks`:
+
+```json
+{
+  "version": 1,
+  "model": "sonnet",
+  "effort": null,
+  "setup": ["npm ci"],
+  "checks": [{"name": "test", "run": "npm test"}],
+  "stages": {},
+  "profiles": {},
+  "default_profile": null,
+  "fix": {"max_auto_rounds": 2},
+  "merge": {"auto": false, "after_workflows": []},
+  "conflicts": {"auto_resolve": false, "max_rounds": 3},
+  "usage_limit": {"resume": true, "retry_minutes": 60},
+  "close_parent_issues": false,
+  "notify": [],
+  "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
+  "protected_paths": [".github/", ".nexkit/"],
+  "transcript": true,
+  "log": {"tool_output": "truncated"}
+}
+```
+
+Write only the keys you change. In an object such as `merge`, the keys you leave out keep
+their defaults.
+
+**What runs and with which model**
+
 | Key | Default | Meaning |
 |---|---|---|
 | `version` | `1` | Configuration format. Must be `1`. |
 | `model` | `"sonnet"` | Claude model for every stage: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
 | `effort` | `null` | Reasoning effort for every stage: `low`, `medium`, `high`, `xhigh`, `max`, or `null` for the Claude Code default. |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
-| `checks` | `[]` | Commands that decide whether a change is acceptable. See below. |
-| `stages` | see below | Per-stage overrides. |
-| `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See below. |
+| `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
+| `stages` | see [Stages](#stages) | Per-stage model, effort, timeout and budget. |
+| `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See [Profiles](#profiles). |
 | `default_profile` | `null` | The profile to use when no plan chose one. Required with `profiles`. |
-| `max_auto_fixes` | `2` | Repair rounds NexKit may start by itself on one pull request (0 to 10). Rounds requested by people do not count. |
-| `auto_merge` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See below. |
-| `after_merge_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. See below. |
+
+**What NexKit does by itself**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings (0 to 10). Rounds requested by people do not count. |
+| `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See [Automatic merge](#automatic-merge). |
+| `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. |
+| `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
+| `conflicts.max_rounds` | `3` | Those rounds per pull request (1 to 10), apart from `fix.max_auto_rounds`. |
+| `usage_limit.resume` | `true` | When Claude stops at the account's usage limit, run the same command again after the limit resets. See [Usage limits](#usage-limits). |
+| `usage_limit.retry_minutes` | `60` | When the reset time is unknown, try again after this many minutes (1 to 1440). |
+| `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See [Parent issues](#parent-issues). |
+| `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`. See [Mentions](#mentions). |
+
+**Limits and safety**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `limits.setup_timeout_minutes` | `30` | Time each `setup` command may take (1 to 120). The agent and verify jobs allow for it. |
+| `limits.max_patch_mb` | `5` | Largest change an implement or fix round may publish, in megabytes (1 to 50). |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
-| `transcript` | `true` | Write Claude's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See below. |
-| `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. See below. |
+| `transcript` | `true` | Write Claude's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See [Logs and transcripts](#logs-and-transcripts). |
+| `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. |
+
+### Keys renamed in this release
+
+NexKit 1.10 and earlier had three of these keys at the top level. A configuration that
+still uses them is rejected with the new name, so move them:
+
+| Before | Now |
+|---|---|
+| `"max_auto_fixes": 2` | `"fix": {"max_auto_rounds": 2}` |
+| `"auto_merge": true` | `"merge": {"auto": true}` |
+| `"after_merge_workflows": ["ci.yml"]` | `"merge": {"after_workflows": ["ci.yml"]}` |
 
 ## Checks
 
@@ -82,13 +141,18 @@ fi
 ## Automatic merge
 
 ```json
-"auto_merge": true,
-"after_merge_workflows": ["ci.yml"]
+"merge": {"auto": true, "after_workflows": ["ci.yml"]}
 ```
 
-With `auto_merge: false` (the default) a person decides every merge. With `true`, the
+With `merge.auto: false` (the default) a person decides every merge. With `true`, the
 `report` job squash-merges a NexKit pull request as soon as every check passes and the AI
 review approves. It merges with the default Actions token; no extra secret is needed.
+
+After the merge, NexKit closes the issue the pull request implements as completed and
+comments a link to the pull request and the merge commit on it. GitHub does this itself
+when a person merges, but not after a merge with the Actions token. An issue that is
+already closed stays as it is. If closing fails, the round's comment says so and links the
+issue; the merge stays.
 
 Branch protection and rulesets still apply, and the Actions token cannot bypass them. When
 a rule is not met, GitHub refuses the merge, the round's comment says why, and the pull
@@ -102,7 +166,7 @@ merge:
   [Troubleshooting](troubleshooting.md));
 - a required merge queue, or squash merging turned off for the repository.
 
-`after_merge_workflows` lists workflow files in `.github/workflows/`. GitHub starts no
+`merge.after_workflows` lists workflow files in `.github/workflows/`. GitHub starts no
 workflow for a push made with the Actions token, so the merge by NexKit does not run your
 `push` CI on the base branch. Two pull requests that pass on their own can still break the
 base branch together. After each merge, NexKit starts every listed workflow on the base
@@ -115,7 +179,89 @@ branch with `workflow_dispatch`:
   Its event is `workflow_dispatch`, so steps limited to `push` events are skipped.
 - The round's comment links each workflow it started, or says why a start failed. A
   failed start does not undo the merge.
-- Nothing is started when `auto_merge` is `false` or the merge was refused.
+- Nothing is started when `merge.auto` is `false` or the merge was refused.
+
+## Parent issues
+
+```json
+"close_parent_issues": true
+```
+
+GitHub does not close a parent issue when all its sub-issues are closed, because a parent
+can mean more than the sum of its parts, such as an epic with work still to plan. In
+repositories where a parent is only its sub-issues, for example when a too-large issue is
+split, turn this on. When the last open sub-issue closes, NexKit closes the parent as
+completed if at least one sub-issue was completed, and comments a list of the sub-issues
+and how each closed. When all of them were closed as not planned, the parent stays open
+with a note for a person. NexKit then checks the parent's own parent. It works the same
+whether a person or NexKit merged the work. See
+[How it works](how-it-works.md#work-without-a-command).
+
+The workflow must listen to `issues: closed`, as `nexkit init` writes it; `nexkit doctor`
+warns when it does not. With the setting off, a closed issue starts a short run that ends
+at once.
+
+## Mentions
+
+```json
+"notify": ["owner"]
+```
+
+NexKit mentions the listed people when a run ends in a state that needs a person, so they
+get a GitHub notification without watching every run. Right after the run's comment, it
+posts one line such as `@owner a person is needed: the plan has questions.` on the issue,
+or on the pull request once there is one. The line is its own comment because GitHub
+notifies people mentioned in a new comment, but not in an edited one, and the run's
+comment is edited when the run ends.
+
+The choice follows the run's outcome only, never a judgment by Claude (see
+[How it works](how-it-works.md#when-a-person-is-needed)). A run mentions at most once;
+nobody outside `notify` is ever mentioned. Write logins without `@`. `nexkit doctor`
+warns about a listed login without write access, but NexKit still mentions it. With
+`[]`, nothing is posted.
+
+## Conflicts with the base branch
+
+```json
+"conflicts": {"auto_resolve": true, "max_rounds": 3}
+```
+
+With `auto_resolve: false` (the default), a person comments `/nexkit fix` on a pull
+request that conflicts with its base branch. With `true`, NexKit keeps its open pull requests
+mergeable: after the base branch moves, each one that now conflicts gets an automatic fix
+round that merges the base branch and keeps both sides. This matters most with
+`merge.auto` and several issues at once, where every merge can make the other pull
+requests conflict.
+
+- NexKit's own merges, pushes to the default branch (through the `push` trigger that
+  `nexkit init` writes) and the hourly schedule start the check. `nexkit doctor` warns when
+  the `push` trigger is missing; the schedule still notices within an hour.
+- When an automatic merge is refused because of a conflict, the same round starts.
+- A conflict that needs a choice ends the round as `blocked` with its questions; a person
+  answers with `/nexkit fix <decisions>`.
+- Each pull request gets at most `max_rounds` of these rounds (default 3), apart from
+  `fix.max_auto_rounds`, and one per base commit.
+
+See [How it works](how-it-works.md#work-without-a-command).
+
+## Usage limits
+
+```json
+"usage_limit": {"resume": true, "retry_minutes": 60}
+```
+
+When Claude stops because the account hit its usage limit, NexKit pauses the run, shows
+the reset time in its comment and keeps `nexkit/checks` and `nexkit/review` pending.
+With `resume: true` (the default), it runs the same command again after the reset, once,
+with the same note; when the reset time is unknown, after `retry_minutes` (default 60).
+With `false`, the comment still names the limit and the reset time, and a person
+comments the command again. See
+[How it works](how-it-works.md#usage-limits).
+
+The resume needs the hourly `schedule` trigger that `nexkit init` writes;
+`nexkit doctor` warns when it is missing. A schedule run with nothing to resume runs
+only `route` and `maintain`, which take well under a minute and run no agent. To check
+less often, change the `cron` line, for example to `"23 */3 * * *"`.
 
 ## Stages
 
@@ -212,6 +358,11 @@ shows what the log, run summary and artifacts contain and what is redacted.
 ## Workflow file
 
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls
-`phuongnse/nexkit/.github/workflows/pipeline.yml` at a fixed release tag. To upgrade,
+`phuongnse/nexkit/.github/workflows/pipeline.yml` at a fixed release tag. It starts NexKit
+for `/nexkit` comments, *Request changes* reviews on NexKit pull requests, dispatches,
+closed issues (for `close_parent_issues`), pushes to the default branch (for
+`conflicts.auto_resolve`) and an hourly schedule (for `usage_limit.resume` and
+`conflicts.auto_resolve`). With those settings off, these events start short runs that
+end at once; remove the triggers you do not use if you prefer. To upgrade,
 change both the `uses:` ref and `nexkit_ref` to the new tag (or rerun
 `nexkit init --force --kit-ref vX.Y.Z` and restore your config).

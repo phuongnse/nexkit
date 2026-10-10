@@ -106,6 +106,29 @@ class GitHub:
     def comments(self, number):
         return self.paginate(f"{self._repo}/issues/{number}/comments")
 
+    def parent_issue(self, number):
+        """The parent of a sub-issue, or None for an issue without a parent."""
+        try:
+            return self.request("GET", f"{self._repo}/issues/{number}/parent")
+        except GitHubError as exc:
+            if exc.status != 404:
+                raise
+            return None
+
+    def sub_issues(self, number):
+        return self.paginate(f"{self._repo}/issues/{number}/sub_issues")
+
+    def close_issue(self, number, reason="completed"):
+        return self.request(
+            "PATCH", f"{self._repo}/issues/{number}", {"state": "closed", "state_reason": reason}
+        )
+
+    def recent_comments(self, since, limit=2000):
+        """Comments on any issue or pull request, edited or posted since `since` (ISO 8601),
+        newest first."""
+        params = {"since": since, "sort": "updated", "direction": "desc"}
+        return self.paginate(f"{self._repo}/issues/comments", params, limit)
+
     def comment(self, number, body):
         return self.request("POST", f"{self._repo}/issues/{number}/comments", {"body": body})
 
@@ -131,6 +154,24 @@ class GitHub:
         return self.request(
             "GET", f"{self._repo}/pulls", params={"state": "open", "head": f"{owner}:{branch}"}
         )
+
+    def open_issues(self):
+        """Open issues and pull requests; pull requests have a `pull_request` key."""
+        return self.paginate(f"{self._repo}/issues", {"state": "open"})
+
+    def list_pulls(self, state="open", limit=1000):
+        params = {"state": state, "sort": "updated", "direction": "desc"}
+        return self.paginate(f"{self._repo}/pulls", params, limit)
+
+    def workflow_run(self, run_id):
+        return self.request("GET", f"{self._repo}/actions/runs/{run_id}")
+
+    def pulls_into(self, base):
+        """Open pull requests whose base branch is `base`."""
+        return self.paginate(f"{self._repo}/pulls", {"state": "open", "base": base})
+
+    def branch_sha(self, branch):
+        return self.request("GET", f"{self._repo}/git/ref/heads/{quote(branch)}")["object"]["sha"]
 
     def create_pull(self, title, head, base, body):
         return self.request(

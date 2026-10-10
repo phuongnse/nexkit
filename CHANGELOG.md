@@ -1,5 +1,71 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking:** the settings for what NexKit does by itself are grouped by feature.
+  `max_auto_fixes` is now `fix.max_auto_rounds`, `auto_merge` is now `merge.auto`, and
+  `after_merge_workflows` is now `merge.after_workflows`. A configuration with the old
+  keys is rejected with a message that names the new ones; see
+  [Keys renamed in this release](docs/configuration.md#keys-renamed-in-this-release).
+- Values that were fixed in the code can now be configured: `limits.setup_timeout_minutes`
+  (default 30) for each `setup` command, and `limits.max_patch_mb` (default 5) for the
+  largest change a round may publish. The job timeouts allow for the setup timeout.
+- After an automatic merge, NexKit closes the issue the pull request implements, as
+  GitHub does when a person merges. GitHub left it open after a merge with the Actions
+  token. NexKit comments a link to the pull request and the merge commit on the issue; an
+  issue that is already closed stays as it is, and a failure to close it is reported in
+  the round's comment without undoing the merge.
+- New `close_parent_issues` key (default `false`): when the last open sub-issue of an
+  issue closes, NexKit closes the parent as completed and lists how each sub-issue closed.
+  When every sub-issue was closed as not planned, the parent stays open with a note for a
+  person. NexKit then checks the parent's own parent. It works whether a person or NexKit
+  merged the work. A new `maintain` job does this without an agent or a repository
+  checkout. **Upgrade:** add `issues: {types: [closed]}` to the triggers in
+  `.github/workflows/nexkit.yml` and `github.event_name == 'issues'` to the job's `if`, as
+  `nexkit init` writes them; `nexkit doctor` warns when the setting is on and the trigger
+  is missing.
+- A run that stops at the Claude account's usage limit is paused instead of failed. Its
+  comment shows ⏸️, the reset time and when NexKit runs the command again;
+  `nexkit/checks` and `nexkit/review` stay pending. After the reset, NexKit runs the same
+  command again, once, with the same note (a review that stopped after its commit was
+  published resumes as `/nexkit review`). A resumed round does not count toward
+  `fix.max_auto_rounds`, and a new command replaces a paused one. The comment used to blame
+  the stage, for example "The AI review did not complete". New keys:
+  `usage_limit.resume` (default `true`) turns the resume off, and
+  `usage_limit.retry_minutes` (default 60) sets when to try again if the reset time is
+  unknown; a run resumed that way that stops again waits for a person. **Upgrade:** add the
+  hourly `schedule` trigger to `.github/workflows/nexkit.yml`, add `schedule` to the
+  events in the job's `if`, and add `|| github.event_name` to its concurrency group, as
+  `nexkit init` writes them; `nexkit doctor` warns when the trigger is missing.
+- New `conflicts.auto_resolve` key (default `false`): when the base branch moves, NexKit
+  starts an automatic fix round, `fix (auto, conflicts)`, for each of its open pull
+  requests that now conflicts, with the note to merge the base branch and keep both sides.
+  NexKit's own merges, pushes to the default branch and the hourly schedule start the
+  check, and an automatic merge refused because of a conflict starts the round too. A
+  conflict that needs a choice still ends as `blocked`. Each pull request gets at most
+  `conflicts.max_rounds` such rounds (default 3), apart from `fix.max_auto_rounds`, one
+  per base commit, and none while a round is running on it; a round whose branch no longer conflicts ends without running Claude.
+  **Upgrade:** add `push: {branches: [<default branch>]}` to the triggers and `push` to
+  the events in the job's `if`, as `nexkit init` writes them; `nexkit doctor` warns when
+  the trigger misses the default branch.
+- New `notify` key (default `[]`): GitHub logins that NexKit mentions when a run ends in a
+  state that needs a person, such as a plan with questions, a blocked or failed run, no
+  automatic fix rounds left, a pull request ready for a person while `merge.auto` is off,
+  or a refused automatic merge. The choice follows the run's outcome only. The mention is
+  one line in a new comment right after the run's comment, because GitHub does not notify
+  for mentions added by an edit. An automatic merge that GitHub refuses now ends as
+  `merge_refused` instead of `ready`. `nexkit doctor` warns about a listed login without
+  write access.
+- New local command `nexkit status [--json]`: one line per open issue NexKit worked on
+  (planning, planned with the plan's link and profile, implementing, paused, failed) and
+  per open NexKit pull request (running with its round, ready, blocked, failing,
+  conflicting, merge refused, paused, failed), each with the link to its last round; the
+  pull requests NexKit merged recently, newest first by merge time, with the state of each
+  `merge.after_workflows` run; and a last section with only the items that need a person,
+  and why. States come from NexKit's markers, which now also record each run's outcome,
+  the reason a person is needed and the started after-merge runs. It reads GitHub with
+  the `gh` login or `GITHUB_TOKEN` and changes nothing.
+
 ## 1.10.0
 
 - Checks can tell which files a pull request changed, so a slow check can skip work that

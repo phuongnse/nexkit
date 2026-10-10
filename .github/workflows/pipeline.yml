@@ -7,7 +7,10 @@
 # verify   run setup and checks on the exact candidate; no secrets at all
 # review   independent read-only Claude review of that candidate
 # report   statuses, PR review, run and state comments, next automatic round; with
-#          auto_merge, the merge and the base branch's after_merge_workflows
+#          merge.auto, the merge and the base branch's merge.after_workflows
+# maintain work that follows other events: closing a parent issue, resuming commands
+#          paused at the usage limit, starting rounds for conflicts with the base branch;
+#          no agent and no repository checkout
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # Claude Code version in nexkit/__init__.py.
@@ -281,15 +284,17 @@ jobs:
 
   report:
     needs: [route, agent, publish, verify, review]
-    if: always() && needs.route.result == 'success' && needs.route.outputs.action != 'none'
+    if: >-
+      always() && needs.route.result == 'success' &&
+      !contains(fromJSON('["none","maintain"]'), needs.route.outputs.action)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write # merge with auto_merge; report never pushes or runs repository code
+      contents: write # merge with merge.auto; report never pushes or runs repository code
       issues: write
       pull-requests: write
       statuses: write
-      actions: write # next automatic round and after_merge_workflows
+      actions: write # next automatic round and merge.after_workflows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -327,4 +332,34 @@ jobs:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
           NEXKIT_NEEDS: ${{ toJSON(needs) }}
+          NEXKIT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
+  maintain:
+    needs: route
+    if: needs.route.outputs.action == 'maintain'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write # close parent issues; mark paused runs as resumed
+      pull-requests: write # paused runs on pull requests
+      actions: write # resume paused commands, start conflict rounds
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false
+      - name: Maintain
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit maintain
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
           NEXKIT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

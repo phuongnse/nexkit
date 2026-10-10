@@ -20,11 +20,11 @@ from .checks import environment, known_base
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, summary, write_summary
+from .usage import usage_limit
 
 READ_ONLY_TOOLS = "Read,Grep,Glob"
 CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 MAX_DIFF = 80_000
-MAX_PATCH_BYTES = 5_000_000
 # A conflict marker at the start of a line: `<<<<<<< ours`, `>>>>>>> theirs`, `||||||| base`.
 CONFLICT_MARKER = re.compile(rb"^(<{7}|>{7}|\|{7})( |$)", re.M)
 BOT = ("-c", "user.name=nexkit", "-c", "user.email=nexkit@localhost")
@@ -275,6 +275,24 @@ def merge_review(repo, context, base):
     )
 
 
+def conflicts_with_base(repo, base):
+    """Whether HEAD conflicts with `origin/<base>`, decided by git without changing anything."""
+    commit = git(repo, "rev-parse", "--verify", f"origin/{base}^{{commit}}").strip()
+    return bool(merge_tree(repo, "HEAD", commit)[1])
+
+
+def up_to_date(base):
+    """The result of an automatic conflict round whose branch no longer conflicts: nothing
+    to do, so Claude does not run."""
+    return {
+        "stage": "fix",
+        "status": "up_to_date",
+        "cost": None,
+        "summary": "",
+        "error": f"The pull request no longer conflicts with `{base}`.",
+    }
+
+
 def merge_base_branch(repo, base):
     """When the branch conflicts with its base branch, start merging the base branch and
     leave the conflicts in the working tree. Return (merged commit, conflicted files), or
@@ -402,13 +420,18 @@ def run_claude(prompt, cmd, *, cwd, timeout_seconds, log, base_sha=None):
     reader = threading.Thread(target=lambda: stderr_chunks.append(proc.stderr.read()))
     reader.start()
     result = None
+    last_text, resets_at = "", None
     try:
         proc.stdin.write(prompt)
         proc.stdin.close()
         for line in proc.stdout:
             event = log.line(line)
-            if event and event.get("type") == "result":
+            if not event:
+                continue
+            if event.get("type") == "result":
                 result = event
+            last_text = _text_of(event) or last_text
+            resets_at = _rejected_until(event) or resets_at
         proc.wait()
     finally:
         timer.cancel()
@@ -420,10 +443,46 @@ def run_claude(prompt, cmd, *, cwd, timeout_seconds, log, base_sha=None):
         "timed_out": timed_out.is_set(),
         "stderr": "".join(stderr_chunks)[-4000:],
         "seconds": round(time.monotonic() - started, 1),
+        "last_text": last_text[-2000:],
+        "resets_at": resets_at,
     }
 
 
-def interpret(stage, run, timeout_minutes):
+def _text_of(event):
+    """The text of a message that Claude Code wrote itself, such as an API or usage limit
+    error, or "". The model's own words are left out: they may mention limits."""
+    message = event.get("message") if event.get("type") == "assistant" else None
+    if not isinstance(message, dict) or message.get("model") != "<synthetic>":
+        return ""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return ""
+    texts = [b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+    return "\n".join(str(t) for t in texts if t)
+
+
+def _rejected_until(event):
+    """The reset time (Unix seconds) of a rate limit event that rejected the request."""
+    info = event.get("rate_limit_info") if event.get("type") == "rate_limit_event" else None
+    if not isinstance(info, dict) or info.get("status") != "rejected":
+        return None
+    value = info.get("resetsAt", info.get("resets_at"))
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def paused(result, limit):
+    """Mark a stage result as paused at the usage limit."""
+    result.update(
+        status="paused",
+        error=f"Claude hit the account's usage limit: {limit['message']}",
+        limit=limit["message"],
+        resume_at=limit["resume_at"],
+        reset_known=limit["reset_known"],
+    )
+    return result
+
+
+def interpret(stage, run, timeout_minutes, retry_minutes=60):
     """Map a Claude run to a stage result: done, blocked or error."""
     event = run["event"] or {}
     result = {
@@ -458,6 +517,13 @@ def interpret(stage, run, timeout_minutes):
                 result["error"] = output.get("blocker") or "The agent reported it was blocked."
         else:
             result["status"] = "done"
+    if result["status"] == "error" and not run["timed_out"]:
+        # Only what Claude Code says about a failed run, never the model's own text.
+        said = event.get("result") if event.get("is_error") else None
+        texts = (said, run["stderr"], run.get("last_text"))
+        limit = usage_limit(texts, resets_at=run.get("resets_at"), retry_minutes=retry_minutes)
+        if limit:
+            paused(result, limit)
     return result
 
 
@@ -543,7 +609,9 @@ def run_triage(context, cfg, previous, out_dir, *, claude="claude"):
             timeout_seconds=settings["timeout_minutes"] * 60,
             log=log,
         )
-    result = interpret("triage", run, settings["timeout_minutes"])
+    result = interpret(
+        "triage", run, settings["timeout_minutes"], cfg["usage_limit"]["retry_minutes"]
+    )
     output = result.pop("output") or {}
     del result["summary"]
     name = output.get("profile")
@@ -633,7 +701,7 @@ def run_stage(
         log=log,
         base_sha=base_sha,
     )
-    result = interpret(stage, run, settings["timeout_minutes"])
+    result = interpret(stage, run, settings["timeout_minutes"], cfg["usage_limit"]["retry_minutes"])
     if stage in ("implement", "fix") and result["status"] == "done":
         left = leftover_markers(repo, conflicts)
         files, size = collect_changes(repo, base_commit, out)
@@ -645,7 +713,7 @@ def run_stage(
                 + ", ".join(f"`{name}`" for name in left)
                 + ".",
             )
-        elif size > MAX_PATCH_BYTES:
+        elif size > cfg["limits"]["max_patch_mb"] * 1_000_000:
             result.update(status="error", error=f"The change is too large ({size} bytes).")
         elif not files and not merged:
             # After a merge an empty patch is valid: it keeps this branch's side everywhere.

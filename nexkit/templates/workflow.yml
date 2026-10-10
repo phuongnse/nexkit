@@ -7,6 +7,12 @@ on:
     types: [created]
   pull_request_review:
     types: [submitted]
+  issues:
+    types: [closed] # close_parent_issues
+  push:
+    branches: [__DEFAULT_BRANCH__] # conflicts.auto_resolve: the default branch moved
+  schedule:
+    - cron: "23 * * * *" # usage_limit.resume, conflicts.auto_resolve
   workflow_dispatch:
     inputs:
       command:
@@ -22,7 +28,7 @@ on:
         required: false
         type: string
       auto:
-        description: Set by NexKit for automatic fix rounds
+        description: Set by NexKit for automatic, conflict and resumed rounds
         required: false
         type: string
         default: "false"
@@ -37,14 +43,15 @@ permissions:
 jobs:
   nexkit:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      contains(fromJSON('["workflow_dispatch","issues","push","schedule"]'), github.event_name) ||
       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/nexkit')) ||
       (github.event_name == 'pull_request_review' &&
        github.event.review.state == 'changes_requested' &&
        startsWith(github.event.pull_request.head.ref, 'nexkit/'))
     # One run at a time per issue or pull request. Set on the job, so only commands join.
+    # Runs for other events, such as the schedule, form a group per event.
     concurrency:
-      group: nexkit-${{ github.event.issue.number || github.event.pull_request.number || inputs.number }}
+      group: nexkit-${{ github.event.issue.number || github.event.pull_request.number || inputs.number || github.event_name }}
     uses: __KIT_REPO__/.github/workflows/pipeline.yml@__KIT_REF__
     with:
       nexkit_repository: __KIT_REPO__

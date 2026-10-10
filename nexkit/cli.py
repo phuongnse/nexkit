@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import CLAUDE_CODE, __version__, python_error, python_supported, scaffold
 from . import config as configuration
+from .status import MERGES
 
 
 def _output(**values):
@@ -337,7 +338,9 @@ def build_parser():
     p.add_argument("--repo", default=".", help="Repository root (default: current directory)")
     p.add_argument("--repository", help="OWNER/REPO (default: the 'origin' remote)")
     p.add_argument("--json", action="store_true", help="Print JSON")
-    p.add_argument("--merges", type=int, default=5, help="Recent merges to show (default 5)")
+    p.add_argument(
+        "--merges", type=int, default=MERGES, help=f"Recent merges to show (default {MERGES})"
+    )
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("route", help="(pipeline) Decide the action for the current event")

@@ -24,26 +24,6 @@ from .state import (
 
 MERGES = 5
 WORKERS = 8
-# Pull request states, in the order a person reads them.
-PULL_STATES = {
-    "running": "a round is running",
-    "paused": "paused at the Claude usage limit",
-    "ready": "ready for a person",
-    "merge_refused": "the automatic merge was refused",
-    "conflicting": "conflicts with its base branch",
-    "blocked": "the agent is blocked",
-    "failing": "checks or review failing",
-    "failed": "the last round failed",
-}
-ISSUE_STATES = {
-    "planning": "a plan is being written",
-    "planned": "planned",
-    "implementing": "being implemented",
-    "paused": "paused at the Claude usage limit",
-    "failed": "the last run failed",
-    "in_pull_request": "has an open pull request",
-    "implemented": "implemented; no open pull request",
-}
 # The round started the next one by itself, which is queued or running.
 QUEUED = {"auto_fix", "conflict_fix"}
 

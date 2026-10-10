@@ -28,7 +28,7 @@ on:
         required: false
         type: string
       auto:
-        description: Set by NexKit for automatic fix rounds
+        description: Set by NexKit for automatic, conflict and resumed rounds
         required: false
         type: string
         default: "false"

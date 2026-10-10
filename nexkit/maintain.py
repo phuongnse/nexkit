@@ -1,8 +1,8 @@
 """Work that follows from events other than commands. No agent runs here.
 
 `route` turns those events into the `maintain` action, and the `maintain` job runs it. The
-job holds write tokens for issues, but never checks out or executes repository code and
-never receives the Claude credential.
+job holds write tokens for issues, pull request comments and workflow dispatches, but never
+checks out or executes repository code and never receives the Claude credential.
 """
 
 from __future__ import annotations
@@ -162,7 +162,8 @@ def is_conflicting(gh, number, tries=6, delay=5):
 
 def start_conflict_round(gh, number, base, workflow, ref, max_rounds):
     """Start an automatic fix round that merges `base` into the pull request, unless one
-    already tried this base commit, its limit is used up, or its latest round is paused.
+    already tried this base commit, its limit is used up, or its latest round is paused or
+    still running.
     Returns a line saying what happened, or "" when nothing was started for a known reason
     that needs no line."""
     rounds = [run for _, run in run_comments(gh.comments(number)) if "round" in run]

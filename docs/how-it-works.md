@@ -12,7 +12,7 @@ Every command starts one run of the reusable workflow
 | `publish` | plan, go, fix | write | no | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
-| `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `auto_merge`, merges an approved pull request and starts the `after_merge_workflows` on the base branch. Never checks out or executes repository code. |
+| `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `auto_merge`, merges an approved pull request, closes its issue and starts the `after_merge_workflows` on the base branch. Never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -379,6 +379,7 @@ new state comment.
 | The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or add a `NEXKIT_PUSH_TOKEN` that may update workflows. |
 | GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person. |
 | A workflow of `after_merge_workflows` cannot be started | Says why in the round's comment; the merge stays. |
+| The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `max_auto_fixes` remain, otherwise asks for a person. |
 | The review itself fails | Sets `nexkit/review` to error; comment `/nexkit review` to retry. |
 

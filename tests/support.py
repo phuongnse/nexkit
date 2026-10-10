@@ -58,6 +58,7 @@ class FakeGitHub:
         self.reactions = []
         self.merge_error = None
         self.dispatch_errors = {}
+        self.close_errors = {}
         self.dispatch_runs = {}
         self._next = 1000
 
@@ -120,6 +121,12 @@ class FakeGitHub:
     def comments(self, number):
         return list(self.issue_comments[number])
 
+    def close_issue(self, number, reason="completed"):
+        if number in self.close_errors:
+            raise self.close_errors[number]
+        self.issues[number].update(state="closed", state_reason=reason)
+        return self.issues[number]
+
     def comment(self, number, body):
         comment = {
             "id": self._id(),
@@ -171,7 +178,7 @@ class FakeGitHub:
         if self.merge_error:
             raise self.merge_error
         self.merged.append((number, sha, method))
-        return {"merged": True}
+        return {"merged": True, "sha": "d" * 40}
 
     def set_status(self, sha, context, state, description, target_url=None):
         self.statuses.append(

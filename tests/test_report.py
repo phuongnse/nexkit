@@ -162,6 +162,44 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(self.run_report(cfg=make_config(auto_merge=True))["outcome"], "merged")
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
 
+    def test_auto_merge_closes_the_issue(self):
+        self.candidate()
+        self.run_report(cfg=make_config(auto_merge=True))
+        self.assertEqual(
+            (self.gh.issues[5]["state"], self.gh.issues[5]["state_reason"]), ("closed", "completed")
+        )
+        [note] = self.gh.comments_matching(5, "NexKit merged #6")
+        self.assertIn("d" * 40, note["body"])
+        [row] = self.gh.run_comments(6)
+        self.assertIn("Closed #5 as completed.", row["body"])
+
+    def test_an_issue_that_is_already_closed_stays_as_it_is(self):
+        self.candidate()
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        self.run_report(cfg=make_config(auto_merge=True))
+        self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
+        self.assertFalse(self.gh.comments_matching(5, "NexKit merged"))
+        [row] = self.gh.run_comments(6)
+        self.assertNotIn("Closed #5", row["body"])
+
+    def test_failing_to_close_the_issue_keeps_the_merge(self):
+        self.candidate()
+        self.gh.close_errors[5] = GitHubError(403, "Resource not accessible by integration")
+        outcome = self.run_report(cfg=make_config(auto_merge=True))
+        self.assertEqual(outcome["outcome"], "merged")
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+        [row] = self.gh.run_comments(6)
+        self.assertIn("Could not close #5: GitHub API 403", row["body"])
+        self.assertEqual(row["run"]["status"], "success")
+
+    def test_issue_stays_open_without_an_automatic_merge(self):
+        self.candidate()
+        self.run_report()
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+        self.gh.merge_error = GitHubError(405, "Required approving review")
+        self.run_report(cfg=make_config(auto_merge=True))
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+
     def test_auto_merge_blocked_by_branch_protection(self):
         self.candidate()
         self.gh.merge_error = GitHubError(405, "Required approving review")

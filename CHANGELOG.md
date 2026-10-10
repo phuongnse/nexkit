@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- After an automatic merge, NexKit closes the issue the pull request implements, as
+  GitHub does when a person merges. GitHub left it open after a merge with the Actions
+  token. NexKit comments a link to the pull request and the merge commit on the issue; an
+  issue that is already closed stays as it is, and a failure to close it is reported in
+  the round's comment without undoing the merge.
+
 ## 1.10.0
 
 - Checks can tell which files a pull request changed, so a slow check can skip work that

@@ -201,6 +201,22 @@ def after_merge(gh, workflows, base):
     return "\n".join([f"After the merge, on `{base}`:", *lines]) if lines else ""
 
 
+def close_merged_issue(gh, issue, pr, sha):
+    """Close the issue a pull request implements after NexKit merged it.
+
+    GitHub closes it when a person merges, but not after a merge with the Actions token.
+    Returns the line for the round's comment; a failure leaves the merge as it is."""
+    try:
+        if gh.issue(issue).get("state") != "open":
+            return ""
+        commit = f" in {sha}" if sha else ""
+        gh.comment(issue, f"NexKit merged #{pr}{commit}, which implements this issue.")
+        gh.close_issue(issue, "completed")
+    except GitHubError as exc:
+        return f"Could not close #{issue}: {exc}. Close it yourself."
+    return f"Closed #{issue} as completed."
+
+
 def _record(state, decision, row, agent, review):
     """Keep what the next review needs: the last review's findings and the fixes since."""
     if decision["action"] == "fix":
@@ -291,13 +307,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         )
         if cfg["auto_merge"]:
             try:
-                gh.merge(pr, head)
+                merge = gh.merge(pr, head) or {}
             except GitHubError as exc:
                 message += f" Automatic merge was not possible: {exc}"
             else:
                 outcome, message = "merged", f"✅ Checks and AI review passed; merged `{head[:7]}`."
+                closed = close_merged_issue(gh, decision["issue"], pr, merge.get("sha"))
                 started = after_merge(gh, cfg["after_merge_workflows"], decision["base"])
-                message += f"\n\n{started}" if started else ""
+                message += "".join(f"\n\n{part}" for part in (closed, started) if part)
     elif verdict is None:
         outcome = "review_failed"
         message = "The AI review did not complete. Comment `/nexkit review` to try again."

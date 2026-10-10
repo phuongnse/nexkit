@@ -90,6 +90,12 @@ With `auto_merge: false` (the default) a person decides every merge. With `true`
 `report` job squash-merges a NexKit pull request as soon as every check passes and the AI
 review approves. It merges with the default Actions token; no extra secret is needed.
 
+After the merge, NexKit closes the issue the pull request implements as completed and
+comments a link to the pull request and the merge commit on it. GitHub does this itself
+when a person merges, but not after a merge with the Actions token. An issue that is
+already closed stays as it is. If closing fails, the round's comment says so and links the
+issue; the merge stays.
+
 Branch protection and rulesets still apply, and the Actions token cannot bypass them. When
 a rule is not met, GitHub refuses the merge, the round's comment says why, and the pull
 request waits for a person. Before merging, NexKit sets the `nexkit/checks` and

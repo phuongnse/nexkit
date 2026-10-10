@@ -106,6 +106,11 @@ class GitHub:
     def comments(self, number):
         return self.paginate(f"{self._repo}/issues/{number}/comments")
 
+    def close_issue(self, number, reason="completed"):
+        return self.request(
+            "PATCH", f"{self._repo}/issues/{number}", {"state": "closed", "state_reason": reason}
+        )
+
     def comment(self, number, body):
         return self.request("POST", f"{self._repo}/issues/{number}/comments", {"body": body})
 

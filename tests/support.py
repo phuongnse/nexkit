@@ -275,7 +275,8 @@ prompt = sys.stdin.read()
 spec = json.loads(os.environ["FAKE_CLAUDE"])
 with open(os.environ["FAKE_CLAUDE_LOG"], "w") as log:
     json.dump({"args": args, "prompt": prompt, "cwd": os.getcwd(),
-               "has_token": bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))}, log)
+               "has_token": bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")),
+               "base_sha": os.environ.get("NEXKIT_BASE_SHA")}, log)
 time.sleep(spec.get("sleep", 0))
 for path, content in spec.get("write", {}).items():
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

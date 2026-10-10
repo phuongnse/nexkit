@@ -199,10 +199,13 @@ jobs:
         with:
           ref: ${{ needs.publish.outputs.head || needs.route.outputs.head }}
           path: repo
+          # The history of the base branch too, for the merge base in NEXKIT_BASE_SHA.
+          fetch-depth: 0
           persist-credentials: false
       - name: Run setup and checks
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit checks --repo repo --out out
         env:
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

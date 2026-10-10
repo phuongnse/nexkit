@@ -16,6 +16,7 @@ from pathlib import Path
 from string import Template
 
 from . import config as configuration
+from .checks import environment, known_base
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, summary, write_summary
@@ -355,11 +356,14 @@ def claude_command(stage, cfg, claude="claude"):
     return cmd
 
 
-def run_claude(prompt, cmd, *, cwd, timeout_seconds, log):
-    """Run Claude Code, show its events through `log` and return its final result event."""
+def run_claude(prompt, cmd, *, cwd, timeout_seconds, log, base_sha=None):
+    """Run Claude Code, show its events through `log` and return its final result event.
+
+    `base_sha` becomes NEXKIT_BASE_SHA, so checks that Claude runs see the same base as in
+    the verify job."""
     started = time.monotonic()
     # Unset secrets arrive as empty strings; drop them so Claude picks the one that is set.
-    env = {k: v for k, v in os.environ.items() if v or k not in CREDENTIALS}
+    env = {k: v for k, v in environment(base_sha).items() if v or k not in CREDENTIALS}
     on_actions = os.environ.get("GITHUB_ACTIONS") == "true"
     if on_actions and not any(env.get(name) for name in CREDENTIALS):
         log.close()
@@ -560,9 +564,21 @@ def run_triage(context, cfg, previous, out_dir, *, claude="claude"):
 
 
 def run_stage(
-    stage, context, cfg, repo, out_dir, *, claude="claude", checks=None, base=None, triage=None
+    stage,
+    context,
+    cfg,
+    repo,
+    out_dir,
+    *,
+    claude="claude",
+    checks=None,
+    base=None,
+    base_sha=None,
+    triage=None,
 ):
-    """Run one stage. A plan's `triage` result is stored with it, and its cost counts."""
+    """Run one stage. A plan's `triage` result is stored with it, and its cost counts.
+
+    `base_sha` is the merge base with the base branch, for NEXKIT_BASE_SHA."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     extra = {}
@@ -573,6 +589,9 @@ def run_stage(
     if stage == "fix":
         merged, conflicts = merge_base_branch(repo, base)
         extra["conflicts"] = conflicts_text(base, merged, conflicts)
+        if merged:
+            # Once committed, the merge has the merged base commit as its merge base.
+            base_sha = known_base(repo, merged)
     if stage == "plan":
         extra["previous"] = previous_plan(context)
     if stage == "review":
@@ -612,6 +631,7 @@ def run_stage(
         cwd=repo,
         timeout_seconds=settings["timeout_minutes"] * 60,
         log=log,
+        base_sha=base_sha,
     )
     result = interpret(stage, run, settings["timeout_minutes"])
     if stage in ("implement", "fix") and result["status"] == "done":

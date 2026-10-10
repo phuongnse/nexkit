@@ -257,6 +257,7 @@ class RunStageTests(StageCase):
         self.assertEqual(saved["status"], "done")
         self.assertTrue((self.out / "transcript.jsonl").read_text())
         call = self.claude.call()
+        self.assertIsNone(call["base_sha"])
         self.assertEqual(Path(call["cwd"]).resolve(), self.repo.resolve())
         self.assertIn("Change add to return a + b.", call["prompt"])
 
@@ -446,11 +447,26 @@ class ConflictTests(StageCase):
         self.assertIn("+def mul(a, b):", patch)
         self.assertNotIn("<<<<<<<", patch)
 
+    def test_claude_sees_the_base_of_the_merge(self):
+        fork = git(self.repo, "rev-parse", "HEAD")
+        _, base = self.repos.diverge()
+        self.checkout_branch()
+        self.claude.configure(result=FIX_DONE, write={"calc.py": CALC + SUB + MUL})
+        with mock.patch.dict(os.environ, {"NEXKIT_BASE_SHA": "stale"}):
+            _, log = self.run_quietly("fix", base="main", base_sha=fork)
+        # Once the base branch is merged in, the merged commit is the merge base.
+        self.assertEqual(self.claude.call()["base_sha"], base)
+        self.assertIn(f"NEXKIT_BASE_SHA={base}", log)
+
     def test_branch_that_merges_cleanly_is_not_merged(self):
         self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
         self.repos.push_commit("dev", "main", {"other.py": "x = 1\n"}, "Other")
+        fork = git(self.repo, "rev-parse", "HEAD")
         self.checkout_branch()
-        result = self.run_fix(write={"calc.py": CALC + SUB + "# fixed\n"})
+        self.claude.configure(result=FIX_DONE, write={"calc.py": CALC + SUB + "# fixed\n"})
+        with mock.patch.dict(os.environ, {"NEXKIT_BASE_SHA": "stale"}):
+            result = self.run_stage("fix", base="main", base_sha=fork)
+        self.assertEqual(self.claude.call()["base_sha"], fork)
         self.assertEqual(result["status"], "done")
         self.assertIsNone(result["start_base"])
         self.assertEqual(result["changed_files"], ["calc.py"])

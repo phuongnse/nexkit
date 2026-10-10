@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 
 BOT_NAME = "github-actions[bot]"
@@ -66,3 +67,10 @@ def is_ancestor(repo, commit, of):
     if proc.returncode not in (0, 1):
         raise _error(args, proc)
     return proc.returncode == 0
+
+
+def has_commit(repo, sha):
+    """Whether `sha` is a full commit id that the checkout has."""
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return False
+    return _run(repo, ("cat-file", "-e", f"{sha}^{{commit}}")).returncode == 0

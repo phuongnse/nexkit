@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.0
 
 - Checks can tell which files a pull request changed, so a slow check can skip work that
   the change cannot affect. Setup and check commands get `NEXKIT_BASE_SHA`, the merge

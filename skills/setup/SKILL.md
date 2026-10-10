@@ -72,6 +72,10 @@ files or repository settings, and wait for confirmation.
    after each merge; each one needs a `workflow_dispatch` trigger, which is a change the
    user makes to that workflow file.
 
+   If the repository splits large issues into sub-issues and a parent means only the sum
+   of its parts, offer `"close_parent_issues": true`: NexKit then closes a parent when its
+   last sub-issue closes and at least one was completed.
+
 8. **Commit to the default branch.** Comment events only run workflows from the default
    branch. Commit both files (directly or through a pull request, as the user prefers).
 

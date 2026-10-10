@@ -1,9 +1,11 @@
 # How NexKit works
 
-## One run, six jobs
+## One run, seven jobs
 
 Every command starts one run of the reusable workflow
 [`pipeline.yml`](../.github/workflows/pipeline.yml). Jobs that do not apply are skipped.
+Some other events start a run too; they run only `route` and `maintain` (see
+[Work without a command](#work-without-a-command)).
 
 | Job | Runs for | Token permissions | Claude credential | Does |
 |---|---|---|---|---|
@@ -13,6 +15,7 @@ Every command starts one run of the reusable workflow
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `auto_merge`, merges an approved pull request, closes its issue and starts the `after_merge_workflows` on the base branch. Never checks out or executes repository code. |
+| `maintain` | closed issues | read; issues | no | Work that follows an event rather than a command, such as closing a parent issue. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -299,6 +302,27 @@ When this run's fix round merged the base branch, the prompt also has a *Merge* 
 the conflicted files and what each side changed in them before the merge. The reviewer
 checks that both sides survived in each file. A dropped side is a blocking finding, unless
 a person's note asked for it.
+
+## Work without a command
+
+Some events start a run without a `/nexkit` command. `route` turns them into one task for
+the `maintain` job, or ends the run at once when the task's setting is off. No agent runs,
+and no Claude credential is used.
+
+**Closing parent issues** (`close_parent_issues`). When an issue closes and it is a
+sub-issue, NexKit looks at its parent's sub-issues:
+
+- When all of them are closed and at least one was completed, NexKit closes the parent as
+  completed. Its comment lists each sub-issue and how it closed. It then checks the
+  parent's own parent the same way.
+- When every sub-issue was closed as not planned or as a duplicate, the parent stays open,
+  and NexKit comments that a person should decide.
+- A parent that is already closed, or that still has an open sub-issue, stays as it is.
+  Reopening a sub-issue does not reopen its parent.
+
+A merge by a person closes the issue through GitHub, and the `issues: closed` event starts
+the check. When NexKit closes the issue itself after an automatic merge, the Actions token
+starts no workflow, so `report` runs the same check in that run.
 
 ## Profiles
 

@@ -173,6 +173,19 @@ class ReportTests(unittest.TestCase):
         [row] = self.gh.run_comments(6)
         self.assertIn("Closed #5 as completed.", row["body"])
 
+    def test_auto_merge_closes_the_parent_issue_with_close_parent_issues(self):
+        self.gh.add_issue(1, title="Epic")
+        self.gh.add_issue(2, state="closed", reason="completed")
+        self.gh.parents.update({2: 1, 5: 1})
+        self.candidate()
+        self.run_report(cfg=make_config(auto_merge=True))
+        self.assertEqual(self.gh.issues[1]["state"], "open")  # the setting is off
+        self.gh.issues[5]["state"] = "open"
+        self.run_report(cfg=make_config(auto_merge=True, close_parent_issues=True))
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+        row = self.gh.run_comments(6)[-1]
+        self.assertIn("Closed #5 as completed.\nClosed #1 as completed", row["body"])
+
     def test_an_issue_that_is_already_closed_stays_as_it_is(self):
         self.candidate()
         self.gh.issues[5].update(state="closed", state_reason="not_planned")

@@ -7,6 +7,15 @@
   token. NexKit comments a link to the pull request and the merge commit on the issue; an
   issue that is already closed stays as it is, and a failure to close it is reported in
   the round's comment without undoing the merge.
+- New `close_parent_issues` key (default `false`): when the last open sub-issue of an
+  issue closes, NexKit closes the parent as completed and lists how each sub-issue closed.
+  When every sub-issue was closed as not planned, the parent stays open with a note for a
+  person. NexKit then checks the parent's own parent. It works whether a person or NexKit
+  merged the work. A new `maintain` job does this without an agent or a repository
+  checkout. **Upgrade:** add `issues: {types: [closed]}` to the triggers in
+  `.github/workflows/nexkit.yml` and `github.event_name == 'issues'` to the job's `if`, as
+  `nexkit init` writes them; `nexkit doctor` warns when the setting is on and the trigger
+  is missing.
 
 ## 1.10.0
 

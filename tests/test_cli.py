@@ -94,6 +94,35 @@ class InitDoctorTests(unittest.TestCase):
         path.write_text(text.replace("    " + group, "").replace("jobs:", "concurrency: x\njobs:"))
         self.assertNotIn(ok, scaffold.doctor(self.root))
 
+    def test_doctor_checks_the_trigger_for_parent_issues(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["close_parent_issues"] = True
+        path.write_text(json.dumps(cfg))
+        ok = (True, "Closed issues start NexKit, for close_parent_issues")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        text = workflow.read_text()
+        workflow.write_text(
+            text.replace("  issues:\n    types: [closed]", "  issues:\n    types: [opened]")
+        )
+        findings = scaffold.doctor(self.root)
+        self.assertNotIn(ok, findings)
+        self.assertTrue(any("does not listen to 'issues: closed'" in m for _, m in findings))
+        cfg["close_parent_issues"] = False
+        path.write_text(json.dumps(cfg))
+        self.assertFalse(any("issues: closed" in m for _, m in scaffold.doctor(self.root)))
+
+    def test_trigger(self):
+        workflow = (
+            "on:\n  push:\n    branches: [main] # x\n  schedule:\n    - cron: '1 * * * *'\njobs:\n"
+        )
+        self.assertIn("branches: [main]", scaffold.trigger(workflow, "push"))
+        self.assertIsNotNone(scaffold.trigger(workflow, "schedule"))
+        self.assertIsNone(scaffold.trigger(workflow, "issues"))
+        self.assertIsNone(scaffold.trigger("on:\n  # issues:\njobs:\n", "issues"))
+
     def test_repository_of(self):
         git(self.root, "init", "-q")
         git(self.root, "remote", "add", "origin", "git@github.com:acme/app.git")
@@ -181,6 +210,20 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(self.gh.reactions, [(4, "eyes")])
         self.assertEqual({s["state"] for s in self.gh.statuses}, {"pending"})
         self.assertTrue(self.gh.comments_matching(6, "actions/runs/9"))
+
+    def test_route_hands_closed_issues_to_maintain_only_when_enabled(self):
+        event = {"action": "closed", "issue": {"number": 5}}
+        out = self.run_route("issues", event)
+        self.assertEqual(out["action"], "none")
+        self.assertFalse(self.gh.issue_comments[5])
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["close_parent_issues"] = True
+        path.write_text(json.dumps(raw))
+        out = self.run_route("issues", event)
+        self.assertEqual(out["action"], "maintain")
+        self.assertEqual(json.loads(out["decision"])["task"], "parents")
+        self.assertFalse(self.gh.issue_comments[5])  # no run comment, no reaction
 
     def test_route_replies_with_configuration_errors(self):
         (self.root / "repo/.nexkit/config.json").write_text('{"model": 1}')
@@ -303,7 +346,8 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_jobs(self):
         self.assertEqual(
-            list(self.jobs), ["route", "agent", "publish", "verify", "review", "report"]
+            list(self.jobs),
+            ["route", "agent", "publish", "verify", "review", "report", "maintain"],
         )
 
     def test_jobs_that_run_agents_or_repository_code_cannot_write(self):
@@ -317,12 +361,12 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertNotIn("github.token", self.jobs["verify"])
 
     def test_jobs_with_write_tokens_never_receive_model_credentials(self):
-        for name in ("publish", "report", "route"):
+        for name in ("publish", "report", "route", "maintain"):
             self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", self.jobs[name], name)
             self.assertNotIn("ANTHROPIC_API_KEY", self.jobs[name], name)
 
     def test_jobs_with_write_tokens_run_only_nexkit(self):
-        for name in ("route", "publish", "report"):
+        for name in ("route", "publish", "report", "maintain"):
             runs = re.findall(r"^\s+run: (.*)$", self.jobs[name], re.M)
             self.assertTrue(runs, name)
             for run in runs:
@@ -344,6 +388,15 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("path: kit", report)
         self.assertNotIn("persist-credentials: true", report)
         self.assertNotIn("NEXKIT_PUSH_TOKEN", report)
+
+    def test_maintain_never_checks_out_the_repository(self):
+        maintain = self.jobs["maintain"]
+        self.assertIn("if: needs.route.outputs.action == 'maintain'", maintain)
+        self.assertEqual(maintain.count("actions/checkout@"), 1)
+        self.assertIn("path: kit", maintain)
+        self.assertNotIn("contents: write", maintain)
+        self.assertNotIn("secrets.", maintain)
+        self.assertIn('["none","maintain"]', self.jobs["report"])
 
     def test_route_acknowledges_commands_without_repository_code(self):
         route = self.jobs["route"]

@@ -68,12 +68,16 @@ def repository_of(root):
     return match.group(1) if match else None
 
 
+def _uncommented(text):
+    return re.sub(r"(^|\s)#.*", "", text)
+
+
 def _after_merge_workflow(root, name):
     """Whether NexKit can start a workflow of after_merge_workflows with a dispatch."""
     path = root / ".github/workflows" / name
     if not path.is_file():
         return (False, f"after_merge_workflows: {path.relative_to(root)} does not exist")
-    text = re.sub(r"(^|\s)#.*", "", path.read_text(errors="replace"))
+    text = _uncommented(path.read_text(errors="replace"))
     if not re.search(r"\bworkflow_dispatch\b", text):
         return (
             False,
@@ -96,10 +100,38 @@ def _concurrency(workflow):
     )
 
 
+def trigger(workflow, event):
+    """The text under `event:` in the workflow's `on:` block, or None without that trigger."""
+    block = re.search(r"^on:[ \t]*\n((?:[ \t]+.*\n|[ \t]*\n)*)", _uncommented(workflow), re.M)
+    if not block:
+        return None
+    found = re.search(rf"^  {event}:(.*\n(?:    .*\n|[ \t]*\n)*)", block.group(1), re.M)
+    return found.group(1) if found else None
+
+
+def _triggers(cfg, workflow):
+    """Findings for the triggers that configuration keys need."""
+    findings = []
+    if cfg.get("close_parent_issues"):
+        issues = trigger(workflow, "issues")
+        if issues is None or ("types" in issues and "closed" not in issues):
+            findings.append(
+                (
+                    False,
+                    f"close_parent_issues is on, but {WORKFLOW_PATH} does not listen to "
+                    "'issues: closed'; add it as 'nexkit init' writes it",
+                )
+            )
+        else:
+            findings.append((True, "Closed issues start NexKit, for close_parent_issues"))
+    return findings
+
+
 def doctor(root):
     """Return a list of (ok, message) findings."""
     root = Path(root)
     findings = []
+    cfg = None
     try:
         cfg = configuration.load(root)
         findings.append((True, f"{configuration.CONFIG_PATH} is valid"))
@@ -120,6 +152,8 @@ def doctor(root):
         else:
             findings.append((False, f"{WORKFLOW_PATH} does not call the NexKit pipeline"))
         findings.append(_concurrency(text))
+        if cfg:
+            findings += _triggers(cfg, text)
 
     repo = repository_of(root)
     if not repo:

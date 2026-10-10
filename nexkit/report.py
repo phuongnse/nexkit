@@ -7,6 +7,7 @@ from pathlib import Path
 
 from . import progress
 from .github import GitHubError, dispatched_runs_url, run_url
+from .maintain import close_parents_safely
 from .state import FAILURE, SUCCESS, clip, empty_state, read_state
 
 ICONS = {True: "✅", False: "❌"}
@@ -205,16 +206,16 @@ def close_merged_issue(gh, issue, pr, sha):
     """Close the issue a pull request implements after NexKit merged it.
 
     GitHub closes it when a person merges, but not after a merge with the Actions token.
-    Returns the line for the round's comment; a failure leaves the merge as it is."""
+    Returns (closed, lines for the round's comment). A failure leaves the merge as it is."""
     try:
         if gh.issue(issue).get("state") != "open":
-            return ""
+            return False, []
         commit = f" in {sha}" if sha else ""
         gh.comment(issue, f"NexKit merged #{pr}{commit}, which implements this issue.")
         gh.close_issue(issue, "completed")
     except GitHubError as exc:
-        return f"Could not close #{issue}: {exc}. Close it yourself."
-    return f"Closed #{issue} as completed."
+        return False, [f"Could not close #{issue}: {exc}. Close it yourself."]
+    return True, [f"Closed #{issue} as completed."]
 
 
 def _record(state, decision, row, agent, review):
@@ -312,9 +313,13 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 message += f" Automatic merge was not possible: {exc}"
             else:
                 outcome, message = "merged", f"✅ Checks and AI review passed; merged `{head[:7]}`."
-                closed = close_merged_issue(gh, decision["issue"], pr, merge.get("sha"))
+                closed, lines = close_merged_issue(gh, decision["issue"], pr, merge.get("sha"))
+                if closed and cfg["close_parent_issues"]:
+                    # Closing with the Actions token starts no workflow for `issues: closed`.
+                    lines += close_parents_safely(gh, decision["issue"])
                 started = after_merge(gh, cfg["after_merge_workflows"], decision["base"])
-                message += "".join(f"\n\n{part}" for part in (closed, started) if part)
+                parts = ["\n".join(lines), started]
+                message += "".join(f"\n\n{part}" for part in parts if part)
     elif verdict is None:
         outcome = "review_failed"
         message = "The AI review did not complete. Comment `/nexkit review` to try again."

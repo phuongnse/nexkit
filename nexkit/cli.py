@@ -72,6 +72,7 @@ def cmd_doctor(args):
 def cmd_route(args):
     from . import progress
     from .github import GitHubError
+    from .maintain import TASKS, enabled
     from .route import route, with_profile
 
     gh = _gh()
@@ -85,11 +86,16 @@ def cmd_route(args):
             decision = {
                 "action": "none",
                 "reason": f"NexKit configuration error: {exc}",
-                "reply_to": decision["target"],
+                "reply_to": decision.get("target"),
             }
         else:
             decision, cfg = with_profile(gh, decision, cfg)
+    if decision["action"] == "maintain" and not enabled(decision["task"], cfg):
+        decision = {"action": "none", "reason": f"{TASKS[decision['task']]} is off"}
     print(json.dumps(decision, indent=2))
+    if decision["action"] == "maintain":
+        _output(action="maintain", decision=decision, config=cfg)
+        return 0
     if decision["action"] == "none":
         if decision.get("reply_to"):
             try:
@@ -246,6 +252,14 @@ def cmd_report(args):
     return 0
 
 
+def cmd_maintain(args):
+    from .maintain import maintain
+
+    for line in maintain(_gh(), _decision(), _config()):
+        print(line)
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="nexkit", description=__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"nexkit {__version__}")
@@ -292,6 +306,9 @@ def build_parser():
     p.add_argument("--repo", required=True)
     p.add_argument("--artifacts", required=True)
     p.set_defaults(func=cmd_publish)
+
+    p = sub.add_parser("maintain", help="(pipeline) Work that follows events, without an agent")
+    p.set_defaults(func=cmd_maintain)
 
     p = sub.add_parser("report", help="(pipeline) Report results and schedule the next round")
     p.add_argument("--artifacts", required=True)

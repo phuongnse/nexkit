@@ -31,6 +31,7 @@ DEFAULTS = {
     "max_auto_fixes": 2,
     "auto_merge": False,
     "after_merge_workflows": [],
+    "close_parent_issues": False,
     "protected_paths": [".github/", ".nexkit/"],
     "transcript": True,
     "log": {"tool_output": "truncated"},
@@ -205,6 +206,8 @@ def validate(raw):
         _fail("max_auto_fixes must be an integer from 0 to 10")
     if not isinstance(cfg["auto_merge"], bool):
         _fail("auto_merge must be true or false")
+    if not isinstance(cfg["close_parent_issues"], bool):
+        _fail("close_parent_issues must be true or false")
     workflows = cfg["after_merge_workflows"]
     if not isinstance(workflows, list) or not all(
         isinstance(w, str) and WORKFLOW_FILE.match(w) for w in workflows

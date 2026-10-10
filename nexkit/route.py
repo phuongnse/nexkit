@@ -78,6 +78,13 @@ def route(gh, event_name, event, inputs=None):
         decision["actor"] = actor
         return decision
 
+    if event_name == "issues":
+        # Anyone who may close the issue starts this; it only closes parents whose
+        # sub-issues are all closed, and only with `close_parent_issues` on.
+        if event.get("action") != "closed":
+            return _none("Only closed issues are handled")
+        return {"action": "maintain", "task": "parents", "issue": event["issue"]["number"]}
+
     if event_name == "workflow_dispatch":
         command = (inputs.get("command") or "").strip()
         number = str(inputs.get("number") or "").strip()
@@ -152,7 +159,7 @@ def with_profile(gh, decision, cfg):
     or `default_profile` when no plan names one. They never fall back from a profile that
     is no longer configured, because that could move a hard issue to a weaker model.
     """
-    if not cfg["profiles"] or decision["action"] == "none":
+    if not cfg["profiles"] or decision["action"] in ("none", "maintain"):
         return decision, cfg
     issue = decision["issue"]
     plan = latest_plan(gh.comments(issue))

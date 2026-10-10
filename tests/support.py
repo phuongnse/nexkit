@@ -59,6 +59,7 @@ class FakeGitHub:
         self.merge_error = None
         self.dispatch_errors = {}
         self.close_errors = {}
+        self.parents = {}  # sub-issue number -> parent number
         self.dispatch_runs = {}
         self._next = 1000
 
@@ -68,8 +69,16 @@ class FakeGitHub:
 
     # fixtures -------------------------------------------------------------------
 
-    def add_issue(self, number, title="Add a feature", body="Please add it.", state="open"):
-        self.issues[number] = {"number": number, "title": title, "body": body, "state": state}
+    def add_issue(
+        self, number, title="Add a feature", body="Please add it.", state="open", reason=None
+    ):
+        self.issues[number] = {
+            "number": number,
+            "title": title,
+            "body": body,
+            "state": state,
+            "state_reason": reason,
+        }
         return self.issues[number]
 
     def human_comment(self, number, body, login="alice", association="COLLABORATOR"):
@@ -120,6 +129,13 @@ class FakeGitHub:
 
     def comments(self, number):
         return list(self.issue_comments[number])
+
+    def parent_issue(self, number):
+        parent = self.parents.get(number)
+        return self.issues[parent] if parent else None
+
+    def sub_issues(self, number):
+        return [self.issues[n] for n, parent in self.parents.items() if parent == number]
 
     def close_issue(self, number, reason="completed"):
         if number in self.close_errors:

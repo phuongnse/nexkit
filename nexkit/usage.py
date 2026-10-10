@@ -26,8 +26,6 @@ RESET = re.compile(
     r"(?:\s*\((?P<zone>[^)]{1,40})\))?",
     re.I,
 )
-# When the message has no reset time NexKit can read, it tries again after this long.
-RETRY_DELAY = timedelta(hours=1)
 
 
 def _zone(name):
@@ -79,12 +77,13 @@ def reset_time(text, now):
     return when.astimezone(UTC)
 
 
-def usage_limit(texts, now=None, resets_at=None):
+def usage_limit(texts, now=None, resets_at=None, retry_minutes=60):
     """When one of `texts` says Claude hit a usage limit: the line that says so, when the
     limit resets (UTC) and whether that time came from Claude. Otherwise None.
 
     `resets_at` is a reset time in Unix seconds that Claude Code reported in its event
-    stream; it wins over the text."""
+    stream; it wins over the text. Without a reset time it can read, NexKit tries again
+    after `retry_minutes` (`usage_limit.retry_minutes`)."""
     now = now or datetime.now(UTC)
     for text in texts:
         # Claude Code's message is short and says it first; longer text is something else.
@@ -98,7 +97,7 @@ def usage_limit(texts, now=None, resets_at=None):
         when = when or reset_time(text, now)
         known = when is not None and when > now - timedelta(hours=1)
         if not known:
-            when = now + RETRY_DELAY
+            when = now + timedelta(minutes=retry_minutes)
         return {"message": line, "resume_at": iso(when), "reset_known": known}
     return None
 

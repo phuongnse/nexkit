@@ -57,25 +57,25 @@ class InitDoctorTests(unittest.TestCase):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         path = self.root / ".nexkit/config.json"
         cfg = json.loads(path.read_text())
-        cfg["after_merge_workflows"] = ["ci.yml", "lint.yml", "e2e.yml"]
+        cfg["merge"]["after_workflows"] = ["ci.yml", "lint.yml", "e2e.yml"]
         path.write_text(json.dumps(cfg))
         workflows = self.root / ".github/workflows"
         (workflows / "ci.yml").write_text("on:\n  push:\n  workflow_dispatch:\n")
         (workflows / "lint.yml").write_text("# no workflow_dispatch yet\non: [push]\n")
         findings = scaffold.doctor(self.root)
         self.assertIn(
-            (True, "after_merge_workflows: ci.yml can be started after a merge"), findings
+            (True, "merge.after_workflows: ci.yml can be started after a merge"), findings
         )
         self.assertIn(
             (
                 False,
-                "after_merge_workflows: lint.yml has no workflow_dispatch trigger, "
+                "merge.after_workflows: lint.yml has no workflow_dispatch trigger, "
                 "so NexKit cannot start it after a merge",
             ),
             findings,
         )
         self.assertIn(
-            (False, "after_merge_workflows: .github/workflows/e2e.yml does not exist"), findings
+            (False, "merge.after_workflows: .github/workflows/e2e.yml does not exist"), findings
         )
 
     def test_concurrency_group_is_on_the_job(self):
@@ -125,7 +125,7 @@ class InitDoctorTests(unittest.TestCase):
         self.assertTrue(any("has no 'schedule' trigger" in m for ok, m in findings if not ok))
         path = self.root / ".nexkit/config.json"
         cfg = json.loads(path.read_text())
-        cfg["resume_after_usage_limit"] = False
+        cfg["usage_limit"] = {"resume": False}
         path.write_text(json.dumps(cfg))
         self.assertFalse(any("schedule" in m for _, m in scaffold.doctor(self.root)))
 
@@ -140,7 +140,7 @@ class InitDoctorTests(unittest.TestCase):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         path = self.root / ".nexkit/config.json"
         cfg = json.loads(path.read_text())
-        cfg["auto_resolve_conflicts"] = True
+        cfg["conflicts"] = {"auto_resolve": True}
         path.write_text(json.dumps(cfg))
         ok = (True, "Pushes to the default branch start the conflict check")
         self.assertIn(ok, scaffold.doctor(self.root))
@@ -244,8 +244,25 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(json.loads(out["config"])["checks"][0]["name"], "test")
         self.assertEqual(out["agent_ref"], "main")
         self.assertEqual(out["agent_timeout"], "75")
+
         self.assertEqual(self.gh.reactions, [(3, "eyes")])
         self.assertEqual(len(self.gh.run_comments(5)), 1)
+
+    def test_route_allows_for_the_setup_timeout(self):
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 3, "body": "/nexkit go", "user": {"login": "alice"}},
+        }
+        out = self.run_route("issue_comment", event)
+        self.assertEqual(out["checks_timeout"], str(15 + 30 + 10))
+        # The setup timeout counts toward the jobs that run setup.
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["limits"] = {"setup_timeout_minutes": 10}
+        path.write_text(json.dumps(raw))
+        out = self.run_route("issue_comment", event)
+        self.assertEqual((out["agent_timeout"], out["checks_timeout"]), ("55", str(15 + 10 + 10)))
 
     def test_route_allows_for_triage_and_the_longest_plan(self):
         path = self.root / "repo/.nexkit/config.json"

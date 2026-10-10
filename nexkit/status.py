@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+from .config import validate
 from .route import issue_from_branch
 from .state import (
     BOT_LOGIN,
@@ -149,13 +150,13 @@ def pull_item(pull, comments, cfg):
     if state == "paused":
         item["resume_at"] = (run.get("resume") or {}).get("at")
     attention = (meaningful if run.get("status") == SUCCESS else run).get("attention")
-    if state == "conflicting" and not cfg.get("auto_resolve_conflicts"):
+    if state == "conflicting" and not cfg["conflicts"]["auto_resolve"]:
         attention = f"conflicts with `{pull['base']['ref']}`; comment `/nexkit fix`"
     elif state in ("running", "conflicting"):
         attention = None
     elif not attention and state in ("failed", "blocked"):
         attention = "the last round failed"
-    elif not attention and state == "ready" and not cfg.get("auto_merge"):
+    elif not attention and state == "ready" and not cfg["merge"]["auto"]:
         attention = "the pull request is ready for a human decision"
     if attention:
         item["attention"] = attention
@@ -203,7 +204,7 @@ def _nexkit_pull(gh, pull):
 
 def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
     """Everything `nexkit status` shows, as a JSON-serialisable dict."""
-    cfg = cfg or {}
+    cfg = cfg or validate({})
     with ThreadPoolExecutor(max_workers=workers) as pool:
         listed = list(gh.open_issues())
         pulls = [p for p in gh.list_pulls("open") if _nexkit_pull(gh, p)]

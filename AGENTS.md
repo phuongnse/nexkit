@@ -36,7 +36,7 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
   output only with workflow commands stopped.
 - State lives only on GitHub (comments, PRs, statuses). Do not add a state store.
 - Agent errors and `blocked` results never trigger automatic retries; only check failures
-  and review findings do, up to `max_auto_fixes`.
+  and review findings do, up to `fix.max_auto_rounds`.
 - Prompts judge code behaviour. Never make an agent responsible for something it cannot
   change (PR text, approvals, workflows).
 - When a config key, command or prompt contract changes, update the code, tests, docs and

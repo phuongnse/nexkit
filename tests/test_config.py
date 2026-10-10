@@ -11,9 +11,13 @@ class ConfigTests(unittest.TestCase):
         cfg = config.validate({"checks": [{"name": "unit", "run": "make test"}]})
         self.assertNotIn("runner", cfg)
         self.assertEqual(cfg["checks"][0]["timeout_minutes"], 15)
-        self.assertEqual(cfg["max_auto_fixes"], 2)
-        self.assertFalse(cfg["auto_merge"])
-        self.assertEqual(cfg["after_merge_workflows"], [])
+        self.assertEqual(cfg["fix"], {"max_auto_rounds": 2})
+        self.assertEqual(cfg["merge"], {"auto": False, "after_workflows": []})
+        self.assertEqual(cfg["conflicts"], {"auto_resolve": False, "max_rounds": 3})
+        self.assertEqual(cfg["usage_limit"], {"resume": True, "retry_minutes": 60})
+        self.assertEqual(cfg["limits"], {"setup_timeout_minutes": 30, "max_patch_mb": 5})
+        self.assertFalse(cfg["close_parent_issues"])
+        self.assertEqual(cfg["notify"], [])
         self.assertTrue(cfg["transcript"])
         self.assertEqual(cfg["log"], {"tool_output": "truncated"})
 
@@ -44,7 +48,15 @@ class ConfigTests(unittest.TestCase):
             ({"stages": {"deploy": {}}}, "Unknown stage"),
             ({"stages": {"plan": {"timeout_minutes": 0}}}, "timeout_minutes"),
             ({"effort": "extreme"}, "effort"),
-            ({"max_auto_fixes": 11}, "max_auto_fixes"),
+            ({"fix": {"max_auto_rounds": 11}}, "fix.max_auto_rounds"),
+            ({"fix": {"max_rounds": 1}}, "Unknown keys in fix"),
+            ({"merge": {"auto": "yes"}}, "merge.auto must be true or false"),
+            ({"conflicts": {"max_rounds": 0}}, "conflicts.max_rounds"),
+            ({"usage_limit": {"retry_minutes": 0}}, "usage_limit.retry_minutes"),
+            ({"usage_limit": []}, "usage_limit must be an object"),
+            ({"limits": {"setup_timeout_minutes": 500}}, "limits.setup_timeout_minutes"),
+            ({"limits": {"max_patch_mb": 0}}, "limits.max_patch_mb"),
+            ({"close_parent_issues": 1}, "close_parent_issues must be true or false"),
             ({"protected_paths": ["src/"]}, "must include"),
             ({"runner": "ubuntu-latest"}, "Unknown configuration keys"),
             ({"claude_version": "2.0.0"}, "Unknown configuration keys"),
@@ -52,18 +64,32 @@ class ConfigTests(unittest.TestCase):
             ({"log": "none"}, "log must be an object"),
             ({"log": {"tool_output": "full"}}, "log.tool_output"),
             ({"log": {"thinking": True}}, "Unknown keys in log"),
-            ({"after_merge_workflows": "ci.yml"}, "workflow file names"),
-            ({"after_merge_workflows": [".github/workflows/ci.yml"]}, "workflow file names"),
-            ({"after_merge_workflows": ["ci"]}, "workflow file names"),
-            ({"after_merge_workflows": ["ci.yml", "ci.yml"]}, "twice"),
+            ({"merge": {"after_workflows": "ci.yml"}}, "workflow file names"),
+            ({"merge": {"after_workflows": [".github/workflows/ci.yml"]}}, "workflow file names"),
+            ({"merge": {"after_workflows": ["ci"]}}, "workflow file names"),
+            ({"merge": {"after_workflows": ["ci.yml", "ci.yml"]}}, "twice"),
         ]
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
                 config.validate(raw)
 
-    def test_after_merge_workflows(self):
-        cfg = config.validate({"auto_merge": True, "after_merge_workflows": ["ci.yml", "e2e.yaml"]})
-        self.assertEqual(cfg["after_merge_workflows"], ["ci.yml", "e2e.yaml"])
+    def test_groups_merge_over_their_defaults(self):
+        cfg = config.validate({"merge": {"after_workflows": ["ci.yml", "e2e.yaml"]}})
+        self.assertEqual(cfg["merge"], {"auto": False, "after_workflows": ["ci.yml", "e2e.yaml"]})
+        cfg = config.validate({"conflicts": {"auto_resolve": True}})
+        self.assertEqual(cfg["conflicts"]["max_rounds"], 3)
+        self.assertEqual(config.setting(cfg, "conflicts.auto_resolve"), True)
+        # A validated configuration validates again unchanged, as the pipeline's jobs do.
+        self.assertEqual(config.validate(json.loads(json.dumps(cfg))), cfg)
+
+    def test_renamed_keys_say_where_they_moved(self):
+        with self.assertRaises(config.ConfigError) as caught:
+            config.validate({"auto_merge": True, "max_auto_fixes": 1})
+        message = str(caught.exception)
+        self.assertIn("'auto_merge' is now 'merge.auto'", message)
+        self.assertIn("'max_auto_fixes' is now 'fix.max_auto_rounds'", message)
+        with self.assertRaisesRegex(config.ConfigError, "'after_merge_workflows' is now"):
+            config.validate({"after_merge_workflows": []})
 
     def test_profiles_layer_over_stages(self):
         cfg = config.validate(

@@ -7,7 +7,7 @@
 # verify   run setup and checks on the exact candidate; no secrets at all
 # review   independent read-only Claude review of that candidate
 # report   statuses, PR review, run and state comments, next automatic round; with
-#          auto_merge, the merge and the base branch's after_merge_workflows
+#          merge.auto, the merge and the base branch's merge.after_workflows
 # maintain work that follows other events: closing a parent issue, resuming commands
 #          paused at the usage limit, starting rounds for conflicts with the base branch;
 #          no agent and no repository checkout
@@ -290,11 +290,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write # merge with auto_merge; report never pushes or runs repository code
+      contents: write # merge with merge.auto; report never pushes or runs repository code
       issues: write
       pull-requests: write
       statuses: write
-      actions: write # next automatic round and after_merge_workflows
+      actions: write # next automatic round and merge.after_workflows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

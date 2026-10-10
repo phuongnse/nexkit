@@ -14,7 +14,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `publish` | plan, go, fix | write | no | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
-| `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `auto_merge`, merges an approved pull request, closes its issue and starts the `after_merge_workflows` on the base branch. Never checks out or executes repository code. |
+| `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
 | `maintain` | closed issues, pushes to the default branch, the schedule | read; issues, comments, workflows | no | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
@@ -24,9 +24,9 @@ into a commit in a different job. As a result:
 - Jobs that hold write tokens never run code from the repository or from the agent.
 - Checks run in a job with no secrets at all.
 
-`report` needs `contents: write` only to merge when `auto_merge` is on. Job permissions
+`report` needs `contents: write` only to merge when `merge.auto` is on. Job permissions
 cannot depend on the configuration, so it holds that permission in every run, but it never
-pushes, and with `auto_merge: false` it never merges.
+pushes, and with `merge.auto: false` it never merges.
 
 ## What you see during a run
 
@@ -63,11 +63,11 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 | The agent returned `blocked` | yes |
 | The agent failed or errored, publishing failed, or the review did not complete | yes |
 | Checks or review still fail and no automatic fix rounds remain | yes |
-| Ready, with `auto_merge` off | yes |
+| Ready, with `merge.auto` off | yes |
 | GitHub refused the automatic merge | yes |
 | Merged, or an automatic fix or conflict round started | no |
 | Paused at the usage limit, resuming by itself | no |
-| Paused at the usage limit, with `resume_after_usage_limit: false` | yes |
+| Paused at the usage limit, with `usage_limit.resume: false` | yes |
 
 ### One run at a time
 
@@ -231,7 +231,7 @@ any conflict (see below).
 
 **Conflicts with the base branch.** `/nexkit fix` also brings a pull request that no longer
 merges cleanly back in line with its base branch. There is no separate command. By
-default a person comments `/nexkit fix`; with `auto_resolve_conflicts`, NexKit starts such
+default a person comments `/nexkit fix`; with `conflicts.auto_resolve`, NexKit starts such
 a round by itself (see [Work without a command](#work-without-a-command)).
 
 1. At the start of every fix round, the `agent` job checks with `git merge-tree` whether
@@ -347,7 +347,7 @@ A merge by a person closes the issue through GitHub, and the `issues: closed` ev
 the check. When NexKit closes the issue itself after an automatic merge, the Actions token
 starts no workflow, so `report` runs the same check in that run.
 
-**Resolving conflicts** (`auto_resolve_conflicts`). When the base branch moves, NexKit
+**Resolving conflicts** (`conflicts.auto_resolve`). When the base branch moves, NexKit
 checks its open pull requests into it. GitHub's own mergeability check decides, so no
 code is checked out. A pull request that conflicts gets an automatic fix round, shown as
 `fix (auto, conflicts)`, with the note to merge the base branch and keep both sides; one
@@ -360,8 +360,9 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
   checks too, which catches anything the other two missed.
 - **Refused merge.** When GitHub refuses an automatic merge because the pull request
   conflicts, the same round starts for it.
-- **Limits.** Each pull request gets at most 3 such rounds, apart from
-  `max_auto_fixes`. A round is started once for each base commit, so a blocked round is
+- **Limits.** Each pull request gets at most `conflicts.max_rounds` such rounds (3 by
+  default), apart from
+  `fix.max_auto_rounds`. A round is started once for each base commit, so a blocked round is
   not repeated until the base branch moves again. A pull request whose latest round is
   paused at the usage limit is left alone, and so is one with a round running: that
   round merges the base branch itself when it conflicts, and a new run would replace a
@@ -380,15 +381,16 @@ implement, fix or review), the run is paused, not failed:
 - After the reset, the hourly `schedule` run starts the same command again, once, with the
   same note. A review that stopped after its round published a commit resumes as
   `/nexkit review`, because the commit is already there. A resumed round shows
-  `(resumed)` and does not count toward `max_auto_fixes`. If it hits the limit again, it
+  `(resumed)` and does not count toward `fix.max_auto_rounds`. If it hits the limit again, it
   pauses again. NexKit recognises the limit only from Claude Code's own message, never
   from what the model wrote, so an issue about rate limits cannot pause a run.
-- When NexKit cannot read the reset time from Claude's message, it tries again after one
-  hour, and says so. If that run stops at the limit again, it waits for a person, so a
-  limit that does not reset cannot start a run every hour.
+- When NexKit cannot read the reset time from Claude's message, it tries again after
+  `usage_limit.retry_minutes` (one hour by default), and says so. If that run stops at
+  the limit again, it waits for a person, so a limit that does not reset cannot start a
+  run again and again.
 - A new command on the same issue or pull request replaces the paused one: its comment
   then says so, and it is not resumed.
-- With `resume_after_usage_limit: false`, the comment still names the limit and the reset
+- With `usage_limit.resume: false`, the comment still names the limit and the reset
   time, and asks a person to comment the command again after it.
 
 The paused run's comment holds the command, its note and the resume time in its hidden
@@ -454,7 +456,7 @@ Each run comment's hidden marker is machine-readable: the command or round, its 
 status (running, success, failure, paused), the outcome (for example `planned`, `ready`,
 `merged`, `merge_refused`, `agent_blocked`, `paused`), the reason a person is needed when
 one is, the resume record of a paused run, and after an automatic merge each started
-`after_merge_workflows` run. `nexkit status` reads these markers, not the text people
+`merge.after_workflows` run. `nexkit status` reads these markers, not the text people
 read, to list the open NexKit work and what each item waits for.
 
 Issues and pull requests from NexKit 1.1.0 have a single status comment. NexKit leaves it
@@ -469,7 +471,7 @@ new state comment.
 | `/nexkit go` while a NexKit PR for the issue is open | Replies: use `/nexkit fix` there or close it. |
 | Setup command fails before the agent | Reports the failing command and output on the issue or PR. |
 | Claude times out, hits its budget, errors, or returns no result | Reports it; publishes nothing; no automatic retry. |
-| Claude stops at the account's usage limit | Pauses the run with the reset time; publishes nothing from that stage; runs the command again after the reset, unless `resume_after_usage_limit` is `false`. |
+| Claude stops at the account's usage limit | Pauses the run with the reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | Agent returns `blocked` | Reports its reason; no automatic retry. A person decides. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
@@ -477,13 +479,13 @@ new state comment.
 | The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. |
 | The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
 | The PR branch moved while a fix round was running | Refuses to publish; run `/nexkit fix` again. |
-| The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `auto_resolve_conflicts`, NexKit starts that round itself, at most 3 times per pull request. |
+| The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `conflicts.auto_resolve`, NexKit starts that round itself, at most `conflicts.max_rounds` times per pull request. |
 | The PR conflicts with its base branch in a protected path | Stops before Claude runs; merge the base branch yourself. |
 | The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or add a `NEXKIT_PUSH_TOKEN` that may update workflows. |
 | GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
-| A workflow of `after_merge_workflows` cannot be started | Says why in the round's comment; the merge stays. |
+| A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
-| Checks fail or the review requests changes | Starts an automatic fix round while `max_auto_fixes` remain, otherwise asks for a person. |
+| Checks fail or the review requests changes | Starts an automatic fix round while `fix.max_auto_rounds` remain, otherwise asks for a person. |
 | The review itself fails | Sets `nexkit/review` to error; comment `/nexkit review` to retry. |
 
 Automatic rounds only follow concrete check failures or review findings. Agent errors and

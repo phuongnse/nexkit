@@ -345,7 +345,7 @@ class PausedRunTests(unittest.TestCase):
     def test_the_schedule_resumes_only_when_enabled(self):
         self.paused(5, 1, at="2026-01-01T00:00:00Z")
         task = {"action": "maintain", "task": "schedule"}
-        maintain(self.gh, task, make_config(resume_after_usage_limit=False), workflow="n.yml")
+        maintain(self.gh, task, make_config(usage_limit={"resume": False}), workflow="n.yml")
         self.assertFalse(self.gh.dispatches)
         maintain(self.gh, task, make_config(), workflow="n.yml", ref="main")
         self.assertEqual(len(self.gh.dispatches), 1)

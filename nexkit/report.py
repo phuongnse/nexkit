@@ -212,7 +212,7 @@ def needs_person(outcome, cfg, plan=None, resume=None):
             return "the plan says the issue is too large for one session"
         return "the plan has questions" if plan.get("questions") else None
     if outcome == "ready":
-        return None if cfg["auto_merge"] else "the pull request is ready for a human decision"
+        return None if cfg["merge"]["auto"] else "the pull request is ready for a human decision"
     if outcome == "paused":
         return (
             None if resume else "Claude hit the usage limit; run the command again after it resets"
@@ -265,7 +265,7 @@ def pause(result, cfg, command, number, note="", auto="resume", resumed=False):
         # A run that was resumed blind and stopped again: a person decides, so a limit
         # that never resets cannot start a run every hour.
         at = None
-    if not cfg["resume_after_usage_limit"] or not at:
+    if not cfg["usage_limit"]["resume"] or not at:
         reset = f"It resets at {shown(at)}." if known and at else "The reset time is unknown."
         return f"{message} {reset} Comment {shown_command} after the reset to continue.", None
     if known:
@@ -473,16 +473,21 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             f"✅ Checks passed and the AI review approved `{head[:7]}`. "
             "This pull request is ready for a human decision."
         )
-        if cfg["auto_merge"]:
+        if cfg["merge"]["auto"]:
             try:
                 merge = gh.merge(pr, head) or {}
             except GitHubError as exc:
                 outcome = "merge_refused"
                 message += f" Automatic merge was not possible: {exc}"
-                if cfg["auto_resolve_conflicts"] and is_conflicting(gh, pr):
+                if cfg["conflicts"]["auto_resolve"] and is_conflicting(gh, pr):
                     workflow = workflow_file(workflow_ref)
                     started = start_conflict_round(
-                        gh, pr, decision["base"], workflow, default_branch
+                        gh,
+                        pr,
+                        decision["base"],
+                        workflow,
+                        default_branch,
+                        cfg["conflicts"]["max_rounds"],
                     )
                     if started.startswith("Started"):
                         outcome = "conflict_fix"
@@ -495,25 +500,32 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                     # Closing with the Actions token starts no workflow for `issues: closed`.
                     lines += close_parents_safely(gh, decision["issue"])
                 runs = []
-                started = after_merge(gh, cfg["after_merge_workflows"], decision["base"], runs)
+                started = after_merge(gh, cfg["merge"]["after_workflows"], decision["base"], runs)
                 if runs:
                     row["after_merge"] = runs
-                if cfg["auto_resolve_conflicts"]:
+                if cfg["conflicts"]["auto_resolve"]:
                     # The merge's push starts no workflow, so look for new conflicts here.
                     workflow = workflow_file(workflow_ref)
-                    swept = resolve_conflicts(gh, decision["base"], workflow, default_branch, {pr})
+                    swept = resolve_conflicts(
+                        gh,
+                        decision["base"],
+                        workflow,
+                        default_branch,
+                        cfg["conflicts"]["max_rounds"],
+                        {pr},
+                    )
                     started = "\n".join(filter(None, [started, *swept]))
                 parts = ["\n".join(lines), started]
                 message += "".join(f"\n\n{part}" for part in parts if part)
     elif verdict is None:
         outcome = "review_failed"
         message = "The AI review did not complete. Comment `/nexkit review` to try again."
-    elif state["auto_fixes"] < cfg["max_auto_fixes"]:
+    elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"]:
         state["auto_fixes"] += 1
         outcome = "auto_fix"
         message = (
-            f"Starting automatic fix round {state['auto_fixes']} of {cfg['max_auto_fixes']} "
-            "for the failing checks and blocking findings."
+            f"Starting automatic fix round {state['auto_fixes']} of "
+            f"{cfg['fix']['max_auto_rounds']} for the failing checks and blocking findings."
         )
     else:
         outcome = "needs_human"

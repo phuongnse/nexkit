@@ -36,7 +36,7 @@ class RuleTests(unittest.TestCase):
 
     def test_ready_only_without_auto_merge(self):
         self.assertIn("ready", needs_person("ready", self.cfg))
-        self.assertIsNone(needs_person("ready", make_config(auto_merge=True)))
+        self.assertIsNone(needs_person("ready", make_config(merge={"auto": True})))
 
     def test_merge_refused(self):
         self.assertIn("refused", needs_person("merge_refused", self.cfg))

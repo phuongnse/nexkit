@@ -30,9 +30,9 @@ GitHub does not start workflows for events created with the default Actions toke
 runs your configured checks itself. To also run your CI, add a `NEXKIT_PUSH_TOKEN` secret
 (see the [configuration reference](configuration.md#secrets)).
 
-The same applies to a merge by NexKit with `auto_merge`: the push to the base branch
+The same applies to a merge by NexKit with `merge.auto`: the push to the base branch
 starts no `push` CI, whichever token published the pull request. List those workflows in
-`after_merge_workflows` and give each a `workflow_dispatch` trigger; NexKit then starts
+`merge.after_workflows` and give each a `workflow_dispatch` trigger; NexKit then starts
 them on the base branch after it merges (see
 [Automatic merge](configuration.md#automatic-merge)).
 
@@ -59,9 +59,10 @@ base branch, and some conflicts need a choice the plan, the issue and your notes
 settle. Answer every question in one comment: `/nexkit fix` followed by your decisions.
 The next round merges the base branch again and follows your note.
 
-**A pull request still conflicts with `main` with `auto_resolve_conflicts` on.** Its
+**A pull request still conflicts with `main` with `conflicts.auto_resolve` on.** Its
 latest round may be blocked on a conflict that needs your decision; answer it with
-`/nexkit fix`. NexKit also stops after 3 automatic conflict rounds on one pull request,
+`/nexkit fix`. NexKit also stops after `conflicts.max_rounds` (3 by default) automatic
+conflict rounds on one pull request,
 and starts one round per commit of `main`. The `maintain` job's log lists what each check
 did.
 

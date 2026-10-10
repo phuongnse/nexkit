@@ -321,6 +321,13 @@ class RunStageTests(StageCase):
         saved = json.loads((self.out / "result.json").read_text())
         self.assertEqual(saved["triage"]["chosen_by"], "triage")
 
+    def test_the_patch_size_limit_is_configured(self):
+        self.claude.configure(result=DONE, write={"calc.py": "x"})
+        with mock.patch.object(agent, "collect_changes", return_value=(["calc.py"], 1_200_000)):
+            result = self.run_stage("implement", make_config(limits={"max_patch_mb": 1}))
+        self.assertEqual(result["status"], "error")
+        self.assertIn("too large", result["error"])
+
     def test_no_change_is_an_error(self):
         self.claude.configure(result=DONE)
         result = self.run_stage("implement")

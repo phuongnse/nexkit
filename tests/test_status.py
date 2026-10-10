@@ -114,7 +114,7 @@ class StatusTests(unittest.TestCase):
         self.gh.add_pull(8, 9)
         self.gh.pulls[8]["mergeable"] = False
         self.round(8, 1, outcome="needs_human")
-        data = collect(self.gh, make_config(auto_resolve_conflicts=True), workers=1)
+        data = collect(self.gh, make_config(conflicts={"auto_resolve": True}), workers=1)
         self.assertEqual(data["pull_requests"][0]["state"], "conflicting")
         self.assertEqual(data["needs_person"], [])
 

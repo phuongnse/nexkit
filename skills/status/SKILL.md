@@ -18,7 +18,7 @@ Change nothing. The NexKit CLI ships with this plugin; run it as
      `blocked`, `failing`, `conflicting`, `merge_refused`, `paused`, `failed`), the round
      and the link to its last round.
    - `recent_merges`: pull requests NexKit merged, newest first by merge time, with the
-     state of each `after_merge_workflows` run.
+     state of each `merge.after_workflows` run.
    - `needs_person`: only the items that need a person, with the reason.
    Rely on these states rather than reading comment text: they come from NexKit's
    markers. Do not post a command for an item whose state is `planning`,

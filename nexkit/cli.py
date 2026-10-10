@@ -144,6 +144,7 @@ def cmd_route(args):
         agent_minutes = configuration.stage(cfg, "triage")["timeout_minutes"] + longest
     review_stage = configuration.stage(cfg, "review")
     checks_minutes = sum(c["timeout_minutes"] for c in cfg["checks"])
+    setup_minutes = cfg["limits"]["setup_timeout_minutes"]
     _output(
         action=decision["action"],
         decision=decision,
@@ -152,9 +153,10 @@ def cmd_route(args):
         base=decision["base"],
         branch=decision["branch"],
         agent_ref=decision["branch"] if decision["action"] == "fix" else decision["base"],
-        agent_timeout=str(agent_minutes + 30),
+        # Setup runs before the agent and before the checks; the rest is for the job's steps.
+        agent_timeout=str(agent_minutes + setup_minutes),
         review_timeout=str(review_stage["timeout_minutes"] + 30),
-        checks_timeout=str(checks_minutes + 40),
+        checks_timeout=str(checks_minutes + setup_minutes + 10),
         claude_version=CLAUDE_CODE,
     )
     return 0

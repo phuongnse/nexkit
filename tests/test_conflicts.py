@@ -11,7 +11,7 @@ from unittest import mock
 
 from nexkit import agent, cli
 from nexkit.github import GitHubError
-from nexkit.maintain import MAX_CONFLICT_ROUNDS, is_conflicting, maintain, resolve_conflicts
+from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
 from nexkit.route import route
 from nexkit.state import BOT_LOGIN, render_run
 from tests.support import FakeGitHub, GitRepos, git, make_config
@@ -31,7 +31,7 @@ class SweepTests(unittest.TestCase):
         self.gh.pulls[9]["mergeable"] = False
 
     def sweep(self, **kw):
-        return resolve_conflicts(self.gh, "main", "nexkit.yml", "main", delay=0, **kw)
+        return resolve_conflicts(self.gh, "main", "nexkit.yml", "main", 3, delay=0, **kw)
 
     def round(self, number, n, **run):
         row = {"round": n, "trigger": "fix", "url": f"https://x/{number}/{n}", "status": "success"}
@@ -52,12 +52,17 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(len(self.sweep()), 1)
 
     def test_rounds_are_limited_per_pull_request(self):
-        for n in range(1, MAX_CONFLICT_ROUNDS + 1):
+        for n in range(1, 4):
             self.round(6, n, conflicts=True, base_sha=str(n) * 40)
         self.round(6, 9, conflicts=True, resumed=True, base_sha="9" * 40)  # not counted twice
         [line] = self.sweep()
         self.assertIn("automatic conflict rounds are used up", line)
         self.assertFalse(self.gh.dispatches)
+
+    def test_the_round_limit_is_configured(self):
+        self.round(6, 1, conflicts=True, base_sha="1" * 40)
+        [line] = resolve_conflicts(self.gh, "main", "nexkit.yml", "main", 1, delay=0)
+        self.assertIn("its 1 automatic conflict rounds are used up", line)
 
     def test_a_paused_or_running_round_is_not_replaced(self):
         self.round(6, 1, status="paused")
@@ -72,7 +77,7 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(self.sweep(), ["GitHub has not worked out yet whether #6 conflicts."])
 
     def test_maintain_tasks(self):
-        cfg = make_config(auto_resolve_conflicts=True)
+        cfg = make_config(conflicts={"auto_resolve": True})
         with mock.patch("nexkit.maintain.time.sleep"):
             maintain(
                 self.gh, {"task": "conflicts", "base": "main"}, cfg, workflow="n.yml", ref="main"
@@ -153,7 +158,7 @@ class ConflictReportTests(ReportCase):
         self.candidate()
         self.gh.merge_error = GitHubError(405, "Pull Request is not mergeable")
         self.gh.pulls[6]["mergeable"] = False
-        cfg = make_config(auto_merge=True, auto_resolve_conflicts=True)
+        cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
         self.assertEqual(self.run_report(cfg=cfg)["outcome"], "conflict_fix")
         [dispatch] = self.gh.dispatches
         self.assertEqual(dispatch["inputs"]["auto"], "conflicts")
@@ -163,7 +168,7 @@ class ConflictReportTests(ReportCase):
     def test_a_merge_refused_for_another_reason_waits_for_a_person(self):
         self.candidate()
         self.gh.merge_error = GitHubError(405, "Required approving review")
-        cfg = make_config(auto_merge=True, auto_resolve_conflicts=True)
+        cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
         self.assertNotEqual(self.run_report(cfg=cfg)["outcome"], "conflict_fix")
         self.assertFalse(self.gh.dispatches)
 
@@ -172,9 +177,9 @@ class ConflictReportTests(ReportCase):
         self.gh.add_pull(7, 4)
         self.gh.pulls[7]["mergeable"] = False
         self.candidate()
-        self.run_report(cfg=make_config(auto_merge=True))
+        self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertFalse(self.gh.dispatches)  # off by default
-        cfg = make_config(auto_merge=True, auto_resolve_conflicts=True)
+        cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
         self.run_report(cfg=cfg)
         self.assertEqual([d["inputs"]["number"] for d in self.gh.dispatches], ["7"])
         row = self.gh.run_comments(6)[-1]

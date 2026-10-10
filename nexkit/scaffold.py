@@ -66,8 +66,8 @@ def init(root, *, checks, setup, model, kit_repo, kit_ref, force):
         "model": model,
         "setup": setup,
         "checks": [parse_check(c) for c in checks],
-        "max_auto_fixes": configuration.DEFAULTS["max_auto_fixes"],
-        "auto_merge": False,
+        "fix": dict(configuration.DEFAULTS["fix"]),
+        "merge": {"auto": False},
     }
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,18 +104,18 @@ def _uncommented(text):
 
 
 def _after_merge_workflow(root, name):
-    """Whether NexKit can start a workflow of after_merge_workflows with a dispatch."""
+    """Whether NexKit can start a workflow of merge.after_workflows with a dispatch."""
     path = root / ".github/workflows" / name
     if not path.is_file():
-        return (False, f"after_merge_workflows: {path.relative_to(root)} does not exist")
+        return (False, f"merge.after_workflows: {path.relative_to(root)} does not exist")
     text = _uncommented(path.read_text(errors="replace"))
     if not re.search(r"\bworkflow_dispatch\b", text):
         return (
             False,
-            f"after_merge_workflows: {name} has no workflow_dispatch trigger, "
+            f"merge.after_workflows: {name} has no workflow_dispatch trigger, "
             "so NexKit cannot start it after a merge",
         )
-    return (True, f"after_merge_workflows: {name} can be started after a merge")
+    return (True, f"merge.after_workflows: {name} can be started after a merge")
 
 
 def _concurrency(workflow):
@@ -143,7 +143,7 @@ def trigger(workflow, event):
 def _triggers(cfg, workflow):
     """Findings for the triggers that configuration keys need."""
     findings = []
-    if cfg.get("close_parent_issues"):
+    if cfg["close_parent_issues"]:
         issues = trigger(workflow, "issues")
         if issues is None or ("types" in issues and "closed" not in issues):
             findings.append(
@@ -155,26 +155,26 @@ def _triggers(cfg, workflow):
             )
         else:
             findings.append((True, "Closed issues start NexKit, for close_parent_issues"))
-    if cfg.get("auto_resolve_conflicts"):
+    if cfg["conflicts"]["auto_resolve"]:
         if trigger(workflow, "push") is None:
             findings.append(
                 (
                     False,
-                    f"auto_resolve_conflicts is on, but {WORKFLOW_PATH} has no 'push' trigger "
+                    f"conflicts.auto_resolve is on, but {WORKFLOW_PATH} has no 'push' trigger "
                     "for the default branch, so merges by people are noticed only by the "
                     "hourly schedule; add it as 'nexkit init' writes it",
                 )
             )
         else:
             findings.append((True, "Pushes to the default branch start the conflict check"))
-    if cfg.get("resume_after_usage_limit"):
+    if cfg["usage_limit"]["resume"]:
         if trigger(workflow, "schedule") is None:
             findings.append(
                 (
                     False,
                     f"{WORKFLOW_PATH} has no 'schedule' trigger, so runs paused at the Claude "
                     "usage limit cannot resume; add it as 'nexkit init' writes it, or set "
-                    "resume_after_usage_limit to false",
+                    "usage_limit.resume to false",
                 )
             )
         else:
@@ -192,7 +192,7 @@ def doctor(root):
         findings.append((True, f"{configuration.CONFIG_PATH} is valid"))
         if not cfg["checks"]:
             findings.append((False, "No checks configured; NexKit cannot verify changes"))
-        findings += [_after_merge_workflow(root, name) for name in cfg["after_merge_workflows"]]
+        findings += [_after_merge_workflow(root, name) for name in cfg["merge"]["after_workflows"]]
     except configuration.ConfigError as exc:
         findings.append((False, str(exc)))
 
@@ -248,7 +248,7 @@ def doctor(root):
                     "-F can_approve_pull_request_reviews=true",
                 )
             )
-    for login in (cfg or {}).get("notify") or []:
+    for login in (cfg or {}).get("notify", []):
         role = (
             _gh("api", f"repos/{repo}/collaborators/{login}/permission", "-q", ".permission") or ""
         ).strip()

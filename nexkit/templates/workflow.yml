@@ -10,9 +10,9 @@ on:
   issues:
     types: [closed] # close_parent_issues
   push:
-    branches: [__DEFAULT_BRANCH__] # auto_resolve_conflicts: the default branch moved
+    branches: [__DEFAULT_BRANCH__] # conflicts.auto_resolve: the default branch moved
   schedule:
-    - cron: "23 * * * *" # resume_after_usage_limit, auto_resolve_conflicts
+    - cron: "23 * * * *" # usage_limit.resume, conflicts.auto_resolve
   workflow_dispatch:
     inputs:
       command:

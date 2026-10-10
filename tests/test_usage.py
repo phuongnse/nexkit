@@ -59,6 +59,10 @@ class UsageLimitTests(unittest.TestCase):
             (limit["resume_at"], limit["reset_known"]), ("2026-10-10T10:00:00Z", False)
         )
 
+    def test_the_retry_delay_is_configured(self):
+        limit = usage_limit(["Usage limit reached"], NOW, retry_minutes=180)
+        self.assertEqual(limit["resume_at"], "2026-10-10T12:00:00Z")
+
     def test_the_event_stream_reset_time_wins(self):
         limit = usage_limit(["Usage limit reached"], NOW, resets_at=1791630000)
         self.assertEqual(limit["resume_at"], "2026-10-10T11:00:00Z")

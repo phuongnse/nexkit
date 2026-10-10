@@ -29,24 +29,32 @@ DEFAULTS = {
     },
     "profiles": {},
     "default_profile": None,
-    "max_auto_fixes": 2,
-    "auto_merge": False,
-    "after_merge_workflows": [],
+    # What NexKit does by itself, grouped by feature.
+    "fix": {"max_auto_rounds": 2},
+    "merge": {"auto": False, "after_workflows": []},
+    "conflicts": {"auto_resolve": False, "max_rounds": 3},
+    "usage_limit": {"resume": True, "retry_minutes": 60},
     "close_parent_issues": False,
-    "resume_after_usage_limit": True,
-    "auto_resolve_conflicts": False,
     "notify": [],
+    "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
     "protected_paths": [".github/", ".nexkit/"],
     "transcript": True,
     "log": {"tool_output": "truncated"},
 }
 
 TOP_KEYS = set(DEFAULTS)
+# Objects whose keys are merged over the defaults one by one.
+GROUPS = ("fix", "merge", "conflicts", "usage_limit", "limits", "log")
+# Keys of earlier releases, with where they live now.
+RENAMED = {
+    "max_auto_fixes": "fix.max_auto_rounds",
+    "auto_merge": "merge.auto",
+    "after_merge_workflows": "merge.after_workflows",
+}
 STAGE_KEYS = {"model", "effort", "timeout_minutes", "max_budget_usd"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
 CHECK_KEYS = {"name", "run", "timeout_minutes"}
-LOG_KEYS = {"tool_output"}
 TOOL_OUTPUT = ("none", "truncated")
 
 
@@ -58,9 +66,14 @@ def _fail(message):
     raise ConfigError(message)
 
 
-def _positive_int(value, where, maximum):
-    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
-        _fail(f"{where} must be an integer from 1 to {maximum}")
+def _positive_int(value, where, maximum, minimum=1):
+    if not isinstance(value, int) or isinstance(value, bool) or not minimum <= value <= maximum:
+        _fail(f"{where} must be an integer from {minimum} to {maximum}")
+
+
+def _bool(value, where):
+    if not isinstance(value, bool):
+        _fail(f"{where} must be true or false")
 
 
 def _optional_budget(value, where):
@@ -145,6 +158,12 @@ def validate(raw):
     """Return a complete configuration with defaults applied, or raise ConfigError."""
     if not isinstance(raw, dict):
         _fail("Configuration must be a JSON object")
+    renamed = [f"'{old}' is now '{RENAMED[old]}'" for old in sorted(set(raw) & set(RENAMED))]
+    if renamed:
+        _fail(
+            "Configuration keys were renamed: " + "; ".join(renamed) + ". Move them in "
+            f"{CONFIG_PATH} (see docs/configuration.md)"
+        )
     unknown = set(raw) - TOP_KEYS
     if unknown:
         _fail(f"Unknown configuration keys: {', '.join(sorted(unknown))}")
@@ -158,13 +177,13 @@ def validate(raw):
                     _fail(f"Unknown stage '{stage}'; stages are {', '.join((*STAGES, TRIAGE))}")
                 _stage_keys(settings, f"stages.{stage}")
                 cfg["stages"].setdefault(stage, {}).update(settings)
-        elif key == "log":
+        elif key in GROUPS:
             if not isinstance(value, dict):
-                _fail("log must be an object")
-            extra = set(value) - LOG_KEYS
+                _fail(f"{key} must be an object")
+            extra = set(value) - set(DEFAULTS[key])
             if extra:
-                _fail(f"Unknown keys in log: {', '.join(sorted(extra))}")
-            cfg["log"].update(value)
+                _fail(f"Unknown keys in {key}: {', '.join(sorted(extra))}")
+            cfg[key].update(copy.deepcopy(value))
         else:
             cfg[key] = copy.deepcopy(value)
 
@@ -202,24 +221,22 @@ def validate(raw):
     for stage, settings in cfg["stages"].items():
         _stage_values(settings, f"stages.{stage}", 30 if stage == TRIAGE else 340)
 
-    if (
-        not isinstance(cfg["max_auto_fixes"], int)
-        or isinstance(cfg["max_auto_fixes"], bool)
-        or not 0 <= cfg["max_auto_fixes"] <= 10
-    ):
-        _fail("max_auto_fixes must be an integer from 0 to 10")
-    if not isinstance(cfg["auto_merge"], bool):
-        _fail("auto_merge must be true or false")
-    for key in ("close_parent_issues", "resume_after_usage_limit", "auto_resolve_conflicts"):
-        if not isinstance(cfg[key], bool):
-            _fail(f"{key} must be true or false")
-    workflows = cfg["after_merge_workflows"]
+    _positive_int(cfg["fix"]["max_auto_rounds"], "fix.max_auto_rounds", 10, minimum=0)
+    _bool(cfg["merge"]["auto"], "merge.auto")
+    workflows = cfg["merge"]["after_workflows"]
     if not isinstance(workflows, list) or not all(
         isinstance(w, str) and WORKFLOW_FILE.match(w) for w in workflows
     ):
-        _fail("after_merge_workflows must be a list of workflow file names such as 'ci.yml'")
+        _fail("merge.after_workflows must be a list of workflow file names such as 'ci.yml'")
     if len(set(workflows)) != len(workflows):
-        _fail("after_merge_workflows lists a workflow twice")
+        _fail("merge.after_workflows lists a workflow twice")
+    _bool(cfg["conflicts"]["auto_resolve"], "conflicts.auto_resolve")
+    _positive_int(cfg["conflicts"]["max_rounds"], "conflicts.max_rounds", 10)
+    _bool(cfg["usage_limit"]["resume"], "usage_limit.resume")
+    _positive_int(cfg["usage_limit"]["retry_minutes"], "usage_limit.retry_minutes", 1440)
+    _bool(cfg["close_parent_issues"], "close_parent_issues")
+    _positive_int(cfg["limits"]["setup_timeout_minutes"], "limits.setup_timeout_minutes", 120)
+    _positive_int(cfg["limits"]["max_patch_mb"], "limits.max_patch_mb", 50)
     people = cfg["notify"]
     if not isinstance(people, list) or not all(
         isinstance(p, str) and LOGIN.match(p) for p in people
@@ -233,11 +250,18 @@ def validate(raw):
     for required in (".github/", ".nexkit/"):
         if required not in paths:
             _fail(f"protected_paths must include '{required}'")
-    if not isinstance(cfg["transcript"], bool):
-        _fail("transcript must be true or false")
+    _bool(cfg["transcript"], "transcript")
     if cfg["log"]["tool_output"] not in TOOL_OUTPUT:
         _fail(f"log.tool_output must be one of {', '.join(TOOL_OUTPUT)}")
     return cfg
+
+
+def setting(cfg, path):
+    """The value at a dotted path such as `merge.auto`."""
+    value = cfg
+    for part in path.split("."):
+        value = value[part]
+    return value
 
 
 def load(root="."):

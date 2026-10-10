@@ -173,12 +173,14 @@ class ReportTests(ReportCase):
 
     def test_auto_merge(self):
         self.candidate()
-        self.assertEqual(self.run_report(cfg=make_config(auto_merge=True))["outcome"], "merged")
+        self.assertEqual(
+            self.run_report(cfg=make_config(merge={"auto": True}))["outcome"], "merged"
+        )
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
 
     def test_auto_merge_closes_the_issue(self):
         self.candidate()
-        self.run_report(cfg=make_config(auto_merge=True))
+        self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(
             (self.gh.issues[5]["state"], self.gh.issues[5]["state_reason"]), ("closed", "completed")
         )
@@ -192,10 +194,10 @@ class ReportTests(ReportCase):
         self.gh.add_issue(2, state="closed", reason="completed")
         self.gh.parents.update({2: 1, 5: 1})
         self.candidate()
-        self.run_report(cfg=make_config(auto_merge=True))
+        self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.issues[1]["state"], "open")  # the setting is off
         self.gh.issues[5]["state"] = "open"
-        self.run_report(cfg=make_config(auto_merge=True, close_parent_issues=True))
+        self.run_report(cfg=make_config(merge={"auto": True}, close_parent_issues=True))
         self.assertEqual(self.gh.issues[1]["state"], "closed")
         row = self.gh.run_comments(6)[-1]
         self.assertIn("Closed #5 as completed.\nClosed #1 as completed", row["body"])
@@ -203,7 +205,7 @@ class ReportTests(ReportCase):
     def test_an_issue_that_is_already_closed_stays_as_it_is(self):
         self.candidate()
         self.gh.issues[5].update(state="closed", state_reason="not_planned")
-        self.run_report(cfg=make_config(auto_merge=True))
+        self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
         self.assertFalse(self.gh.comments_matching(5, "NexKit merged"))
         [row] = self.gh.run_comments(6)
@@ -212,7 +214,7 @@ class ReportTests(ReportCase):
     def test_failing_to_close_the_issue_keeps_the_merge(self):
         self.candidate()
         self.gh.close_errors[5] = GitHubError(403, "Resource not accessible by integration")
-        outcome = self.run_report(cfg=make_config(auto_merge=True))
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(outcome["outcome"], "merged")
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
         [row] = self.gh.run_comments(6)
@@ -224,13 +226,13 @@ class ReportTests(ReportCase):
         self.run_report()
         self.assertEqual(self.gh.issues[5]["state"], "open")
         self.gh.merge_error = GitHubError(405, "Required approving review")
-        self.run_report(cfg=make_config(auto_merge=True))
+        self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.issues[5]["state"], "open")
 
     def test_auto_merge_blocked_by_branch_protection(self):
         self.candidate()
         self.gh.merge_error = GitHubError(405, "Required approving review")
-        outcome = self.run_report(cfg=make_config(auto_merge=True))
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(outcome["outcome"], "merge_refused")
         self.assertTrue(self.gh.comments_matching(6, "Required approving review"))
         [row] = self.gh.run_comments(6)
@@ -241,7 +243,7 @@ class ReportTests(ReportCase):
         self.candidate()
         run = "https://github.com/acme/app/actions/runs/77"
         self.gh.dispatch_runs["ci.yml"] = run
-        cfg = make_config(auto_merge=True, after_merge_workflows=["ci.yml", "e2e.yml"])
+        cfg = make_config(merge={"auto": True, "after_workflows": ["ci.yml", "e2e.yml"]})
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"}):
             outcome = self.run_report(d=decision(base="develop"), cfg=cfg)
         self.assertEqual(outcome["outcome"], "merged")
@@ -274,7 +276,7 @@ class ReportTests(ReportCase):
         self.gh.dispatch_errors["ci.yml"] = GitHubError(
             422, "Workflow does not have 'workflow_dispatch' trigger"
         )
-        cfg = make_config(auto_merge=True, after_merge_workflows=["ci.yml", "e2e.yml"])
+        cfg = make_config(merge={"auto": True, "after_workflows": ["ci.yml", "e2e.yml"]})
         outcome = self.run_report(cfg=cfg)
         self.assertEqual(outcome["outcome"], "merged")
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
@@ -290,14 +292,14 @@ class ReportTests(ReportCase):
 
     def test_no_workflows_start_without_auto_merge(self):
         self.candidate()
-        self.run_report(cfg=make_config(after_merge_workflows=["ci.yml"]))
+        self.run_report(cfg=make_config(merge={"after_workflows": ["ci.yml"]}))
         self.assertFalse(self.gh.merged)
         self.assertFalse(self.gh.dispatches)
 
     def test_failures_schedule_bounded_automatic_fixes(self):
         finding = {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Wrong sign"}
         self.candidate(checks_pass=False, review=review_result("request_changes", [finding]))
-        cfg = make_config(max_auto_fixes=1)
+        cfg = make_config(fix={"max_auto_rounds": 1})
         first = self.run_report(cfg=cfg)
         self.assertEqual(first["outcome"], "auto_fix")
         self.assertEqual(
@@ -597,7 +599,7 @@ class ReportTests(ReportCase):
 
     def test_without_resume_the_comment_says_when_to_continue(self):
         self.write("nexkit-agent", "result.json", LIMIT)
-        cfg = make_config(resume_after_usage_limit=False)
+        cfg = make_config(usage_limit={"resume": False})
         self.run_report(d=decision("implement"), cfg=cfg, published=False)
         [run] = self.gh.run_comments(5)
         self.assertNotIn("resume", run["run"])

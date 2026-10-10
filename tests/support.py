@@ -36,6 +36,8 @@ class FakeGitHub:
         self.merged = []
         self.reactions = []
         self.merge_error = None
+        self.dispatch_errors = {}
+        self.dispatch_runs = {}
         self._next = 1000
 
     def _id(self):
@@ -155,8 +157,13 @@ class FakeGitHub:
             {"sha": sha, "context": context, "state": state, "target_url": target_url}
         )
 
-    def dispatch(self, workflow, ref, inputs):
+    def dispatch(self, workflow, ref, inputs, run_details=False):
+        if workflow in self.dispatch_errors:
+            raise self.dispatch_errors[workflow]
         self.dispatches.append({"workflow": workflow, "ref": ref, "inputs": inputs})
+        if run_details and workflow in self.dispatch_runs:
+            return {"workflow_run_id": 1, "html_url": self.dispatch_runs[workflow]}
+        return None
 
     def comments_matching(self, number, text):
         return [c for c in self.issue_comments[number] if text in c["body"]]

@@ -13,6 +13,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["checks"][0]["timeout_minutes"], 15)
         self.assertEqual(cfg["max_auto_fixes"], 2)
         self.assertFalse(cfg["auto_merge"])
+        self.assertEqual(cfg["after_merge_workflows"], [])
         self.assertTrue(cfg["transcript"])
         self.assertEqual(cfg["log"], {"tool_output": "truncated"})
 
@@ -51,10 +52,18 @@ class ConfigTests(unittest.TestCase):
             ({"log": "none"}, "log must be an object"),
             ({"log": {"tool_output": "full"}}, "log.tool_output"),
             ({"log": {"thinking": True}}, "Unknown keys in log"),
+            ({"after_merge_workflows": "ci.yml"}, "workflow file names"),
+            ({"after_merge_workflows": [".github/workflows/ci.yml"]}, "workflow file names"),
+            ({"after_merge_workflows": ["ci"]}, "workflow file names"),
+            ({"after_merge_workflows": ["ci.yml", "ci.yml"]}, "twice"),
         ]
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
                 config.validate(raw)
+
+    def test_after_merge_workflows(self):
+        cfg = config.validate({"auto_merge": True, "after_merge_workflows": ["ci.yml", "e2e.yaml"]})
+        self.assertEqual(cfg["after_merge_workflows"], ["ci.yml", "e2e.yaml"])
 
     def test_protected_paths(self):
         cfg = config.validate({})

@@ -57,6 +57,12 @@ files or repository settings, and wait for confirmation.
    store a fine-grained token with Contents and Pull requests write access as
    `NEXKIT_PUSH_TOKEN`.
 
+   If the user wants `"auto_merge": true`, say that branch protection still applies and
+   that a merge by NexKit starts no `push` CI on the base branch. Offer to list those CI
+   workflows in `after_merge_workflows` (for example `["ci.yml"]`) so NexKit starts them
+   after each merge; each one needs a `workflow_dispatch` trigger, which is a change the
+   user makes to that workflow file.
+
 8. **Commit to the default branch.** Comment events only run workflows from the default
    branch. Commit both files (directly or through a pull request, as the user prefers).
 

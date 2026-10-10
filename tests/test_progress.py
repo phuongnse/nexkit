@@ -285,5 +285,27 @@ class ReactionTests(unittest.TestCase):
         self.assertIn("denied", stderr.getvalue())
 
 
+class DispatchTests(unittest.TestCase):
+    def test_dispatch_asks_for_the_run_only_when_needed(self):
+        gh = GitHub(repository="acme/app", token="t")
+        with mock.patch.object(gh, "request", return_value=None) as request:
+            gh.dispatch("nexkit.yml", "main", {"command": "fix"})
+            gh.dispatch("ci.yml", "main", {}, run_details=True)
+        path = "/repos/acme/app/actions/workflows/{}/dispatches"
+        self.assertEqual(
+            request.call_args_list,
+            [
+                mock.call(
+                    "POST", path.format("nexkit.yml"), {"ref": "main", "inputs": {"command": "fix"}}
+                ),
+                mock.call(
+                    "POST",
+                    path.format("ci.yml"),
+                    {"ref": "main", "inputs": {}, "return_run_details": True},
+                ),
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

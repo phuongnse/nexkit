@@ -95,7 +95,9 @@ NexKit comment, posted right after the command, shows it running and then its re
 and next step. Pull requests also get `nexkit/checks` and `nexkit/review` commit statuses, which
 you can make required in branch protection.
 
-Merging is up to you unless you set `"auto_merge": true`.
+Merging is up to you unless you set `"auto_merge": true`. NexKit then merges approved
+pull requests itself and can start your CI on the base branch afterwards; see
+[Automatic merge](docs/configuration.md#automatic-merge).
 
 ## Configuration
 

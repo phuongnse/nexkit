@@ -23,6 +23,23 @@ GitHub does not start workflows for events created with the default Actions toke
 runs your configured checks itself. To also run your CI, add a `NEXKIT_PUSH_TOKEN` secret
 (see the [configuration reference](configuration.md#secrets)).
 
+The same applies to a merge by NexKit with `auto_merge`: the push to the base branch
+starts no `push` CI, whichever token published the pull request. List those workflows in
+`after_merge_workflows` and give each a `workflow_dispatch` trigger; NexKit then starts
+them on the base branch after it merges (see
+[Automatic merge](configuration.md#automatic-merge)).
+
+**"Automatic merge was not possible".** GitHub refused the merge, and the comment gives
+its reason. Usually a branch protection rule or ruleset is not met, such as a required
+approval or a required check that did not run. Merge the pull request yourself, or change
+the rule (see [Automatic merge](configuration.md#automatic-merge)).
+
+**"Could not start `ci.yml`" after an automatic merge.** The merge happened; only the
+workflow did not start. Check that `.github/workflows/ci.yml` exists on the base branch
+and has a `workflow_dispatch` trigger without required inputs; `nexkit doctor` checks both
+in your working copy. To run it for this merge, use *Run workflow* on the base branch in
+the Actions tab.
+
 **"No Claude credential".** Add `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or
 `ANTHROPIC_API_KEY` as a repository secret. Secrets are not available to runs triggered
 from forks.

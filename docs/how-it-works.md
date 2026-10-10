@@ -12,7 +12,7 @@ Every command starts one run of the reusable workflow
 | `publish` | plan, go, fix | write | no | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
-| `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. |
+| `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `auto_merge`, merges an approved pull request and starts the `after_merge_workflows` on the base branch. Never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -20,6 +20,10 @@ into a commit in a different job. As a result:
 - The session that runs Claude never holds a token that can write to the repository.
 - Jobs that hold write tokens never run code from the repository or from the agent.
 - Checks run in a job with no secrets at all.
+
+`report` needs `contents: write` only to merge when `auto_merge` is on. Job permissions
+cannot depend on the configuration, so it holds that permission in every run, but it never
+pushes, and with `auto_merge: false` it never merges.
 
 ## What you see during a run
 
@@ -310,6 +314,8 @@ new state comment.
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. |
 | The PR conflicts with its base branch in a protected path | Stops before Claude runs; merge the base branch yourself. |
 | The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or add a `NEXKIT_PUSH_TOKEN` that may update workflows. |
+| GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person. |
+| A workflow of `after_merge_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `max_auto_fixes` remain, otherwise asks for a person. |
 | The review itself fails | Sets `nexkit/review` to error; comment `/nexkit review` to retry. |
 

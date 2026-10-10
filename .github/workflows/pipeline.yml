@@ -6,7 +6,8 @@
 # publish  post the plan, or commit the patch and open the PR; never runs repo code
 # verify   run setup and checks on the exact candidate; no secrets at all
 # review   independent read-only Claude review of that candidate
-# report   statuses, PR review, run and state comments, next automatic round
+# report   statuses, PR review, run and state comments, next automatic round; with
+#          auto_merge, the merge and the base branch's after_merge_workflows
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # Claude Code version in nexkit/__init__.py.
@@ -281,11 +282,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: read
+      contents: write # merge with auto_merge; report never pushes or runs repository code
       issues: write
       pull-requests: write
       statuses: write
-      actions: write
+      actions: write # next automatic round and after_merge_workflows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

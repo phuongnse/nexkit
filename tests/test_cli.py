@@ -53,6 +53,31 @@ class InitDoctorTests(unittest.TestCase):
         self.assertIn((False, "The 'origin' remote is not a GitHub repository"), findings)
         self.assertEqual(cli.main(["doctor", "--repo", str(self.root)]), 1)
 
+    def test_doctor_checks_the_workflows_to_start_after_a_merge(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["after_merge_workflows"] = ["ci.yml", "lint.yml", "e2e.yml"]
+        path.write_text(json.dumps(cfg))
+        workflows = self.root / ".github/workflows"
+        (workflows / "ci.yml").write_text("on:\n  push:\n  workflow_dispatch:\n")
+        (workflows / "lint.yml").write_text("# no workflow_dispatch yet\non: [push]\n")
+        findings = scaffold.doctor(self.root)
+        self.assertIn(
+            (True, "after_merge_workflows: ci.yml can be started after a merge"), findings
+        )
+        self.assertIn(
+            (
+                False,
+                "after_merge_workflows: lint.yml has no workflow_dispatch trigger, "
+                "so NexKit cannot start it after a merge",
+            ),
+            findings,
+        )
+        self.assertIn(
+            (False, "after_merge_workflows: .github/workflows/e2e.yml does not exist"), findings
+        )
+
     def test_repository_of(self):
         git(self.root, "init", "-q")
         git(self.root, "remote", "add", "origin", "git@github.com:acme/app.git")
@@ -227,6 +252,20 @@ class WorkflowSafetyTests(unittest.TestCase):
                     run.startswith("${{ steps.python.outputs.python-path }} kit/bin/nexkit "),
                     f"{name}: {run}",
                 )
+
+    def test_only_publish_and_report_may_write_contents(self):
+        writers = [name for name, job in self.jobs.items() if "contents: write" in job]
+        self.assertEqual(writers, ["publish", "report"])
+
+    def test_report_merges_without_checking_out_the_repository(self):
+        # `contents: write` lets report merge; it has nothing of the repository to run or push.
+        report = self.jobs["report"]
+        self.assertIn("contents: write", report)
+        self.assertIn("actions: write", report)  # workflow_dispatch after the merge
+        self.assertEqual(report.count("actions/checkout@"), 1)
+        self.assertIn("path: kit", report)
+        self.assertNotIn("persist-credentials: true", report)
+        self.assertNotIn("NEXKIT_PUSH_TOKEN", report)
 
     def test_route_acknowledges_commands_without_repository_code(self):
         route = self.jobs["route"]

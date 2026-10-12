@@ -7,7 +7,7 @@ PYTHON = (3, 12)
 # The pipeline installs exactly these. Each is tested; .github/workflows/update-claude-code.yml
 # proposes the newest stable Claude Code every week, and CI tests it before it is merged.
 RUNNER = "ubuntu-24.04"
-CLAUDE_CODE = "2.1.285"
+CLAUDE_CODE = "2.1.287"
 
 
 def python_supported(version_info):

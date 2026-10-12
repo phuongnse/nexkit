@@ -17,6 +17,7 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 | `redact.py` | removes secrets from everything printed or stored from an agent session |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py` | `verify` and agent setup: run configured commands |
+| `cache.py`, `.github/actions/restore-caches/` | `agent` and `verify`: restore caches before setup, never save |
 | `report.py`, `state.py` | `report`: statuses, review, state comment, next round |
 | `progress.py` | `route` and `report`: reactions, one comment per run with its link |
 | `maintain.py` | `maintain`: work that follows other events, without an agent |

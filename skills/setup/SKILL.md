@@ -32,6 +32,15 @@ files or repository settings, and wait for confirmation.
      none of its paths changed (see the configuration reference, Checks).
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
+   If setup downloads toolchains or many dependencies, offer `cache` entries (see the
+   configuration reference, Caches): each has a `name`, `paths` outside the repository
+   (`~/.npm`, `~/.gradle/caches`) and the `key_files` that decide the key, such as lock
+   files. NexKit only restores them. The repository's own CI on the default branch must
+   save each one with an `actions/cache` step before its setup, with the same `path`
+   lines in the same order and the key
+   `nexkit-${{ runner.os }}-<name>-${{ hashFiles(<key_files, in order>) }}`; offer that
+   change to the CI workflow too. `nexkit init` does not write `cache`; add it to
+   `.nexkit/config.json` after step 4.
 
 3. **Choose the model.** Default `sonnet` for every stage. Mention that `opus` gives
    stronger results at a higher cost, and that each stage can be set separately in the

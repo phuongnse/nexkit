@@ -22,6 +22,7 @@ DEFAULTS = {
     "effort": None,
     "setup": [],
     "checks": [],
+    "cache": [],
     "stages": {
         "plan": {"timeout_minutes": 15, "max_budget_usd": None},
         "implement": {"timeout_minutes": 45, "max_budget_usd": None},
@@ -55,6 +56,9 @@ STAGE_KEYS = {"model", "effort", "timeout_minutes", "max_budget_usd"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
 CHECK_KEYS = {"name", "run", "timeout_minutes"}
+CACHE_KEYS = {"name", "paths", "key_files"}
+# The restore action has one step per entry: .github/actions/restore-caches/action.yml.
+MAX_CACHES = 8
 TOOL_OUTPUT = ("none", "truncated")
 
 
@@ -108,6 +112,51 @@ def _stage_values(settings, where, max_minutes):
         _effort(settings["effort"], f"{where}.effort")
     _positive_int(settings.get("timeout_minutes"), f"{where}.timeout_minutes", max_minutes)
     _optional_budget(settings.get("max_budget_usd"), f"{where}.max_budget_usd")
+
+
+def _patterns(value, where, what):
+    if not isinstance(value, list) or not value:
+        _fail(f"{where} must be a non-empty list of {what}")
+    for pattern in value:
+        if not isinstance(pattern, str) or not pattern.strip() or "\n" in pattern:
+            _fail(f"{where} must be a non-empty list of {what}")
+
+
+def _caches(entries):
+    """Check `cache`. Paths are outside the checkout: NexKit checks the repository out in a
+    subdirectory, so a path inside it would not match the cache the base branch saved."""
+    if not isinstance(entries, list):
+        _fail("cache must be a list")
+    if len(entries) > MAX_CACHES:
+        _fail(f"cache has at most {MAX_CACHES} entries")
+    names = []
+    for index, entry in enumerate(entries):
+        where = f"cache[{index}]"
+        if not isinstance(entry, dict):
+            _fail(f"{where} must be an object")
+        extra = set(entry) - CACHE_KEYS
+        if extra:
+            _fail(f"Unknown keys in {where}: {', '.join(sorted(extra))}")
+        name = entry.get("name")
+        if not isinstance(name, str) or not NAME.match(name):
+            _fail(f"{where}.name must be a short lowercase identifier")
+        # Keys are `nexkit-<os>-<name>-<hash>`, and the prefix finds a partial match.
+        for other in names:
+            if name == other or name.startswith(f"{other}-") or other.startswith(f"{name}-"):
+                _fail(f"Cache names '{other}' and '{name}' would share keys; rename one")
+        names.append(name)
+        _patterns(entry.get("paths"), f"{where}.paths", "paths")
+        for path in entry["paths"]:
+            if not path.removeprefix("!").startswith(("~/", "/")):
+                _fail(
+                    f"{where}.paths: '{path}' must start with '~/' or '/'. Cache what lives "
+                    "outside the repository, such as ~/.npm or ~/.gradle/caches"
+                )
+        _patterns(entry.get("key_files"), f"{where}.key_files", "file patterns")
+        for pattern in entry["key_files"]:
+            path = pattern.removeprefix("!")
+            if path.startswith(("/", "~")) or ".." in path.split("/"):
+                _fail(f"{where}.key_files: '{pattern}' must be a path inside the repository")
 
 
 def _profiles(cfg):
@@ -216,6 +265,7 @@ def validate(raw):
             _fail(f"{where}.run must be a shell command")
         check.setdefault("timeout_minutes", 15)
         _positive_int(check["timeout_minutes"], f"{where}.timeout_minutes", 360)
+    _caches(cfg["cache"])
 
     _profiles(cfg)
     for stage, settings in cfg["stages"].items():

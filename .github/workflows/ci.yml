@@ -41,6 +41,52 @@ jobs:
       - name: Validate plugin
         run: ~/.local/bin/claude plugin validate --strict .
 
+  cache-save:
+    # Saves a cache as docs/configuration.md#caches tells a repository's own CI to.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/nexkit-cache-test
+          key: nexkit-${{ runner.os }}-demo-${{ hashFiles('pyproject.toml', 'nexkit/__init__.py') }}
+          restore-keys: nexkit-${{ runner.os }}-demo-
+      - run: mkdir -p ~/nexkit-cache-test && touch ~/nexkit-cache-test/marker
+
+  cache-restore:
+    # The agent and verify jobs' restore action finds that cache and skips a missing one.
+    needs: cache-save
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: kit
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false
+      - id: restore
+        uses: ./kit/.github/actions/restore-caches
+        with:
+          python: ${{ steps.python.outputs.python-path }}
+          repo: repo
+          config: >-
+            {"cache": [
+              {"name": "demo", "paths": ["~/nexkit-cache-test"],
+               "key_files": ["pyproject.toml", "nexkit/__init__.py"]},
+              {"name": "missing", "paths": ["~/nexkit-cache-missing"],
+               "key_files": ["pyproject.toml"]}]}
+      - run: test -f ~/nexkit-cache-test/marker && test ! -e ~/nexkit-cache-missing
+
   decide-smoke-test:
     # A pull request runs the smoke test only when it changes what the test covers, and only
     # from a branch of this repository: pull requests from forks do not receive secrets.

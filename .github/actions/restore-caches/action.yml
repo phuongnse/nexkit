@@ -1,0 +1,99 @@
+# Restore the caches in `cache` of .nexkit/config.json. The agent and verify jobs use it
+# before setup. It never saves: those jobs run code the agent wrote, and a cache saved in
+# a NexKit run would reach every later run on the base branch. The repository's own
+# workflow on the base branch saves the caches (docs/configuration.md#caches).
+#
+# A workflow cannot loop over steps, so there is one restore step per possible entry:
+# MAX_CACHES in nexkit/config.py.
+name: Restore NexKit caches
+description: Restore the caches in .nexkit/config.json; never save one
+inputs:
+  python:
+    description: Python that runs NexKit
+    required: true
+  config:
+    description: The configuration from the route job
+    required: true
+  repo:
+    description: The repository checkout, relative to the workspace
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: plan
+      shell: bash
+      run: '"$NEXKIT_PYTHON" "$GITHUB_ACTION_PATH/../../../bin/nexkit" cache --repo "$NEXKIT_REPO"'
+      env:
+        NEXKIT_PYTHON: ${{ inputs.python }}
+        NEXKIT_CONFIG: ${{ inputs.config }}
+        NEXKIT_REPO: ${{ inputs.repo }}
+    - id: cache1
+      if: steps.plan.outputs.name1
+      continue-on-error: true # a failed restore never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths1 }}
+        key: ${{ steps.plan.outputs.prefix1 }}${{ hashFiles(steps.plan.outputs.files1) }}
+        restore-keys: ${{ steps.plan.outputs.prefix1 }}
+    - id: cache2
+      if: steps.plan.outputs.name2
+      continue-on-error: true # a failed restore never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths2 }}
+        key: ${{ steps.plan.outputs.prefix2 }}${{ hashFiles(steps.plan.outputs.files2) }}
+        restore-keys: ${{ steps.plan.outputs.prefix2 }}
+    - id: cache3
+      if: steps.plan.outputs.name3
+      continue-on-error: true # a failed restore never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths3 }}
+        key: ${{ steps.plan.outputs.prefix3 }}${{ hashFiles(steps.plan.outputs.files3) }}
+        restore-keys: ${{ steps.plan.outputs.prefix3 }}
+    - id: cache4
+      if: steps.plan.outputs.name4
+      continue-on-error: true # a failed restore never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths4 }}
+        key: ${{ steps.plan.outputs.prefix4 }}${{ hashFiles(steps.plan.outputs.files4) }}
+        restore-keys: ${{ steps.plan.outputs.prefix4 }}
+    - id: cache5
+      if: steps.plan.outputs.name5
+      continue-on-error: true # a failed restore never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths5 }}
+        key: ${{ steps.plan.outputs.prefix5 }}${{ hashFiles(steps.plan.outputs.files5) }}
+        restore-keys: ${{ steps.plan.outputs.prefix5 }}
+    - id: cache6
+      if: steps.plan.outputs.name6
+      continue-on-error: true # a failed restore never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths6 }}
+        key: ${{ steps.plan.outputs.prefix6 }}${{ hashFiles(steps.plan.outputs.files6) }}
+        restore-keys: ${{ steps.plan.outputs.prefix6 }}
+    - id: cache7
+      if: steps.plan.outputs.name7
+      continue-on-error: true # a failed restore never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths7 }}
+        key: ${{ steps.plan.outputs.prefix7 }}${{ hashFiles(steps.plan.outputs.files7) }}
+        restore-keys: ${{ steps.plan.outputs.prefix7 }}
+    - id: cache8
+      if: steps.plan.outputs.name8
+      continue-on-error: true # a failed restore never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths8 }}
+        key: ${{ steps.plan.outputs.prefix8 }}${{ hashFiles(steps.plan.outputs.files8) }}
+        restore-keys: ${{ steps.plan.outputs.prefix8 }}
+    - shell: bash
+      run: '"$NEXKIT_PYTHON" "$GITHUB_ACTION_PATH/../../../bin/nexkit" cache --report'
+      env:
+        NEXKIT_PYTHON: ${{ inputs.python }}
+        NEXKIT_CONFIG: ${{ inputs.config }}
+        NEXKIT_CACHE_STEPS: ${{ toJSON(steps) }}

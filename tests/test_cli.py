@@ -427,8 +427,8 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        text = (ROOT / ".github/workflows/pipeline.yml").read_text()
-        body = text.split("\njobs:\n", 1)[1]
+        cls.text = (ROOT / ".github/workflows/pipeline.yml").read_text()
+        body = cls.text.split("\njobs:\n", 1)[1]
         cls.jobs = dict(re.findall(r"^  (\w+):\n((?:    .*\n|\n)*)", body, re.M))
 
     def test_jobs(self):
@@ -535,6 +535,39 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("fetch-depth: 0", self.jobs["verify"])
         checks = self.jobs["verify"].split("- name: Run setup and checks", 1)[1]
         self.assertIn("NEXKIT_DECISION: ${{ needs.route.outputs.decision }}", checks)
+
+    def test_agent_and_verify_restore_caches_but_never_save(self):
+        # Both jobs run code the agent wrote; a cache they saved would reach the base branch.
+        uses = "uses: ./kit/.github/actions/restore-caches\n"
+        setup = {"agent": "kit/bin/nexkit agent --repo", "verify": "kit/bin/nexkit checks --repo"}
+        for name, job in self.jobs.items():
+            if name not in setup:
+                self.assertNotIn("restore-caches", job, name)
+                continue
+            self.assertEqual(job.count(uses), 1, name)
+            self.assertLess(job.index(uses), job.index(setup[name]), name)
+            step = job.split("- name: Restore caches\n", 1)[1].split("\n      - ", 1)[0]
+            self.assertIn("continue-on-error: true", step, name)
+            self.assertIn("fromJSON(needs.route.outputs.config).cache[0]", step, name)
+        # A plan runs no setup.
+        self.assertIn("if: needs.route.outputs.action != 'plan' &&", self.jobs["agent"])
+
+        action = (ROOT / ".github/actions/restore-caches/action.yml").read_text()
+        for text in (self.text, action):
+            self.assertNotRegex(text, r"actions/cache(/save)?@")
+            self.assertNotIn("save-always", text)
+        self.assertNotIn("secrets.", action)
+        self.assertNotIn("github.token", action)
+        steps = action.split("\n    - ")[1:]
+        restores = [step for step in steps if "uses: actions/cache/restore@" in step]
+        # One step for each entry that `cache` may have.
+        self.assertEqual(len(restores), nexkit.config.MAX_CACHES)
+        for number, step in enumerate(restores, 1):
+            self.assertTrue(step.startswith(f"id: cache{number}\n"), step)
+            self.assertIn(f"if: steps.plan.outputs.name{number}\n", step)
+            self.assertIn("continue-on-error: true", step)
+            self.assertIn(f"hashFiles(steps.plan.outputs.files{number})", step)
+        self.assertIn("cache --report", steps[-1])
 
     def test_config_comes_from_default_branch(self):
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.jobs["route"])

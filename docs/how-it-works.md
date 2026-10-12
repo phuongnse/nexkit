@@ -10,9 +10,9 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | Job | Runs for | Token permissions | Claude credential | Does |
 |---|---|---|---|---|
 | `route` | every event | read; comments, reactions, statuses | no | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
-| `agent` | plan, go, fix | read only | yes | Installs Claude Code, runs `setup`, then one Claude session; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
+| `agent` | plan, go, fix | read only | yes | Installs Claude Code, restores the [caches](configuration.md#caches) and runs `setup`, then one Claude session; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | no | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
-| `verify` | go, fix, review | read only | no | Runs `setup` and the checks on the published commit. |
+| `verify` | go, fix, review | read only | no | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
 | `maintain` | closed issues, pushes to the default branch, the schedule | read; issues, comments, workflows | no | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch. Runs no agent, and never checks out or executes repository code. |
@@ -23,6 +23,8 @@ into a commit in a different job. As a result:
 - The session that runs Claude never holds a token that can write to the repository.
 - Jobs that hold write tokens never run code from the repository or from the agent.
 - Checks run in a job with no secrets at all.
+- Jobs that run the agent's code restore caches but never save one, so nothing they
+  produce reaches later runs.
 
 `report` needs `contents: write` only to merge when `merge.auto` is on. Job permissions
 cannot depend on the configuration, so it holds that permission in every run, but it never

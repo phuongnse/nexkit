@@ -2,9 +2,11 @@
 #
 # route    decide the action from the event; read config from the default branch;
 #          acknowledge the command and link the run; never runs repo code
-# agent    run Claude Code (plan / implement / fix); no GitHub write token
+# agent    run Claude Code (plan / implement / fix); no GitHub write token; restores
+#          caches before setup but never saves one
 # publish  post the plan, or commit the patch and open the PR; never runs repo code
-# verify   run setup and checks on the exact candidate; no secrets at all
+# verify   run setup and checks on the exact candidate; no secrets at all; restores
+#          caches but never saves one
 # review   independent read-only Claude review of that candidate
 # report   statuses, PR review, run and state comments, next automatic round; with
 #          merge.auto, the merge and the base branch's merge.after_workflows
@@ -106,6 +108,15 @@ jobs:
           # A fix round needs the history of the branch and its base to merge them.
           fetch-depth: ${{ needs.route.outputs.action == 'fix' && '0' || '1' }}
           persist-credentials: false
+      # Restore only, before setup: this job runs code the agent wrote (see the action).
+      - name: Restore caches
+        if: needs.route.outputs.action != 'plan' && fromJSON(needs.route.outputs.config).cache[0]
+        continue-on-error: true # a missing or failed cache never fails the run
+        uses: ./kit/.github/actions/restore-caches
+        with:
+          python: ${{ steps.python.outputs.python-path }}
+          config: ${{ needs.route.outputs.config }}
+          repo: repo
       - name: Install Claude Code
         run: |
           curl -fsSL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION"
@@ -205,6 +216,15 @@ jobs:
           # The history of the base branch too, for the merge base in NEXKIT_BASE_SHA.
           fetch-depth: 0
           persist-credentials: false
+      # Restore only, before setup: this job runs code the agent wrote (see the action).
+      - name: Restore caches
+        if: fromJSON(needs.route.outputs.config).cache[0]
+        continue-on-error: true # a missing or failed cache never fails the run
+        uses: ./kit/.github/actions/restore-caches
+        with:
+          python: ${{ steps.python.outputs.python-path }}
+          config: ${{ needs.route.outputs.config }}
+          repo: repo
       - name: Run setup and checks
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit checks --repo repo --out out
         env:

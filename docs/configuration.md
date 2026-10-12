@@ -16,6 +16,7 @@ A complete configuration with every key at its default, except `setup` and `chec
   "effort": null,
   "setup": ["npm ci"],
   "checks": [{"name": "test", "run": "npm test"}],
+  "cache": [],
   "stages": {},
   "profiles": {},
   "default_profile": null,
@@ -44,6 +45,7 @@ their defaults.
 | `effort` | `null` | Reasoning effort for every stage: `low`, `medium`, `high`, `xhigh`, `max`, or `null` for the Claude Code default. |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
+| `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
 | `stages` | see [Stages](#stages) | Per-stage model, effort, timeout and budget. |
 | `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See [Profiles](#profiles). |
 | `default_profile` | `null` | The profile to use when no plan chose one. Required with `profiles`. |
@@ -137,6 +139,80 @@ else
   echo "Dev tooling unchanged since $NEXKIT_BASE_SHA: smoke tests skipped."
 fi
 ```
+
+## Caches
+
+```json
+"cache": [
+  {
+    "name": "gradle",
+    "paths": ["~/.gradle/caches", "~/.gradle/wrapper"],
+    "key_files": ["android/gradle/libs.versions.toml", "android/gradle/wrapper/gradle-wrapper.properties"]
+  },
+  {"name": "npm", "paths": ["~/.npm"], "key_files": ["web/package-lock.json"]}
+]
+```
+
+Without caches, every agent and `verify` job installs toolchains and dependencies from
+scratch. With them, both jobs restore each entry before `setup`, so `setup` only adds
+what changed. NexKit **only restores**; your own workflow on the base branch saves.
+
+- `name`: short lowercase identifier, part of the key. Two names cannot be the same, and
+  one cannot be another followed by `-`, because they would share keys.
+- `paths`: what to restore, as for `actions/cache`. Each path starts with `~/` or `/`
+  (a `!` before it excludes). NexKit checks the repository out in a subdirectory, so a
+  path inside the repository would not land where your workflow saved it. Cache what
+  lives outside it: package manager caches (`~/.npm`, `~/.cargo/registry`), toolchains
+  (`~/.rustup`, an SDK under `~`) and downloaded browsers (`~/.cache/ms-playwright`).
+- `key_files`: patterns inside the repository, as for `hashFiles`, usually lock files and
+  version files. Their contents decide the key; `!` excludes.
+- At most 8 entries. The agent job restores them for `go` and fix rounds; a plan runs no
+  `setup`.
+
+**Why NexKit never saves.** The agent and `verify` jobs run code the agent wrote, and
+NexKit's runs use the base branch's cache scope. A cache saved there would reach every
+later run, including your CI on the base branch. Restoring needs no token and no secret,
+so `verify` keeps none.
+
+**The key.** For each entry NexKit restores
+
+```text
+nexkit-<runner.os>-<name>-<hashFiles(key_files)>
+```
+
+and, when that key has no cache, the newest cache whose key starts with
+`nexkit-<runner.os>-<name>-`. With an older cache, `setup` installs what changed since.
+
+**Who saves.** A workflow of your repository that runs on the base branch saves each entry
+under the same key, for example the CI that runs on pushes to the default branch, which
+NexKit also starts after its merges with `merge.after_workflows`. Add one `actions/cache`
+step per entry, after the checkout and before your setup:
+
+```yaml
+- uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+  with:
+    path: |
+      ~/.gradle/caches
+      ~/.gradle/wrapper
+    key: nexkit-${{ runner.os }}-gradle-${{ hashFiles('android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+    restore-keys: nexkit-${{ runner.os }}-gradle-
+- run: scripts/setup.sh
+```
+
+`actions/cache` restores the entry and saves it at the end of a successful job when the
+key had no cache. For NexKit to find what it saves:
+
+- `path` lists exactly the `paths` of the entry, in the same order. The list is part of
+  the cache's version, and a cache saved with another list is not found.
+- `hashFiles` gets exactly the `key_files`, in the same order.
+- The step comes before your setup, so the key files are hashed as committed, as NexKit
+  hashes them.
+- The job runs on `ubuntu-24.04` or `ubuntu-latest`, like NexKit.
+- It runs on the base branch. Caches saved on other branches are not visible to NexKit.
+
+**A miss is not a failure.** A missing cache, or a restore that fails, never fails a run.
+The *Restore caches* step in the job log lists each entry as restored, restored from an
+older key, or missed, with the key it looked for.
 
 ## Automatic merge
 

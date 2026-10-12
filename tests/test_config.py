@@ -18,6 +18,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["limits"], {"setup_timeout_minutes": 30, "max_patch_mb": 5})
         self.assertFalse(cfg["close_parent_issues"])
         self.assertEqual(cfg["notify"], [])
+        self.assertEqual(cfg["cache"], [])
         self.assertTrue(cfg["transcript"])
         self.assertEqual(cfg["log"], {"tool_output": "truncated"})
 
@@ -68,6 +69,42 @@ class ConfigTests(unittest.TestCase):
             ({"merge": {"after_workflows": [".github/workflows/ci.yml"]}}, "workflow file names"),
             ({"merge": {"after_workflows": ["ci"]}}, "workflow file names"),
             ({"merge": {"after_workflows": ["ci.yml", "ci.yml"]}}, "twice"),
+        ]
+        for raw, message in cases:
+            with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
+                config.validate(raw)
+
+    def test_cache_entries(self):
+        entry = {
+            "name": "gradle",
+            "paths": ["~/.gradle/caches", "~/.gradle/wrapper", "!~/.gradle/caches/*.lock"],
+            "key_files": ["android/gradle/libs.versions.toml", "**/*.gradle.kts", "!build/**"],
+        }
+        cfg = config.validate({"cache": [entry, {**entry, "name": "npm", "paths": ["/opt/x"]}]})
+        self.assertEqual(cfg["cache"][0], entry)
+        self.assertEqual(config.validate(json.loads(json.dumps(cfg))), cfg)
+
+    def test_rejects_invalid_cache_entries(self):
+        entry = {"name": "npm", "paths": ["~/.npm"], "key_files": ["package-lock.json"]}
+        cases = [
+            ({"cache": entry}, "cache must be a list"),
+            ({"cache": [entry] * (config.MAX_CACHES + 1)}, f"at most {config.MAX_CACHES}"),
+            ({"cache": ["npm"]}, r"cache\[0\] must be an object"),
+            ({"cache": [{**entry, "save": True}]}, r"Unknown keys in cache\[0\]: save"),
+            ({"cache": [{**entry, "name": "Node Modules"}]}, "lowercase identifier"),
+            ({"cache": [entry, entry]}, "'npm' and 'npm' would share keys"),
+            ({"cache": [entry, {**entry, "name": "npm-e2e"}]}, "would share keys"),
+            ({"cache": [{**entry, "paths": []}]}, r"cache\[0\].paths must be a non-empty list"),
+            ({"cache": [{**entry, "paths": "~/.npm"}]}, "non-empty list of paths"),
+            ({"cache": [{**entry, "paths": ["~/a\n~/b"]}]}, "non-empty list of paths"),
+            ({"cache": [{**entry, "paths": ["node_modules"]}]}, "must start with '~/' or '/'"),
+            ({"cache": [{**entry, "paths": ["!target"]}]}, "must start with '~/' or '/'"),
+            ({"cache": [{**entry, "paths": ["~"]}]}, "must start with '~/' or '/'"),
+            ({"cache": [{**entry, "key_files": []}]}, "key_files must be a non-empty list"),
+            ({"cache": [{"name": "npm", "paths": ["~/.npm"]}]}, "key_files must be"),
+            ({"cache": [{**entry, "key_files": ["/etc/os-release"]}]}, "inside the repository"),
+            ({"cache": [{**entry, "key_files": ["~/.npmrc"]}]}, "inside the repository"),
+            ({"cache": [{**entry, "key_files": ["!../x"]}]}, "inside the repository"),
         ]
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):

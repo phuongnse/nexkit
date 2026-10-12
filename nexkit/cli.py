@@ -250,6 +250,19 @@ def cmd_checks(args):
     return 0
 
 
+def cmd_cache(args):
+    from .cache import plan, report
+
+    cfg = _config()
+    if args.report:
+        for line in report(cfg, json.loads(os.environ.get("NEXKIT_CACHE_STEPS") or "{}")):
+            print(line)
+        return 0
+    print(f"Caches to restore: {', '.join(e['name'] for e in cfg['cache']) or 'none'}")
+    _output(**plan(cfg, args.repo, os.environ.get("RUNNER_OS", "Linux")))
+    return 0
+
+
 def cmd_publish(args):
     from .github import GitHub, GitHubError
     from .gitutil import GitError
@@ -365,6 +378,11 @@ def build_parser():
     p.add_argument("--repo", required=True)
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_checks)
+
+    p = sub.add_parser("cache", help="(pipeline) Name the caches to restore, or log the result")
+    p.add_argument("--repo", default="repo", help="Checkout, relative to the workspace")
+    p.add_argument("--report", action="store_true", help="Log what the restore steps found")
+    p.set_defaults(func=cmd_cache)
 
     p = sub.add_parser("publish", help="(pipeline) Commit, push and open pull requests")
     p.add_argument("--repo", required=True)

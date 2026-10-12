@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.1.0
+
+- New `cache` key (default `[]`): caches to restore before `setup`, so the agent job (for
+  `go` and fix rounds) and `verify` stop installing toolchains and dependencies from scratch
+  in every round. Each entry has a `name`, the `paths` to restore (outside the repository,
+  such as `~/.npm` or `~/.gradle/caches`) and the `key_files` whose contents decide the key
+  `nexkit-<runner.os>-<name>-<hash>`; an older cache with the same prefix is used when the
+  key has none. NexKit only restores: both jobs run code the agent wrote, so a cache they
+  saved would reach every later run on the base branch. The repository's own workflow on
+  the base branch saves the caches; see
+  [Caches](docs/configuration.md#caches) for the key format and an `actions/cache` step
+  that matches it. A missing or failed cache never fails a run, and the job log lists each
+  entry as restored, restored from an older key, or missed.
+
 ## 2.0.0
 
 - **Breaking:** the settings for what NexKit does by itself are grouped by feature.

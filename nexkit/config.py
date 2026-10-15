@@ -38,7 +38,7 @@ DEFAULTS = {
     "fix": {"max_auto_rounds": 2},
     "merge": {"auto": False, "after_workflows": []},
     "conflicts": {"auto_resolve": False, "max_rounds": 3},
-    "usage_limit": {"resume": True, "retry_minutes": 60},
+    "usage_limit": {"resume": True, "retry_minutes": 60, "wait_minutes": 330},
     "close_parent_issues": False,
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -50,6 +50,9 @@ DEFAULTS = {
 }
 
 TOP_KEYS = set(DEFAULTS)
+# The longest a run waits for a usage limit to reset: a GitHub-hosted job ends after six
+# hours, and the wait needs time left to start the commands.
+MAX_WAIT = 330
 # Objects whose keys are merged over the defaults one by one.
 GROUPS = ("fix", "merge", "conflicts", "usage_limit", "limits", "log", "publish")
 # Keys of earlier releases, with where they live now.
@@ -415,6 +418,9 @@ def validate(raw, *, layered=False):
     _positive_int(cfg["conflicts"]["max_rounds"], "conflicts.max_rounds", 10)
     _bool(cfg["usage_limit"]["resume"], "usage_limit.resume")
     _positive_int(cfg["usage_limit"]["retry_minutes"], "usage_limit.retry_minutes", 1440)
+    _positive_int(
+        cfg["usage_limit"]["wait_minutes"], "usage_limit.wait_minutes", MAX_WAIT, minimum=0
+    )
     _bool(cfg["close_parent_issues"], "close_parent_issues")
     _positive_int(cfg["limits"]["setup_timeout_minutes"], "limits.setup_timeout_minutes", 120)
     _positive_int(cfg["limits"]["max_patch_mb"], "limits.max_patch_mb", 50)

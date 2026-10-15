@@ -28,7 +28,7 @@ A complete configuration with every key at its default, except `agents`, `setup`
   "fix": {"max_auto_rounds": 2},
   "merge": {"auto": false, "after_workflows": []},
   "conflicts": {"auto_resolve": false, "max_rounds": 3},
-  "usage_limit": {"resume": true, "retry_minutes": 60},
+  "usage_limit": {"resume": true, "retry_minutes": 60, "wait_minutes": 330},
   "close_parent_issues": false,
   "notify": [],
   "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -68,6 +68,7 @@ their defaults.
 | `conflicts.max_rounds` | `3` | Those rounds per pull request (1 to 10), apart from `fix.max_auto_rounds`. |
 | `usage_limit.resume` | `true` | When the agent stops at the account's usage limit, run the same command again after the limit resets. See [Usage limits](#usage-limits). |
 | `usage_limit.retry_minutes` | `60` | When the reset time is unknown, try again after this many minutes (1 to 1440). |
+| `usage_limit.wait_minutes` | `330` | Start a run that waits for the reset when it is at most this many minutes away (0 to 330); 0 leaves the resume to the hourly schedule. |
 | `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See [Parent issues](#parent-issues). |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`. See [Mentions](#mentions). |
 
@@ -350,7 +351,7 @@ See [How it works](how-it-works.md#work-without-a-command).
 ## Usage limits
 
 ```json
-"usage_limit": {"resume": true, "retry_minutes": 60}
+"usage_limit": {"resume": true, "retry_minutes": 60, "wait_minutes": 330}
 ```
 
 When an agent stops because its account hit a usage limit that resets, NexKit pauses the
@@ -361,10 +362,19 @@ With `false`, the comment still names the limit and the reset time, and a person
 comments the command again. Only the `claude-code` runtime reports such limits; see
 [How it works](how-it-works.md#usage-limits) for why `codex` does not.
 
-The resume needs the hourly `schedule` trigger that `nexkit init` writes;
-`nexkit doctor` warns when it is missing. A schedule run with nothing to resume runs
-only `route` and `maintain`, which take well under a minute and run no agent. To check
-less often, change the `cron` line, for example to `"23 */3 * * *"`.
+When the reset is at most `wait_minutes` away (330, five and a half hours, by default),
+NexKit starts a run that waits for it and resumes the command within ten minutes of the
+reset. The run uses no agent and no repository code, but it holds a runner while it waits:
+free on public repositories, billed minutes on private ones. Set `wait_minutes` lower, or
+to 0, to spend fewer minutes; the hourly schedule then resumes the command.
+
+The schedule also covers resets further away, such as a weekly limit: once one comes
+within `wait_minutes`, the schedule starts the waiting run. It needs the hourly `schedule`
+trigger that `nexkit init` writes; `nexkit doctor` warns when it is missing. GitHub runs
+scheduled workflows when it can, so in practice a scheduled run can come hours late. A
+schedule run with nothing to resume runs only `route` and `maintain`, which take well under
+a minute and run no agent. To check less often, change the `cron` line, for example to
+`"23 */3 * * *"`.
 
 ## Agents
 

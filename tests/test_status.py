@@ -14,7 +14,7 @@ from tests.support import FakeGitHub, make_config
 class StatusTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()
-        for number in (1, 2, 3, 4, 5, 7):
+        for number in (1, 2, 3, 4, 5, 7, 27):
             self.gh.add_issue(number, title=f"Issue {number}")
 
     def command(self, number, command, status, **run):
@@ -46,6 +46,11 @@ class StatusTests(unittest.TestCase):
             4, "go", "failure", outcome="agent_error", attention="the run stopped on an error"
         )
         self.command(5, "go", "success", outcome="implemented")
+        # `/nexkit go` paused at its pull request's review, which carries on there.
+        self.command(7, "go", "continued", outcome="paused", attention="usage limit")
+        self.gh.add_pull(18, 7)
+        self.round(18, 1, status="continued", outcome="paused")
+        self.command(27, "plan", "continued", outcome="paused")  # resumed, not started yet
         self.gh.add_pull(6, 5)
         self.round(
             6, 1, outcome="ready", attention="the pull request is ready for a human decision"
@@ -74,14 +79,30 @@ class StatusTests(unittest.TestCase):
         issues = {i["number"]: i for i in data["issues"]}
         self.assertEqual(
             {n: i["state"] for n, i in issues.items()},
-            {1: "planning", 2: "planned", 3: "implementing", 4: "failed", 5: "in_pull_request"},
+            {
+                1: "planning",
+                2: "planned",
+                3: "implementing",
+                4: "failed",
+                5: "in_pull_request",
+                7: "in_pull_request",
+                27: "planning",
+            },
         )
         self.assertEqual(issues[2]["plan"]["profile"], "hard")
         self.assertEqual(issues[5]["pull"], 6)
         pulls = {p["number"]: p for p in data["pull_requests"]}
         self.assertEqual(
             {n: p["state"] for n, p in pulls.items()},
-            {6: "ready", 8: "conflicting", 10: "running", 12: "paused", 14: "ready", 16: "ready"},
+            {
+                6: "ready",
+                8: "conflicting",
+                10: "running",
+                12: "paused",
+                14: "ready",
+                16: "ready",
+                18: "running",
+            },
         )
         self.assertEqual(pulls[10]["round"], 2)
         self.assertEqual(pulls[12]["resume_at"], "2026-10-11T04:40:00Z")

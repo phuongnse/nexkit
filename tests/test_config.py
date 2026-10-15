@@ -23,7 +23,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["fix"], {"max_auto_rounds": 2})
         self.assertEqual(cfg["merge"], {"auto": False, "after_workflows": []})
         self.assertEqual(cfg["conflicts"], {"auto_resolve": False, "max_rounds": 3})
-        self.assertEqual(cfg["usage_limit"], {"resume": True, "retry_minutes": 60})
+        self.assertEqual(
+            cfg["usage_limit"], {"resume": True, "retry_minutes": 60, "wait_minutes": 330}
+        )
         self.assertEqual(cfg["limits"], {"setup_timeout_minutes": 30, "max_patch_mb": 5})
         self.assertFalse(cfg["close_parent_issues"])
         self.assertEqual(cfg["notify"], [])
@@ -63,6 +65,8 @@ class ConfigTests(unittest.TestCase):
             ({"merge": {"auto": "yes"}}, "merge.auto must be true or false"),
             ({"conflicts": {"max_rounds": 0}}, "conflicts.max_rounds"),
             ({"usage_limit": {"retry_minutes": 0}}, "usage_limit.retry_minutes"),
+            ({"usage_limit": {"wait_minutes": 331}}, "usage_limit.wait_minutes"),
+            ({"usage_limit": {"wait_minutes": -1}}, "usage_limit.wait_minutes"),
             ({"usage_limit": []}, "usage_limit must be an object"),
             ({"limits": {"setup_timeout_minutes": 500}}, "limits.setup_timeout_minutes"),
             ({"limits": {"max_patch_mb": 0}}, "limits.max_patch_mb"),

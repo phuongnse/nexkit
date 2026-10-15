@@ -14,6 +14,7 @@ from .config import DEFAULTS
 from .route import issue_from_branch
 from .state import (
     BOT_LOGIN,
+    CONTINUED,
     FAILURE,
     PAUSED,
     RUNNING,
@@ -54,9 +55,13 @@ def issue_item(issue, comments, open_pulls):
     comment, run = runs[-1]
     item.update(link=_link(comment), run=run.get("url"), command=run.get("command"))
     status, command = run.get("status"), run.get("command")
-    if run.get("attention"):
+    if run.get("attention") and status != CONTINUED:
         item["attention"] = run["attention"]
-    if status == RUNNING:
+    if status == CONTINUED and number in open_pulls:
+        # `/nexkit go` paused on its pull request's review, which carries on there.
+        item.update(state="in_pull_request", pull=open_pulls[number])
+    elif status in (RUNNING, CONTINUED):
+        # A continued run's command runs again in a run that has not posted yet.
         item["state"] = "planning" if command == "plan" else "implementing"
     elif status == PAUSED:
         item["state"] = "paused"
@@ -86,7 +91,7 @@ def _meaningful(rounds):
 def pull_state(run, conflicting):
     """A pull request's state from its latest round and GitHub's mergeability."""
     status, outcome = run.get("status"), run.get("outcome")
-    if status == RUNNING or outcome in QUEUED:
+    if status in (RUNNING, CONTINUED) or outcome in QUEUED:
         return "running"
     if status == PAUSED:
         return "paused"

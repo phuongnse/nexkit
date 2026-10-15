@@ -132,6 +132,8 @@ class RouteTests(unittest.TestCase):
         self.assertFalse(manual["auto"])
         bad = route(self.gh, "workflow_dispatch", event, {"command": "go", "number": "x"})
         self.assertEqual(bad["action"], "none")
+        wait = route(self.gh, "workflow_dispatch", event, {"command": "resume", "number": "resume"})
+        self.assertEqual(wait, {"action": "maintain", "task": "resume"})
 
     def test_dispatch_marks_resumed_and_conflict_rounds(self):
         self.gh.add_pull(9, 5)

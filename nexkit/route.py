@@ -116,6 +116,9 @@ def route(gh, event_name, event, inputs=None):
     if event_name == "workflow_dispatch":
         command = (inputs.get("command") or "").strip()
         number = str(inputs.get("number") or "").strip()
+        if command == "resume":
+            # NexKit's own run that waits for commands paused at the usage limit.
+            return {"action": "maintain", "task": "resume"}
         if not number.isdigit():
             return _none("Dispatch input 'number' must be an issue or PR number")
         issue = gh.issue(int(number))

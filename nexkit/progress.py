@@ -11,6 +11,7 @@ import sys
 
 from .github import GitHubError, run_url
 from .state import (
+    CONTINUED,
     PAUSED,
     RUNNING,
     SUCCESS,
@@ -84,11 +85,15 @@ def show_command(gh, decision, status, text="", comments=None, **fields):
     _save(gh, issue, comment_id, render_run(run, text))
 
 
-def replace_paused(gh, comments, why="Replaced by a later command."):
-    """Stop paused runs in `comments` from resuming: a new command replaces them."""
+def replace_paused(gh, comments, why="Replaced by a later command.", recorded=True):
+    """Stop paused runs in `comments` from resuming and from showing ⏸️: a new command
+    carries on from them. With `recorded` false, only runs without a resume record."""
     for comment, run in run_comments(comments):
-        if run.get("status") == PAUSED and run.pop("resume", None):
-            gh.update_comment(comment["id"], with_run(comment["body"], run, why))
+        if run.get("status") != PAUSED or (not recorded and run.get("resume")):
+            continue
+        run.pop("resume", None)
+        run["status"] = CONTINUED
+        gh.update_comment(comment["id"], with_run(comment["body"], run, why))
 
 
 def start(gh, decision):
@@ -100,6 +105,10 @@ def start(gh, decision):
         comments = gh.comments(number)
         replace_paused(gh, comments)
         if decision.get("pr"):
+            # `/nexkit go` shows a pause of its pull request's review on the issue too; the
+            # pull request's record resumes it. Paused issue commands keep their own record.
+            why = f"Continued in pull request #{decision['pr']}."
+            replace_paused(gh, gh.comments(decision["issue"]), why, recorded=False)
             description = f"NexKit {decision['action']} round in progress"
             for context in STATUS_CONTEXTS:
                 gh.set_status(decision["head"], context, "pending", description, run_url())

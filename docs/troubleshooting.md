@@ -109,11 +109,15 @@ access, named in `publish.push_token_secret`, also lets NexKit push the merge.
 
 **⏸️ "The agent stopped at the account's usage limit".** The account behind the agent's
 secret, such as a Claude subscription, used up its session or weekly limit. NexKit runs
-the same command again after the reset time shown, through the hourly `schedule` trigger in
-`.github/workflows/nexkit.yml`. If nothing happens after the reset, check that the
-trigger is there (`nexkit doctor` warns when it is not) and that scheduled workflows are
-not disabled for the repository. To continue earlier, or with another note, comment the
-command yourself; it replaces the paused one.
+the same command again after the reset time shown. When the reset is at most
+`usage_limit.wait_minutes` away, a dispatched NexKit run with the command `resume` waits
+for it in the Actions tab;
+otherwise the hourly `schedule` trigger in `.github/workflows/nexkit.yml` picks it up, which
+GitHub can delay by hours. If nothing happens after the reset, look for that run and its
+log, check that the trigger is there (`nexkit doctor` warns when it is not) and that
+scheduled workflows are not disabled for the repository. To continue earlier, or with
+another note, comment the command yourself; it replaces the paused one, whose comment then
+shows ⏭️.
 
 **The agent timed out or stopped on its budget.** The issue is probably too large. Ask for a
 new plan and use its suggested split, or raise `timeout_minutes` / `max_budget_usd` for

@@ -69,6 +69,8 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(self.sweep(), [])
         self.round(6, 2, status="running")
         self.assertEqual(self.sweep(), [])
+        self.round(6, 3, status="continued")  # its command runs again
+        self.assertEqual(self.sweep(), [])
         self.assertFalse(self.gh.dispatches)
 
     def test_unknown_mergeability(self):

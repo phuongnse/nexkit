@@ -15,13 +15,14 @@ from datetime import UTC, datetime, timedelta
 from .config import setting
 from .github import GitHubError
 from .route import issue_from_branch
-from .state import PAUSED, RUNNING, by_bot, run_comments, with_run
+from .state import CONTINUED, PAUSED, RUNNING, by_bot, run_comments, with_run
 from .usage import iso, parse_iso
 
 # Each task runs only when one of its configuration keys is on.
 TASKS = {
     "parents": ("close_parent_issues",),
     "schedule": ("usage_limit.resume", "conflicts.auto_resolve"),
+    "resume": ("usage_limit.resume",),
     "conflicts": ("conflicts.auto_resolve",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
@@ -29,6 +30,12 @@ CLOSED = "<!-- nexkit:parent-closed -->"
 HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "duplicate"}
 # Usage limits reset within a week; paused runs older than this are not resumed.
 PAUSE_WINDOW = timedelta(days=8)
+# The `resume` dispatch: a run that waits for paused commands to come due and starts them.
+# Its `number` input is not a number, so callers' concurrency groups give it a group of its
+# own and it never holds up a command on an issue or pull request.
+WAIT_INPUTS = {"command": "resume", "number": "resume", "note": "", "auto": "false"}
+# How often a waiting run looks again for runs that paused while it waits.
+POLL = timedelta(minutes=10)
 
 
 def enabled(task, cfg):
@@ -103,11 +110,9 @@ def _number(comment):
     return int(match.group(1)) if match else None
 
 
-def resume_paused(gh, workflow, ref, now=None):
-    """Start each command that paused at the usage limit and whose reset time has passed,
-    once. Its run comment then says it was resumed and holds no resume record."""
-    now = now or datetime.now(UTC)
-    lines = []
+def paused_runs(gh, now):
+    """(comment, issue or pull request number, run, resume time) for each run paused at the
+    usage limit that NexKit resumes by itself."""
     for comment in gh.recent_comments(iso(now - PAUSE_WINDOW)):
         number = _number(comment)
         found = next(run_comments([comment]), None)
@@ -118,8 +123,21 @@ def resume_paused(gh, workflow, ref, now=None):
         if run.get("status") != PAUSED or not isinstance(resume, dict):
             continue
         at = parse_iso(resume.get("at"))
-        if not at or at > now:
+        if at:
+            yield comment, number, run, at
+
+
+def resume_paused(gh, workflow, ref, now=None):
+    """Start each command that paused at the usage limit and whose reset time has passed,
+    once. Its run comment then shows it continued in a new run and holds no resume record.
+    Returns (lines, the earliest resume time still to come or None)."""
+    now = now or datetime.now(UTC)
+    lines, upcoming = [], None
+    for comment, number, run, at in paused_runs(gh, now):
+        if at > now:
+            upcoming = min(upcoming or at, at)
             continue
+        resume = run["resume"]
         inputs = {
             "command": str(resume.get("command") or ""),
             "number": str(resume.get("number") or number),
@@ -133,12 +151,48 @@ def resume_paused(gh, workflow, ref, now=None):
             lines.append(f"Could not resume /nexkit {inputs['command']} on #{number}: {exc}")
             continue
         del run["resume"]
+        run["status"] = CONTINUED
         link = f"[a new run]({started['html_url']})" if started.get("html_url") else "a new run"
         target = "" if inputs["number"] == str(number) else f" on #{inputs['number']}"
         note = f"Resumed `/nexkit {inputs['command']}`{target} in {link} after the usage limit."
         gh.update_comment(comment["id"], with_run(comment["body"], run, note))
         lines.append(f"Resumed /nexkit {inputs['command']} on #{inputs['number']}.")
-    return lines
+    return lines, upcoming
+
+
+def start_waiting(gh, workflow, ref):
+    """Dispatch the run that waits for paused commands to come due. A second one waits
+    behind the first in its concurrency group and finds little or nothing left to do."""
+    gh.dispatch(workflow, ref, WAIT_INPUTS)
+
+
+def wait_and_resume(gh, workflow, ref, wait_minutes, now=datetime.now, sleep=time.sleep):
+    """Resume paused commands as they come due, for up to `wait_minutes`. Looks again every
+    `POLL`, so runs that pause meanwhile are resumed too. A resume due later is left to a
+    later scheduled check, which starts another wait when it comes within reach."""
+    deadline = now(UTC) + timedelta(minutes=wait_minutes)
+    lines = []
+    while True:
+        done, upcoming = resume_paused(gh, workflow, ref, now(UTC))
+        lines += done
+        current = now(UTC)
+        if upcoming is None or upcoming > deadline or current >= deadline:
+            return lines
+        sleep(max(0.0, min((upcoming - current).total_seconds(), POLL.total_seconds())))
+
+
+def check_paused(gh, workflow, ref, wait_minutes, now=None):
+    """The scheduled check. When a resume comes due within `wait_minutes`, it starts the run
+    that waits for it, and every resume goes through that run, so two runs never start the
+    same command. With no wait, it resumes what is due itself."""
+    now = now or datetime.now(UTC)
+    if not wait_minutes:
+        return resume_paused(gh, workflow, ref, now)[0]
+    reach = now + timedelta(minutes=wait_minutes)
+    if not any(at <= reach for _, _, _, at in paused_runs(gh, now)):
+        return []
+    start_waiting(gh, workflow, ref)
+    return ["Started a run that resumes paused commands as they come due."]
 
 
 def conflict_note(base):
@@ -171,9 +225,10 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds):
     sha = gh.branch_sha(base)
     if tried and tried[-1].get("base_sha") == sha:
         return ""
-    if rounds and rounds[-1].get("status") in (PAUSED, RUNNING):
+    if rounds and rounds[-1].get("status") in (PAUSED, RUNNING, CONTINUED):
         # A running round merges the base branch itself when it conflicts, and a dispatch
         # now would replace a command waiting behind it. A later check starts the round.
+        # A continued round has a run on its way.
         return ""
     if len([run for run in tried if not run.get("resumed")]) >= max_rounds:
         return (
@@ -214,11 +269,14 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
         return resolve_conflicts(
             gh, decision["base"], workflow, ref, cfg["conflicts"]["max_rounds"]
         )
+    wait = cfg["usage_limit"]["wait_minutes"]
+    if task == "resume":
+        return wait_and_resume(gh, workflow, ref, wait)
     if task == "schedule":
         lines = []
         if cfg["usage_limit"]["resume"]:
             try:
-                lines += resume_paused(gh, workflow, ref)
+                lines += check_paused(gh, workflow, ref, wait)
             except GitHubError as exc:
                 print(f"warning: could not resume paused runs: {exc}", file=sys.stderr)
         if cfg["conflicts"]["auto_resolve"]:

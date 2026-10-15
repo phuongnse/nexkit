@@ -1,5 +1,52 @@
 # Changelog
 
+## 3.0.0
+
+- **Breaking:** every agent is declared in the new `agents` key, with the names of the
+  secrets it uses, so the configuration names every secret NexKit reads. There is no
+  built-in Claude agent any more, and a configuration without `agents` is rejected with
+  the block to add. A `NEXKIT_PUSH_TOKEN` secret is used only when
+  `publish.push_token_secret` names it (default `null`: the Actions token). **Upgrade:**
+  see [Agents are declared](docs/configuration.md#agents-are-declared); `nexkit doctor`
+  warns about a push token secret the configuration does not name.
+- An agent is a runtime (the CLI) and a provider (where the model is served). `agent`
+  chooses one at the top level, for a stage or in a profile, and layers like `model`;
+  wherever `agent` is set, `model` is set next to it. Each runtime checks the settings of
+  the stages it runs, such as an effort it does not know. See
+  [Agents](docs/configuration.md#agents).
+- New runtime `codex` with the provider `azure-openai`, for OpenAI models deployed on
+  Azure AI Foundry. The endpoint and each deployment's key live in secrets, never in the
+  configuration. Codex has no spending limit, so it rejects `max_budget_usd`, and the run
+  summary shows its tokens instead of a cost. See
+  [OpenAI models on Azure AI Foundry](docs/configuration.md#openai-models-on-azure-ai-foundry).
+- Secrets can have any name except those starting with `GITHUB_` or `NEXKIT_`. Each job
+  receives only the secrets of the agents its stages use, and each agent's process only
+  its own; `setup` and check commands no longer see an agent credential. **Upgrade:**
+  pass `secrets: inherit` to the pipeline in `.github/workflows/nexkit.yml`, as
+  `nexkit init` writes it. A workflow that passes `CLAUDE_CODE_OAUTH_TOKEN` or
+  `ANTHROPIC_API_KEY` one by one still works for agents that use those names. `nexkit
+  doctor` checks, for each agent the configuration uses, that its secret is set and
+  passed.
+- New `fallback` key on an agent: other agents of the same runtime that take over when it
+  stops at a usage limit, such as an Anthropic API key behind a Claude subscription.
+  Errors, timeouts and `blocked` never move to a fallback. A stage always starts on its own
+  agent; implement and fix restart from a clean checkout. When every agent is at its
+  limit, the run pauses until the earliest reset. The run summary and the run comments
+  name the agent of each stage. See [Fallback agents](docs/configuration.md#fallback-agents).
+- Paused runs resume within about ten minutes of the reset instead of whenever GitHub runs
+  the hourly schedule. When the reset is at most `usage_limit.wait_minutes` away (new key,
+  default 330, 0 to turn it off), NexKit starts a run that waits for it; it uses no agent
+  and no repository code, but holds a runner (billed minutes on private repositories). A
+  run whose command carried on now shows ⏭️ `continued` instead of staying ⏸️.
+- Only the `claude-code` runtime reports usage limits, so only its runs pause or fall back;
+  an Azure rate or quota error ends a Codex run as an error.
+- A structured result that does not fit its stage's schema is now an error, checked by
+  NexKit before anything is published.
+- The docs, the setup skill and the CLI's own text describe agents in general rather than
+  Claude only. `nexkit init` names the secret to set next, and
+  [Troubleshooting](docs/troubleshooting.md) covers the configuration errors that are new
+  in this release.
+
 ## 2.1.0
 
 - New `cache` key (default `[]`): caches to restore before `setup`, so the agent job (for

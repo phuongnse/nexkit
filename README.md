@@ -1,6 +1,6 @@
 # NexKit
 
-**Turn GitHub issues into reviewed, tested pull requests with Claude Code.**
+**Turn GitHub issues into reviewed, tested pull requests with coding agents.**
 
 NexKit is a GitHub Actions pipeline plus a Claude Code plugin. A collaborator asks for a
 plan on an issue, approves it, and NexKit implements the change on a branch, runs the
@@ -68,7 +68,7 @@ commands, writes the two NexKit files, helps you add the secret and runs `nexkit
 ### By hand
 
 ```sh
-pipx install git+https://github.com/phuongnse/nexkit@v2.1.0   # or run bin/nexkit from a clone
+pipx install git+https://github.com/phuongnse/nexkit@v3.0.0   # or run bin/nexkit from a clone
 cd your-repository
 nexkit init --check "test=npm test" --check "lint=npm run lint" --setup "npm ci"
 claude setup-token                       # copy the token it prints

@@ -281,7 +281,15 @@ class PublishTests(unittest.TestCase):
         self.assertIn("### What changes", plan_text(plan))
 
     def test_plan_comment_names_agents_other_than_the_default(self):
-        cfg = profile_config(agents={"backup": {"runtime": "claude-code", "provider": "anthropic"}})
+        cfg = profile_config(
+            agents={
+                "backup": {
+                    "runtime": "claude-code",
+                    "provider": "anthropic",
+                    "api_key_secret": "ANTHROPIC_API_KEY",
+                }
+            }
+        )
         cfg["profiles"]["hard"]["stages"]["implement"].update(agent="backup")
         result = {"status": "done", "output": PLAN, "profile": "hard"}
         result["triage"] = {"profile": "hard", "chosen_by": "triage", "reason": "Auth."}

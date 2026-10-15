@@ -156,9 +156,14 @@ class Provider:
     # Whether the CLI can run without the secrets on a person's machine, with its own login.
     local_login = False
 
+    def check(self, agent, where):
+        """Raise AgentConfigError for settings that do not fit together."""
+
     def secrets(self, agent):
         """The secrets the agent needs, as groups: one secret of every group must be set."""
-        return [(agent[key],) for key, f in self.fields.items() if f.kind == "secret"]
+        return [
+            (agent[key],) for key, f in self.fields.items() if f.kind == "secret" and key in agent
+        ]
 
     def check_secrets(self, agent, values):
         """Raise AgentConfigError for a secret whose value this provider cannot use. The

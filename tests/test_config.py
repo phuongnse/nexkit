@@ -5,11 +5,19 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import config
+from tests.support import CLAUDE, with_claude
+
+
+def validate(raw, **kw):
+    """config.validate with the Claude agent declared, as `nexkit init` writes it."""
+    if isinstance(raw, dict) and isinstance(raw.get("agents", {}), dict):
+        raw = with_claude(raw)
+    return config.validate(raw, **kw)
 
 
 class ConfigTests(unittest.TestCase):
     def test_defaults_are_applied(self):
-        cfg = config.validate({"checks": [{"name": "unit", "run": "make test"}]})
+        cfg = validate({"checks": [{"name": "unit", "run": "make test"}]})
         self.assertNotIn("runner", cfg)
         self.assertEqual(cfg["checks"][0]["timeout_minutes"], 15)
         self.assertEqual(cfg["fix"], {"max_auto_rounds": 2})
@@ -24,13 +32,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["log"], {"tool_output": "truncated"})
 
     def test_log_settings(self):
-        cfg = config.validate({"transcript": False, "log": {"tool_output": "none"}})
+        cfg = validate({"transcript": False, "log": {"tool_output": "none"}})
         self.assertFalse(cfg["transcript"])
         self.assertEqual(cfg["log"]["tool_output"], "none")
-        self.assertEqual(config.validate({"log": {}})["log"]["tool_output"], "truncated")
+        self.assertEqual(validate({"log": {}})["log"]["tool_output"], "truncated")
 
     def test_stage_settings_fall_back_to_global_model(self):
-        cfg = config.validate(
+        cfg = validate(
             {"model": "opus", "effort": "high", "stages": {"review": {"model": "sonnet"}}}
         )
         self.assertEqual(config.stage(cfg, "plan")["model"], "opus")
@@ -38,7 +46,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.stage(cfg, "review")["effort"], "high")
 
     def test_fix_uses_implement_limits(self):
-        cfg = config.validate({"stages": {"implement": {"timeout_minutes": 60}}})
+        cfg = validate({"stages": {"implement": {"timeout_minutes": 60}}})
         self.assertEqual(config.stage(cfg, "fix")["timeout_minutes"], 60)
 
     def test_rejects_unknown_and_invalid_values(self):
@@ -73,7 +81,7 @@ class ConfigTests(unittest.TestCase):
         ]
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
-                config.validate(raw)
+                validate(raw)
 
     def test_cache_entries(self):
         entry = {
@@ -81,9 +89,9 @@ class ConfigTests(unittest.TestCase):
             "paths": ["~/.gradle/caches", "~/.gradle/wrapper", "!~/.gradle/caches/*.lock"],
             "key_files": ["android/gradle/libs.versions.toml", "**/*.gradle.kts", "!build/**"],
         }
-        cfg = config.validate({"cache": [entry, {**entry, "name": "npm", "paths": ["/opt/x"]}]})
+        cfg = validate({"cache": [entry, {**entry, "name": "npm", "paths": ["/opt/x"]}]})
         self.assertEqual(cfg["cache"][0], entry)
-        self.assertEqual(config.validate(json.loads(json.dumps(cfg))), cfg)
+        self.assertEqual(validate(json.loads(json.dumps(cfg))), cfg)
 
     def test_rejects_invalid_cache_entries(self):
         entry = {"name": "npm", "paths": ["~/.npm"], "key_files": ["package-lock.json"]}
@@ -109,28 +117,28 @@ class ConfigTests(unittest.TestCase):
         ]
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
-                config.validate(raw)
+                validate(raw)
 
     def test_groups_merge_over_their_defaults(self):
-        cfg = config.validate({"merge": {"after_workflows": ["ci.yml", "e2e.yaml"]}})
+        cfg = validate({"merge": {"after_workflows": ["ci.yml", "e2e.yaml"]}})
         self.assertEqual(cfg["merge"], {"auto": False, "after_workflows": ["ci.yml", "e2e.yaml"]})
-        cfg = config.validate({"conflicts": {"auto_resolve": True}})
+        cfg = validate({"conflicts": {"auto_resolve": True}})
         self.assertEqual(cfg["conflicts"]["max_rounds"], 3)
         self.assertEqual(config.setting(cfg, "conflicts.auto_resolve"), True)
         # A validated configuration validates again unchanged, as the pipeline's jobs do.
-        self.assertEqual(config.validate(json.loads(json.dumps(cfg))), cfg)
+        self.assertEqual(validate(json.loads(json.dumps(cfg))), cfg)
 
     def test_renamed_keys_say_where_they_moved(self):
         with self.assertRaises(config.ConfigError) as caught:
-            config.validate({"auto_merge": True, "max_auto_fixes": 1})
+            validate({"auto_merge": True, "max_auto_fixes": 1})
         message = str(caught.exception)
         self.assertIn("'auto_merge' is now 'merge.auto'", message)
         self.assertIn("'max_auto_fixes' is now 'fix.max_auto_rounds'", message)
         with self.assertRaisesRegex(config.ConfigError, "'after_merge_workflows' is now"):
-            config.validate({"after_merge_workflows": []})
+            validate({"after_merge_workflows": []})
 
     def test_profiles_layer_over_stages(self):
-        cfg = config.validate(
+        cfg = validate(
             {
                 "model": "sonnet",
                 "effort": "high",
@@ -162,8 +170,8 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertEqual(config.stage(hard, "plan")["model"], "sonnet")
         # The configuration passes between jobs and is validated again there.
-        self.assertEqual(config.validate(json.loads(json.dumps(hard))), hard)
-        self.assertNotIn("triage", config.validate({})["stages"])
+        self.assertEqual(validate(json.loads(json.dumps(hard))), hard)
+        self.assertNotIn("triage", validate({})["stages"])
 
     def test_rejects_invalid_profiles(self):
         good = {"when": "Small changes."}
@@ -194,18 +202,24 @@ class ConfigTests(unittest.TestCase):
         ]
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
-                config.validate(raw)
+                validate(raw)
 
     def test_agents(self):
         raw = {
-            "agents": {"backup": {"runtime": "claude-code", "provider": "anthropic"}},
+            "agents": {
+                "backup": {
+                    "runtime": "claude-code",
+                    "provider": "anthropic",
+                    "api_key_secret": "ANTHROPIC_API_KEY",
+                }
+            },
             "stages": {"review": {"agent": "backup", "model": "opus"}},
             "profiles": {
                 "hard": {"when": "Security.", "stages": {"plan": {"agent": "backup", "model": "x"}}}
             },
             "default_profile": "hard",
         }
-        cfg = config.validate(raw)
+        cfg = validate(raw)
         self.assertEqual(cfg["agent"], "claude")
         self.assertEqual(config.stage(cfg, "plan")["agent"], "claude")
         self.assertEqual(config.stage(cfg, "review")["agent"], "backup")
@@ -214,22 +228,25 @@ class ConfigTests(unittest.TestCase):
             (config.stage(hard, "plan")["agent"], config.stage(hard, "plan")["model"]),
             ("backup", "x"),
         )
-        self.assertEqual(
-            config.agent(cfg, "claude"), {"runtime": "claude-code", "provider": "anthropic"}
-        )
+        self.assertEqual(config.agent(cfg, "claude"), CLAUDE["claude"])
         self.assertEqual(config.runtimes(cfg), ["claude-code"])
-        self.assertEqual(config.validate(json.loads(json.dumps(hard))), hard)
-        top = config.validate({**raw, "agent": "backup", "model": "opus"})
+        self.assertEqual(validate(json.loads(json.dumps(hard))), hard)
+        top = validate({**raw, "agent": "backup", "model": "opus"})
         self.assertEqual(config.stage(top, "implement")["agent"], "backup")
 
     def test_rejects_invalid_agents(self):
         def agents(**definitions):
             return {"agents": definitions}
 
-        claude = {"runtime": "claude-code", "provider": "anthropic"}
+        claude = {
+            "runtime": "claude-code",
+            "provider": "anthropic",
+            "api_key_secret": "ANTHROPIC_API_KEY",
+        }
         cases = [
             ({"agents": []}, "agents must be an object"),
-            (agents(claude=claude), "'claude' is built in"),
+            (agents(x={**claude, "oauth_token_secret": "T"}), "agents.x needs exactly one of"),
+            (agents(x={"runtime": "claude-code", "provider": "anthropic"}), "needs exactly one"),
             (agents(Big=claude), "lowercase identifier"),
             (agents(x={"runtime": "aider", "provider": "anthropic"}), "agents.x.runtime"),
             (agents(x={"runtime": "claude-code", "provider": "acme"}), "agents.x.provider"),
@@ -246,26 +263,44 @@ class ConfigTests(unittest.TestCase):
         ]
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
-                config.validate(raw)
+                validate(raw)
 
     def test_a_layered_configuration_validates_again(self):
         # route passes on the configuration with the run's profile applied; every later job
         # validates it again, without layering the other profiles over that profile.
         raw = {
-            "agents": {"backup": {"runtime": "claude-code", "provider": "anthropic"}},
+            "agents": {
+                "backup": {
+                    "runtime": "claude-code",
+                    "provider": "anthropic",
+                    "api_key_secret": "ANTHROPIC_API_KEY",
+                }
+            },
             "profiles": {
                 "a": {"when": "x", "stages": {"implement": {"model": "opus", "effort": "xhigh"}}},
                 "b": {"when": "y", "stages": {"implement": {"agent": "backup", "model": "m"}}},
             },
             "default_profile": "a",
         }
-        layered = config.with_profile(config.validate(raw), "a")
+        layered = config.with_profile(validate(raw), "a")
         runtime = config.RUNTIMES["claude-code"]
         with mock.patch.object(runtime, "validate", wraps=runtime.validate) as checked:
-            again = config.validate(json.loads(json.dumps(layered)), layered=True)
+            again = validate(json.loads(json.dumps(layered)), layered=True)
         self.assertEqual(again, layered)
         where = [call.args[1] for call in checked.call_args_list]
         self.assertEqual(where, [f"stages.{name}" for name in again["stages"]])
+
+    def test_agents_are_declared(self):
+        # A configuration from before agents were declared says what to add.
+        with self.assertRaisesRegex(config.ConfigError, "agents is required") as caught:
+            config.validate({"model": "opus"})
+        self.assertIn(
+            '"agents": {"claude": {"runtime": "claude-code", "provider": "anthropic", '
+            '"oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"}}',
+            str(caught.exception),
+        )
+        agent = config.agent(config.validate({"agents": CLAUDE}), "claude")
+        self.assertEqual(agent, config.CLAUDE_AGENT)
 
     def test_each_runtime_checks_the_stages_it_runs(self):
         raw = {
@@ -276,10 +311,10 @@ class ConfigTests(unittest.TestCase):
             config.ConfigError,
             r"profiles\.easy\.stages\.review\.effort must be one of .* for Claude",
         ):
-            config.validate(raw)
+            validate(raw)
 
     def test_protected_paths(self):
-        cfg = config.validate({})
+        cfg = validate({})
         self.assertTrue(config.is_protected(".github/workflows/ci.yml", cfg))
         self.assertTrue(config.is_protected("./.nexkit/config.json", cfg))
         self.assertFalse(config.is_protected("github/notes.md", cfg))
@@ -294,7 +329,7 @@ class ConfigTests(unittest.TestCase):
             path.write_text("{")
             with self.assertRaisesRegex(config.ConfigError, "not valid JSON"):
                 config.load(tmp)
-            path.write_text(json.dumps({"model": "opus"}))
+            path.write_text(json.dumps({"agents": CLAUDE, "model": "opus"}))
             self.assertEqual(config.load(tmp)["model"], "opus")
 
 

@@ -69,7 +69,11 @@ files or repository settings, and wait for confirmation.
 
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`
-   Show the generated `.nexkit/config.json` and `.github/workflows/nexkit.yml`.
+   Show the generated `.nexkit/config.json` and `.github/workflows/nexkit.yml`. The config
+   declares the `claude` agent with `"oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"`; if
+   the user has an Anthropic API key instead, change it to
+   `"api_key_secret": "ANTHROPIC_API_KEY"`. Every secret NexKit reads is named in the
+   config this way.
 
 5. **Add the Claude credential** as a repository secret. With a Claude Pro or Max
    subscription, the user runs `claude setup-token` in their own terminal (in this

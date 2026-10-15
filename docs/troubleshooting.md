@@ -47,9 +47,9 @@ and has a `workflow_dispatch` trigger without required inputs; `nexkit doctor` c
 in your working copy. To run it for this merge, use *Run workflow* on the base branch in
 the Actions tab.
 
-**"No secret for the `claude` agent".** Add `CLAUDE_CODE_OAUTH_TOKEN` (from
-`claude setup-token`) or `ANTHROPIC_API_KEY` as a repository secret. For another agent, add
-the secrets its configuration names. Either way, `.github/workflows/nexkit.yml` must pass
+**"No secret for the `claude` agent".** Add the secret that the agent's configuration
+names as a repository secret: for `oauth_token_secret`, the token from
+`claude setup-token`; for `api_key_secret`, an Anthropic API key. Either way, `.github/workflows/nexkit.yml` must pass
 them to the pipeline: `secrets: inherit`, as `nexkit init` writes it. `nexkit doctor`
 checks this.
 Secrets are not available to runs triggered from forks.
@@ -64,6 +64,10 @@ with …".** The secret holds something other than the resource URL, such as the
 URI with `/openai/...`. Set it again to `https://<name>.openai.azure.com`. The log line
 "Model metadata for `<deployment>` not found" is harmless: Codex does not know the
 deployment's name.
+
+**"agents is required".** The configuration is from before agents were declared. Add the
+`agents` block that the message shows (see
+[Agents are declared](configuration.md#agents-are-declared)).
 
 **"provider must be one of …".** That runtime does not support the provider. The
 [Agents](configuration.md#agents) table lists the pairs NexKit supports.

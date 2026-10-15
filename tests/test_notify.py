@@ -4,8 +4,10 @@ import unittest
 
 from nexkit.config import ConfigError, validate
 from nexkit.report import needs_person, report
-from tests.support import make_config
+from tests.support import CLAUDE, make_config
 from tests.test_report import HEAD, LIMIT, ReportCase, decision, review_result
+
+WITH_CLAUDE = {"agents": CLAUDE}
 
 
 class RuleTests(unittest.TestCase):
@@ -54,11 +56,18 @@ class RuleTests(unittest.TestCase):
 
 class ConfigTests(unittest.TestCase):
     def test_notify(self):
-        self.assertEqual(validate({})["notify"], [])
-        self.assertEqual(validate({"notify": ["octo-cat"]})["notify"], ["octo-cat"])
+        self.assertEqual(
+            validate(
+                {
+                    **WITH_CLAUDE,
+                }
+            )["notify"],
+            [],
+        )
+        self.assertEqual(validate({**WITH_CLAUDE, "notify": ["octo-cat"]})["notify"], ["octo-cat"])
         for bad in (["@owner"], "owner", ["a", "A"], [""], ["-x"]):
             with self.assertRaises(ConfigError, msg=bad):
-                validate({"notify": bad})
+                validate({**WITH_CLAUDE, "notify": bad})
 
 
 class MentionTests(ReportCase):

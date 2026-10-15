@@ -42,7 +42,9 @@ CONFIG = {}  # set by main() for the runtime under test
 def agent_settings(runtime):
     """The configuration keys that run every stage on `runtime`."""
     if runtime == "claude-code":
-        return {"model": "haiku"}
+        agent = {"runtime": "claude-code", "provider": "anthropic"}
+        agent["oauth_token_secret"] = "CLAUDE_CODE_OAUTH_TOKEN"
+        return {"agents": {"claude": agent}, "model": "haiku"}
     model = os.environ.get("AZURE_OPENAI_DEPLOYMENT")
     if not model or not os.environ.get("AZURE_OPENAI_ENDPOINT"):
         raise SystemExit(

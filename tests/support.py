@@ -17,10 +17,24 @@ from nexkit.config import validate
 from nexkit.runtimes.claude_code import ClaudeReader
 from nexkit.state import BOT_LOGIN, RUN_PATTERN
 
+# The Claude agent that `nexkit init` declares.
+CLAUDE = {
+    "claude": {
+        "runtime": "claude-code",
+        "provider": "anthropic",
+        "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN",
+    }
+}
+
+
+def with_claude(raw):
+    """`raw` with the Claude agent declared next to the agents it has."""
+    return {**raw, "agents": {**CLAUDE, **raw.get("agents", {})}}
+
 
 def make_config(**overrides):
     raw = {"checks": [{"name": "test", "run": "true"}], **overrides}
-    return validate(raw)
+    return validate(with_claude(raw))
 
 
 PROFILES = {

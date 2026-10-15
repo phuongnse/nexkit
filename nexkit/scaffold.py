@@ -63,6 +63,8 @@ def init(root, *, checks, setup, model, kit_repo, kit_ref, force):
             raise FileExistsError(f"Already exists: {', '.join(existing)} (use --force)")
     raw = {
         "version": 1,
+        "agents": {"claude": dict(configuration.CLAUDE_AGENT)},
+        "agent": "claude",
         "model": model,
         "setup": setup,
         "checks": [parse_check(c) for c in checks],
@@ -261,8 +263,8 @@ def doctor(root):
     names = set(
         (_gh("secret", "list", "--repo", repo, "--json", "name", "-q", ".[].name") or "").split()
     )
-    # With an invalid config, check the built-in agent's secret.
-    findings += _secrets_set(cfg or configuration.validate({}), names, repo)
+    if cfg:
+        findings += _secrets_set(cfg, names, repo)
     perms = _gh("api", f"repos/{repo}/actions/permissions/workflow")
     if perms is not None:
         if json.loads(perms).get("can_approve_pull_request_reviews"):

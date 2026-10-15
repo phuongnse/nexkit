@@ -15,8 +15,13 @@ INSTALL_URL = "https://claude.ai/install.sh"
 
 
 def anthropic(agent, spec, secrets):
-    """Claude's own service, with a subscription token or an API key."""
-    return Launch([], env=dict(secrets))
+    """Claude's own service. Claude Code reads the token or key from its own variable, so
+    the agent's secret, whatever its name, is passed under that one."""
+    env = {}
+    for key, variable in zip(("oauth_token_secret", "api_key_secret"), CREDENTIALS, strict=True):
+        if secrets.get(agent.get(key)):
+            env[variable] = secrets[agent[key]]
+    return Launch([], env=env)
 
 
 def result_text(content):

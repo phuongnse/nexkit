@@ -12,7 +12,7 @@ import nexkit
 import nexkit.config
 from nexkit import cli, scaffold
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
-from tests.support import PROFILES, FakeGitHub, GitRepos, git
+from tests.support import CLAUDE, PROFILES, FakeGitHub, GitRepos, git
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -178,9 +178,9 @@ class InitDoctorTests(unittest.TestCase):
             self.assertIn(
                 (
                     False,
-                    "Set a secret for the `claude` agent: run 'claude setup-token' and "
-                    "'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/app', or set "
-                    "ANTHROPIC_API_KEY",
+                    "Set a secret for the `claude` agent: run "
+                    "'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/app' with the token "
+                    "from 'claude setup-token'",
                 ),
                 findings,
             )
@@ -209,7 +209,7 @@ class InitDoctorTests(unittest.TestCase):
         self.assertIn(
             (
                 False,
-                "The `claude` agent needs CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, but "
+                "The `claude` agent needs CLAUDE_CODE_OAUTH_TOKEN, but "
                 ".github/workflows/nexkit.yml does not pass it to the pipeline; add it under "
                 "'secrets:' as 'nexkit init' writes it",
             ),
@@ -236,14 +236,26 @@ class InitDoctorTests(unittest.TestCase):
     def test_doctor_finds_the_secret_of_each_agent(self):
         cfg = nexkit.config.validate(
             {
-                "agents": {"backup": {"runtime": "claude-code", "provider": "anthropic"}},
+                "agents": {
+                    **CLAUDE,
+                    "backup": {
+                        "runtime": "claude-code",
+                        "provider": "anthropic",
+                        "api_key_secret": "ANTHROPIC_API_KEY",
+                    },
+                },
                 "stages": {"review": {"agent": "backup", "model": "opus"}},
             }
         )
         self.assertEqual(
             scaffold._secrets_set(cfg, {"ANTHROPIC_API_KEY", "OTHER"}, "acme/app"),
             [
-                (True, "Secret for the `claude` agent is set: ANTHROPIC_API_KEY"),
+                (
+                    False,
+                    "Set a secret for the `claude` agent: run 'gh secret set "
+                    "CLAUDE_CODE_OAUTH_TOKEN --repo acme/app' with the token from "
+                    "'claude setup-token'",
+                ),
                 (True, "Secret for the `backup` agent is set: ANTHROPIC_API_KEY"),
             ],
         )
@@ -304,7 +316,7 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("issue_comment", event)
         self.assertEqual(out["action"], "implement")
         self.assertNotIn("claude_version", out)
-        claude = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+        claude = ["CLAUDE_CODE_OAUTH_TOKEN"]
         self.assertEqual(json.loads(out["agent_secrets"]), claude)
         self.assertEqual(json.loads(out["review_secrets"]), claude)
         self.assertEqual(json.loads(out["decision"])["issue"], 5)
@@ -356,7 +368,7 @@ class PipelineCommandTests(unittest.TestCase):
 
         path = self.root / "repo/.nexkit/config.json"
         path.write_text(json.dumps({**json.loads(path.read_text()), **MixedRuntimeTests.RAW}))
-        claude = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+        claude = ["CLAUDE_CODE_OAUTH_TOKEN"]
         azure = ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]
         event = {
             "action": "created",
@@ -416,7 +428,7 @@ class PipelineCommandTests(unittest.TestCase):
 
     def test_agent_setup_failure_is_redacted_and_summarised(self):
         setup = 'echo "key $DEPLOY_TOKEN, agent [$ANTHROPIC_API_KEY]"; exit 4'
-        cfg = nexkit.config.validate({"setup": [setup]})
+        cfg = nexkit.config.validate({"agents": CLAUDE, "setup": [setup]})
         out = self.root / "out"
         out.mkdir()
         (out / "context.json").write_text("{}")
@@ -444,7 +456,9 @@ class PipelineCommandTests(unittest.TestCase):
         repos = GitRepos()
         self.addCleanup(repos.cleanup)
         repo = repos.clone("agent")  # implement starts on the base branch itself
-        cfg = nexkit.config.validate({"setup": ['echo "base=$NEXKIT_BASE_SHA"; exit 4']})
+        cfg = nexkit.config.validate(
+            {"agents": CLAUDE, "setup": ['echo "base=$NEXKIT_BASE_SHA"; exit 4']}
+        )
         out = self.root / "out"
         out.mkdir()
         (out / "context.json").write_text("{}")
@@ -467,7 +481,10 @@ class PipelineCommandTests(unittest.TestCase):
         repo = repos.clone("verify")
         git(repo, "checkout", "-q", "nexkit/issue-5")
         cfg = nexkit.config.validate(
-            {"checks": [{"name": "base", "run": 'echo "${NEXKIT_BASE_SHA-unset}"'}]}
+            {
+                "agents": CLAUDE,
+                "checks": [{"name": "base", "run": 'echo "${NEXKIT_BASE_SHA-unset}"'}],
+            }
         )
         for base, seen in (("main", fork), ("gone", "unset")):
             env = {
@@ -488,7 +505,7 @@ class InstallAgentsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "path"
             env = {
-                "NEXKIT_CONFIG": json.dumps(nexkit.config.validate({})),
+                "NEXKIT_CONFIG": json.dumps(nexkit.config.validate({"agents": CLAUDE})),
                 "GITHUB_PATH": str(path),
             }
             with (

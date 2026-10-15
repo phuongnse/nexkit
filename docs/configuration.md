@@ -7,12 +7,15 @@ Unknown keys are rejected so typos fail loudly.
 The runner (`ubuntu-24.04`), the version of each agent runtime and NexKit's Python
 version are set by the NexKit release and are not configurable. See [supported versions](../README.md#supported-versions).
 
-A complete configuration with every key at its default, except `setup` and `checks`:
+A complete configuration with every key at its default, except `agents`, `setup` and
+`checks`, which `nexkit init` writes:
 
 ```json
 {
   "version": 1,
-  "agents": {},
+  "agents": {
+    "claude": {"runtime": "claude-code", "provider": "anthropic", "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"}
+  },
   "agent": "claude",
   "model": "sonnet",
   "effort": null,
@@ -43,9 +46,9 @@ their defaults.
 | Key | Default | Meaning |
 |---|---|---|
 | `version` | `1` | Configuration format. Must be `1`. |
-| `agents` | `{}` | Agents besides the built-in `claude`: a runtime, a provider and its settings. See [Agents](#agents). |
+| `agents` | required | The agents the stages may use: a runtime, a provider, its settings and the names of the secrets it uses. See [Agents](#agents). |
 | `agent` | `"claude"` | The agent for every stage. Set `model` with it. |
-| `model` | `"sonnet"` | Model for every stage, as the agent names it. For `claude`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
+| `model` | `"sonnet"` | Model for every stage, as the agent names it. For Claude Code: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
 | `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
@@ -77,6 +80,22 @@ their defaults.
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
 | `transcript` | `true` | Write the agent's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See [Logs and transcripts](#logs-and-transcripts). |
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. |
+
+### Agents are declared
+
+NexKit 2.1 and earlier ran every stage on a Claude agent that the configuration did not
+mention. Every agent is now declared in `agents`, with the names of the secrets it uses,
+so the configuration shows every secret NexKit reads. A configuration without `agents`
+is rejected with what to add:
+
+```json
+"agents": {
+  "claude": {"runtime": "claude-code", "provider": "anthropic", "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"}
+}
+```
+
+With an Anthropic API key, write `"api_key_secret": "ANTHROPIC_API_KEY"` instead of
+`oauth_token_secret`.
 
 ### Keys renamed in this release
 
@@ -346,12 +365,17 @@ less often, change the `cron` line, for example to `"23 */3 * * *"`.
 ## Agents
 
 An agent is a **runtime**, the CLI that runs the tool loop, paired with a **provider**,
-where the model is served and how it authenticates. Stages choose an agent by name. The
-agent `claude` is built in: Claude Code with a Claude subscription token or an Anthropic
-API key. Without `agents`, every stage runs on it.
+where the model is served and how it authenticates. Every agent is declared here, with the
+names of the secrets it uses; stages choose one by name. `nexkit init` declares `claude`:
+Claude Code with a Claude subscription token.
 
 ```json
 "agents": {
+  "claude": {
+    "runtime": "claude-code",
+    "provider": "anthropic",
+    "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"
+  },
   "sol": {
     "runtime": "codex",
     "provider": "azure-openai",
@@ -386,7 +410,7 @@ API key. Without `agents`, every stage runs on it.
 }
 ```
 
-- An agent name is a short lowercase identifier other than `claude`. `runtime` and
+- An agent name is a short lowercase identifier. `runtime` and
   `provider` are required; the other keys are the provider's settings, and unknown keys
   are rejected.
 - `agent` layers like `model`: `profiles.<profile>.stages.<stage>`, then
@@ -403,7 +427,7 @@ API key. Without `agents`, every stage runs on it.
 
 | Provider | Settings | Secret |
 |---|---|---|
-| `anthropic` | none | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` |
+| `anthropic` | none | Exactly one of `oauth_token_secret`, the secret that holds a Claude subscription token from `claude setup-token`, and `api_key_secret`, the secret that holds an Anthropic API key. Claude Code receives it under its own variable, whatever the secret's name. |
 | `azure-openai` | none. `model` is the deployment name. | `endpoint_secret`: the secret that holds the resource URL, `https://<name>.openai.azure.com` (or `.services.ai.azure.com`, `.cognitiveservices.azure.com`), with no path. `api_key_secret`: the secret that holds the deployment's key. |
 
 A run reports usage limits only for `claude-code`. When Azure refuses a request for its
@@ -535,15 +559,13 @@ writes it, so the pipeline can read each agent's secrets by the names in
 `.nexkit/config.json`. It passes a job only the secrets of the agents its stages use, at
 most 8 per job, and each agent's CLI only its own; setup and check commands get none. See
 [How it works](how-it-works.md#agents) for what this does and does not isolate. A
-workflow that lists secrets one by one, as `nexkit init` wrote before, can pass only the
-built-in agent's secrets and `NEXKIT_PUSH_TOKEN`; `nexkit doctor` says when an agent needs
-`secrets: inherit`.
+workflow that lists secrets one by one, as `nexkit init` wrote before, can pass only
+`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` and `NEXKIT_PUSH_TOKEN`; `nexkit doctor`
+says when an agent needs `secrets: inherit`.
 
 | Secret | Required | Used by |
 |---|---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` | one of these two, for `claude` | Agent and review jobs. Create it with `claude setup-token` (Claude Pro or Max). |
-| `ANTHROPIC_API_KEY` | one of these two, for `claude` | Agent and review jobs. Takes precedence when both are set. |
-| The names an agent's `*_secret` keys give | for that agent | Agent and review jobs, only for the stages that run on it. For `azure-openai`: the resource URL and the deployment's key. |
+| The names an agent's `*_secret` keys give | for each agent a stage uses | Agent and review jobs, only for the stages that run on that agent. For `anthropic`: the subscription token (`claude setup-token`, Claude Pro or Max) or the API key. For `azure-openai`: the resource URL and the deployment's key. |
 | `NEXKIT_PUSH_TOKEN` | no | Publish job only: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. Add Workflows write access if fix rounds should merge base branch changes to `.github/workflows/`; the default Actions token cannot push those. |
 
 ## Workflow file

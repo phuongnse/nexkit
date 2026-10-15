@@ -10,7 +10,7 @@ from unittest import mock
 
 from nexkit import agent, runlog
 from nexkit.redact import Redactor
-from nexkit.runtimes import BUILTIN, RUNTIMES
+from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.claude_code import ClaudeReader
 from tests.support import (
     CALC,
@@ -177,7 +177,7 @@ class PromptTests(unittest.TestCase):
 
     def argv(self, stage, cfg):
         spec = agent.stage_spec(stage, cfg, "/nonexistent")
-        return RUNTIMES["claude-code"].launch(BUILTIN["claude"], spec, {}).argv
+        return RUNTIMES["claude-code"].launch(cfg["agents"]["claude"], spec, {}).argv
 
     def test_command_restricts_read_only_stages(self):
         cfg = make_config(
@@ -443,9 +443,8 @@ class RunStageTests(StageCase):
         self.assertEqual(result["status"], "error")
         self.assertEqual(
             result["error"],
-            "No secret for the `claude` agent: set the CLAUDE_CODE_OAUTH_TOKEN or "
-            "ANTHROPIC_API_KEY repository secret and pass it in the `secrets:` of the NexKit "
-            "workflow.",
+            "No secret for the `claude` agent: set the CLAUDE_CODE_OAUTH_TOKEN repository secret "
+            "and pass it in the `secrets:` of the NexKit workflow.",
         )
         self.assertFalse(self.claude.log.exists())
         with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):

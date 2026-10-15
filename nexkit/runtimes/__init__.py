@@ -1,7 +1,7 @@
 """Agent runtimes and model providers, and the only places that list them.
 
-An agent is a runtime paired with a provider and the provider's settings. Stages choose
-an agent by name; `claude` is built in.
+An agent is a runtime paired with a provider and the provider's settings, declared in the
+configuration with the names of the secrets it uses. Stages choose an agent by name.
 """
 
 from __future__ import annotations
@@ -16,9 +16,8 @@ from .providers import Anthropic, AzureOpenAI
 
 RUNTIMES = {runtime.name: runtime for runtime in (ClaudeCode(), Codex())}
 PROVIDERS = {provider.name: provider for provider in (Anthropic(), AzureOpenAI())}
-BUILTIN = {"claude": {"runtime": "claude-code", "provider": "anthropic"}}
-# The secrets the built-in agent may use; the pipeline still declares them, so a workflow
-# that passes them one by one keeps working.
+# The secrets a Claude agent used before agents were declared; the pipeline still declares
+# them, so a workflow that passes secrets one by one keeps working with those names.
 DECLARED_SECRETS = CREDENTIALS
 # route names the secrets a job's stages need in NAMES_VAR, and pipeline.yml reads each
 # one by name into a numbered slot: SLOT_VAR % 1 … SLOT_VAR % SECRET_SLOTS.

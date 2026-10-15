@@ -43,8 +43,8 @@ Your project's own commands (`setup`, `checks`) use whatever tools they install 
 
 - A GitHub repository with a test or lint command that can run on `ubuntu-24.04`.
 - A Claude credential stored as a repository secret: a Claude Pro or Max subscription
-  token from `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN`), or an Anthropic API key
-  (`ANTHROPIC_API_KEY`).
+  token from `claude setup-token`, or an Anthropic API key. `.nexkit/config.json` names
+  the secret (`nexkit init` writes `CLAUDE_CODE_OAUTH_TOKEN`).
 - Optionally, OpenAI models deployed in Azure AI Foundry for some stages, run with Codex
   (see [Agents](docs/configuration.md#agents)).
 - No server or self-hosted runner. Everything runs on GitHub-hosted runners, which are

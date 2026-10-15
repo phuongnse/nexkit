@@ -12,7 +12,7 @@ from nexkit.redact import Redactor
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.codex import CodexReader
 from nexkit.schema import strict
-from tests.support import AZURE, FakeCodex, GitRepos, codex_events, make_config
+from tests.support import AZURE, CLAUDE, FakeCodex, GitRepos, codex_events, make_config
 from tests.test_agent import CONTEXT, DONE, PLAN
 
 ERROR = "unexpected status 401 Unauthorized: Access denied due to invalid subscription key"
@@ -92,7 +92,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(
             config.credentials(cfg),
             [
-                ("claude", ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")),
+                ("claude", ("CLAUDE_CODE_OAUTH_TOKEN",)),
                 ("sol", ("AZURE_OPENAI_ENDPOINT",)),
                 ("sol", ("AZURE_OPENAI_API_KEY",)),
             ],
@@ -118,8 +118,9 @@ class ConfigTests(unittest.TestCase):
             name: {"when": "x", "stages": {"plan": {"agent": name, "model": "m"}}}
             for name in agents
         }
-        with self.assertRaisesRegex(config.ConfigError, "The plan stage can need 11 agent secrets"):
-            config.validate({"agents": agents, "profiles": profiles, "default_profile": "a0"})
+        with self.assertRaisesRegex(config.ConfigError, "The plan stage can need 10 agent secrets"):
+            raw = {"agents": {**CLAUDE, **agents}, "profiles": profiles, "default_profile": "a0"}
+            config.validate(raw)
 
     def test_rejects_what_codex_or_azure_cannot_honour(self):
         def sol(**changes):
@@ -151,7 +152,7 @@ class ConfigTests(unittest.TestCase):
 
 class MixedRuntimeTests(unittest.TestCase):
     RAW = {
-        "agents": {"sol": AZURE},
+        "agents": {**CLAUDE, "sol": AZURE},
         "stages": {"triage": {"agent": "sol", "model": "gpt-mini"}},
         "default_profile": "claude",
         "profiles": {
@@ -176,7 +177,7 @@ class MixedRuntimeTests(unittest.TestCase):
     def test_each_job_gets_only_the_secrets_its_stages_need(self):
         cfg = config.validate(self.RAW)
         plan = [cfg, *(config.with_profile(cfg, name) for name in cfg["profiles"])]
-        claude = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+        claude = ["CLAUDE_CODE_OAUTH_TOKEN"]
         azure = ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]
         self.assertEqual(config.secret_names(plan, ["plan", "triage"]), sorted([*claude, *azure]))
         self.assertEqual(config.secret_names(plan, ["plan"]), claude)

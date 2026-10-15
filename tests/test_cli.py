@@ -384,6 +384,26 @@ class PipelineCommandTests(unittest.TestCase):
         cfg = json.loads(out["config"])
         self.assertEqual(nexkit.config.stage(cfg, "implement")["model"], "sonnet")
 
+    def test_route_allows_for_and_passes_the_secrets_of_fallback_agents(self):
+        from tests.test_fallback import AGENTS
+
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw.update(agents=AGENTS, stages={"implement": {"timeout_minutes": 40}})
+        path.write_text(json.dumps(raw))
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 3, "body": "/nexkit go", "user": {"login": "alice"}},
+        }
+        out = self.run_route("issue_comment", event)
+        # Each of the three agents may take the stage's timeout, then setup.
+        self.assertEqual(out["agent_timeout"], str(3 * 40 + 30))
+        self.assertEqual(
+            json.loads(out["agent_secrets"]),
+            ["CLAUDE_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_SPARE_TOKEN"],
+        )
+
     def test_route_passes_each_job_the_secrets_of_its_agents(self):
         from tests.test_codex import MixedRuntimeTests
 

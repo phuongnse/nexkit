@@ -112,8 +112,10 @@ masks or create annotations. Claude's thinking is never printed. With
 
 **Run summary.** At the end of the `agent` and `review` jobs, the run's summary page shows
 the stage and a one-row table of its result (done, blocked or error), turns, duration and
-cost, plus the verdict for a review; `-` marks a missing value. Below it are why the stage
-stopped, for a fix round that merged the base branch the files that had conflicts, the
+cost, plus the verdict for a review; `-` marks a missing value. Below it are the agent that
+ran the stage, with its runtime, provider and model, and when the stage moved to a
+[fallback agent](configuration.md#fallback-agents), a table of every agent's run with its
+result, duration and cost. Then come why the stage stopped, for a fix round that merged the base branch the files that had conflicts, the
 files changed (including what the merge brought), each command Claude ran and whether it failed, and for a review
 the findings.
 
@@ -123,13 +125,18 @@ the findings.
 | Result | Turns | Duration | Cost | Verdict |
 |---|---|---|---|---|
 | done | 12 | 3m 41s | $0.84 | approve |
+
+**Agent:** `claude` (claude-code on anthropic, model `opus`)
 ```
+
+The run comment on the issue or pull request names the agent of each stage that ran:
+"**Agents:** plan `claude-api` after `claude` hit its usage limit".
 
 **Artifacts,** kept 14 days:
 
 | Artifact | Contains |
 |---|---|
-| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (Claude's event stream, including thinking) and `transcript.md` (the conversation in order: Claude's text, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. |
+| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (Claude's event stream, including thinking) and `transcript.md` (the conversation in order: Claude's text, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/`. |
 | `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
@@ -375,8 +382,12 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
 ### Usage limits
 
 When an agent stops because its account hit a usage limit that resets, in any stage
-(triage, plan, implement, fix or review), the run is paused, not failed. The agent's
-runtime recognises the limit from its CLI's own message. Today only `claude-code` reports
+(triage, plan, implement, fix or review), the stage starts again on the agent's next
+[fallback agent](configuration.md#fallback-agents), from the beginning; implement and fix
+start from the checkout the first agent found. Without one left, the run is paused, not
+failed, until the earliest reset of the agents that stopped. The next run starts on the
+stage's own agent again, so a fallback runs only while the agent is at its limit. The
+agent's runtime recognises the limit from its CLI's own message. Today only `claude-code` reports
 one: Claude subscriptions have session and weekly limits. `codex` on `azure-openai` does
 not, because Azure limits requests per minute and Codex retries them itself; a run that
 still fails ends as an error, like any other.
@@ -440,7 +451,7 @@ that restriction on the disposable runner, or a read-only stage could not even r
 
 **How secrets reach an agent.** The repository's workflow passes the pipeline
 `secrets: inherit`. `route` works out which agents each job may run and names their
-secrets: for the `agent` job those of its stage (for a plan, triage and the plan of every
+secrets: for the `agent` job those of its stage and its fallback agents (for a plan, triage and the plan of every
 profile, since triage chooses one in the job), for the `review` job those of the review's
 agent. The job reads each named secret into one of 8 slots, and NexKit gives it back its
 name. Names that start with `GITHUB_` or `NEXKIT_` are never read. Within the job, each CLI process gets an
@@ -453,7 +464,7 @@ and never uploaded.
 This filtering limits what each process inherits. It is not a wall inside a job: an agent
 that can run commands can read other processes on the runner, so it may see every secret
 its job holds. A job holds another agent's secret only when that agent may run in the same
-job, such as a plan whose triage runs on another agent.
+job, such as a plan whose triage runs on another agent, or a fallback agent of the stage.
 
 ## Profiles
 

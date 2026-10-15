@@ -236,6 +236,7 @@ class ClaudeCode(Runtime):
     program = "claude"
     efforts = ("low", "medium", "high", "xhigh", "max")
     supports_budget = True
+    reports_limits = True
     providers = {"anthropic": anthropic}
 
     def install(self):

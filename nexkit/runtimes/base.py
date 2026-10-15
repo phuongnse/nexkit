@@ -202,6 +202,9 @@ class Runtime:
     program = ""  # the executable, found on PATH
     efforts: tuple[str, ...] = ()
     supports_budget = False
+    # Whether the reader can tell that the CLI stopped at a usage limit (`Outcome.limit`).
+    # Only then can a run pause, or move to the agent's fallback.
+    reports_limits = False
     # Provider name -> function(agent, spec, secrets) returning the Launch parts for it.
     providers: dict = {}
 

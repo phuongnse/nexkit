@@ -53,6 +53,8 @@ TOP_KEYS = set(DEFAULTS)
 # The longest a run waits for a usage limit to reset: a GitHub-hosted job ends after six
 # hours, and the wait needs time left to start the commands.
 MAX_WAIT = 330
+# The longest a stage may run, with all of its agents.
+MAX_STAGE_MINUTES = 340
 # Objects whose keys are merged over the defaults one by one.
 GROUPS = ("fix", "merge", "conflicts", "usage_limit", "limits", "log", "publish")
 # Keys of earlier releases, with where they live now.
@@ -62,7 +64,7 @@ RENAMED = {
     "after_merge_workflows": "merge.after_workflows",
 }
 STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes", "max_budget_usd"}
-AGENT_KEYS = {"runtime", "provider"}
+AGENT_KEYS = {"runtime", "provider", "fallback"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
 CHECK_KEYS = {"name", "run", "timeout_minutes"}
@@ -230,6 +232,36 @@ def _agents(cfg):
             provider.check(agent, where)
         except AgentConfigError as exc:
             _fail(str(exc))
+    for name, agent in agents.items():
+        if "fallback" in agent:
+            _fallback(cfg, name, agent)
+
+
+def _fallback(cfg, name, agent):
+    """Check `agents.<name>.fallback`: the agents that run a stage in turn when this one
+    stops at a usage limit. They share its runtime, which the stage's model is meant for."""
+    where = f"agents.{name}.fallback"
+    names = agent["fallback"]
+    if not isinstance(names, list) or not names or not all(isinstance(n, str) for n in names):
+        _fail(f"{where} must be a non-empty list of agent names")
+    runtime = RUNTIMES[agent["runtime"]]
+    if not runtime.reports_limits:
+        _fail(
+            f"{where}: {runtime.label} does not report usage limits, so a fallback would never "
+            "run; remove it"
+        )
+    for other in names:
+        if other == name:
+            _fail(f"{where} cannot name the agent itself")
+        if other not in cfg["agents"]:
+            _fail(f"{where}: '{other}' is not an agent: {', '.join(cfg['agents'])}")
+        if cfg["agents"][other]["runtime"] != agent["runtime"]:
+            _fail(
+                f"{where}: '{other}' must use the {runtime.name} runtime too, because a stage's "
+                "model and effort are meant for one runtime"
+            )
+    if len(set(names)) != len(names):
+        _fail(f"{where} names an agent twice")
 
 
 def _runtime_settings(cfg, profiles=True):
@@ -310,7 +342,7 @@ def _profiles(cfg):
             _stage_keys(settings, f"{where}.stages.{stage}")
             # Without its own timeout, the stage keeps the one from `stages`.
             settings = {"timeout_minutes": 1, **settings}
-            _stage_values(settings, f"{where}.stages.{stage}", 340, cfg)
+            _stage_values(settings, f"{where}.stages.{stage}", MAX_STAGE_MINUTES, cfg)
     if not profiles:
         if default is not None:
             _fail("default_profile needs profiles")
@@ -400,7 +432,7 @@ def validate(raw, *, layered=False):
 
     _profiles(cfg)
     for name, settings in cfg["stages"].items():
-        _stage_values(settings, f"stages.{name}", 30 if name == TRIAGE else 340, cfg)
+        _stage_values(settings, f"stages.{name}", 30 if name == TRIAGE else MAX_STAGE_MINUTES, cfg)
     _runtime_settings(cfg, profiles=not layered)
     if not layered:
         _secret_slots(cfg)
@@ -488,10 +520,28 @@ def agent(cfg, name):
     return cfg["agents"][name]
 
 
+def chain(cfg, name):
+    """The agents that run a stage of the agent `name`, in order: the agent, then its
+    fallbacks. Only the agent's own `fallback` counts, not that of its fallbacks."""
+    return [name, *cfg["agents"][name].get("fallback", [])]
+
+
+def stage_minutes(cfg, name):
+    """The longest a stage may run: its timeout for each agent that may run it in turn."""
+    settings = stage(cfg, name)
+    attempts = len(chain(cfg, settings["agent"]))
+    return min(settings["timeout_minutes"] * attempts, MAX_STAGE_MINUTES)
+
+
 def agents_used(cfg):
-    """The names of the agents that some stage uses, in any profile."""
+    """The names of the agents that some stage may run, in any profile, with fallbacks."""
     variants = [cfg, *(with_profile(cfg, name) for name in cfg["profiles"])]
-    used = {stage(variant, name)["agent"] for variant in variants for name in variant["stages"]}
+    used = {
+        member
+        for variant in variants
+        for name in variant["stages"]
+        for member in chain(variant, stage(variant, name)["agent"])
+    }
     return [name for name in cfg["agents"] if name in used]
 
 
@@ -506,15 +556,16 @@ def secret_names(variants, stages):
     names = set()
     for variant in variants:
         for name in stages:
-            chosen = agent(variant, stage(variant, name)["agent"])
-            for group in PROVIDERS[chosen["provider"]].secrets(chosen):
-                names.update(group)
+            for member in chain(variant, stage(variant, name)["agent"]):
+                chosen = agent(variant, member)
+                for group in PROVIDERS[chosen["provider"]].secrets(chosen):
+                    names.update(group)
     return sorted(names)
 
 
 def credentials(cfg):
     """(agent name, secrets of which one must be set) for each secret that an agent a stage
-    uses needs."""
+    may run needs, fallbacks included."""
     return [
         (name, group)
         for name in agents_used(cfg)

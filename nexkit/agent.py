@@ -365,12 +365,6 @@ def stage_spec(stage, cfg, home):
     )
 
 
-def agent_for(cfg, stage):
-    """The name and definition of the agent that runs a stage."""
-    name = configuration.stage(cfg, stage)["agent"]
-    return name, configuration.agent(cfg, name)
-
-
 def run_process(prompt, argv, *, env, cwd, timeout_seconds, log):
     """Start the CLI with `prompt` on stdin and pass each output line to `log`, which
     shows it and hands it to the runtime's reader."""
@@ -419,14 +413,119 @@ def run_process(prompt, argv, *, env, cwd, timeout_seconds, log):
     }
 
 
-def run_agent(stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, program=None):
+def run_agent(
+    stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, program=None, restore=None
+):
     """Run the agent of `stage` on `prompt`. Return the interpreted result and the tool
     calls for the summary. `program` replaces the runtime's executable, for tests.
+
+    When the agent stops at a usage limit, the stage runs again from the start on each of
+    its fallbacks in turn, after `restore` returned the checkout to where the agent started.
+    Nothing else moves to a fallback. The stage pauses when every agent stopped at its
+    limit, until the earliest reset. The result names the agent that ran last and lists
+    every agent's run in `attempts`.
 
     `base_sha` becomes NEXKIT_BASE_SHA, so checks that the agent runs see the same base as
     in the verify job."""
     settings = configuration.stage(cfg, stage)
-    name, agent = agent_for(cfg, stage)
+    names = configuration.chain(cfg, settings["agent"])
+    deadline = time.monotonic() + configuration.stage_minutes(cfg, stage) * 60
+    attempts, calls, limited = [], [], []
+    for index, name in enumerate(names):
+        seconds = min(settings["timeout_minutes"] * 60, deadline - time.monotonic())
+        if index and seconds < 60:
+            skipped = {"skipped": True, "error": "No time was left in the stage."}
+            attempts.append(_attempt_record(cfg, name, settings, skipped))
+            break
+        if index:
+            if restore:
+                restore()
+            print(
+                f"! The `{limited[-1][0]}` agent stopped at its usage limit; running the "
+                f"{stage} stage on `{name}`.",
+                flush=True,
+            )
+        attempt, attempt_calls = _run_one(
+            stage,
+            prompt,
+            cfg,
+            name,
+            fallback=bool(index),
+            seconds=seconds,
+            cwd=cwd,
+            redact=redact,
+            out=Path(out) / f"agent-{name}" if index else Path(out),
+            title=title,
+            base_sha=base_sha,
+            program=program,
+        )
+        attempts.append(_attempt_record(cfg, name, settings, attempt))
+        if attempt.get("skipped"):
+            continue
+        result, calls = attempt, attempt_calls
+        if attempt["status"] != "paused":
+            break
+        limited.append((name, attempt))
+    # The agent's own run is never skipped, so some run ended the stage.
+    if result["status"] == "paused" and len(limited) > 1:
+        _all_limited(result, limited)
+    _totals(result, attempts)
+    ran = next(a["agent"] for a in reversed(attempts) if a["status"] != "skipped")
+    result.update(agent=ran, attempts=attempts)
+    return result, calls
+
+
+def _attempt_record(cfg, name, settings, result):
+    """One agent's run of a stage, for the run summary and the run comment."""
+    chosen = configuration.agent(cfg, name)
+    record = {
+        "agent": name,
+        "runtime": chosen["runtime"],
+        "provider": chosen["provider"],
+        "model": settings["model"],
+        "status": "skipped" if result.get("skipped") else result["status"],
+    }
+    for key in ("seconds", "cost", "turns", "tokens", "limit"):
+        if result.get(key) is not None:
+            record[key] = result[key]
+    if record["status"] in ("skipped", "error") and result.get("error"):
+        record["error"] = result["error"]
+    return record
+
+
+def _all_limited(result, limited):
+    """Pause until the earliest reset of the agents that stopped at their limits."""
+    # `resume_at` is `YYYY-MM-DDTHH:MM:SSZ`, so text order is time order.
+    first = min((attempt for _, attempt in limited), key=lambda a: a["resume_at"])
+    text = "; ".join(f"`{name}`: {attempt['limit']}" for name, attempt in limited)
+    result.update(
+        error=f"Every agent stopped at its usage limit: {text}",
+        limit=text,
+        resume_at=first["resume_at"],
+        reset_known=first["reset_known"],
+    )
+
+
+def _totals(result, attempts):
+    """The stage's cost, turns, tokens and duration add up every agent's run."""
+    ran = [a for a in attempts if a["status"] != "skipped"]
+    if len(ran) < 2:
+        return
+    for key in ("cost", "turns", "seconds"):
+        values = [a[key] for a in ran if isinstance(a.get(key), (int, float))]
+        result[key] = round(sum(values), 4) if values else None
+    tokens = [a["tokens"] for a in ran if a.get("tokens")]
+    if tokens:
+        keys = dict.fromkeys(key for item in tokens for key in item)
+        result["tokens"] = {key: sum(item.get(key) or 0 for item in tokens) for key in keys}
+
+
+def _run_one(
+    stage, prompt, cfg, name, *, fallback, seconds, cwd, redact, out, title, base_sha, program
+):
+    """Run the agent `name` once. A fallback without its secret is skipped: the result has
+    `skipped` and says why."""
+    agent = configuration.agent(cfg, name)
     runtime = RUNTIMES[agent["runtime"]]
     provider = PROVIDERS[agent["provider"]]
     groups = provider.secrets(agent)
@@ -435,7 +534,8 @@ def run_agent(stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, pro
     missing = [group for group in groups if not any(key in secrets for key in group)]
     on_actions = os.environ.get("GITHUB_ACTIONS") == "true"
     error = None
-    if missing and (on_actions or not provider.local_login):
+    # A fallback never runs on a person's own login: that is the login the agent used.
+    if missing and (on_actions or fallback or not provider.local_login):
         error = (
             f"No secret for the `{name}` agent: set the {' or '.join(missing[0])} repository "
             "secret and pass it in the `secrets:` of the NexKit workflow."
@@ -446,13 +546,17 @@ def run_agent(stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, pro
         except AgentConfigError as exc:
             error = f"{exc} (the `{name}` agent)."
     if error:
-        return {"stage": stage, "status": "error", "cost": None, "error": error}, []
+        result = {"stage": stage, "status": "error", "cost": None, "error": error}
+        if fallback:
+            result["skipped"] = True
+        return result, []
     # Whatever names the configuration gave them.
     redact.add(secrets.values())
+    out.mkdir(parents=True, exist_ok=True)
     log = RunLog(
         redact,
         reader=runtime.reader(),
-        title=title,
+        title=f"{title} ({name})" if fallback else title,
         speaker=runtime.label,
         tool_output=cfg["log"]["tool_output"],
         transcript_dir=out if cfg["transcript"] else None,
@@ -469,7 +573,7 @@ def run_agent(stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, pro
             launch.argv,
             env={**env, **launch.env},
             cwd=cwd,
-            timeout_seconds=settings["timeout_minutes"] * 60,
+            timeout_seconds=seconds,
             log=log,
         )
     outcome = log.reader.outcome(run["returncode"], run["stderr"])
@@ -477,7 +581,7 @@ def run_agent(stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, pro
         stage,
         run,
         outcome,
-        settings["timeout_minutes"],
+        max(1, round(seconds / 60)),
         cfg["usage_limit"]["retry_minutes"],
         label=runtime.label,
         # NexKit's own schema: triage names an unknown profile in its error, not here.
@@ -694,6 +798,14 @@ def run_stage(
         }
         return _save(result, out, redact, [], start=start, merged=merged, conflicts=conflicts)
 
+    def restore():
+        """The checkout as the agent found it, for a fallback agent: the setup baseline,
+        and the merge of the base branch with its conflicts."""
+        git(repo, "reset", "-q", "--hard", base_commit)
+        git(repo, "clean", "-q", "-fd")
+        if merged:
+            git(repo, *BOT, "merge", "--no-commit", "--no-ff", "-q", merged, ok=(0, 1))
+
     result, calls = run_agent(
         stage,
         prompt,
@@ -704,6 +816,7 @@ def run_stage(
         title=f"NexKit {stage}",
         base_sha=base_sha,
         program=program,
+        restore=restore if base_commit else None,
     )
     if stage in ("implement", "fix") and result["status"] == "done":
         left = leftover_markers(repo, conflicts)

@@ -140,14 +140,15 @@ def cmd_route(args):
         _output(action="none", decision=decision, config={})
         return 0
     progress.start(gh, decision)
-    agent_minutes = configuration.stage(cfg, decision["action"])["timeout_minutes"]
+    # Each stage may run on its agent and then on each fallback in turn.
+    agent_minutes = configuration.stage_minutes(cfg, decision["action"])
     if decision["action"] == "plan" and cfg["profiles"]:
         # Triage chooses the profile inside the job, so allow for the longest plan.
         longest = max(
-            configuration.stage(configuration.with_profile(cfg, name), "plan")["timeout_minutes"]
+            configuration.stage_minutes(configuration.with_profile(cfg, name), "plan")
             for name in cfg["profiles"]
         )
-        agent_minutes = configuration.stage(cfg, "triage")["timeout_minutes"] + longest
+        agent_minutes = configuration.stage_minutes(cfg, "triage") + longest
     # Each job receives only the secrets of the agents it may run: an agent that can run
     # any command can read whatever its job holds. A plan may use any profile's agent.
     if decision["action"] == "plan":
@@ -155,7 +156,6 @@ def cmd_route(args):
         stages = ["plan", *([configuration.TRIAGE] if cfg["profiles"] else [])]
     else:
         variants, stages = [cfg], [decision["action"]]
-    review_stage = configuration.stage(cfg, "review")
     checks_minutes = sum(c["timeout_minutes"] for c in cfg["checks"])
     setup_minutes = cfg["limits"]["setup_timeout_minutes"]
     _output(
@@ -168,7 +168,7 @@ def cmd_route(args):
         agent_ref=decision["branch"] if decision["action"] == "fix" else decision["base"],
         # Setup runs before the agent and before the checks; the rest is for the job's steps.
         agent_timeout=str(agent_minutes + setup_minutes),
-        review_timeout=str(review_stage["timeout_minutes"] + 30),
+        review_timeout=str(configuration.stage_minutes(cfg, "review") + 30),
         checks_timeout=str(checks_minutes + setup_minutes + 10),
         agent_secrets=configuration.secret_names(variants, stages),
         review_secrets=configuration.secret_names([cfg], ["review"]),
@@ -252,7 +252,7 @@ def cmd_agent(args):
         if triage["status"] == "paused":
             # The plan would stop at the same limit; it runs again after the reset.
             keys = ("status", "error", "limit", "resume_at", "reset_known", "cost")
-            result = {"stage": stage, **{key: triage[key] for key in keys}}
+            result = {"stage": stage, **{key: triage[key] for key in keys}, "triage": triage}
             (out / "result.json").write_text(json.dumps(result, indent=2))
             print(json.dumps(result, indent=2))
             return 0

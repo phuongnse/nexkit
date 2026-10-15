@@ -13,6 +13,7 @@ from nexkit.runtimes import (
     unpack_secrets,
 )
 from nexkit.runtimes.base import AgentConfigError, Field, reserved
+from tests.support import CLAUDE
 
 
 class RegistryTests(unittest.TestCase):
@@ -38,9 +39,23 @@ class RegistryTests(unittest.TestCase):
         self.assertFalse(reserved("GPT_SOL_KEY"))
 
     def test_the_built_in_agent_needs_no_settings(self):
-        cfg = config.validate({})
+        cfg = config.validate({"agents": CLAUDE})
         agent = config.agent(cfg, "claude")
-        self.assertEqual(PROVIDERS[agent["provider"]].secrets(agent), [DECLARED_SECRETS])
+        self.assertEqual(
+            PROVIDERS[agent["provider"]].secrets(agent), [("CLAUDE_CODE_OAUTH_TOKEN",)]
+        )
+
+
+class AnthropicTests(unittest.TestCase):
+    def test_claude_code_gets_the_secret_under_its_own_variable(self):
+        from nexkit.agent import stage_spec
+
+        agent = {"runtime": "claude-code", "provider": "anthropic", "api_key_secret": "TEAM_KEY"}
+        cfg = config.validate({"agents": {"claude": agent}})
+        spec = stage_spec("plan", cfg, "/nonexistent")
+        launch = RUNTIMES["claude-code"].launch(agent, spec, {"TEAM_KEY": "sk-ant-x"})
+        self.assertEqual(launch.env, {"ANTHROPIC_API_KEY": "sk-ant-x"})
+        self.assertEqual(PROVIDERS["anthropic"].secrets(agent), [("TEAM_KEY",)])
 
 
 class SlotTests(unittest.TestCase):

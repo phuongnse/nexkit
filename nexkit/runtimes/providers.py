@@ -2,26 +2,33 @@
 
 from __future__ import annotations
 
-from .base import Field, Provider
-from .claude_code import CREDENTIALS
+from .base import AgentConfigError, Field, Provider
 
 
 class Anthropic(Provider):
-    """Claude's own service: a subscription token or an API key, whichever is set."""
+    """Claude's own service, with a subscription token (`claude setup-token`) or an API key.
+    The agent names the one secret it uses."""
 
     name = "anthropic"
-    fields = {}
+    fields = {
+        "oauth_token_secret": Field("secret", required=False),
+        "api_key_secret": Field("secret", required=False),
+    }
     # Claude Code uses the person's own login when no secret is set.
     local_login = True
 
-    def secrets(self, agent):
-        return [CREDENTIALS]
+    def check(self, agent, where):
+        if ("oauth_token_secret" in agent) == ("api_key_secret" in agent):
+            raise AgentConfigError(
+                f"{where} needs exactly one of oauth_token_secret (a Claude subscription token "
+                "from 'claude setup-token') and api_key_secret (an Anthropic API key)"
+            )
 
     def secret_hint(self, names, repo):
-        return (
-            "run 'claude setup-token' and "
-            f"'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo {repo}', or set ANTHROPIC_API_KEY"
-        )
+        hint = f"run 'gh secret set {names[0]} --repo {repo}'"
+        if "oauth" in names[0].lower():
+            hint += " with the token from 'claude setup-token'"
+        return hint
 
 
 AZURE_HOSTS = (".openai.azure.com", ".services.ai.azure.com", ".cognitiveservices.azure.com")

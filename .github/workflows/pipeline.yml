@@ -28,8 +28,9 @@ on:
         type: string
         required: true
     secrets:
-      # The built-in agent's secrets (DECLARED_SECRETS) and the push token, for workflows
-      # that pass secrets one by one. Other agents' secrets need `secrets: inherit`.
+      # For workflows that pass secrets one by one: the names Claude's secrets and the push
+      # token had before they were named in the config (DECLARED_SECRETS). Others need
+      # `secrets: inherit`.
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
       ANTHROPIC_API_KEY:
@@ -184,7 +185,8 @@ jobs:
           ref: ${{ needs.route.outputs.base }}
           path: repo
           fetch-depth: 0
-          token: ${{ secrets.NEXKIT_PUSH_TOKEN || github.token }}
+          # The secret that publish.push_token_secret names, or the Actions token without one.
+          token: ${{ secrets[fromJSON(needs.route.outputs.config).publish.push_token_secret] || github.token }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: nexkit-agent
@@ -193,7 +195,7 @@ jobs:
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit publish --repo repo --artifacts artifacts
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          NEXKIT_PUSH_TOKEN: ${{ secrets.NEXKIT_PUSH_TOKEN }}
+          NEXKIT_PUSH_TOKEN: ${{ secrets[fromJSON(needs.route.outputs.config).publish.push_token_secret] }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
 

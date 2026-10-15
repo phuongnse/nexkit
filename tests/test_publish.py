@@ -281,7 +281,15 @@ class PublishTests(unittest.TestCase):
         self.assertIn("### What changes", plan_text(plan))
 
     def test_plan_comment_names_agents_other_than_the_default(self):
-        cfg = profile_config(agents={"backup": {"runtime": "claude-code", "provider": "anthropic"}})
+        cfg = profile_config(
+            agents={
+                "backup": {
+                    "runtime": "claude-code",
+                    "provider": "anthropic",
+                    "api_key_secret": "ANTHROPIC_API_KEY",
+                }
+            }
+        )
         cfg["profiles"]["hard"]["stages"]["implement"].update(agent="backup")
         result = {"status": "done", "output": PLAN, "profile": "hard"}
         result["triage"] = {"profile": "hard", "chosen_by": "triage", "reason": "Auth."}
@@ -515,7 +523,7 @@ class MergePublishTests(unittest.TestCase):
     def test_merged_workflow_changes_need_a_push_token(self):
         head, _ = self.repos.diverge({".github/workflows/ci.yml": "on: push\n"})
         with self.assertRaisesRegex(
-            PublishError, r"`\.github/workflows/ci\.yml`.*NEXKIT_PUSH_TOKEN"
+            PublishError, r"`\.github/workflows/ci\.yml`.*publish\.push_token_secret"
         ):
             self.fix_round({"calc.py": CALC + SUB + MUL})
         self.assertEqual(git(self.repos.origin, "rev-parse", "nexkit/issue-5"), head)

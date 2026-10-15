@@ -27,8 +27,9 @@ Enable it under Settings > Actions > General > Workflow permissions, or run the
 
 **My repository's CI does not run on NexKit pull requests.**
 GitHub does not start workflows for events created with the default Actions token. NexKit
-runs your configured checks itself. To also run your CI, add a `NEXKIT_PUSH_TOKEN` secret
-(see the [configuration reference](configuration.md#secrets)).
+runs your configured checks itself. To also run your CI, store a push token as a secret
+and name it in `publish.push_token_secret` (see the
+[configuration reference](configuration.md#secrets)).
 
 The same applies to a merge by NexKit with `merge.auto`: the push to the base branch
 starts no `push` CI, whichever token published the pull request. List those workflows in
@@ -47,9 +48,9 @@ and has a `workflow_dispatch` trigger without required inputs; `nexkit doctor` c
 in your working copy. To run it for this merge, use *Run workflow* on the base branch in
 the Actions tab.
 
-**"No secret for the `claude` agent".** Add `CLAUDE_CODE_OAUTH_TOKEN` (from
-`claude setup-token`) or `ANTHROPIC_API_KEY` as a repository secret. For another agent, add
-the secrets its configuration names. Either way, `.github/workflows/nexkit.yml` must pass
+**"No secret for the `claude` agent".** Add the secret that the agent's configuration
+names as a repository secret: for `oauth_token_secret`, the token from
+`claude setup-token`; for `api_key_secret`, an Anthropic API key. Either way, `.github/workflows/nexkit.yml` must pass
 them to the pipeline: `secrets: inherit`, as `nexkit init` writes it. `nexkit doctor`
 checks this.
 Secrets are not available to runs triggered from forks.
@@ -64,6 +65,10 @@ with …".** The secret holds something other than the resource URL, such as the
 URI with `/openai/...`. Set it again to `https://<name>.openai.azure.com`. The log line
 "Model metadata for `<deployment>` not found" is harmless: Codex does not know the
 deployment's name.
+
+**"agents is required".** The configuration is from before agents were declared. Add the
+`agents` block that the message shows (see
+[Agents are declared](configuration.md#agents-are-declared)).
 
 **"provider must be one of …".** That runtime does not support the provider. The
 [Agents](configuration.md#agents) table lists the pairs NexKit supports.
@@ -99,8 +104,8 @@ gone from it. Comment `/nexkit go` to implement the plan again on the current ba
 
 **"conflicts with `main` in protected paths" or "brings changes to `.github/workflows/…`".**
 NexKit cannot publish this merge. Merge the base branch into the pull request yourself,
-push, and comment `/nexkit review`. For workflow files, a `NEXKIT_PUSH_TOKEN` with
-Workflows write access also lets NexKit push the merge.
+push, and comment `/nexkit review`. For workflow files, a push token with Workflows write
+access, named in `publish.push_token_secret`, also lets NexKit push the merge.
 
 **⏸️ "The agent stopped at the account's usage limit".** The account behind the agent's
 secret, such as the Claude subscription, used up its session or weekly limit. NexKit runs the same command again after the

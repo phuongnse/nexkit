@@ -6,10 +6,11 @@ comments) and from GitHub's own pull request data, never from the text shown to 
 
 from __future__ import annotations
 
+import copy
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-from .config import validate
+from .config import DEFAULTS
 from .route import issue_from_branch
 from .state import (
     BOT_LOGIN,
@@ -184,7 +185,8 @@ def _nexkit_pull(gh, pull):
 
 def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
     """Everything `nexkit status` shows, as a JSON-serialisable dict."""
-    cfg = cfg or validate({})
+    # Without a valid configuration, the defaults: status reads only what NexKit does itself.
+    cfg = cfg or copy.deepcopy(DEFAULTS)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         listed = list(gh.open_issues())
         pulls = [p for p in gh.list_pulls("open") if _nexkit_pull(gh, p)]

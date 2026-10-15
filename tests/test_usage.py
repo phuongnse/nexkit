@@ -5,8 +5,9 @@ import unittest
 from datetime import UTC, datetime
 
 from nexkit import agent
+from nexkit.runtimes.claude_code import _text_of
 from nexkit.usage import parse_iso, reset_time, shown, usage_limit
-from tests.support import profile_config
+from tests.support import interpret_claude, profile_config
 from tests.test_agent import CONTEXT, DONE, StageCase
 
 NOW = datetime(2026, 10, 10, 9, 0, tzinfo=UTC)
@@ -79,42 +80,32 @@ class UsageLimitTests(unittest.TestCase):
 
 
 class InterpretTests(unittest.TestCase):
-    def run_result(self, event=None, **kw):
-        return {
-            "event": event,
-            "returncode": 1,
-            "timed_out": False,
-            "stderr": "",
-            "seconds": 1,
-            **kw,
-        }
-
     def test_a_failed_run_at_the_limit_is_paused(self):
         event = {
             "subtype": "success",
             "is_error": True,
             "result": "You've hit your session limit · resets 4:40am (UTC)",
         }
-        result = agent.interpret("fix", self.run_result(event), 5)
+        result = interpret_claude("fix", event, returncode=1)
         self.assertEqual(result["status"], "paused")
         self.assertTrue(result["reset_known"])
         self.assertIn("usage limit: You've hit your session limit", result["error"])
-        missing = agent.interpret(
-            "review", self.run_result(None, last_text="Claude AI usage limit reached|1893456000"), 5
+        missing = interpret_claude(
+            "review", None, last_text="Claude AI usage limit reached|1893456000", returncode=1
         )
         self.assertEqual(missing["resume_at"], "2030-01-01T00:00:00Z")
 
     def test_the_models_own_words_never_pause_a_run(self):
         prose = 'The handler now returns "Rate limit reached" when the usage limit is hit.'
         stopped = {"subtype": "error_max_turns", "is_error": False, "result": prose}
-        result = agent.interpret("fix", self.run_result(stopped), 5)
+        result = interpret_claude("fix", stopped, returncode=1)
         self.assertEqual(result["status"], "error")
         long = {
             "subtype": "error_during_execution",
             "is_error": True,
             "result": "usage limit " + "x" * 2000,
         }
-        self.assertEqual(agent.interpret("fix", self.run_result(long), 5)["status"], "error")
+        self.assertEqual(interpret_claude("fix", long, returncode=1)["status"], "error")
         model = {
             "type": "assistant",
             "message": {
@@ -129,19 +120,17 @@ class InterpretTests(unittest.TestCase):
                 "content": [{"type": "text", "text": "Usage limit reached"}],
             },
         }
-        self.assertEqual(agent._text_of(model), "")
-        self.assertEqual(agent._text_of(synthetic), "Usage limit reached")
+        self.assertEqual(_text_of(model), "")
+        self.assertEqual(_text_of(synthetic), "Usage limit reached")
 
     def test_a_finished_run_that_mentions_limits_is_not_paused(self):
         event = {
             "subtype": "success",
             "structured_output": {**DONE, "summary": "Added a usage limit."},
         }
-        result = agent.interpret("implement", self.run_result(event, returncode=0), 5)
+        result = interpret_claude("implement", event)
         self.assertEqual(result["status"], "done")
-        timeout = agent.interpret(
-            "plan", self.run_result(None, timed_out=True, last_text="session limit"), 5
-        )
+        timeout = interpret_claude("plan", None, timed_out=True, last_text="session limit")
         self.assertEqual(timeout["status"], "error")
 
 
@@ -175,7 +164,7 @@ class PausedStageTests(StageCase):
                 profile_config(),
                 None,
                 self.out,
-                claude=str(self.claude.path),
+                program=str(self.claude.path),
             )
         self.assertEqual(triage["status"], "paused")
 

@@ -12,7 +12,9 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 |---|---|
 | `route.py` | `route`: event → action, authorization |
 | `context.py` | collects issue, plan and feedback text before an agent runs |
-| `agent.py`, `prompts/*.md` | `agent` and `review`: build prompt, run `claude -p`, collect patch |
+| `agent.py`, `prompts/*.md` | `agent` and `review`: build prompt, run the stage's agent, collect patch |
+| `runtimes/` | agent runtimes (CLIs) and model providers; everything specific to one CLI |
+| `schema.py` | checks an agent's structured result against its stage schema |
 | `runlog.py` | `agent` and `review`: Actions log, transcripts, run summary |
 | `redact.py` | removes secrets from everything printed or stored from an agent session |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
@@ -21,7 +23,7 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 | `report.py`, `state.py` | `report`: statuses, review, state comment, next round |
 | `progress.py` | `route` and `report`: reactions, one comment per run with its link |
 | `maintain.py` | `maintain`: work that follows other events, without an agent |
-| `usage.py` | recognises Claude's usage limit and its reset time |
+| `usage.py` | recognises an agent's usage limit and its reset time |
 | `config.py` | `.nexkit/config.json` schema and defaults |
 | `scaffold.py`, `templates/` | `nexkit init` and `nexkit doctor` |
 | `status.py` | `nexkit status`: open NexKit work from the comment markers |
@@ -47,7 +49,8 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
   those versions: no matrices. The Claude Code pin is read from `nexkit/__init__.py`
   everywhere; never repeat it. `update-claude-code.yml` proposes new stable versions, and
   the CI `smoke-test` job (`scripts/smoke.py`) must pass before one is merged. CI runs it on
-  pull requests that change `agent.py`, `prompts/`, `nexkit/__init__.py` or the smoke test.
+  pull requests that change `agent.py`, `runtimes/`, `prompts/`, `nexkit/__init__.py` or the
+  smoke test.
 
 ## Verify
 
@@ -56,5 +59,5 @@ python3 -m unittest discover -s tests -t .
 ruff check . && ruff format --check .
 actionlint .github/workflows/*.yml
 claude plugin validate --strict .
-python3 scripts/smoke.py   # real Claude Code; required when changing prompts, agent.py or the pin
+python3 scripts/smoke.py   # real Claude Code; required when changing prompts, agent.py, runtimes/ or the pin
 ```

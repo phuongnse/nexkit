@@ -1,4 +1,4 @@
-"""Run one Claude Code session for a pipeline stage and collect its result."""
+"""Run one agent session for a pipeline stage and collect its result."""
 
 from __future__ import annotations
 
@@ -20,10 +20,11 @@ from .checks import environment, known_base
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, summary, write_summary
-from .usage import usage_limit
+from .runtimes import AGENT_SECRETS, BUILTIN, PROVIDERS, RUNTIMES
+from .runtimes.base import Spec
+from .schema import problems
+from .usage import schedule
 
-READ_ONLY_TOOLS = "Read,Grep,Glob"
-CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 MAX_DIFF = 80_000
 # A conflict marker at the start of a line: `<<<<<<< ours`, `>>>>>>> theirs`, `||||||| base`.
 CONFLICT_MARKER = re.compile(rb"^(<{7}|>{7}|\|{7})( |$)", re.M)
@@ -283,7 +284,7 @@ def conflicts_with_base(repo, base):
 
 def up_to_date(base):
     """The result of an automatic conflict round whose branch no longer conflicts: nothing
-    to do, so Claude does not run."""
+    to do, so the agent does not run."""
     return {
         "stage": "fix",
         "status": "up_to_date",
@@ -342,59 +343,39 @@ def build_prompt(stage, context, cfg, extra=None):
     return Template(template).safe_substitute({k: str(v) for k, v in values.items()})
 
 
-def claude_command(stage, cfg, claude="claude"):
-    settings = configuration.stage(cfg, stage)
+def stage_schema(stage, cfg):
+    """The schema of a stage's result. Triage may name only the configured profiles."""
     schema = SCHEMAS[stage]
     if stage == "triage":
         schema = copy.deepcopy(schema)
         schema["properties"]["profile"]["enum"] = list(cfg["profiles"])
-    cmd = [
-        claude,
-        "-p",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--no-session-persistence",
-        "--model",
-        settings["model"],
-        "--json-schema",
-        json.dumps(schema),
-    ]
-    if settings["effort"]:
-        cmd += ["--effort", settings["effort"]]
-    if settings["max_budget_usd"]:
-        cmd += ["--max-budget-usd", str(settings["max_budget_usd"])]
-    if stage == "triage":
-        cmd += ["--tools", ""]
-    elif stage in ("plan", "review"):
-        cmd += ["--tools", READ_ONLY_TOOLS]
-    else:
-        # The job runs on a disposable runner without any GitHub write token.
-        cmd += ["--permission-mode", "bypassPermissions"]
-    return cmd
+    return schema
 
 
-def run_claude(prompt, cmd, *, cwd, timeout_seconds, log, base_sha=None):
-    """Run Claude Code, show its events through `log` and return its final result event.
+def stage_spec(stage, cfg, home):
+    """What the runtime needs to run `stage`, with `home` for the CLI's own files."""
+    settings = configuration.stage(cfg, stage)
+    return Spec(
+        stage=stage,
+        model=settings["model"],
+        effort=settings["effort"],
+        budget_usd=settings["max_budget_usd"],
+        schema=stage_schema(stage, cfg),
+        home=Path(home),
+    )
 
-    `base_sha` becomes NEXKIT_BASE_SHA, so checks that Claude runs see the same base as in
-    the verify job."""
+
+def agent_for(cfg, stage):
+    """The name and definition of the agent that runs a stage."""
+    return "claude", BUILTIN["claude"]
+
+
+def run_process(prompt, argv, *, env, cwd, timeout_seconds, log):
+    """Start the CLI with `prompt` on stdin and pass each output line to `log`, which
+    shows it and hands it to the runtime's reader."""
     started = time.monotonic()
-    # Unset secrets arrive as empty strings; drop them so Claude picks the one that is set.
-    env = {k: v for k, v in environment(base_sha).items() if v or k not in CREDENTIALS}
-    on_actions = os.environ.get("GITHUB_ACTIONS") == "true"
-    if on_actions and not any(env.get(name) for name in CREDENTIALS):
-        log.close()
-        return {
-            "event": None,
-            "returncode": None,
-            "timed_out": False,
-            "stderr": "No Claude credential: set the CLAUDE_CODE_OAUTH_TOKEN or "
-            "ANTHROPIC_API_KEY repository secret.",
-            "seconds": 0.0,
-        }
     proc = subprocess.Popen(
-        cmd,
+        argv,
         cwd=cwd,
         env=env,
         stdin=subprocess.PIPE,
@@ -419,62 +400,83 @@ def run_claude(prompt, cmd, *, cwd, timeout_seconds, log, base_sha=None):
     stderr_chunks = []
     reader = threading.Thread(target=lambda: stderr_chunks.append(proc.stderr.read()))
     reader.start()
-    result = None
-    last_text, resets_at = "", None
     try:
         proc.stdin.write(prompt)
         proc.stdin.close()
         for line in proc.stdout:
-            event = log.line(line)
-            if not event:
-                continue
-            if event.get("type") == "result":
-                result = event
-            last_text = _text_of(event) or last_text
-            resets_at = _rejected_until(event) or resets_at
+            log.line(line)
         proc.wait()
     finally:
         timer.cancel()
         reader.join()
         log.close()
     return {
-        "event": result,
         "returncode": proc.returncode,
         "timed_out": timed_out.is_set(),
         "stderr": "".join(stderr_chunks)[-4000:],
         "seconds": round(time.monotonic() - started, 1),
-        "last_text": last_text[-2000:],
-        "resets_at": resets_at,
     }
 
 
-def _text_of(event):
-    """The text of a message that Claude Code wrote itself, such as an API or usage limit
-    error, or "". The model's own words are left out: they may mention limits."""
-    message = event.get("message") if event.get("type") == "assistant" else None
-    if not isinstance(message, dict) or message.get("model") != "<synthetic>":
-        return ""
-    content = message.get("content")
-    if not isinstance(content, list):
-        return ""
-    texts = [b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text"]
-    return "\n".join(str(t) for t in texts if t)
+def run_agent(stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, program=None):
+    """Run the agent of `stage` on `prompt`. Return the interpreted result and the tool
+    calls for the summary. `program` replaces the runtime's executable, for tests.
+
+    `base_sha` becomes NEXKIT_BASE_SHA, so checks that the agent runs see the same base as
+    in the verify job."""
+    settings = configuration.stage(cfg, stage)
+    name, agent = agent_for(cfg, stage)
+    runtime = RUNTIMES[agent["runtime"]]
+    names = PROVIDERS[agent["provider"]].credentials(agent)
+    # Unset secrets arrive as empty strings. The CLI gets only its own credential.
+    secrets = {key: os.environ[key] for key in names if os.environ.get(key)}
+    if os.environ.get("GITHUB_ACTIONS") == "true" and not secrets:
+        error = (
+            f"No credential for the `{name}` agent: set the {' or '.join(names)} repository "
+            "secret and pass it in the `secrets:` of the NexKit workflow."
+        )
+        return {"stage": stage, "status": "error", "cost": None, "error": error}, []
+    log = RunLog(
+        redact,
+        reader=runtime.reader(),
+        title=title,
+        speaker=runtime.label,
+        tool_output=cfg["log"]["tool_output"],
+        transcript_dir=out if cfg["transcript"] else None,
+    )
+    env = {k: v for k, v in environment(base_sha).items() if k not in AGENT_SECRETS}
+    with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
+        spec = stage_spec(stage, cfg, home)
+        launch = runtime.launch(agent, spec, secrets, program)
+        for path, text in launch.files.items():
+            Path(path).write_text(text, encoding="utf-8")
+        run = run_process(
+            prompt,
+            launch.argv,
+            env={**env, **launch.env},
+            cwd=cwd,
+            timeout_seconds=settings["timeout_minutes"] * 60,
+            log=log,
+        )
+    outcome = log.reader.outcome(run["returncode"], run["stderr"])
+    result = interpret(
+        stage,
+        run,
+        outcome,
+        settings["timeout_minutes"],
+        cfg["usage_limit"]["retry_minutes"],
+        label=runtime.label,
+        # NexKit's own schema: triage names an unknown profile in its error, not here.
+        schema=SCHEMAS[stage],
+    )
+    return result, log.calls
 
 
-def _rejected_until(event):
-    """The reset time (Unix seconds) of a rate limit event that rejected the request."""
-    info = event.get("rate_limit_info") if event.get("type") == "rate_limit_event" else None
-    if not isinstance(info, dict) or info.get("status") != "rejected":
-        return None
-    value = info.get("resetsAt", info.get("resets_at"))
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-
-
-def paused(result, limit):
+def paused(result, limit, label="The agent"):
     """Mark a stage result as paused at the usage limit."""
     result.update(
         status="paused",
-        error=f"Claude hit the account's usage limit: {limit['message']}",
+        error=f"{label} hit the account's usage limit: {limit['message']}",
         limit=limit["message"],
         resume_at=limit["resume_at"],
         reset_known=limit["reset_known"],
@@ -482,33 +484,37 @@ def paused(result, limit):
     return result
 
 
-def interpret(stage, run, timeout_minutes, retry_minutes=60):
-    """Map a Claude run to a stage result: done, blocked or error."""
-    event = run["event"] or {}
+def interpret(
+    stage, run, outcome, timeout_minutes, retry_minutes=60, *, label="The agent", schema=None
+):
+    """Map a run and the runtime's outcome to a stage result: done, blocked, paused or
+    error. With `schema`, the structured result must fit it."""
     result = {
         "stage": stage,
-        "cost": event.get("total_cost_usd"),
-        "turns": event.get("num_turns"),
+        "cost": outcome.cost_usd,
+        "turns": outcome.turns,
         "seconds": run["seconds"],
         "output": None,
         "status": "error",
         "summary": "",
         "error": "",
     }
+    if outcome.tokens:
+        result["tokens"] = outcome.tokens
+    found = problems(outcome.output, schema) if schema and outcome.output is not None else []
     if run["timed_out"]:
-        result["error"] = f"Claude did not finish within {timeout_minutes} minutes."
-    elif not event:
+        result["error"] = f"{label} did not finish within {timeout_minutes} minutes."
+    elif outcome.error:
+        result["error"] = f"{label} {outcome.error}"[:2000].strip()
+    elif not isinstance(outcome.output, dict):
+        result["error"] = f"{label} finished without the required structured result."
+    elif found:
         result["error"] = (
-            f"Claude exited with code {run['returncode']} without a result. "
-            f"{run['stderr'].strip()[-1500:]}"
-        ).strip()
-    elif event.get("is_error") or event.get("subtype") != "success":
-        detail = event.get("result") or ""
-        result["error"] = f"Claude stopped ({event.get('subtype')}). {detail}"[:2000].strip()
-    elif not isinstance(event.get("structured_output"), dict):
-        result["error"] = "Claude finished without the required structured result."
+            f"{label} returned a result that does not fit the {stage} schema: "
+            + "; ".join(found[:5])
+        )
     else:
-        output = event["structured_output"]
+        output = outcome.output
         result["output"] = output
         result["summary"] = output.get("summary", "")
         if stage in ("implement", "fix"):
@@ -517,13 +523,8 @@ def interpret(stage, run, timeout_minutes, retry_minutes=60):
                 result["error"] = output.get("blocker") or "The agent reported it was blocked."
         else:
             result["status"] = "done"
-    if result["status"] == "error" and not run["timed_out"]:
-        # Only what Claude Code says about a failed run, never the model's own text.
-        said = event.get("result") if event.get("is_error") else None
-        texts = (said, run["stderr"], run.get("last_text"))
-        limit = usage_limit(texts, resets_at=run.get("resets_at"), retry_minutes=retry_minutes)
-        if limit:
-            paused(result, limit)
+    if result["status"] == "error" and not run["timed_out"] and outcome.limit:
+        paused(result, schedule(outcome.limit, retry_minutes=retry_minutes), label)
     return result
 
 
@@ -575,8 +576,8 @@ def collect_changes(repo, base_commit, out_dir):
     return files, len(patch)
 
 
-def run_triage(context, cfg, previous, out_dir, *, claude="claude"):
-    """Choose the profile for a plan with one Claude call that has no tools.
+def run_triage(context, cfg, previous, out_dir, *, program=None):
+    """Choose the profile for a plan with one agent call that cannot see the repository.
 
     Triage never stops the plan: after an error or an unknown name, the plan uses the
     `previous` profile, or `default_profile` when there is none."""
@@ -592,28 +593,21 @@ def run_triage(context, cfg, previous, out_dir, *, claude="claude"):
     }
     prompt = build_prompt("triage", context, cfg, extra)
     (out / "prompt.md").write_text(prompt, encoding="utf-8")
-    settings = configuration.stage(cfg, "triage")
     redact = Redactor()
-    log = RunLog(
-        redact,
-        title="NexKit triage",
-        tool_output=cfg["log"]["tool_output"],
-        transcript_dir=out if cfg["transcript"] else None,
-    )
-    # An empty directory, so the repository's Claude settings and instructions do not load.
+    # An empty directory, so the repository's agent settings and instructions do not load.
     with tempfile.TemporaryDirectory() as empty:
-        run = run_claude(
+        result, calls = run_agent(
+            "triage",
             prompt,
-            claude_command("triage", cfg, claude),
+            cfg,
             cwd=empty,
-            timeout_seconds=settings["timeout_minutes"] * 60,
-            log=log,
+            redact=redact,
+            out=out,
+            title="NexKit triage",
+            program=program,
         )
-    result = interpret(
-        "triage", run, settings["timeout_minutes"], cfg["usage_limit"]["retry_minutes"]
-    )
-    output = result.pop("output") or {}
-    del result["summary"]
+    output = result.pop("output", None) or {}
+    result.pop("summary", None)
     name = output.get("profile")
     if result["status"] == "done" and name in profiles:
         result.update(profile=name, chosen_by="triage", reason=str(output.get("reason") or ""))
@@ -627,7 +621,7 @@ def run_triage(context, cfg, previous, out_dir, *, claude="claude"):
             reason="",
         )
     result = redact.data(result)
-    write_summary(summary(result, log.calls), redact)
+    write_summary(summary(result, calls), redact)
     return result
 
 
@@ -638,7 +632,7 @@ def run_stage(
     repo,
     out_dir,
     *,
-    claude="claude",
+    program=None,
     checks=None,
     base=None,
     base_sha=None,
@@ -686,22 +680,17 @@ def run_stage(
         }
         return _save(result, out, redact, [], start=start, merged=merged, conflicts=conflicts)
 
-    settings = configuration.stage(cfg, stage)
-    log = RunLog(
-        redact,
-        title=f"NexKit {stage}",
-        tool_output=cfg["log"]["tool_output"],
-        transcript_dir=out if cfg["transcript"] else None,
-    )
-    run = run_claude(
+    result, calls = run_agent(
+        stage,
         prompt,
-        claude_command(stage, cfg, claude),
+        cfg,
         cwd=repo,
-        timeout_seconds=settings["timeout_minutes"] * 60,
-        log=log,
+        redact=redact,
+        out=out,
+        title=f"NexKit {stage}",
         base_sha=base_sha,
+        program=program,
     )
-    result = interpret(stage, run, settings["timeout_minutes"], cfg["usage_limit"]["retry_minutes"])
     if stage in ("implement", "fix") and result["status"] == "done":
         left = leftover_markers(repo, conflicts)
         files, size = collect_changes(repo, base_commit, out)
@@ -721,7 +710,7 @@ def run_stage(
     if triage:
         costs = [c for c in (result["cost"], triage.get("cost")) if isinstance(c, (int, float))]
         result.update(profile=triage["profile"], triage=triage, cost=sum(costs) if costs else None)
-    return _save(result, out, redact, log.calls, start=start, merged=merged, conflicts=conflicts)
+    return _save(result, out, redact, calls, start=start, merged=merged, conflicts=conflicts)
 
 
 def _save(result, out, redact, calls, *, start, merged, conflicts):

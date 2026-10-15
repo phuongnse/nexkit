@@ -78,7 +78,7 @@ class StateComments:
 
 
 def stage(name, work, out, claude, context=None, *, want="done", **kw):
-    result = run_stage(name, context or CONTEXT, CONFIG, work, out, claude=claude, **kw)
+    result = run_stage(name, context or CONTEXT, CONFIG, work, out, program=claude, **kw)
     keys = ("status", "error", "cost", "changed_files", "conflicts")
     summary = {k: result.get(k) for k in keys}
     print(f"{name}: {json.dumps(summary)}", flush=True)
@@ -108,7 +108,7 @@ def triage(root, claude):
         ({**CONTEXT, "requests": "@olivia: Plan this with the hard profile."}, "hard"),
     ]
     for number, (context, want) in enumerate(cases, 1):
-        result = run_triage(context, cfg, None, root / f"triage-{number}", claude=claude)
+        result = run_triage(context, cfg, None, root / f"triage-{number}", program=claude)
         keys = ("status", "profile", "chosen_by", "reason", "error", "cost")
         print(f"triage: {json.dumps({k: result.get(k) for k in keys})}", flush=True)
         if result["chosen_by"] != "triage" or result["profile"] != want or not result["reason"]:

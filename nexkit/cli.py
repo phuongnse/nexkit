@@ -367,7 +367,7 @@ def build_parser():
     p.add_argument("--fix-result", help="This run's fix result.json, for the review stage")
     p.set_defaults(func=cmd_context)
 
-    p = sub.add_parser("agent", help="(pipeline) Run a Claude Code stage")
+    p = sub.add_parser("agent", help="(pipeline) Run an agent stage")
     p.add_argument("--repo", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--stage", choices=["plan", "implement", "fix", "review"])

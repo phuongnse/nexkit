@@ -1,4 +1,4 @@
-"""Show a Claude Code event stream: the Actions log, transcripts and the run summary.
+"""Show an agent's run: the Actions log, transcripts and the run summary.
 
 Everything shown comes from the agent and the repository, so it is untrusted: it is
 redacted first, and tool output is printed with GitHub workflow commands stopped.
@@ -90,45 +90,34 @@ def input_text(data):
     return "\n".join(lines)
 
 
-def result_text(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(str(item.get("text", "")))
-            elif isinstance(item, dict):
-                parts.append(f"[{item.get('type', 'content')}]")
-            else:
-                parts.append(str(item))
-        return "\n".join(parts)
-    return "" if content is None else json.dumps(content, ensure_ascii=False)
-
-
 def result_label(call):
     return {True: "error", False: "ok"}.get(call["is_error"], "no result (the run ended first)")
 
 
 class RunLog:
-    """Consumes Claude Code's stream-json lines for one run.
+    """Consumes the output lines of one agent run.
 
-    It prints the Actions log (one line per message and tool call with `tool_output`
-    `none`, a collapsible group per tool call with `truncated`), and when `transcript_dir`
-    is set writes a redacted `transcript.jsonl` and a readable `transcript.md` there.
-    Claude's thinking is never printed and is left out of `transcript.md`.
+    The runtime's `reader` turns each line into events. RunLog prints the Actions log (one
+    line per message and tool call with `tool_output` `none`, a collapsible group per tool
+    call with `truncated`), and when `transcript_dir` is set writes a redacted
+    `transcript.jsonl` of the raw lines and a readable `transcript.md` there. The model's
+    thinking is never printed and is left out of `transcript.md`.
     """
 
     def __init__(
         self,
         redact,
         *,
-        title="Claude Code",
+        reader,
+        title="NexKit agent",
+        speaker="Agent",
         tool_output="truncated",
         transcript_dir=None,
         timer=time.monotonic,
     ):
         self.redact = redact
+        self.reader = reader
+        self.speaker = speaker
         self.tool_output = tool_output
         self.timer = timer
         self.started = timer()
@@ -136,7 +125,6 @@ class RunLog:
         self.now = 0.0  # seconds since the start, at the current event
         self.calls = []
         self._pending = {}
-        self._messages = set()
         self._jsonl = self._markdown = None
         if transcript_dir is not None:
             directory = Path(transcript_dir)
@@ -159,60 +147,55 @@ class RunLog:
             self._markdown.flush()
 
     def line(self, raw):
-        """Handle one line of output. Returns the parsed event, or None."""
+        """Handle one line of output. Returns the parsed line, or None."""
         try:
-            event = json.loads(raw)
+            data = json.loads(raw)
         except json.JSONDecodeError:
-            event = None
+            data = None
         if self._jsonl:
-            if event is None:
+            if data is None:
                 self._jsonl.write(self.redact(raw.rstrip("\n")) + "\n")
             else:
-                self._jsonl.write(json.dumps(self.redact.data(event), ensure_ascii=False) + "\n")
+                self._jsonl.write(json.dumps(self.redact.data(data), ensure_ascii=False) + "\n")
             self._jsonl.flush()
-        if isinstance(event, dict):
-            self.event(event)
-            return event
-        return None
-
-    def event(self, event):
+        if not isinstance(data, dict):
+            return None
         self.now = self.timer() - self.started
-        kind = event.get("type")
-        message = event.get("message")
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, list):
-            return
-        if kind == "assistant":
-            message_id = message.get("id")
-            if message_id is None or message_id not in self._messages:
-                self._messages.add(message_id)
-                self.turn += 1
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                if block.get("type") == "text" and str(block.get("text", "")).strip():
-                    self._text(str(block["text"]))
-                elif block.get("type") == "tool_use":
-                    self._tool_use(block)
-        elif kind == "user":
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_result":
-                    call = self._pending.pop(block.get("tool_use_id"), None)
-                    if call:
-                        output = result_text(block.get("content"))
-                        self._finish(call, output, bool(block.get("is_error")))
+        for event in self.reader.events(data):
+            self.show(event)
+        return data
+
+    def show(self, event):
+        if event.kind == "turn":
+            self.turn += 1
+        elif event.kind == "text" and event.text.strip():
+            self._text(event.text)
+        elif event.kind == "notice" and event.text.strip():
+            self._notice(event.text)
+        elif event.kind == "tool_call":
+            self._tool_use(event)
+        elif event.kind == "tool_result":
+            call = self._pending.pop(event.id, None)
+            if call:
+                self._finish(call, event.text, event.is_error)
 
     def _text(self, text):
         text = self.redact(text.strip())
         self._print("· " + one_line(text)[:240])
-        self._md(f"\n## [{clock(self.now)} #{self.turn}] Claude\n\n{text}\n")
+        self._md(f"\n## [{clock(self.now)} #{self.turn}] {self.speaker}\n\n{text}\n")
 
-    def _tool_use(self, block):
+    def _notice(self, text):
+        text = self.redact(text.strip())
+        self._print("! " + one_line(text)[:240])
+        self._md(f"\n> [{clock(self.now)}] {one_line(text)}\n")
+
+    def _tool_use(self, event):
         # Redact before shortening, so a cut cannot split a secret.
-        data = self.redact.data(block.get("input") or {})
+        data = self.redact.data(event.input or {})
         call = {
-            "name": one_line(block.get("name") or "tool"),
+            "name": one_line(event.name or "tool"),
             "detail": one_line(tool_detail(data)),
+            "command": self.redact(event.command) if event.command else None,
             "input": input_text(data),
             "at": self.now,
             "turn": self.turn,
@@ -220,7 +203,7 @@ class RunLog:
             "output": "",
         }
         self.calls.append(call)
-        self._pending[block.get("id")] = call
+        self._pending[event.id] = call
         if self.tool_output == "none":
             self._print(f"▸ {call['name']} {call['detail'][:200]}")
 
@@ -304,10 +287,13 @@ def summary(result, calls):
         lines += ["", f"**Files changed** ({len(files)})"]
         if files:
             lines += ["", _block("\n".join(files))]
-    commands = [call for call in calls if call["name"] == "Bash"]
+    commands = [call for call in calls if call.get("command")]
     if commands:
         marks = {True: "✗", False: "✓"}
-        rows = [f"{marks.get(call['is_error'], '…')} {call['detail'][:200]}" for call in commands]
+        rows = [
+            f"{marks.get(call['is_error'], '…')} {one_line(call['command'])[:200]}"
+            for call in commands
+        ]
         lines += ["", f"**Commands run** ({len(commands)}; ✗ failed)", "", _block("\n".join(rows))]
     findings = output.get("findings") if result.get("stage") == "review" else None
     if isinstance(findings, list):

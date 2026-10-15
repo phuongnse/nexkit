@@ -436,7 +436,7 @@ class MergePublishTests(unittest.TestCase):
         self.claude.configure(result={**done, "checks_run": [], "open_conflicts": []}, write=write)
         context = {**CONTEXT, "pr": 6, "body": "", "discussion": "", "plan": "", "note": ""}
         result = agent.run_stage(
-            "fix", context, self.cfg, work, self.out, claude=str(self.claude.path), base="main"
+            "fix", context, self.cfg, work, self.out, program=str(self.claude.path), base="main"
         )
         self.assertEqual(result["status"], "done", result.get("error"))
         return result

@@ -9,6 +9,7 @@ from unittest import mock
 
 from nexkit import runlog, state
 from nexkit.redact import Redactor
+from nexkit.runtimes.claude_code import ClaudeReader
 
 FAKE_KEY = "fake-credential-0123456789"
 INJECTION = "::set-output name=approved::true\n::add-mask::secret\n::error file=a.py::boom"
@@ -53,7 +54,8 @@ class Ticker:
 
 def run(events, **kw):
     stdout = io.StringIO()
-    log = runlog.RunLog(Redactor({"ANTHROPIC_API_KEY": FAKE_KEY}), timer=Ticker(), **kw)
+    redact = Redactor({"ANTHROPIC_API_KEY": FAKE_KEY})
+    log = runlog.RunLog(redact, reader=ClaudeReader(), speaker="Claude", timer=Ticker(), **kw)
     with contextlib.redirect_stdout(stdout), log:
         for event in events:
             log.line(json.dumps(event) + "\n")

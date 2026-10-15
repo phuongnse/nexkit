@@ -10,6 +10,8 @@ from unittest import mock
 
 from nexkit import agent, runlog
 from nexkit.redact import Redactor
+from nexkit.runtimes import BUILTIN, RUNTIMES
+from nexkit.runtimes.claude_code import ClaudeReader
 from tests.support import (
     CALC,
     MUL,
@@ -17,6 +19,7 @@ from tests.support import (
     FakeClaude,
     GitRepos,
     git,
+    interpret_claude,
     make_config,
     profile_config,
 )
@@ -32,8 +35,36 @@ CONTEXT = {
     "note": "None.",
     "feedback": "",
 }
-DONE = {"status": "done", "summary": "Fixed add.", "blocker": "", "checks_run": ["make test"]}
+DONE = {
+    "status": "done",
+    "summary": "Fixed add.",
+    "blocker": "",
+    "checks_run": ["make test"],
+    "changes": ["add() adds."],
+    "testing": "make test",
+    "outside_plan": [],
+    "reviewer_notes": [],
+}
 FIX_DONE = {**DONE, "open_conflicts": []}
+PLAN = {
+    "summary": "Plan.",
+    "changes": ["Fix add()."],
+    "decisions": [],
+    "risks": [],
+    "acceptance_criteria": ["add(2, 3) is 5."],
+    "implementation_notes": [],
+    "questions": [],
+    "too_large": False,
+    "split": [],
+    "revision": {"started_over": True, "changes": []},
+}
+VERDICT = {
+    "verdict": "approve",
+    "summary": "Good",
+    "criteria": [],
+    "findings": [],
+    "previous_findings": [],
+}
 
 
 class PromptTests(unittest.TestCase):
@@ -144,14 +175,18 @@ class PromptTests(unittest.TestCase):
             for name in ("$issue", "$title", "$plan", "$checks", "$protected", "$diff"):
                 self.assertNotIn(name, prompt, f"{stage} leaves {name}")
 
+    def argv(self, stage, cfg):
+        spec = agent.stage_spec(stage, cfg, "/nonexistent")
+        return RUNTIMES["claude-code"].launch(BUILTIN["claude"], spec, {}).argv
+
     def test_command_restricts_read_only_stages(self):
         cfg = make_config(
             effort="high", stages={"implement": {"max_budget_usd": 5, "model": "opus"}}
         )
-        plan = agent.claude_command("plan", cfg)
+        plan = self.argv("plan", cfg)
         self.assertIn("Read,Grep,Glob", plan)
         self.assertNotIn("bypassPermissions", plan)
-        fix = agent.claude_command("fix", cfg)
+        fix = self.argv("fix", cfg)
         self.assertIn("bypassPermissions", fix)
         self.assertEqual(fix[fix.index("--model") + 1], "opus")
         self.assertEqual(fix[fix.index("--max-budget-usd") + 1], "5")
@@ -161,7 +196,7 @@ class PromptTests(unittest.TestCase):
 
     def test_triage_command_has_no_tools_and_names_the_profiles(self):
         cfg = profile_config(stages={"triage": {"model": "fable", "max_budget_usd": 1}})
-        cmd = agent.claude_command("triage", cfg)
+        cmd = self.argv("triage", cfg)
         self.assertEqual(cmd[cmd.index("--tools") + 1], "")
         self.assertNotIn("bypassPermissions", cmd)
         self.assertEqual(cmd[cmd.index("--model") + 1], "fable")
@@ -172,32 +207,35 @@ class PromptTests(unittest.TestCase):
 
 
 class InterpretTests(unittest.TestCase):
-    def run_result(self, event=None, **kw):
-        return {
-            "event": event,
-            "returncode": 0,
-            "timed_out": False,
-            "stderr": "",
-            "seconds": 1.0,
-            **kw,
-        }
-
     def test_outcomes(self):
         ok = {"subtype": "success", "structured_output": DONE, "total_cost_usd": 1.5}
-        self.assertEqual(agent.interpret("implement", self.run_result(ok), 5)["status"], "done")
+        self.assertEqual(interpret_claude("implement", ok)["status"], "done")
         blocked = {**ok, "structured_output": {**DONE, "status": "blocked", "blocker": "No spec"}}
-        result = agent.interpret("implement", self.run_result(blocked), 5)
+        result = interpret_claude("implement", blocked)
         self.assertEqual((result["status"], result["error"]), ("blocked", "No spec"))
-        timeout = agent.interpret("plan", self.run_result(ok, timed_out=True), 7)
-        self.assertIn("7 minutes", timeout["error"])
-        missing = agent.interpret("plan", self.run_result(None, stderr="auth failed"), 5)
-        self.assertIn("auth failed", missing["error"])
-        budget = agent.interpret(
-            "plan", self.run_result({"subtype": "error_max_budget_usd", "is_error": True}), 5
+        timeout = interpret_claude("plan", ok, minutes=7, timed_out=True)
+        self.assertEqual(timeout["error"], "Claude did not finish within 7 minutes.")
+        missing = interpret_claude("plan", None, stderr="auth failed", returncode=1)
+        self.assertEqual(
+            missing["error"], "Claude exited with code 1 without a result. auth failed"
         )
-        self.assertIn("error_max_budget_usd", budget["error"])
-        unstructured = agent.interpret("review", self.run_result({"subtype": "success"}), 5)
+        budget = interpret_claude("plan", {"subtype": "error_max_budget_usd", "is_error": True})
+        self.assertIn("Claude stopped (error_max_budget_usd).", budget["error"])
+        unstructured = interpret_claude("review", {"subtype": "success"})
         self.assertIn("structured result", unstructured["error"])
+
+    def test_the_result_must_fit_the_schema(self):
+        wrong = {**DONE, "checks_run": "make test"}
+        del wrong["testing"]
+        event = {"subtype": "success", "structured_output": wrong}
+        result = interpret_claude("implement", event, schema=agent.SCHEMAS["implement"])
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(
+            result["error"],
+            "Claude returned a result that does not fit the implement schema: "
+            "result.testing is missing; result.checks_run must be an array",
+        )
+        self.assertIsNone(result["output"])
 
 
 class StageCase(unittest.TestCase):
@@ -220,7 +258,7 @@ class StageCase(unittest.TestCase):
             cfg or make_config(),
             self.repo,
             self.out,
-            claude=str(self.claude.path),
+            program=str(self.claude.path),
             **kw,
         )
 
@@ -270,7 +308,7 @@ class RunStageTests(StageCase):
                 profile_config(),
                 previous,
                 self.out,
-                claude=str(self.claude.path),
+                program=str(self.claude.path),
             )
 
     def test_triage_chooses_the_profile_from_the_issue_text(self):
@@ -311,7 +349,7 @@ class RunStageTests(StageCase):
     def test_plan_keeps_the_triage_result_and_its_cost(self):
         triage = self.triage(result={"profile": "hard", "reason": "Auth."})
         cfg = agent.configuration.with_profile(profile_config(), "hard")
-        self.claude.configure(result={"summary": "Plan."})
+        self.claude.configure(result=PLAN)
         result, _ = self.run_quietly("plan", cfg, triage=triage)
         self.assertEqual(result["profile"], "hard")
         self.assertEqual(result["triage"]["reason"], "Auth.")
@@ -348,8 +386,7 @@ class RunStageTests(StageCase):
         (self.repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")
         git(self.repo, "add", "-A")
         self.repos.commit(self.repo, "fix")
-        verdict = {"verdict": "approve", "summary": "Good", "criteria": [], "findings": []}
-        self.claude.configure(result=verdict)
+        self.claude.configure(result=VERDICT)
         checks = [{"name": "test", "run": "true", "exit_code": 0, "passed": True, "output": ""}]
         result = self.run_stage("review", checks=checks, base="main")
         self.assertEqual(result["status"], "done")
@@ -370,21 +407,14 @@ class RunStageTests(StageCase):
             "previous_head": reviewed,
             "previous_round": "1. blocking, `calc.py:2`: Use $floats",
         }
-        verdict = {
-            "verdict": "approve",
-            "summary": "Good",
-            "criteria": [],
-            "findings": [],
-            "previous_findings": [],
-        }
-        self.claude.configure(result=verdict)
+        self.claude.configure(result=VERDICT)
         agent.run_stage(
             "review",
             context,
             make_config(),
             self.repo,
             self.out,
-            claude=str(self.claude.path),
+            program=str(self.claude.path),
             checks=[],
             base="main",
         )
@@ -411,16 +441,27 @@ class RunStageTests(StageCase):
         with mock.patch.dict(os.environ, env):
             result = self.run_stage("plan")
         self.assertEqual(result["status"], "error")
-        self.assertIn("No Claude credential", result["error"])
+        self.assertEqual(
+            result["error"],
+            "No credential for the `claude` agent: set the CLAUDE_CODE_OAUTH_TOKEN or "
+            "ANTHROPIC_API_KEY repository secret and pass it in the `secrets:` of the NexKit "
+            "workflow.",
+        )
+        self.assertFalse(self.claude.log.exists())
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
+            triage = agent.run_triage(CONTEXT, profile_config(), None, self.out)
+        self.assertEqual((triage["status"], triage["chosen_by"]), ("error", "default"))
+        self.assertIn("No credential for the `claude` agent", triage["error"])
 
     def test_timeout_kills_claude(self):
         self.claude.configure(result=DONE, sleep=30)
-        run = agent.run_claude(
+        run = agent.run_process(
             "x",
             [str(self.claude.path)],
+            env=dict(os.environ),
             cwd=self.repo,
             timeout_seconds=1,
-            log=runlog.RunLog(Redactor(), transcript_dir=self.tmp.name),
+            log=runlog.RunLog(Redactor(), reader=ClaudeReader(), transcript_dir=self.tmp.name),
         )
         self.assertTrue(run["timed_out"])
         self.assertLess(run["seconds"], 15)
@@ -549,21 +590,14 @@ class ConflictTests(StageCase):
             "previous_round": "1. suggestion, `calc.py:4`: Document sub().",
             "merged": {"head": head, "base": base, "conflicts": ["calc.py"]},
         }
-        verdict = {
-            "verdict": "approve",
-            "summary": "Good",
-            "criteria": [],
-            "findings": [],
-            "previous_findings": [],
-        }
-        self.claude.configure(result=verdict)
+        self.claude.configure(result=VERDICT)
         agent.run_stage(
             "review",
             context,
             make_config(),
             self.repo,
             self.out,
-            claude=str(self.claude.path),
+            program=str(self.claude.path),
             checks=[],
             base="main",
         )

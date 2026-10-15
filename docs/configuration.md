@@ -652,4 +652,6 @@ closed issues (for `close_parent_issues`), pushes to the default branch (for
 `conflicts.auto_resolve`). With those settings off, these events start short runs that
 end at once; remove the triggers you do not use if you prefer. To upgrade,
 change both the `uses:` ref and `nexkit_ref` to the new tag (or rerun
-`nexkit init --force --kit-ref vX.Y.Z` and restore your config).
+`nexkit init --force --kit-ref vX.Y.Z` and restore your config); each release's notes
+list its upgrade steps. `nexkit doctor` reports a problem when the two refs differ, and
+mentions a newer release without failing: staying on a release is your choice.

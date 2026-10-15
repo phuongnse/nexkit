@@ -117,7 +117,7 @@ any, or pauses and continues after the reset.
 | Command | What it does |
 |---|---|
 | `nexkit init` | Writes `.nexkit/config.json` and `.github/workflows/nexkit.yml`. |
-| `nexkit doctor` | Checks the repository's setup: config, workflow triggers, each agent's secrets and that the workflow passes them, permissions. |
+| `nexkit doctor` | Checks the repository's setup: config, workflow triggers and NexKit ref, each agent's secrets and that the workflow passes them, permissions. Mentions a newer NexKit release. |
 | `nexkit status [--json]` | Lists the open NexKit work and what each item waits for: issues being planned, planned or implemented; pull requests running, ready, blocked, failing, conflicting, paused or refused a merge, each with the link to its last round; recent merges by NexKit with the state of each `merge.after_workflows` run; and, last, only the items that need a person and why. It reads NexKit's hidden markers, not the comment text, and changes nothing. |
 
 The commands use the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`.

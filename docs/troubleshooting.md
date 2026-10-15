@@ -18,6 +18,15 @@ once the running command finishes. See [one run at a time](how-it-works.md#one-r
 NexKit 1.8, a plain comment can cancel a waiting command. Move the `concurrency` block in
 `.github/workflows/nexkit.yml` into the `nexkit` job, as `nexkit init` writes it.
 
+**`nexkit doctor`: "calls the pipeline at …, but nexkit_ref is …".** Only one of the two
+refs was changed. The jobs check out NexKit's code at `nexkit_ref`, so they would run the
+code of another release than the pipeline. Set the `uses:` ref and `nexkit_ref` to the
+same tag.
+
+**`nexkit doctor`: "NexKit vX.Y.Z is available".** A newer release exists. This is not a
+problem, and doctor still passes: upgrade when you choose to, with the steps in that
+release's notes.
+
 **"needs write access".** The commenter must be a collaborator with write, maintain or
 admin permission.
 

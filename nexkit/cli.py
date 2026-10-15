@@ -13,6 +13,8 @@ import sys
 import uuid
 from pathlib import Path
 
+import nexkit
+
 from . import __version__, python_error, python_supported, scaffold
 from . import config as configuration
 from .runtimes import RUNTIMES
@@ -61,7 +63,11 @@ def cmd_init(args):
     )
     for path in written:
         print(f"wrote {path}")
-    print("Next: review the files, commit them to the default branch, then run 'nexkit doctor'.")
+    print(
+        "Next: review the files, set the secret each agent in .nexkit/config.json names "
+        "(gh secret set CLAUDE_CODE_OAUTH_TOKEN), commit both files to the default branch, "
+        "then run 'nexkit doctor'."
+    )
     return 0
 
 
@@ -362,7 +368,7 @@ def cmd_maintain(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="nexkit", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="nexkit", description=nexkit.__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"nexkit {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -370,7 +376,11 @@ def build_parser():
     p.add_argument("--repo", default=".", help="Repository root (default: current directory)")
     p.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND")
     p.add_argument("--setup", action="append", default=[], metavar="COMMAND")
-    p.add_argument("--model", default=configuration.DEFAULTS["model"])
+    p.add_argument(
+        "--model",
+        default=configuration.DEFAULTS["model"],
+        help="Model for every stage of the `claude` agent (default: %(default)s)",
+    )
     p.add_argument("--kit-repo", default=scaffold.KIT_REPOSITORY)
     p.add_argument("--kit-ref", default=None, help=f"Default: v{__version__}")
     p.add_argument("--force", action="store_true", help="Overwrite existing files")

@@ -1,6 +1,6 @@
 {
   "name": "nexkit",
-  "description": "NexKit: GitHub issues to reviewed, tested pull requests with Claude Code.",
+  "description": "NexKit: GitHub issues to reviewed, tested pull requests with coding agents.",
   "owner": {
     "name": "Phuong Nguyen"
   },
@@ -8,7 +8,7 @@
     {
       "name": "nexkit",
       "source": "./",
-      "description": "Turn GitHub issues into reviewed, tested pull requests with Claude Code."
+      "description": "Turn GitHub issues into reviewed, tested pull requests with coding agents."
     }
   ]
 }

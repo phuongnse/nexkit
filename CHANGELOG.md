@@ -20,7 +20,7 @@
   `max_auto_fixes` is now `fix.max_auto_rounds`, `auto_merge` is now `merge.auto`, and
   `after_merge_workflows` is now `merge.after_workflows`. A configuration with the old
   keys is rejected with a message that names the new ones; see
-  [Keys renamed in this release](docs/configuration.md#keys-renamed-in-this-release).
+  [Keys renamed in this release](docs/configuration.md#keys-renamed-in-20).
 - Values that were fixed in the code can now be configured: `limits.setup_timeout_minutes`
   (default 30) for each `setup` command, and `limits.max_patch_mb` (default 5) for the
   largest change a round may publish. The job timeouts allow for the setup timeout.

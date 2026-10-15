@@ -34,7 +34,8 @@ A complete configuration with every key at its default, except `agents`, `setup`
   "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
   "protected_paths": [".github/", ".nexkit/"],
   "transcript": true,
-  "log": {"tool_output": "truncated"}
+  "log": {"tool_output": "truncated"},
+  "publish": {"push_token_secret": null}
 }
 ```
 
@@ -47,8 +48,8 @@ their defaults.
 |---|---|---|
 | `version` | `1` | Configuration format. Must be `1`. |
 | `agents` | required | The agents the stages may use: a runtime, a provider, its settings and the names of the secrets it uses. See [Agents](#agents). |
-| `agent` | `"claude"` | The agent for every stage. Set `model` with it. |
-| `model` | `"sonnet"` | Model for every stage, as the agent names it. For Claude Code: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
+| `agent` | `"claude"` | The agent for every stage. It must name an agent in `agents`; when you set it, set `model` too. |
+| `model` | `"sonnet"` | Model for every stage, as the agent's runtime and provider name it. For `claude-code`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. For `azure-openai`: the deployment name. The default is a Claude Code alias, so set `model` when the default agent runs on another runtime. |
 | `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
@@ -63,14 +64,14 @@ their defaults.
 |---|---|---|
 | `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings (0 to 10). Rounds requested by people do not count. |
 | `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See [Automatic merge](#automatic-merge). |
-| `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. |
+| `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
 | `conflicts.max_rounds` | `3` | Those rounds per pull request (1 to 10), apart from `fix.max_auto_rounds`. |
 | `usage_limit.resume` | `true` | When the agent stops at the account's usage limit, run the same command again after the limit resets. See [Usage limits](#usage-limits). |
 | `usage_limit.retry_minutes` | `60` | When the reset time is unknown, try again after this many minutes (1 to 1440). |
 | `usage_limit.wait_minutes` | `330` | Start a run that waits for the reset when it is at most this many minutes away (0 to 330); 0 leaves the resume to the hourly schedule. |
 | `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See [Parent issues](#parent-issues). |
-| `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`. See [Mentions](#mentions). |
+| `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`, each listed once. See [Mentions](#mentions). |
 
 **Limits and safety**
 
@@ -81,7 +82,7 @@ their defaults.
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
 | `transcript` | `true` | Write the agent's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See [Logs and transcripts](#logs-and-transcripts). |
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. |
-| `publish.push_token_secret` | `null` | The secret with the token that pushes NexKit's branches and opens its pull requests, such as `"NEXKIT_PUSH_TOKEN"`; `null` pushes with the Actions token. See [Secrets](#secrets). |
+| `publish.push_token_secret` | `null` | The secret with the token that pushes NexKit's branches and opens its pull requests, such as `"NEXKIT_PUSH_TOKEN"`; `null` pushes with the Actions token. It cannot be an agent's secret or start with `GITHUB_`. See [Secrets](#secrets). |
 
 ### Agents are declared
 
@@ -101,7 +102,7 @@ With an Anthropic API key, write `"api_key_secret": "ANTHROPIC_API_KEY"` instead
 `"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}`: NexKit now uses a push token only
 when the configuration names it, and `nexkit doctor` warns about one that it does not.
 
-### Keys renamed in this release
+### Keys renamed in 2.0
 
 NexKit 1.10 and earlier had three of these keys at the top level. A configuration that
 still uses them is rejected with the new name, so move them:
@@ -121,9 +122,9 @@ still uses them is rejected with the new name, so move them:
 ]
 ```
 
-- `name`: short lowercase identifier, shown in reports.
+- `name`: short lowercase identifier, shown in reports. Two checks cannot share a name.
 - `run`: a Bash command run from the repository root with `pipefail`.
-- `timeout_minutes`: default 15.
+- `timeout_minutes`: default 15, at most 360.
 
 Checks run in a separate job that has **no secrets and a read-only token**, on the exact
 commit NexKit published. A setup failure counts as a failed check. With no checks
@@ -140,7 +141,7 @@ List the paths the pull request changed with both of these commands:
 ```
 
 The first lists changed tracked files, committed or not. The second lists new files that
-are not committed yet: when Claude runs the checks while it works, the files it created are
+are not committed yet: when the agent runs the checks while it works, the files it created are
 still untracked, and without that line a check would skip work it should run. Changes that
 the base branch made after the merge base are not listed. In a fix round that merges the
 base branch, the variable is the merged base commit.
@@ -318,7 +319,7 @@ or on the pull request once there is one. The line is its own comment because Gi
 notifies people mentioned in a new comment, but not in an edited one, and the run's
 comment is edited when the run ends.
 
-The choice follows the run's outcome only, never a judgment by Claude (see
+The choice follows the run's outcome only, never a judgment by the agent (see
 [How it works](how-it-works.md#when-a-person-is-needed)). A run mentions at most once;
 nobody outside `notify` is ever mentioned. Write logins without `@`. `nexkit doctor`
 warns about a listed login without write access, but NexKit still mentions it. With
@@ -360,8 +361,9 @@ pauses the run, shows the reset time in its comment and keeps `nexkit/checks` an
 With `resume: true` (the default), it runs the same command again after the reset, once,
 with the same note; when the reset time is unknown, after `retry_minutes` (default 60).
 With `false`, the comment still names the limit and the reset time, and a person
-comments the command again. Only the `claude-code` runtime reports such limits; see
-[How it works](how-it-works.md#usage-limits) for why `codex` does not.
+comments the command again. Each runtime says whether it reports such limits; of the
+current ones only `claude-code` does (see
+[How it works](how-it-works.md#usage-limits) for why `codex` does not).
 
 When the reset is at most `wait_minutes` away (330, five and a half hours, by default),
 NexKit starts a run that waits for it and resumes the command within ten minutes of the
@@ -425,15 +427,18 @@ Claude Code with a Claude subscription token.
 }
 ```
 
-- An agent name is a short lowercase identifier. `runtime` and
-  `provider` are required; the other keys are the provider's settings, and unknown keys
-  are rejected.
+- An agent name is a short lowercase identifier. `runtime` and `provider` are required;
+  the other keys are `fallback` (see [Fallback agents](#fallback-agents)) and the
+  provider's settings, and unknown keys are rejected.
 - `agent` layers like `model`: `profiles.<profile>.stages.<stage>`, then
   `stages.<stage>`, then the top-level `agent`. Wherever `agent` is set, at the top level,
   in a stage or in a profile, `model` must be set next to it, because a model name means
   something only to its agent.
 - Each runtime checks the settings of the stages it runs, in every profile. A setting it
   cannot honour, such as an effort level it does not know, is a configuration error.
+
+The runtimes and providers NexKit supports today; each is a module in
+`nexkit/runtimes/`, so more can be added:
 
 | Runtime | Providers | `effort` | `max_budget_usd` | Cost in the summary |
 |---|---|---|---|---|
@@ -445,8 +450,8 @@ Claude Code with a Claude subscription token.
 | `anthropic` | none | Exactly one of `oauth_token_secret`, the secret that holds a Claude subscription token from `claude setup-token`, and `api_key_secret`, the secret that holds an Anthropic API key. Claude Code receives it under its own variable, whatever the secret's name. |
 | `azure-openai` | none. `model` is the deployment name. | `endpoint_secret`: the secret that holds the resource URL, `https://<name>.openai.azure.com` (or `.services.ai.azure.com`, `.cognitiveservices.azure.com`), with no path. `api_key_secret`: the secret that holds the deployment's key. |
 
-Only `claude-code` reports usage limits, so only its runs pause at one or move to a
-fallback; see [Usage limits](#usage-limits). When Azure refuses a request for its rate
+Of the current runtimes, only `claude-code` reports usage limits, so only its runs pause
+at one or move to a fallback; see [Usage limits](#usage-limits). When Azure refuses a request for its rate
 limit or quota, Codex retries a few times, then the run ends as an error.
 
 ### Fallback agents
@@ -490,8 +495,8 @@ Anthropic API key behind a Claude subscription:
 - A fallback agent's secrets count like any agent's: the job that may run it receives
   them, they count toward the 8 per job, and `nexkit doctor` checks them. A fallback
   whose secret is not set is skipped, and the run summary says so.
-- `fallback` is rejected for a runtime that does not report usage limits (`codex`), since
-  it would never run.
+- `fallback` is a non-empty list of other agents, each named once. It is rejected for a
+  runtime that does not report usage limits (currently `codex`), since it would never run.
 
 The run summary names the agent of each stage, and when a fallback ran it lists every
 agent's run with its result, duration and cost. The run comment on the issue or pull
@@ -520,12 +525,14 @@ endpoint and has its own key, so each deployment you use is an agent with its ow
 
 Codex reads the repository's `AGENTS.md`, as Claude Code reads `CLAUDE.md`.
 
+### Settings and secrets
 
-**Settings and secrets.** A provider declares which of its settings are secrets: keys,
+ A provider declares which of its settings are secrets: keys,
 and anything that identifies your own account or resource, such as an endpoint. A secret
 lives in a repository secret, and the configuration holds only its name, in a key that
 ends in `_secret`. Choose the names freely, except names that start with `GITHUB_` or
-`NEXKIT_`, which belong to GitHub and NexKit. A value that is not a secret name, such as a
+`NEXKIT_`, which belong to GitHub and NexKit (the push token, such as `NEXKIT_PUSH_TOKEN`,
+is NexKit's own and may use the prefix). A value that is not a secret name, such as a
 key pasted into the configuration, is rejected. `nexkit doctor` checks that each secret is
 set and that the repository's NexKit workflow passes it.
 
@@ -547,7 +554,7 @@ Fix rounds use the `implement` settings. `triage` is a fourth stage, allowed onl
 | `agent` | Overrides the top-level `agent`. Needs `model` next to it. |
 | `model` | Overrides the top-level `model`. |
 | `effort` | Overrides the top-level `effort`. |
-| `timeout_minutes` | Stop the agent after this long (plan 15, implement 45, review 20 and triage 5 by default; triage at most 30). With [fallback agents](#fallback-agents), each agent's run gets this long. |
+| `timeout_minutes` | Stop the agent after this long (plan 15, implement 45, review 20 and triage 5 by default; triage at most 30, other stages at most 340). With [fallback agents](#fallback-agents), each agent's run gets this long. |
 | `max_budget_usd` | A spending limit for each agent's run, for runtimes that have one (Claude Code's `--max-budget-usd`); `null` means no limit. |
 
 ## Profiles
@@ -587,8 +594,8 @@ ones, without choosing by hand on every issue.
   `stages.<stage>`, then `profiles.<profile>.stages.<stage>`. What a profile leaves out
   comes from `stages`. A profile can run a stage on another agent, for example a review by
   a different model family than the one that wrote the code.
-- `stages.triage` sets the model, effort, timeout and budget of the triage call. It takes
-  the top-level `model` and `effort` unless it sets its own. A profile cannot set it,
+- `stages.triage` sets the agent, model, effort, timeout and budget of the triage call. It
+  takes the top-level `agent`, `model` and `effort` unless it sets its own. A profile cannot set it,
   because triage runs before there is a profile.
 - `default_profile` is used when no plan chose a profile: `/nexkit go` without a plan, a
   plan from before profiles were configured, and a plan whose triage failed. The cheapest
@@ -625,7 +632,7 @@ most 8 per job, and each agent's CLI only its own; setup and check commands get 
 [How it works](how-it-works.md#agents) for what this does and does not isolate. A
 workflow that lists secrets one by one, as `nexkit init` wrote before, can pass only
 `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` and `NEXKIT_PUSH_TOKEN`; `nexkit doctor`
-says when an agent needs `secrets: inherit`.
+says when an agent or the push token needs `secrets: inherit`.
 
 | Secret | Required | Used by |
 |---|---|---|

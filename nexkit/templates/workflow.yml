@@ -56,6 +56,6 @@ jobs:
     with:
       nexkit_repository: __KIT_REPO__
       nexkit_ref: __KIT_REF__
-    # The pipeline passes each job only the secrets of the agents .nexkit/config.json
-    # names for its stages, so it can read them by those names.
+    # The pipeline passes each job only the secrets .nexkit/config.json names for it (its
+    # stages' agents, or the push token), so it can read them by those names.
     secrets: inherit

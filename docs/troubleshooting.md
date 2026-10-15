@@ -29,7 +29,9 @@ Enable it under Settings > Actions > General > Workflow permissions, or run the
 GitHub does not start workflows for events created with the default Actions token. NexKit
 runs your configured checks itself. To also run your CI, store a push token as a secret
 and name it in `publish.push_token_secret` (see the
-[configuration reference](configuration.md#secrets)).
+[configuration reference](configuration.md#secrets)). If CI stopped running after an
+upgrade to 3.0, a `NEXKIT_PUSH_TOKEN` secret is set but not named: NexKit uses a push
+token only when the configuration names it, and `nexkit doctor` warns about this.
 
 The same applies to a merge by NexKit with `merge.auto`: the push to the base branch
 starts no `push` CI, whichever token published the pull request. List those workflows in
@@ -48,27 +50,45 @@ and has a `workflow_dispatch` trigger without required inputs; `nexkit doctor` c
 in your working copy. To run it for this merge, use *Run workflow* on the base branch in
 the Actions tab.
 
-**"No secret for the `claude` agent".** Add the secret that the agent's configuration
-names as a repository secret: for `oauth_token_secret`, the token from
-`claude setup-token`; for `api_key_secret`, an Anthropic API key. Either way, `.github/workflows/nexkit.yml` must pass
-them to the pipeline: `secrets: inherit`, as `nexkit init` writes it. `nexkit doctor`
-checks this.
+**"No secret for the `<name>` agent".** Add the secret that the agent's configuration
+names as a repository secret. For `anthropic`: for `oauth_token_secret`, the token from
+`claude setup-token`; for `api_key_secret`, an Anthropic API key. For `azure-openai`: the
+resource URL in the `endpoint_secret` and the deployment's key in the `api_key_secret`.
+`.github/workflows/nexkit.yml` must pass them to the pipeline: `secrets: inherit`, as
+`nexkit init` writes it (a workflow that lists secrets one by one can pass only
+`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` and `NEXKIT_PUSH_TOKEN`). `nexkit doctor`
+checks this. A [fallback agent](configuration.md#fallback-agents) without its secret does
+not fail the stage: it is skipped, and the run summary says so.
 Secrets are not available to runs triggered from forks.
 
 **Codex stopped: "401 Unauthorized" or "404 Not Found".** A 401 means the agent's
 `api_key_secret` does not hold the key of the stage's deployment. A 404 means the endpoint
-or the deployment is wrong: the `AZURE_OPENAI_ENDPOINT` secret is the resource URL without
-a path, and the stage's `model` is the deployment name, not the model's name.
+or the deployment is wrong: the secret the agent's `endpoint_secret` names is the resource
+URL without a path, and the stage's `model` is the deployment name, not the model's name.
 
-**"The AZURE_OPENAI_ENDPOINT secret must be an https URL …" or "… the host must end
-with …".** The secret holds something other than the resource URL, such as the full target
+**"The `<endpoint secret>` secret must be an https URL with only a host …" or "… the host
+must end with …".** The secret holds something other than the resource URL, such as the full target
 URI with `/openai/...`. Set it again to `https://<name>.openai.azure.com`. The log line
 "Model metadata for `<deployment>` not found" is harmless: Codex does not know the
 deployment's name.
 
-**"agents is required".** The configuration is from before agents were declared. Add the
-`agents` block that the message shows (see
-[Agents are declared](configuration.md#agents-are-declared)).
+**"NexKit configuration error: …".** NexKit replies with this on the command when
+`.nexkit/config.json` on the default branch is invalid; run `nexkit doctor` locally to see
+the same message. The ones new in 3.0:
+
+- **"agents is required".** The configuration is from before agents were declared. Add the
+  `agents` block that the message shows (see
+  [Agents are declared](configuration.md#agents-are-declared)).
+- **"names that start with GITHUB_ or NEXKIT_ are reserved".** An agent's secret has a
+  name GitHub or NexKit uses. Store it under another name and change the `*_secret` key.
+- **"publish.push_token_secret: … is an agent's secret".** The push token must be a
+  secret of its own, because agents never hold a token that can write.
+- **"… does not report usage limits, so a fallback would never run".** Remove `fallback`
+  from that agent. **"… must use the … runtime too".** A fallback agent runs the stage's
+  `model` and `effort`, so it must use the same runtime as the agent.
+- **"… NexKit passes at most 8 to one job".** The agents a job may run, with their
+  fallbacks (and for a plan with profiles, every profile's plan agent), need too many
+  secrets. Use fewer agents, or agents that share secrets.
 
 **"provider must be one of …".** That runtime does not support the provider. The
 [Agents](configuration.md#agents) table lists the pairs NexKit supports.
@@ -98,7 +118,7 @@ while the agent worked. NexKit opens the pull request on the commit the agent st
 from, so the work is not lost. Comment `/nexkit fix` to merge the base branch and resolve
 any conflicts.
 
-**"The agent started from … which is no longer on `main`".** The base branch was rewritten
+**"The agent started from …, which is no longer on `main`".** The base branch was rewritten
 (for example force-pushed) while the agent worked, so the commit the change is built on is
 gone from it. Comment `/nexkit go` to implement the plan again on the current base branch.
 
@@ -107,8 +127,11 @@ NexKit cannot publish this merge. Merge the base branch into the pull request yo
 push, and comment `/nexkit review`. For workflow files, a push token with Workflows write
 access, named in `publish.push_token_secret`, also lets NexKit push the merge.
 
-**⏸️ "The agent stopped at the account's usage limit".** The account behind the agent's
-secret, such as a Claude subscription, used up its session or weekly limit. NexKit runs
+**⏸️ "The agent stopped at the account's usage limit" or "Every agent stopped at its usage
+limit".** The account behind the agent's secret, such as a Claude subscription, used up
+its session or weekly limit, and so did each of its
+[fallback agents](configuration.md#fallback-agents), if it has any. To keep working
+through a limit, add a fallback, such as an Anthropic API key behind a subscription. NexKit runs
 the same command again after the reset time shown. When the reset is at most
 `usage_limit.wait_minutes` away, a dispatched NexKit run with the command `resume` waits
 for it in the Actions tab;
@@ -117,11 +140,15 @@ GitHub can delay by hours. If nothing happens after the reset, look for that run
 log, check that the trigger is there (`nexkit doctor` warns when it is not) and that
 scheduled workflows are not disabled for the repository. To continue earlier, or with
 another note, comment the command yourself; it replaces the paused one, whose comment then
-shows ⏭️.
+shows ⏭️. When the comment says "The reset time is unknown" and asks you to comment the
+command after the reset, NexKit will not resume it by itself: a resumed run stopped at the
+limit again without a reset time.
 
 **The agent timed out or stopped on its budget.** The issue is probably too large. Ask for a
 new plan and use its suggested split, or raise `timeout_minutes` / `max_budget_usd` for
-the `implement` stage.
+the `implement` stage. `max_budget_usd` exists only for runtimes with a spending limit
+(`claude-code`). With fallback agents, each agent's run gets `timeout_minutes`, within one
+stage deadline for all of them.
 
 **"Unable to download artifact(s): Artifact not found" on `report`.**
 `report` only downloads the artifacts of stages that ran, so this means a stage ran but

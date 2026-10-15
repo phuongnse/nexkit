@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up the NexKit pipeline in the current GitHub repository - choose check commands, install the config and workflow, add the Claude credential and verify. Use when the user asks to install, configure or repair NexKit for a repository.
+description: Set up the NexKit pipeline in the current GitHub repository - choose check commands, install the config and workflow, add the agents' credentials and verify. Use when the user asks to install, configure or repair NexKit for a repository.
 ---
 
 # Set up NexKit in this repository
@@ -42,7 +42,7 @@ files or repository settings, and wait for confirmation.
    change to the CI workflow too. `nexkit init` does not write `cache`; add it to
    `.nexkit/config.json` after step 4.
 
-3. **Choose the model.** Default `sonnet` for every stage. Mention that `opus` gives
+3. **Choose the agents and models.** Default: the `claude` agent with `sonnet` for every stage. Mention that `opus` gives
    stronger results at a higher cost, and that each stage can be set separately in the
    config (see the configuration reference in the NexKit repository).
    If the user wants to save cost on easy issues, offer `profiles`: for example a cheap
@@ -67,8 +67,9 @@ files or repository settings, and wait for confirmation.
    sets `agent` must set `model` too. Codex has no `max_budget_usd`. Add it to
    `.nexkit/config.json` after step 4.
    If the user has a second Claude credential, such as an Anthropic API key next to the
-   subscription, offer it as a fallback: declare it as another `claude-code` agent and add
-   `"fallback": ["claude-api"]` to the `claude` agent. A stage then moves to it only when
+   subscription, offer it as a fallback: declare it as another `claude-code` agent,
+   `"claude-api": {"runtime": "claude-code", "provider": "anthropic", "api_key_secret": "ANTHROPIC_API_KEY"}`,
+   and add `"fallback": ["claude-api"]` to the `claude` agent. A stage then moves to it only when
    `claude` stops at a usage limit, and the next run starts on `claude` again. Say that
    the fallback's runs are billed per token, so `max_budget_usd` is worth setting.
    Fallbacks must use the same runtime; Codex agents cannot have one.
@@ -79,13 +80,15 @@ files or repository settings, and wait for confirmation.
    declares the `claude` agent with `"oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"`; if
    the user has an Anthropic API key instead, change it to
    `"api_key_secret": "ANTHROPIC_API_KEY"`. Every secret NexKit reads is named in the
-   config this way.
+   config this way. The workflow passes the pipeline `secrets: inherit`; keep it, because
+   that is how the pipeline reads secrets by the names the config gives them.
 
-5. **Add the Claude credential** as a repository secret. With a Claude Pro or Max
+5. **Add the agents' credentials** as repository secrets. With a Claude Pro or Max
    subscription, the user runs `claude setup-token` in their own terminal (in this
    session they can type `! claude setup-token`), then
    `gh secret set CLAUDE_CODE_OAUTH_TOKEN`. With an API key instead:
-   `gh secret set ANTHROPIC_API_KEY`. For Azure agents, also
+   `gh secret set ANTHROPIC_API_KEY`, which a `claude-api` fallback also needs next to
+   the subscription token. For Azure agents, also
    `gh secret set AZURE_OPENAI_ENDPOINT` with the resource URL (`https://<name>.openai.azure.com`,
    no path) and `gh secret set <name>` with each deployment's key, under the names the
    agents in the config give. Never ask the user to

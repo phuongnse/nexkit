@@ -101,7 +101,7 @@ def _optional_budget(value, where):
 
 def _model(value, where):
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._\-\[\]]+", value):
-        _fail(f"{where} must be a model alias such as 'sonnet' or a full model name")
+        _fail(f"{where} must be a model name, such as 'sonnet' or a deployment name")
 
 
 def _effort(value, where):

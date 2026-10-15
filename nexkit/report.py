@@ -205,7 +205,7 @@ def _stage_failure(decision, agent, publish):
 
 def needs_person(outcome, cfg, plan=None, resume=None):
     """The reason a person is needed after a run, or None. It follows only the outcome and
-    the run's structured output, never a judgment by Claude."""
+    the run's structured output, never a judgment by the agent."""
     if outcome == "planned":
         plan = plan or {}
         if plan.get("too_large"):
@@ -215,7 +215,9 @@ def needs_person(outcome, cfg, plan=None, resume=None):
         return None if cfg["merge"]["auto"] else "the pull request is ready for a human decision"
     if outcome == "paused":
         return (
-            None if resume else "Claude hit the usage limit; run the command again after it resets"
+            None
+            if resume
+            else "The agent hit its usage limit; run the command again after the reset"
         )
     return NEEDS_PERSON.get(outcome)
 
@@ -259,7 +261,7 @@ def pause(result, cfg, command, number, note="", auto="resume", resumed=False):
     at = result.get("resume_at")
     known = result.get("reset_known")
     shown_command = f"`/nexkit {command}`" + (" with the same note" if note else "")
-    message = f"⏸️ Claude stopped at the account's usage limit: {result.get('limit') or ''}"
+    message = f"⏸️ The agent stopped at the account's usage limit: {result.get('limit') or ''}"
     message = message.rstrip(": ") + "."
     if resumed and not known:
         # A run that was resumed blind and stopped again: a person decides, so a limit
@@ -282,7 +284,7 @@ def pause(result, cfg, command, number, note="", auto="resume", resumed=False):
 
 def _pause_statuses(gh, head, resume, url):
     """Keep both statuses pending while the round waits for the usage limit to reset."""
-    description = "Paused at the Claude usage limit" + (
+    description = "Paused at the agent's usage limit" + (
         f"; resumes after {shown(resume['at'])}" if resume else ""
     )
     for context in progress.STATUS_CONTEXTS:

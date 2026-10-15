@@ -117,7 +117,7 @@ class InitDoctorTests(unittest.TestCase):
 
     def test_doctor_checks_the_schedule_that_resumes_paused_runs(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
-        ok = (True, "A schedule resumes runs paused at the Claude usage limit")
+        ok = (True, "A schedule resumes runs paused at the agent's usage limit")
         self.assertIn(ok, scaffold.doctor(self.root))
         workflow = self.root / ".github/workflows/nexkit.yml"
         text = workflow.read_text()
@@ -213,6 +213,8 @@ class InitDoctorTests(unittest.TestCase):
             ),
             scaffold.doctor(self.root),
         )
+        workflow.write_text(text.replace("    secrets:\n", "    secrets: inherit\n    unused:\n"))
+        self.assertFalse(any("does not pass it" in m for _, m in scaffold.doctor(self.root)))
 
     def test_doctor_finds_the_secret_of_each_agent(self):
         cfg = nexkit.config.validate(
@@ -285,6 +287,9 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("issue_comment", event)
         self.assertEqual(out["action"], "implement")
         self.assertNotIn("claude_version", out)
+        claude = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
+        self.assertEqual(json.loads(out["agent_secrets"]), claude)
+        self.assertEqual(json.loads(out["review_secrets"]), claude)
         self.assertEqual(json.loads(out["decision"])["issue"], 5)
         self.assertEqual(json.loads(out["config"])["checks"][0]["name"], "test")
         self.assertEqual(out["agent_ref"], "main")
@@ -532,13 +537,23 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(re.findall(r"^      (\w+): ", passed, re.M), names)
 
     def test_only_the_steps_that_run_an_agent_receive_its_secrets(self):
-        steps = [step for job in self.jobs.values() for step in job.split("\n      - ")]
-        receiving = [step for step in steps if any(f"secrets.{s} " in step for s in AGENT_SECRETS)]
-        self.assertEqual(len(receiving), 2)
-        for step in receiving:
+        steps = {
+            name: [step for step in job.split("\n      - ") if "secrets." in step]
+            for name, job in self.jobs.items()
+        }
+        for job, needed in (("agent", "agent_secrets"), ("review", "review_secrets")):
+            (step,) = [s for s in steps[job] if any(f"secrets.{n} " in s for n in AGENT_SECRETS)]
             self.assertIn("kit/bin/nexkit agent ", step)
             for secret in AGENT_SECRETS:
-                self.assertIn(f"{secret}: ${{{{ secrets.{secret} }}}}", step)
+                # Passed only when route says the job's stages need it.
+                gate = f"contains(fromJSON(needs.route.outputs.{needed}), '{secret}')"
+                self.assertIn(f"{secret}: ${{{{ {gate} && secrets.{secret} || '' }}}}", step)
+        others = [
+            s for name, found in steps.items() if name not in ("agent", "review") for s in found
+        ]
+        for step in others:
+            for secret in AGENT_SECRETS:
+                self.assertNotIn(secret, step)
 
     def test_agent_jobs_install_the_runtimes_with_nexkit(self):
         for name in ("agent", "review"):

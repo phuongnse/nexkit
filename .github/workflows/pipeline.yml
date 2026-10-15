@@ -57,6 +57,8 @@ jobs:
       agent_timeout: ${{ steps.route.outputs.agent_timeout }}
       review_timeout: ${{ steps.route.outputs.review_timeout }}
       checks_timeout: ${{ steps.route.outputs.checks_timeout }}
+      agent_secrets: ${{ steps.route.outputs.agent_secrets }}
+      review_secrets: ${{ steps.route.outputs.review_secrets }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -132,9 +134,10 @@ jobs:
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
-          # Every agent secret (AGENT_SECRETS); each CLI gets only its own.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Only the agent secrets this job's stages need (route's agent_secrets);
+          # each CLI gets only its own.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ contains(fromJSON(needs.route.outputs.agent_secrets), 'CLAUDE_CODE_OAUTH_TOKEN') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ contains(fromJSON(needs.route.outputs.agent_secrets), 'ANTHROPIC_API_KEY') && secrets.ANTHROPIC_API_KEY || '' }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -291,9 +294,10 @@ jobs:
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
-          # Every agent secret (AGENT_SECRETS); each CLI gets only its own.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Only the agent secrets this job's stages need (route's review_secrets);
+          # each CLI gets only its own.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ contains(fromJSON(needs.route.outputs.review_secrets), 'CLAUDE_CODE_OAUTH_TOKEN') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ contains(fromJSON(needs.route.outputs.review_secrets), 'ANTHROPIC_API_KEY') && secrets.ANTHROPIC_API_KEY || '' }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

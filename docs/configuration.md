@@ -44,7 +44,7 @@ their defaults.
 |---|---|---|
 | `version` | `1` | Configuration format. Must be `1`. |
 | `agents` | `{}` | Agents besides the built-in `claude`: a runtime, a provider and its settings. See [Agents](#agents). |
-| `agent` | `"claude"` | The agent for every stage. |
+| `agent` | `"claude"` | The agent for every stage. Set `model` with it. |
 | `model` | `"sonnet"` | Model for every stage, as the agent names it. For `claude`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
 | `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Claude Code takes `low`, `medium`, `high`, `xhigh` and `max`. |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
@@ -363,8 +363,9 @@ API key. Without `agents`, every stage runs on it.
   `provider` are required; the other keys are the provider's settings, and unknown keys
   are rejected.
 - `agent` layers like `model`: `profiles.<profile>.stages.<stage>`, then
-  `stages.<stage>`, then the top-level `agent`. A stage or profile that sets `agent` must
-  set `model` too, because a model name means something only to its agent.
+  `stages.<stage>`, then the top-level `agent`. Wherever `agent` is set, at the top level,
+  in a stage or in a profile, `model` must be set next to it, because a model name means
+  something only to its agent.
 - Each runtime checks the settings of the stages it runs, in every profile. A setting it
   cannot honour, such as an effort level it does not know, is a configuration error.
 
@@ -469,8 +470,10 @@ shows what the log, run summary and artifacts contain and what is redacted.
 
 ## Secrets
 
-NexKit passes these secrets, and no others, to the steps that run an agent. Each agent's
-CLI receives only the secret its provider names; setup and check commands receive none.
+NexKit passes these secrets, and no others, to the steps that run an agent, and each job
+only the secrets of the agents its stages use. Each agent's CLI receives only the secret
+its provider names; setup and check commands receive none. See
+[How it works](how-it-works.md#agents) for what this does and does not isolate.
 Set the secrets of the agents your stages use, and pass each one in the `secrets:` of
 `.github/workflows/nexkit.yml`, as `nexkit init` writes it.
 

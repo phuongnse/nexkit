@@ -417,10 +417,17 @@ anything is published. Everything specific to one CLI lives in `nexkit/runtimes/
 The levels define what an agent can affect, not the same set of tools: a runtime meets
 each level in its own way.
 
-**How secrets reach an agent.** The steps that run an agent receive every agent secret.
-Each CLI process gets an environment without any of them, plus the one secret its
-provider names, so one agent's CLI never sees another's credential. Setup and check
-commands get none. Secrets are never put on a command line or in a file.
+**How secrets reach an agent.** `route` works out which agents each job may run and
+passes the job only those agents' secrets: the `agent` job the secrets for its stage (for
+a plan, triage and the plan of every profile, since triage chooses one in the job), the
+`review` job the secret of the review's agent. Within the job, each CLI process gets an
+environment without any agent secret, plus the one its provider names, and setup and
+check commands get none. Secrets are never put on a command line or in a file.
+
+This filtering limits what each process inherits. It is not a wall inside a job: an agent
+that can run commands can read other processes on the runner, so it may see every secret
+its job holds. A job holds another agent's secret only when that agent may run in the same
+job, such as a plan whose triage runs on another agent.
 
 ## Profiles
 
@@ -523,8 +530,8 @@ once the limit has reset.
 - Only collaborators with write, maintain or admin access can start runs. Prompts include
   issue text from anyone but mark it as untrusted; discussion and review feedback come only
   from collaborators.
-- The implement session can run any command on the runner, and its agent's credential
-  may be in its environment. Treat `/nexkit go` like running a script that the issue describes:
+- The implement session can run any command on the runner, so it can read the secrets
+  its job holds: its own agent's credential, and no other agent's. Treat `/nexkit go` like running a script that the issue describes:
   approve plans only for issues whose content you trust.
 - With profiles, an issue's text can steer triage towards a more expensive profile, for
   example through prompt injection. Requests in the issue do not count as a person's

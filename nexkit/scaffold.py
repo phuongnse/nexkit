@@ -172,13 +172,13 @@ def _triggers(cfg, workflow):
             findings.append(
                 (
                     False,
-                    f"{WORKFLOW_PATH} has no 'schedule' trigger, so runs paused at the Claude "
+                    f"{WORKFLOW_PATH} has no 'schedule' trigger, so runs paused at the agent's "
                     "usage limit cannot resume; add it as 'nexkit init' writes it, or set "
                     "usage_limit.resume to false",
                 )
             )
         else:
-            findings.append((True, "A schedule resumes runs paused at the Claude usage limit"))
+            findings.append((True, "A schedule resumes runs paused at the agent's usage limit"))
     return findings
 
 
@@ -186,6 +186,8 @@ def _passed_secrets(cfg, workflow):
     """Findings: the workflow passes a secret of each agent that a stage uses."""
     findings = []
     text = _uncommented(workflow)
+    if re.search(r"^\s+secrets:\s*inherit\s*$", text, re.M):
+        return findings
     for name, secrets in configuration.credentials(cfg):
         if any(re.search(rf"\bsecrets\.{secret}\b", text) for secret in secrets):
             continue

@@ -90,8 +90,8 @@ NexKit cannot publish this merge. Merge the base branch into the pull request yo
 push, and comment `/nexkit review`. For workflow files, a `NEXKIT_PUSH_TOKEN` with
 Workflows write access also lets NexKit push the merge.
 
-**⏸️ "Claude stopped at the account's usage limit".** The Claude account behind the
-secret used up its session or weekly limit. NexKit runs the same command again after the
+**⏸️ "The agent stopped at the account's usage limit".** The account behind the agent's
+secret, such as the Claude subscription, used up its session or weekly limit. NexKit runs the same command again after the
 reset time shown, through the hourly `schedule` trigger in
 `.github/workflows/nexkit.yml`. If nothing happens after the reset, check that the
 trigger is there (`nexkit doctor` warns when it is not) and that scheduled workflows are

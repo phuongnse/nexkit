@@ -210,10 +210,11 @@ def _agents(cfg):
                 _fail(f"{where}.{key} is required for the {provider.name} provider")
 
 
-def _runtime_settings(cfg):
+def _runtime_settings(cfg, profiles=True):
     """Each runtime checks the settings of every stage it runs, in every profile."""
     variants = [("stages", cfg)]
-    variants += [(f"profiles.{name}.stages", with_profile(cfg, name)) for name in cfg["profiles"]]
+    if profiles:
+        variants += [(f"profiles.{p}.stages", with_profile(cfg, p)) for p in cfg["profiles"]]
     for prefix, variant in variants:
         for name in variant["stages"]:
             if prefix != "stages" and name == TRIAGE:
@@ -271,8 +272,12 @@ def _profiles(cfg):
     cfg["stages"][TRIAGE] = {**TRIAGE_DEFAULTS, **cfg["stages"].get(TRIAGE, {})}
 
 
-def validate(raw):
-    """Return a complete configuration with defaults applied, or raise ConfigError."""
+def validate(raw, *, layered=False):
+    """Return a complete configuration with defaults applied, or raise ConfigError.
+
+    `layered` is for the configuration that `route` passes to the other jobs: it may
+    already hold one profile's settings in `stages`, so the other profiles are not checked
+    on top of them again. `route` checked them on the configuration as written."""
     if not isinstance(raw, dict):
         _fail("Configuration must be a JSON object")
     renamed = [f"'{old}' is now '{RENAMED[old]}'" for old in sorted(set(raw) & set(RENAMED))]
@@ -308,6 +313,10 @@ def validate(raw):
         _fail("version must be 1")
     _agents(cfg)
     _agent_name(cfg["agent"], cfg, "agent")
+    if "agent" in raw and "model" not in raw:
+        _fail(
+            "agent is set, so model must be set too: a model name means something only to its agent"
+        )
     _model(cfg["model"], "model")
     _effort(cfg["effort"], "effort")
 
@@ -340,7 +349,7 @@ def validate(raw):
     _profiles(cfg)
     for name, settings in cfg["stages"].items():
         _stage_values(settings, f"stages.{name}", 30 if name == TRIAGE else 340, cfg)
-    _runtime_settings(cfg)
+    _runtime_settings(cfg, profiles=not layered)
 
     _positive_int(cfg["fix"]["max_auto_rounds"], "fix.max_auto_rounds", 10, minimum=0)
     _bool(cfg["merge"]["auto"], "merge.auto")
@@ -432,6 +441,16 @@ def runtimes(cfg):
     """The runtimes that some stage uses, in any profile, in registry order."""
     used = {agent(cfg, name)["runtime"] for name in agents_used(cfg)}
     return [name for name in RUNTIMES if name in used]
+
+
+def secret_names(variants, stages):
+    """The agent secrets that `stages` need in any of the configurations `variants`."""
+    names = set()
+    for variant in variants:
+        for name in stages:
+            chosen = agent(variant, stage(variant, name)["agent"])
+            names.update(PROVIDERS[chosen["provider"]].credentials(chosen))
+    return [name for name in AGENT_SECRETS if name in names]
 
 
 def credentials(cfg):

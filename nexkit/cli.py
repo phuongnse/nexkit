@@ -38,7 +38,8 @@ def _decision():
 
 
 def _config():
-    return configuration.validate(json.loads(os.environ["NEXKIT_CONFIG"]))
+    # The configuration from `route`, with the run's profile already applied.
+    return configuration.validate(json.loads(os.environ["NEXKIT_CONFIG"]), layered=True)
 
 
 def _gh():
@@ -143,6 +144,13 @@ def cmd_route(args):
             for name in cfg["profiles"]
         )
         agent_minutes = configuration.stage(cfg, "triage")["timeout_minutes"] + longest
+    # Each job receives only the secrets of the agents it may run: an agent that can run
+    # any command can read whatever its job holds. A plan may use any profile's agent.
+    if decision["action"] == "plan":
+        variants = [cfg, *(configuration.with_profile(cfg, name) for name in cfg["profiles"])]
+        stages = ["plan", *([configuration.TRIAGE] if cfg["profiles"] else [])]
+    else:
+        variants, stages = [cfg], [decision["action"]]
     review_stage = configuration.stage(cfg, "review")
     checks_minutes = sum(c["timeout_minutes"] for c in cfg["checks"])
     setup_minutes = cfg["limits"]["setup_timeout_minutes"]
@@ -158,6 +166,8 @@ def cmd_route(args):
         agent_timeout=str(agent_minutes + setup_minutes),
         review_timeout=str(review_stage["timeout_minutes"] + 30),
         checks_timeout=str(checks_minutes + setup_minutes + 10),
+        agent_secrets=configuration.secret_names(variants, stages),
+        review_secrets=configuration.secret_names([cfg], ["review"]),
     )
     return 0
 

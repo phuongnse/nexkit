@@ -7,20 +7,20 @@ Every command starts one run of the reusable workflow
 Some other events start a run too; they run only `route` and `maintain` (see
 [Work without a command](#work-without-a-command)).
 
-| Job | Runs for | Token permissions | Claude credential | Does |
+| Job | Runs for | Token permissions | Secrets | Does |
 |---|---|---|---|---|
-| `route` | every event | read; comments, reactions, statuses | no | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
-| `agent` | plan, go, fix | read only | yes | Installs Claude Code, restores the [caches](configuration.md#caches) and runs `setup`, then one Claude session; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
-| `publish` | plan, go, fix | write | no | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
-| `verify` | go, fix, review | read only | no | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit. |
-| `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
+| `route` | every event | read; comments, reactions, statuses | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
+| `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`. Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
+| `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
+| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit. |
+| `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
-| `maintain` | closed issues, pushes to the default branch, the schedule, the `resume` dispatch | read; issues, comments, workflows | no | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | closed issues, pushes to the default branch, the schedule, the `resume` dispatch | read; issues, comments, workflows | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
 
-- The session that runs Claude never holds a token that can write to the repository.
+- The session that runs the agent never holds a token that can write to the repository.
 - Jobs that hold write tokens never run code from the repository or from the agent.
 - Checks run in a job with no secrets at all.
 - Jobs that run the agent's code restore caches but never save one, so nothing they
@@ -32,8 +32,8 @@ pushes, and with `merge.auto: false` it never merges.
 
 ## What you see during a run
 
-GitHub cannot show a live run inside a comment, and only `route` and `report` hold write
-tokens, so NexKit updates the issue or pull request when a run starts and when it ends.
+GitHub cannot show a live run inside a comment, and only `route` and `report` update the
+run's comment, so NexKit updates the issue or pull request when a run starts and when it ends.
 
 Every run gets its own NexKit comment, posted by `route` when the run starts, so it appears
 right after the command or review that started it. `report` edits that comment with the
@@ -42,14 +42,15 @@ outcome. Comments of earlier runs keep their final state.
 | When | Command on an issue (`plan`, `go`) | Round on a pull request (`fix`, `review`, automatic, *Request changes*) |
 |---|---|---|
 | Start (`route`) | 👀 on the command comment. A new NexKit comment names the command and shows ⏳ with a link to the run. | 👀 on the command comment. A new NexKit comment shows the round number, its trigger and ⏳ with a link to the run. `nexkit/checks` and `nexkit/review` turn `pending` on the current commit and link to the run. |
-| End (`report`) | The same comment shows ✅ or ❌, the run log and the result: the plan, the pull request and its outcome, or why the run stopped. | The same comment shows ✅ or ❌, the run log, the round's commit, checks, review verdict and cost, and the next step. Statuses are set on the new commit; a commit the round did not check gets its earlier statuses back. |
+| End (`report`) | The same comment shows ✅, ❌ or ⏸️, the run log, the agent of each stage and the result: the plan, the pull request and its outcome, or why the run stopped. | The same comment shows ✅, ❌ or ⏸️, the run log, the agent of each stage, the round's commit, checks, review verdict and cost (`-` for a runtime that reports tokens instead), and the next step. Statuses are set on the new commit; a commit the round did not check gets its earlier statuses back. |
 
 ✅ means the run did its work, even when the checks fail or the review asks for changes
 (the round's columns show that). ❌ means it stopped on an error. A run started by a
 comment ends with 🚀 or 😕 on that comment. Runs started by a dispatch or by a
-*Request changes* review have no comment to react to. ⏸️ means Claude stopped at the
-account's usage limit; the run waits for the limit to reset (see
-[Usage limits](#usage-limits)), and its command comment keeps 👀.
+*Request changes* review have no comment to react to. ⏸️ means the stage's agent, and each
+of its fallback agents, stopped at a usage limit; the run waits for the limit to reset
+(see [Usage limits](#usage-limits)), and its command comment keeps 👀. ⏭️ `continued`
+replaces ⏸️ once a later run carries the command on.
 
 ### When a person is needed
 
@@ -69,12 +70,13 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 | GitHub refused the automatic merge | yes |
 | Merged, or an automatic fix or conflict round started | no |
 | Paused at the usage limit, resuming by itself | no |
-| Paused at the usage limit, with `usage_limit.resume: false` | yes |
+| Paused, and NexKit will not resume it (`usage_limit.resume: false`, or a second pause with an unknown reset time) | yes |
 
 ### One run at a time
 
 Runs for one issue or pull request run one at a time, in order. Only commands, *Request
-changes* reviews and dispatches wait in this queue; other comments do not. GitHub keeps
+changes* reviews, dispatches and the short run for a closed issue wait in this queue;
+other comments do not. GitHub keeps
 one waiting run, so a command posted while another waits replaces it. A command that
 never got 👀 did not run; post it again.
 
@@ -83,10 +85,12 @@ own run started. If that comment was deleted, `report` posts a new one.
 
 ## Logs, summary and artifacts
 
-The run link opens the Actions run. The `agent` and `review` jobs show what Claude does
+The run link opens the Actions run. The `agent` and `review` jobs show what the agent does
 while it works.
 
-**Log.** One line `· text` (first 240 characters) per message from Claude. Each tool call
+**Log.** One line `· text` (first 240 characters) per message from the agent, and one line
+`! text` per notice from the CLI itself, such as a move to a fallback agent: "! The
+`claude` agent stopped at its usage limit; running the implement stage on `claude-api`". Each tool call
 is a collapsible group, printed when its result arrives:
 
 ```text
@@ -100,24 +104,26 @@ is a collapsible group, printed when its result arrives:
 Warning: Bash failed: 2 tests failed
 ```
 
-The title has the time since Claude started, the turn number, the tool and a short
+The title has the time since the agent started, the turn number, the tool and a short
 detail. Inside are the input (long values, such as a file's new content, are shortened the
 same way as the output), whether the result is an error, and the output. A failed tool
 call also adds a warning annotation with its first line. A call still running when the
 session ends shows `no result`. Tool output is printed between `::stop-commands::` markers
 with a random token, so text from the repository or the agent cannot set outputs, add
-masks or create annotations. Claude's thinking is never printed. With
+masks or create annotations. The model's thinking is never printed. With
 `log.tool_output: "none"` the log has one line per message and per tool call instead
 (`▸ Tool detail`, 200 characters), as in earlier releases.
 
 **Run summary.** At the end of the `agent` and `review` jobs, the run's summary page shows
-the stage and a one-row table of its result (done, blocked or error), turns, duration and
-cost, plus the verdict for a review; `-` marks a missing value. Below it are the agent that
-ran the stage, with its runtime, provider and model, and when the stage moved to a
+the stage and a one-row table of its result (done, blocked, paused or error), turns,
+duration and cost, tokens for a runtime that reports them, plus the verdict for a review;
+`-` marks a missing value. Below it are the agent that ran the stage, with its runtime,
+provider and model, the profile with profiles, and when the stage moved to a
 [fallback agent](configuration.md#fallback-agents), a table of every agent's run with its
-result, duration and cost. Then come why the stage stopped, for a fix round that merged the base branch the files that had conflicts, the
-files changed (including what the merge brought), each command Claude ran and whether it failed, and for a review
-the findings.
+model, result (`usage limit`, or `skipped` and why), duration and cost. Then come why the
+stage stopped, for a fix round that merged the base branch the files that had conflicts,
+the files changed (including what the merge brought), each command the agent ran and
+whether it failed, and for a review the findings.
 
 ```text
 ### NexKit review: done
@@ -136,7 +142,7 @@ The run comment on the issue or pull request names the agent of each stage that 
 
 | Artifact | Contains |
 |---|---|
-| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (Claude's event stream, including thinking) and `transcript.md` (the conversation in order: Claude's text, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/`. |
+| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
 | `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
@@ -162,7 +168,7 @@ output of `setup` in the agent job. It replaces with `***`:
   `GITHUB_TOKEN`, the push token and of every environment variable whose name contains `TOKEN`,
   `SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` (values of 8 characters or more), also
   URL-encoded or base64-encoded;
-- Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`, `sk-proj-…`, `sk-svcacct-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+- Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`, `sk-proj-…`, `sk-svcacct-…`, `sk-admin-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
   `github_pat_`), JWTs, `Authorization:` and `Bearer` header values and PEM private key
   blocks;
 - `password=` and `pwd=` values in connection strings and the password in
@@ -188,7 +194,8 @@ sentences and one idea per bullet, and say what changes in behaviour, and why, b
 naming classes, files or methods. The agents return fields, and NexKit adds the headings,
 so plans, reviews and pull request descriptions always have the same layout.
 
-**Plan.** Read-only tools (`Read`, `Grep`, `Glob`). Posted as a comment marked
+**Plan.** Read-only access to the checkout (see [Agents](#agents) for what that means for
+each runtime). Posted as a comment marked
 `<!-- nexkit:plan -->`. The latest plan is the one `/nexkit go` implements. The part a
 person approves comes first; the detail for the implementing agent is collapsed:
 
@@ -222,7 +229,7 @@ from scratch, such as `/nexkit plan from scratch`, makes it plan again without t
 plan's choices. *Since the last plan* says which happened and lists each decision,
 acceptance criterion or scope item that was added, changed or removed.
 
-**Implement and fix.** Full Claude Code tools on a disposable runner. The prompt contains
+**Implement and fix.** Full access to a disposable runner. The prompt contains
 the plan, the issue, the discussion from collaborators, and for fix rounds the failing
 check output, blocking review findings and collaborators' review comments on the current
 commit. The agent must return `done` or `blocked`. A blocked or failed session publishes
@@ -267,7 +274,7 @@ a round by itself (see [Work without a command](#work-without-a-command)).
 5. The checks and the review run on the merge commit, as after any fix round. The round's
    comment says that the base branch was merged and which files had conflicts.
 
-Conflicts in protected paths stop the round before Claude runs, because the agent may not
+Conflicts in protected paths stop the round before the agent runs, because the agent may not
 change those files. Changes that the base branch brings to protected paths are fine: the
 protected-path check compares the result with git's own merge of the two commits, so only
 the agent's edits count. GitHub refuses pushes from the default Actions token that change
@@ -276,7 +283,7 @@ branch is such a push. Without a push token (`publish.push_token_secret`), NexKi
 before pushing and says that the pull request needs a manual merge or a push token that may
 update workflows.
 
-**Review.** Read-only tools. Returns `approve` or `request_changes`, a verdict for each
+**Review.** Read-only access, like the plan. Returns `approve` or `request_changes`, a verdict for each
 acceptance criterion with the test that covers it and the evidence, and findings marked
 `blocking` or `suggestion`. The prompt tells the reviewer not to block on things the
 implementer cannot change, such as PR text or CI files. The pull request review starts
@@ -338,7 +345,7 @@ a person's note asked for it.
 
 Some events start a run without a `/nexkit` command. `route` turns them into one task for
 the `maintain` job, or ends the run at once when the task's setting is off. No agent runs,
-and no Claude credential is used.
+and no agent credential is used.
 
 **Closing parent issues** (`close_parent_issues`). When an issue closes and it is a
 sub-issue, NexKit looks at its parent's sub-issues:
@@ -377,20 +384,25 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
   round merges the base branch itself when it conflicts, and a new run would replace a
   command waiting behind it. The next check starts the round if it is still needed.
 - When the round starts and the branch no longer conflicts, for example because another
-  round already merged the base branch, it ends at once without running Claude.
+  round already merged the base branch, it ends at once without running an agent.
 
 ### Usage limits
 
 When an agent stops because its account hit a usage limit that resets, in any stage
 (triage, plan, implement, fix or review), the stage starts again on the agent's next
 [fallback agent](configuration.md#fallback-agents), from the beginning; implement and fix
-start from the checkout the first agent found. Without one left, the run is paused, not
-failed, until the earliest reset of the agents that stopped. The next run starts on the
-stage's own agent again, so a fallback runs only while the agent is at its limit. The
-agent's runtime recognises the limit from its CLI's own message. Today only `claude-code` reports
-one: Claude subscriptions have session and weekly limits. `codex` on `azure-openai` does
-not, because Azure limits requests per minute and Codex retries them itself; a run that
-still fails ends as an error, like any other.
+start from the checkout the first agent found. A fallback without its secret is skipped,
+and so is one when less than a minute of the stage's time is left; the run summary says
+which. Without one left, the run is paused, not failed, until the earliest reset of the
+agents that stopped. The next run starts on the stage's own agent again, so a fallback runs
+only while the agent is at its limit.
+
+Each runtime says whether it reports usage limits, and recognises them from its CLI's own
+message. Of the current runtimes, `claude-code` does: Claude subscriptions have session and
+weekly limits. `codex` on `azure-openai` does not, because Azure limits requests per minute
+and Codex retries them itself; a run that still fails ends as an error, like any other.
+Fallbacks use the same runtime as the agent, and a runtime that does not report limits
+cannot have them.
 
 - Its comment shows ⏸️, the CLI's message with the reset time, and when NexKit runs the
   command again. `nexkit/checks` and `nexkit/review` stay `pending`. Nothing is published
@@ -399,7 +411,9 @@ still fails ends as an error, like any other.
   the reset is at most `usage_limit.wait_minutes` away, the run that paused starts a run
   that waits for it: a dispatch of the workflow with the command `resume`, in the
   `nexkit-resume` concurrency group, so it never holds up a command on an issue or pull
-  request. It runs no agent and no repository code, looks for due commands every ten
+  request. Its job may run `wait_minutes` plus 15 minutes, which is why `wait_minutes` is
+  at most 330: a GitHub-hosted job ends after six hours. It runs no agent and no
+  repository code, looks for due commands every ten
   minutes until nothing is left within its wait, and also resumes runs that pause
   meanwhile. Resets further away wait for the hourly `schedule`, which starts the waiting
   run once one comes within reach; with `wait_minutes: 0`, the schedule resumes commands
@@ -451,11 +465,11 @@ that restriction on the disposable runner, or a read-only stage could not even r
 
 **How secrets reach an agent.** The repository's workflow passes the pipeline
 `secrets: inherit`. `route` works out which agents each job may run and names their
-secrets: for the `agent` job those of its stage and its fallback agents (for a plan, triage and the plan of every
-profile, since triage chooses one in the job), for the `review` job those of the review's
-agent. The job reads each named secret into one of 8 slots, and NexKit gives it back its
+secrets: for the `agent` job those of its stage's agent and its fallback agents (for a
+plan, triage and the plan of every profile, since triage chooses one in the job), for the
+`review` job those of the review's agent and its fallback agents. The job reads each named secret into one of 8 slots, and NexKit gives it back its
 name. Names that start with `GITHUB_` or `NEXKIT_` are never read. Within the job, each CLI process gets an
-environment without any agent secret, plus the one its provider names, and setup and
+environment without any agent secret, plus the ones its provider names, and setup and
 check commands get none. Keys are never put on a command line or in a file. Codex also
 keeps its secrets out of the environment of the commands it runs; it reads the Azure
 endpoint from the `config.toml` in the run's own `CODEX_HOME`, which is removed afterwards
@@ -506,8 +520,11 @@ triage. When the plan names a profile that is no longer in the configuration, th
 stops before any job runs and asks for a re-plan; it never falls back to another profile.
 A re-plan while the pull request is open applies from the next round.
 
-The job timeouts follow the profile. For a plan, `route` does not know the profile yet, so
-the `agent` job allows for the triage call and the longest plan of all profiles.
+The job timeouts follow the profile. A stage may run for its `timeout_minutes` once for
+each agent of its fallback list, at most 340 minutes; the `agent` job adds
+`limits.setup_timeout_minutes`, and `review` adds time for its own steps. For a plan,
+`route` does not know the profile yet, so the `agent` job allows for the triage call and
+the longest plan of all profiles.
 
 ## State
 
@@ -522,9 +539,10 @@ conflicts). Recorded text is clipped so the comment and
 the prompts stay bounded. Nothing else is stored, so there is nothing to migrate or repair.
 
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
-status (running, success, failure, paused), the outcome (for example `planned`, `ready`,
-`merged`, `merge_refused`, `agent_blocked`, `paused`), the reason a person is needed when
-one is, the resume record of a paused run, and after an automatic merge each started
+status (running, success, failure, paused, continued), the outcome (for example
+`planned`, `ready`, `merged`, `merge_refused`, `agent_blocked`, `paused`), the agents that
+ran each stage, the reason a person is needed when one is, the resume record of a paused
+run, and after an automatic merge each started
 `merge.after_workflows` run. `nexkit status` reads these markers, not the text people
 read, to list the open NexKit work and what each item waits for.
 
@@ -540,7 +558,8 @@ new state comment.
 | `/nexkit go` while a NexKit PR for the issue is open | Replies: use `/nexkit fix` there or close it. |
 | Setup command fails before the agent | Reports the failing command and output on the issue or PR. |
 | The agent times out, hits its budget, errors, or returns no result or one that does not fit the stage's schema | Reports it; publishes nothing; no automatic retry. |
-| The agent stops at the account's usage limit | Pauses the run with the reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
+| The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
+| An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |
 | Agent returns `blocked` | Reports its reason; no automatic retry. A person decides. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
@@ -549,7 +568,7 @@ new state comment.
 | The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
 | The PR branch moved while a fix round was running | Refuses to publish; run `/nexkit fix` again. |
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `conflicts.auto_resolve`, NexKit starts that round itself, at most `conflicts.max_rounds` times per pull request. |
-| The PR conflicts with its base branch in a protected path | Stops before Claude runs; merge the base branch yourself. |
+| The PR conflicts with its base branch in a protected path | Stops before the agent runs; merge the base branch yourself. |
 | The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or name a push token that may update workflows in `publish.push_token_secret`. |
 | GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
@@ -568,7 +587,8 @@ once the limit has reset.
   issue text from anyone but mark it as untrusted; discussion and review feedback come only
   from collaborators.
 - The implement session can run any command on the runner, so it can read the secrets
-  its job holds: its own agent's credential, and no other agent's. Treat `/nexkit go` like
+  its job holds: the credentials of the agents that job may run, such as its fallback
+  agents (see [How secrets reach an agent](#agents)), and no other agent's. Treat `/nexkit go` like
   running a script that the issue describes: approve plans only for issues whose content
   you trust.
 - With profiles, an issue's text can steer triage towards a more expensive profile, for

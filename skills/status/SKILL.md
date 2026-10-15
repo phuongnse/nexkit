@@ -23,7 +23,9 @@ Change nothing. The NexKit CLI ships with this plugin; run it as
    Rely on these states rather than reading comment text: they come from NexKit's
    markers. Do not post a command for an item whose state is `planning`,
    `implementing` or `running`; it would queue behind the running one. A `paused` item
-   resumes by itself after the time shown.
+   resumes by itself after the time shown, unless it is also in `needs_person`
+   (`usage_limit.resume` is off). A run comment showing ⏭️ `continued` was carried on by
+   a later run.
 
 2. **Why a run stopped.** For an item that failed, open its link. For the details, use
    `gh run view <id> --log-failed` on the run. In the agent or review job log, each tool

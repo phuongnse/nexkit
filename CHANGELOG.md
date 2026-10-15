@@ -42,6 +42,10 @@
   an Azure rate or quota error ends a Codex run as an error.
 - A structured result that does not fit its stage's schema is now an error, checked by
   NexKit before anything is published.
+- The docs, the setup skill and the CLI's own text describe agents in general rather than
+  Claude only. `nexkit init` names the secret to set next, and
+  [Troubleshooting](docs/troubleshooting.md) covers the configuration errors that are new
+  in this release.
 
 ## 2.1.0
 

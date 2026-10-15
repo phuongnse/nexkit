@@ -12,7 +12,9 @@ import textwrap
 from collections import defaultdict
 from pathlib import Path
 
+from nexkit.agent import interpret
 from nexkit.config import validate
+from nexkit.runtimes.claude_code import ClaudeReader
 from nexkit.state import BOT_LOGIN, RUN_PATTERN
 
 
@@ -40,6 +42,24 @@ PROFILES = {
 def profile_config(**overrides):
     """A configuration with the `standard` and `hard` profiles."""
     return make_config(profiles=PROFILES, default_profile="standard", **overrides)
+
+
+def interpret_claude(
+    stage, event=None, *, minutes=5, timed_out=False, stderr="", last_text="", returncode=0, **kw
+):
+    """Interpret a Claude Code run that ended with the result `event` (None: no result) and
+    whose last message from Claude Code itself was `last_text`."""
+    reader = ClaudeReader()
+    if last_text:
+        content = [{"type": "text", "text": last_text}]
+        reader.events(
+            {"type": "assistant", "message": {"model": "<synthetic>", "content": content}}
+        )
+    if event is not None:
+        reader.events({"type": "result", **event})
+    run = {"seconds": 1.0, "timed_out": timed_out}
+    outcome = reader.outcome(returncode, stderr)
+    return interpret(stage, run, outcome, minutes, label="Claude", **kw)
 
 
 class FakeGitHub:

@@ -1,8 +1,9 @@
-"""Recognise when Claude stopped at the account's usage limit, and when the limit resets.
+"""Recognise when an agent stopped at the account's usage limit, and when the limit resets.
 
 Claude Code says so in plain text, for example `You've hit your session limit · resets
-4:40am (UTC)`, and older versions as `Claude AI usage limit reached|1760000000`. A run that
-stops there is paused, not failed, and resumes after the reset.
+4:40am (UTC)`, and older versions as `Claude AI usage limit reached|1760000000`. A runtime
+passes the texts its CLI wrote about a failed run. A run that stops there is paused, not
+failed, and resumes after the reset.
 """
 
 from __future__ import annotations
@@ -77,16 +78,15 @@ def reset_time(text, now):
     return when.astimezone(UTC)
 
 
-def usage_limit(texts, now=None, resets_at=None, retry_minutes=60):
-    """When one of `texts` says Claude hit a usage limit: the line that says so, when the
-    limit resets (UTC) and whether that time came from Claude. Otherwise None.
+def limit_reached(texts, now=None, resets_at=None):
+    """When one of `texts` says the agent hit a usage limit: the line that says so and when
+    the limit resets (UTC), or None for the reset when no text says. Otherwise None.
 
-    `resets_at` is a reset time in Unix seconds that Claude Code reported in its event
-    stream; it wins over the text. Without a reset time it can read, NexKit tries again
-    after `retry_minutes` (`usage_limit.retry_minutes`)."""
+    `resets_at` is a reset time in Unix seconds that the CLI reported in its event stream;
+    it wins over the text."""
     now = now or datetime.now(UTC)
     for text in texts:
-        # Claude Code's message is short and says it first; longer text is something else.
+        # The CLI's message is short and says it first; longer text is something else.
         text = str(text or "").strip()
         line = text.splitlines()[0][:300] if text else ""
         if not LIMIT.search(line) or len(text) > 1000:
@@ -95,11 +95,29 @@ def usage_limit(texts, now=None, resets_at=None, retry_minutes=60):
         if isinstance(resets_at, (int, float)) and resets_at > 0:
             when = datetime.fromtimestamp(resets_at, UTC)
         when = when or reset_time(text, now)
-        known = when is not None and when > now - timedelta(hours=1)
-        if not known:
-            when = now + timedelta(minutes=retry_minutes)
-        return {"message": line, "resume_at": iso(when), "reset_known": known}
+        if when is not None and when <= now - timedelta(hours=1):
+            when = None
+        return {"message": line, "reset": when}
     return None
+
+
+def schedule(limit, now=None, retry_minutes=60):
+    """When to resume after `limit` from `limit_reached`, and whether the CLI said so.
+    Without a reset time, NexKit tries again after `retry_minutes`."""
+    now = now or datetime.now(UTC)
+    when = limit["reset"] or now + timedelta(minutes=retry_minutes)
+    return {
+        "message": limit["message"],
+        "resume_at": iso(when),
+        "reset_known": bool(limit["reset"]),
+    }
+
+
+def usage_limit(texts, now=None, resets_at=None, retry_minutes=60):
+    """When one of `texts` says the agent hit a usage limit: the line that says so, when to
+    resume (UTC) and whether that time came from the CLI. Otherwise None."""
+    limit = limit_reached(texts, now, resets_at)
+    return schedule(limit, now, retry_minutes) if limit else None
 
 
 def iso(when):

@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.2.0
+
+- `nexkit doctor` reports a problem when the `uses:` ref and `nexkit_ref` in
+  `.github/workflows/nexkit.yml` differ, or `nexkit_ref` is missing: the jobs check out
+  NexKit's code at `nexkit_ref`, so they would run another release's code than the
+  pipeline (#69). See [Troubleshooting](docs/troubleshooting.md).
+- `nexkit doctor` mentions a NexKit release newer than the pinned tag, with a link to its
+  notes. Staying on a release is a choice, so this is a ✓ line and doctor still passes.
+- Release notes always end with the upgrade steps and the install commands again (#68).
+  They are printed by `scripts/release_notes.py` from this changelog; the 3.0.0 entry now
+  lists its upgrade steps.
+
 ## 3.1.0
 
 - Runs show tokens the same way for every runtime, and no cost (#65). Every runtime

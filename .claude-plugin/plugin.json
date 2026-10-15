@@ -1,6 +1,6 @@
 {
   "name": "nexkit",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Set up and use a GitHub Actions pipeline that turns issues into reviewed, tested pull requests with coding agents.",
   "author": {
     "name": "Phuong Nguyen"

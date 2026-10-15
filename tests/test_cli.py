@@ -150,6 +150,54 @@ class InitDoctorTests(unittest.TestCase):
         findings = scaffold.doctor(self.root)
         self.assertTrue(any("has no 'push' trigger" in m for ok, m in findings if not ok))
 
+    def test_doctor_checks_that_both_refs_match(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--kit-ref", "v3.0.0"])
+        path = self.root / ".github/workflows/nexkit.yml"
+        self.assertFalse(any("nexkit_ref" in m for _, m in scaffold.doctor(self.root)))
+        # Only `uses:` was upgraded: the jobs would still check out 3.0.0's code.
+        text = path.read_text()
+        path.write_text(text.replace("pipeline.yml@v3.0.0", "pipeline.yml@v3.1.0"))
+        problem = (
+            False,
+            ".github/workflows/nexkit.yml calls the pipeline at v3.1.0, but nexkit_ref is "
+            "v3.0.0; set both to the same tag",
+        )
+        self.assertIn(problem, scaffold.doctor(self.root))
+        path.write_text(text.replace("      nexkit_ref: v3.0.0\n", ""))
+        self.assertTrue(
+            any("nexkit_ref is not set" in m for ok, m in scaffold.doctor(self.root) if not ok)
+        )
+
+    def test_doctor_mentions_a_newer_release(self):
+        latest = {"tag": "v3.1.0"}
+
+        def fake_gh(*args):
+            if args[:2] == ("auth", "status"):
+                return "Logged in"
+            if args[:2] == ("api", "repos/phuongnse/nexkit/releases/latest"):
+                return latest["tag"] + "\n"
+            return None
+
+        def doctor(ref):
+            cli.main(["init", "--repo", str(self.root), "--force", "--kit-ref", ref])
+            with (
+                mock.patch.object(scaffold, "repository_of", return_value="acme/app"),
+                mock.patch.object(scaffold, "_gh", side_effect=fake_gh),
+            ):
+                return [(ok, m) for ok, m in scaffold.doctor(self.root) if "is available" in m]
+
+        # Staying on an older release is a choice: a ✓ that does not fail doctor.
+        newer = (
+            True,
+            "NexKit v3.1.0 is available; this repository uses v3.0.0. To upgrade, see "
+            "https://github.com/phuongnse/nexkit/releases/tag/v3.1.0",
+        )
+        self.assertEqual(doctor("v3.0.0"), [newer])
+        self.assertEqual(doctor("v3.1.0"), [])
+        self.assertEqual(doctor("main"), [])
+        latest["tag"] = "v2.9.0"
+        self.assertEqual(doctor("v3.0.0"), [])
+
     def test_doctor_with_github(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         path = self.root / ".nexkit/config.json"

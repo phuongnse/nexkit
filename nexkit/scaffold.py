@@ -120,6 +120,51 @@ def _after_merge_workflow(root, name):
     return (True, f"merge.after_workflows: {name} can be started after a merge")
 
 
+def pipeline_ref(workflow):
+    """(NexKit repository, ref) of the pipeline the workflow calls, or None."""
+    match = re.search(
+        r"uses:\s*(\S+)/\.github/workflows/pipeline\.yml@(\S+)", _uncommented(workflow)
+    )
+    return (match.group(1), match.group(2)) if match else None
+
+
+def _same_ref(workflow, ref):
+    """Findings: `nexkit_ref` names the ref the pipeline is called at. The jobs check out
+    NexKit's code at `nexkit_ref`, so with another ref they run another release's code."""
+    match = re.search(r"^\s*nexkit_ref:\s*['\"]?([^'\"\s]+)", _uncommented(workflow), re.M)
+    if match and match.group(1) == ref:
+        return []
+    found = f"is {match.group(1)}" if match else "is not set"
+    return [
+        (
+            False,
+            f"{WORKFLOW_PATH} calls the pipeline at {ref}, but nexkit_ref {found}; set both "
+            "to the same tag",
+        )
+    ]
+
+
+def _version(ref):
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", ref or "")
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def _newer_release(kit_repo, ref):
+    """Findings: a NexKit release newer than the pinned tag. Staying on a release is a
+    choice, so this is information, never a problem. A branch or commit says nothing."""
+    pinned = _version(ref)
+    latest = (_gh("api", f"repos/{kit_repo}/releases/latest", "-q", ".tag_name") or "").strip()
+    if not pinned or not _version(latest) or _version(latest) <= pinned:
+        return []
+    return [
+        (
+            True,
+            f"NexKit {latest} is available; this repository uses {ref}. To upgrade, see "
+            f"https://github.com/{kit_repo}/releases/tag/{latest}",
+        )
+    ]
+
+
 def _concurrency(workflow):
     """A finding: the concurrency group must be on the job, so plain comments never join it."""
     if re.search(r"^    concurrency:", workflow, re.M) and not re.search(
@@ -264,13 +309,15 @@ def doctor(root):
         findings.append((False, str(exc)))
 
     workflow = root / WORKFLOW_PATH
+    pinned = None
     if not workflow.is_file():
         findings.append((False, f"Missing {WORKFLOW_PATH}; run 'nexkit init'"))
     else:
         text = workflow.read_text()
-        match = re.search(r"uses:\s*(\S+)/\.github/workflows/pipeline\.yml@(\S+)", text)
-        if match:
-            findings.append((True, f"Workflow uses {match.group(1)} pipeline at {match.group(2)}"))
+        pinned = pipeline_ref(text)
+        if pinned:
+            findings.append((True, f"Workflow uses {pinned[0]} pipeline at {pinned[1]}"))
+            findings += _same_ref(text, pinned[1])
         else:
             findings.append((False, f"{WORKFLOW_PATH} does not call the NexKit pipeline"))
         findings.append(_concurrency(text))
@@ -286,6 +333,8 @@ def doctor(root):
         findings.append((False, "GitHub CLI is missing or not signed in; skipped GitHub checks"))
         return findings
 
+    if pinned:
+        findings += _newer_release(*pinned)
     names = set(
         (_gh("secret", "list", "--repo", repo, "--json", "name", "-q", ".[].name") or "").split()
     )

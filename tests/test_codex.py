@@ -244,6 +244,16 @@ class LaunchTests(unittest.TestCase):
         # The endpoint is only in the run's own config.toml, never on the command line.
         self.assertFalse(any("acme" in arg for arg in launch.argv))
 
+    def test_install_lets_the_sandbox_use_user_namespaces(self):
+        commands, bin_dir = RUNTIMES["codex"].install()
+        self.assertEqual(commands[0][:2], ["npm", "install"])
+        self.assertIn("--ignore-scripts", commands[0])
+        self.assertTrue(commands[0][-1].endswith(f"@{RUNTIMES['codex'].version}"))
+        # Only where AppArmor restricts them, as on ubuntu-24.04 runners.
+        self.assertEqual(commands[1][:2], ["bash", "-c"])
+        self.assertIn("apparmor_restrict_unprivileged_userns=0", commands[1][2])
+        self.assertTrue(str(bin_dir).endswith("node_modules/.bin"))
+
     def test_strict_schemas_close_every_object(self):
         schema = strict(agent.SCHEMAS["review"])
         finding = schema["properties"]["findings"]["items"]

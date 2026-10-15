@@ -418,7 +418,9 @@ The levels define what an agent can affect, not the same set of tools: a runtime
 each level in its own way. Codex cannot turn its shell off, so in triage it gets a
 read-only sandbox in an empty directory. Codex runs with web search off, an empty
 `CODEX_HOME` holding only the provider's settings, and the repository's `.rules` files
-ignored, so a repository cannot widen what a read-only stage may run.
+ignored, so a repository cannot widen what a read-only stage may run. Its sandbox needs
+unprivileged user namespaces, which Ubuntu 24.04 restricts; `nexkit install-agents` lifts
+that restriction on the disposable runner, or a read-only stage could not even read files.
 
 **How secrets reach an agent.** The repository's workflow passes the pipeline
 `secrets: inherit`. `route` works out which agents each job may run and names their

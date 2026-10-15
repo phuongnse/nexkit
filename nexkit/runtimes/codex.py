@@ -15,6 +15,13 @@ from ..schema import strict
 from .base import Event, Launch, Outcome, Reader, Runtime
 
 PACKAGE = "@openai/codex"
+# Codex's Linux sandbox needs unprivileged user namespaces, which Ubuntu 24.04 restricts
+# through AppArmor. Without them a read-only stage cannot run even `ls`. The runner is
+# disposable and has passwordless sudo, so the install lifts the restriction there.
+USER_NAMESPACES = (
+    'if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; '
+    "then sudo -n sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi"
+)
 INSTALL_DIR = Path.home() / ".nexkit" / "codex"
 SANDBOX = {"none": "read-only", "read": "read-only", "write": "danger-full-access"}
 # Codex's provider id in the generated config.toml.
@@ -161,7 +168,7 @@ class Codex(Runtime):
             "--ignore-scripts",
             f"{PACKAGE}@{self.version}",
         ]
-        return [command], INSTALL_DIR / "node_modules" / ".bin"
+        return [command, ["bash", "-c", USER_NAMESPACES]], INSTALL_DIR / "node_modules" / ".bin"
 
     def launch(self, agent, spec, secrets, program=None):
         schema = spec.home / "schema.json"

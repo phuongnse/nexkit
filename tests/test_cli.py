@@ -11,6 +11,7 @@ from unittest import mock
 import nexkit
 import nexkit.config
 from nexkit import cli, scaffold
+from nexkit.runtimes import AGENT_SECRETS, RUNTIMES
 from tests.support import PROFILES, FakeGitHub, GitRepos, git
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -174,6 +175,15 @@ class InitDoctorTests(unittest.TestCase):
             mock.patch.object(scaffold, "_gh", side_effect=fake_gh),
         ):
             findings = scaffold.doctor(self.root)
+            self.assertIn(
+                (
+                    False,
+                    "Set a secret for the `claude` agent: run 'claude setup-token' and "
+                    "'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/app', or set "
+                    "ANTHROPIC_API_KEY",
+                ),
+                findings,
+            )
             self.assertIn((True, "notify: @owner has write access"), findings)
             self.assertTrue(any("@reader has no write access" in m for ok, m in findings))
             self.assertFalse(any("does not list the default branch" in m for _, m in findings))
@@ -183,6 +193,41 @@ class InitDoctorTests(unittest.TestCase):
             cfg["notify"] = []
             path.write_text(json.dumps(cfg))
             scaffold.doctor(self.root)  # no notify: the rest of the checks still run
+
+    def test_doctor_checks_that_the_workflow_passes_each_agent_secret(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        self.assertFalse(
+            any("does not pass it" in m for _, m in scaffold.doctor(self.root)), "init passes all"
+        )
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        text = re.sub(
+            r"\n +(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY): .*", "", workflow.read_text()
+        )
+        workflow.write_text(text + "# ${{ secrets.ANTHROPIC_API_KEY }} in a comment\n")
+        self.assertIn(
+            (
+                False,
+                "The `claude` agent needs CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, but "
+                ".github/workflows/nexkit.yml does not pass it to the pipeline; add it under "
+                "'secrets:' as 'nexkit init' writes it",
+            ),
+            scaffold.doctor(self.root),
+        )
+
+    def test_doctor_finds_the_secret_of_each_agent(self):
+        cfg = nexkit.config.validate(
+            {
+                "agents": {"backup": {"runtime": "claude-code", "provider": "anthropic"}},
+                "stages": {"review": {"agent": "backup", "model": "opus"}},
+            }
+        )
+        self.assertEqual(
+            scaffold._secrets_set(cfg, {"ANTHROPIC_API_KEY", "OTHER"}, "acme/app"),
+            [
+                (True, "Secret for the `claude` agent is set: ANTHROPIC_API_KEY"),
+                (True, "Secret for the `backup` agent is set: ANTHROPIC_API_KEY"),
+            ],
+        )
 
     def test_trigger(self):
         workflow = (
@@ -239,7 +284,7 @@ class PipelineCommandTests(unittest.TestCase):
         }
         out = self.run_route("issue_comment", event)
         self.assertEqual(out["action"], "implement")
-        self.assertEqual(out["claude_version"], nexkit.CLAUDE_CODE)
+        self.assertNotIn("claude_version", out)
         self.assertEqual(json.loads(out["decision"])["issue"], 5)
         self.assertEqual(json.loads(out["config"])["checks"][0]["name"], "test")
         self.assertEqual(out["agent_ref"], "main")
@@ -328,7 +373,8 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertTrue(self.gh.comments_matching(5, "configuration error"))
 
     def test_agent_setup_failure_is_redacted_and_summarised(self):
-        cfg = nexkit.config.validate({"setup": ['echo "key $ANTHROPIC_API_KEY"; exit 4']})
+        setup = 'echo "key $DEPLOY_TOKEN, agent [$ANTHROPIC_API_KEY]"; exit 4'
+        cfg = nexkit.config.validate({"setup": [setup]})
         out = self.root / "out"
         out.mkdir()
         (out / "context.json").write_text("{}")
@@ -336,6 +382,7 @@ class PipelineCommandTests(unittest.TestCase):
         env = {
             "NEXKIT_DECISION": json.dumps({"action": "implement", "base": "main"}),
             "NEXKIT_CONFIG": json.dumps(cfg),
+            "DEPLOY_TOKEN": "fake-deploy-token-0123456789",
             "ANTHROPIC_API_KEY": "fake-api-key-0123456789",
             "GITHUB_STEP_SUMMARY": str(summary),
         }
@@ -346,8 +393,9 @@ class PipelineCommandTests(unittest.TestCase):
         result = (out / "result.json").read_text()
         self.assertIn("exit code 4", result)
         for text in (stdout.getvalue(), result, summary.read_text()):
-            self.assertNotIn("fake-api-key-0123456789", text)
-            self.assertIn("key ***", text)
+            self.assertNotIn("fake-deploy-token-0123456789", text)
+            # Setup never sees the agent's credential.
+            self.assertIn("key ***, agent []", text)
         self.assertIn("### NexKit implement: error", summary.read_text())
 
     def test_agent_setup_gets_the_base_commit(self):
@@ -393,6 +441,28 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertIn("NEXKIT_BASE_SHA is not set", stdout.getvalue())
 
 
+class InstallAgentsTests(unittest.TestCase):
+    def test_installs_each_runtime_the_config_uses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "path"
+            env = {
+                "NEXKIT_CONFIG": json.dumps(nexkit.config.validate({})),
+                "GITHUB_PATH": str(path),
+            }
+            with (
+                mock.patch.dict(os.environ, env),
+                mock.patch("subprocess.run") as run,
+                contextlib.redirect_stdout(io.StringIO()) as stdout,
+            ):
+                self.assertEqual(cli.main(["install-agents"]), 0)
+            commands, bin_dir = RUNTIMES["claude-code"].install()
+            self.assertEqual([c.args[0] for c in run.call_args_list], commands)
+            self.assertEqual(run.call_args.kwargs, {"cwd": Path.home(), "check": True})
+            self.assertEqual(path.read_text(), f"{bin_dir}\n")
+        self.assertIn(f"Installing claude-code {nexkit.CLAUDE_CODE}", stdout.getvalue())
+        self.assertEqual(commands[0][-1], nexkit.CLAUDE_CODE)
+
+
 class SupportedVersionTests(unittest.TestCase):
     """The workflows use the tested versions, and the Claude Code pin has one source."""
 
@@ -405,8 +475,9 @@ class SupportedVersionTests(unittest.TestCase):
                 set(re.findall(r'python-version: "([^"]+)"', text)), {wanted_python}, path.name
             )
             self.assertNotIn("python3 ", text, path.name)
-            # The Claude Code version is read from nexkit/__init__.py, never repeated.
-            self.assertNotIn(nexkit.CLAUDE_CODE, text, path.name)
+            # Runtime versions are read from nexkit/__init__.py, never repeated.
+            for runtime in RUNTIMES.values():
+                self.assertNotIn(runtime.version, text, path.name)
 
     def test_pyproject_declares_the_minimum_python(self):
         text = (ROOT / "pyproject.toml").read_text()
@@ -449,8 +520,30 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_jobs_with_write_tokens_never_receive_model_credentials(self):
         for name in ("publish", "report", "route", "maintain"):
-            self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", self.jobs[name], name)
-            self.assertNotIn("ANTHROPIC_API_KEY", self.jobs[name], name)
+            for secret in AGENT_SECRETS:
+                self.assertNotIn(secret, self.jobs[name], name)
+
+    def test_the_pipeline_takes_exactly_the_agent_secrets(self):
+        declared = self.text.split("    secrets:\n", 1)[1].split("\npermissions:", 1)[0]
+        names = re.findall(r"^      (\w+):$", declared, re.M)
+        self.assertEqual(names, [*AGENT_SECRETS, "NEXKIT_PUSH_TOKEN"])
+        template = (ROOT / "nexkit/templates/workflow.yml").read_text()
+        passed = template.split("    secrets:\n", 1)[1]
+        self.assertEqual(re.findall(r"^      (\w+): ", passed, re.M), names)
+
+    def test_only_the_steps_that_run_an_agent_receive_its_secrets(self):
+        steps = [step for job in self.jobs.values() for step in job.split("\n      - ")]
+        receiving = [step for step in steps if any(f"secrets.{s} " in step for s in AGENT_SECRETS)]
+        self.assertEqual(len(receiving), 2)
+        for step in receiving:
+            self.assertIn("kit/bin/nexkit agent ", step)
+            for secret in AGENT_SECRETS:
+                self.assertIn(f"{secret}: ${{{{ secrets.{secret} }}}}", step)
+
+    def test_agent_jobs_install_the_runtimes_with_nexkit(self):
+        for name in ("agent", "review"):
+            self.assertIn("kit/bin/nexkit install-agents\n", self.jobs[name])
+            self.assertNotIn("curl ", self.jobs[name])
 
     def test_jobs_with_write_tokens_run_only_nexkit(self):
         for name in ("route", "publish", "report", "maintain"):
@@ -498,9 +591,9 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("--stage review --fix-result agent/result.json", review)
 
     def test_agent_step_has_no_github_token(self):
-        step = self.jobs["agent"].split("- name: Run Claude Code", 1)[1].split("- uses:", 1)[0]
+        step = self.jobs["agent"].split("- name: Run agent\n", 1)[1].split("- uses:", 1)[0]
         self.assertNotIn("GITHUB_TOKEN", step)
-        review = self.jobs["review"].split("- name: Review with Claude Code", 1)[1]
+        review = self.jobs["review"].split("- name: Run agent review", 1)[1]
         self.assertNotIn("GITHUB_TOKEN", review.split("- uses:", 1)[0])
 
     def test_report_downloads_each_artifact_into_its_own_directory(self):

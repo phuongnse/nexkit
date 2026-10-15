@@ -11,10 +11,10 @@ from pathlib import Path
 
 from . import __version__
 from . import config as configuration
+from .runtimes import PROVIDERS
 
 KIT_REPOSITORY = "phuongnse/nexkit"
 WORKFLOW_PATH = ".github/workflows/nexkit.yml"
-SECRETS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 
 
 def workflow_text(kit_repo, kit_ref, default_branch="main"):
@@ -182,6 +182,37 @@ def _triggers(cfg, workflow):
     return findings
 
 
+def _passed_secrets(cfg, workflow):
+    """Findings: the workflow passes a secret of each agent that a stage uses."""
+    findings = []
+    text = _uncommented(workflow)
+    for name, secrets in configuration.credentials(cfg):
+        if any(re.search(rf"\bsecrets\.{secret}\b", text) for secret in secrets):
+            continue
+        findings.append(
+            (
+                False,
+                f"The `{name}` agent needs {' or '.join(secrets)}, but {WORKFLOW_PATH} does not "
+                "pass it to the pipeline; add it under 'secrets:' as 'nexkit init' writes it",
+            )
+        )
+    return findings
+
+
+def _secrets_set(cfg, names, repo):
+    """Findings: a secret of each agent that a stage uses is set in the repository."""
+    findings = []
+    for name, secrets in configuration.credentials(cfg):
+        found = sorted(names & set(secrets))
+        if found:
+            findings.append((True, f"Secret for the `{name}` agent is set: {', '.join(found)}"))
+            continue
+        agent = configuration.agent(cfg, name)
+        hint = PROVIDERS[agent["provider"]].secret_hint(agent, repo)
+        findings.append((False, f"Set a secret for the `{name}` agent: {hint}"))
+    return findings
+
+
 def doctor(root):
     """Return a list of (ok, message) findings."""
     root = Path(root)
@@ -209,6 +240,7 @@ def doctor(root):
         findings.append(_concurrency(text))
         if cfg:
             findings += _triggers(cfg, text)
+            findings += _passed_secrets(cfg, text)
 
     repo = repository_of(root)
     if not repo:
@@ -221,19 +253,8 @@ def doctor(root):
     names = set(
         (_gh("secret", "list", "--repo", repo, "--json", "name", "-q", ".[].name") or "").split()
     )
-    if names & set(SECRETS):
-        findings.append(
-            (True, "Claude credential secret is set: " + ", ".join(sorted(names & set(SECRETS))))
-        )
-    else:
-        findings.append(
-            (
-                False,
-                "Set a Claude credential: run 'claude setup-token' and "
-                f"'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo {repo}', "
-                "or set ANTHROPIC_API_KEY",
-            )
-        )
+    # With an invalid config, check the built-in agent's secret.
+    findings += _secrets_set(cfg or configuration.validate({}), names, repo)
     perms = _gh("api", f"repos/{repo}/actions/permissions/workflow")
     if perms is not None:
         if json.loads(perms).get("can_approve_pull_request_reviews"):

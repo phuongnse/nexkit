@@ -7,17 +7,21 @@ import json
 import re
 from pathlib import Path
 
+from .runtimes import AGENT_SECRETS, BUILTIN, PROVIDERS, RUNTIMES
+from .runtimes.base import AgentConfigError
+
 CONFIG_PATH = ".nexkit/config.json"
 STAGES = ("plan", "implement", "review")
 # Triage chooses a profile before the plan, so only the top-level `stages` can set it.
 TRIAGE = "triage"
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
 NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 WORKFLOW_FILE = re.compile(r"^[A-Za-z0-9_.-]+\.ya?ml$")
 
 DEFAULTS = {
     "version": 1,
+    "agents": {},
+    "agent": "claude",
     "model": "sonnet",
     "effort": None,
     "setup": [],
@@ -52,7 +56,8 @@ RENAMED = {
     "auto_merge": "merge.auto",
     "after_merge_workflows": "merge.after_workflows",
 }
-STAGE_KEYS = {"model", "effort", "timeout_minutes", "max_budget_usd"}
+STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes", "max_budget_usd"}
+AGENT_KEYS = {"runtime", "provider"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
 CHECK_KEYS = {"name", "run", "timeout_minutes"}
@@ -93,8 +98,9 @@ def _model(value, where):
 
 
 def _effort(value, where):
-    if value is not None and value not in EFFORTS:
-        _fail(f"{where} must be one of {', '.join(EFFORTS)} or null")
+    # Each runtime checks the value against the efforts it supports.
+    if value is not None and (not isinstance(value, str) or not NAME.match(value)):
+        _fail(f"{where} must be an effort level such as 'high', or null")
 
 
 def _stage_keys(settings, where):
@@ -103,9 +109,20 @@ def _stage_keys(settings, where):
     extra = set(settings) - STAGE_KEYS
     if extra:
         _fail(f"Unknown keys in {where}: {', '.join(sorted(extra))}")
+    # A model name means something only to its agent, so the two are chosen together.
+    if "agent" in settings and "model" not in settings:
+        _fail(f"{where} sets agent, so it must set model too")
 
 
-def _stage_values(settings, where, max_minutes):
+def _agent_name(value, cfg, where):
+    names = [*BUILTIN, *cfg["agents"]]
+    if value not in names:
+        _fail(f"{where} must name an agent: {', '.join(names)}")
+
+
+def _stage_values(settings, where, max_minutes, cfg):
+    if "agent" in settings:
+        _agent_name(settings["agent"], cfg, f"{where}.agent")
     if "model" in settings:
         _model(settings["model"], f"{where}.model")
     if "effort" in settings:
@@ -159,6 +176,56 @@ def _caches(entries):
                 _fail(f"{where}.key_files: '{pattern}' must be a path inside the repository")
 
 
+def _agents(cfg):
+    """Check `agents`: each pairs a runtime with a provider and the provider's settings."""
+    agents = cfg["agents"]
+    if not isinstance(agents, dict):
+        _fail("agents must be an object")
+    for name, agent in agents.items():
+        where = f"agents.{name}"
+        if name in BUILTIN:
+            _fail(f"{where}: '{name}' is built in; choose another name")
+        if not isinstance(name, str) or not NAME.match(name):
+            _fail(f"Agent name '{name}' must be a short lowercase identifier")
+        if not isinstance(agent, dict):
+            _fail(f"{where} must be an object")
+        runtime = RUNTIMES.get(agent.get("runtime"))
+        if not runtime:
+            _fail(f"{where}.runtime must be one of {', '.join(RUNTIMES)}")
+        provider = PROVIDERS.get(agent.get("provider"))
+        if not provider or provider.name not in runtime.providers:
+            _fail(
+                f"{where}.provider must be one of {', '.join(runtime.providers)} for {runtime.name}"
+            )
+        extra = set(agent) - AGENT_KEYS - set(provider.fields)
+        if extra:
+            _fail(f"Unknown keys in {where}: {', '.join(sorted(extra))}")
+        for key, field in provider.fields.items():
+            if key in agent:
+                try:
+                    field.check(agent[key], f"{where}.{key}", AGENT_SECRETS)
+                except AgentConfigError as exc:
+                    _fail(str(exc))
+            elif field.required:
+                _fail(f"{where}.{key} is required for the {provider.name} provider")
+
+
+def _runtime_settings(cfg):
+    """Each runtime checks the settings of every stage it runs, in every profile."""
+    variants = [("stages", cfg)]
+    variants += [(f"profiles.{name}.stages", with_profile(cfg, name)) for name in cfg["profiles"]]
+    for prefix, variant in variants:
+        for name in variant["stages"]:
+            if prefix != "stages" and name == TRIAGE:
+                continue
+            settings = stage(variant, name)
+            runtime = RUNTIMES[agent(variant, settings["agent"])["runtime"]]
+            try:
+                runtime.validate(settings, f"{prefix}.{name}")
+            except AgentConfigError as exc:
+                _fail(str(exc))
+
+
 def _profiles(cfg):
     """Check `profiles` and `default_profile`. A profile's stage settings are optional:
     what a profile leaves out comes from the top-level `stages`."""
@@ -189,7 +256,8 @@ def _profiles(cfg):
                 _fail(f"Unknown stage '{stage}' in {where}; stages are {', '.join(STAGES)}")
             _stage_keys(settings, f"{where}.stages.{stage}")
             # Without its own timeout, the stage keeps the one from `stages`.
-            _stage_values({"timeout_minutes": 1, **settings}, f"{where}.stages.{stage}", 340)
+            settings = {"timeout_minutes": 1, **settings}
+            _stage_values(settings, f"{where}.stages.{stage}", 340, cfg)
     if not profiles:
         if default is not None:
             _fail("default_profile needs profiles")
@@ -238,6 +306,8 @@ def validate(raw):
 
     if cfg["version"] != 1:
         _fail("version must be 1")
+    _agents(cfg)
+    _agent_name(cfg["agent"], cfg, "agent")
     _model(cfg["model"], "model")
     _effort(cfg["effort"], "effort")
 
@@ -268,8 +338,9 @@ def validate(raw):
     _caches(cfg["cache"])
 
     _profiles(cfg)
-    for stage, settings in cfg["stages"].items():
-        _stage_values(settings, f"stages.{stage}", 30 if stage == TRIAGE else 340)
+    for name, settings in cfg["stages"].items():
+        _stage_values(settings, f"stages.{name}", 30 if name == TRIAGE else 340, cfg)
+    _runtime_settings(cfg)
 
     _positive_int(cfg["fix"]["max_auto_rounds"], "fix.max_auto_rounds", 10, minimum=0)
     _bool(cfg["merge"]["auto"], "merge.auto")
@@ -334,14 +405,41 @@ def with_profile(cfg, name):
 
 
 def stage(cfg, name):
-    """Effective model and limits for a stage. Fix rounds use the implement settings."""
+    """Effective agent, model and limits for a stage. Fix rounds use the implement settings."""
     settings = cfg["stages"]["implement" if name == "fix" else name]
     return {
+        "agent": settings.get("agent") or cfg["agent"],
         "model": settings.get("model") or cfg["model"],
         "effort": settings.get("effort", cfg["effort"]),
         "timeout_minutes": settings["timeout_minutes"],
         "max_budget_usd": settings.get("max_budget_usd"),
     }
+
+
+def agent(cfg, name):
+    """The definition of the agent `name`: built in, or from `agents`."""
+    return BUILTIN.get(name) or cfg["agents"][name]
+
+
+def agents_used(cfg):
+    """The names of the agents that some stage uses, in any profile."""
+    variants = [cfg, *(with_profile(cfg, name) for name in cfg["profiles"])]
+    used = {stage(variant, name)["agent"] for variant in variants for name in variant["stages"]}
+    return [name for name in (*BUILTIN, *cfg["agents"]) if name in used]
+
+
+def runtimes(cfg):
+    """The runtimes that some stage uses, in any profile, in registry order."""
+    used = {agent(cfg, name)["runtime"] for name in agents_used(cfg)}
+    return [name for name in RUNTIMES if name in used]
+
+
+def credentials(cfg):
+    """(agent name, secrets of which one must be set) for each agent that a stage uses."""
+    return [
+        (name, PROVIDERS[agent(cfg, name)["provider"]].credentials(agent(cfg, name)))
+        for name in agents_used(cfg)
+    ]
 
 
 def is_protected(path, cfg):

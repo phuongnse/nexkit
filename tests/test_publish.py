@@ -280,6 +280,17 @@ class PublishTests(unittest.TestCase):
         self.assertNotIn("Profile", plan_text(plan))
         self.assertIn("### What changes", plan_text(plan))
 
+    def test_plan_comment_names_agents_other_than_the_default(self):
+        cfg = profile_config(agents={"backup": {"runtime": "claude-code", "provider": "anthropic"}})
+        cfg["profiles"]["hard"]["stages"]["implement"].update(agent="backup")
+        result = {"status": "done", "output": PLAN, "profile": "hard"}
+        result["triage"] = {"profile": "hard", "chosen_by": "triage", "reason": "Auth."}
+        publish(self.gh, decision("plan"), result, CONTEXT, cfg, ".", self.out)
+        self.assertIn(
+            "(plan `fable`, implement `opus` on `backup`, review `fable`)",
+            latest_plan(self.gh.comments(5))["body"],
+        )
+
     def test_plan_comment_says_when_triage_failed(self):
         error = "Claude did not finish within 5 minutes.\nMore detail."
         plan = self.publish_plan({"profile": "standard", "chosen_by": "default", "error": error})

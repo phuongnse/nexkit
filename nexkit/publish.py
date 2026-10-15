@@ -48,10 +48,13 @@ def render_profile(result, cfg):
     triage = result.get("triage") or {}
     chosen_by = triage.get("chosen_by") or "default"
     settings = configuration.with_profile(cfg, name)
-    models = ", ".join(
-        f"{stage} `{configuration.stage(settings, stage)['model']}`"
-        for stage in configuration.STAGES
-    )
+    models = []
+    for stage in configuration.STAGES:
+        chosen = configuration.stage(settings, stage)
+        # The agent is named only where it is not the configured default.
+        on = f" on `{chosen['agent']}`" if chosen["agent"] != cfg["agent"] else ""
+        models.append(f"{stage} `{chosen['model']}`{on}")
+    models = ", ".join(models)
     if chosen_by == "triage":
         reason = (triage.get("reason") or "").strip()
     else:

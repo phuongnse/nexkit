@@ -34,6 +34,18 @@ class ChecksTests(unittest.TestCase):
         saved = json.loads((self.root / "out" / "checks.json").read_text())
         self.assertEqual(saved, results)
 
+    def test_commands_never_see_agent_credentials(self):
+        cfg = make_config(checks=[{"name": "env", "run": "env"}])
+        secrets = {
+            "CLAUDE_CODE_OAUTH_TOKEN": "oauth-for-checks-1",
+            "ANTHROPIC_API_KEY": "key-for-checks-2",
+        }
+        with mock.patch.dict(os.environ, {**secrets, "KEEP_ME": "1"}):
+            output = checks.run_checks(cfg, self.root)[0]["output"]
+        self.assertIn("KEEP_ME=1", output)
+        for value in secrets.values():
+            self.assertNotIn(value, output)
+
     def test_setup_failure_is_a_failed_check(self):
         cfg = make_config(setup=["exit 3"], checks=[{"name": "unit", "run": "true"}])
         results = checks.run_checks(cfg, self.root)

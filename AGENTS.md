@@ -32,6 +32,7 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 | `status.py` | `nexkit status`: open NexKit work from the comment markers |
 | `github.py`, `gitutil.py` | REST and git helpers |
 | `scripts/smoke.py`, `scripts/agent_version.py` | live smoke test per runtime; reading and updating the pins |
+| `scripts/release_notes.py` | a release's GitHub notes, from `CHANGELOG.md` |
 
 ## Rules to keep
 
@@ -68,6 +69,20 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
   start with `GITHUB_`. Every secret NexKit reads is named in
   the configuration: each agent's in `agents`, the push token in
   `publish.push_token_secret`. Never read a secret the configuration does not name.
+
+## Releases
+
+- Feature pull requests do not change the version or `CHANGELOG.md`. A release pull request
+  does both: the version in `nexkit/__init__.py`, `pyproject.toml`,
+  `.claude-plugin/plugin.json` and the README's `pipx install` line, and a `## X.Y.Z` entry
+  in `CHANGELOG.md`.
+- An entry whose changes need more than the new tag (the configuration, the caller
+  workflow or its permissions) ends with a `### Upgrade` list of those steps, with an
+  example where it helps. Without one, the notes say that nothing else changes.
+- The GitHub release is `vX.Y.Z` on the merge commit, titled `NexKit X.Y.Z`, with the notes
+  that `python3 scripts/release_notes.py X.Y.Z` prints: the entry with links made absolute
+  at the tag, `## Upgrade` (both refs, the entry's steps, `nexkit doctor`) and
+  `## Install`. Put them in the release pull request's description so they are reviewed.
 
 ## Verify
 

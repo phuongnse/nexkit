@@ -132,6 +132,8 @@ class ClaudeCode(Runtime):
     name = "claude-code"
     label = "Claude"
     version = CLAUDE_CODE
+    pin = "CLAUDE_CODE"
+    release_url = "https://downloads.claude.ai/claude-code-releases/stable"
     program = "claude"
     efforts = ("low", "medium", "high", "xhigh", "max")
     supports_budget = True

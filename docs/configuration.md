@@ -46,7 +46,7 @@ their defaults.
 | `agents` | `{}` | Agents besides the built-in `claude`: a runtime, a provider and its settings. See [Agents](#agents). |
 | `agent` | `"claude"` | The agent for every stage. Set `model` with it. |
 | `model` | `"sonnet"` | Model for every stage, as the agent names it. For `claude`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
-| `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Claude Code takes `low`, `medium`, `high`, `xhigh` and `max`. |
+| `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
@@ -352,10 +352,31 @@ API key. Without `agents`, every stage runs on it.
 
 ```json
 "agents": {
-  "backup": {"runtime": "claude-code", "provider": "anthropic"}
+  "sol": {
+    "runtime": "codex",
+    "provider": "azure-openai",
+    "endpoint": "https://my-resource.openai.azure.com",
+    "api_key_secret": "AZURE_OPENAI_API_KEY"
+  }
 },
-"stages": {
-  "review": {"agent": "backup", "model": "claude-opus-5-5"}
+"default_profile": "standard",
+"profiles": {
+  "standard": {
+    "when": "Clear spec, one layer, follows an existing pattern.",
+    "stages": {
+      "plan":      {"model": "claude-opus-5-5"},
+      "implement": {"model": "claude-sonnet-5-5"},
+      "review":    {"agent": "sol", "model": "gpt-6-1-sol"}
+    }
+  },
+  "hard": {
+    "when": "Touches security or access control, storage schema or execution.",
+    "stages": {
+      "plan":      {"model": "claude-opus-5-5"},
+      "implement": {"agent": "sol", "model": "gpt-6-1-sol", "effort": "high"},
+      "review":    {"model": "claude-fable-5-1"}
+    }
+  }
 }
 ```
 
@@ -372,6 +393,31 @@ API key. Without `agents`, every stage runs on it.
 | Runtime | Providers | `effort` | `max_budget_usd` | Cost in the summary |
 |---|---|---|---|---|
 | `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` | yes | yes |
+| `codex` | `azure-openai` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` | no: rely on `timeout_minutes` | no: tokens instead |
+
+| Provider | Settings | Secret |
+|---|---|---|
+| `anthropic` | none | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` |
+| `azure-openai` | `endpoint`: the resource URL, `https://<name>.openai.azure.com` (or `.services.ai.azure.com`, `.cognitiveservices.azure.com`), with no path. `model` is the deployment name. | `api_key_secret`: `AZURE_OPENAI_API_KEY` |
+
+A run reports usage limits only for `claude-code`. When Azure refuses a request for its
+rate limit or quota, Codex retries a few times, then the run ends as an error; NexKit does
+not pause and resume it.
+
+### OpenAI models on Azure AI Foundry
+
+1. In Azure AI Foundry, deploy the model and note the deployment name and the resource's
+   endpoint. NexKit uses the OpenAI v1 API (`<endpoint>/openai/v1`), so no API version is
+   needed.
+2. Store the resource's key: `gh secret set AZURE_OPENAI_API_KEY`.
+3. Make sure `.github/workflows/nexkit.yml` passes it, under `secrets:`:
+   `AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}`. Workflows written by
+   an earlier `nexkit init` lack this line.
+4. Add the agent to `agents` and choose it in the stages or profiles that should use it.
+5. Run `nexkit doctor`.
+
+Codex reads the repository's `AGENTS.md`, as Claude Code reads `CLAUDE.md`.
+
 
 **Settings and secrets.** A provider declares which of its settings are secrets. Settings
 such as an endpoint live in `.nexkit/config.json`, where they are reviewed and validated.
@@ -481,6 +527,7 @@ Set the secrets of the agents your stages use, and pass each one in the `secrets
 |---|---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | one of these two, for `claude` | Agent and review jobs. Create it with `claude setup-token` (Claude Pro or Max). |
 | `ANTHROPIC_API_KEY` | one of these two, for `claude` | Agent and review jobs. Takes precedence when both are set. |
+| `AZURE_OPENAI_API_KEY` | for an `azure-openai` agent | Agent and review jobs, only for the stages that run on it. |
 | `NEXKIT_PUSH_TOKEN` | no | Publish job only: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. Add Workflows write access if fix rounds should merge base branch changes to `.github/workflows/`; the default Actions token cannot push those. |
 
 ## Workflow file

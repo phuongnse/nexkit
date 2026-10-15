@@ -1,13 +1,15 @@
-"""NexKit: turn GitHub issues into reviewed, tested pull requests with Claude Code."""
+"""NexKit: turn GitHub issues into reviewed, tested pull requests with coding agents."""
 
 __version__ = "2.1.0"
 
 # NexKit runs on Python 3.12 or newer. CI tests 3.12 only, and the pipeline installs 3.12.
 PYTHON = (3, 12)
-# The pipeline installs exactly these. Each is tested; .github/workflows/update-claude-code.yml
-# proposes the newest stable Claude Code every week, and CI tests it before it is merged.
+# The pipeline installs exactly these. Each is tested; .github/workflows/update-agents.yml
+# proposes the newest stable version of each runtime every week, and CI tests it before it
+# is merged.
 RUNNER = "ubuntu-24.04"
 CLAUDE_CODE = "2.1.285"
+CODEX = "0.162.1"
 
 
 def python_supported(version_info):

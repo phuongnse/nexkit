@@ -396,3 +396,64 @@ class FakeClaude:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+FAKE_CODEX = """#!/usr/bin/env python3
+import json, os, sys
+spec = json.loads(os.environ["FAKE_CODEX"])
+home = os.environ.get("CODEX_HOME", "")
+files = {name: open(os.path.join(home, name)).read() for name in sorted(os.listdir(home))}
+with open(os.environ["FAKE_CODEX_LOG"], "w") as log:
+    json.dump({"args": sys.argv[1:], "prompt": sys.stdin.read(), "cwd": os.getcwd(),
+               "env": sorted(k for k in os.environ if "KEY" in k or "TOKEN" in k),
+               "key": os.environ.get("AZURE_OPENAI_API_KEY"), "home": files}, log)
+for path, content in spec.get("write", {}).items():
+    with open(path, "w") as f:
+        f.write(content)
+for event in spec["events"]:
+    print(json.dumps(event))
+sys.exit(spec.get("exit", 0))
+"""
+
+
+def codex_events(result, *, commands=()):
+    """A Codex JSONL stream that runs `commands` and ends with `result` as its message."""
+    events = [{"type": "thread.started", "thread_id": "t"}, {"type": "turn.started"}]
+    for index, (command, output, code) in enumerate(commands):
+        item = {"id": f"c{index}", "type": "command_execution", "command": command}
+        events.append({"type": "item.started", "item": {**item, "status": "in_progress"}})
+        done = {**item, "aggregated_output": output, "exit_code": code, "status": "completed"}
+        events.append({"type": "item.completed", "item": done})
+    text = result if isinstance(result, str) else json.dumps(result)
+    events.append(
+        {"type": "item.completed", "item": {"id": "m", "type": "agent_message", "text": text}}
+    )
+    usage = {"input_tokens": 1200, "cached_input_tokens": 100, "output_tokens": 300}
+    events.append({"type": "turn.completed", "usage": usage})
+    return events
+
+
+class FakeCodex(FakeClaude):
+    """Install a fake `codex` executable that records what it was started with."""
+
+    def __init__(self, directory):
+        self.dir = Path(directory)
+        self.path = self.dir / "codex"
+        self.path.write_text(FAKE_CODEX)
+        self.path.chmod(self.path.stat().st_mode | stat.S_IEXEC)
+        self.log = self.dir / "codex-call.json"
+        self._saved = {}
+
+    def configure(self, **spec):
+        self._set("FAKE_CODEX", json.dumps(spec))
+        self._set("FAKE_CODEX_LOG", str(self.log))
+        self._set("AZURE_OPENAI_API_KEY", "azure-key-0123456789")
+        self._set("CLAUDE_CODE_OAUTH_TOKEN", "claude-token-0123456789")
+
+
+AZURE = {
+    "runtime": "codex",
+    "provider": "azure-openai",
+    "endpoint": "https://acme.openai.azure.com",
+    "api_key_secret": "AZURE_OPENAI_API_KEY",
+}

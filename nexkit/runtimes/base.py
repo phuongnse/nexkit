@@ -170,11 +170,17 @@ class Runtime:
     name = ""
     label = ""  # how logs and comments name it: "Claude did not finish …"
     version = ""  # pinned in nexkit/__init__.py
+    pin = ""  # the name of that constant
+    # Where the newest stable version is published, and how to read it from the response.
+    release_url = ""
     program = ""  # the executable, found on PATH
     efforts: tuple[str, ...] = ()
     supports_budget = False
     # Provider name -> function(agent, spec, secrets) returning the Launch parts for it.
     providers: dict = {}
+
+    def release_version(self, text):
+        return text.strip()
 
     def install(self):
         """Commands that install the pinned version, and the directory to add to PATH."""

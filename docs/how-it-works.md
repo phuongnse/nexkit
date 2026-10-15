@@ -408,21 +408,25 @@ anything is published. Everything specific to one CLI lives in `nexkit/runtimes/
 
 **What a stage may affect** is the same for every runtime:
 
-| Stage | Access | Claude Code |
-|---|---|---|
-| triage | none: an empty working directory | no tools |
-| plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` |
-| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed |
+| Stage | Access | Claude Code | Codex |
+|---|---|---|---|
+| triage | none: an empty working directory | no tools | read-only sandbox, no network |
+| plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` | read-only sandbox: shell commands that cannot write and have no network |
+| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed | no sandbox |
 
 The levels define what an agent can affect, not the same set of tools: a runtime meets
-each level in its own way.
+each level in its own way. Codex cannot turn its shell off, so in triage it gets a
+read-only sandbox in an empty directory. Codex runs with web search off, an empty
+`CODEX_HOME` holding only the provider's settings, and the repository's `.rules` files
+ignored, so a repository cannot widen what a read-only stage may run.
 
 **How secrets reach an agent.** `route` works out which agents each job may run and
 passes the job only those agents' secrets: the `agent` job the secrets for its stage (for
 a plan, triage and the plan of every profile, since triage chooses one in the job), the
 `review` job the secret of the review's agent. Within the job, each CLI process gets an
 environment without any agent secret, plus the one its provider names, and setup and
-check commands get none. Secrets are never put on a command line or in a file.
+check commands get none. Secrets are never put on a command line or in a file. Codex
+also keeps its key out of the environment of the commands it runs.
 
 This filtering limits what each process inherits. It is not a wall inside a job: an agent
 that can run commands can read other processes on the runner, so it may see every secret
@@ -531,8 +535,9 @@ once the limit has reset.
   issue text from anyone but mark it as untrusted; discussion and review feedback come only
   from collaborators.
 - The implement session can run any command on the runner, so it can read the secrets
-  its job holds: its own agent's credential, and no other agent's. Treat `/nexkit go` like running a script that the issue describes:
-  approve plans only for issues whose content you trust.
+  its job holds: its own agent's credential, and no other agent's. Treat `/nexkit go` like
+  running a script that the issue describes: approve plans only for issues whose content
+  you trust.
 - With profiles, an issue's text can steer triage towards a more expensive profile, for
   example through prompt injection. Requests in the issue do not count as a person's
   request, and the plan comment shows the profile before anyone comments `/nexkit go`.

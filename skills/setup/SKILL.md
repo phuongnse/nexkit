@@ -54,7 +54,15 @@ files or repository settings, and wait for confirmation.
    `.nexkit/config.json` after step 4.
    If the repository is public, say that anyone signed in to GitHub can read NexKit's
    logs and artifacts. NexKit redacts known secrets, but offer `"transcript": false` in
-   the config to stop storing Claude's transcripts.
+   the config to stop storing the agents' transcripts.
+   If the user has OpenAI models deployed in Azure AI Foundry, offer an agent that runs
+   chosen stages on them with Codex, for example the review, so a different model family
+   checks the code. It needs the resource endpoint (`https://<name>.openai.azure.com`, no
+   path) and the deployment name, which is the stage's `model`:
+   `"agents": {"sol": {"runtime": "codex", "provider": "azure-openai", "endpoint": "<endpoint>", "api_key_secret": "AZURE_OPENAI_API_KEY"}}`,
+   then `{"agent": "sol", "model": "<deployment>"}` in that stage or profile. A stage that
+   sets `agent` must set `model` too. Codex has no `max_budget_usd`. Add it to
+   `.nexkit/config.json` after step 4.
 
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`
@@ -64,7 +72,10 @@ files or repository settings, and wait for confirmation.
    subscription, the user runs `claude setup-token` in their own terminal (in this
    session they can type `! claude setup-token`), then
    `gh secret set CLAUDE_CODE_OAUTH_TOKEN`. With an API key instead:
-   `gh secret set ANTHROPIC_API_KEY`. Never ask the user to paste a token into the chat.
+   `gh secret set ANTHROPIC_API_KEY`. For an Azure agent, also
+   `gh secret set AZURE_OPENAI_API_KEY` with the resource's key. Never ask the user to
+   paste a token or key into the chat, or to put one in `.nexkit/config.json`: the config
+   holds only the secret's name.
 
 6. **Allow Actions to open pull requests.** After confirmation, run
    `gh api -X PUT repos/OWNER/REPO/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true`.

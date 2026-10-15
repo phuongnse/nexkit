@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import Provider
+from .base import Field, Provider
 from .claude_code import CREDENTIALS
 
 
@@ -20,3 +20,17 @@ class Anthropic(Provider):
             "run 'claude setup-token' and "
             f"'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo {repo}', or set ANTHROPIC_API_KEY"
         )
+
+
+class AzureOpenAI(Provider):
+    """OpenAI models deployed in Azure AI Foundry, reached through the v1 API with a key.
+    The model of a stage is the deployment name."""
+
+    name = "azure-openai"
+    fields = {
+        "endpoint": Field(
+            "url",
+            hosts=(".openai.azure.com", ".services.ai.azure.com", ".cognitiveservices.azure.com"),
+        ),
+        "api_key_secret": Field("secret"),
+    }

@@ -27,6 +27,8 @@ PATTERNS = (
         MASK,
     ),
     (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{8,}"), MASK),
+    # OpenAI keys: sk-proj-…, sk-svcacct-…, sk-admin-… and older sk-….
+    (re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}"), MASK),
     (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"), MASK),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"), MASK),
     (

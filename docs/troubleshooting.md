@@ -53,6 +53,13 @@ the secret its configuration names. Either way, `.github/workflows/nexkit.yml` m
 the secret under `secrets:`, as `nexkit init` writes it; `nexkit doctor` checks this.
 Secrets are not available to runs triggered from forks.
 
+**Codex stopped: "401 Unauthorized" or "404 Not Found".** A 401 means the
+`AZURE_OPENAI_API_KEY` secret is not the key of the resource in `endpoint`. A 404 means the
+endpoint or the deployment is wrong: `endpoint` is the resource URL without a path, and
+the stage's `model` is the deployment name, not the model's name. The log line
+"Model metadata for `<deployment>` not found" is harmless: Codex does not know the
+deployment's name.
+
 **"provider must be one of …".** That runtime does not support the provider. The
 [Agents](configuration.md#agents) table lists the pairs NexKit supports.
 

@@ -4,7 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch: # also started by update-claude-code.yml; always runs the smoke test
+  workflow_dispatch: # also started by update-agents.yml; runs the smoke test of `runtime`
+    inputs:
+      runtime:
+        description: Runtime to smoke-test
+        type: choice
+        options: [all, claude-code, codex]
+        default: all
 
 permissions:
   contents: read
@@ -37,9 +43,9 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
           ./actionlint -color
       - name: Install the pinned Claude Code
-        run: curl -fsSL https://claude.ai/install.sh | bash -s -- "$(python scripts/claude_code_version.py current)"
+        run: python bin/nexkit install-agents --runtime claude-code
       - name: Validate plugin
-        run: ~/.local/bin/claude plugin validate --strict .
+        run: claude plugin validate --strict .
 
   cache-save:
     # Saves a cache as docs/configuration.md#caches tells a repository's own CI to.
@@ -88,12 +94,14 @@ jobs:
       - run: test -f ~/nexkit-cache-test/marker && test ! -e ~/nexkit-cache-missing
 
   decide-smoke-test:
-    # A pull request runs the smoke test only when it changes what the test covers, and only
-    # from a branch of this repository: pull requests from forks do not receive secrets.
+    # A pull request runs a runtime's smoke test only when it changes what the test covers:
+    # the shared agent code or that runtime's module. Only from a branch of this repository:
+    # pull requests from forks do not receive secrets.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     outputs:
-      run: ${{ steps.diff.outputs.run }}
+      claude_code: ${{ steps.diff.outputs.claude_code }}
+      codex: ${{ steps.diff.outputs.codex }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,18 +111,21 @@ jobs:
         # HEAD is the test merge commit; its first parent is the base branch.
         run: |
           changed=$(git diff --name-only HEAD^1 HEAD)
-          if grep -qE '^(nexkit/agent\.py|nexkit/runtimes/|nexkit/__init__\.py|nexkit/prompts/|scripts/smoke\.py)' <<< "$changed"; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
+          shared='^(nexkit/agent\.py|nexkit/schema\.py|nexkit/runtimes/(__init__|base|providers)\.py|nexkit/__init__\.py|nexkit/prompts/|scripts/smoke\.py)'
+          if grep -qE "$shared|^nexkit/runtimes/claude_code\.py" <<< "$changed"; then
+            echo "claude_code=true" >> "$GITHUB_OUTPUT"
+          fi
+          if grep -qE "$shared|^nexkit/runtimes/codex\.py" <<< "$changed"; then
+            echo "codex=true" >> "$GITHUB_OUTPUT"
           fi
 
-  smoke-test:
+  smoke-claude-code:
     # Real Claude Code against a tiny repository. Needs the CLAUDE_CODE_OAUTH_TOKEN secret.
-    # Runs when started by hand or by update-claude-code.yml, and on pull requests that
-    # change the agent, its runtimes, its prompts, the Claude Code pin or the smoke test.
     needs: decide-smoke-test
     if: >-
       !cancelled() &&
-      (github.event_name == 'workflow_dispatch' || needs.decide-smoke-test.outputs.run == 'true')
+      ((github.event_name == 'workflow_dispatch' && contains(fromJSON('["all","claude-code"]'), inputs.runtime)) ||
+       needs.decide-smoke-test.outputs.claude_code == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -125,13 +136,45 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install the pinned Claude Code
-        run: curl -fsSL https://claude.ai/install.sh | bash -s -- "$(python scripts/claude_code_version.py current)"
+        run: python bin/nexkit install-agents --runtime claude-code
       - name: Smoke test
         run: |
           if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
             echo "::error::Set the CLAUDE_CODE_OAUTH_TOKEN secret to run the live smoke test."
             exit 1
           fi
-          python scripts/smoke.py --claude ~/.local/bin/claude
+          python scripts/smoke.py --runtime claude-code
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+  smoke-codex:
+    # Real Codex against a tiny repository, on an Azure OpenAI deployment. Needs the
+    # AZURE_OPENAI_API_KEY secret and the NEXKIT_SMOKE_AZURE_ENDPOINT and
+    # NEXKIT_SMOKE_AZURE_MODEL (deployment name) repository variables.
+    needs: decide-smoke-test
+    if: >-
+      !cancelled() &&
+      ((github.event_name == 'workflow_dispatch' && contains(fromJSON('["all","codex"]'), inputs.runtime)) ||
+       needs.decide-smoke-test.outputs.codex == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the pinned Codex
+        run: python bin/nexkit install-agents --runtime codex
+      - name: Smoke test
+        run: |
+          if [ -z "$AZURE_OPENAI_API_KEY" ] || [ -z "$NEXKIT_SMOKE_AZURE_ENDPOINT" ] || [ -z "$NEXKIT_SMOKE_AZURE_MODEL" ]; then
+            echo "::error::Set the AZURE_OPENAI_API_KEY secret and the NEXKIT_SMOKE_AZURE_ENDPOINT and NEXKIT_SMOKE_AZURE_MODEL variables to run the live smoke test."
+            exit 1
+          fi
+          python scripts/smoke.py --runtime codex
+        env:
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          NEXKIT_SMOKE_AZURE_ENDPOINT: ${{ vars.NEXKIT_SMOKE_AZURE_ENDPOINT }}
+          NEXKIT_SMOKE_AZURE_MODEL: ${{ vars.NEXKIT_SMOKE_AZURE_MODEL }}

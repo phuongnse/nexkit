@@ -34,6 +34,9 @@ class RedactTests(unittest.TestCase):
     def test_github_token_and_credentials_are_always_secrets(self):
         redact = Redactor({"GITHUB_TOKEN": "ghs-not-a-real-shape", "ANTHROPIC_API_KEY": "k" * 12})
         self.assertEqual(redact("ghs-not-a-real-shape kkkkkkkkkkkk"), "*** ***")
+        # An Azure key has no known shape; it is redacted by name.
+        azure = Redactor({"AZURE_OPENAI_API_KEY": "0123456789abcdef0123456789abcdef"})
+        self.assertEqual(azure("api-key: 0123456789abcdef0123456789abcdef"), "api-key: ***")
 
     def test_encoded_environment_values(self):
         value = "oauth-value-1234567890"
@@ -47,6 +50,9 @@ class RedactTests(unittest.TestCase):
     def test_token_shapes(self):
         cases = {
             "anthropic": "sk-ant-api03-AbCdEf_123-456",
+            "openai project": "sk-proj-" + "Ab1_" * 12,
+            "openai service account": "sk-svcacct-" + "Zx9-" * 10,
+            "openai": "sk-" + "a1B2c3D4" * 4,
             "ghp": "ghp_" + "a1B2" * 9,
             "gho": "gho_" + "Z9" * 18,
             "ghu": "ghu_" + "x" * 36,

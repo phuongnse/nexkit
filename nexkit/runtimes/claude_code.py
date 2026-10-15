@@ -135,6 +135,38 @@ def result_text(content):
     return "" if content is None else json.dumps(content, ensure_ascii=False)
 
 
+# A model's tokens in a result event: (`modelUsage` key, `usage` key).
+TOKEN_KEYS = {
+    "input": ("inputTokens", "input_tokens"),
+    "written": ("cacheCreationInputTokens", "cache_creation_input_tokens"),
+    "read": ("cacheReadInputTokens", "cache_read_input_tokens"),
+    "output": ("outputTokens", "output_tokens"),
+}
+
+
+def tokens(result):
+    """The tokens of a result event over every model the session used: `modelUsage` has
+    one entry per model, such as a subagent's, and `usage` only the main model's."""
+    models = [m for m in (result.get("modelUsage") or {}).values() if isinstance(m, dict)]
+    column = 0
+    if not models:
+        if not isinstance(result.get("usage"), dict):
+            return None
+        models, column = [result["usage"]], 1
+    total = dict.fromkeys(TOKEN_KEYS, 0)
+    for model in models:
+        for name, keys in TOKEN_KEYS.items():
+            value = model.get(keys[column])
+            if isinstance(value, int) and not isinstance(value, bool):
+                total[name] += value
+    # Claude counts the input written to and read from the cache apart from the rest.
+    return {
+        "input": total["input"] + total["written"] + total["read"],
+        "cached": total["read"],
+        "output": total["output"],
+    }
+
+
 def _text_of(event):
     """The text of a message that Claude Code wrote itself, such as an API or usage limit
     error, or "". The model's own words are left out: they may mention limits."""
@@ -212,7 +244,7 @@ class ClaudeReader(Reader):
 
     def outcome(self, returncode, stderr):
         event = self.result or {}
-        outcome = Outcome(cost_usd=event.get("total_cost_usd"), turns=event.get("num_turns"))
+        outcome = Outcome(tokens=tokens(event))
         if not self.result:
             outcome.error = (
                 f"exited with code {returncode} without a result. {stderr.strip()[-1500:]}"

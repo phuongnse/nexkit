@@ -31,10 +31,13 @@ def decision(action="implement", **kw):
     return {**base, **kw}
 
 
+TOKENS = {"input": 1000, "cached": 800, "output": 200}
+
+
 def review_result(verdict="approve", findings=()):
     return {
         "status": "done",
-        "cost": 0.25,
+        "tokens": {"input": 300, "cached": 100, "output": 50},
         "output": {
             "verdict": verdict,
             "summary": "Looks right.",
@@ -53,7 +56,6 @@ def review_result(verdict="approve", findings=()):
 
 LIMIT = {
     "status": "paused",
-    "cost": 0.2,
     "error": "Claude hit the account's usage limit: You've hit your session limit",
     "limit": "You've hit your session limit · resets 4:40am (UTC)",
     "resume_at": "2026-10-11T04:40:00Z",
@@ -85,7 +87,7 @@ class ReportCase(unittest.TestCase):
         path.write_text(json.dumps(data))
 
     def candidate(self, checks_pass=True, review=None):
-        self.write("nexkit-agent", "result.json", {"status": "done", "cost": 1.0})
+        self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
         self.write(
             "nexkit-checks",
             "checks.json",
@@ -131,7 +133,7 @@ class ReportTests(ReportCase):
         self.write(
             "nexkit-agent",
             "result.json",
-            {"status": "blocked", "error": "Need API key", "cost": 0.3},
+            {"status": "blocked", "error": "Need API key"},
         )
         outcome = self.run_report(published=False)
         self.assertEqual(outcome["outcome"], "agent_blocked")
@@ -168,9 +170,21 @@ class ReportTests(ReportCase):
         self.assertIn("✅ add works", self.gh.created_reviews[0]["body"])
         [row] = self.gh.run_comments(6)
         self.assertIn("ready for a human decision", row["body"])
-        self.assertEqual((row["run"]["cost"], row["run"]["verdict"]), (1.25, "approve"))
+        # The round counts the tokens of both agents.
+        both = {"input": 1300, "cached": 900, "output": 250}
+        self.assertEqual((row["run"]["tokens"], row["run"]["verdict"]), (both, "approve"))
+        self.assertIn("| 1.3k in (900 cached), 250 out |", row["body"])
         self.assertFalse(self.gh.dispatches)
         self.assertFalse(self.gh.merged)
+
+    def test_a_round_without_every_count_shows_no_total(self):
+        review = review_result()
+        del review["tokens"]
+        self.candidate(review=review)
+        self.run_report()
+        [row] = self.gh.run_comments(6)
+        self.assertIsNone(row["run"]["tokens"])
+        self.assertIn("| approve | N/A |", row["body"])
 
     def test_auto_merge(self):
         self.candidate()
@@ -387,7 +401,6 @@ class ReportTests(ReportCase):
             {
                 "status": "blocked",
                 "error": "Two conflicts need a decision.",
-                "cost": 0.4,
                 "start_base": "b" * 40,
                 "conflicts": ["Program.cs"],
                 "output": {"status": "blocked", "open_conflicts": [open_conflict]},
@@ -418,7 +431,6 @@ class ReportTests(ReportCase):
             {
                 "status": "done",
                 "summary": "Kept both.",
-                "cost": 1.0,
                 "start_base": "b" * 40,
                 "conflicts": ["Program.cs", "Axis.Server.csproj"],
             },

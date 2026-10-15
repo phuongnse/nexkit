@@ -247,7 +247,6 @@ def cmd_agent(args):
                 "status": "error",
                 "error": f"Setup command `{failed['run']}` failed with exit code "
                 f"{failed['exit_code']}:\n```\n{failed['output'][-2000:]}\n```",
-                "cost": None,
             }
             (out / "result.json").write_text(json.dumps(result, indent=2))
             write_summary(summary(result, []), redact)
@@ -257,7 +256,7 @@ def cmd_agent(args):
         triage = run_triage(context, cfg, decision.get("previous_profile"), out)
         if triage["status"] == "paused":
             # The plan would stop at the same limit; it runs again after the reset.
-            keys = ("status", "error", "limit", "resume_at", "reset_known", "cost")
+            keys = ("status", "error", "limit", "resume_at", "reset_known")
             result = {"stage": stage, **{key: triage[key] for key in keys}, "triage": triage}
             (out / "result.json").write_text(json.dumps(result, indent=2))
             print(json.dumps(result, indent=2))

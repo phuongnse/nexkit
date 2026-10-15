@@ -13,6 +13,8 @@ import secrets
 import time
 from pathlib import Path
 
+from .runtimes.base import TOKENS
+
 HEAD_LINES = 20
 MAX_CHARS = 4000
 
@@ -43,6 +45,39 @@ def clock(seconds):
 def duration(seconds):
     seconds = int(seconds or 0)
     return f"{seconds // 60}m {seconds % 60:02d}s" if seconds >= 60 else f"{seconds}s"
+
+
+# What a table cell shows when there is nothing to count or say.
+NO_DATA = "N/A"
+
+
+def add_tokens(*counts):
+    """The sum of runs' tokens, or None when a run has no count: a total that left out a
+    run would read as the whole."""
+    if not counts or not all(counts):
+        return None
+    return {key: sum(count.get(key) or 0 for count in counts) for key in TOKENS}
+
+
+def tokens_text(tokens):
+    """`1.24M in (1.1M cached), 15.2k out`, or N/A when there is no count."""
+    if not tokens:
+        return NO_DATA
+    cached = tokens.get("cached") or 0
+    cached = f" ({_count(cached)} cached)" if cached else ""
+    return f"{_count(tokens.get('input') or 0)} in{cached}, {_count(tokens.get('output') or 0)} out"
+
+
+def _count(number):
+    """A count in three significant digits: 950, 15.2k, 1.24M."""
+    if number < 1000:
+        return str(number)
+    for unit in ("k", "M", "B"):
+        number /= 1000
+        digits = 2 if number < 9.995 else 1 if number < 99.95 else 0
+        if round(number, digits) < 1000 or unit == "B":
+            text = f"{number:.{digits}f}"
+            return (text.rstrip("0").rstrip(".") if digits else text) + unit
 
 
 def command_data(text):
@@ -250,23 +285,13 @@ class RunLog:
 def summary(result, calls):
     """The Markdown run summary for an agent or review job."""
     status = result.get("status") or "error"
-    turns, cost = result.get("turns"), result.get("cost")
-    columns = {
-        "Result": status,
-        "Turns": turns if turns is not None else "-",
-        "Duration": duration(result.get("seconds")),
-        "Cost": f"${cost:.2f}" if cost is not None else "-",
-    }
-    tokens = result.get("tokens") or {}
-    if tokens:
-        # From runtimes that report tokens instead of cost; "Cost" covers only the others.
-        columns["Tokens"] = (
-            f"{tokens.get('input_tokens', 0):,} in, {tokens.get('output_tokens', 0):,} out"
-        )
+    columns = {"Result": status, "Duration": duration(result.get("seconds"))}
+    if result.get("tokens"):
+        columns["Tokens"] = tokens_text(result["tokens"])
     output = result.get("output") or {}
     if result.get("stage") == "review":
         verdict = output.get("verdict")
-        columns["Verdict"] = verdict if verdict in ("approve", "request_changes") else "-"
+        columns["Verdict"] = verdict if verdict in ("approve", "request_changes") else NO_DATA
     lines = [
         f"### NexKit {result.get('stage', 'agent')}: {status}",
         "",
@@ -336,7 +361,7 @@ def _agents(result):
     if len(attempts) < 2:
         return lines
     tokens = any(a.get("tokens") for a in attempts)
-    header = ["Agent", "Model", "Result", "Duration", "Cost", *(["Tokens"] if tokens else [])]
+    header = ["Agent", "Model", "Result", "Duration", *(["Tokens"] if tokens else [])]
     lines += [
         "",
         "**Agents that ran in turn** (the next one starts when one stops at its usage limit)",
@@ -348,21 +373,14 @@ def _agents(result):
         outcome = RESULTS.get(attempt["status"], attempt["status"])
         if attempt["status"] == "skipped" and attempt.get("error"):
             outcome += f": {one_line(attempt['error'])[:200]}"
-        cost = attempt.get("cost")
         cells = [
             code(attempt["agent"]),
             code(one_line(attempt["model"])),
             outcome,
-            duration(attempt.get("seconds")) if attempt.get("seconds") is not None else "-",
-            f"${cost:.2f}" if isinstance(cost, (int, float)) else "-",
+            duration(attempt.get("seconds")) if attempt.get("seconds") is not None else NO_DATA,
         ]
         if tokens:
-            used = attempt.get("tokens") or {}
-            cells.append(
-                f"{used.get('input_tokens', 0):,} in, {used.get('output_tokens', 0):,} out"
-                if used
-                else "-"
-            )
+            cells.append(tokens_text(attempt.get("tokens")))
         lines.append("| " + " | ".join(cell.replace("|", "\\|") for cell in cells) + " |")
     return lines
 

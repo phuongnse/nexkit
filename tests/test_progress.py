@@ -41,7 +41,7 @@ def decision(action, **kw):
 def review_result(verdict="approve"):
     return {
         "status": "done",
-        "cost": 0.25,
+        "tokens": {"input": 48_000, "cached": 40_000, "output": 2_100},
         "output": {"verdict": verdict, "summary": "Ok.", "criteria": [], "findings": []},
     }
 
@@ -81,7 +81,10 @@ class ProgressTests(unittest.TestCase):
         )
 
     def candidate(self, verdict="approve"):
-        self.write("nexkit-agent", "result.json", {"status": "done", "summary": "Done."})
+        tokens = {"input": 52_000, "cached": 30_000, "output": 900}
+        self.write(
+            "nexkit-agent", "result.json", {"status": "done", "summary": "Done.", "tokens": tokens}
+        )
         checks = [{"name": "test", "run": "t", "exit_code": 0, "passed": True, "output": ""}]
         self.write("nexkit-checks", "checks.json", checks)
         self.write("nexkit-review", "result.json", review_result(verdict))
@@ -177,7 +180,7 @@ class ProgressTests(unittest.TestCase):
         )
         [running] = self.gh.run_comments(6)
         self.assertIn("### NexKit round 1: fix\n\n⏳ [running]", running["body"])
-        self.assertIn("| ccccccc | - | - | - |", running["body"])
+        self.assertIn("| ccccccc | N/A | N/A | N/A |", running["body"])
 
         self.candidate()
         outcome = self.finish(d, {"published": True, "pr": 6, "head": NEW_HEAD})
@@ -186,7 +189,7 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(done["id"], running["id"])
         self.assertEqual(done["run"]["status"], "success")
         self.assertIn(f"✅ [run log]({RUN})", done["body"])
-        self.assertIn("| eeeeeee | passed | approve | $0.25 |", done["body"])
+        self.assertIn("| eeeeeee | passed | approve | 100k in (70k cached), 3k out |", done["body"])
         self.assertIn("ready for a human decision", done["body"])
         self.assertEqual(len(self.gh.comments_matching(6, "ready for a human decision")), 1)
         latest = {(s["sha"], s["context"]): s["state"] for s in self.gh.statuses}

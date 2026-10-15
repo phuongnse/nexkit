@@ -287,7 +287,7 @@ class RunStageTests(StageCase):
         self.assertEqual(result["status"], "done")
         self.assertEqual(result["changed_files"], ["calc.py"])
         self.assertEqual(result["start_head"], start)
-        self.assertEqual(result["cost"], 0.5)
+        self.assertEqual(result["tokens"], {"input": 1000, "cached": 850, "output": 120})
         patch = (self.out / "changes.patch").read_text()
         self.assertIn("+    return a + b", patch)
         self.assertNotIn("setup-output", patch)
@@ -314,13 +314,13 @@ class RunStageTests(StageCase):
     def test_triage_chooses_the_profile_from_the_issue_text(self):
         result = self.triage(result={"profile": "hard", "reason": "Touches the login code."})
         self.assertEqual(
-            {k: result[k] for k in ("status", "profile", "chosen_by", "reason", "cost")},
+            {k: result[k] for k in ("status", "profile", "chosen_by", "reason", "tokens")},
             {
                 "status": "done",
                 "profile": "hard",
                 "chosen_by": "triage",
                 "reason": "Touches the login code.",
-                "cost": 0.5,
+                "tokens": {"input": 1000, "cached": 850, "output": 120},
             },
         )
         call = self.claude.call()
@@ -346,14 +346,15 @@ class RunStageTests(StageCase):
         prompt = self.claude.call()["prompt"]
         self.assertIn("The latest plan of this issue used the profile `hard`.", prompt)
 
-    def test_plan_keeps_the_triage_result_and_its_cost(self):
+    def test_plan_keeps_the_triage_result(self):
         triage = self.triage(result={"profile": "hard", "reason": "Auth."})
         cfg = agent.configuration.with_profile(profile_config(), "hard")
         self.claude.configure(result=PLAN)
         result, _ = self.run_quietly("plan", cfg, triage=triage)
         self.assertEqual(result["profile"], "hard")
         self.assertEqual(result["triage"]["reason"], "Auth.")
-        self.assertEqual(result["cost"], 1.0)
+        # Triage has its own run summary; the plan counts only its own tokens.
+        self.assertEqual(result["tokens"], {"input": 1000, "cached": 850, "output": 120})
         args = self.claude.call()["args"]
         self.assertEqual(args[args.index("--model") + 1], "fable")
         saved = json.loads((self.out / "result.json").read_text())

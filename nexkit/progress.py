@@ -113,7 +113,9 @@ def start(gh, decision):
             for context in STATUS_CONTEXTS:
                 gh.set_status(decision["head"], context, "pending", description, run_url())
             comment_id, row = find_round(comments, decision)
-            row.update(status=RUNNING, head=decision["head"], checks="-", verdict="-", cost=None)
+            row.update(
+                status=RUNNING, head=decision["head"], checks=None, verdict=None, tokens=None
+            )
             save_round(gh, decision["pr"], comment_id, row)
         else:
             show_command(gh, decision, RUNNING, comments=comments)

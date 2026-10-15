@@ -271,7 +271,8 @@ class PublishTests(unittest.TestCase):
             plan["body"],
         )
         self.assertIn(
-            "**Profile: hard** (plan `fable`, implement `opus`, review `fable`). "
+            "**Profile: hard**: plan `claude` (`fable`) · implement `claude` (`opus`) · "
+            "review `claude` (`fable`). "
             "Touches the login code.\n\nTo use another profile, say which in a comment and "
             "comment `/nexkit plan`, or comment `/nexkit plan <request>`.",
             plan["body"],
@@ -280,7 +281,7 @@ class PublishTests(unittest.TestCase):
         self.assertNotIn("Profile", plan_text(plan))
         self.assertIn("### What changes", plan_text(plan))
 
-    def test_plan_comment_names_agents_other_than_the_default(self):
+    def test_plan_comment_names_the_agent_of_every_stage(self):
         cfg = profile_config(
             agents={
                 "backup": {
@@ -295,7 +296,7 @@ class PublishTests(unittest.TestCase):
         result["triage"] = {"profile": "hard", "chosen_by": "triage", "reason": "Auth."}
         publish(self.gh, decision("plan"), result, CONTEXT, cfg, ".", self.out)
         self.assertIn(
-            "(plan `fable`, implement `opus` on `backup`, review `fable`)",
+            "plan `claude` (`fable`) · implement `backup` (`opus`) · review `claude` (`fable`)",
             latest_plan(self.gh.comments(5))["body"],
         )
 
@@ -303,7 +304,8 @@ class PublishTests(unittest.TestCase):
         error = "Claude did not finish within 5 minutes.\nMore detail."
         plan = self.publish_plan({"profile": "standard", "chosen_by": "default", "error": error})
         self.assertIn(
-            "**Profile: standard** (plan `opus`, implement `sonnet`, review `sonnet`). "
+            "**Profile: standard**: plan `claude` (`opus`) · implement `claude` (`sonnet`) · "
+            "review `claude` (`sonnet`). "
             "Triage failed (Claude did not finish within 5 minutes.), so this plan uses the "
             "default profile.",
             plan["body"],

@@ -280,8 +280,8 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual((shown[3].text, shown[3].is_error), ("a.txt\n", False))
         self.assertEqual(outcome.output, PLAN)
         self.assertIsNone(outcome.error)
-        self.assertIsNone(outcome.cost_usd)
-        self.assertEqual(outcome.tokens["input_tokens"], 200)
+        # Codex counts cached input in the input and reasoning in the output.
+        self.assertEqual(outcome.tokens, {"input": 200, "cached": 20, "output": 40})
 
     def test_failed_commands_and_file_changes(self):
         events = codex_events(DONE, commands=[("make test", "1 failed", 1)])
@@ -313,8 +313,8 @@ class ReaderTests(unittest.TestCase):
         _, prose = read(codex_events("I fixed it."))
         result = agent.interpret("plan", run, prose, 5, label="Codex")
         self.assertEqual(result["error"], "Codex finished without the required structured result.")
-        self.assertEqual(result["tokens"]["output_tokens"], 300)
-        self.assertIn("| 1,200 in, 300 out |", runlog.summary(result, []))
+        self.assertEqual(result["tokens"], {"input": 1200, "cached": 100, "output": 300})
+        self.assertIn("| 1.2k in (100 cached), 300 out |", runlog.summary(result, []))
 
 
 class StageTests(unittest.TestCase):
@@ -354,7 +354,7 @@ class StageTests(unittest.TestCase):
             result, stdout = self.run_stage("implement")
         self.assertEqual(result["status"], "done", result.get("error"))
         self.assertEqual(result["changed_files"], ["calc.py"])
-        self.assertEqual(result["tokens"]["input_tokens"], 1200)
+        self.assertEqual(result["tokens"]["input"], 1200)
         call = json.loads(self.codex.log.read_text())
         # Of the agent secrets, only its own; never Claude's.
         agent_secrets = {"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "AZURE_OPENAI_ENDPOINT"}

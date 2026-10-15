@@ -42,7 +42,7 @@ outcome. Comments of earlier runs keep their final state.
 | When | Command on an issue (`plan`, `go`) | Round on a pull request (`fix`, `review`, automatic, *Request changes*) |
 |---|---|---|
 | Start (`route`) | 👀 on the command comment. A new NexKit comment names the command and shows ⏳ with a link to the run. | 👀 on the command comment. A new NexKit comment shows the round number, its trigger and ⏳ with a link to the run. `nexkit/checks` and `nexkit/review` turn `pending` on the current commit and link to the run. |
-| End (`report`) | The same comment shows ✅, ❌ or ⏸️, the run log, the agent of each stage and the result: the plan, the pull request and its outcome, or why the run stopped. | The same comment shows ✅, ❌ or ⏸️, the run log, the agent of each stage, the round's commit, checks, review verdict and cost (`-` for a runtime that reports tokens instead), and the next step. Statuses are set on the new commit; a commit the round did not check gets its earlier statuses back. |
+| End (`report`) | The same comment shows ✅, ❌ or ⏸️, the run log, the agent of each stage and the result: the plan, the pull request and its outcome, or why the run stopped. | The same comment shows ✅, ❌ or ⏸️, the run log, the agent of each stage, the round's commit, checks, review verdict and tokens (`N/A` when a stage that ran has no count), and the next step. Statuses are set on the new commit; a commit the round did not check gets its earlier statuses back. |
 
 ✅ means the run did its work, even when the checks fail or the review asks for changes
 (the round's columns show that). ❌ means it stopped on an error. A run started by a
@@ -115,12 +115,11 @@ masks or create annotations. The model's thinking is never printed. With
 (`▸ Tool detail`, 200 characters), as in earlier releases.
 
 **Run summary.** At the end of the `agent` and `review` jobs, the run's summary page shows
-the stage and a one-row table of its result (done, blocked, paused or error), turns,
-duration and cost, tokens for a runtime that reports them, plus the verdict for a review;
-`-` marks a missing value. Below it are the agent that ran the stage, with its runtime,
-provider and model, the profile with profiles, and when the stage moved to a
+the stage and a one-row table of its result (done, blocked, paused or error), duration and
+tokens, plus the verdict for a review. Below it are the agent that ran the stage, with its
+runtime, provider and model, the profile with profiles, and when the stage moved to a
 [fallback agent](configuration.md#fallback-agents), a table of every agent's run with its
-model, result (`usage limit`, or `skipped` and why), duration and cost. Then come why the
+model, result (`usage limit`, or `skipped` and why), duration and tokens. Then come why the
 stage stopped, for a fix round that merged the base branch the files that had conflicts,
 the files changed (including what the merge brought), each command the agent ran and
 whether it failed, and for a review the findings.
@@ -128,15 +127,23 @@ whether it failed, and for a review the findings.
 ```text
 ### NexKit review: done
 
-| Result | Turns | Duration | Cost | Verdict |
-|---|---|---|---|---|
-| done | 12 | 3m 41s | $0.84 | approve |
+| Result | Duration | Tokens | Verdict |
+|---|---|---|---|
+| done | 3m 41s | 1.24M in (1.1M cached), 15.2k out | approve |
 
 **Agent:** `claude` (claude-code on anthropic, model `opus`)
 ```
 
 The run comment on the issue or pull request names the agent of each stage that ran:
 "**Agents:** plan `claude-api` after `claude` hit its usage limit".
+
+**Tokens** are the one usage number, counted the same way for every runtime: input (cached
+input included), the cached part of it, and output (reasoning included), over every model
+the run used. Each runtime converts what its CLI reports. NexKit shows no cost: runtimes
+do not all report one, and on a subscription it is not what you pay. A count is shown only
+when it is known, and a total, such as a stage that moved to a fallback agent or a round's
+implement and review, only when every run in it has a count; otherwise the cell shows
+`N/A`. A table cell with nothing to show is `N/A` too.
 
 **Artifacts,** kept 14 days:
 
@@ -203,7 +210,7 @@ person approves comes first; the detail for the implementing agent is collapsed:
 ## Plan
 One or two sentences: what changes and why.
 
-**Profile: hard** (models)  only with profiles: why, and how to change it
+**Profile: hard**: plan `claude` (`opus`) · …  only with profiles: each stage's agent and model, why, and how to change it
 
 ### Since the last plan   only on a re-plan: revised or started over, and what changed
 ### What changes          up to six bullets about behaviour
@@ -499,7 +506,8 @@ name and a reason. It decides in this order:
    unless someone asks.
 3. Otherwise triage picks the profile whose `when` text fits the issue.
 
-The plan then runs with the profile's settings. Triage's cost counts with the plan's.
+The plan then runs with the profile's settings. Triage has its own run summary, with its
+own tokens.
 
 **Triage never stops the plan.** After an error, a timeout or an unknown profile name, the
 plan uses the previous plan's profile, or `default_profile` when there is none, and the

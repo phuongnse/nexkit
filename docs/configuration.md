@@ -440,10 +440,13 @@ Claude Code with a Claude subscription token.
 The runtimes and providers NexKit supports today; each is a module in
 `nexkit/runtimes/`, so more can be added:
 
-| Runtime | Providers | `effort` | `max_budget_usd` | Cost in the summary |
-|---|---|---|---|---|
-| `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` | yes | yes |
-| `codex` | `azure-openai` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` | no: rely on `timeout_minutes` | no: tokens instead. A run that mixes runtimes shows the cost of the others. |
+| Runtime | Providers | `effort` | `max_budget_usd` |
+|---|---|---|---|
+| `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` | yes |
+| `codex` | `azure-openai` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` | no: rely on `timeout_minutes` |
+
+Every runtime reports the tokens of its runs in the same form, which the run summary and
+the run comments show; see [Logs, summary and artifacts](how-it-works.md#logs-summary-and-artifacts).
 
 | Provider | Settings | Secret |
 |---|---|---|
@@ -489,7 +492,7 @@ Anthropic API key behind a Claude subscription:
   `effort` are meant for it. Only the stage's agent's own list counts: when `claude-api`
   has a `fallback` too, it applies to the stages that choose `claude-api`.
 - `timeout_minutes` and `max_budget_usd` apply to each agent's run, and the job allows
-  for every agent of the list, up to 340 minutes for a stage. The stage's cost adds up
+  for every agent of the list, up to 340 minutes for a stage. The stage's tokens add up
   every agent's run. An API key is billed per token, so set `max_budget_usd` if a
   fallback should not spend more than a limit.
 - A fallback agent's secrets count like any agent's: the job that may run it receives
@@ -499,7 +502,7 @@ Anthropic API key behind a Claude subscription:
   runtime that does not report usage limits (currently `codex`), since it would never run.
 
 The run summary names the agent of each stage, and when a fallback ran it lists every
-agent's run with its result, duration and cost. The run comment on the issue or pull
+agent's run with its result, duration and tokens. The run comment on the issue or pull
 request names the agent of each stage, for example
 "**Agents:** implement `claude-api` after `claude` hit its usage limit · review `claude`".
 

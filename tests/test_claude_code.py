@@ -1,7 +1,7 @@
 import unittest
 from datetime import UTC, datetime
 
-from nexkit.runtimes.claude_code import _text_of, limit_reached, reset_time
+from nexkit.runtimes.claude_code import _text_of, limit_reached, reset_time, tokens
 from nexkit.usage import schedule, shown
 from tests.support import interpret_claude
 from tests.test_agent import DONE
@@ -62,6 +62,29 @@ class UsageLimitTests(unittest.TestCase):
     def test_other_errors_are_not_limits(self):
         for text in ("Credit balance is too low", "API Error: 500", "Rate limited: retry"):
             self.assertIsNone(usage_limit([text], NOW), text)
+
+
+class TokensTests(unittest.TestCase):
+    def test_every_model_counts(self):
+        # A subagent on another model has its own entry; cache reads and writes are input.
+        event = {
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "modelUsage": {
+                "opus": {
+                    "inputTokens": 10,
+                    "cacheCreationInputTokens": 200,
+                    "cacheReadInputTokens": 3000,
+                    "outputTokens": 40,
+                },
+                "haiku": {"inputTokens": 5, "outputTokens": 2},
+            },
+        }
+        self.assertEqual(tokens(event), {"input": 3215, "cached": 3000, "output": 42})
+
+    def test_without_model_usage(self):
+        event = {"usage": {"input_tokens": 2, "cache_read_input_tokens": 8, "output_tokens": 3}}
+        self.assertEqual(tokens(event), {"input": 10, "cached": 8, "output": 3})
+        self.assertIsNone(tokens({"subtype": "success"}))
 
 
 class InterpretTests(unittest.TestCase):

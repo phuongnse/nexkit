@@ -12,6 +12,8 @@ import base64
 import json
 import re
 
+from .runlog import NO_DATA, tokens_text
+
 BOT_LOGIN = "github-actions[bot]"
 PLAN_MARKER = "<!-- nexkit:plan -->"
 STATE_PREFIX = "<!-- nexkit:state "
@@ -161,22 +163,26 @@ def _cell(value):
     return str(value).replace("|", "\\|").replace("\n", " ")
 
 
+def _known(value):
+    # Earlier rounds stored `-` for a value that was not known yet.
+    return NO_DATA if value in (None, "", "-") else value
+
+
 def render_run(run, text=""):
     """A run comment: what started the run, its status and link, and the result text."""
     if "round" in run:
-        cost = run.get("cost")
         cells = (
-            (run.get("head") or "-")[:7],
-            run.get("checks", "-"),
-            run.get("verdict", "-"),
-            f"${cost:.2f}" if isinstance(cost, (int, float)) else "-",
+            _known((run.get("head") or "")[:7]),
+            _known(run.get("checks")),
+            _known(run.get("verdict")),
+            tokens_text(run.get("tokens")),
         )
         lines = [
             f"### NexKit round {run['round']}: {run['trigger']}",
             "",
             run_link(run),
             "",
-            "| Commit | Checks | AI review | Cost |",
+            "| Commit | Checks | AI review | Tokens |",
             "|---|---|---|---|",
             "| " + " | ".join(_cell(v) for v in cells) + " |",
         ]

@@ -381,7 +381,9 @@ for event in spec.get("events", [{"type": "assistant", "message": {"content": [
 if "result" in spec:
     event = {"type": "result", "subtype": spec.get("subtype", "success"),
              "is_error": spec.get("is_error", False), "num_turns": 3,
-             "total_cost_usd": 0.5, "result": spec.get("text", "")}
+             "total_cost_usd": 0.5, "result": spec.get("text", ""),
+             "modelUsage": {"m": {"inputTokens": 100, "cacheCreationInputTokens": 50,
+                                  "cacheReadInputTokens": 850, "outputTokens": 120}}}
     if spec["result"] is not None:
         event["structured_output"] = spec["result"]
     print(json.dumps(event))

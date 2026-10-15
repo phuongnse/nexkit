@@ -129,7 +129,17 @@ class CodexReader(Reader):
         return Event("tool_result", id=item.get("id"), text=text, is_error=failed)
 
     def outcome(self, returncode, stderr):
-        outcome = Outcome(tokens=self.tokens or None)
+        used = self.tokens
+        outcome = Outcome(
+            # Codex counts cached input in `input_tokens` and reasoning in `output_tokens`.
+            tokens={
+                "input": used.get("input_tokens", 0),
+                "cached": used.get("cached_input_tokens", 0),
+                "output": used.get("output_tokens", 0),
+            }
+            if used
+            else None
+        )
         if self.failed:
             outcome.error = f"stopped: {self.failed}"
         elif not self.completed:

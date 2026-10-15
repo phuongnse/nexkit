@@ -19,7 +19,7 @@ from . import config as configuration
 from .checks import environment, known_base
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
-from .runlog import RunLog, summary, write_summary
+from .runlog import RunLog, add_tokens, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import AgentConfigError, Spec
 from .schema import problems
@@ -288,7 +288,6 @@ def up_to_date(base):
     return {
         "stage": "fix",
         "status": "up_to_date",
-        "cost": None,
         "summary": "",
         "error": f"The pull request no longer conflicts with `{base}`.",
     }
@@ -485,7 +484,7 @@ def _attempt_record(cfg, name, settings, result):
         "model": settings["model"],
         "status": "skipped" if result.get("skipped") else result["status"],
     }
-    for key in ("seconds", "cost", "turns", "tokens", "limit"):
+    for key in ("seconds", "tokens", "limit"):
         if result.get(key) is not None:
             record[key] = result[key]
     if record["status"] in ("skipped", "error") and result.get("error"):
@@ -507,17 +506,13 @@ def _all_limited(result, limited):
 
 
 def _totals(result, attempts):
-    """The stage's cost, turns, tokens and duration add up every agent's run."""
+    """The stage's tokens and duration add up every agent's run."""
     ran = [a for a in attempts if a["status"] != "skipped"]
     if len(ran) < 2:
         return
-    for key in ("cost", "turns", "seconds"):
-        values = [a[key] for a in ran if isinstance(a.get(key), (int, float))]
-        result[key] = round(sum(values), 4) if values else None
-    tokens = [a["tokens"] for a in ran if a.get("tokens")]
-    if tokens:
-        keys = dict.fromkeys(key for item in tokens for key in item)
-        result["tokens"] = {key: sum(item.get(key) or 0 for item in tokens) for key in keys}
+    seconds = [a["seconds"] for a in ran if isinstance(a.get("seconds"), (int, float))]
+    result["seconds"] = round(sum(seconds), 4) if seconds else None
+    result["tokens"] = add_tokens(*(a.get("tokens") for a in ran))
 
 
 def _run_one(
@@ -546,7 +541,7 @@ def _run_one(
         except AgentConfigError as exc:
             error = f"{exc} (the `{name}` agent)."
     if error:
-        result = {"stage": stage, "status": "error", "cost": None, "error": error}
+        result = {"stage": stage, "status": "error", "error": error}
         if fallback:
             result["skipped"] = True
         return result, []
@@ -609,8 +604,6 @@ def interpret(
     error. With `schema`, the structured result must fit it."""
     result = {
         "stage": stage,
-        "cost": outcome.cost_usd,
-        "turns": outcome.turns,
         "seconds": run["seconds"],
         "output": None,
         "status": "error",
@@ -756,7 +749,7 @@ def run_stage(
     base_sha=None,
     triage=None,
 ):
-    """Run one stage. A plan's `triage` result is stored with it, and its cost counts.
+    """Run one stage. A plan's `triage` result is stored with it.
 
     `base_sha` is the merge base with the base branch, for NEXKIT_BASE_SHA."""
     out = Path(out_dir)
@@ -791,7 +784,6 @@ def run_stage(
         result = {
             "stage": stage,
             "status": "error",
-            "cost": None,
             "error": f"The pull request conflicts with `{base}` in protected paths, which NexKit "
             f"does not change: {', '.join(f'`{name}`' for name in protected)}. Merge `{base}` "
             "into the branch yourself, then comment `/nexkit review`.",
@@ -835,8 +827,7 @@ def run_stage(
             # After a merge an empty patch is valid: it keeps this branch's side everywhere.
             result.update(status="error", error="The agent finished without changing any files.")
     if triage:
-        costs = [c for c in (result["cost"], triage.get("cost")) if isinstance(c, (int, float))]
-        result.update(profile=triage["profile"], triage=triage, cost=sum(costs) if costs else None)
+        result.update(profile=triage["profile"], triage=triage)
     return _save(result, out, redact, calls, start=start, merged=merged, conflicts=conflicts)
 
 

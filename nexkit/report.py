@@ -17,6 +17,7 @@ from .maintain import (
     start_waiting,
 )
 from .route import auto_input
+from .runlog import add_tokens
 from .state import FAILURE, PAUSED, SUCCESS, clip, empty_state, read_state
 from .usage import parse_iso, shown
 
@@ -59,9 +60,9 @@ def _load(path):
     return json.loads(path.read_text()) if path.is_file() else None
 
 
-def _cost(*results):
-    costs = [r.get("cost") for r in results if r and isinstance(r.get("cost"), (int, float))]
-    return round(sum(costs), 4) if costs else None
+def _tokens(*results):
+    """The tokens of the stages that ran, or None when one of them has no count."""
+    return add_tokens(*(r.get("tokens") for r in results if r))
 
 
 def agents_ran(*results):
@@ -217,8 +218,7 @@ def _stage_failure(decision, agent, publish):
     if agent is None:
         return "agent_failed", f"NexKit could not run the {action} agent."
     if agent["status"] != "done":
-        cost = f" Cost: ${agent['cost']:.2f}." if agent.get("cost") else ""
-        message = f"NexKit stopped during {action}: {agent['error']}{cost}"
+        message = f"NexKit stopped during {action}: {agent['error']}"
         conflicts = open_conflicts(agent, decision["base"])
         return "agent_" + agent["status"], message + (f"\n\n{conflicts}" if conflicts else "")
     if not publish.get("published"):
@@ -271,7 +271,7 @@ def _stop_round(gh, decision, agent, outcome, message, reason=None):
     _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
     comment_id, row = progress.find_round(comments, decision)
     status = run_status(outcome)
-    row.update(status=status, head=decision["head"], cost=_cost(agent), outcome=outcome)
+    row.update(status=status, head=decision["head"], tokens=_tokens(agent), outcome=outcome)
     _show_agents(row, agent)
     if reason:
         row["attention"] = reason
@@ -345,7 +345,7 @@ def _paused_agent(gh, decision, cfg, agent):
         }
     _pause_statuses(gh, decision["head"], resume, run_url())
     comment_id, row = progress.find_round(gh.comments(decision["pr"]), decision)
-    row.update(status=PAUSED, head=decision["head"], cost=_cost(agent), outcome="paused")
+    row.update(status=PAUSED, head=decision["head"], tokens=_tokens(agent), outcome="paused")
     _show_agents(row, agent)
     row.update({key: value for key, value in (("resume", resume), ("attention", reason)) if value})
     progress.save_round(gh, decision["pr"], comment_id, row, message)
@@ -517,7 +517,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         head=head,
         checks="not run" if checks is None else ("passed" if checks_ok else "failed"),
         verdict=verdict or "not run",
-        cost=_cost(agent if action != "review" else None, reviewed),
+        tokens=_tokens(agent if action != "review" else None, reviewed),
     )
     _show_agents(row, agent if action != "review" else None, reviewed)
     _record(state, decision, row, agent or {}, review)

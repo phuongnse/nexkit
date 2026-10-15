@@ -179,15 +179,36 @@ class LogTests(unittest.TestCase):
         self.assertNotIn("Private reasoning", markdown)
 
 
+class TokensTests(unittest.TestCase):
+    def test_counts_have_three_significant_digits(self):
+        counts = (999, 1000, 1234, 9995, 99_950, 999_500, 1_240_000, 2_500_000_000)
+        self.assertEqual(
+            [runlog._count(n) for n in counts],
+            ["999", "1k", "1.23k", "10k", "100k", "1M", "1.24M", "2.5B"],
+        )
+
+    def test_a_total_needs_every_count(self):
+        one = {"input": 10, "cached": 4, "output": 2}
+        self.assertEqual(runlog.add_tokens(one, one), {"input": 20, "cached": 8, "output": 4})
+        self.assertIsNone(runlog.add_tokens(one, None))
+        self.assertIsNone(runlog.add_tokens())
+        self.assertEqual(runlog.tokens_text(None), "N/A")
+        self.assertEqual(runlog.tokens_text(one), "10 in (4 cached), 2 out")
+
+    def test_a_round_shows_what_is_not_known_as_na(self):
+        # Earlier rounds stored `-`.
+        run = {"round": 1, "trigger": "fix", "status": "running", "url": "u", "checks": "-"}
+        self.assertIn("| N/A | N/A | N/A | N/A |", state.render_run(run))
+
+
 class SummaryTests(unittest.TestCase):
     def test_agent_summary(self):
         _, log = run(EVENTS)
         result = {
             "stage": "implement",
             "status": "done",
-            "turns": 3,
             "seconds": 125.4,
-            "cost": 0.5,
+            "tokens": {"input": 999_600, "cached": 0, "output": 999},
             "changed_files": ["calc.py"],
         }
         text = runlog.summary(result, log.calls)
@@ -196,9 +217,9 @@ class SummaryTests(unittest.TestCase):
             [
                 "### NexKit implement: done",
                 "",
-                "| Result | Turns | Duration | Cost |",
-                "|---|---|---|---|",
-                "| done | 3 | 2m 05s | $0.50 |",
+                "| Result | Duration | Tokens |",
+                "|---|---|---|",
+                "| done | 2m 05s | 1M in, 999 out |",
             ],
         )
         self.assertEqual(text.splitlines()[5], "")
@@ -229,9 +250,8 @@ class SummaryTests(unittest.TestCase):
         result = {
             "stage": "review",
             "status": "done",
-            "turns": 2,
             "seconds": 30,
-            "cost": None,
+            "tokens": {"input": 12_345, "cached": 9_990, "output": 99_960},
             "output": {
                 "verdict": "request_changes",
                 "findings": [
@@ -246,20 +266,19 @@ class SummaryTests(unittest.TestCase):
         }
         text = runlog.summary(result, [])
         self.assertIn(
-            "| Result | Turns | Duration | Cost | Verdict |\n"
-            "|---|---|---|---|---|\n"
-            "| done | 2 | 30s | - | request_changes |\n",
+            "| Result | Duration | Tokens | Verdict |\n"
+            "|---|---|---|---|\n"
+            "| done | 30s | 12.3k in (9.99k cached), 100k out | request_changes |\n",
             text,
         )
         self.assertIn("**Findings** (1)\n\n- **blocking** `calc.py:2`: Subtracts. Fix", text)
         self.assertNotIn("Commands", text)
 
-    def test_review_summary_without_cost_turns_or_output(self):
+    def test_review_summary_without_tokens_or_output(self):
+        # A count the runtime did not give has no column.
         text = runlog.summary({"stage": "review", "status": "error", "seconds": 4}, [])
         self.assertIn(
-            "| Result | Turns | Duration | Cost | Verdict |\n"
-            "|---|---|---|---|---|\n"
-            "| error | - | 4s | - | - |\n",
+            "| Result | Duration | Verdict |\n|---|---|---|\n| error | 4s | N/A |\n",
             text,
         )
 
@@ -267,8 +286,7 @@ class SummaryTests(unittest.TestCase):
         text = runlog.summary({"stage": "fix", "status": "blocked", "error": "Needs ```x```"}, [])
         self.assertIn("### NexKit fix: blocked", text)
         self.assertIn("**Why it stopped**\n\n````\nNeeds ```x```\n````", text)
-        self.assertIn("| Result | Turns | Duration | Cost |\n|---|---|---|---|\n", text)
-        self.assertIn("| blocked | - | 0s | - |\n", text)
+        self.assertIn("| Result | Duration |\n|---|---|\n| blocked | 0s |\n", text)
 
     def test_no_table_has_an_empty_header(self):
         # GitHub always renders a header row, so an empty one shows as a blank first row.
@@ -281,10 +299,10 @@ class SummaryTests(unittest.TestCase):
             "head": "abc1234def",
             "checks": "passed",
             "verdict": "approve",
-            "cost": 1.25,
+            "tokens": {"input": 10, "cached": 0, "output": 1},
         }
         texts = [
-            runlog.summary({"stage": "implement", "status": "done", "cost": 0.5}, log.calls),
+            runlog.summary({"stage": "implement", "status": "done"}, log.calls),
             runlog.summary(
                 {"stage": "review", "status": "done", "output": {"verdict": "approve"}}, []
             ),

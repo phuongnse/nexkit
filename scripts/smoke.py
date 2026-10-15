@@ -33,6 +33,7 @@ from nexkit.context import previous_review  # noqa: E402
 from nexkit.publish import pull_body, render_plan  # noqa: E402
 from nexkit.report import review_body  # noqa: E402
 from nexkit.runtimes import RUNTIMES  # noqa: E402
+from nexkit.runtimes.base import TOKENS  # noqa: E402
 from nexkit.state import BOT_LOGIN, PLAN_MARKER, empty_state, render_state  # noqa: E402
 
 CHECKS = [{"name": "test", "run": "python3 -m unittest -v"}]
@@ -108,11 +109,12 @@ class StateComments:
 
 def stage(name, work, out, program, context=None, *, want="done", **kw):
     result = run_stage(name, context or CONTEXT, CONFIG["cfg"], work, out, program=program, **kw)
-    keys = ("status", "error", "cost", "changed_files", "conflicts")
+    keys = ("status", "error", "tokens", "changed_files", "conflicts")
     summary = {k: result.get(k) for k in keys}
     print(f"{name}: {json.dumps(summary)}", flush=True)
     if result["status"] != want:
         raise SystemExit(f"{name} stage failed: {result.get('error')}")
+    counted(name, result)
     # The readable transcript pairs every tool call with its result. Planning, implementing
     # and fixing cannot be done without reading or changing the code, so those stages must
     # call tools; a review may judge from the diff and check results in its prompt.
@@ -142,10 +144,18 @@ def triage(root, program):
     ]
     for number, (context, want) in enumerate(cases, 1):
         result = run_triage(context, cfg, None, root / f"triage-{number}", program=program)
-        keys = ("status", "profile", "chosen_by", "reason", "error", "cost")
+        keys = ("status", "profile", "chosen_by", "reason", "error", "tokens")
         print(f"triage: {json.dumps({k: result.get(k) for k in keys})}", flush=True)
         if result["chosen_by"] != "triage" or result["profile"] != want or not result["reason"]:
             raise SystemExit(f"triage: wanted {want}, got {result}")
+        counted("triage", result)
+
+
+def counted(name, result):
+    """The runtime reported the run's tokens, in the form every runtime shares."""
+    tokens = result.get("tokens") or {}
+    if set(tokens) != set(TOKENS) or not tokens["input"] or not tokens["output"]:
+        raise SystemExit(f"{name}: the runtime reported no tokens: {tokens}")
 
 
 def conflicted(root, name, path, start, base, pull):

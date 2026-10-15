@@ -112,8 +112,8 @@ class FallbackStageTests(StageCase):
             [("claude", "paused"), ("spare", "done")],
         )
         self.assertEqual(result["attempts"][0]["limit"], LIMIT)
-        # Both runs cost $0.50: the stage costs what every agent spent.
-        self.assertEqual(result["cost"], 1.0)
+        # The stage counts the tokens of every agent that ran.
+        self.assertEqual(result["tokens"], {"input": 2000, "cached": 1700, "output": 240})
         self.assertTrue((self.out / "transcript.md").exists())
         self.assertTrue((self.out / "agent-spare" / "transcript.md").exists())
 
@@ -186,7 +186,7 @@ class ShowTests(unittest.TestCase):
             "model": "opus",
             "status": "paused",
             "seconds": 3,
-            "cost": 0.01,
+            "tokens": {"input": 900, "cached": 0, "output": 15},
             "limit": LIMIT,
         },
         {
@@ -204,7 +204,7 @@ class ShowTests(unittest.TestCase):
             "model": "opus",
             "status": "done",
             "seconds": 302,
-            "cost": 1.2,
+            "tokens": {"input": 1_240_000, "cached": 1_100_000, "output": 15_200},
         },
     ]
 
@@ -212,10 +212,12 @@ class ShowTests(unittest.TestCase):
         result = {"stage": "implement", "status": "done", "agent": "api", "attempts": self.ATTEMPTS}
         text = runlog.summary(result, [])
         self.assertIn("**Agent:** `api` (claude-code on anthropic, model `opus`)", text)
-        self.assertIn("| `claude` | `opus` | usage limit | 3s | $0.01 |", text)
+        self.assertIn("| `claude` | `opus` | usage limit | 3s | 900 in, 15 out |", text)
         skipped = "skipped: No secret for the `spare` agent."
-        self.assertIn(f"| `spare` | `opus` | {skipped} | - | - |", text)
-        self.assertIn("| `api` | `opus` | done | 5m 02s | $1.20 |", text)
+        self.assertIn(f"| `spare` | `opus` | {skipped} | N/A | N/A |", text)
+        self.assertIn(
+            "| `api` | `opus` | done | 5m 02s | 1.24M in (1.1M cached), 15.2k out |", text
+        )
         one = {**result, "attempts": self.ATTEMPTS[2:]}
         self.assertNotIn("Agents that ran in turn", runlog.summary(one, []))
 
@@ -256,7 +258,6 @@ class ReportTests(ReportCase):
         implement = {
             "stage": "implement",
             "status": "done",
-            "cost": 1.21,
             "agent": "api",
             "attempts": ShowTests.ATTEMPTS,
         }

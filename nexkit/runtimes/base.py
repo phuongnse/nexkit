@@ -32,6 +32,11 @@ def reserved(name):
     return name.startswith(RESERVED_PREFIXES)
 
 
+# The keys of `Outcome.tokens`, the same for every runtime. `input` counts every input token,
+# `cached` the part of them read from a cache, and `output` every output token, reasoning too.
+TOKENS = ("input", "cached", "output")
+
+
 class AgentConfigError(ValueError):
     """An agent setting that the runtime or provider cannot honour."""
 
@@ -89,9 +94,8 @@ class Outcome:
 
     output: Any = None
     error: str | None = None
-    cost_usd: float | None = None
+    # TOKENS: what every model the run used read and wrote, or None when the CLI did not say.
     tokens: dict | None = None
-    turns: int | None = None
     # {"message": the line that says so, "reset": UTC datetime or None} when the CLI said it
     # stopped at a usage limit that resets. The run then pauses instead of failing.
     limit: dict | None = None

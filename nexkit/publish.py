@@ -48,13 +48,12 @@ def render_profile(result, cfg):
     triage = result.get("triage") or {}
     chosen_by = triage.get("chosen_by") or "default"
     settings = configuration.with_profile(cfg, name)
-    models = []
+    # Like the run comment's **Agents:** line, with each stage's model.
+    stages = []
     for stage in configuration.STAGES:
         chosen = configuration.stage(settings, stage)
-        # The agent is named only where it is not the configured default.
-        on = f" on `{chosen['agent']}`" if chosen["agent"] != cfg["agent"] else ""
-        models.append(f"{stage} `{chosen['model']}`{on}")
-    models = ", ".join(models)
+        stages.append(f"{stage} `{chosen['agent']}` (`{chosen['model']}`)")
+    stages = " · ".join(stages)
     if chosen_by == "triage":
         reason = (triage.get("reason") or "").strip()
     else:
@@ -62,7 +61,7 @@ def render_profile(result, cfg):
         which = "the previous plan's profile" if chosen_by == "previous" else "the default profile"
         reason = f"Triage failed ({error}), so this plan uses {which}."
     text = (
-        f"**Profile: {name}** ({models}). {reason}\n\n"
+        f"**Profile: {name}**: {stages}. {reason}\n\n"
         "To use another profile, say which in a comment and comment `/nexkit plan`, or "
         "comment `/nexkit plan <request>`."
     )

@@ -64,6 +64,27 @@
   [Troubleshooting](docs/troubleshooting.md) covers the configuration errors that are new
   in this release.
 
+### Upgrade
+
+- In `.github/workflows/nexkit.yml`, replace the `secrets:` block that passes
+  `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` and `NEXKIT_PUSH_TOKEN` one by one with
+  `secrets: inherit`.
+- **Declare your agent** in `.nexkit/config.json`: NexKit 3.0.0 rejects a configuration
+  without `agents`. For a Claude subscription:
+
+  ```json
+  "agents": {
+    "claude": {"runtime": "claude-code", "provider": "anthropic", "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"}
+  }
+  ```
+
+  With an Anthropic API key, write `"api_key_secret": "ANTHROPIC_API_KEY"` instead of
+  `oauth_token_secret`. See [Agents are declared](docs/configuration.md#agents-are-declared).
+- If you set a `NEXKIT_PUSH_TOKEN` secret, add
+  `"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}`. Without it, NexKit pushes with
+  the Actions token. `nexkit doctor` warns about a push token secret the configuration
+  does not name.
+
 ## 2.1.0
 
 - New `cache` key (default `[]`): caches to restore before `setup`, so the agent job (for

@@ -111,11 +111,13 @@ jobs:
         # HEAD is the test merge commit; its first parent is the base branch.
         run: |
           changed=$(git diff --name-only HEAD^1 HEAD)
-          shared='^(nexkit/agent\.py|nexkit/schema\.py|nexkit/runtimes/(__init__|base|providers)\.py|nexkit/__init__\.py|nexkit/prompts/|scripts/smoke\.py)'
-          if grep -qE "$shared|^nexkit/runtimes/claude_code\.py" <<< "$changed"; then
+          # A runtime's pin in nexkit/__init__.py counts as that runtime's own change.
+          pins=$(git diff HEAD^1 HEAD -- nexkit/__init__.py | grep -oE '^[+-](CLAUDE_CODE|CODEX) =' || true)
+          shared='^(nexkit/agent\.py|nexkit/schema\.py|nexkit/runtimes/(__init__|base|providers)\.py|nexkit/prompts/|scripts/smoke\.py)'
+          if grep -qE "$shared|^nexkit/runtimes/claude_code\.py" <<< "$changed" || grep -q CLAUDE_CODE <<< "$pins"; then
             echo "claude_code=true" >> "$GITHUB_OUTPUT"
           fi
-          if grep -qE "$shared|^nexkit/runtimes/codex\.py" <<< "$changed"; then
+          if grep -qE "$shared|^nexkit/runtimes/codex\.py" <<< "$changed" || grep -q CODEX <<< "$pins"; then
             echo "codex=true" >> "$GITHUB_OUTPUT"
           fi
 

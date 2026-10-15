@@ -393,7 +393,7 @@ API key. Without `agents`, every stage runs on it.
 | Runtime | Providers | `effort` | `max_budget_usd` | Cost in the summary |
 |---|---|---|---|---|
 | `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` | yes | yes |
-| `codex` | `azure-openai` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` | no: rely on `timeout_minutes` | no: tokens instead |
+| `codex` | `azure-openai` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` | no: rely on `timeout_minutes` | no: tokens instead. A run that mixes runtimes shows the cost of the others. |
 
 | Provider | Settings | Secret |
 |---|---|---|

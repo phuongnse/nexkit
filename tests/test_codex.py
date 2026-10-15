@@ -125,6 +125,41 @@ class ConfigTests(unittest.TestCase):
                 config.validate(raw)
 
 
+class MixedRuntimeTests(unittest.TestCase):
+    RAW = {
+        "agents": {"sol": AZURE},
+        "stages": {"triage": {"agent": "sol", "model": "gpt-mini"}},
+        "default_profile": "claude",
+        "profiles": {
+            "claude": {
+                "when": "x",
+                "stages": {"implement": {"model": "opus", "effort": "max", "max_budget_usd": 5}},
+            },
+            "gpt": {"when": "y", "stages": {"implement": {"agent": "sol", "model": "gpt"}}},
+        },
+    }
+
+    def test_jobs_validate_the_layered_configuration_again(self):
+        cfg = config.validate(self.RAW)
+        for name in cfg["profiles"]:
+            layered = config.with_profile(cfg, name)
+            again = config.validate(json.loads(json.dumps(layered)), layered=True)
+            self.assertEqual(again, layered, name)
+        # Layering another profile over a layered one is what a fresh check would do.
+        with self.assertRaisesRegex(config.ConfigError, "for Codex"):
+            config.validate(json.loads(json.dumps(config.with_profile(cfg, "claude"))))
+
+    def test_each_job_gets_only_the_secrets_its_stages_need(self):
+        cfg = config.validate(self.RAW)
+        plan = [cfg, *(config.with_profile(cfg, name) for name in cfg["profiles"])]
+        claude, azure = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"], ["AZURE_OPENAI_API_KEY"]
+        self.assertEqual(config.secret_names(plan, ["plan", "triage"]), [*claude, *azure])
+        self.assertEqual(config.secret_names(plan, ["plan"]), claude)
+        gpt = config.with_profile(cfg, "gpt")
+        self.assertEqual(config.secret_names([gpt], ["implement"]), azure)
+        self.assertEqual(config.secret_names([gpt], ["review"]), claude)
+
+
 class LaunchTests(unittest.TestCase):
     def launch(self, stage, cfg=None):
         cfg = cfg or sol_config(effort="high")

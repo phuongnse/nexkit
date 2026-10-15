@@ -258,8 +258,8 @@ def summary(result, calls):
         "Cost": f"${cost:.2f}" if cost is not None else "-",
     }
     tokens = result.get("tokens") or {}
-    if cost is None and tokens:
-        # Runtimes that report no cost report tokens.
+    if tokens:
+        # From runtimes that report tokens instead of cost; "Cost" covers only the others.
         columns["Tokens"] = (
             f"{tokens.get('input_tokens', 0):,} in, {tokens.get('output_tokens', 0):,} out"
         )

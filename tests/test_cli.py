@@ -334,6 +334,25 @@ class PipelineCommandTests(unittest.TestCase):
         cfg = json.loads(out["config"])
         self.assertEqual(nexkit.config.stage(cfg, "implement")["model"], "sonnet")
 
+    def test_route_passes_each_job_the_secrets_of_its_agents(self):
+        from tests.test_codex import MixedRuntimeTests
+
+        path = self.root / "repo/.nexkit/config.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), **MixedRuntimeTests.RAW}))
+        claude, azure = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"], ["AZURE_OPENAI_API_KEY"]
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 3, "body": "/nexkit plan", "user": {"login": "alice"}},
+        }
+        out = self.run_route("issue_comment", event)
+        self.assertEqual(json.loads(out["agent_secrets"]), [*claude, *azure])
+        # Without a plan, go runs on default_profile: implement and review on Claude.
+        event["comment"]["body"] = "/nexkit go"
+        out = self.run_route("issue_comment", event)
+        self.assertEqual(json.loads(out["agent_secrets"]), claude)
+        self.assertEqual(json.loads(out["review_secrets"]), claude)
+
     def test_route_on_pull_request_marks_the_round_running(self):
         self.gh.add_pull(6, 5, head_sha="b" * 40)
         event = {

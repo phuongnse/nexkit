@@ -155,7 +155,7 @@ output of `setup` in the agent job. It replaces with `***`:
   `GITHUB_TOKEN`, `NEXKIT_PUSH_TOKEN` and of every environment variable whose name contains `TOKEN`,
   `SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` (values of 8 characters or more), also
   URL-encoded or base64-encoded;
-- Anthropic keys (`sk-ant-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+- Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`, `sk-proj-…`, `sk-svcacct-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
   `github_pat_`), JWTs, `Authorization:` and `Bearer` header values and PEM private key
   blocks;
 - `password=` and `pwd=` values in connection strings and the password in

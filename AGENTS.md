@@ -52,8 +52,8 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
   `update-agents.yml` proposes new stable versions, one pull request per runtime, and that
   runtime's CI smoke test (`smoke-claude-code`, `smoke-codex`; `scripts/smoke.py`) must pass
   before one is merged. CI runs a runtime's smoke test on pull requests that change
-  `agent.py`, the shared code in `runtimes/`, that runtime's module, `prompts/`,
-  `nexkit/__init__.py` or the smoke test.
+  `agent.py`, the shared code in `runtimes/`, that runtime's module or pin, `prompts/` or
+  the smoke test.
 - Everything specific to one CLI or model provider lives in `runtimes/`, behind `Runtime`
   and `Provider`. Add a runtime or provider there and in the registry; never branch on
   runtime names elsewhere in `nexkit/`. Agent secrets are the fixed `AGENT_SECRETS`; a new one needs

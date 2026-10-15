@@ -152,7 +152,7 @@ Everything NexKit prints or stores from the agent's session passes through one f
 output of `setup` in the agent job. It replaces with `***`:
 
 - the values of every agent secret (see [Secrets](configuration.md#secrets)),
-  `GITHUB_TOKEN`, `NEXKIT_PUSH_TOKEN` and of every environment variable whose name contains `TOKEN`,
+  `GITHUB_TOKEN`, the push token and of every environment variable whose name contains `TOKEN`,
   `SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` (values of 8 characters or more), also
   URL-encoded or base64-encoded;
 - Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`, `sk-proj-…`, `sk-svcacct-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
@@ -265,8 +265,9 @@ change those files. Changes that the base branch brings to protected paths are f
 protected-path check compares the result with git's own merge of the two commits, so only
 the agent's edits count. GitHub refuses pushes from the default Actions token that change
 workflow files, and a merge that brings changes to `.github/workflows/` from the base
-branch is such a push. Without a `NEXKIT_PUSH_TOKEN`, NexKit stops before pushing and says
-that the pull request needs a manual merge or a push token that may update workflows.
+branch is such a push. Without a push token (`publish.push_token_secret`), NexKit stops
+before pushing and says that the pull request needs a manual merge or a push token that may
+update workflows.
 
 **Review.** Read-only tools. Returns `approve` or `request_changes`, a verdict for each
 acceptance criterion with the test that covers it and the evidence, and findings marked
@@ -523,7 +524,7 @@ new state comment.
 | The PR branch moved while a fix round was running | Refuses to publish; run `/nexkit fix` again. |
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `conflicts.auto_resolve`, NexKit starts that round itself, at most `conflicts.max_rounds` times per pull request. |
 | The PR conflicts with its base branch in a protected path | Stops before Claude runs; merge the base branch yourself. |
-| The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or add a `NEXKIT_PUSH_TOKEN` that may update workflows. |
+| The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or name a push token that may update workflows in `publish.push_token_secret`. |
 | GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |

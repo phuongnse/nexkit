@@ -27,8 +27,9 @@ Enable it under Settings > Actions > General > Workflow permissions, or run the
 
 **My repository's CI does not run on NexKit pull requests.**
 GitHub does not start workflows for events created with the default Actions token. NexKit
-runs your configured checks itself. To also run your CI, add a `NEXKIT_PUSH_TOKEN` secret
-(see the [configuration reference](configuration.md#secrets)).
+runs your configured checks itself. To also run your CI, store a push token as a secret
+and name it in `publish.push_token_secret` (see the
+[configuration reference](configuration.md#secrets)).
 
 The same applies to a merge by NexKit with `merge.auto`: the push to the base branch
 starts no `push` CI, whichever token published the pull request. List those workflows in
@@ -103,8 +104,8 @@ gone from it. Comment `/nexkit go` to implement the plan again on the current ba
 
 **"conflicts with `main` in protected paths" or "brings changes to `.github/workflows/…`".**
 NexKit cannot publish this merge. Merge the base branch into the pull request yourself,
-push, and comment `/nexkit review`. For workflow files, a `NEXKIT_PUSH_TOKEN` with
-Workflows write access also lets NexKit push the merge.
+push, and comment `/nexkit review`. For workflow files, a push token with Workflows write
+access, named in `publish.push_token_secret`, also lets NexKit push the merge.
 
 **⏸️ "The agent stopped at the account's usage limit".** The account behind the agent's
 secret, such as the Claude subscription, used up its session or weekly limit. NexKit runs the same command again after the

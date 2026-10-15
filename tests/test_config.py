@@ -290,6 +290,20 @@ class ConfigTests(unittest.TestCase):
         where = [call.args[1] for call in checked.call_args_list]
         self.assertEqual(where, [f"stages.{name}" for name in again["stages"]])
 
+    def test_push_token_secret(self):
+        self.assertIsNone(validate({})["publish"]["push_token_secret"])
+        named = validate({"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}})
+        self.assertEqual(named["publish"]["push_token_secret"], "NEXKIT_PUSH_TOKEN")
+        for value, message in (
+            ("github_pat_0123456789abcdef", "the config holds only its name"),
+            ("GITHUB_TOKEN", "the config holds only its name"),
+            ("CLAUDE_CODE_OAUTH_TOKEN", "is an agent's secret"),
+        ):
+            with self.subTest(value=value), self.assertRaisesRegex(config.ConfigError, message):
+                validate({"publish": {"push_token_secret": value}})
+        with self.assertRaisesRegex(config.ConfigError, "Unknown keys in publish"):
+            validate({"publish": {"token": "X"}})
+
     def test_agents_are_declared(self):
         # A configuration from before agents were declared says what to add.
         with self.assertRaisesRegex(config.ConfigError, "agents is required") as caught:

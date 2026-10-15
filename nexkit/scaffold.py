@@ -191,7 +191,11 @@ def _passed_secrets(cfg, workflow):
     text = _uncommented(workflow)
     if re.search(r"^\s+secrets:\s*inherit\s*$", text, re.M):
         return findings
-    for name, secrets in configuration.credentials(cfg):
+    needed = list(configuration.credentials(cfg))
+    push = cfg["publish"]["push_token_secret"]
+    if push:
+        needed.append(("publish", (push,)))
+    for name, secrets in needed:
         if any(re.search(rf"\bsecrets\.{secret}\b", text) for secret in secrets):
             continue
         how = (
@@ -199,10 +203,11 @@ def _passed_secrets(cfg, workflow):
             if set(secrets) <= set(DECLARED_SECRETS)
             else "write 'secrets: inherit'"
         )
+        who = "publish.push_token_secret" if name == "publish" else f"The `{name}` agent"
         findings.append(
             (
                 False,
-                f"The `{name}` agent needs {' or '.join(secrets)}, but {WORKFLOW_PATH} does not "
+                f"{who} needs {' or '.join(secrets)}, but {WORKFLOW_PATH} does not "
                 f"pass it to the pipeline; {how} as 'nexkit init' writes it",
             )
         )
@@ -220,6 +225,27 @@ def _secrets_set(cfg, names, repo):
         agent = configuration.agent(cfg, name)
         hint = PROVIDERS[agent["provider"]].secret_hint(secrets, repo)
         findings.append((False, f"Set a secret for the `{name}` agent: {hint}"))
+    push = cfg["publish"]["push_token_secret"]
+    if push and push not in names:
+        findings.append(
+            (
+                False,
+                f"publish.push_token_secret names {push}, which is not set: run "
+                f"'gh secret set {push} --repo {repo}' with a fine-grained token, or remove it",
+            )
+        )
+    elif push:
+        findings.append((True, f"Pushes use the {push} secret"))
+    elif "NEXKIT_PUSH_TOKEN" in names:
+        findings.append(
+            (
+                False,
+                "The NEXKIT_PUSH_TOKEN secret is set, but publish.push_token_secret does not "
+                "name it, so NexKit pushes with the Actions token. To use it, add "
+                '"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"} to '
+                f"{configuration.CONFIG_PATH}",
+            )
+        )
     return findings
 
 

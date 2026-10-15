@@ -233,6 +233,27 @@ class InitDoctorTests(unittest.TestCase):
         workflow.write_text(inherit)
         self.assertFalse(any("does not pass it" in m for _, m in scaffold.doctor(self.root)))
 
+    def test_doctor_checks_the_push_token(self):
+        cfg = nexkit.config.validate({"agents": CLAUDE})
+        names = {"CLAUDE_CODE_OAUTH_TOKEN", "NEXKIT_PUSH_TOKEN"}
+        unused = scaffold._secrets_set(cfg, names, "acme/app")[-1]
+        self.assertFalse(unused[0])
+        self.assertIn("publish.push_token_secret does not name it", unused[1])
+        cfg["publish"]["push_token_secret"] = "BOT_TOKEN"
+        self.assertIn(
+            "names BOT_TOKEN, which is not set",
+            scaffold._secrets_set(cfg, names, "acme/app")[-1][1],
+        )
+        found = scaffold._secrets_set(cfg, {*names, "BOT_TOKEN"}, "acme/app")[-1]
+        self.assertEqual(found, (True, "Pushes use the BOT_TOKEN secret"))
+        listed = (
+            "    secrets:\n      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}\n"
+        )
+        self.assertIn(
+            "publish.push_token_secret needs BOT_TOKEN",
+            scaffold._passed_secrets(cfg, listed)[0][1],
+        )
+
     def test_doctor_finds_the_secret_of_each_agent(self):
         cfg = nexkit.config.validate(
             {
@@ -578,9 +599,19 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertNotIn("github.token", self.jobs["verify"])
 
     def test_jobs_with_write_tokens_never_receive_model_credentials(self):
+        push = "secrets[fromJSON(needs.route.outputs.config).publish.push_token_secret]"
         for name in ("publish", "report", "route", "maintain"):
-            for text in (*DECLARED_SECRETS, "secrets[", "NEXKIT_AGENT_SECRET"):
-                self.assertNotIn(text, self.jobs[name], name)
+            job = self.jobs[name].replace(push, "")
+            for text in (
+                "CLAUDE_CODE_OAUTH_TOKEN",
+                "ANTHROPIC_API_KEY",
+                "secrets[",
+                "NEXKIT_AGENT_SECRET",
+            ):
+                self.assertNotIn(text, job, name)
+        # Publish reads only the push token, by the name the configuration gives it.
+        self.assertEqual(self.jobs["publish"].count(push), 2)
+        self.assertNotIn("secrets.", self.jobs["publish"])
 
     def test_the_pipeline_declares_the_secrets_a_workflow_may_pass_one_by_one(self):
         declared = self.text.split("    secrets:\n", 1)[1].split("\npermissions:", 1)[0]
@@ -592,7 +623,7 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_only_the_steps_that_run_an_agent_receive_agent_secrets(self):
         steps = [(n, s) for n, job in self.jobs.items() for s in job.split("\n      - ")]
-        receiving = [(n, s) for n, s in steps if "secrets[" in s or "NEXKIT_AGENT_SECRET" in s]
+        receiving = [(n, s) for n, s in steps if "NEXKIT_AGENT_SECRET" in s]
         self.assertEqual([n for n, _ in receiving], ["agent", "review"])
         for (job, step), needed in zip(receiving, ("agent_secrets", "review_secrets"), strict=True):
             self.assertIn("kit/bin/nexkit agent ", step)

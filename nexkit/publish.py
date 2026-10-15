@@ -178,8 +178,8 @@ def _workflow_error(base, files):
     return PublishError(
         f"Merging `{base}` brings changes to {listed}, and the token NexKit pushes with may not "
         "change workflow files. Merge the base branch into the pull request yourself and "
-        "comment `/nexkit review`, or set a `NEXKIT_PUSH_TOKEN` secret that may update "
-        "workflows."
+        "comment `/nexkit review`, or name a token that may update workflows in "
+        "`publish.push_token_secret`."
     )
 
 

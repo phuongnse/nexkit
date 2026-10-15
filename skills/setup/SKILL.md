@@ -92,8 +92,10 @@ files or repository settings, and wait for confirmation.
 7. **Optional: let the repository's own CI run on NexKit pull requests.** Pull requests
    opened with the default Actions token do not trigger other workflows. NexKit runs the
    configured checks itself, so this is optional. To also trigger the repository's CI,
-   store a fine-grained token with Contents and Pull requests write access as
-   `NEXKIT_PUSH_TOKEN`.
+   store a fine-grained token with Contents and Pull requests write access as a secret,
+   for example `gh secret set NEXKIT_PUSH_TOKEN`, and name it in the config:
+   `"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}`. NexKit uses a push token only
+   when the config names it.
 
    If the user wants `"merge": {"auto": true}`, say that branch protection still applies and
    that a merge by NexKit starts no `push` CI on the base branch. Offer to list those CI

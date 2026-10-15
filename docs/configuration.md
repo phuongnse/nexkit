@@ -80,6 +80,7 @@ their defaults.
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
 | `transcript` | `true` | Write the agent's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See [Logs and transcripts](#logs-and-transcripts). |
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. |
+| `publish.push_token_secret` | `null` | The secret with the token that pushes NexKit's branches and opens its pull requests, such as `"NEXKIT_PUSH_TOKEN"`; `null` pushes with the Actions token. See [Secrets](#secrets). |
 
 ### Agents are declared
 
@@ -95,7 +96,9 @@ is rejected with what to add:
 ```
 
 With an Anthropic API key, write `"api_key_secret": "ANTHROPIC_API_KEY"` instead of
-`oauth_token_secret`.
+`oauth_token_secret`. If you set a `NEXKIT_PUSH_TOKEN` secret, also add
+`"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}`: NexKit now uses a push token only
+when the configuration names it, and `nexkit doctor` warns about one that it does not.
 
 ### Keys renamed in this release
 
@@ -260,7 +263,8 @@ request waits for a person. Before merging, NexKit sets the `nexkit/checks` and
 merge:
 
 - a required approval from a person;
-- a required check from your own CI, unless `NEXKIT_PUSH_TOKEN` is set, because without it
+- a required check from your own CI, unless `publish.push_token_secret` names a push
+  token, because without one
   your CI does not run on NexKit pull requests (see
   [Troubleshooting](troubleshooting.md));
 - a required merge queue, or squash merging turned off for the repository.
@@ -566,7 +570,7 @@ says when an agent needs `secrets: inherit`.
 | Secret | Required | Used by |
 |---|---|---|
 | The names an agent's `*_secret` keys give | for each agent a stage uses | Agent and review jobs, only for the stages that run on that agent. For `anthropic`: the subscription token (`claude setup-token`, Claude Pro or Max) or the API key. For `azure-openai`: the resource URL and the deployment's key. |
-| `NEXKIT_PUSH_TOKEN` | no | Publish job only: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. Add Workflows write access if fix rounds should merge base branch changes to `.github/workflows/`; the default Actions token cannot push those. |
+| The name `publish.push_token_secret` gives, such as `NEXKIT_PUSH_TOKEN` | no | Publish job only, never a job that runs an agent, and never an agent's secret: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. Add Workflows write access if fix rounds should merge base branch changes to `.github/workflows/`; the default Actions token cannot push those. |
 
 ## Workflow file
 

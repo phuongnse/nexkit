@@ -61,7 +61,9 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
   configurations and logs of public repositories are public. Agent secrets have the names
   the configuration gives them; the caller passes `secrets: inherit`, and `pipeline.yml`
   reads only the names `route` lists for a job into its slots (`SECRET_SLOTS`). Names
-  starting with `GITHUB_` or `NEXKIT_` are reserved.
+  starting with `GITHUB_` or `NEXKIT_` are reserved. Every secret NexKit reads is named in
+  the configuration: each agent's in `agents`, the push token in
+  `publish.push_token_secret`. Never read a secret the configuration does not name.
 
 ## Verify
 

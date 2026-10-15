@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from .runtimes import PROVIDERS, RUNTIMES, SECRET_SLOTS
-from .runtimes.base import AgentConfigError
+from .runtimes.base import SECRET_NAME, AgentConfigError
 
 CONFIG_PATH = ".nexkit/config.json"
 STAGES = ("plan", "implement", "review")
@@ -45,11 +45,13 @@ DEFAULTS = {
     "protected_paths": [".github/", ".nexkit/"],
     "transcript": True,
     "log": {"tool_output": "truncated"},
+    # The secret with the token that pushes NexKit's branches, or the Actions token.
+    "publish": {"push_token_secret": None},
 }
 
 TOP_KEYS = set(DEFAULTS)
 # Objects whose keys are merged over the defaults one by one.
-GROUPS = ("fix", "merge", "conflicts", "usage_limit", "limits", "log")
+GROUPS = ("fix", "merge", "conflicts", "usage_limit", "limits", "log", "publish")
 # Keys of earlier releases, with where they live now.
 RENAMED = {
     "max_auto_fixes": "fix.max_auto_rounds",
@@ -258,6 +260,22 @@ def _secret_slots(cfg):
             )
 
 
+def _push_token(cfg):
+    """`publish.push_token_secret`: null, or a secret that no agent uses, since the publish
+    job may write to the repository and agents must never hold its token."""
+    name = cfg["publish"]["push_token_secret"]
+    if name is None:
+        return
+    if not isinstance(name, str) or not SECRET_NAME.match(name) or name.startswith("GITHUB_"):
+        _fail(
+            "publish.push_token_secret must be null or the name of a repository secret, such "
+            "as NEXKIT_PUSH_TOKEN; the config holds only its name"
+        )
+    variants = [cfg, *(with_profile(cfg, profile) for profile in cfg["profiles"])]
+    if name in secret_names(variants, list(cfg["stages"])):
+        _fail(f"publish.push_token_secret: {name} is an agent's secret; use another secret")
+
+
 def _profiles(cfg):
     """Check `profiles` and `default_profile`. A profile's stage settings are optional:
     what a profile leaves out comes from the top-level `stages`."""
@@ -416,6 +434,7 @@ def validate(raw, *, layered=False):
     _bool(cfg["transcript"], "transcript")
     if cfg["log"]["tool_output"] not in TOOL_OUTPUT:
         _fail(f"log.tool_output must be one of {', '.join(TOOL_OUTPUT)}")
+    _push_token(cfg)
     return cfg
 
 

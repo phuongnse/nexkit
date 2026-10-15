@@ -523,7 +523,7 @@ class MergePublishTests(unittest.TestCase):
     def test_merged_workflow_changes_need_a_push_token(self):
         head, _ = self.repos.diverge({".github/workflows/ci.yml": "on: push\n"})
         with self.assertRaisesRegex(
-            PublishError, r"`\.github/workflows/ci\.yml`.*NEXKIT_PUSH_TOKEN"
+            PublishError, r"`\.github/workflows/ci\.yml`.*publish\.push_token_secret"
         ):
             self.fix_round({"calc.py": CALC + SUB + MUL})
         self.assertEqual(git(self.repos.origin, "rev-parse", "nexkit/issue-5"), head)

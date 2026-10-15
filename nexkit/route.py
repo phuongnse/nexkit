@@ -31,7 +31,7 @@ def issue_from_branch(branch):
 
 # The `auto` dispatch input: `true` for an automatic fix round after failures, `conflicts`
 # for an automatic round that merges the base branch, `resume` for a command that NexKit
-# runs again after Claude's usage limit reset. Several are joined with commas.
+# runs again after the agent's usage limit reset. Several are joined with commas.
 RESUME = "resume"
 
 

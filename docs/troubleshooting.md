@@ -2,10 +2,10 @@
 
 Start with `nexkit doctor` in the repository, then the NexKit run in the Actions tab. The
 summary of the `agent` and `review` jobs shows the result, the files changed and each
-command Claude ran; their logs have one collapsible group per tool call with its output.
+command the agent ran; their logs have one collapsible group per tool call with its output.
 Each stage that runs uploads its artifact (`nexkit-agent`, `nexkit-checks`, `nexkit-review`)
-containing the exact prompt, the results and, unless `transcript` is off, Claude's redacted
-transcript: `transcript.md` to read, `transcript.jsonl` with every event.
+containing the exact prompt, the results and, unless `transcript` is off, the agent's
+redacted transcript: `transcript.md` to read, `transcript.jsonl` with every event.
 
 **Nothing happens after a `/nexkit` comment.**
 The workflow file must be on the default branch. The comment's first line must start with
@@ -47,9 +47,19 @@ and has a `workflow_dispatch` trigger without required inputs; `nexkit doctor` c
 in your working copy. To run it for this merge, use *Run workflow* on the base branch in
 the Actions tab.
 
-**"No Claude credential".** Add `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or
-`ANTHROPIC_API_KEY` as a repository secret. Secrets are not available to runs triggered
-from forks.
+**"No credential for the `claude` agent".** Add `CLAUDE_CODE_OAUTH_TOKEN` (from
+`claude setup-token`) or `ANTHROPIC_API_KEY` as a repository secret. For another agent, add
+the secret its configuration names. Either way, `.github/workflows/nexkit.yml` must pass
+the secret under `secrets:`, as `nexkit init` writes it; `nexkit doctor` checks this.
+Secrets are not available to runs triggered from forks.
+
+**"provider must be one of …".** That runtime does not support the provider. The
+[Agents](configuration.md#agents) table lists the pairs NexKit supports.
+
+**"… returned a result that does not fit the … schema".** The agent finished, but its
+structured result lacks a field or has one of the wrong type. NexKit publishes nothing.
+Run the command again; if it keeps happening with one model, use a stronger one for that
+stage.
 
 **"The change modifies protected paths".** The agent edited `.github/` or `.nexkit/`, or a
 path you added to `protected_paths`. Make those changes yourself, then use `/nexkit fix`.
@@ -80,15 +90,15 @@ NexKit cannot publish this merge. Merge the base branch into the pull request yo
 push, and comment `/nexkit review`. For workflow files, a `NEXKIT_PUSH_TOKEN` with
 Workflows write access also lets NexKit push the merge.
 
-**⏸️ "Claude stopped at the account's usage limit".** The Claude account behind the
-secret used up its session or weekly limit. NexKit runs the same command again after the
+**⏸️ "The agent stopped at the account's usage limit".** The account behind the agent's
+secret, such as the Claude subscription, used up its session or weekly limit. NexKit runs the same command again after the
 reset time shown, through the hourly `schedule` trigger in
 `.github/workflows/nexkit.yml`. If nothing happens after the reset, check that the
 trigger is there (`nexkit doctor` warns when it is not) and that scheduled workflows are
 not disabled for the repository. To continue earlier, or with another note, comment the
 command yourself; it replaces the paused one.
 
-**Claude timed out or stopped on its budget.** The issue is probably too large. Ask for a
+**The agent timed out or stopped on its budget.** The issue is probably too large. Ask for a
 new plan and use its suggested split, or raise `timeout_minutes` / `max_budget_usd` for
 the `implement` stage.
 

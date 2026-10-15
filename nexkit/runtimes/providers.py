@@ -14,3 +14,9 @@ class Anthropic(Provider):
 
     def credentials(self, agent):
         return CREDENTIALS
+
+    def secret_hint(self, agent, repo):
+        return (
+            "run 'claude setup-token' and "
+            f"'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo {repo}', or set ANTHROPIC_API_KEY"
+        )

@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from nexkit import config
 
@@ -151,7 +152,13 @@ class ConfigTests(unittest.TestCase):
         hard = config.with_profile(cfg, "hard")
         self.assertEqual(
             config.stage(hard, "fix"),
-            {"model": "opus", "effort": "high", "timeout_minutes": 60, "max_budget_usd": 20},
+            {
+                "agent": "claude",
+                "model": "opus",
+                "effort": "high",
+                "timeout_minutes": 60,
+                "max_budget_usd": 20,
+            },
         )
         self.assertEqual(config.stage(hard, "plan")["model"], "sonnet")
         # The configuration passes between jobs and is validated again there.
@@ -188,6 +195,88 @@ class ConfigTests(unittest.TestCase):
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
                 config.validate(raw)
+
+    def test_agents(self):
+        raw = {
+            "agents": {"backup": {"runtime": "claude-code", "provider": "anthropic"}},
+            "stages": {"review": {"agent": "backup", "model": "opus"}},
+            "profiles": {
+                "hard": {"when": "Security.", "stages": {"plan": {"agent": "backup", "model": "x"}}}
+            },
+            "default_profile": "hard",
+        }
+        cfg = config.validate(raw)
+        self.assertEqual(cfg["agent"], "claude")
+        self.assertEqual(config.stage(cfg, "plan")["agent"], "claude")
+        self.assertEqual(config.stage(cfg, "review")["agent"], "backup")
+        hard = config.with_profile(cfg, "hard")
+        self.assertEqual(
+            (config.stage(hard, "plan")["agent"], config.stage(hard, "plan")["model"]),
+            ("backup", "x"),
+        )
+        self.assertEqual(
+            config.agent(cfg, "claude"), {"runtime": "claude-code", "provider": "anthropic"}
+        )
+        self.assertEqual(config.runtimes(cfg), ["claude-code"])
+        self.assertEqual(config.validate(json.loads(json.dumps(hard))), hard)
+        top = config.validate({**raw, "agent": "backup", "model": "opus"})
+        self.assertEqual(config.stage(top, "implement")["agent"], "backup")
+
+    def test_rejects_invalid_agents(self):
+        def agents(**definitions):
+            return {"agents": definitions}
+
+        claude = {"runtime": "claude-code", "provider": "anthropic"}
+        cases = [
+            ({"agents": []}, "agents must be an object"),
+            (agents(claude=claude), "'claude' is built in"),
+            (agents(Big=claude), "lowercase identifier"),
+            (agents(x={"runtime": "aider", "provider": "anthropic"}), "agents.x.runtime"),
+            (agents(x={"runtime": "claude-code", "provider": "acme"}), "agents.x.provider"),
+            (agents(x={**claude, "endpoint": "https://a.b"}), "Unknown keys in agents.x"),
+            ({"agent": "other", "model": "m"}, "agent must name an agent: claude"),
+            ({"agent": "claude"}, "agent is set, so model must be set too"),
+            (
+                {"stages": {"plan": {"agent": "claude"}}},
+                "stages.plan sets agent, so it must set model",
+            ),
+            ({"stages": {"plan": {"agent": "x", "model": "m"}}}, "stages.plan.agent must name"),
+            ({"stages": {"plan": {"effort": "minimal"}}}, "stages.plan.effort must be one of low"),
+            ({"effort": 3}, "effort must be an effort level"),
+        ]
+        for raw, message in cases:
+            with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
+                config.validate(raw)
+
+    def test_a_layered_configuration_validates_again(self):
+        # route passes on the configuration with the run's profile applied; every later job
+        # validates it again, without layering the other profiles over that profile.
+        raw = {
+            "agents": {"backup": {"runtime": "claude-code", "provider": "anthropic"}},
+            "profiles": {
+                "a": {"when": "x", "stages": {"implement": {"model": "opus", "effort": "xhigh"}}},
+                "b": {"when": "y", "stages": {"implement": {"agent": "backup", "model": "m"}}},
+            },
+            "default_profile": "a",
+        }
+        layered = config.with_profile(config.validate(raw), "a")
+        runtime = config.RUNTIMES["claude-code"]
+        with mock.patch.object(runtime, "validate", wraps=runtime.validate) as checked:
+            again = config.validate(json.loads(json.dumps(layered)), layered=True)
+        self.assertEqual(again, layered)
+        where = [call.args[1] for call in checked.call_args_list]
+        self.assertEqual(where, [f"stages.{name}" for name in again["stages"]])
+
+    def test_each_runtime_checks_the_stages_it_runs(self):
+        raw = {
+            "profiles": {"easy": {"when": "x", "stages": {"review": {"effort": "turbo"}}}},
+            "default_profile": "easy",
+        }
+        with self.assertRaisesRegex(
+            config.ConfigError,
+            r"profiles\.easy\.stages\.review\.effort must be one of .* for Claude",
+        ):
+            config.validate(raw)
 
     def test_protected_paths(self):
         cfg = config.validate({})

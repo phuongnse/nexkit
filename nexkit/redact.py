@@ -1,7 +1,7 @@
 """Remove secrets from text derived from agent output before it is printed or stored.
 
 Redaction is a safety net, not a guarantee: it catches the values NexKit can know about
-and well-known token shapes. The real protection is that jobs running Claude hold no
+and well-known token shapes. The real protection is that jobs running agents hold no
 write token and that real secrets stay out of the agent's environment.
 """
 
@@ -12,9 +12,11 @@ import os
 import re
 from urllib.parse import quote
 
+from .runtimes import AGENT_SECRETS
+
 MASK = "***"
 MIN_LENGTH = 8
-SECRET_NAMES = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "GITHUB_TOKEN", "NEXKIT_PUSH_TOKEN")
+SECRET_NAMES = (*AGENT_SECRETS, "GITHUB_TOKEN", "NEXKIT_PUSH_TOKEN")
 SECRET_WORDS = ("TOKEN", "SECRET", "KEY", "PASSWORD", "CREDENTIAL")
 
 PATTERNS = (

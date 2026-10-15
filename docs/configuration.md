@@ -4,14 +4,16 @@ NexKit reads `.nexkit/config.json` from the repository's **default branch** on e
 Changes on a pull request branch never affect the run that is checking that branch.
 Unknown keys are rejected so typos fail loudly.
 
-The runner (`ubuntu-24.04`), Claude Code version and NexKit's Python version are set by
-the NexKit release and are not configurable. See [supported versions](../README.md#supported-versions).
+The runner (`ubuntu-24.04`), the version of each agent runtime and NexKit's Python
+version are set by the NexKit release and are not configurable. See [supported versions](../README.md#supported-versions).
 
 A complete configuration with every key at its default, except `setup` and `checks`:
 
 ```json
 {
   "version": 1,
+  "agents": {},
+  "agent": "claude",
   "model": "sonnet",
   "effort": null,
   "setup": ["npm ci"],
@@ -41,12 +43,14 @@ their defaults.
 | Key | Default | Meaning |
 |---|---|---|
 | `version` | `1` | Configuration format. Must be `1`. |
-| `model` | `"sonnet"` | Claude model for every stage: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
-| `effort` | `null` | Reasoning effort for every stage: `low`, `medium`, `high`, `xhigh`, `max`, or `null` for the Claude Code default. |
+| `agents` | `{}` | Agents besides the built-in `claude`: a runtime, a provider and its settings. See [Agents](#agents). |
+| `agent` | `"claude"` | The agent for every stage. Set `model` with it. |
+| `model` | `"sonnet"` | Model for every stage, as the agent names it. For `claude`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
+| `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Claude Code takes `low`, `medium`, `high`, `xhigh` and `max`. |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
-| `stages` | see [Stages](#stages) | Per-stage model, effort, timeout and budget. |
+| `stages` | see [Stages](#stages) | Per-stage agent, model, effort, timeout and budget. |
 | `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See [Profiles](#profiles). |
 | `default_profile` | `null` | The profile to use when no plan chose one. Required with `profiles`. |
 
@@ -59,7 +63,7 @@ their defaults.
 | `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
 | `conflicts.max_rounds` | `3` | Those rounds per pull request (1 to 10), apart from `fix.max_auto_rounds`. |
-| `usage_limit.resume` | `true` | When Claude stops at the account's usage limit, run the same command again after the limit resets. See [Usage limits](#usage-limits). |
+| `usage_limit.resume` | `true` | When the agent stops at the account's usage limit, run the same command again after the limit resets. See [Usage limits](#usage-limits). |
 | `usage_limit.retry_minutes` | `60` | When the reset time is unknown, try again after this many minutes (1 to 1440). |
 | `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See [Parent issues](#parent-issues). |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`. See [Mentions](#mentions). |
@@ -71,7 +75,7 @@ their defaults.
 | `limits.setup_timeout_minutes` | `30` | Time each `setup` command may take (1 to 120). The agent and verify jobs allow for it. |
 | `limits.max_patch_mb` | `5` | Largest change an implement or fix round may publish, in megabytes (1 to 50). |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
-| `transcript` | `true` | Write Claude's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See [Logs and transcripts](#logs-and-transcripts). |
+| `transcript` | `true` | Write the agent's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See [Logs and transcripts](#logs-and-transcripts). |
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. |
 
 ### Keys renamed in this release
@@ -339,6 +343,44 @@ The resume needs the hourly `schedule` trigger that `nexkit init` writes;
 only `route` and `maintain`, which take well under a minute and run no agent. To check
 less often, change the `cron` line, for example to `"23 */3 * * *"`.
 
+## Agents
+
+An agent is a **runtime**, the CLI that runs the tool loop, paired with a **provider**,
+where the model is served and how it authenticates. Stages choose an agent by name. The
+agent `claude` is built in: Claude Code with a Claude subscription token or an Anthropic
+API key. Without `agents`, every stage runs on it.
+
+```json
+"agents": {
+  "backup": {"runtime": "claude-code", "provider": "anthropic"}
+},
+"stages": {
+  "review": {"agent": "backup", "model": "claude-opus-5-5"}
+}
+```
+
+- An agent name is a short lowercase identifier other than `claude`. `runtime` and
+  `provider` are required; the other keys are the provider's settings, and unknown keys
+  are rejected.
+- `agent` layers like `model`: `profiles.<profile>.stages.<stage>`, then
+  `stages.<stage>`, then the top-level `agent`. Wherever `agent` is set, at the top level,
+  in a stage or in a profile, `model` must be set next to it, because a model name means
+  something only to its agent.
+- Each runtime checks the settings of the stages it runs, in every profile. A setting it
+  cannot honour, such as an effort level it does not know, is a configuration error.
+
+| Runtime | Providers | `effort` | `max_budget_usd` | Cost in the summary |
+|---|---|---|---|---|
+| `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` | yes | yes |
+
+**Settings and secrets.** A provider declares which of its settings are secrets. Settings
+such as an endpoint live in `.nexkit/config.json`, where they are reviewed and validated.
+A secret lives in a repository secret, and the configuration holds only its name, in a key
+that ends in `_secret`. A value that is not a secret name, such as a key pasted into the
+configuration, is rejected. The name must be one that NexKit passes to agents (see
+[Secrets](#secrets)), and the repository's NexKit workflow must pass it to the pipeline;
+`nexkit doctor` checks both.
+
 ## Stages
 
 ```json
@@ -354,10 +396,11 @@ Fix rounds use the `implement` settings. `triage` is a fourth stage, allowed onl
 
 | Key | Meaning |
 |---|---|
+| `agent` | Overrides the top-level `agent`. Needs `model` next to it. |
 | `model` | Overrides the top-level `model`. |
 | `effort` | Overrides the top-level `effort`. |
-| `timeout_minutes` | Stop Claude after this long (plan 15, implement 45, review 20 and triage 5 by default; triage at most 30). |
-| `max_budget_usd` | Passed to Claude Code as `--max-budget-usd`; `null` means no limit. |
+| `timeout_minutes` | Stop the agent after this long (plan 15, implement 45, review 20 and triage 5 by default; triage at most 30). |
+| `max_budget_usd` | A spending limit, for runtimes that have one (Claude Code's `--max-budget-usd`); `null` means no limit. |
 
 ## Profiles
 
@@ -392,8 +435,10 @@ ones, without choosing by hand on every issue.
 - A profile name is a short lowercase identifier. Each profile has a `when` text, which
   triage reads to decide which issues belong in it, and optional `stages` with the same
   keys as the top-level `stages`, for `plan`, `implement` and `review`.
-- Settings are layered: the top-level `model` and `effort`, then `stages.<stage>`, then
-  `profiles.<profile>.stages.<stage>`. What a profile leaves out comes from `stages`.
+- Settings are layered: the top-level `agent`, `model` and `effort`, then
+  `stages.<stage>`, then `profiles.<profile>.stages.<stage>`. What a profile leaves out
+  comes from `stages`. A profile can run a stage on another agent, for example a review by
+  a different model family than the one that wrote the code.
 - `stages.triage` sets the model, effort, timeout and budget of the triage call. It takes
   the top-level `model` and `effort` unless it sets its own. A profile cannot set it,
   because triage runs before there is a profile.
@@ -425,10 +470,17 @@ shows what the log, run summary and artifacts contain and what is redacted.
 
 ## Secrets
 
+NexKit passes these secrets, and no others, to the steps that run an agent, and each job
+only the secrets of the agents its stages use. Each agent's CLI receives only the secret
+its provider names; setup and check commands receive none. See
+[How it works](how-it-works.md#agents) for what this does and does not isolate.
+Set the secrets of the agents your stages use, and pass each one in the `secrets:` of
+`.github/workflows/nexkit.yml`, as `nexkit init` writes it.
+
 | Secret | Required | Used by |
 |---|---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` | one of these two | Agent and review jobs. Create it with `claude setup-token` (Claude Pro or Max). |
-| `ANTHROPIC_API_KEY` | one of these two | Agent and review jobs. Takes precedence when both are set. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | one of these two, for `claude` | Agent and review jobs. Create it with `claude setup-token` (Claude Pro or Max). |
+| `ANTHROPIC_API_KEY` | one of these two, for `claude` | Agent and review jobs. Takes precedence when both are set. |
 | `NEXKIT_PUSH_TOKEN` | no | Publish job only: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. Add Workflows write access if fix rounds should merge base branch changes to `.github/workflows/`; the default Actions token cannot push those. |
 
 ## Workflow file

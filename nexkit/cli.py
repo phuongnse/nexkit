@@ -13,7 +13,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from . import CLAUDE_CODE, __version__, python_error, python_supported, scaffold
+from . import __version__, python_error, python_supported, scaffold
 from . import config as configuration
 from .status import MERGES
 
@@ -38,7 +38,8 @@ def _decision():
 
 
 def _config():
-    return configuration.validate(json.loads(os.environ["NEXKIT_CONFIG"]))
+    # The configuration from `route`, with the run's profile already applied.
+    return configuration.validate(json.loads(os.environ["NEXKIT_CONFIG"]), layered=True)
 
 
 def _gh():
@@ -143,6 +144,13 @@ def cmd_route(args):
             for name in cfg["profiles"]
         )
         agent_minutes = configuration.stage(cfg, "triage")["timeout_minutes"] + longest
+    # Each job receives only the secrets of the agents it may run: an agent that can run
+    # any command can read whatever its job holds. A plan may use any profile's agent.
+    if decision["action"] == "plan":
+        variants = [cfg, *(configuration.with_profile(cfg, name) for name in cfg["profiles"])]
+        stages = ["plan", *([configuration.TRIAGE] if cfg["profiles"] else [])]
+    else:
+        variants, stages = [cfg], [decision["action"]]
     review_stage = configuration.stage(cfg, "review")
     checks_minutes = sum(c["timeout_minutes"] for c in cfg["checks"])
     setup_minutes = cfg["limits"]["setup_timeout_minutes"]
@@ -158,8 +166,28 @@ def cmd_route(args):
         agent_timeout=str(agent_minutes + setup_minutes),
         review_timeout=str(review_stage["timeout_minutes"] + 30),
         checks_timeout=str(checks_minutes + setup_minutes + 10),
-        claude_version=CLAUDE_CODE,
+        agent_secrets=configuration.secret_names(variants, stages),
+        review_secrets=configuration.secret_names([cfg], ["review"]),
     )
+    return 0
+
+
+def cmd_install_agents(args):
+    import subprocess
+
+    from .runtimes import RUNTIMES
+
+    for name in configuration.runtimes(_config()):
+        runtime = RUNTIMES[name]
+        commands, bin_dir = runtime.install()
+        print(f"Installing {name} {runtime.version}", flush=True)
+        for command in commands:
+            # From the home directory, so nothing in the checkouts can change the install.
+            subprocess.run(command, cwd=Path.home(), check=True)
+        path = os.environ.get("GITHUB_PATH")
+        if path:
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(f"{bin_dir}\n")
     return 0
 
 
@@ -359,6 +387,9 @@ def build_parser():
     p = sub.add_parser("route", help="(pipeline) Decide the action for the current event")
     p.add_argument("--repo", required=True, help="Checkout of the default branch")
     p.set_defaults(func=cmd_route)
+
+    p = sub.add_parser("install-agents", help="(pipeline) Install the runtimes the config uses")
+    p.set_defaults(func=cmd_install_agents)
 
     p = sub.add_parser("context", help="(pipeline) Collect GitHub context for an agent")
     p.add_argument("--out", required=True)

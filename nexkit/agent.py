@@ -20,7 +20,7 @@ from .checks import environment, known_base
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, summary, write_summary
-from .runtimes import AGENT_SECRETS, BUILTIN, PROVIDERS, RUNTIMES
+from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import Spec
 from .schema import problems
 from .usage import schedule
@@ -367,7 +367,8 @@ def stage_spec(stage, cfg, home):
 
 def agent_for(cfg, stage):
     """The name and definition of the agent that runs a stage."""
-    return "claude", BUILTIN["claude"]
+    name = configuration.stage(cfg, stage)["agent"]
+    return name, configuration.agent(cfg, name)
 
 
 def run_process(prompt, argv, *, env, cwd, timeout_seconds, log):
@@ -444,7 +445,8 @@ def run_agent(stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, pro
         tool_output=cfg["log"]["tool_output"],
         transcript_dir=out if cfg["transcript"] else None,
     )
-    env = {k: v for k, v in environment(base_sha).items() if k not in AGENT_SECRETS}
+    # Without any agent credential: the CLI gets only its own, through `launch.env`.
+    env = environment(base_sha)
     with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
         spec = stage_spec(stage, cfg, home)
         launch = runtime.launch(agent, spec, secrets, program)

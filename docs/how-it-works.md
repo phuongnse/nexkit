@@ -149,11 +149,10 @@ sets the statuses and edits the comment without that stage's results.
 
 Everything NexKit prints or stores from the agent's session passes through one function,
 `nexkit/redact.py`: log lines, both transcripts, `result.json`, the run summary and the
-output of `setup` in the agent job, which runs with the Claude credential in its
-environment. It replaces with `***`:
+output of `setup` in the agent job. It replaces with `***`:
 
-- the values of `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`,
-  `NEXKIT_PUSH_TOKEN` and of every environment variable whose name contains `TOKEN`,
+- the values of every agent secret (see [Secrets](configuration.md#secrets)),
+  `GITHUB_TOKEN`, `NEXKIT_PUSH_TOKEN` and of every environment variable whose name contains `TOKEN`,
   `SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` (values of 8 characters or more), also
   URL-encoded or base64-encoded;
 - Anthropic keys (`sk-ant-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
@@ -171,8 +170,8 @@ transformed in another way, or not shaped like a known token passes through. Git
 exact secret values in job logs, but not in artifacts. **On a public repository, anyone
 signed in to GitHub can read the logs and download the artifacts**, so keep real secrets out
 of the agent's environment, and consider `"transcript": false` there, which stops writing
-both transcripts. The real protection stays the job separation: the jobs that run Claude
-have no write token and no credentials besides Claude's.
+both transcripts. The real protection stays the job separation: the jobs that run agents
+have no write token and no credentials besides the agents'.
 
 ## Stages
 
@@ -399,6 +398,37 @@ The paused run's comment holds the command, its note and the resume time in its 
 marker; that is all the state there is. The schedule looks at run comments edited in the
 last eight days and runs no agent when nothing is due.
 
+## Agents
+
+Each stage runs on an agent: a runtime, which is the CLI that NexKit starts, paired with a
+provider, which serves the model (see [Agents](configuration.md#agents)). NexKit builds
+the prompt, starts the CLI with it, reads the CLI's event stream for the log and the
+transcript, and checks the structured result against the stage's schema itself before
+anything is published. Everything specific to one CLI lives in `nexkit/runtimes/`.
+
+**What a stage may affect** is the same for every runtime:
+
+| Stage | Access | Claude Code |
+|---|---|---|
+| triage | none: an empty working directory | no tools |
+| plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` |
+| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed |
+
+The levels define what an agent can affect, not the same set of tools: a runtime meets
+each level in its own way.
+
+**How secrets reach an agent.** `route` works out which agents each job may run and
+passes the job only those agents' secrets: the `agent` job the secrets for its stage (for
+a plan, triage and the plan of every profile, since triage chooses one in the job), the
+`review` job the secret of the review's agent. Within the job, each CLI process gets an
+environment without any agent secret, plus the one its provider names, and setup and
+check commands get none. Secrets are never put on a command line or in a file.
+
+This filtering limits what each process inherits. It is not a wall inside a job: an agent
+that can run commands can read other processes on the runner, so it may see every secret
+its job holds. A job holds another agent's secret only when that agent may run in the same
+job, such as a plan whose triage runs on another agent.
+
 ## Profiles
 
 With `profiles` in the configuration (see the
@@ -406,8 +436,8 @@ With `profiles` in the configuration (see the
 which sets the models and limits of its stages.
 
 **Triage chooses the profile.** Every `/nexkit plan` starts with a triage call in the
-`agent` job: one Claude session with no tools, run in an empty directory so the
-repository's Claude settings do not load. It reads the issue, the collaborators'
+`agent` job: one agent session with no access to the repository, run in an empty
+directory so the repository's agent settings do not load. It reads the issue, the collaborators'
 discussion including the notes on earlier `/nexkit` commands, the note on this command,
 each profile with its `when` text, and the previous plan's profile. It returns a profile
 name and a reason. It decides in this order:
@@ -472,8 +502,8 @@ new state comment.
 | Comment author lacks write access, unknown command, closed issue, PR not opened by NexKit | Replies with the reason; no agent runs. |
 | `/nexkit go` while a NexKit PR for the issue is open | Replies: use `/nexkit fix` there or close it. |
 | Setup command fails before the agent | Reports the failing command and output on the issue or PR. |
-| Claude times out, hits its budget, errors, or returns no result | Reports it; publishes nothing; no automatic retry. |
-| Claude stops at the account's usage limit | Pauses the run with the reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
+| The agent times out, hits its budget, errors, or returns no result or one that does not fit the stage's schema | Reports it; publishes nothing; no automatic retry. |
+| The agent stops at the account's usage limit | Pauses the run with the reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | Agent returns `blocked` | Reports its reason; no automatic retry. A person decides. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
@@ -500,8 +530,8 @@ once the limit has reset.
 - Only collaborators with write, maintain or admin access can start runs. Prompts include
   issue text from anyone but mark it as untrusted; discussion and review feedback come only
   from collaborators.
-- The implement session can run any command on the runner, and Claude Code's credential is
-  in its environment. Treat `/nexkit go` like running a script that the issue describes:
+- The implement session can run any command on the runner, so it can read the secrets
+  its job holds: its own agent's credential, and no other agent's. Treat `/nexkit go` like running a script that the issue describes:
   approve plans only for issues whose content you trust.
 - With profiles, an issue's text can steer triage towards a more expensive profile, for
   example through prompt injection. Requests in the issue do not count as a person's

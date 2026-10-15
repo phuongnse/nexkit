@@ -10,14 +10,16 @@ import time
 from pathlib import Path
 
 from .gitutil import GitError, git, has_commit
+from .runtimes import AGENT_SECRETS
 
 OUTPUT_TAIL = 12_000
 BASE_SHA = "NEXKIT_BASE_SHA"
 
 
 def environment(base_sha=None):
-    """The environment for repository commands: NEXKIT_BASE_SHA is set only when known."""
-    env = {k: v for k, v in os.environ.items() if k != BASE_SHA}
+    """The environment for repository commands: without any agent credential, and with
+    NEXKIT_BASE_SHA only when it is known."""
+    env = {k: v for k, v in os.environ.items() if k != BASE_SHA and k not in AGENT_SECRETS}
     if base_sha:
         env[BASE_SHA] = base_sha
     return env
@@ -73,7 +75,7 @@ def _run(command, cwd, timeout_seconds, env=None):
 def setup(cfg, cwd, redact=str, base_sha=None):
     """Run setup commands in order. Return None, or a failed result for the first failure.
 
-    In the agent job the Claude credential is in the environment, so pass a redactor there.
+    In the agent job, pass a redactor: the output may still show other secrets.
     """
     env = environment(base_sha)
     for command in cfg["setup"]:

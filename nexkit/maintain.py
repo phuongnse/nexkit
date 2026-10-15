@@ -2,7 +2,7 @@
 
 `route` turns those events into the `maintain` action, and the `maintain` job runs it. The
 job holds write tokens for issues, pull request comments and workflow dispatches, but never
-checks out or executes repository code and never receives the Claude credential.
+checks out or executes repository code and never receives an agent credential.
 """
 
 from __future__ import annotations

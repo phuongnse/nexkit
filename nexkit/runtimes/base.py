@@ -148,6 +148,10 @@ class Provider:
         """The secrets that authenticate this agent. Any one of them is enough."""
         return tuple(agent[key] for key, f in self.fields.items() if f.kind == "secret")
 
+    def secret_hint(self, agent, repo):
+        """How a person sets the agent's secret, for `nexkit doctor`."""
+        return f"run 'gh secret set {self.credentials(agent)[0]} --repo {repo}'"
+
 
 class Reader:
     """Reads one run's output: an event for the log per line, then the outcome."""

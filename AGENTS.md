@@ -71,5 +71,5 @@ ruff check . && ruff format --check .
 actionlint .github/workflows/*.yml
 claude plugin validate --strict .
 python3 scripts/smoke.py   # real Claude Code; required when changing prompts, agent.py, runtimes/ or a pin
-python3 scripts/smoke.py --runtime codex   # real Codex on Azure: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, NEXKIT_SMOKE_AZURE_MODEL
+python3 scripts/smoke.py --runtime codex   # real Codex on Azure: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT
 ```

@@ -151,7 +151,7 @@ jobs:
 
   smoke-codex:
     # Real Codex against a tiny repository, on an Azure OpenAI deployment. Needs the
-    # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and NEXKIT_SMOKE_AZURE_MODEL (deployment
+    # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT (deployment
     # name) secrets: they are personal, and a public repository's logs mask only secrets.
     needs: decide-smoke-test
     if: >-
@@ -171,12 +171,12 @@ jobs:
         run: python bin/nexkit install-agents --runtime codex
       - name: Smoke test
         run: |
-          if [ -z "$AZURE_OPENAI_ENDPOINT" ] || [ -z "$AZURE_OPENAI_API_KEY" ] || [ -z "$NEXKIT_SMOKE_AZURE_MODEL" ]; then
-            echo "::error::Set the AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and NEXKIT_SMOKE_AZURE_MODEL secrets to run the live smoke test."
+          if [ -z "$AZURE_OPENAI_ENDPOINT" ] || [ -z "$AZURE_OPENAI_API_KEY" ] || [ -z "$AZURE_OPENAI_DEPLOYMENT" ]; then
+            echo "::error::Set the AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT secrets to run the live smoke test."
             exit 1
           fi
           python scripts/smoke.py --runtime codex
         env:
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
-          NEXKIT_SMOKE_AZURE_MODEL: ${{ secrets.NEXKIT_SMOKE_AZURE_MODEL }}
+          AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}

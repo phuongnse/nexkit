@@ -7,7 +7,7 @@ a few cents.
 
 - claude-code: model `haiku`. Needs a Claude login or credential.
 - codex: an Azure OpenAI deployment. Needs AZURE_OPENAI_ENDPOINT (the resource URL),
-  AZURE_OPENAI_API_KEY (the deployment's key) and NEXKIT_SMOKE_AZURE_MODEL (its name).
+  AZURE_OPENAI_API_KEY (the deployment's key) and AZURE_OPENAI_DEPLOYMENT (the deployment name).
 
     scripts/smoke.py [--runtime claude-code|codex] [--program PATH]
 """
@@ -43,10 +43,10 @@ def agent_settings(runtime):
     """The configuration keys that run every stage on `runtime`."""
     if runtime == "claude-code":
         return {"model": "haiku"}
-    model = os.environ.get("NEXKIT_SMOKE_AZURE_MODEL")
+    model = os.environ.get("AZURE_OPENAI_DEPLOYMENT")
     if not model or not os.environ.get("AZURE_OPENAI_ENDPOINT"):
         raise SystemExit(
-            "Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and NEXKIT_SMOKE_AZURE_MODEL."
+            "Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT."
         )
     agent = {
         "runtime": "codex",

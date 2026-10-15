@@ -102,7 +102,7 @@ Merging is up to you unless you set `"merge": {"auto": true}`. NexKit then merge
 pull requests itself, closes their issues and can start your CI on the base branch
 afterwards; see [Automatic merge](docs/configuration.md#automatic-merge). With
 `"conflicts": {"auto_resolve": true}` it also merges the base branch into its pull requests
-that start to conflict. When Claude hits the account's usage limit, NexKit pauses and
+that start to conflict. When an agent hits its account's usage limit, NexKit pauses and
 continues after the reset.
 
 ## Local commands

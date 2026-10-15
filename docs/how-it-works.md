@@ -374,19 +374,23 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
 
 ### Usage limits
 
-When Claude stops because the account hit its usage limit, in any stage (triage, plan,
-implement, fix or review), the run is paused, not failed:
+When an agent stops because its account hit a usage limit that resets, in any stage
+(triage, plan, implement, fix or review), the run is paused, not failed. The agent's
+runtime recognises the limit from its CLI's own message. Today only `claude-code` reports
+one: Claude subscriptions have session and weekly limits. `codex` on `azure-openai` does
+not, because Azure limits requests per minute and Codex retries them itself; a run that
+still fails ends as an error, like any other.
 
-- Its comment shows ⏸️, Claude's message with the reset time, and when NexKit runs the
+- Its comment shows ⏸️, the CLI's message with the reset time, and when NexKit runs the
   command again. `nexkit/checks` and `nexkit/review` stay `pending`. Nothing is published
   from the stage that stopped.
 - After the reset, the hourly `schedule` run starts the same command again, once, with the
   same note. A review that stopped after its round published a commit resumes as
   `/nexkit review`, because the commit is already there. A resumed round shows
   `(resumed)` and does not count toward `fix.max_auto_rounds`. If it hits the limit again, it
-  pauses again. NexKit recognises the limit only from Claude Code's own message, never
-  from what the model wrote, so an issue about rate limits cannot pause a run.
-- When NexKit cannot read the reset time from Claude's message, it tries again after
+  pauses again. NexKit recognises the limit only from the CLI's own message, never from
+  what the model wrote, so an issue about rate limits cannot pause a run.
+- When NexKit cannot read the reset time from the message, it tries again after
   `usage_limit.retry_minutes` (one hour by default), and says so. If that run stops at
   the limit again, it waits for a person, so a limit that does not reset cannot start a
   run again and again.

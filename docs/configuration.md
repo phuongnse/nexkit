@@ -353,13 +353,13 @@ See [How it works](how-it-works.md#work-without-a-command).
 "usage_limit": {"resume": true, "retry_minutes": 60}
 ```
 
-When Claude stops because the account hit its usage limit, NexKit pauses the run, shows
-the reset time in its comment and keeps `nexkit/checks` and `nexkit/review` pending.
+When an agent stops because its account hit a usage limit that resets, NexKit pauses the
+run, shows the reset time in its comment and keeps `nexkit/checks` and `nexkit/review` pending.
 With `resume: true` (the default), it runs the same command again after the reset, once,
 with the same note; when the reset time is unknown, after `retry_minutes` (default 60).
 With `false`, the comment still names the limit and the reset time, and a person
-comments the command again. See
-[How it works](how-it-works.md#usage-limits).
+comments the command again. Only the `claude-code` runtime reports such limits; see
+[How it works](how-it-works.md#usage-limits) for why `codex` does not.
 
 The resume needs the hourly `schedule` trigger that `nexkit init` writes;
 `nexkit doctor` warns when it is missing. A schedule run with nothing to resume runs
@@ -434,9 +434,9 @@ Claude Code with a Claude subscription token.
 | `anthropic` | none | Exactly one of `oauth_token_secret`, the secret that holds a Claude subscription token from `claude setup-token`, and `api_key_secret`, the secret that holds an Anthropic API key. Claude Code receives it under its own variable, whatever the secret's name. |
 | `azure-openai` | none. `model` is the deployment name. | `endpoint_secret`: the secret that holds the resource URL, `https://<name>.openai.azure.com` (or `.services.ai.azure.com`, `.cognitiveservices.azure.com`), with no path. `api_key_secret`: the secret that holds the deployment's key. |
 
-A run reports usage limits only for `claude-code`. When Azure refuses a request for its
-rate limit or quota, Codex retries a few times, then the run ends as an error; NexKit does
-not pause and resume it.
+Only `claude-code` reports usage limits, so only its runs pause at one; see
+[Usage limits](#usage-limits). When Azure refuses a request for its rate limit or quota,
+Codex retries a few times, then the run ends as an error.
 
 ### OpenAI models on Azure AI Foundry
 

@@ -86,7 +86,9 @@ jobs:
           python: ${{ steps.python.outputs.python-path }}
           repo: repo
           config: >-
-            {"cache": [
+            {"agents": {"claude": {"runtime": "claude-code", "provider": "anthropic",
+                                   "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"}},
+             "cache": [
               {"name": "demo", "paths": ["~/nexkit-cache-test"],
                "key_files": ["pyproject.toml", "nexkit/__init__.py"]},
               {"name": "missing", "paths": ["~/nexkit-cache-missing"],

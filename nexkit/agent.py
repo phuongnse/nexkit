@@ -21,7 +21,7 @@ from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
-from .runtimes.base import Spec
+from .runtimes.base import AgentConfigError, Spec
 from .schema import problems
 from .usage import schedule
 
@@ -428,15 +428,27 @@ def run_agent(stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, pro
     settings = configuration.stage(cfg, stage)
     name, agent = agent_for(cfg, stage)
     runtime = RUNTIMES[agent["runtime"]]
-    names = PROVIDERS[agent["provider"]].credentials(agent)
-    # Unset secrets arrive as empty strings. The CLI gets only its own credential.
-    secrets = {key: os.environ[key] for key in names if os.environ.get(key)}
-    if os.environ.get("GITHUB_ACTIONS") == "true" and not secrets:
+    provider = PROVIDERS[agent["provider"]]
+    groups = provider.secrets(agent)
+    # Unset secrets arrive as empty strings. The CLI gets only its agent's secrets.
+    secrets = {key: os.environ[key] for group in groups for key in group if os.environ.get(key)}
+    missing = [group for group in groups if not any(key in secrets for key in group)]
+    on_actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    error = None
+    if missing and (on_actions or not provider.local_login):
         error = (
-            f"No credential for the `{name}` agent: set the {' or '.join(names)} repository "
+            f"No secret for the `{name}` agent: set the {' or '.join(missing[0])} repository "
             "secret and pass it in the `secrets:` of the NexKit workflow."
         )
+    else:
+        try:
+            provider.check_secrets(agent, secrets)
+        except AgentConfigError as exc:
+            error = f"{exc} (the `{name}` agent)."
+    if error:
         return {"stage": stage, "status": "error", "cost": None, "error": error}, []
+    # Whatever names the configuration gave them.
+    redact.add(secrets.values())
     log = RunLog(
         redact,
         reader=runtime.reader(),

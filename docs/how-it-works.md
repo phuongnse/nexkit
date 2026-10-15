@@ -420,13 +420,17 @@ read-only sandbox in an empty directory. Codex runs with web search off, an empt
 `CODEX_HOME` holding only the provider's settings, and the repository's `.rules` files
 ignored, so a repository cannot widen what a read-only stage may run.
 
-**How secrets reach an agent.** `route` works out which agents each job may run and
-passes the job only those agents' secrets: the `agent` job the secrets for its stage (for
-a plan, triage and the plan of every profile, since triage chooses one in the job), the
-`review` job the secret of the review's agent. Within the job, each CLI process gets an
+**How secrets reach an agent.** The repository's workflow passes the pipeline
+`secrets: inherit`. `route` works out which agents each job may run and names their
+secrets: for the `agent` job those of its stage (for a plan, triage and the plan of every
+profile, since triage chooses one in the job), for the `review` job those of the review's
+agent. The job reads each named secret into one of 8 slots, and NexKit gives it back its
+name. Names that start with `GITHUB_` or `NEXKIT_` are never read. Within the job, each CLI process gets an
 environment without any agent secret, plus the one its provider names, and setup and
-check commands get none. Secrets are never put on a command line or in a file. Codex
-also keeps its key out of the environment of the commands it runs.
+check commands get none. Keys are never put on a command line or in a file. Codex also
+keeps its secrets out of the environment of the commands it runs; it reads the Azure
+endpoint from the `config.toml` in the run's own `CODEX_HOME`, which is removed afterwards
+and never uploaded.
 
 This filtering limits what each process inherits. It is not a wall inside a job: an agent
 that can run commands can read other processes on the runner, so it may see every secret

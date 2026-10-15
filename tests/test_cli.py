@@ -11,7 +11,7 @@ from unittest import mock
 import nexkit
 import nexkit.config
 from nexkit import cli, scaffold
-from nexkit.runtimes import AGENT_SECRETS, RUNTIMES
+from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
 from tests.support import PROFILES, FakeGitHub, GitRepos, git
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -200,8 +200,10 @@ class InitDoctorTests(unittest.TestCase):
             any("does not pass it" in m for _, m in scaffold.doctor(self.root)), "init passes all"
         )
         workflow = self.root / ".github/workflows/nexkit.yml"
-        text = re.sub(
-            r"\n +(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY): .*", "", workflow.read_text()
+        inherit = workflow.read_text()
+        text = inherit.replace(
+            "    secrets: inherit\n",
+            "    secrets:\n      NEXKIT_PUSH_TOKEN: ${{ secrets.NEXKIT_PUSH_TOKEN }}\n",
         )
         workflow.write_text(text + "# ${{ secrets.ANTHROPIC_API_KEY }} in a comment\n")
         self.assertIn(
@@ -213,7 +215,22 @@ class InitDoctorTests(unittest.TestCase):
             ),
             scaffold.doctor(self.root),
         )
-        workflow.write_text(text.replace("    secrets:\n", "    secrets: inherit\n    unused:\n"))
+        config = self.root / ".nexkit/config.json"
+        azure = {"runtime": "codex", "provider": "azure-openai"}
+        azure.update(endpoint_secret="AZURE_OPENAI_ENDPOINT", api_key_secret="GPT_SOL_KEY")
+        raw = {**json.loads(config.read_text()), "agents": {"sol": azure}}
+        config.write_text(json.dumps({**raw, "agent": "sol", "model": "gpt-sol"}))
+        passed = "    secrets:\n      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}\n"
+        workflow.write_text(inherit.replace("    secrets: inherit\n", passed))
+        self.assertIn(
+            (
+                False,
+                "The `sol` agent needs GPT_SOL_KEY, but .github/workflows/nexkit.yml does not "
+                "pass it to the pipeline; write 'secrets: inherit' as 'nexkit init' writes it",
+            ),
+            scaffold.doctor(self.root),
+        )
+        workflow.write_text(inherit)
         self.assertFalse(any("does not pass it" in m for _, m in scaffold.doctor(self.root)))
 
     def test_doctor_finds_the_secret_of_each_agent(self):
@@ -287,7 +304,7 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("issue_comment", event)
         self.assertEqual(out["action"], "implement")
         self.assertNotIn("claude_version", out)
-        claude = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
+        claude = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
         self.assertEqual(json.loads(out["agent_secrets"]), claude)
         self.assertEqual(json.loads(out["review_secrets"]), claude)
         self.assertEqual(json.loads(out["decision"])["issue"], 5)
@@ -339,14 +356,15 @@ class PipelineCommandTests(unittest.TestCase):
 
         path = self.root / "repo/.nexkit/config.json"
         path.write_text(json.dumps({**json.loads(path.read_text()), **MixedRuntimeTests.RAW}))
-        claude, azure = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"], ["AZURE_OPENAI_API_KEY"]
+        claude = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+        azure = ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]
         event = {
             "action": "created",
             "issue": {"number": 5},
             "comment": {"id": 3, "body": "/nexkit plan", "user": {"login": "alice"}},
         }
         out = self.run_route("issue_comment", event)
-        self.assertEqual(json.loads(out["agent_secrets"]), [*claude, *azure])
+        self.assertEqual(json.loads(out["agent_secrets"]), sorted([*claude, *azure]))
         # Without a plan, go runs on default_profile: implement and review on Claude.
         event["comment"]["body"] = "/nexkit go"
         out = self.run_route("issue_comment", event)
@@ -544,35 +562,32 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_jobs_with_write_tokens_never_receive_model_credentials(self):
         for name in ("publish", "report", "route", "maintain"):
-            for secret in AGENT_SECRETS:
-                self.assertNotIn(secret, self.jobs[name], name)
+            for text in (*DECLARED_SECRETS, "secrets[", "NEXKIT_AGENT_SECRET"):
+                self.assertNotIn(text, self.jobs[name], name)
 
-    def test_the_pipeline_takes_exactly_the_agent_secrets(self):
+    def test_the_pipeline_declares_the_secrets_a_workflow_may_pass_one_by_one(self):
         declared = self.text.split("    secrets:\n", 1)[1].split("\npermissions:", 1)[0]
         names = re.findall(r"^      (\w+):$", declared, re.M)
-        self.assertEqual(names, [*AGENT_SECRETS, "NEXKIT_PUSH_TOKEN"])
+        self.assertEqual(names, [*DECLARED_SECRETS, "NEXKIT_PUSH_TOKEN"])
+        # A new workflow passes every secret, so agents can use secrets of any name.
         template = (ROOT / "nexkit/templates/workflow.yml").read_text()
-        passed = template.split("    secrets:\n", 1)[1]
-        self.assertEqual(re.findall(r"^      (\w+): ", passed, re.M), names)
+        self.assertIn("\n    secrets: inherit\n", template)
 
-    def test_only_the_steps_that_run_an_agent_receive_its_secrets(self):
-        steps = {
-            name: [step for step in job.split("\n      - ") if "secrets." in step]
-            for name, job in self.jobs.items()
-        }
-        for job, needed in (("agent", "agent_secrets"), ("review", "review_secrets")):
-            (step,) = [s for s in steps[job] if any(f"secrets.{n} " in s for n in AGENT_SECRETS)]
+    def test_only_the_steps_that_run_an_agent_receive_agent_secrets(self):
+        steps = [(n, s) for n, job in self.jobs.items() for s in job.split("\n      - ")]
+        receiving = [(n, s) for n, s in steps if "secrets[" in s or "NEXKIT_AGENT_SECRET" in s]
+        self.assertEqual([n for n, _ in receiving], ["agent", "review"])
+        for (job, step), needed in zip(receiving, ("agent_secrets", "review_secrets"), strict=True):
             self.assertIn("kit/bin/nexkit agent ", step)
-            for secret in AGENT_SECRETS:
-                # Passed only when route says the job's stages need it.
-                gate = f"contains(fromJSON(needs.route.outputs.{needed}), '{secret}')"
-                self.assertIn(f"{secret}: ${{{{ {gate} && secrets.{secret} || '' }}}}", step)
-        others = [
-            s for name, found in steps.items() if name not in ("agent", "review") for s in found
-        ]
-        for step in others:
-            for secret in AGENT_SECRETS:
-                self.assertNotIn(secret, step)
+            # Only the names route lists for the job's stages, each read into a slot.
+            names = f"needs.route.outputs.{needed}"
+            self.assertIn(f"NEXKIT_AGENT_SECRETS: ${{{{ {names} }}}}\n", step)
+            slots = re.findall(
+                r"NEXKIT_AGENT_SECRET_(\d+): \$\{\{ secrets\[fromJSON\((.*?)\)\[(\d+)\]\] \}\}",
+                step,
+            )
+            self.assertEqual(slots, [(str(i + 1), names, str(i)) for i in range(SECRET_SLOTS)], job)
+            self.assertEqual(re.findall(r"secrets\.\w+", step), [], job)
 
     def test_agent_jobs_install_the_runtimes_with_nexkit(self):
         for name in ("agent", "review"):

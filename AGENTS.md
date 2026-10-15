@@ -56,8 +56,12 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
   the smoke test.
 - Everything specific to one CLI or model provider lives in `runtimes/`, behind `Runtime`
   and `Provider`. Add a runtime or provider there and in the registry; never branch on
-  runtime names elsewhere in `nexkit/`. Agent secrets are the fixed `AGENT_SECRETS`; a new one needs
-  `pipeline.yml`, the workflow template and the docs updated with it.
+  runtime names elsewhere in `nexkit/`. A provider setting that identifies a person's own
+  account or resource, such as an endpoint, is a secret field, never a plain setting:
+  configurations and logs of public repositories are public. Agent secrets have the names
+  the configuration gives them; the caller passes `secrets: inherit`, and `pipeline.yml`
+  reads only the names `route` lists for a job into its slots (`SECRET_SLOTS`). Names
+  starting with `GITHUB_` or `NEXKIT_` are reserved.
 
 ## Verify
 
@@ -67,5 +71,5 @@ ruff check . && ruff format --check .
 actionlint .github/workflows/*.yml
 claude plugin validate --strict .
 python3 scripts/smoke.py   # real Claude Code; required when changing prompts, agent.py, runtimes/ or a pin
-python3 scripts/smoke.py --runtime codex   # real Codex on an Azure deployment (NEXKIT_SMOKE_AZURE_*)
+python3 scripts/smoke.py --runtime codex   # real Codex on Azure: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, NEXKIT_SMOKE_AZURE_MODEL
 ```

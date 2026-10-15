@@ -443,7 +443,7 @@ class RunStageTests(StageCase):
         self.assertEqual(result["status"], "error")
         self.assertEqual(
             result["error"],
-            "No credential for the `claude` agent: set the CLAUDE_CODE_OAUTH_TOKEN or "
+            "No secret for the `claude` agent: set the CLAUDE_CODE_OAUTH_TOKEN or "
             "ANTHROPIC_API_KEY repository secret and pass it in the `secrets:` of the NexKit "
             "workflow.",
         )
@@ -451,7 +451,7 @@ class RunStageTests(StageCase):
         with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
             triage = agent.run_triage(CONTEXT, profile_config(), None, self.out)
         self.assertEqual((triage["status"], triage["chosen_by"]), ("error", "default"))
-        self.assertIn("No credential for the `claude` agent", triage["error"])
+        self.assertIn("No secret for the `claude` agent", triage["error"])
 
     def test_timeout_kills_claude(self):
         self.claude.configure(result=DONE, sleep=30)

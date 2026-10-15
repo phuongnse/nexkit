@@ -1,8 +1,18 @@
+import json
 import unittest
 
 from nexkit import config
-from nexkit.runtimes import AGENT_SECRETS, PROVIDERS, RUNTIMES
-from nexkit.runtimes.base import AgentConfigError, Field
+from nexkit.runtimes import (
+    DECLARED_SECRETS,
+    NAMES_VAR,
+    PROVIDERS,
+    RUNTIMES,
+    SECRET_SLOTS,
+    SLOT_VAR,
+    secret_names,
+    unpack_secrets,
+)
+from nexkit.runtimes.base import AgentConfigError, Field, reserved
 
 
 class RegistryTests(unittest.TestCase):
@@ -11,32 +21,65 @@ class RegistryTests(unittest.TestCase):
             self.assertTrue(runtime.label and runtime.version and runtime.program, runtime.name)
             self.assertLessEqual(set(runtime.providers), set(PROVIDERS), runtime.name)
 
-    def test_provider_secrets_are_allowlisted(self):
+    def test_secret_fields_end_in_secret(self):
         for provider in PROVIDERS.values():
             for key, field in provider.fields.items():
                 if field.kind == "secret":
                     self.assertTrue(key.endswith("_secret"), key)
-        self.assertEqual(len(set(AGENT_SECRETS)), len(AGENT_SECRETS))
-        self.assertNotIn("GITHUB_TOKEN", AGENT_SECRETS)
-        self.assertNotIn("NEXKIT_PUSH_TOKEN", AGENT_SECRETS)
+
+    def test_reserved_names(self):
+        for name in (
+            "GITHUB_TOKEN",
+            "GITHUB_ANYTHING",
+            "NEXKIT_PUSH_TOKEN",
+            "NEXKIT_AGENT_SECRET_1",
+        ):
+            self.assertTrue(reserved(name), name)
+        self.assertFalse(reserved("GPT_SOL_KEY"))
 
     def test_the_built_in_agent_needs_no_settings(self):
         cfg = config.validate({})
         agent = config.agent(cfg, "claude")
-        self.assertEqual(PROVIDERS[agent["provider"]].credentials(agent), AGENT_SECRETS[:2])
+        self.assertEqual(PROVIDERS[agent["provider"]].secrets(agent), [DECLARED_SECRETS])
+
+
+class SlotTests(unittest.TestCase):
+    def test_unpack_moves_slots_to_their_names(self):
+        names = ["AZURE_OPENAI_ENDPOINT", "GPT_SOL_KEY", "UNSET_ONE"]
+        environ = {NAMES_VAR: json.dumps(names), "KEEP": "1"}
+        environ.update({SLOT_VAR % i: "" for i in range(1, SECRET_SLOTS + 1)})
+        environ.update({SLOT_VAR % 1: "https://acme.openai.azure.com", SLOT_VAR % 2: "key"})
+        unpack_secrets(environ)
+        self.assertEqual(
+            environ,
+            {
+                NAMES_VAR: json.dumps(names),
+                "KEEP": "1",
+                "AZURE_OPENAI_ENDPOINT": "https://acme.openai.azure.com",
+                "GPT_SOL_KEY": "key",
+            },
+        )
+        self.assertEqual(secret_names(environ), {*DECLARED_SECRETS, *names})
+
+    def test_reserved_names_are_never_unpacked(self):
+        environ = {NAMES_VAR: '["NEXKIT_PUSH_TOKEN"]', SLOT_VAR % 1: "token"}
+        unpack_secrets(environ)
+        self.assertNotIn("NEXKIT_PUSH_TOKEN", environ)
 
 
 class FieldTests(unittest.TestCase):
     def check(self, field, value):
-        field.check(value, "agents.x.key", AGENT_SECRETS)
+        field.check(value, "agents.x.key")
 
     def test_secret_fields_hold_an_allowlisted_name(self):
         secret = Field("secret")
         self.check(secret, "ANTHROPIC_API_KEY")
+        self.check(secret, "GPT_SOL_KEY")
         with self.assertRaisesRegex(AgentConfigError, "the config holds only its name"):
             self.check(secret, "sk-ant-api03-abcdefghijklmnop")
-        with self.assertRaisesRegex(AgentConfigError, "NexKit passes only these secrets"):
-            self.check(secret, "GITHUB_TOKEN")
+        for name in ("GITHUB_TOKEN", "NEXKIT_PUSH_TOKEN", "NEXKIT_FUTURE"):
+            with self.assertRaisesRegex(AgentConfigError, "reserved for GitHub and NexKit"):
+                self.check(secret, name)
 
     def test_url_fields(self):
         url = Field("url", hosts=(".openai.azure.com", "example.com"))

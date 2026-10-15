@@ -23,8 +23,9 @@ PROVIDER_ID = "nexkit"
 
 def azure_openai(agent, spec, secrets):
     """Azure AI Foundry's OpenAI v1 API. Codex reads the key from the variable `env_key`
-    names, so the key itself is never in the file."""
-    base_url = agent["endpoint"].rstrip("/") + "/openai/v1"
+    names, so the key itself is never in the file. The endpoint is: the file lives in the
+    run's own CODEX_HOME, which is removed afterwards and never uploaded."""
+    base_url = secrets[agent["endpoint_secret"]].rstrip("/") + "/openai/v1"
     config = (
         f'model_provider = "{PROVIDER_ID}"\n\n'
         f"[model_providers.{PROVIDER_ID}]\n"
@@ -33,7 +34,8 @@ def azure_openai(agent, spec, secrets):
         f"env_key = {json.dumps(agent['api_key_secret'])}\n"
         'wire_api = "responses"\n'
     )
-    return Launch([], env=dict(secrets), files={spec.home / "config.toml": config})
+    key = agent["api_key_secret"]
+    return Launch([], env={key: secrets[key]}, files={spec.home / "config.toml": config})
 
 
 class CodexReader(Reader):

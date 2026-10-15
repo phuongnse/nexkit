@@ -28,12 +28,11 @@ on:
         type: string
         required: true
     secrets:
-      # The agent secrets of nexkit/runtimes/__init__.py (AGENT_SECRETS), then the push token.
+      # The built-in agent's secrets (DECLARED_SECRETS) and the push token, for workflows
+      # that pass secrets one by one. Other agents' secrets need `secrets: inherit`.
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
       ANTHROPIC_API_KEY:
-        required: false
-      AZURE_OPENAI_API_KEY:
         required: false
       NEXKIT_PUSH_TOKEN:
         required: false
@@ -136,11 +135,17 @@ jobs:
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
-          # Only the agent secrets this job's stages need (route's agent_secrets);
-          # each CLI gets only its own.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ contains(fromJSON(needs.route.outputs.agent_secrets), 'CLAUDE_CODE_OAUTH_TOKEN') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          ANTHROPIC_API_KEY: ${{ contains(fromJSON(needs.route.outputs.agent_secrets), 'ANTHROPIC_API_KEY') && secrets.ANTHROPIC_API_KEY || '' }}
-          AZURE_OPENAI_API_KEY: ${{ contains(fromJSON(needs.route.outputs.agent_secrets), 'AZURE_OPENAI_API_KEY') && secrets.AZURE_OPENAI_API_KEY || '' }}
+          # Only the agent secrets this job's stages need, which route names in agent_secrets,
+          # read by name into slots (nexkit/runtimes/__init__.py); each CLI gets only its own.
+          NEXKIT_AGENT_SECRETS: ${{ needs.route.outputs.agent_secrets }}
+          NEXKIT_AGENT_SECRET_1: ${{ secrets[fromJSON(needs.route.outputs.agent_secrets)[0]] }}
+          NEXKIT_AGENT_SECRET_2: ${{ secrets[fromJSON(needs.route.outputs.agent_secrets)[1]] }}
+          NEXKIT_AGENT_SECRET_3: ${{ secrets[fromJSON(needs.route.outputs.agent_secrets)[2]] }}
+          NEXKIT_AGENT_SECRET_4: ${{ secrets[fromJSON(needs.route.outputs.agent_secrets)[3]] }}
+          NEXKIT_AGENT_SECRET_5: ${{ secrets[fromJSON(needs.route.outputs.agent_secrets)[4]] }}
+          NEXKIT_AGENT_SECRET_6: ${{ secrets[fromJSON(needs.route.outputs.agent_secrets)[5]] }}
+          NEXKIT_AGENT_SECRET_7: ${{ secrets[fromJSON(needs.route.outputs.agent_secrets)[6]] }}
+          NEXKIT_AGENT_SECRET_8: ${{ secrets[fromJSON(needs.route.outputs.agent_secrets)[7]] }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -297,11 +302,17 @@ jobs:
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
-          # Only the agent secrets this job's stages need (route's review_secrets);
-          # each CLI gets only its own.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ contains(fromJSON(needs.route.outputs.review_secrets), 'CLAUDE_CODE_OAUTH_TOKEN') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          ANTHROPIC_API_KEY: ${{ contains(fromJSON(needs.route.outputs.review_secrets), 'ANTHROPIC_API_KEY') && secrets.ANTHROPIC_API_KEY || '' }}
-          AZURE_OPENAI_API_KEY: ${{ contains(fromJSON(needs.route.outputs.review_secrets), 'AZURE_OPENAI_API_KEY') && secrets.AZURE_OPENAI_API_KEY || '' }}
+          # Only the agent secrets this job's stages need, which route names in review_secrets,
+          # read by name into slots (nexkit/runtimes/__init__.py); each CLI gets only its own.
+          NEXKIT_AGENT_SECRETS: ${{ needs.route.outputs.review_secrets }}
+          NEXKIT_AGENT_SECRET_1: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[0]] }}
+          NEXKIT_AGENT_SECRET_2: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[1]] }}
+          NEXKIT_AGENT_SECRET_3: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[2]] }}
+          NEXKIT_AGENT_SECRET_4: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[3]] }}
+          NEXKIT_AGENT_SECRET_5: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[4]] }}
+          NEXKIT_AGENT_SECRET_6: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[5]] }}
+          NEXKIT_AGENT_SECRET_7: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[6]] }}
+          NEXKIT_AGENT_SECRET_8: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[7]] }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

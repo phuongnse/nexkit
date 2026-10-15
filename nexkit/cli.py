@@ -211,7 +211,10 @@ def cmd_agent(args):
     from .checks import find_base, setup
     from .redact import Redactor
     from .runlog import summary, write_summary
+    from .runtimes import unpack_secrets
 
+    # Before anything reads the environment: setup, the redactor and the agent's CLI.
+    unpack_secrets()
     decision = _decision()
     cfg = _config()
     stage = args.stage or decision["action"]

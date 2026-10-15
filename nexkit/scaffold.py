@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import __version__
 from . import config as configuration
-from .runtimes import PROVIDERS
+from .runtimes import DECLARED_SECRETS, PROVIDERS
 
 KIT_REPOSITORY = "phuongnse/nexkit"
 WORKFLOW_PATH = ".github/workflows/nexkit.yml"
@@ -183,7 +183,8 @@ def _triggers(cfg, workflow):
 
 
 def _passed_secrets(cfg, workflow):
-    """Findings: the workflow passes a secret of each agent that a stage uses."""
+    """Findings: the workflow passes the pipeline a secret of each agent that a stage uses.
+    With `secrets: inherit` it passes them all; one by one, only the declared ones."""
     findings = []
     text = _uncommented(workflow)
     if re.search(r"^\s+secrets:\s*inherit\s*$", text, re.M):
@@ -191,11 +192,16 @@ def _passed_secrets(cfg, workflow):
     for name, secrets in configuration.credentials(cfg):
         if any(re.search(rf"\bsecrets\.{secret}\b", text) for secret in secrets):
             continue
+        how = (
+            "add it under 'secrets:'"
+            if set(secrets) <= set(DECLARED_SECRETS)
+            else "write 'secrets: inherit'"
+        )
         findings.append(
             (
                 False,
                 f"The `{name}` agent needs {' or '.join(secrets)}, but {WORKFLOW_PATH} does not "
-                "pass it to the pipeline; add it under 'secrets:' as 'nexkit init' writes it",
+                f"pass it to the pipeline; {how} as 'nexkit init' writes it",
             )
         )
     return findings
@@ -210,7 +216,7 @@ def _secrets_set(cfg, names, repo):
             findings.append((True, f"Secret for the `{name}` agent is set: {', '.join(found)}"))
             continue
         agent = configuration.agent(cfg, name)
-        hint = PROVIDERS[agent["provider"]].secret_hint(agent, repo)
+        hint = PROVIDERS[agent["provider"]].secret_hint(secrets, repo)
         findings.append((False, f"Set a secret for the `{name}` agent: {hint}"))
     return findings
 

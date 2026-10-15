@@ -39,8 +39,11 @@ class ChecksTests(unittest.TestCase):
         secrets = {
             "CLAUDE_CODE_OAUTH_TOKEN": "oauth-for-checks-1",
             "ANTHROPIC_API_KEY": "key-for-checks-2",
+            "PLAIN_NAMED_ENDPOINT": "endpoint-for-checks-3",
         }
-        with mock.patch.dict(os.environ, {**secrets, "KEEP_ME": "1"}):
+        # Agent secrets by any name: the job lists them.
+        names = {"NEXKIT_AGENT_SECRETS": '["PLAIN_NAMED_ENDPOINT"]'}
+        with mock.patch.dict(os.environ, {**secrets, **names, "KEEP_ME": "1"}):
             output = checks.run_checks(cfg, self.root)[0]["output"]
         self.assertIn("KEEP_ME=1", output)
         for value in secrets.values():

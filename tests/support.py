@@ -447,6 +447,7 @@ class FakeCodex(FakeClaude):
     def configure(self, **spec):
         self._set("FAKE_CODEX", json.dumps(spec))
         self._set("FAKE_CODEX_LOG", str(self.log))
+        self._set("AZURE_OPENAI_ENDPOINT", "https://acme.openai.azure.com")
         self._set("AZURE_OPENAI_API_KEY", "azure-key-0123456789")
         self._set("CLAUDE_CODE_OAUTH_TOKEN", "claude-token-0123456789")
 
@@ -454,6 +455,6 @@ class FakeCodex(FakeClaude):
 AZURE = {
     "runtime": "codex",
     "provider": "azure-openai",
-    "endpoint": "https://acme.openai.azure.com",
+    "endpoint_secret": "AZURE_OPENAI_ENDPOINT",
     "api_key_secret": "AZURE_OPENAI_API_KEY",
 }

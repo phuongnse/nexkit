@@ -37,6 +37,18 @@ class RedactTests(unittest.TestCase):
         # An Azure key has no known shape; it is redacted by name.
         azure = Redactor({"AZURE_OPENAI_API_KEY": "0123456789abcdef0123456789abcdef"})
         self.assertEqual(azure("api-key: 0123456789abcdef0123456789abcdef"), "api-key: ***")
+        # Agent secrets go by the names the configuration gives them.
+        endpoint = "https://acme.openai.azure.com"
+        named = Redactor(
+            {"NEXKIT_AGENT_SECRETS": '["AZURE_OPENAI_ENDPOINT"]', "AZURE_OPENAI_ENDPOINT": endpoint}
+        )
+        self.assertEqual(named(f"url: {endpoint}/openai/v1"), "url: ***/openai/v1")
+        # And the values an agent runs with, whatever their names.
+        local = Redactor({})
+        local.add(["https://other.openai.azure.com", "deployment-key-1234", "", "short"])
+        self.assertEqual(
+            local("https://other.openai.azure.com deployment-key-1234 short"), "*** *** short"
+        )
 
     def test_encoded_environment_values(self):
         value = "oauth-value-1234567890"

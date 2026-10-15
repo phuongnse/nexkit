@@ -57,10 +57,13 @@ files or repository settings, and wait for confirmation.
    the config to stop storing the agents' transcripts.
    If the user has OpenAI models deployed in Azure AI Foundry, offer an agent that runs
    chosen stages on them with Codex, for example the review, so a different model family
-   checks the code. It needs the resource endpoint (`https://<name>.openai.azure.com`, no
-   path) and the deployment name, which is the stage's `model`:
-   `"agents": {"sol": {"runtime": "codex", "provider": "azure-openai", "endpoint": "<endpoint>", "api_key_secret": "AZURE_OPENAI_API_KEY"}}`,
-   then `{"agent": "sol", "model": "<deployment>"}` in that stage or profile. A stage that
+   checks the code. Each deployment has its own key and they share the resource's endpoint,
+   so add one agent per deployment:
+   `"agents": {"sol": {"runtime": "codex", "provider": "azure-openai", "endpoint_secret": "AZURE_OPENAI_ENDPOINT", "api_key_secret": "GPT_SOL_KEY"}}`,
+   with secret names the user chooses (not starting with `GITHUB_` or `NEXKIT_`), then
+   `{"agent": "sol", "model": "<deployment name>"}` in that stage or profile. Never write
+   the endpoint, or anything else that identifies the user's resources, into the config:
+   it goes in a secret. A stage that
    sets `agent` must set `model` too. Codex has no `max_budget_usd`. Add it to
    `.nexkit/config.json` after step 4.
 
@@ -72,8 +75,10 @@ files or repository settings, and wait for confirmation.
    subscription, the user runs `claude setup-token` in their own terminal (in this
    session they can type `! claude setup-token`), then
    `gh secret set CLAUDE_CODE_OAUTH_TOKEN`. With an API key instead:
-   `gh secret set ANTHROPIC_API_KEY`. For an Azure agent, also
-   `gh secret set AZURE_OPENAI_API_KEY` with the resource's key. Never ask the user to
+   `gh secret set ANTHROPIC_API_KEY`. For Azure agents, also
+   `gh secret set AZURE_OPENAI_ENDPOINT` with the resource URL (`https://<name>.openai.azure.com`,
+   no path) and `gh secret set <name>` with each deployment's key, under the names the
+   agents in the config give. Never ask the user to
    paste a token or key into the chat, or to put one in `.nexkit/config.json`: the config
    holds only the secret's name.
 

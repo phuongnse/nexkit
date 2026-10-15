@@ -47,16 +47,21 @@ and has a `workflow_dispatch` trigger without required inputs; `nexkit doctor` c
 in your working copy. To run it for this merge, use *Run workflow* on the base branch in
 the Actions tab.
 
-**"No credential for the `claude` agent".** Add `CLAUDE_CODE_OAUTH_TOKEN` (from
+**"No secret for the `claude` agent".** Add `CLAUDE_CODE_OAUTH_TOKEN` (from
 `claude setup-token`) or `ANTHROPIC_API_KEY` as a repository secret. For another agent, add
-the secret its configuration names. Either way, `.github/workflows/nexkit.yml` must pass
-the secret under `secrets:`, as `nexkit init` writes it; `nexkit doctor` checks this.
+the secrets its configuration names. Either way, `.github/workflows/nexkit.yml` must pass
+them to the pipeline: `secrets: inherit`, as `nexkit init` writes it. `nexkit doctor`
+checks this.
 Secrets are not available to runs triggered from forks.
 
-**Codex stopped: "401 Unauthorized" or "404 Not Found".** A 401 means the
-`AZURE_OPENAI_API_KEY` secret is not the key of the resource in `endpoint`. A 404 means the
-endpoint or the deployment is wrong: `endpoint` is the resource URL without a path, and
-the stage's `model` is the deployment name, not the model's name. The log line
+**Codex stopped: "401 Unauthorized" or "404 Not Found".** A 401 means the agent's
+`api_key_secret` does not hold the key of the stage's deployment. A 404 means the endpoint
+or the deployment is wrong: the `AZURE_OPENAI_ENDPOINT` secret is the resource URL without
+a path, and the stage's `model` is the deployment name, not the model's name.
+
+**"The AZURE_OPENAI_ENDPOINT secret must be an https URL …" or "… the host must end
+with …".** The secret holds something other than the resource URL, such as the full target
+URI with `/openai/...`. Set it again to `https://<name>.openai.azure.com`. The log line
 "Model metadata for `<deployment>` not found" is harmless: Codex does not know the
 deployment's name.
 

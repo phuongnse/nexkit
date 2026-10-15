@@ -9,7 +9,7 @@ from unittest import mock
 
 from nexkit import agent, config, runlog
 from nexkit.redact import Redactor
-from nexkit.runtimes import AGENT_SECRETS, RUNTIMES
+from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.codex import CodexReader
 from nexkit.schema import strict
 from tests.support import AZURE, FakeCodex, GitRepos, codex_events, make_config
@@ -93,24 +93,48 @@ class ConfigTests(unittest.TestCase):
             config.credentials(cfg),
             [
                 ("claude", ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")),
+                ("sol", ("AZURE_OPENAI_ENDPOINT",)),
                 ("sol", ("AZURE_OPENAI_API_KEY",)),
             ],
         )
+
+    def test_one_endpoint_with_a_key_per_deployment(self):
+        sol = {**AZURE, "api_key_secret": "GPT_SOL_KEY"}
+        cfg = make_config(
+            agents={"sol": sol, "max": {**AZURE, "api_key_secret": "GPT_MAX_KEY"}},
+            stages={
+                "implement": {"agent": "max", "model": "gpt-max"},
+                "review": {"agent": "sol", "model": "gpt-sol"},
+            },
+        )
+        self.assertEqual(
+            config.secret_names([cfg], ["implement", "review"]),
+            ["AZURE_OPENAI_ENDPOINT", "GPT_MAX_KEY", "GPT_SOL_KEY"],
+        )
+
+    def test_one_job_holds_at_most_the_slots(self):
+        agents = {f"a{n}": {**AZURE, "api_key_secret": f"KEY_{n}"} for n in range(8)}
+        profiles = {
+            name: {"when": "x", "stages": {"plan": {"agent": name, "model": "m"}}}
+            for name in agents
+        }
+        with self.assertRaisesRegex(config.ConfigError, "The plan stage can need 11 agent secrets"):
+            config.validate({"agents": agents, "profiles": profiles, "default_profile": "a0"})
 
     def test_rejects_what_codex_or_azure_cannot_honour(self):
         def sol(**changes):
             return {"agents": {"sol": {**AZURE, **changes}}, "agent": "sol", "model": "m"}
 
         cases = [
-            (sol(endpoint="https://evil.example.com"), "agents.sol.endpoint: the host must end"),
-            (sol(endpoint="http://acme.openai.azure.com"), "must be an https URL"),
-            (sol(endpoint="https://acme.openai.azure.com/openai/v1"), "only a host"),
+            # The endpoint is personal: it lives in a secret, never in the configuration.
+            (sol(endpoint="https://acme.openai.azure.com"), "Unknown keys in agents.sol: endpoint"),
+            (sol(endpoint_secret="https://acme.openai.azure.com"), "holds only its name"),
             (sol(api_key_secret="0123456789abcdef0123456789abcdef"), "holds only its name"),
-            (sol(api_key_secret="NEXKIT_PUSH_TOKEN"), "NexKit passes only these secrets"),
+            (sol(api_key_secret="NEXKIT_PUSH_TOKEN"), "reserved for GitHub and NexKit"),
             (sol(api_version="2025-04-01"), "Unknown keys in agents.sol: api_version"),
             (
-                {"agents": {"sol": {k: v for k, v in AZURE.items() if k != "endpoint"}}},
-                "endpoint is required",
+                {"agents": {"sol": {k: v for k, v in AZURE.items() if k != "endpoint_secret"}}},
+                "endpoint_secret is required",
             ),
             (sol(runtime="claude-code"), "provider must be one of anthropic for claude-code"),
             (sol(provider="anthropic"), "provider must be one of azure-openai for codex"),
@@ -152,8 +176,9 @@ class MixedRuntimeTests(unittest.TestCase):
     def test_each_job_gets_only_the_secrets_its_stages_need(self):
         cfg = config.validate(self.RAW)
         plan = [cfg, *(config.with_profile(cfg, name) for name in cfg["profiles"])]
-        claude, azure = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"], ["AZURE_OPENAI_API_KEY"]
-        self.assertEqual(config.secret_names(plan, ["plan", "triage"]), [*claude, *azure])
+        claude = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+        azure = ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]
+        self.assertEqual(config.secret_names(plan, ["plan", "triage"]), sorted([*claude, *azure]))
         self.assertEqual(config.secret_names(plan, ["plan"]), claude)
         gpt = config.with_profile(cfg, "gpt")
         self.assertEqual(config.secret_names([gpt], ["implement"]), azure)
@@ -164,7 +189,10 @@ class LaunchTests(unittest.TestCase):
     def launch(self, stage, cfg=None):
         cfg = cfg or sol_config(effort="high")
         spec = agent.stage_spec(stage, cfg, "/home/runner/codex")
-        secrets = {"AZURE_OPENAI_API_KEY": "azure-key-0123456789"}
+        secrets = {
+            "AZURE_OPENAI_ENDPOINT": "https://acme.openai.azure.com",
+            "AZURE_OPENAI_API_KEY": "azure-key-0123456789",
+        }
         return RUNTIMES["codex"].launch(cfg["agents"]["sol"], spec, secrets), spec
 
     def test_access_levels_map_to_sandboxes(self):
@@ -192,7 +220,10 @@ class LaunchTests(unittest.TestCase):
         )
         self.assertIn('model_reasoning_effort="high"', launch.argv)
         self.assertIn('web_search="disabled"', launch.argv)
-        self.assertIn('shell_environment_policy.exclude=["AZURE_OPENAI_API_KEY"]', launch.argv)
+        exclude = (
+            'shell_environment_policy.exclude=["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]'
+        )
+        self.assertIn(exclude, launch.argv)
         self.assertEqual(
             launch.env, {"AZURE_OPENAI_API_KEY": "azure-key-0123456789", "CODEX_HOME": str(home)}
         )
@@ -210,6 +241,8 @@ class LaunchTests(unittest.TestCase):
         self.assertFalse(schema["additionalProperties"])
         for text in [*launch.argv, *launch.files.values()]:
             self.assertNotIn("azure-key-0123456789", text)
+        # The endpoint is only in the run's own config.toml, never on the command line.
+        self.assertFalse(any("acme" in arg for arg in launch.argv))
 
     def test_strict_schemas_close_every_object(self):
         schema = strict(agent.SCHEMAS["review"])
@@ -313,7 +346,14 @@ class StageTests(unittest.TestCase):
         self.assertEqual(result["tokens"]["input_tokens"], 1200)
         call = json.loads(self.codex.log.read_text())
         # Of the agent secrets, only its own; never Claude's.
-        self.assertEqual([k for k in call["env"] if k in AGENT_SECRETS], ["AZURE_OPENAI_API_KEY"])
+        agent_secrets = {"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "AZURE_OPENAI_ENDPOINT"}
+        self.assertEqual(
+            [k for k in call["env"] if k in agent_secrets | {"AZURE_OPENAI_API_KEY"}],
+            ["AZURE_OPENAI_API_KEY"],
+        )
+        self.assertIn(
+            'base_url = "https://acme.openai.azure.com/openai/v1"', call["home"]["config.toml"]
+        )
         self.assertEqual(sorted(call["home"]), ["config.toml", "schema.json"])
         self.assertIn("Change add to return a + b.", call["prompt"])
         self.assertEqual(Path(call["cwd"]).resolve(), self.repo.resolve())
@@ -332,9 +372,31 @@ class StageTests(unittest.TestCase):
             result, _ = self.run_stage("plan")
         self.assertEqual(
             result["error"],
-            "No credential for the `sol` agent: set the AZURE_OPENAI_API_KEY repository secret "
+            "No secret for the `sol` agent: set the AZURE_OPENAI_API_KEY repository secret "
             "and pass it in the `secrets:` of the NexKit workflow.",
         )
+        self.assertFalse(self.codex.log.exists())
+        # Codex cannot run without an endpoint, so it is missing on a person's machine too.
+        with mock.patch.dict(os.environ, {"AZURE_OPENAI_ENDPOINT": ""}):
+            result, _ = self.run_stage("plan")
+        self.assertIn("set the AZURE_OPENAI_ENDPOINT repository secret", result["error"])
+
+    def test_the_endpoint_secret_is_checked_before_codex_starts(self):
+        self.codex.configure(events=codex_events(PLAN))
+        for value, message in (
+            ("https://evil.example.com", "the host must end with .openai.azure.com"),
+            ("http://acme.openai.azure.com", "must be an https URL"),
+            ("https://acme.openai.azure.com/openai/v1", "only a host"),
+        ):
+            with (
+                self.subTest(value=value),
+                mock.patch.dict(os.environ, {"AZURE_OPENAI_ENDPOINT": value}),
+            ):
+                result, _ = self.run_stage("plan")
+                self.assertTrue(result["error"].startswith("The AZURE_OPENAI_ENDPOINT secret"))
+                self.assertIn(message, result["error"])
+                self.assertTrue(result["error"].endswith("(the `sol` agent)."))
+                self.assertNotIn(value, result["error"])
         self.assertFalse(self.codex.log.exists())
 
     def test_a_result_that_does_not_fit_publishes_nothing(self):

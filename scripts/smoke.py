@@ -250,8 +250,10 @@ def main():
         print(CONTEXT["plan"], flush=True)
 
         # A re-plan revises that plan with what was asked since it.
-        since = "@olivia: Also test that add(-2, -3) returns -5."
-        context = {**CONTEXT, "since_plan": since, "note": "Add the negative-number case."}
+        # A change of scope that no first plan contains, so the re-plan must say what changed.
+        since = "@olivia: Also let add() take an optional third number c, default 0."
+        note = "Add the optional third argument, and test that add(1, 2, 3) returns 6."
+        context = {**CONTEXT, "since_plan": since, "note": note}
         replan = stage("plan", work, root / "replan", args.program, context)
         revision = replan["output"]["revision"]
         print(render_plan(replan["output"], replan=True), flush=True)

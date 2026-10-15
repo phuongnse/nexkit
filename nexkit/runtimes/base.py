@@ -23,6 +23,13 @@ ACCESS = {
     "fix": "write",
 }
 SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+# A configuration names its agents' secrets freely, except names with these prefixes: they
+# belong to GitHub and to NexKit itself, such as NEXKIT_PUSH_TOKEN and the pipeline's slots.
+RESERVED_PREFIXES = ("GITHUB_", "NEXKIT_")
+
+
+def reserved(name):
+    return name.startswith(RESERVED_PREFIXES)
 
 
 class AgentConfigError(ValueError):
@@ -49,7 +56,7 @@ class Spec:
 @dataclass(frozen=True)
 class Launch:
     """How to start the CLI. `env` is added to an environment without any agent secret;
-    `files` are written before the start and never hold a secret."""
+    `files` are written into the run's home before the start and never hold a key."""
 
     argv: list[str]
     env: dict[str, str] = field(default_factory=dict)
@@ -91,14 +98,16 @@ class Outcome:
 
 @dataclass(frozen=True)
 class Field:
-    """A provider setting. A `secret` field holds the name of a secret, never its value."""
+    """A provider setting. A `secret` field holds the name of a secret, never its value;
+    `holds` describes the value, which only the job that runs the agent can check."""
 
     kind: str  # "str", "url" or "secret"
     required: bool = True
     # For URLs: the host must be one of these or end with one that starts with ".".
     hosts: tuple[str, ...] = ()
+    holds: Field | None = None
 
-    def check(self, value, where, secrets):
+    def check(self, value, where):
         if self.kind == "str":
             if not isinstance(value, str) or not value.strip():
                 raise AgentConfigError(f"{where} must be a non-empty string")
@@ -108,9 +117,10 @@ class Field:
                     f"{where} must be the name of a repository secret. Put the key in a "
                     "repository secret; the config holds only its name"
                 )
-            if value not in secrets:
+            if reserved(value):
                 raise AgentConfigError(
-                    f"{where}: NexKit passes only these secrets to agents: {', '.join(secrets)}"
+                    f"{where}: names that start with {' or '.join(RESERVED_PREFIXES)} are "
+                    "reserved for GitHub and NexKit; NexKit never passes them to agents"
                 )
         elif self.kind == "url":
             self._url(value, where)
@@ -143,14 +153,24 @@ class Provider:
 
     name = ""
     fields: dict[str, Field] = {}
+    # Whether the CLI can run without the secrets on a person's machine, with its own login.
+    local_login = False
 
-    def credentials(self, agent):
-        """The secrets that authenticate this agent. Any one of them is enough."""
-        return tuple(agent[key] for key, f in self.fields.items() if f.kind == "secret")
+    def secrets(self, agent):
+        """The secrets the agent needs, as groups: one secret of every group must be set."""
+        return [(agent[key],) for key, f in self.fields.items() if f.kind == "secret"]
 
-    def secret_hint(self, agent, repo):
-        """How a person sets the agent's secret, for `nexkit doctor`."""
-        return f"run 'gh secret set {self.credentials(agent)[0]} --repo {repo}'"
+    def check_secrets(self, agent, values):
+        """Raise AgentConfigError for a secret whose value this provider cannot use. The
+        message names the secret, never its value."""
+        for key, f in self.fields.items():
+            name = agent.get(key)
+            if f.kind == "secret" and f.holds and values.get(name):
+                f.holds.check(values[name], f"The {name} secret")
+
+    def secret_hint(self, names, repo):
+        """How a person sets one of `names`, for `nexkit doctor`."""
+        return f"run 'gh secret set {names[0]} --repo {repo}'"
 
 
 class Reader:
@@ -170,11 +190,17 @@ class Runtime:
     name = ""
     label = ""  # how logs and comments name it: "Claude did not finish …"
     version = ""  # pinned in nexkit/__init__.py
+    pin = ""  # the name of that constant
+    # Where the newest stable version is published, and how to read it from the response.
+    release_url = ""
     program = ""  # the executable, found on PATH
     efforts: tuple[str, ...] = ()
     supports_budget = False
     # Provider name -> function(agent, spec, secrets) returning the Launch parts for it.
     providers: dict = {}
+
+    def release_version(self, text):
+        return text.strip()
 
     def install(self):
         """Commands that install the pinned version, and the directory to add to PATH."""

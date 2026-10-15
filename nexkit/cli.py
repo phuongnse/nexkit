@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import __version__, python_error, python_supported, scaffold
 from . import config as configuration
+from .runtimes import RUNTIMES
 from .status import MERGES
 
 
@@ -175,9 +176,7 @@ def cmd_route(args):
 def cmd_install_agents(args):
     import subprocess
 
-    from .runtimes import RUNTIMES
-
-    for name in configuration.runtimes(_config()):
+    for name in args.runtime or configuration.runtimes(_config()):
         runtime = RUNTIMES[name]
         commands, bin_dir = runtime.install()
         print(f"Installing {name} {runtime.version}", flush=True)
@@ -212,7 +211,10 @@ def cmd_agent(args):
     from .checks import find_base, setup
     from .redact import Redactor
     from .runlog import summary, write_summary
+    from .runtimes import unpack_secrets
 
+    # Before anything reads the environment: setup, the redactor and the agent's CLI.
+    unpack_secrets()
     decision = _decision()
     cfg = _config()
     stage = args.stage or decision["action"]
@@ -389,6 +391,9 @@ def build_parser():
     p.set_defaults(func=cmd_route)
 
     p = sub.add_parser("install-agents", help="(pipeline) Install the runtimes the config uses")
+    p.add_argument(
+        "--runtime", action="append", choices=list(RUNTIMES), help="Install this one instead"
+    )
     p.set_defaults(func=cmd_install_agents)
 
     p = sub.add_parser("context", help="(pipeline) Collect GitHub context for an agent")

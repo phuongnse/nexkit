@@ -7,7 +7,7 @@ import json
 import re
 from pathlib import Path
 
-from .runtimes import AGENT_SECRETS, BUILTIN, PROVIDERS, RUNTIMES
+from .runtimes import BUILTIN, PROVIDERS, RUNTIMES, SECRET_SLOTS
 from .runtimes.base import AgentConfigError
 
 CONFIG_PATH = ".nexkit/config.json"
@@ -203,7 +203,7 @@ def _agents(cfg):
         for key, field in provider.fields.items():
             if key in agent:
                 try:
-                    field.check(agent[key], f"{where}.{key}", AGENT_SECRETS)
+                    field.check(agent[key], f"{where}.{key}")
                 except AgentConfigError as exc:
                     _fail(str(exc))
             elif field.required:
@@ -225,6 +225,20 @@ def _runtime_settings(cfg, profiles=True):
                 runtime.validate(settings, f"{prefix}.{name}")
             except AgentConfigError as exc:
                 _fail(str(exc))
+
+
+def _secret_slots(cfg):
+    """No job may need more agent secrets than the pipeline has slots for."""
+    variants = [cfg, *(with_profile(cfg, name) for name in cfg["profiles"])]
+    jobs = [("plan", variants, ["plan", *([TRIAGE] if cfg["profiles"] else [])])]
+    jobs += [(name, [variant], [name]) for variant in variants for name in ("implement", "review")]
+    for job, configs, stages in jobs:
+        names = secret_names(configs, stages)
+        if len(names) > SECRET_SLOTS:
+            _fail(
+                f"The {job} stage can need {len(names)} agent secrets ({', '.join(names)}); "
+                f"NexKit passes at most {SECRET_SLOTS} to one job"
+            )
 
 
 def _profiles(cfg):
@@ -350,6 +364,8 @@ def validate(raw, *, layered=False):
     for name, settings in cfg["stages"].items():
         _stage_values(settings, f"stages.{name}", 30 if name == TRIAGE else 340, cfg)
     _runtime_settings(cfg, profiles=not layered)
+    if not layered:
+        _secret_slots(cfg)
 
     _positive_int(cfg["fix"]["max_auto_rounds"], "fix.max_auto_rounds", 10, minimum=0)
     _bool(cfg["merge"]["auto"], "merge.auto")
@@ -449,15 +465,18 @@ def secret_names(variants, stages):
     for variant in variants:
         for name in stages:
             chosen = agent(variant, stage(variant, name)["agent"])
-            names.update(PROVIDERS[chosen["provider"]].credentials(chosen))
-    return [name for name in AGENT_SECRETS if name in names]
+            for group in PROVIDERS[chosen["provider"]].secrets(chosen):
+                names.update(group)
+    return sorted(names)
 
 
 def credentials(cfg):
-    """(agent name, secrets of which one must be set) for each agent that a stage uses."""
+    """(agent name, secrets of which one must be set) for each secret that an agent a stage
+    uses needs."""
     return [
-        (name, PROVIDERS[agent(cfg, name)["provider"]].credentials(agent(cfg, name)))
+        (name, group)
         for name in agents_used(cfg)
+        for group in PROVIDERS[agent(cfg, name)["provider"]].secrets(agent(cfg, name))
     ]
 
 

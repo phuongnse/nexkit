@@ -23,15 +23,16 @@ flowchart LR
 ## Supported versions
 
 Everything the pipeline installs is pinned to the version NexKit was tested with, so a
-release never changes underneath you. New Claude Code versions still arrive quickly: a
-weekly job proposes the newest stable Claude Code, CI tests it with real Claude, and a new
-NexKit release ships it.
+release never changes underneath you. New agent versions still arrive quickly: a weekly
+job proposes the newest stable version of each runtime, CI tests it with the real CLI, and
+a new NexKit release ships it.
 
 | Dependency | Supported | Tested |
 |---|---|---|
 | Platform | GitHub and GitHub Actions | |
 | Runner | GitHub-hosted `ubuntu-24.04` | `ubuntu-24.04` |
 | Claude Code | the version pinned in [`nexkit/__init__.py`](nexkit/__init__.py), installed by the pipeline | that version, with a live smoke test |
+| Codex CLI, for agents on Azure AI Foundry | the version pinned in [`nexkit/__init__.py`](nexkit/__init__.py), installed by the pipeline when a stage uses it | that version, with a live smoke test |
 | Python for NexKit in the pipeline | 3.12, installed without changing your project's Python | 3.12 |
 | Python for the `nexkit` CLI on your machine | 3.12 or newer | 3.12 |
 
@@ -44,6 +45,8 @@ Your project's own commands (`setup`, `checks`) use whatever tools they install 
 - A Claude credential stored as a repository secret: a Claude Pro or Max subscription
   token from `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN`), or an Anthropic API key
   (`ANTHROPIC_API_KEY`).
+- Optionally, OpenAI models deployed in Azure AI Foundry for some stages, run with Codex
+  (see [Agents](docs/configuration.md#agents)).
 - No server or self-hosted runner. Everything runs on GitHub-hosted runners, which are
   free for public repositories.
 
@@ -150,6 +153,7 @@ Python 3.12 or newer, standard library only.
 python3 -m unittest discover -s tests -t .
 python3 -m pip install ruff && ruff check . && ruff format --check .
 python3 scripts/smoke.py   # real Claude Code, a few cents; needs a Claude login
+python3 scripts/smoke.py --runtime codex   # real Codex on an Azure deployment
 ```
 
 See [AGENTS.md](AGENTS.md) for the code layout and conventions.

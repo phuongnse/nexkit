@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Run every agent stage against real Claude Code on a tiny repository.
+"""Run every agent stage against a real agent runtime on a tiny repository.
 
-This is the check that a Claude Code version works with NexKit: it exercises the real
-CLI flags, stream output and structured results that unit tests replace with a fake.
-It costs a few cents (model `haiku`). Needs a Claude login or credential.
+This is the check that a runtime version works with NexKit: it exercises the real CLI
+flags, event stream and structured results that unit tests replace with a fake. It costs
+a few cents.
 
-    scripts/smoke.py [--claude PATH]
+- claude-code: model `haiku`. Needs a Claude login or credential.
+- codex: an Azure OpenAI deployment. Needs AZURE_OPENAI_ENDPOINT (the resource URL),
+  AZURE_OPENAI_API_KEY (the deployment's key) and AZURE_OPENAI_DEPLOYMENT (the deployment name).
+
+    scripts/smoke.py [--runtime claude-code|codex] [--program PATH]
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -21,15 +27,36 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import nexkit  # noqa: E402
 from nexkit.agent import run_stage, run_triage  # noqa: E402
 from nexkit.config import validate  # noqa: E402
 from nexkit.context import previous_review  # noqa: E402
 from nexkit.publish import pull_body, render_plan  # noqa: E402
 from nexkit.report import review_body  # noqa: E402
+from nexkit.runtimes import RUNTIMES  # noqa: E402
 from nexkit.state import BOT_LOGIN, PLAN_MARKER, empty_state, render_state  # noqa: E402
 
-CONFIG = validate({"model": "haiku", "checks": [{"name": "test", "run": "python3 -m unittest -v"}]})
+CHECKS = [{"name": "test", "run": "python3 -m unittest -v"}]
+CONFIG = {}  # set by main() for the runtime under test
+
+
+def agent_settings(runtime):
+    """The configuration keys that run every stage on `runtime`."""
+    if runtime == "claude-code":
+        return {"model": "haiku"}
+    model = os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+    if not model or not os.environ.get("AZURE_OPENAI_ENDPOINT"):
+        raise SystemExit(
+            "Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT."
+        )
+    agent = {
+        "runtime": "codex",
+        "provider": "azure-openai",
+        "endpoint_secret": "AZURE_OPENAI_ENDPOINT",
+        "api_key_secret": "AZURE_OPENAI_API_KEY",
+    }
+    return {"agents": {"smoke": agent}, "agent": "smoke", "model": model}
+
+
 CONTEXT = {
     "issue": 1,
     "pr": "",
@@ -77,25 +104,29 @@ class StateComments:
         return [{"id": 1, "body": self.body, "user": {"login": BOT_LOGIN}}]
 
 
-def stage(name, work, out, claude, context=None, *, want="done", **kw):
-    result = run_stage(name, context or CONTEXT, CONFIG, work, out, program=claude, **kw)
+def stage(name, work, out, program, context=None, *, want="done", **kw):
+    result = run_stage(name, context or CONTEXT, CONFIG["cfg"], work, out, program=program, **kw)
     keys = ("status", "error", "cost", "changed_files", "conflicts")
     summary = {k: result.get(k) for k in keys}
     print(f"{name}: {json.dumps(summary)}", flush=True)
     if result["status"] != want:
         raise SystemExit(f"{name} stage failed: {result.get('error')}")
-    # The readable transcript pairs every tool call with its result.
+    # The readable transcript pairs every tool call with its result. Planning, implementing
+    # and fixing cannot be done without reading or changing the code, so those stages must
+    # call tools; a review may judge from the diff and check results in its prompt.
     transcript = (Path(out) / "transcript.md").read_text()
-    if "\n### [" not in transcript or "Result: no result" in transcript:
-        raise SystemExit(f"{name}: transcript.md lacks tool calls with results")
+    if "Result: no result" in transcript:
+        raise SystemExit(f"{name}: transcript.md has a tool call without its result")
+    if name != "review" and "\n### [" not in transcript:
+        raise SystemExit(f"{name}: transcript.md has no tool calls; could the agent read the code?")
     return result
 
 
-def triage(root, claude):
+def triage(root, program):
     """Triage picks a profile from the issue text, and a collaborator's request wins."""
     cfg = validate(
         {
-            "model": "haiku",
+            **CONFIG["settings"],
             "default_profile": "standard",
             "profiles": {
                 "standard": {"when": "A small, clear change to one function."},
@@ -108,7 +139,7 @@ def triage(root, claude):
         ({**CONTEXT, "requests": "@olivia: Plan this with the hard profile."}, "hard"),
     ]
     for number, (context, want) in enumerate(cases, 1):
-        result = run_triage(context, cfg, None, root / f"triage-{number}", program=claude)
+        result = run_triage(context, cfg, None, root / f"triage-{number}", program=program)
         keys = ("status", "profile", "chosen_by", "reason", "error", "cost")
         print(f"triage: {json.dumps({k: result.get(k) for k in keys})}", flush=True)
         if result["chosen_by"] != "triage" or result["profile"] != want or not result["reason"]:
@@ -136,7 +167,7 @@ def conflicted(root, name, path, start, base, pull):
     return work
 
 
-def conflicts(root, claude):
+def conflicts(root, program):
     """Fix rounds on pull requests that conflict with main: one conflict has one right
     answer, the other needs a person's decision, which a note then gives."""
     context = {
@@ -156,7 +187,7 @@ def conflicts(root, claude):
         (calc + "\n\ndef mul(a, b):\n    return a * b\n", "Add mul()"),
         (calc + "\n\ndef sub(a, b):\n    return a - b\n", "Add sub()"),
     )
-    fix = stage("fix", work, root / "fix-trivial", claude, context, base="main")
+    fix = stage("fix", work, root / "fix-trivial", program, context, base="main")
     merged = (work / "calc.py").read_text()
     if fix["conflicts"] != ["calc.py"] or "def mul" not in merged or "def sub" not in merged:
         raise SystemExit(f"fix: both sides were not kept:\n{merged}")
@@ -171,7 +202,7 @@ def conflicts(root, claude):
         (greet.format('"Hi " + name'), "Greet visitors with Hi"),
     )
     work = conflicted(*choice)
-    blocked = stage("fix", work, root / "fix-choice", claude, context, base="main", want="blocked")
+    blocked = stage("fix", work, root / "fix-choice", program, context, base="main", want="blocked")
     questions = blocked["output"]["open_conflicts"]
     print(f"open conflicts: {json.dumps(questions)}", flush=True)
     if not any(item["file"] == "greet.py" and item["question"] for item in questions):
@@ -181,29 +212,35 @@ def conflicts(root, claude):
     shutil.rmtree(root / "choice-work")
     work = conflicted(*choice)
     note = 'In greet.py, keep this pull request\'s greeting: "Hi " + name.'
-    stage("fix", work, root / "fix-note", claude, {**context, "note": note}, base="main")
+    stage("fix", work, root / "fix-note", program, {**context, "note": note}, base="main")
     if (work / "greet.py").read_text() != greet.format('"Hi " + name'):
         raise SystemExit("fix: the note's decision was not followed")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--claude", default="claude")
+    parser.add_argument("--runtime", choices=list(RUNTIMES), default="claude-code")
+    parser.add_argument("--program", help="The runtime's executable (default: on PATH)")
     args = parser.parse_args()
+    runtime = RUNTIMES[args.runtime]
+    args.program = args.program or runtime.program
+    CONFIG["settings"] = agent_settings(args.runtime)
+    CONFIG["cfg"] = validate({**CONFIG["settings"], "checks": CHECKS})
 
-    version = subprocess.run(
-        [args.claude, "--version"], capture_output=True, text=True, check=True
-    ).stdout.split()[0]
-    print(f"Claude Code {version}; NexKit pins {nexkit.CLAUDE_CODE}", flush=True)
-    if version != nexkit.CLAUDE_CODE:
-        raise SystemExit("The installed Claude Code is not the pinned version.")
+    said = subprocess.run(
+        [args.program, "--version"], capture_output=True, text=True, check=True
+    ).stdout
+    version = re.search(r"\d+\.\d+\.\d+", said).group(0)
+    print(f"{args.runtime} {version}; NexKit pins {runtime.version}", flush=True)
+    if version != runtime.version:
+        raise SystemExit(f"The installed {args.runtime} is not the pinned version.")
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         work = make_repo(root)
 
-        triage(root, args.claude)
-        plan = stage("plan", work, root / "plan", args.claude)
+        triage(root, args.program)
+        plan = stage("plan", work, root / "plan", args.program)
         for field in ("changes", "acceptance_criteria", "implementation_notes"):
             if not plan["output"][field]:
                 raise SystemExit(f"plan: no {field}")
@@ -213,15 +250,17 @@ def main():
         print(CONTEXT["plan"], flush=True)
 
         # A re-plan revises that plan with what was asked since it.
-        since = "@olivia: Also test that add(-2, -3) returns -5."
-        context = {**CONTEXT, "since_plan": since, "note": "Add the negative-number case."}
-        replan = stage("plan", work, root / "replan", args.claude, context)
+        # A change of scope that no first plan contains, so the re-plan must say what changed.
+        since = "@olivia: Also let add() take an optional third number c, default 0."
+        note = "Add the optional third argument, and test that add(1, 2, 3) returns 6."
+        context = {**CONTEXT, "since_plan": since, "note": note}
+        replan = stage("plan", work, root / "replan", args.program, context)
         revision = replan["output"]["revision"]
         print(render_plan(replan["output"], replan=True), flush=True)
         if revision["started_over"] or not revision["changes"]:
             raise SystemExit(f"replan: wanted a revision with changes, got {revision}")
 
-        implement = stage("implement", work, root / "implement", args.claude)
+        implement = stage("implement", work, root / "implement", args.program)
         if "calc.py" not in implement["changed_files"]:
             raise SystemExit("implement: calc.py was not changed")
         body = pull_body({"issue": 1}, implement)
@@ -250,7 +289,7 @@ def main():
         ]
         if not checks[0]["passed"]:
             raise SystemExit("implement: the published change fails its tests")
-        review = stage("review", work, root / "review", args.claude, checks=checks, base="main")
+        review = stage("review", work, root / "review", args.program, checks=checks, base="main")
         if review["output"]["verdict"] not in ("approve", "request_changes"):
             raise SystemExit("review: no verdict")
         if not review["output"]["criteria"]:
@@ -291,7 +330,7 @@ def main():
         }
         context = {**CONTEXT, "pr": 2, **previous_review(StateComments(state), decision, fix)}
         second = stage(
-            "review", work, root / "second", args.claude, context, checks=checks, base="main"
+            "review", work, root / "second", args.program, context, checks=checks, base="main"
         )
         previous = second["output"]["previous_findings"]
         print(f"previous findings: {json.dumps(previous)}", flush=True)
@@ -302,7 +341,7 @@ def main():
             raise SystemExit(f"second review: bad resolution in {previous}")
         if {item["severity"] for item in previous} != {"blocking", "suggestion"}:
             raise SystemExit(f"second review: severities not kept in {previous}")
-        conflicts(root, args.claude)
+        conflicts(root, args.program)
     print("Smoke test passed.")
     return 0
 

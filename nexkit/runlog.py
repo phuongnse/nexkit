@@ -257,6 +257,12 @@ def summary(result, calls):
         "Duration": duration(result.get("seconds")),
         "Cost": f"${cost:.2f}" if cost is not None else "-",
     }
+    tokens = result.get("tokens") or {}
+    if tokens:
+        # From runtimes that report tokens instead of cost; "Cost" covers only the others.
+        columns["Tokens"] = (
+            f"{tokens.get('input_tokens', 0):,} in, {tokens.get('output_tokens', 0):,} out"
+        )
     output = result.get("output") or {}
     if result.get("stage") == "review":
         verdict = output.get("verdict")

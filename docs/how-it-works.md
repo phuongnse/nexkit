@@ -155,7 +155,7 @@ output of `setup` in the agent job. It replaces with `***`:
   `GITHUB_TOKEN`, `NEXKIT_PUSH_TOKEN` and of every environment variable whose name contains `TOKEN`,
   `SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` (values of 8 characters or more), also
   URL-encoded or base64-encoded;
-- Anthropic keys (`sk-ant-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+- Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`, `sk-proj-…`, `sk-svcacct-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
   `github_pat_`), JWTs, `Authorization:` and `Bearer` header values and PEM private key
   blocks;
 - `password=` and `pwd=` values in connection strings and the password in
@@ -408,21 +408,31 @@ anything is published. Everything specific to one CLI lives in `nexkit/runtimes/
 
 **What a stage may affect** is the same for every runtime:
 
-| Stage | Access | Claude Code |
-|---|---|---|
-| triage | none: an empty working directory | no tools |
-| plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` |
-| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed |
+| Stage | Access | Claude Code | Codex |
+|---|---|---|---|
+| triage | none: an empty working directory | no tools | read-only sandbox, no network |
+| plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` | read-only sandbox: shell commands that cannot write and have no network |
+| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed | no sandbox |
 
 The levels define what an agent can affect, not the same set of tools: a runtime meets
-each level in its own way.
+each level in its own way. Codex cannot turn its shell off, so in triage it gets a
+read-only sandbox in an empty directory. Codex runs with web search off, an empty
+`CODEX_HOME` holding only the provider's settings, and the repository's `.rules` files
+ignored, so a repository cannot widen what a read-only stage may run. Its sandbox needs
+unprivileged user namespaces, which Ubuntu 24.04 restricts; `nexkit install-agents` lifts
+that restriction on the disposable runner, or a read-only stage could not even read files.
 
-**How secrets reach an agent.** `route` works out which agents each job may run and
-passes the job only those agents' secrets: the `agent` job the secrets for its stage (for
-a plan, triage and the plan of every profile, since triage chooses one in the job), the
-`review` job the secret of the review's agent. Within the job, each CLI process gets an
+**How secrets reach an agent.** The repository's workflow passes the pipeline
+`secrets: inherit`. `route` works out which agents each job may run and names their
+secrets: for the `agent` job those of its stage (for a plan, triage and the plan of every
+profile, since triage chooses one in the job), for the `review` job those of the review's
+agent. The job reads each named secret into one of 8 slots, and NexKit gives it back its
+name. Names that start with `GITHUB_` or `NEXKIT_` are never read. Within the job, each CLI process gets an
 environment without any agent secret, plus the one its provider names, and setup and
-check commands get none. Secrets are never put on a command line or in a file.
+check commands get none. Keys are never put on a command line or in a file. Codex also
+keeps its secrets out of the environment of the commands it runs; it reads the Azure
+endpoint from the `config.toml` in the run's own `CODEX_HOME`, which is removed afterwards
+and never uploaded.
 
 This filtering limits what each process inherits. It is not a wall inside a job: an agent
 that can run commands can read other processes on the runner, so it may see every secret
@@ -531,8 +541,9 @@ once the limit has reset.
   issue text from anyone but mark it as untrusted; discussion and review feedback come only
   from collaborators.
 - The implement session can run any command on the runner, so it can read the secrets
-  its job holds: its own agent's credential, and no other agent's. Treat `/nexkit go` like running a script that the issue describes:
-  approve plans only for issues whose content you trust.
+  its job holds: its own agent's credential, and no other agent's. Treat `/nexkit go` like
+  running a script that the issue describes: approve plans only for issues whose content
+  you trust.
 - With profiles, an issue's text can steer triage towards a more expensive profile, for
   example through prompt injection. Requests in the issue do not count as a person's
   request, and the plan comment shows the profile before anyone comments `/nexkit go`.

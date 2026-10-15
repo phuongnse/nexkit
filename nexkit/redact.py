@@ -12,11 +12,11 @@ import os
 import re
 from urllib.parse import quote
 
-from .runtimes import AGENT_SECRETS
+from .runtimes import secret_names
 
 MASK = "***"
 MIN_LENGTH = 8
-SECRET_NAMES = (*AGENT_SECRETS, "GITHUB_TOKEN", "NEXKIT_PUSH_TOKEN")
+SECRET_NAMES = ("GITHUB_TOKEN", "NEXKIT_PUSH_TOKEN")
 SECRET_WORDS = ("TOKEN", "SECRET", "KEY", "PASSWORD", "CREDENTIAL")
 
 PATTERNS = (
@@ -27,6 +27,8 @@ PATTERNS = (
         MASK,
     ),
     (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{8,}"), MASK),
+    # OpenAI keys: sk-proj-…, sk-svcacct-…, sk-admin-… and older sk-….
+    (re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}"), MASK),
     (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"), MASK),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"), MASK),
     (
@@ -49,11 +51,13 @@ PATTERNS = (
 def secret_values(environ):
     """Values of credentials and of variables whose names suggest a secret."""
     values = set()
+    # Agent secrets by the names the configuration gave them, whatever those are.
+    names = {*SECRET_NAMES, *secret_names(environ)}
     for name, value in environ.items():
         upper = name.upper()
         if len(value) < MIN_LENGTH:
             continue
-        if name in SECRET_NAMES or any(word in upper for word in SECRET_WORDS):
+        if name in names or any(word in upper for word in SECRET_WORDS):
             values.add(value)
             # The same value, encoded the usual ways (echo adds a newline before base64).
             values.add(quote(value, safe=""))
@@ -66,9 +70,21 @@ class Redactor:
     """Replaces secrets with ***. Build it from the environment the agent runs in."""
 
     def __init__(self, environ=None):
-        values = secret_values(os.environ if environ is None else environ)
-        ordered = sorted(values, key=len, reverse=True)
+        self._known = secret_values(os.environ if environ is None else environ)
+        self._compile()
+
+    def _compile(self):
+        ordered = sorted(self._known, key=len, reverse=True)
         self._values = re.compile("|".join(map(re.escape, ordered))) if ordered else None
+
+    def add(self, values):
+        """Also redact these values, such as the secrets an agent runs with."""
+        found = set()
+        for value in values:
+            found |= secret_values({"AGENT_SECRET": value or ""})
+        if found - self._known:
+            self._known |= found
+            self._compile()
 
     def __call__(self, text):
         if not text:

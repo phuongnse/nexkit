@@ -1,0 +1,56 @@
+# Every week, propose the newest stable version of each agent runtime, one pull request per
+# runtime. CI on the pull request runs the unit tests and that runtime's live smoke test
+# with that exact version; merge it when CI is green, then release. Until then the pipeline
+# keeps using the version it was tested with.
+name: Update agents
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: update-agents
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Open a pull request per runtime
+        run: |
+          base=$(git rev-parse HEAD)
+          for runtime in $(python -c "from nexkit.runtimes import RUNTIMES; print(*RUNTIMES)"); do
+            git checkout -q --detach "$base"
+            version=$(python scripts/agent_version.py "$runtime" update)
+            if [ -z "$version" ]; then
+              echo "$runtime is up to date."
+              continue
+            fi
+            branch="update/$runtime-$version"
+            if gh pr list --head "$branch" --state open --json number -q '.[0].number' | grep -q .; then
+              echo "A pull request for $runtime $version is already open."
+              git checkout -q -- nexkit/__init__.py
+              continue
+            fi
+            git switch -q -c "$branch"
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit -qam "Support $runtime $version"
+            git push --force origin "$branch"
+            gh pr create --head "$branch" --title "Support $runtime $version" --body \
+              "$runtime $version is the newest stable version. CI on this branch runs the unit tests and the live smoke test with it. Merge when CI is green, then release."
+            # Pull requests opened with the Actions token do not start CI; dispatch it.
+            gh workflow run ci.yml --ref "$branch" -f runtime="$runtime"
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -46,7 +46,7 @@ their defaults.
 | `agents` | `{}` | Agents besides the built-in `claude`: a runtime, a provider and its settings. See [Agents](#agents). |
 | `agent` | `"claude"` | The agent for every stage. Set `model` with it. |
 | `model` | `"sonnet"` | Model for every stage, as the agent names it. For `claude`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
-| `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Claude Code takes `low`, `medium`, `high`, `xhigh` and `max`. |
+| `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
@@ -352,10 +352,37 @@ API key. Without `agents`, every stage runs on it.
 
 ```json
 "agents": {
-  "backup": {"runtime": "claude-code", "provider": "anthropic"}
+  "sol": {
+    "runtime": "codex",
+    "provider": "azure-openai",
+    "endpoint_secret": "AZURE_OPENAI_ENDPOINT",
+    "api_key_secret": "GPT_SOL_KEY"
+  },
+  "max": {
+    "runtime": "codex",
+    "provider": "azure-openai",
+    "endpoint_secret": "AZURE_OPENAI_ENDPOINT",
+    "api_key_secret": "GPT_MAX_KEY"
+  }
 },
-"stages": {
-  "review": {"agent": "backup", "model": "claude-opus-5-5"}
+"default_profile": "standard",
+"profiles": {
+  "standard": {
+    "when": "Clear spec, one layer, follows an existing pattern.",
+    "stages": {
+      "plan":      {"model": "claude-opus-5-5"},
+      "implement": {"model": "claude-sonnet-5-5"},
+      "review":    {"agent": "sol", "model": "gpt-6-1-sol"}
+    }
+  },
+  "hard": {
+    "when": "Touches security or access control, storage schema or execution.",
+    "stages": {
+      "plan":      {"model": "claude-opus-5-5"},
+      "implement": {"agent": "max", "model": "gpt-6-2-max", "effort": "high"},
+      "review":    {"model": "claude-fable-5-1"}
+    }
+  }
 }
 ```
 
@@ -372,14 +399,47 @@ API key. Without `agents`, every stage runs on it.
 | Runtime | Providers | `effort` | `max_budget_usd` | Cost in the summary |
 |---|---|---|---|---|
 | `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` | yes | yes |
+| `codex` | `azure-openai` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` | no: rely on `timeout_minutes` | no: tokens instead. A run that mixes runtimes shows the cost of the others. |
 
-**Settings and secrets.** A provider declares which of its settings are secrets. Settings
-such as an endpoint live in `.nexkit/config.json`, where they are reviewed and validated.
-A secret lives in a repository secret, and the configuration holds only its name, in a key
-that ends in `_secret`. A value that is not a secret name, such as a key pasted into the
-configuration, is rejected. The name must be one that NexKit passes to agents (see
-[Secrets](#secrets)), and the repository's NexKit workflow must pass it to the pipeline;
-`nexkit doctor` checks both.
+| Provider | Settings | Secret |
+|---|---|---|
+| `anthropic` | none | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` |
+| `azure-openai` | none. `model` is the deployment name. | `endpoint_secret`: the secret that holds the resource URL, `https://<name>.openai.azure.com` (or `.services.ai.azure.com`, `.cognitiveservices.azure.com`), with no path. `api_key_secret`: the secret that holds the deployment's key. |
+
+A run reports usage limits only for `claude-code`. When Azure refuses a request for its
+rate limit or quota, Codex retries a few times, then the run ends as an error; NexKit does
+not pause and resume it.
+
+### OpenAI models on Azure AI Foundry
+
+The endpoint identifies your own resource, so like the keys it lives in a secret, never
+in `.nexkit/config.json`: a public repository shows its configuration and logs to everyone,
+and only secrets are masked in the logs. Every deployment of the resource shares the
+endpoint and has its own key, so each deployment you use is an agent with its own
+`api_key_secret`, and all of them name `AZURE_OPENAI_ENDPOINT`.
+
+1. In Azure AI Foundry, deploy the models and note, for each, the deployment name and its
+   key, and the resource's endpoint. NexKit uses the OpenAI v1 API
+   (`<endpoint>/openai/v1`), so no API version is needed.
+2. Store the endpoint and each deployment's key as repository secrets, with names of your
+   choice: `gh secret set AZURE_OPENAI_ENDPOINT`, `gh secret set GPT_SOL_KEY`, and so on.
+3. Make sure `.github/workflows/nexkit.yml` passes the pipeline `secrets: inherit`, as
+   `nexkit init` writes it (see [Secrets](#secrets)).
+4. Add an agent per deployment to `agents` and choose them in the stages or profiles that
+   should use them, with the deployment name as `model`.
+5. Run `nexkit doctor`. NexKit checks the endpoint when the agent runs, since only that
+   job can read the secret: it must be an https URL on an Azure host, with no path.
+
+Codex reads the repository's `AGENTS.md`, as Claude Code reads `CLAUDE.md`.
+
+
+**Settings and secrets.** A provider declares which of its settings are secrets: keys,
+and anything that identifies your own account or resource, such as an endpoint. A secret
+lives in a repository secret, and the configuration holds only its name, in a key that
+ends in `_secret`. Choose the names freely, except names that start with `GITHUB_` or
+`NEXKIT_`, which belong to GitHub and NexKit. A value that is not a secret name, such as a
+key pasted into the configuration, is rejected. `nexkit doctor` checks that each secret is
+set and that the repository's NexKit workflow passes it.
 
 ## Stages
 
@@ -470,17 +530,20 @@ shows what the log, run summary and artifacts contain and what is redacted.
 
 ## Secrets
 
-NexKit passes these secrets, and no others, to the steps that run an agent, and each job
-only the secrets of the agents its stages use. Each agent's CLI receives only the secret
-its provider names; setup and check commands receive none. See
-[How it works](how-it-works.md#agents) for what this does and does not isolate.
-Set the secrets of the agents your stages use, and pass each one in the `secrets:` of
-`.github/workflows/nexkit.yml`, as `nexkit init` writes it.
+`.github/workflows/nexkit.yml` passes the pipeline `secrets: inherit`, as `nexkit init`
+writes it, so the pipeline can read each agent's secrets by the names in
+`.nexkit/config.json`. It passes a job only the secrets of the agents its stages use, at
+most 8 per job, and each agent's CLI only its own; setup and check commands get none. See
+[How it works](how-it-works.md#agents) for what this does and does not isolate. A
+workflow that lists secrets one by one, as `nexkit init` wrote before, can pass only the
+built-in agent's secrets and `NEXKIT_PUSH_TOKEN`; `nexkit doctor` says when an agent needs
+`secrets: inherit`.
 
 | Secret | Required | Used by |
 |---|---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | one of these two, for `claude` | Agent and review jobs. Create it with `claude setup-token` (Claude Pro or Max). |
 | `ANTHROPIC_API_KEY` | one of these two, for `claude` | Agent and review jobs. Takes precedence when both are set. |
+| The names an agent's `*_secret` keys give | for that agent | Agent and review jobs, only for the stages that run on it. For `azure-openai`: the resource URL and the deployment's key. |
 | `NEXKIT_PUSH_TOKEN` | no | Publish job only: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. Add Workflows write access if fix rounds should merge base branch changes to `.github/workflows/`; the default Actions token cannot push those. |
 
 ## Workflow file

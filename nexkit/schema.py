@@ -41,3 +41,21 @@ def problems(value, schema, where="result"):
         for index, item in enumerate(value):
             found += problems(item, schema["items"], f"{where}[{index}]")
     return found
+
+
+def strict(schema):
+    """A copy for structured-output modes that need every object closed and every property
+    required, and a type next to each enum. NexKit's schemas already require every property."""
+    schema = dict(schema)
+    if (
+        "enum" in schema
+        and "type" not in schema
+        and all(isinstance(v, str) for v in schema["enum"])
+    ):
+        schema["type"] = "string"
+    if "properties" in schema:
+        properties = {key: strict(sub) for key, sub in schema["properties"].items()}
+        schema.update(properties=properties, required=list(properties), additionalProperties=False)
+    if "items" in schema:
+        schema["items"] = strict(schema["items"])
+    return schema

@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from .gitutil import GitError, git, has_commit
-from .runtimes import AGENT_SECRETS
+from .runtimes import NAMES_VAR, secret_names
 
 OUTPUT_TAIL = 12_000
 BASE_SHA = "NEXKIT_BASE_SHA"
@@ -19,7 +19,8 @@ BASE_SHA = "NEXKIT_BASE_SHA"
 def environment(base_sha=None):
     """The environment for repository commands: without any agent credential, and with
     NEXKIT_BASE_SHA only when it is known."""
-    env = {k: v for k, v in os.environ.items() if k != BASE_SHA and k not in AGENT_SECRETS}
+    drop = {BASE_SHA, NAMES_VAR, *secret_names()}
+    env = {k: v for k, v in os.environ.items() if k not in drop}
     if base_sha:
         env[BASE_SHA] = base_sha
     return env

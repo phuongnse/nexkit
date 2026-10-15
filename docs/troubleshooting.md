@@ -108,8 +108,8 @@ push, and comment `/nexkit review`. For workflow files, a push token with Workfl
 access, named in `publish.push_token_secret`, also lets NexKit push the merge.
 
 **⏸️ "The agent stopped at the account's usage limit".** The account behind the agent's
-secret, such as the Claude subscription, used up its session or weekly limit. NexKit runs the same command again after the
-reset time shown, through the hourly `schedule` trigger in
+secret, such as a Claude subscription, used up its session or weekly limit. NexKit runs
+the same command again after the reset time shown, through the hourly `schedule` trigger in
 `.github/workflows/nexkit.yml`. If nothing happens after the reset, check that the
 trigger is there (`nexkit doctor` warns when it is not) and that scheduled workflows are
 not disabled for the repository. To continue earlier, or with another note, comment the

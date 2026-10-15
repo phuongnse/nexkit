@@ -92,7 +92,8 @@ class Outcome:
     cost_usd: float | None = None
     tokens: dict | None = None
     turns: int | None = None
-    # {"message": the line that says so, "reset": UTC datetime or None} at a usage limit.
+    # {"message": the line that says so, "reset": UTC datetime or None} when the CLI said it
+    # stopped at a usage limit that resets. The run then pauses instead of failing.
     limit: dict | None = None
 
 

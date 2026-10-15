@@ -111,10 +111,14 @@ def stage(name, work, out, program, context=None, *, want="done", **kw):
     print(f"{name}: {json.dumps(summary)}", flush=True)
     if result["status"] != want:
         raise SystemExit(f"{name} stage failed: {result.get('error')}")
-    # The readable transcript pairs every tool call with its result.
+    # The readable transcript pairs every tool call with its result. Planning, implementing
+    # and fixing cannot be done without reading or changing the code, so those stages must
+    # call tools; a review may judge from the diff and check results in its prompt.
     transcript = (Path(out) / "transcript.md").read_text()
-    if "\n### [" not in transcript or "Result: no result" in transcript:
-        raise SystemExit(f"{name}: transcript.md lacks tool calls with results")
+    if "Result: no result" in transcript:
+        raise SystemExit(f"{name}: transcript.md has a tool call without its result")
+    if name != "review" and "\n### [" not in transcript:
+        raise SystemExit(f"{name}: transcript.md has no tool calls; could the agent read the code?")
     return result
 
 

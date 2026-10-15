@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nexkit"
-version = "2.1.0"
-description = "Turn GitHub issues into reviewed, tested pull requests with Claude Code."
+version = "3.0.0"
+description = "Turn GitHub issues into reviewed, tested pull requests with coding agents."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

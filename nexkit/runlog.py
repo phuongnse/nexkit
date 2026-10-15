@@ -276,6 +276,7 @@ def summary(result, calls):
     ]
     if result.get("profile"):
         lines += ["", f"**Profile:** {code(one_line(result['profile']))}"]
+    lines += _agents(result)
     if result.get("error"):
         lines += ["", "**Why it stopped**", "", _block(result["error"])]
     if result.get("start_base"):
@@ -315,6 +316,55 @@ def summary(result, calls):
                 f"{one_line(item.get('body', ''))[:500]}"
             )
     return "\n".join(lines) + "\n"
+
+
+# How the run summary names an agent's result.
+RESULTS = {"paused": "usage limit", "skipped": "skipped"}
+
+
+def _agents(result):
+    """The agent that ran the stage, and when a fallback ran, every agent's run."""
+    attempts = result.get("attempts") or []
+    ran = next((a for a in attempts if a["agent"] == result.get("agent")), None)
+    if not ran:
+        return []
+    lines = [
+        "",
+        f"**Agent:** {code(ran['agent'])} ({ran['runtime']} on {ran['provider']}, "
+        f"model {code(one_line(ran['model']))})",
+    ]
+    if len(attempts) < 2:
+        return lines
+    tokens = any(a.get("tokens") for a in attempts)
+    header = ["Agent", "Model", "Result", "Duration", "Cost", *(["Tokens"] if tokens else [])]
+    lines += [
+        "",
+        "**Agents that ran in turn** (the next one starts when one stops at its usage limit)",
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + "---|" * len(header),
+    ]
+    for attempt in attempts:
+        outcome = RESULTS.get(attempt["status"], attempt["status"])
+        if attempt["status"] == "skipped" and attempt.get("error"):
+            outcome += f": {one_line(attempt['error'])[:200]}"
+        cost = attempt.get("cost")
+        cells = [
+            code(attempt["agent"]),
+            code(one_line(attempt["model"])),
+            outcome,
+            duration(attempt.get("seconds")) if attempt.get("seconds") is not None else "-",
+            f"${cost:.2f}" if isinstance(cost, (int, float)) else "-",
+        ]
+        if tokens:
+            used = attempt.get("tokens") or {}
+            cells.append(
+                f"{used.get('input_tokens', 0):,} in, {used.get('output_tokens', 0):,} out"
+                if used
+                else "-"
+            )
+        lines.append("| " + " | ".join(cell.replace("|", "\\|") for cell in cells) + " |")
+    return lines
 
 
 def _block(text):

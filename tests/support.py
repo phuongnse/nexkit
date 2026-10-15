@@ -356,10 +356,18 @@ import json, os, sys, time
 args = sys.argv[1:]
 prompt = sys.stdin.read()
 spec = json.loads(os.environ["FAKE_CLAUDE"])
+# A spec per credential, for agents with fallbacks: {"by_token": {token: spec}}.
+token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
+spec = spec.get("by_token", {}).get(token, spec)
+call = {"args": args, "prompt": prompt, "cwd": os.getcwd(),
+        "has_token": bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")), "token": token,
+        "base_sha": os.environ.get("NEXKIT_BASE_SHA"),
+        "files": sorted(os.listdir(".")),
+        "merging": os.path.exists(os.path.join(".git", "MERGE_HEAD"))}
 with open(os.environ["FAKE_CLAUDE_LOG"], "w") as log:
-    json.dump({"args": args, "prompt": prompt, "cwd": os.getcwd(),
-               "has_token": bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")),
-               "base_sha": os.environ.get("NEXKIT_BASE_SHA")}, log)
+    json.dump(call, log)
+with open(os.environ["FAKE_CLAUDE_LOG"] + "l", "a") as log:
+    log.write(json.dumps(call) + "\\n")
 time.sleep(spec.get("sleep", 0))
 for path, content in spec.get("write", {}).items():
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -403,6 +411,11 @@ class FakeClaude:
 
     def call(self):
         return json.loads(self.log.read_text())
+
+    def calls(self):
+        """Every call since the fake was installed, oldest first."""
+        path = self.log.with_name(self.log.name + "l")
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def restore(self):
         for key, value in self._saved.items():

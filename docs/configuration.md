@@ -354,8 +354,9 @@ See [How it works](how-it-works.md#work-without-a-command).
 "usage_limit": {"resume": true, "retry_minutes": 60, "wait_minutes": 330}
 ```
 
-When an agent stops because its account hit a usage limit that resets, NexKit pauses the
-run, shows the reset time in its comment and keeps `nexkit/checks` and `nexkit/review` pending.
+When an agent stops because its account hit a usage limit that resets, the stage moves to
+the agent's [fallback agents](#fallback-agents), if it has any. When none is left, NexKit
+pauses the run, shows the reset time in its comment and keeps `nexkit/checks` and `nexkit/review` pending.
 With `resume: true` (the default), it runs the same command again after the reset, once,
 with the same note; when the reset time is unknown, after `retry_minutes` (default 60).
 With `false`, the comment still names the limit and the reset time, and a person
@@ -444,9 +445,58 @@ Claude Code with a Claude subscription token.
 | `anthropic` | none | Exactly one of `oauth_token_secret`, the secret that holds a Claude subscription token from `claude setup-token`, and `api_key_secret`, the secret that holds an Anthropic API key. Claude Code receives it under its own variable, whatever the secret's name. |
 | `azure-openai` | none. `model` is the deployment name. | `endpoint_secret`: the secret that holds the resource URL, `https://<name>.openai.azure.com` (or `.services.ai.azure.com`, `.cognitiveservices.azure.com`), with no path. `api_key_secret`: the secret that holds the deployment's key. |
 
-Only `claude-code` reports usage limits, so only its runs pause at one; see
-[Usage limits](#usage-limits). When Azure refuses a request for its rate limit or quota,
-Codex retries a few times, then the run ends as an error.
+Only `claude-code` reports usage limits, so only its runs pause at one or move to a
+fallback; see [Usage limits](#usage-limits). When Azure refuses a request for its rate
+limit or quota, Codex retries a few times, then the run ends as an error.
+
+### Fallback agents
+
+An agent can name other agents that take over when it stops at a usage limit, such as an
+Anthropic API key behind a Claude subscription:
+
+```json
+"agents": {
+  "claude": {
+    "runtime": "claude-code",
+    "provider": "anthropic",
+    "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN",
+    "fallback": ["claude-api"]
+  },
+  "claude-api": {
+    "runtime": "claude-code",
+    "provider": "anthropic",
+    "api_key_secret": "ANTHROPIC_API_KEY"
+  }
+}
+```
+
+- A stage always starts on its own agent. Only when that run stops at a usage limit does
+  the stage start again, from the beginning, on the next agent of `fallback`, and so on.
+  Every run starts on the agent itself again, so once its limit resets NexKit is back on
+  it. When every agent stopped at its limit, the run pauses until the earliest reset (see
+  [Usage limits](#usage-limits)).
+- Nothing else moves to a fallback: an error, a timeout or a `blocked` result ends the
+  stage as it does without one.
+- Before implement or fix starts again, NexKit returns the checkout to where the first
+  agent started: the setup baseline, and in a fix round the merge of the base branch with
+  its conflicts. What the agent at its limit changed is dropped.
+- Fallback agents use the same runtime as the agent, because the stage's `model` and
+  `effort` are meant for it. Only the stage's agent's own list counts: when `claude-api`
+  has a `fallback` too, it applies to the stages that choose `claude-api`.
+- `timeout_minutes` and `max_budget_usd` apply to each agent's run, and the job allows
+  for every agent of the list, up to 340 minutes for a stage. The stage's cost adds up
+  every agent's run. An API key is billed per token, so set `max_budget_usd` if a
+  fallback should not spend more than a limit.
+- A fallback agent's secrets count like any agent's: the job that may run it receives
+  them, they count toward the 8 per job, and `nexkit doctor` checks them. A fallback
+  whose secret is not set is skipped, and the run summary says so.
+- `fallback` is rejected for a runtime that does not report usage limits (`codex`), since
+  it would never run.
+
+The run summary names the agent of each stage, and when a fallback ran it lists every
+agent's run with its result, duration and cost. The run comment on the issue or pull
+request names the agent of each stage, for example
+"**Agents:** implement `claude-api` after `claude` hit its usage limit · review `claude`".
 
 ### OpenAI models on Azure AI Foundry
 
@@ -497,8 +547,8 @@ Fix rounds use the `implement` settings. `triage` is a fourth stage, allowed onl
 | `agent` | Overrides the top-level `agent`. Needs `model` next to it. |
 | `model` | Overrides the top-level `model`. |
 | `effort` | Overrides the top-level `effort`. |
-| `timeout_minutes` | Stop the agent after this long (plan 15, implement 45, review 20 and triage 5 by default; triage at most 30). |
-| `max_budget_usd` | A spending limit, for runtimes that have one (Claude Code's `--max-budget-usd`); `null` means no limit. |
+| `timeout_minutes` | Stop the agent after this long (plan 15, implement 45, review 20 and triage 5 by default; triage at most 30). With [fallback agents](#fallback-agents), each agent's run gets this long. |
+| `max_budget_usd` | A spending limit for each agent's run, for runtimes that have one (Claude Code's `--max-budget-usd`); `null` means no limit. |
 
 ## Profiles
 
@@ -579,7 +629,7 @@ says when an agent needs `secrets: inherit`.
 
 | Secret | Required | Used by |
 |---|---|---|
-| The names an agent's `*_secret` keys give | for each agent a stage uses | Agent and review jobs, only for the stages that run on that agent. For `anthropic`: the subscription token (`claude setup-token`, Claude Pro or Max) or the API key. For `azure-openai`: the resource URL and the deployment's key. |
+| The names an agent's `*_secret` keys give | for each agent a stage uses; a fallback agent without its secret is skipped | Agent and review jobs, only for the stages that run on that agent. For `anthropic`: the subscription token (`claude setup-token`, Claude Pro or Max) or the API key. For `azure-openai`: the resource URL and the deployment's key. |
 | The name `publish.push_token_secret` gives, such as `NEXKIT_PUSH_TOKEN` | no | Publish job only, never a job that runs an agent, and never an agent's secret: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. Add Workflows write access if fix rounds should merge base branch changes to `.github/workflows/`; the default Actions token cannot push those. |
 
 ## Workflow file

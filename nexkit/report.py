@@ -64,6 +64,28 @@ def _cost(*results):
     return round(sum(costs), 4) if costs else None
 
 
+def agents_ran(*results):
+    """Which agents ran each stage of `results`, for the run comment: the agents that ran
+    in turn, without those skipped, and whether the stage paused at their limits."""
+    entries = []
+    for result in results:
+        for item in (result or {}).get("triage"), result:
+            if not item or not item.get("attempts"):
+                continue
+            names = [a["agent"] for a in item["attempts"] if a.get("status") != "skipped"]
+            entries.append(
+                {"stage": item["stage"], "agents": names, "paused": item["status"] == "paused"}
+            )
+    return entries
+
+
+def _show_agents(row, *results):
+    """Name the agents in a round's comment, once some agent ran."""
+    entries = agents_ran(*results)
+    if entries:
+        row["agents"] = entries
+
+
 def _location(item):
     if not item.get("file"):
         return ""
@@ -250,6 +272,7 @@ def _stop_round(gh, decision, agent, outcome, message, reason=None):
     comment_id, row = progress.find_round(comments, decision)
     status = run_status(outcome)
     row.update(status=status, head=decision["head"], cost=_cost(agent), outcome=outcome)
+    _show_agents(row, agent)
     if reason:
         row["attention"] = reason
     progress.save_round(gh, decision["pr"], comment_id, row, message)
@@ -263,7 +286,11 @@ def pause(result, cfg, command, number, note="", auto="resume", resumed=False):
     at = result.get("resume_at")
     known = result.get("reset_known")
     shown_command = f"`/nexkit {command}`" + (" with the same note" if note else "")
-    message = f"⏸️ The agent stopped at the account's usage limit: {result.get('limit') or ''}"
+    # A plan that paused in triage has the attempts of its triage.
+    attempts = result.get("attempts") or (result.get("triage") or {}).get("attempts") or []
+    limited = [a for a in attempts if a.get("status") == "paused"]
+    who = "Every agent stopped at its" if len(limited) > 1 else "The agent stopped at the account's"
+    message = f"⏸️ {who} usage limit: {result.get('limit') or ''}"
     message = message.rstrip(": ") + "."
     if resumed and not known:
         # A run that was resumed blind and stopped again: a person decides, so a limit
@@ -314,10 +341,12 @@ def _paused_agent(gh, decision, cfg, agent):
             "resume": resume,
             "resume_at": at,
             "attention": reason,
+            "agents": agents_ran(agent),
         }
     _pause_statuses(gh, decision["head"], resume, run_url())
     comment_id, row = progress.find_round(gh.comments(decision["pr"]), decision)
     row.update(status=PAUSED, head=decision["head"], cost=_cost(agent), outcome="paused")
+    _show_agents(row, agent)
     row.update({key: value for key, value in (("resume", resume), ("attention", reason)) if value})
     progress.save_round(gh, decision["pr"], comment_id, row, message)
     return {"outcome": "paused", "summary": message, "resume_at": at, "attention": reason}
@@ -397,7 +426,7 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
     """Post the outcome. Returns a short machine-readable summary for logs and tests."""
     result = _report(gh, decision, cfg, needs, Path(artifacts), workflow_ref, default_branch)
     fields = {"outcome": result["outcome"]}
-    for key in ("resume", "attention"):
+    for key in ("resume", "attention", "agents"):
         if result.get(key):
             fields[key] = result[key]
     progress.finish(gh, decision, run_status(result["outcome"]), result["summary"], **fields)
@@ -444,13 +473,19 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             reason = needs_person(outcome, cfg)
             if decision.get("pr"):
                 _stop_round(gh, decision, agent, outcome, message, reason)
-            return {"outcome": outcome, "summary": message, "attention": reason}
+            return {
+                "outcome": outcome,
+                "summary": message,
+                "attention": reason,
+                "agents": agents_ran(agent),
+            }
         if action == "plan":
             plan = publish.get("comment")
             return {
                 "outcome": "planned",
                 "summary": f"[Plan]({plan}) posted." if plan else "",
                 "attention": needs_person("planned", cfg, plan=agent.get("output")),
+                "agents": agents_ran(agent),
             }
 
     pr = publish.get("pr") or decision["pr"]
@@ -484,6 +519,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         verdict=verdict or "not run",
         cost=_cost(agent if action != "review" else None, reviewed),
     )
+    _show_agents(row, agent if action != "review" else None, reviewed)
     _record(state, decision, row, agent or {}, review)
     state["feedback"] = {"head": head, "checks": checks, "review": review}
 
@@ -585,4 +621,5 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         "summary": summary,
         "attention": reason,
         "resume_at": resume and resume["at"],
+        "agents": row.get("agents"),
     }

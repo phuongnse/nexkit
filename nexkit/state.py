@@ -182,10 +182,37 @@ def render_run(run, text=""):
         ]
     else:
         lines = [f"### NexKit `/nexkit {run['command']}`", "", run_link(run)]
+    agents = agents_text(run.get("agents") or [])
+    if agents:
+        lines += ["", agents]
     text = (text or "").strip()
     if text:
         lines += ["", text]
     return "\n".join(lines) + "\n\n" + _encode(RUN_PREFIX, run)
+
+
+def _names(names):
+    names = [f"`{name}`" for name in names]
+    return ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 else names[0]
+
+
+def agents_text(entries):
+    """Which agent ran each stage, from `report.agents_ran`: `**Agents:** plan `claude` ·
+    implement `claude-api` after `claude` hit its usage limit`."""
+    parts = []
+    for entry in entries:
+        names, stage = entry.get("agents") or [], entry.get("stage")
+        if not names:
+            continue
+        limit = "its usage limit" if len(names) == 1 else "their usage limits"
+        if entry.get("paused"):
+            parts.append(f"{stage}: {_names(names)} hit {limit}")
+        elif len(names) > 1:
+            limit = "its usage limit" if len(names) == 2 else "their usage limits"
+            parts.append(f"{stage} `{names[-1]}` after {_names(names[:-1])} hit {limit}")
+        else:
+            parts.append(f"{stage} `{names[0]}`")
+    return "**Agents:** " + " · ".join(parts) if parts else ""
 
 
 # -- pull request state -------------------------------------------------------------

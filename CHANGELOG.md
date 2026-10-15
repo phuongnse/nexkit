@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.1.0
+
+- Runs show tokens the same way for every runtime, and no cost (#65). Every runtime
+  reports `input` (cached input included), `cached` and `output` (reasoning included);
+  Claude Code now reports its tokens too, over every model the session used. Cost and
+  turns are no longer shown: Codex reports no cost, a subscription's cost is not what you
+  pay, and a Codex turn is not a Claude Code turn. `max_budget_usd` is still a limit. The
+  run summary is `Result | Duration | Tokens` (and `Verdict` for a review), and a round's
+  comment is `Commit | Checks | AI review | Tokens`.
+- A total is shown only when every run in it has a count: a round whose review reports no
+  tokens shows `N/A`, not the implement stage's tokens as the whole. A table cell with no
+  data shows `N/A` instead of `-`. The plan no longer adds triage's numbers to its own;
+  triage has its own run summary.
+- The plan comment names the agent and model of every stage, like the run comment's
+  **Agents:** line, for example "**Profile: standard**: plan `claude` (`opus`) · implement
+  `claude` (`sonnet`) · review `astra` (`gpt-6-astra`)".
+
 ## 3.0.0
 
 - **Breaking:** every agent is declared in the new `agents` key, with the names of the

@@ -28,8 +28,11 @@ PROFILE_TEXT_PATTERN = re.compile(
 )
 
 RUNNING, SUCCESS, FAILURE, PAUSED = "running", "success", "failure", "paused"
-RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️"}
-RUN_LABELS = {RUNNING: "running", PAUSED: "paused"}
+# A paused run whose command another run carries on: resumed, replaced by a later command,
+# or continued on the pull request.
+CONTINUED = "continued"
+RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️", CONTINUED: "⏭️"}
+RUN_LABELS = {RUNNING: "running", PAUSED: "paused", CONTINUED: "continued"}
 
 
 def by_bot(comment):
@@ -101,7 +104,8 @@ def _encode(prefix, data):
 
 
 def run_link(run):
-    """`⏳ [running](url)`, `✅ [run log](url)`, `❌ [run log](url)` or `⏸️ [paused](url)`."""
+    """`⏳ [running](url)`, `✅ [run log](url)`, `❌ [run log](url)`, `⏸️ [paused](url)` or
+    `⏭️ [continued](url)`."""
     icon = RUN_ICONS.get(run["status"], "❔")
     label = RUN_LABELS.get(run["status"], "run log")
     return f"{icon} [{label}]({run['url']})" if run.get("url") else f"{icon} {label}"
@@ -134,8 +138,12 @@ def run_marker(run):
 
 def with_run(body, run, line=""):
     """A run comment's `body` with its marker replaced by `run`'s and `line` added to its
-    text, for a change after the run ended."""
+    text, for a change after the run ended. The status line follows `run`'s status."""
+    match = RUN_PATTERN.search(body)
     text = RUN_PATTERN.sub("", body).rstrip()
+    if match:
+        old = json.loads(base64.b64decode(match.group(1)))
+        text = text.replace(run_link(old), run_link(run), 1)
     if line:
         text += f"\n\n{line}"
     return f"{text}\n\n{run_marker(run)}"

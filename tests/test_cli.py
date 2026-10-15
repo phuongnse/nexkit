@@ -430,7 +430,14 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("issues", event)
         self.assertEqual(out["action"], "maintain")
         self.assertEqual(json.loads(out["decision"])["task"], "parents")
+        self.assertEqual(out["maintain_timeout"], "15")
         self.assertFalse(self.gh.issue_comments[5])  # no run comment, no reaction
+
+    def test_route_gives_the_waiting_run_its_wait(self):
+        event = {"inputs": {"command": "resume", "number": "resume"}}
+        out = self.run_route("workflow_dispatch", event)
+        self.assertEqual(json.loads(out["decision"]), {"action": "maintain", "task": "resume"})
+        self.assertEqual(out["maintain_timeout"], str(330 + 15))
 
     def test_route_replies_with_configuration_errors(self):
         (self.root / "repo/.nexkit/config.json").write_text('{"model": 1}')
@@ -669,6 +676,7 @@ class WorkflowSafetyTests(unittest.TestCase):
     def test_maintain_never_checks_out_the_repository(self):
         maintain = self.jobs["maintain"]
         self.assertIn("if: needs.route.outputs.action == 'maintain'", maintain)
+        self.assertIn("fromJSON(needs.route.outputs.maintain_timeout)", maintain)
         self.assertEqual(maintain.count("actions/checkout@"), 1)
         self.assertIn("path: kit", maintain)
         self.assertNotIn("contents: write", maintain)

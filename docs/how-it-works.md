@@ -15,7 +15,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `verify` | go, fix, review | read only | no | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | yes | A fresh Claude session with read-only tools reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
-| `maintain` | closed issues, pushes to the default branch, the schedule | read; issues, comments, workflows | no | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | closed issues, pushes to the default branch, the schedule, the `resume` dispatch | read; issues, comments, workflows | no | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -384,24 +384,35 @@ still fails ends as an error, like any other.
 - Its comment shows ⏸️, the CLI's message with the reset time, and when NexKit runs the
   command again. `nexkit/checks` and `nexkit/review` stay `pending`. Nothing is published
   from the stage that stopped.
-- After the reset, the hourly `schedule` run starts the same command again, once, with the
-  same note. A review that stopped after its round published a commit resumes as
-  `/nexkit review`, because the commit is already there. A resumed round shows
-  `(resumed)` and does not count toward `fix.max_auto_rounds`. If it hits the limit again, it
-  pauses again. NexKit recognises the limit only from the CLI's own message, never from
+- After the reset, NexKit starts the same command again, once, with the same note. When
+  the reset is at most `usage_limit.wait_minutes` away, the run that paused starts a run
+  that waits for it: a dispatch of the workflow with the command `resume`, in the
+  `nexkit-resume` concurrency group, so it never holds up a command on an issue or pull
+  request. It runs no agent and no repository code, looks for due commands every ten
+  minutes until nothing is left within its wait, and also resumes runs that pause
+  meanwhile. Resets further away wait for the hourly `schedule`, which starts the waiting
+  run once one comes within reach; with `wait_minutes: 0`, the schedule resumes commands
+  itself. GitHub runs scheduled workflows when it can, often hours apart, which is why
+  NexKit does not rely on it for resets that are close.
+- A review that stopped after its round published a commit resumes as `/nexkit review`,
+  because the commit is already there. A resumed round shows `(resumed)` and does not
+  count toward `fix.max_auto_rounds`. If it hits the limit again, it pauses again. NexKit recognises the limit only from the CLI's own message, never from
   what the model wrote, so an issue about rate limits cannot pause a run.
 - When NexKit cannot read the reset time from the message, it tries again after
   `usage_limit.retry_minutes` (one hour by default), and says so. If that run stops at
   the limit again, it waits for a person, so a limit that does not reset cannot start a
   run again and again.
-- A new command on the same issue or pull request replaces the paused one: its comment
-  then says so, and it is not resumed.
+- Once the command runs again, the paused run's comment shows ⏭️ `continued` instead of
+  ⏸️, and says how: resumed in a new run (linked), or replaced by a later command. A new
+  command on the same issue or pull request replaces the paused one, which is then not
+  resumed. When `/nexkit go` paused at its pull request's review, the issue's comment
+  shows ⏭️ once a round starts on the pull request.
 - With `usage_limit.resume: false`, the comment still names the limit and the reset
   time, and asks a person to comment the command again after it.
 
 The paused run's comment holds the command, its note and the resume time in its hidden
-marker; that is all the state there is. The schedule looks at run comments edited in the
-last eight days and runs no agent when nothing is due.
+marker; that is all the state there is. The waiting run and the schedule look at run
+comments edited in the last eight days and run no agent.
 
 ## Agents
 

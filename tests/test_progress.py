@@ -5,13 +5,13 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
 from nexkit import progress
 from nexkit.github import GitHub, GitHubError
-from nexkit.maintain import maintain, resume_paused
+from nexkit.maintain import WAIT_INPUTS, check_paused, maintain, resume_paused, wait_and_resume
 from nexkit.report import report
 from nexkit.state import empty_state, read_state, render_run, render_state
 from tests.support import FakeGitHub, make_config
@@ -305,8 +305,10 @@ class PausedRunTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "2"}):
             progress.start(self.gh, decision("plan"))
         first, second = self.gh.run_comments(5)
-        self.assertEqual(first["run"]["status"], "paused")
+        self.assertEqual(first["run"]["status"], "continued")
         self.assertNotIn("resume", first["run"])
+        self.assertIn("⏭️ [continued](https://x/runs/1)", first["body"])
+        self.assertNotIn("⏸️ [paused]", first["body"])
         self.assertIn("⏸️ Paused.\n\nReplaced by a later command.", first["body"])
         self.assertEqual(second["run"]["status"], "running")
 
@@ -316,8 +318,9 @@ class PausedRunTests(unittest.TestCase):
         self.gh.add_issue(7)
         self.paused(7, 2, at="2026-10-11T06:00:00Z")
         self.gh.dispatch_runs["nexkit.yml"] = "https://x/runs/3"
-        lines = resume_paused(self.gh, "nexkit.yml", "main", now)
+        lines, upcoming = resume_paused(self.gh, "nexkit.yml", "main", now)
         self.assertEqual(lines, ["Resumed /nexkit plan on #5."])
+        self.assertEqual(upcoming, datetime(2026, 10, 11, 6, 0, tzinfo=UTC))
         self.assertEqual(
             self.gh.dispatches,
             [
@@ -330,15 +333,17 @@ class PausedRunTests(unittest.TestCase):
         )
         [run] = self.gh.run_comments(5)
         self.assertNotIn("resume", run["run"])
+        self.assertEqual(run["run"]["status"], "continued")
         self.assertIn("Resumed `/nexkit plan` in [a new run](https://x/runs/3)", due["body"])
-        self.assertEqual(resume_paused(self.gh, "nexkit.yml", "main", now), [])  # once
+        self.assertNotIn("⏸️ [paused]", due["body"])
+        self.assertEqual(resume_paused(self.gh, "nexkit.yml", "main", now)[0], [])  # once
         self.assertEqual(len(self.gh.dispatches), 1)
 
     def test_a_failed_resume_is_tried_again(self):
         now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
         self.paused(5, 1)
         self.gh.dispatch_errors["nexkit.yml"] = GitHubError(500, "Server error")
-        [line] = resume_paused(self.gh, "nexkit.yml", "main", now)
+        [line], _ = resume_paused(self.gh, "nexkit.yml", "main", now)
         self.assertIn("Could not resume /nexkit plan on #5", line)
         self.assertIn("resume", self.gh.run_comments(5)[0]["run"])
 
@@ -347,8 +352,67 @@ class PausedRunTests(unittest.TestCase):
         task = {"action": "maintain", "task": "schedule"}
         maintain(self.gh, task, make_config(usage_limit={"resume": False}), workflow="n.yml")
         self.assertFalse(self.gh.dispatches)
-        maintain(self.gh, task, make_config(), workflow="n.yml", ref="main")
+        # Without a wait, the schedule resumes due commands itself.
+        cfg = make_config(usage_limit={"wait_minutes": 0})
+        maintain(self.gh, task, cfg, workflow="n.yml", ref="main")
+        self.assertEqual(self.gh.dispatches[-1]["inputs"]["command"], "plan")
+
+    def test_the_schedule_hands_due_commands_to_the_waiting_run(self):
+        now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
+        self.paused(5, 1)  # due at 04:40, within the wait
+        lines = check_paused(self.gh, "nexkit.yml", "main", 330, now)
+        self.assertEqual(lines, ["Started a run that resumes paused commands as they come due."])
+        self.assertEqual(self.gh.dispatches[-1]["inputs"], WAIT_INPUTS)
+        self.assertEqual(self.gh.run_comments(5)[0]["run"]["status"], "paused")
+        # A resume beyond the wait is left to a later check.
+        self.assertEqual(check_paused(self.gh, "nexkit.yml", "main", 60, now), [])
         self.assertEqual(len(self.gh.dispatches), 1)
+
+    def test_the_waiting_run_resumes_commands_as_they_come_due(self):
+        clock = [datetime(2026, 10, 11, 4, 15, tzinfo=UTC)]
+        slept = []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            clock[0] += timedelta(seconds=seconds)
+            if len(slept) == 1:
+                # A run that pauses while this one waits is resumed too.
+                self.gh.add_issue(7)
+                self.paused(7, 2, at="2026-10-11T04:50:00Z")
+
+        lines = wait_and_resume(
+            self.gh, "nexkit.yml", "main", 330, now=lambda tz: clock[0], sleep=sleep
+        )
+        self.assertEqual(lines, [])  # nothing was due at first
+        self.paused(5, 1)  # due at 04:40
+        lines = wait_and_resume(
+            self.gh, "nexkit.yml", "main", 330, now=lambda tz: clock[0], sleep=sleep
+        )
+        self.assertEqual(lines, ["Resumed /nexkit plan on #5.", "Resumed /nexkit plan on #7."])
+        self.assertEqual(slept, [600, 600, 300, 600])  # looks again at least every ten minutes
+        self.assertEqual(clock[0], datetime(2026, 10, 11, 4, 50, tzinfo=UTC))
+
+    def test_the_waiting_run_leaves_later_resumes_to_the_schedule(self):
+        now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
+        self.paused(5, 1)  # due at 04:40
+        sleep = mock.Mock()
+        lines = wait_and_resume(self.gh, "nexkit.yml", "main", 60, now=lambda tz: now, sleep=sleep)
+        self.assertEqual(lines, [])
+        sleep.assert_not_called()
+        self.assertFalse(self.gh.dispatches)
+
+    def test_a_pull_request_command_continues_the_issues_paused_go(self):
+        self.gh.add_pull(6, 5)
+        go = {"url": "https://x/runs/1", "command": "go", "status": "paused"}
+        self.gh.comment(5, render_run(go, "Pull request #6: ⏸️ Paused."))
+        self.paused(5, 2)  # a paused plan on the issue keeps its own record
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "3"}):
+            progress.start(self.gh, decision("review", comment_id=None))
+        first, second = self.gh.run_comments(5)
+        self.assertEqual(first["run"]["status"], "continued")
+        self.assertIn("Continued in pull request #6.", first["body"])
+        self.assertEqual(second["run"]["status"], "paused")
+        self.assertIn("resume", second["run"])
 
 
 class ReactionTests(unittest.TestCase):

@@ -126,7 +126,10 @@ def cmd_route(args):
         decision = {"action": "none", "reason": f"Nothing to do: {keys} off"}
     print(json.dumps(decision, indent=2))
     if decision["action"] == "maintain":
-        _output(action="maintain", decision=decision, config=cfg)
+        # A run that waits for paused commands needs the wait and time to start them.
+        waits = decision["task"] == "resume"
+        minutes = cfg["usage_limit"]["wait_minutes"] + 15 if waits else 15
+        _output(action="maintain", decision=decision, config=cfg, maintain_timeout=str(minutes))
         return 0
     if decision["action"] == "none":
         if decision.get("reply_to"):

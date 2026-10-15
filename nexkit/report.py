@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import progress
@@ -13,10 +14,11 @@ from .maintain import (
     is_conflicting,
     resolve_conflicts,
     start_conflict_round,
+    start_waiting,
 )
 from .route import auto_input
 from .state import FAILURE, PAUSED, SUCCESS, clip, empty_state, read_state
-from .usage import shown
+from .usage import parse_iso, shown
 
 ICONS = {True: "✅", False: "❌"}
 # 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
@@ -304,14 +306,21 @@ def _paused_agent(gh, decision, cfg, agent):
         resumed=bool(decision.get("resumed")),
     )
     reason = needs_person("paused", cfg, resume=resume)
+    at = resume and resume["at"]
     if not decision.get("pr"):
-        return {"outcome": "paused", "summary": message, "resume": resume, "attention": reason}
+        return {
+            "outcome": "paused",
+            "summary": message,
+            "resume": resume,
+            "resume_at": at,
+            "attention": reason,
+        }
     _pause_statuses(gh, decision["head"], resume, run_url())
     comment_id, row = progress.find_round(gh.comments(decision["pr"]), decision)
     row.update(status=PAUSED, head=decision["head"], cost=_cost(agent), outcome="paused")
     row.update({key: value for key, value in (("resume", resume), ("attention", reason)) if value})
     progress.save_round(gh, decision["pr"], comment_id, row, message)
-    return {"outcome": "paused", "summary": message, "attention": reason}
+    return {"outcome": "paused", "summary": message, "resume_at": at, "attention": reason}
 
 
 def after_merge(gh, workflows, base, records=None):
@@ -392,6 +401,7 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         if result.get(key):
             fields[key] = result[key]
     progress.finish(gh, decision, run_status(result["outcome"]), result["summary"], **fields)
+    wait_for_reset(gh, cfg, result.get("resume_at"), workflow_ref, default_branch)
     notify(
         gh,
         cfg,
@@ -399,6 +409,19 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         result.get("attention"),
     )
     return result
+
+
+def wait_for_reset(gh, cfg, at, workflow_ref, default_branch):
+    """Start the run that waits for a paused command's reset when it comes within
+    `usage_limit.wait_minutes`. Later resumes are left to the scheduled check."""
+    when = parse_iso(at)
+    wait = cfg["usage_limit"]["wait_minutes"]
+    if not when or not wait or when > datetime.now(UTC) + timedelta(minutes=wait):
+        return
+    try:
+        start_waiting(gh, workflow_file(workflow_ref), default_branch)
+    except GitHubError as exc:
+        print(f"warning: could not start waiting for the reset: {exc}", file=sys.stderr)
 
 
 def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
@@ -555,4 +578,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             {"command": "fix", "number": str(pr), "note": "", "auto": "true"},
         )
     summary = f"Pull request #{pr}: {message}" if action == "implement" else message
-    return {"outcome": outcome, "pr": pr, "head": head, "summary": summary, "attention": reason}
+    return {
+        "outcome": outcome,
+        "pr": pr,
+        "head": head,
+        "summary": summary,
+        "attention": reason,
+        "resume_at": resume and resume["at"],
+    }

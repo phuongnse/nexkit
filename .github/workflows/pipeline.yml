@@ -11,8 +11,9 @@
 # report   statuses, PR review, run and state comments, next automatic round; with
 #          merge.auto, the merge and the base branch's merge.after_workflows
 # maintain work that follows other events: closing a parent issue, resuming commands
-#          paused at the usage limit, starting rounds for conflicts with the base branch;
-#          no agent and no repository checkout
+#          paused at the usage limit (waiting for their reset in a run of its own),
+#          starting rounds for conflicts with the base branch; no agent and no repository
+#          checkout
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # version of each agent runtime in nexkit/__init__.py.
@@ -61,6 +62,7 @@ jobs:
       checks_timeout: ${{ steps.route.outputs.checks_timeout }}
       agent_secrets: ${{ steps.route.outputs.agent_secrets }}
       review_secrets: ${{ steps.route.outputs.review_secrets }}
+      maintain_timeout: ${{ steps.route.outputs.maintain_timeout }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -379,7 +381,8 @@ jobs:
     needs: route
     if: needs.route.outputs.action == 'maintain'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Longer for the run that waits for paused commands to come due (usage_limit.wait_minutes).
+    timeout-minutes: ${{ fromJSON(needs.route.outputs.maintain_timeout) }}
     permissions:
       contents: read
       issues: write # close parent issues; mark paused runs as resumed

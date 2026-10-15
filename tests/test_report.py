@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit.github import GitHubError
+from nexkit.maintain import WAIT_INPUTS
 from nexkit.report import report, review_body, workflow_file
 from nexkit.state import read_state
 from tests.support import FakeGitHub, make_config
@@ -551,7 +552,9 @@ class ReportTests(ReportCase):
             run["body"],
         )
         self.assertEqual(self.gh.reactions, [])  # keeps 👀 until it finishes
-        self.assertFalse(self.gh.dispatches)
+        # The reset is within usage_limit.wait_minutes: a run waits for it.
+        [wait] = self.gh.dispatches
+        self.assertEqual(wait["inputs"], WAIT_INPUTS)
 
     def test_a_fix_round_at_the_usage_limit_keeps_the_statuses_pending(self):
         self.write("nexkit-agent", "result.json", {**LIMIT, "reset_known": False})
@@ -586,7 +589,18 @@ class ReportTests(ReportCase):
         [command] = self.gh.run_comments(5)
         self.assertEqual(command["run"]["status"], "paused")
         self.assertNotIn("resume", command["run"])
-        self.assertFalse(self.gh.dispatches)
+        self.assertEqual([d["inputs"] for d in self.gh.dispatches], [WAIT_INPUTS])
+
+    def test_a_reset_beyond_the_wait_is_left_to_the_schedule(self):
+        for usage_limit, at in (({"wait_minutes": 0}, None), ({}, "2099-01-01T00:00:00Z")):
+            self.gh.dispatches.clear()
+            result = {**LIMIT, "resume_at": at or LIMIT["resume_at"]}
+            self.write("nexkit-agent", "result.json", result)
+            d = decision("plan", comment_id=3)
+            cfg = make_config(usage_limit=usage_limit)
+            outcome = self.run_report(d=d, cfg=cfg, published=False)
+            self.assertEqual(outcome["outcome"], "paused")
+            self.assertFalse(self.gh.dispatches, usage_limit)
 
     def test_a_resumed_run_with_an_unknown_reset_does_not_resume_again(self):
         self.write("nexkit-agent", "result.json", {**LIMIT, "reset_known": False})

@@ -1,5 +1,47 @@
 # Changelog
 
+## 4.0.0
+
+- **Breaking:** NexKit supports and tests one runtime, Claude Code. The `codex` runtime
+  and the `azure-openai` provider are removed: Codex on Azure AI Foundry hit token rate
+  limits and authentication errors in practice, and it could not be smoke-tested. A
+  configuration that still declares a Codex agent is rejected with what to do. Agents stay
+  as they are: declare as many as you need, each with its own secrets, chosen per stage
+  and profile, with fallbacks; a runtime can be added again as a module in
+  `nexkit/runtimes/` with its own smoke test. See
+  [Codex removed in 4.0](docs/configuration.md#codex-removed-in-40).
+- A review that does not complete says why, in the round's comment, the issue's run
+  comment and the `nexkit/review` status (#74). An authentication error points to
+  [Troubleshooting](docs/troubleshooting.md) instead of suggesting `/nexkit review`, which
+  would stop the same way.
+- Claude Code keeps a result that it accepted even when the model writes more afterwards,
+  instead of ending with "finished without the required structured result" (#75).
+  Background tasks are turned off, and the implement and fix prompts say to run commands
+  in the foreground: a check left running in the background used to end the run without
+  a result. A run that still ends that way says so.
+- An implement round publishes when the base branch changed files under
+  `.github/workflows/` while the agent worked (#76). Pushing with the Actions token, the
+  pull request then starts at the base branch's tip instead of the commit the agent
+  started from; if the change does not apply there, the round says to run `/nexkit go`
+  again instead of showing git's error.
+- Every comment and summary names each stage's agent and model the same way (#78), for
+  example "**Agents:** plan `claude` (`claude-opus-5-5`) · implement `claude`
+  (`claude-sonnet-5-5`) · review `claude` (`claude-fable-5-1`)": the run comment, the
+  plan comment's profile line and the job summary, including fallbacks and pauses.
+
+### Upgrade
+
+- **Remove Codex agents** from `.nexkit/config.json`, if any: delete each agent with
+  `"runtime": "codex"` from `agents`, and give the stages and profiles that chose it a
+  Claude agent and model, or drop `agent` there to use the default. For example:
+
+  ```json
+  "review": {"agent": "claude", "model": "claude-opus-5-5"}
+  ```
+
+  NexKit 4.0.0 no longer reads the Azure secrets; delete them when nothing else uses
+  them. See [Codex removed in 4.0](docs/configuration.md#codex-removed-in-40).
+
 ## 3.2.0
 
 - `nexkit doctor` reports a problem when the `uses:` ref and `nexkit_ref` in

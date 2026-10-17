@@ -131,11 +131,13 @@ whether it failed, and for a review the findings.
 |---|---|---|---|
 | done | 3m 41s | 1.24M in (1.1M cached), 15.2k out | approve |
 
-**Agent:** `claude` (claude-code on anthropic, model `opus`)
+**Agent:** review `claude` (`claude-opus-5-5`), claude-code on anthropic
 ```
 
-The run comment on the issue or pull request names the agent of each stage that ran:
-"**Agents:** plan `claude-api` after `claude` hit its usage limit".
+The run comment on the issue or pull request names the agent and model of each stage that
+ran, in the same format as the summary and the plan comment's profile line: "**Agents:**
+triage `claude` (`claude-opus-5-5`) · plan `claude-api` (`claude-opus-5-5`) after `claude`
+(`claude-opus-5-5`) hit its usage limit".
 
 **Tokens** are the one usage number, counted the same way for every runtime: input (cached
 input included), the cached part of it, and output (reasoning included), over every model

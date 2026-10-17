@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import config as configuration
 from .gitutil import BOT_EMAIL, BOT_NAME, GitError, git, is_ancestor, merge_tree, names
+from .runlog import stage_agent
 from .state import PLAN_MARKER, profile_record, profile_text
 
 
@@ -48,11 +49,11 @@ def render_profile(result, cfg):
     triage = result.get("triage") or {}
     chosen_by = triage.get("chosen_by") or "default"
     settings = configuration.with_profile(cfg, name)
-    # Like the run comment's **Agents:** line, with each stage's model.
+    # In the format of the run comment's **Agents:** line.
     stages = []
     for stage in configuration.STAGES:
         chosen = configuration.stage(settings, stage)
-        stages.append(f"{stage} `{chosen['agent']}` (`{chosen['model']}`)")
+        stages.append(stage_agent(stage, chosen["agent"], chosen["model"]))
     stages = " · ".join(stages)
     if chosen_by == "triage":
         reason = (triage.get("reason") or "").strip()

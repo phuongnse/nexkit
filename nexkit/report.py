@@ -77,15 +77,21 @@ def _tokens(*results):
 
 def agents_ran(*results):
     """Which agents ran each stage of `results`, for the run comment: the agents that ran
-    in turn, without those skipped, and whether the stage paused at their limits."""
+    in turn, without those skipped, with the model each ran, and whether the stage paused
+    at their limits."""
     entries = []
     for result in results:
         for item in (result or {}).get("triage"), result:
             if not item or not item.get("attempts"):
                 continue
-            names = [a["agent"] for a in item["attempts"] if a.get("status") != "skipped"]
+            ran = [a for a in item["attempts"] if a.get("status") != "skipped"]
             entries.append(
-                {"stage": item["stage"], "agents": names, "paused": item["status"] == "paused"}
+                {
+                    "stage": item["stage"],
+                    "agents": [a["agent"] for a in ran],
+                    "models": [a.get("model") for a in ran],
+                    "paused": item["status"] == "paused",
+                }
             )
     return entries
 

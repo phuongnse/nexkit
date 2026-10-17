@@ -505,8 +505,9 @@ Anthropic API key behind a Claude subscription:
 
 The run summary names the agent of each stage, and when a fallback ran it lists every
 agent's run with its result, duration and tokens. The run comment on the issue or pull
-request names the agent of each stage, for example
-"**Agents:** implement `claude-api` after `claude` hit its usage limit · review `claude`".
+request names the agent and model of each stage, for example
+"**Agents:** implement `claude-api` (`claude-sonnet-5-5`) after `claude`
+(`claude-sonnet-5-5`) hit its usage limit · review `claude` (`claude-opus-5-5`)".
 
 ### OpenAI models on Azure AI Foundry
 

@@ -203,6 +203,15 @@ def _merged_base(repo, decision, result):
     return commit
 
 
+def _moved_workflows(base, files):
+    listed = ", ".join(f"`{name}`" for name in files) if files else "workflow files"
+    return (
+        f"`{base}` changed {listed} while the agent worked, and the token NexKit pushes with "
+        "may not change workflow files, so the change must start from the current "
+        f"`{base}`"
+    )
+
+
 def _implement_start(repo, decision, result):
     """The base commit the implement agent started from, checked. The pull request starts
     there, so the patch applies even when the base branch moved during the run."""
@@ -226,8 +235,14 @@ def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_wor
     branch = decision["branch"]
     refs = [decision["base"]] + ([branch] if decision["action"] == "fix" else [])
     git(repo, "fetch", "--quiet", "origin", *refs)
+    moved = []
     if decision["action"] == "implement":
-        git(repo, "checkout", "-q", "-B", branch, _implement_start(repo, decision, result))
+        start = _implement_start(repo, decision, result)
+        if not can_push_workflows:
+            # A branch that starts behind the base would carry its old workflow files, and
+            # GitHub refuses such a push from a token that may not change workflows.
+            moved = _changed(repo, start, f"origin/{decision['base']}", "--", WORKFLOWS)
+        git(repo, "checkout", "-q", "-B", branch, f"origin/{decision['base']}" if moved else start)
     else:
         git(repo, "checkout", "-q", "-B", branch, f"origin/{branch}")
         current = git(repo, "rev-parse", "HEAD").strip()
@@ -238,7 +253,16 @@ def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_wor
             )
     merged = _merged_base(repo, decision, result)
     if Path(patch_path).stat().st_size:
-        git(repo, "apply", "--index", "--whitespace=nowarn", str(patch_path))
+        try:
+            git(repo, "apply", "--index", "--whitespace=nowarn", str(patch_path))
+        except GitError:
+            if not moved:
+                raise
+            raise PublishError(
+                f"{_moved_workflows(decision['base'], moved)}, where the change does not "
+                "apply. Comment `/nexkit go` to run again on the current base branch, or name "
+                "a token that may update workflows in `publish.push_token_secret`."
+            ) from None
     files = _changed(repo, "--cached", "HEAD")
     edits = files
     if merged:
@@ -281,6 +305,13 @@ def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_wor
     except GitError as exc:
         if merged and WORKFLOW_REFUSAL.search(str(exc)):
             raise _workflow_error(decision["base"], workflows) from None
+        if decision["action"] == "implement" and WORKFLOW_REFUSAL.search(str(exc)):
+            raise PublishError(
+                f"GitHub refused the push because it would change workflow files: `"
+                f"{decision['base']}` probably changed them again while NexKit published. "
+                "Comment `/nexkit go` to run again on the current base branch, or name a token "
+                "that may update workflows in `publish.push_token_secret`."
+            ) from None
         raise
     return git(repo, "rev-parse", "HEAD").strip()
 

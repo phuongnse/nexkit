@@ -249,7 +249,10 @@ The pull request of an implement round starts at the base commit the agent start
 not at the base branch's tip when `publish` runs. So the patch always applies, even when
 someone merges into the base branch while the agent works. The pull request is then
 behind its base branch, which GitHub shows; `/nexkit fix` brings it up to date and resolves
-any conflict (see below).
+any conflict (see below). The one exception: when the base branch changed files under
+`.github/workflows/` while the agent worked and NexKit pushes with the Actions token, which
+may not change workflow files, the pull request starts at the base branch's tip instead,
+or the round says that the change does not apply there and to run `/nexkit go` again.
 
 **Conflicts with the base branch.** `/nexkit fix` also brings a pull request that no longer
 merges cleanly back in line with its base branch. There is no separate command. By
@@ -578,6 +581,7 @@ new state comment.
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |
 | The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. |
+| The base branch changed workflow files while an implement round was running, and only the default Actions token can push | Opens the pull request on the base branch's tip if the change applies there; otherwise refuses to publish and says to run `/nexkit go` again. |
 | The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
 | The PR branch moved while a fix round was running | Refuses to publish; run `/nexkit fix` again. |
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `conflicts.auto_resolve`, NexKit starts that round itself, at most `conflicts.max_rounds` times per pull request. |
@@ -587,7 +591,7 @@ new state comment.
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `fix.max_auto_rounds` remain, otherwise asks for a person. |
-| The review itself fails | Sets `nexkit/review` to error; comment `/nexkit review` to retry. |
+| The review itself fails | Sets `nexkit/review` to error and says why in the round's comment; comment `/nexkit review` to retry, after fixing the agent's secrets if it was an authentication error. |
 
 Automatic rounds only follow concrete check failures or review findings. Agent errors and
 blocked results always stop, so model usage is never spent repeating a problem the agent

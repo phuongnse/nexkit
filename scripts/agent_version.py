@@ -6,7 +6,7 @@
     agent_version.py RUNTIME set VERSION    pin VERSION
     agent_version.py RUNTIME update         pin the stable version if it is newer; print it
 
-RUNTIME is a name from nexkit/runtimes/__init__.py, such as claude-code or codex. The pins
+RUNTIME is a name from nexkit/runtimes/__init__.py, such as claude-code. The pins
 live only in nexkit/__init__.py. The pipeline and CI read them from there.
 """
 

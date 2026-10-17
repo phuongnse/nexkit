@@ -13,7 +13,7 @@ from nexkit.runtimes import (
     unpack_secrets,
 )
 from nexkit.runtimes.base import AgentConfigError, Field, reserved
-from tests.support import CLAUDE
+from tests.support import CLAUDE, OTHER, TEAM, make_config, with_other_runtime
 
 
 class RegistryTests(unittest.TestCase):
@@ -61,20 +61,102 @@ class AnthropicTests(unittest.TestCase):
         self.assertEqual(PROVIDERS["anthropic"].secrets(agent), [("TEAM_KEY",)])
 
 
+class RemovedTests(unittest.TestCase):
+    CODEX = {
+        "runtime": "codex",
+        "provider": "azure-openai",
+        "endpoint_secret": "AZURE_OPENAI_ENDPOINT",
+        "api_key_secret": "GPT_ASTRA_KEY",
+    }
+
+    def test_a_removed_runtime_says_what_to_do(self):
+        raw = {"agents": {**CLAUDE, "astra": self.CODEX}}
+        with self.assertRaisesRegex(
+            config.ConfigError,
+            "agents.astra.runtime must be one of claude-code: NexKit 4.0.0 removed the codex "
+            "runtime; run the stage on a claude-code agent",
+        ):
+            config.validate(raw)
+
+    def test_a_removed_provider_says_so(self):
+        agent = {**TEAM, "provider": "azure-openai"}
+        with self.assertRaisesRegex(
+            config.ConfigError, "agents.team.provider: NexKit 4.0.0 removed the azure-openai"
+        ):
+            config.validate({"agents": {**CLAUDE, "team": agent}})
+
+
+class MultiAgentTests(unittest.TestCase):
+    """Several agents, each with its own secret: each job gets only the secrets it needs."""
+
+    RAW = {
+        "agents": {**CLAUDE, "team": TEAM},
+        "stages": {"triage": {"agent": "team", "model": "haiku"}},
+        "default_profile": "claude",
+        "profiles": {
+            "claude": {
+                "when": "x",
+                "stages": {"implement": {"model": "opus", "effort": "max", "max_budget_usd": 5}},
+            },
+            "team": {"when": "y", "stages": {"implement": {"agent": "team", "model": "sonnet"}}},
+        },
+    }
+
+    def test_jobs_validate_the_layered_configuration_again(self):
+        cfg = config.validate(self.RAW)
+        for name in cfg["profiles"]:
+            layered = config.with_profile(cfg, name)
+            again = config.validate(json.loads(json.dumps(layered)), layered=True)
+            self.assertEqual(again, layered, name)
+
+    def test_each_job_gets_only_the_secrets_its_stages_need(self):
+        cfg = config.validate(self.RAW)
+        plan = [cfg, *(config.with_profile(cfg, name) for name in cfg["profiles"])]
+        claude, team = ["CLAUDE_CODE_OAUTH_TOKEN"], ["TEAM_KEY"]
+        self.assertEqual(config.secret_names(plan, ["plan", "triage"]), sorted([*claude, *team]))
+        self.assertEqual(config.secret_names(plan, ["plan"]), claude)
+        other = config.with_profile(cfg, "team")
+        self.assertEqual(config.secret_names([other], ["implement"]), team)
+        self.assertEqual(config.secret_names([other], ["review"]), claude)
+
+    def test_one_job_holds_at_most_the_slots(self):
+        agents = {f"a{n}": {**TEAM, "api_key_secret": f"KEY_{n}"} for n in range(8)}
+        profiles = {
+            name: {"when": "x", "stages": {"plan": {"agent": name, "model": "m"}}}
+            for name in agents
+        }
+        with self.assertRaisesRegex(config.ConfigError, "The plan stage can need 9 agent secrets"):
+            raw = {"agents": {**CLAUDE, **agents}, "profiles": profiles, "default_profile": "a0"}
+            config.validate(raw)
+
+    def test_stages_may_run_on_another_runtime(self):
+        with with_other_runtime():
+            cfg = make_config(
+                agents={"other": OTHER}, stages={"review": {"agent": "other", "model": "m"}}
+            )
+            self.assertEqual(config.runtimes(cfg), ["claude-code", "other"])
+            self.assertEqual(config.secret_names([cfg], ["review"]), ["OTHER_KEY"])
+            with self.assertRaisesRegex(config.ConfigError, "max_budget_usd: Other has no"):
+                make_config(
+                    agents={"other": OTHER},
+                    stages={"review": {"agent": "other", "model": "m", "max_budget_usd": 1}},
+                )
+
+
 class SlotTests(unittest.TestCase):
     def test_unpack_moves_slots_to_their_names(self):
-        names = ["AZURE_OPENAI_ENDPOINT", "GPT_SOL_KEY", "UNSET_ONE"]
+        names = ["TEAM_GATEWAY", "TEAM_KEY", "UNSET_ONE"]
         environ = {NAMES_VAR: json.dumps(names), "KEEP": "1"}
         environ.update({SLOT_VAR % i: "" for i in range(1, SECRET_SLOTS + 1)})
-        environ.update({SLOT_VAR % 1: "https://acme.openai.azure.com", SLOT_VAR % 2: "key"})
+        environ.update({SLOT_VAR % 1: "https://gateway.example.com", SLOT_VAR % 2: "key"})
         unpack_secrets(environ)
         self.assertEqual(
             environ,
             {
                 NAMES_VAR: json.dumps(names),
                 "KEEP": "1",
-                "AZURE_OPENAI_ENDPOINT": "https://acme.openai.azure.com",
-                "GPT_SOL_KEY": "key",
+                "TEAM_GATEWAY": "https://gateway.example.com",
+                "TEAM_KEY": "key",
             },
         )
         self.assertEqual(secret_names(environ), {*DECLARED_SECRETS, *names})
@@ -100,17 +182,17 @@ class FieldTests(unittest.TestCase):
                 self.check(secret, name)
 
     def test_url_fields(self):
-        url = Field("url", hosts=(".openai.azure.com", "example.com"))
-        for good in ("https://acme.openai.azure.com", "https://example.com/"):
+        url = Field("url", hosts=(".gateway.example.net", "example.com"))
+        for good in ("https://acme.gateway.example.net", "https://example.com/"):
             self.check(url, good)
         bad = [
-            "http://acme.openai.azure.com",
-            "https://user:pw@acme.openai.azure.com",
-            "https://acme.openai.azure.com/openai",
-            "https://acme.openai.azure.com?x=1",
-            "https://acme.openai.azure.com#x",
+            "http://acme.gateway.example.net",
+            "https://user:pw@acme.gateway.example.net",
+            "https://acme.gateway.example.net/openai",
+            "https://acme.gateway.example.net?x=1",
+            "https://acme.gateway.example.net#x",
             "https://evil.com",
-            "https://openai.azure.com.evil.com",
+            "https://gateway.example.net.evil.com",
             "https://sub.example.com",
             None,
         ]

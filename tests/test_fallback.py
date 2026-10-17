@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from nexkit import config, report, runlog, state
-from tests.support import AZURE, CALC, MUL, SUB, git, make_config, with_claude
+from tests.support import CALC, MUL, OTHER, SUB, git, make_config, with_claude, with_other_runtime
 from tests.test_agent import DONE, FIX_DONE, StageCase
 from tests.test_report import ReportCase, review_result
 
@@ -52,16 +52,17 @@ class ConfigTests(unittest.TestCase):
             (["claude"], "cannot name the agent itself"),
             (["nobody"], "'nobody' is not an agent"),
             (["spare", "spare"], "names an agent twice"),
-            (["azure"], "'azure' must use the claude-code runtime too"),
+            (["other"], "'other' must use the claude-code runtime too"),
         ]
         for fallback, message in cases:
-            with self.subTest(fallback=fallback):
-                agents = {**AGENTS, "azure": AZURE, "claude": {**claude, "fallback": fallback}}
+            with self.subTest(fallback=fallback), with_other_runtime():
+                agents = {**AGENTS, "other": OTHER, "claude": {**claude, "fallback": fallback}}
                 self.check(agents, message)
 
     def test_a_runtime_without_usage_limits_has_no_fallback(self):
-        agents = {"azure": {**AZURE, "fallback": ["other"]}, "other": AZURE}
-        self.check(agents, "Codex does not report usage limits, so a fallback would never run")
+        agents = {"one": {**OTHER, "fallback": ["two"]}, "two": OTHER}
+        with with_other_runtime():
+            self.check(agents, "Other does not report usage limits, so a fallback would never run")
 
     def test_fallback_secrets_count_for_the_jobs_that_may_run_them(self):
         cfg = fallback_config()

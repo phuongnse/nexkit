@@ -6,17 +6,16 @@ flags, event stream and structured results that unit tests replace with a fake. 
 a few cents.
 
 - claude-code: model `haiku`. Needs a Claude login or credential.
-- codex: an Azure OpenAI deployment. Needs AZURE_OPENAI_ENDPOINT (the resource URL),
-  AZURE_OPENAI_API_KEY (the deployment's key) and AZURE_OPENAI_DEPLOYMENT (the deployment name).
 
-    scripts/smoke.py [--runtime claude-code|codex] [--program PATH]
+A runtime added to nexkit/runtimes/ adds its settings to SETTINGS here.
+
+    scripts/smoke.py [--runtime claude-code] [--program PATH]
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -40,24 +39,19 @@ CHECKS = [{"name": "test", "run": "python3 -m unittest -v"}]
 CONFIG = {}  # set by main() for the runtime under test
 
 
-def agent_settings(runtime):
-    """The configuration keys that run every stage on `runtime`."""
-    if runtime == "claude-code":
-        agent = {"runtime": "claude-code", "provider": "anthropic"}
-        agent["oauth_token_secret"] = "CLAUDE_CODE_OAUTH_TOKEN"
-        return {"agents": {"claude": agent}, "model": "haiku"}
-    model = os.environ.get("AZURE_OPENAI_DEPLOYMENT")
-    if not model or not os.environ.get("AZURE_OPENAI_ENDPOINT"):
-        raise SystemExit(
-            "Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT."
-        )
-    agent = {
-        "runtime": "codex",
-        "provider": "azure-openai",
-        "endpoint_secret": "AZURE_OPENAI_ENDPOINT",
-        "api_key_secret": "AZURE_OPENAI_API_KEY",
-    }
-    return {"agents": {"smoke": agent}, "agent": "smoke", "model": model}
+# The configuration keys that run every stage on each runtime.
+SETTINGS = {
+    "claude-code": {
+        "agents": {
+            "claude": {
+                "runtime": "claude-code",
+                "provider": "anthropic",
+                "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN",
+            }
+        },
+        "model": "haiku",
+    },
+}
 
 
 CONTEXT = {
@@ -236,7 +230,7 @@ def main():
     args = parser.parse_args()
     runtime = RUNTIMES[args.runtime]
     args.program = args.program or runtime.program
-    CONFIG["settings"] = agent_settings(args.runtime)
+    CONFIG["settings"] = SETTINGS[args.runtime]
     CONFIG["cfg"] = validate({**CONFIG["settings"], "checks": CHECKS})
 
     said = subprocess.run(

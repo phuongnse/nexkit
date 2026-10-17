@@ -1,7 +1,7 @@
 # Working on NexKit
 
 NexKit turns GitHub issues into reviewed, tested pull requests with coding agents (currently
-Claude Code, and Codex on Azure AI Foundry). It has three parts: the reusable workflow
+Claude Code, the one runtime it supports and tests). It has three parts: the reusable workflow
 `.github/workflows/pipeline.yml`, the Python package `nexkit/` (standard library only,
 Python 3.12 or newer) that each job calls through `bin/nexkit`, and the Claude Code plugin
 (`.claude-plugin/`, `skills/`) for setting up repositories.
@@ -50,7 +50,7 @@ Read [How it works](docs/how-it-works.md) before changing behaviour.
 - When a config key, command or prompt contract changes, update the code, tests, docs and
   skills together.
 - Versions live in `nexkit/__init__.py`. The pipeline installs exactly `RUNNER`, Python
-  `PYTHON` and the pinned version of each runtime it uses (such as `CLAUDE_CODE`, `CODEX`); the
+  `PYTHON` and the pinned version of each runtime it uses (such as `CLAUDE_CODE`); the
   local CLI accepts Python `PYTHON` or newer. Test only those versions: no matrices. Each
   runtime's pin is read from `nexkit/__init__.py` everywhere; never repeat it.
   `update-agents.yml` proposes new stable versions, one pull request per runtime, and that
@@ -92,5 +92,4 @@ ruff check . && ruff format --check .
 actionlint .github/workflows/*.yml
 claude plugin validate --strict .
 python3 scripts/smoke.py   # real Claude Code; required when changing prompts, agent.py, schema.py, runtimes/ or a pin
-python3 scripts/smoke.py --runtime codex   # real Codex on Azure: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT
 ```

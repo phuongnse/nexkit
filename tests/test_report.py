@@ -356,8 +356,8 @@ class ReportTests(ReportCase):
 
     def test_a_review_that_stopped_says_why(self):
         error = (
-            "Codex stopped: unexpected status 401 Unauthorized: Access denied due to invalid "
-            "subscription key or wrong API endpoint."
+            "Claude stopped (error_during_execution). API Error: 401 authentication_error: "
+            "Invalid bearer token."
         )
         self.candidate(review={"status": "error", "error": error})
         outcome = self.run_report()
@@ -366,18 +366,25 @@ class ReportTests(ReportCase):
         self.assertIn("docs/troubleshooting.md", outcome["summary"])
         self.assertNotIn("to try again", outcome["summary"])
         round_comment = self.gh.run_comments(6)[-1]["body"]
-        self.assertIn("401 Unauthorized", round_comment)
+        self.assertIn("401 authentication_error", round_comment)
         [status] = self.review_status()
-        self.assertTrue(status.startswith("AI review did not complete: Codex stopped: unexpected"))
+        self.assertTrue(
+            status.startswith("AI review did not complete: Claude stopped (error_during")
+        )
         self.assertLessEqual(len(status), 140)
 
     def test_a_review_that_timed_out_can_be_tried_again(self):
-        self.candidate(review={"status": "error", "error": "Codex timed out after 25 minutes"})
+        self.candidate(
+            review={"status": "error", "error": "Claude did not finish within 25 minutes."}
+        )
         outcome = self.run_report()
-        self.assertIn("did not complete: Codex timed out after 25 minutes", outcome["summary"])
+        self.assertIn(
+            "did not complete: Claude did not finish within 25 minutes.", outcome["summary"]
+        )
         self.assertIn("Comment `/nexkit review` to try again.", outcome["summary"])
         self.assertEqual(
-            self.review_status(), ["AI review did not complete: Codex timed out after 25 minutes"]
+            self.review_status(),
+            ["AI review did not complete: Claude did not finish within 25 minutes."],
         )
 
     def test_a_review_without_a_verdict_says_so(self):
@@ -387,7 +394,12 @@ class ReportTests(ReportCase):
         self.assertIn("the review agent returned no verdict", outcome["summary"])
 
     def test_the_issue_hears_why_the_review_stopped(self):
-        self.candidate(review={"status": "error", "error": "Codex stopped: 403 Forbidden"})
+        self.candidate(
+            review={
+                "status": "error",
+                "error": "Claude stopped (error_during_execution). API Error: 403 Forbidden",
+            }
+        )
         outcome = self.run_report()
         self.assertTrue(outcome["summary"].startswith("Pull request #6: The AI review did"))
         self.assertIn("403 Forbidden", outcome["summary"])

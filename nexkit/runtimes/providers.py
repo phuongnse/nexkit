@@ -29,18 +29,3 @@ class Anthropic(Provider):
         if "oauth" in names[0].lower():
             hint += " with the token from 'claude setup-token'"
         return hint
-
-
-AZURE_HOSTS = (".openai.azure.com", ".services.ai.azure.com", ".cognitiveservices.azure.com")
-
-
-class AzureOpenAI(Provider):
-    """OpenAI models deployed in an Azure AI Foundry resource, reached through the v1 API
-    with a key. The model of a stage is the deployment name. The resource's endpoint is
-    personal, so it lives in a secret like the key, never in the configuration."""
-
-    name = "azure-openai"
-    fields = {
-        "endpoint_secret": Field("secret", holds=Field("url", hosts=AZURE_HOSTS)),
-        "api_key_secret": Field("secret"),
-    }

@@ -49,7 +49,7 @@ their defaults.
 | `version` | `1` | Configuration format. Must be `1`. |
 | `agents` | required | The agents the stages may use: a runtime, a provider, its settings and the names of the secrets it uses. See [Agents](#agents). |
 | `agent` | `"claude"` | The agent for every stage. It must name an agent in `agents`; when you set it, set `model` too. |
-| `model` | `"sonnet"` | Model for every stage, as the agent's runtime and provider name it. For `claude-code`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. For `azure-openai`: the deployment name. The default is a Claude Code alias, so set `model` when the default agent runs on another runtime. |
+| `model` | `"sonnet"` | Model for every stage, as the agent's runtime and provider name it. For `claude-code`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
 | `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
@@ -101,6 +101,15 @@ With an Anthropic API key, write `"api_key_secret": "ANTHROPIC_API_KEY"` instead
 `oauth_token_secret`. If you set a `NEXKIT_PUSH_TOKEN` secret, also add
 `"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}`: NexKit now uses a push token only
 when the configuration names it, and `nexkit doctor` warns about one that it does not.
+
+### Codex removed in 4.0
+
+NexKit 3.x could run stages on Codex with OpenAI models on Azure AI Foundry. NexKit 4.0
+supports and tests only Claude Code, so an agent with `"runtime": "codex"` or
+`"provider": "azure-openai"` is rejected with what to do. Remove such agents from `agents`,
+and give the stages and profiles that chose them a Claude agent and a Claude model, for
+example `"review": {"agent": "claude", "model": "claude-opus-5-5"}`, or drop `agent` to use
+the default. The Azure secrets are no longer read; delete them when nothing else uses them.
 
 ### Keys renamed in 2.0
 
@@ -361,9 +370,8 @@ pauses the run, shows the reset time in its comment and keeps `nexkit/checks` an
 With `resume: true` (the default), it runs the same command again after the reset, once,
 with the same note; when the reset time is unknown, after `retry_minutes` (default 60).
 With `false`, the comment still names the limit and the reset time, and a person
-comments the command again. Each runtime says whether it reports such limits; of the
-current ones only `claude-code` does (see
-[How it works](how-it-works.md#usage-limits) for why `codex` does not).
+comments the command again. Each runtime says whether it reports such limits; `claude-code`
+does (see [How it works](how-it-works.md#usage-limits)).
 
 When the reset is at most `wait_minutes` away (330, five and a half hours, by default),
 NexKit starts a run that waits for it and resumes the command within ten minutes of the
@@ -384,7 +392,8 @@ a minute and run no agent. To check less often, change the `cron` line, for exam
 An agent is a **runtime**, the CLI that runs the tool loop, paired with a **provider**,
 where the model is served and how it authenticates. Every agent is declared here, with the
 names of the secrets it uses; stages choose one by name. `nexkit init` declares `claude`:
-Claude Code with a Claude subscription token.
+Claude Code with a Claude subscription token. Declare as many agents as you need, for
+example a second Claude account for some stages:
 
 ```json
 "agents": {
@@ -393,17 +402,10 @@ Claude Code with a Claude subscription token.
     "provider": "anthropic",
     "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"
   },
-  "sol": {
-    "runtime": "codex",
-    "provider": "azure-openai",
-    "endpoint_secret": "AZURE_OPENAI_ENDPOINT",
-    "api_key_secret": "GPT_SOL_KEY"
-  },
-  "max": {
-    "runtime": "codex",
-    "provider": "azure-openai",
-    "endpoint_secret": "AZURE_OPENAI_ENDPOINT",
-    "api_key_secret": "GPT_MAX_KEY"
+  "team": {
+    "runtime": "claude-code",
+    "provider": "anthropic",
+    "api_key_secret": "TEAM_ANTHROPIC_KEY"
   }
 },
 "default_profile": "standard",
@@ -413,14 +415,14 @@ Claude Code with a Claude subscription token.
     "stages": {
       "plan":      {"model": "claude-opus-5-5"},
       "implement": {"model": "claude-sonnet-5-5"},
-      "review":    {"agent": "sol", "model": "gpt-6-1-sol"}
+      "review":    {"agent": "team", "model": "claude-opus-5-5"}
     }
   },
   "hard": {
     "when": "Touches security or access control, storage schema or execution.",
     "stages": {
       "plan":      {"model": "claude-opus-5-5"},
-      "implement": {"agent": "max", "model": "gpt-6-2-max", "effort": "high"},
+      "implement": {"model": "claude-sonnet-5-5", "effort": "high"},
       "review":    {"model": "claude-fable-5-1"}
     }
   }
@@ -437,13 +439,13 @@ Claude Code with a Claude subscription token.
 - Each runtime checks the settings of the stages it runs, in every profile. A setting it
   cannot honour, such as an effort level it does not know, is a configuration error.
 
-The runtimes and providers NexKit supports today; each is a module in
-`nexkit/runtimes/`, so more can be added:
+The runtimes and providers NexKit supports and tests today. Each is a module in
+`nexkit/runtimes/`, so more can be added; a runtime is supported only with a live smoke
+test in CI.
 
 | Runtime | Providers | `effort` | `max_budget_usd` |
 |---|---|---|---|
 | `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` | yes |
-| `codex` | `azure-openai` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` | no: rely on `timeout_minutes` |
 
 Every runtime reports the tokens of its runs in the same form, which the run summary and
 the run comments show; see [Logs, summary and artifacts](how-it-works.md#logs-summary-and-artifacts).
@@ -451,11 +453,9 @@ the run comments show; see [Logs, summary and artifacts](how-it-works.md#logs-su
 | Provider | Settings | Secret |
 |---|---|---|
 | `anthropic` | none | Exactly one of `oauth_token_secret`, the secret that holds a Claude subscription token from `claude setup-token`, and `api_key_secret`, the secret that holds an Anthropic API key. Claude Code receives it under its own variable, whatever the secret's name. |
-| `azure-openai` | none. `model` is the deployment name. | `endpoint_secret`: the secret that holds the resource URL, `https://<name>.openai.azure.com` (or `.services.ai.azure.com`, `.cognitiveservices.azure.com`), with no path. `api_key_secret`: the secret that holds the deployment's key. |
 
-Of the current runtimes, only `claude-code` reports usage limits, so only its runs pause
-at one or move to a fallback; see [Usage limits](#usage-limits). When Azure refuses a request for its rate
-limit or quota, Codex retries a few times, then the run ends as an error.
+`claude-code` reports usage limits, so its runs pause at one or move to a fallback; see
+[Usage limits](#usage-limits).
 
 ### Fallback agents
 
@@ -499,35 +499,13 @@ Anthropic API key behind a Claude subscription:
   them, they count toward the 8 per job, and `nexkit doctor` checks them. A fallback
   whose secret is not set is skipped, and the run summary says so.
 - `fallback` is a non-empty list of other agents, each named once. It is rejected for a
-  runtime that does not report usage limits (currently `codex`), since it would never run.
+  runtime that does not report usage limits, since it would never run.
 
 The run summary names the agent of each stage, and when a fallback ran it lists every
 agent's run with its result, duration and tokens. The run comment on the issue or pull
 request names the agent and model of each stage, for example
 "**Agents:** implement `claude-api` (`claude-sonnet-5-5`) after `claude`
 (`claude-sonnet-5-5`) hit its usage limit · review `claude` (`claude-opus-5-5`)".
-
-### OpenAI models on Azure AI Foundry
-
-The endpoint identifies your own resource, so like the keys it lives in a secret, never
-in `.nexkit/config.json`: a public repository shows its configuration and logs to everyone,
-and only secrets are masked in the logs. Every deployment of the resource shares the
-endpoint and has its own key, so each deployment you use is an agent with its own
-`api_key_secret`, and all of them name `AZURE_OPENAI_ENDPOINT`.
-
-1. In Azure AI Foundry, deploy the models and note, for each, the deployment name and its
-   key, and the resource's endpoint. NexKit uses the OpenAI v1 API
-   (`<endpoint>/openai/v1`), so no API version is needed.
-2. Store the endpoint and each deployment's key as repository secrets, with names of your
-   choice: `gh secret set AZURE_OPENAI_ENDPOINT`, `gh secret set GPT_SOL_KEY`, and so on.
-3. Make sure `.github/workflows/nexkit.yml` passes the pipeline `secrets: inherit`, as
-   `nexkit init` writes it (see [Secrets](#secrets)).
-4. Add an agent per deployment to `agents` and choose them in the stages or profiles that
-   should use them, with the deployment name as `model`.
-5. Run `nexkit doctor`. NexKit checks the endpoint when the agent runs, since only that
-   job can read the secret: it must be an https URL on an Azure host, with no path.
-
-Codex reads the repository's `AGENTS.md`, as Claude Code reads `CLAUDE.md`.
 
 ### Settings and secrets
 
@@ -640,7 +618,7 @@ says when an agent or the push token needs `secrets: inherit`.
 
 | Secret | Required | Used by |
 |---|---|---|
-| The names an agent's `*_secret` keys give | for each agent a stage uses; a fallback agent without its secret is skipped | Agent and review jobs, only for the stages that run on that agent. For `anthropic`: the subscription token (`claude setup-token`, Claude Pro or Max) or the API key. For `azure-openai`: the resource URL and the deployment's key. |
+| The names an agent's `*_secret` keys give | for each agent a stage uses; a fallback agent without its secret is skipped | Agent and review jobs, only for the stages that run on that agent. For `anthropic`: the subscription token (`claude setup-token`, Claude Pro or Max) or the API key. |
 | The name `publish.push_token_secret` gives, such as `NEXKIT_PUSH_TOKEN` | no | Publish job only, never a job that runs an agent, and never an agent's secret: pushes the branch and opens the pull request, so the repository's own CI workflows also run. A fine-grained token with Contents and Pull requests write access. Add Workflows write access if fix rounds should merge base branch changes to `.github/workflows/`; the default Actions token cannot push those. |
 
 ## Workflow file

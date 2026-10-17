@@ -61,8 +61,7 @@ the Actions tab.
 
 **"No secret for the `<name>` agent".** Add the secret that the agent's configuration
 names as a repository secret. For `anthropic`: for `oauth_token_secret`, the token from
-`claude setup-token`; for `api_key_secret`, an Anthropic API key. For `azure-openai`: the
-resource URL in the `endpoint_secret` and the deployment's key in the `api_key_secret`.
+`claude setup-token`; for `api_key_secret`, an Anthropic API key.
 `.github/workflows/nexkit.yml` must pass them to the pipeline: `secrets: inherit`, as
 `nexkit init` writes it (a workflow that lists secrets one by one can pass only
 `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` and `NEXKIT_PUSH_TOKEN`). `nexkit doctor`
@@ -70,23 +69,20 @@ checks this. A [fallback agent](configuration.md#fallback-agents) without its se
 not fail the stage: it is skipped, and the run summary says so.
 Secrets are not available to runs triggered from forks.
 
-**Codex stopped: "401 Unauthorized" or "404 Not Found".** A 401 means the agent's
-`api_key_secret` does not hold the key of the stage's deployment, or the Azure
-subscription behind the resource is no longer active. A 404 means the endpoint
-or the deployment is wrong: the secret the agent's `endpoint_secret` names is the resource
-URL without a path, and the stage's `model` is the deployment name, not the model's name.
+**Claude stopped with "401" or "authentication_error".** The secret the agent names does
+not hold a working credential: a subscription token from `claude setup-token` that has
+expired or was revoked, or an API key that was deleted or has no credit. Set the secret
+again and comment the command again.
+
+**"… runtime must be one of claude-code: NexKit 4.0.0 removed the codex runtime …".** The
+configuration still declares a Codex agent. Remove it and give its stages a Claude agent;
+see [Codex removed in 4.0](configuration.md#codex-removed-in-40).
 
 **"The AI review did not complete: …".** The round's comment and the `nexkit/review`
 status say why the review stopped. When it is a 401, 403 or another authentication error,
-another `/nexkit review` stops the same way: fix the review agent's secrets first (see the
+another `/nexkit review` stops the same way: fix the review agent's secret first (see the
 entries above), or point the review at another agent in `.nexkit/config.json`. A timeout
 or a review that returned no verdict can be tried again with `/nexkit review`.
-
-**"The `<endpoint secret>` secret must be an https URL with only a host …" or "… the host
-must end with …".** The secret holds something other than the resource URL, such as the full target
-URI with `/openai/...`. Set it again to `https://<name>.openai.azure.com`. The log line
-"Model metadata for `<deployment>` not found" is harmless: Codex does not know the
-deployment's name.
 
 **"NexKit configuration error: …".** NexKit replies with this on the command when
 `.nexkit/config.json` on the default branch is invalid; run `nexkit doctor` locally to see

@@ -410,9 +410,7 @@ agents that stopped. The next run starts on the stage's own agent again, so a fa
 only while the agent is at its limit.
 
 Each runtime says whether it reports usage limits, and recognises them from its CLI's own
-message. Of the current runtimes, `claude-code` does: Claude subscriptions have session and
-weekly limits. `codex` on `azure-openai` does not, because Azure limits requests per minute
-and Codex retries them itself; a run that still fails ends as an error, like any other.
+message. `claude-code` does: Claude subscriptions have session and weekly limits.
 Fallbacks use the same runtime as the agent, and a runtime that does not report limits
 cannot have them.
 
@@ -461,22 +459,17 @@ anything is published. Everything specific to one CLI lives in `nexkit/runtimes/
 
 **What a stage may affect** is the same for every runtime:
 
-| Stage | Access | Claude Code | Codex |
-|---|---|---|---|
-| triage | none: an empty working directory | no tools | read-only sandbox, no network |
-| plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` | read-only sandbox: shell commands that cannot write and have no network |
-| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed, background tasks off | no sandbox |
+| Stage | Access | Claude Code |
+|---|---|---|
+| triage | none: an empty working directory | no tools |
+| plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` |
+| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed, background tasks off |
 
-The levels define what an agent can affect, not the same set of tools: a runtime meets
-each level in its own way. A run ends when the agent ends its turn, so Claude Code runs
-with background tasks turned off: a check started in the background would end the run
-without a result. When Claude Code accepted a result but does not repeat it at the end,
-NexKit uses the result it accepted. Codex cannot turn its shell off, so in triage it gets a
-read-only sandbox in an empty directory. Codex runs with web search off, an empty
-`CODEX_HOME` holding only the provider's settings, and the repository's `.rules` files
-ignored, so a repository cannot widen what a read-only stage may run. Its sandbox needs
-unprivileged user namespaces, which Ubuntu 24.04 restricts; `nexkit install-agents` lifts
-that restriction on the disposable runner, or a read-only stage could not even read files.
+The levels define what an agent can affect, not a set of tools: a runtime added later
+meets each level in its own way and documents how here. A run ends when the agent ends its
+turn, so Claude Code runs with background tasks turned off: a check started in the
+background would end the run without a result. When Claude Code accepted a result but does
+not repeat it at the end, NexKit uses the result it accepted.
 
 **How secrets reach an agent.** The repository's workflow passes the pipeline
 `secrets: inherit`. `route` works out which agents each job may run and names their
@@ -485,10 +478,7 @@ plan, triage and the plan of every profile, since triage chooses one in the job)
 `review` job those of the review's agent and its fallback agents. The job reads each named secret into one of 8 slots, and NexKit gives it back its
 name. Names that start with `GITHUB_` or `NEXKIT_` are never read. Within the job, each CLI process gets an
 environment without any agent secret, plus the ones its provider names, and setup and
-check commands get none. Keys are never put on a command line or in a file. Codex also
-keeps its secrets out of the environment of the commands it runs; it reads the Azure
-endpoint from the `config.toml` in the run's own `CODEX_HOME`, which is removed afterwards
-and never uploaded.
+check commands get none. Keys are never put on a command line or in a file.
 
 This filtering limits what each process inherits. It is not a wall inside a job: an agent
 that can run commands can read other processes on the runner, so it may see every secret

@@ -71,9 +71,16 @@ not fail the stage: it is skipped, and the run summary says so.
 Secrets are not available to runs triggered from forks.
 
 **Codex stopped: "401 Unauthorized" or "404 Not Found".** A 401 means the agent's
-`api_key_secret` does not hold the key of the stage's deployment. A 404 means the endpoint
+`api_key_secret` does not hold the key of the stage's deployment, or the Azure
+subscription behind the resource is no longer active. A 404 means the endpoint
 or the deployment is wrong: the secret the agent's `endpoint_secret` names is the resource
 URL without a path, and the stage's `model` is the deployment name, not the model's name.
+
+**"The AI review did not complete: …".** The round's comment and the `nexkit/review`
+status say why the review stopped. When it is a 401, 403 or another authentication error,
+another `/nexkit review` stops the same way: fix the review agent's secrets first (see the
+entries above), or point the review at another agent in `.nexkit/config.json`. A timeout
+or a review that returned no verdict can be tried again with `/nexkit review`.
 
 **"The `<endpoint secret>` secret must be an https URL with only a host …" or "… the host
 must end with …".** The secret holds something other than the resource URL, such as the full target

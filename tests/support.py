@@ -258,7 +258,13 @@ class FakeGitHub:
 
     def set_status(self, sha, context, state, description, target_url=None):
         self.statuses.append(
-            {"sha": sha, "context": context, "state": state, "target_url": target_url}
+            {
+                "sha": sha,
+                "context": context,
+                "state": state,
+                "description": description,
+                "target_url": target_url,
+            }
         )
 
     def dispatch(self, workflow, ref, inputs, run_details=False):

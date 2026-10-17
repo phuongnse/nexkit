@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,7 +18,7 @@ from .maintain import (
     start_waiting,
 )
 from .route import auto_input
-from .runlog import add_tokens
+from .runlog import add_tokens, one_line
 from .state import FAILURE, PAUSED, SUCCESS, clip, empty_state, read_state
 from .usage import parse_iso, shown
 
@@ -53,6 +54,15 @@ NEEDS_PERSON = {
 # Bounds for what the state comment keeps for the next review.
 MAX_FINDINGS = 30
 MAX_FIXES = 5
+# How a failed review's reason fits in a commit status; GitHub allows 140 characters.
+STATUS_LIMIT = 140
+TROUBLESHOOTING = "https://github.com/phuongnse/nexkit/blob/main/docs/troubleshooting.md"
+# An agent's error that another try cannot fix: the credential, endpoint or deployment.
+ACCESS_ERROR = re.compile(
+    r"\b(?:401|403)\b|unauthori[sz]ed|forbidden|invalid (?:api|subscription) key"
+    r"|authentication",
+    re.IGNORECASE,
+)
 
 
 def _load(path):
@@ -149,8 +159,9 @@ def workflow_file(workflow_ref):
     return workflow_ref.split("@", 1)[0].rsplit("/", 1)[-1]
 
 
-def _set_statuses(gh, head, checks, review, url):
-    """Set both commit statuses from check results and a review output (None: not run)."""
+def _set_statuses(gh, head, checks, review, url, review_error=""):
+    """Set both commit statuses from check results and a review output (None: not run).
+    `review_error` says why a review that did not complete stopped."""
     checks_ok = checks is not None and all(c["passed"] for c in checks)
     gh.set_status(
         head,
@@ -171,8 +182,32 @@ def _set_statuses(gh, head, checks, review, url):
             url,
         )
     else:
-        gh.set_status(head, "nexkit/review", "error", "AI review did not complete", url)
+        text = "AI review did not complete"
+        if review_error:
+            text = f"{text}: {review_error}"
+        if len(text) > STATUS_LIMIT:
+            text = text[: STATUS_LIMIT - 1] + "…"
+        gh.set_status(head, "nexkit/review", "error", text, url)
     return checks_ok, verdict
+
+
+def review_failure(reviewed):
+    """(reason, message) for a round whose review gave no verdict: why it stopped, from the
+    review's result, and what a person can do about it."""
+    if not reviewed:
+        reason = "the review job left no result"
+    elif reviewed.get("error"):
+        reason = one_line(reviewed["error"])[:500]
+    else:
+        reason = "the review agent returned no verdict"
+    if reviewed and ACCESS_ERROR.search(reason):
+        advice = (
+            "Another try will stop the same way until the review agent's secrets are fixed: "
+            f"see [Troubleshooting]({TROUBLESHOOTING}). Then comment `/nexkit review`."
+        )
+    else:
+        advice = "Comment `/nexkit review` to try again."
+    return reason, f"The AI review did not complete: {reason}\n\n{advice}"
 
 
 def _restore_statuses(gh, sha, feedback, url):
@@ -509,7 +544,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         _pause_statuses(gh, head, resume, url)
         checks_ok, verdict = checks is not None and all(c["passed"] for c in checks), None
     else:
-        checks_ok, verdict = _set_statuses(gh, head, checks, review, url)
+        failed = "" if review else review_failure(reviewed)[0]
+        checks_ok, verdict = _set_statuses(gh, head, checks, review, url, failed)
     if review:
         gh.create_review(pr, head, review_body({"output": review}, checks))
 
@@ -580,7 +616,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 message += "".join(f"\n\n{part}" for part in parts if part)
     elif verdict is None:
         outcome = "review_failed"
-        message = "The AI review did not complete. Comment `/nexkit review` to try again."
+        message = review_failure(reviewed)[1]
     elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"]:
         state["auto_fixes"] += 1
         outcome = "auto_fix"

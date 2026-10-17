@@ -122,6 +122,12 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("$discussion", prompt)
         self.assertNotIn("$outside_plan", prompt)
 
+    def test_writing_stages_run_commands_in_the_foreground(self):
+        extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
+        for stage in ("implement", "fix"):
+            prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
+            self.assertIn("Run every command in the foreground", prompt, stage)
+
     def test_every_prompt_has_the_writing_guide(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("plan", "implement", "fix", "review"):

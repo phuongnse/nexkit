@@ -7,7 +7,7 @@ import json
 import re
 from pathlib import Path
 
-from .runtimes import PROVIDERS, RUNTIMES, SECRET_SLOTS
+from .runtimes import PROVIDERS, REMOVED, RUNTIMES, SECRET_SLOTS
 from .runtimes.base import SECRET_NAME, AgentConfigError
 
 CONFIG_PATH = ".nexkit/config.json"
@@ -211,9 +211,16 @@ def _agents(cfg):
             _fail(f"{where} must be an object")
         runtime = RUNTIMES.get(agent.get("runtime"))
         if not runtime:
-            _fail(f"{where}.runtime must be one of {', '.join(RUNTIMES)}")
+            removed = REMOVED.get(agent.get("runtime"))
+            _fail(
+                f"{where}.runtime must be one of {', '.join(RUNTIMES)}"
+                + (f": {removed}" if removed else "")
+            )
         provider = PROVIDERS.get(agent.get("provider"))
         if not provider or provider.name not in runtime.providers:
+            removed = REMOVED.get(agent.get("provider"))
+            if removed:
+                _fail(f"{where}.provider: {removed}")
             _fail(
                 f"{where}.provider must be one of {', '.join(runtime.providers)} for {runtime.name}"
             )

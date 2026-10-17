@@ -9,7 +9,6 @@ PYTHON = (3, 12)
 # is merged.
 RUNNER = "ubuntu-24.04"
 CLAUDE_CODE = "2.1.285"
-CODEX = "0.162.1"
 
 
 def python_supported(version_info):

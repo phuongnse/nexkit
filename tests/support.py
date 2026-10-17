@@ -11,9 +11,12 @@ import tempfile
 import textwrap
 from collections import defaultdict
 from pathlib import Path
+from unittest import mock
 
 from nexkit.agent import interpret
 from nexkit.config import validate
+from nexkit.runtimes import RUNTIMES
+from nexkit.runtimes.base import Launch, Runtime
 from nexkit.runtimes.claude_code import ClaudeReader
 from nexkit.state import BOT_LOGIN, RUN_PATTERN
 
@@ -59,11 +62,23 @@ def profile_config(**overrides):
 
 
 def interpret_claude(
-    stage, event=None, *, minutes=5, timed_out=False, stderr="", last_text="", returncode=0, **kw
+    stage,
+    event=None,
+    *,
+    minutes=5,
+    timed_out=False,
+    stderr="",
+    last_text="",
+    returncode=0,
+    stream=(),
+    **kw,
 ):
     """Interpret a Claude Code run that ended with the result `event` (None: no result) and
-    whose last message from Claude Code itself was `last_text`."""
+    whose last message from Claude Code itself was `last_text`. `stream` holds the events
+    that came before."""
     reader = ClaudeReader()
+    for raw in stream:
+        reader.events(raw)
     if last_text:
         content = [{"type": "text", "text": last_text}]
         reader.events(
@@ -258,7 +273,13 @@ class FakeGitHub:
 
     def set_status(self, sha, context, state, description, target_url=None):
         self.statuses.append(
-            {"sha": sha, "context": context, "state": state, "target_url": target_url}
+            {
+                "sha": sha,
+                "context": context,
+                "state": state,
+                "description": description,
+                "target_url": target_url,
+            }
         )
 
     def dispatch(self, workflow, ref, inputs, run_details=False):
@@ -427,63 +448,21 @@ class FakeClaude:
                 os.environ[key] = value
 
 
-FAKE_CODEX = """#!/usr/bin/env python3
-import json, os, sys
-spec = json.loads(os.environ["FAKE_CODEX"])
-home = os.environ.get("CODEX_HOME", "")
-files = {name: open(os.path.join(home, name)).read() for name in sorted(os.listdir(home))}
-with open(os.environ["FAKE_CODEX_LOG"], "w") as log:
-    json.dump({"args": sys.argv[1:], "prompt": sys.stdin.read(), "cwd": os.getcwd(),
-               "env": sorted(k for k in os.environ if "KEY" in k or "TOKEN" in k),
-               "key": os.environ.get("AZURE_OPENAI_API_KEY"), "home": files}, log)
-for path, content in spec.get("write", {}).items():
-    with open(path, "w") as f:
-        f.write(content)
-for event in spec["events"]:
-    print(json.dumps(event))
-sys.exit(spec.get("exit", 0))
-"""
+class OtherRuntime(Runtime):
+    """A second runtime for tests of what holds across runtimes. It never reports usage
+    limits and takes the anthropic provider's fields."""
+
+    name = "other"
+    label = "Other"
+    providers = {"anthropic": lambda agent, spec, secrets: Launch([], {}, {})}
 
 
-def codex_events(result, *, commands=()):
-    """A Codex JSONL stream that runs `commands` and ends with `result` as its message."""
-    events = [{"type": "thread.started", "thread_id": "t"}, {"type": "turn.started"}]
-    for index, (command, output, code) in enumerate(commands):
-        item = {"id": f"c{index}", "type": "command_execution", "command": command}
-        events.append({"type": "item.started", "item": {**item, "status": "in_progress"}})
-        done = {**item, "aggregated_output": output, "exit_code": code, "status": "completed"}
-        events.append({"type": "item.completed", "item": done})
-    text = result if isinstance(result, str) else json.dumps(result)
-    events.append(
-        {"type": "item.completed", "item": {"id": "m", "type": "agent_message", "text": text}}
-    )
-    usage = {"input_tokens": 1200, "cached_input_tokens": 100, "output_tokens": 300}
-    events.append({"type": "turn.completed", "usage": usage})
-    return events
+def with_other_runtime():
+    """Register `OtherRuntime` for the duration of a test: `with with_other_runtime(): …`."""
+    return mock.patch.dict(RUNTIMES, {OtherRuntime.name: OtherRuntime()})
 
 
-class FakeCodex(FakeClaude):
-    """Install a fake `codex` executable that records what it was started with."""
-
-    def __init__(self, directory):
-        self.dir = Path(directory)
-        self.path = self.dir / "codex"
-        self.path.write_text(FAKE_CODEX)
-        self.path.chmod(self.path.stat().st_mode | stat.S_IEXEC)
-        self.log = self.dir / "codex-call.json"
-        self._saved = {}
-
-    def configure(self, **spec):
-        self._set("FAKE_CODEX", json.dumps(spec))
-        self._set("FAKE_CODEX_LOG", str(self.log))
-        self._set("AZURE_OPENAI_ENDPOINT", "https://acme.openai.azure.com")
-        self._set("AZURE_OPENAI_API_KEY", "azure-key-0123456789")
-        self._set("CLAUDE_CODE_OAUTH_TOKEN", "claude-token-0123456789")
-
-
-AZURE = {
-    "runtime": "codex",
-    "provider": "azure-openai",
-    "endpoint_secret": "AZURE_OPENAI_ENDPOINT",
-    "api_key_secret": "AZURE_OPENAI_API_KEY",
-}
+# A Claude agent on an API key: a second agent with its own secret.
+TEAM = {"runtime": "claude-code", "provider": "anthropic", "api_key_secret": "TEAM_KEY"}
+# An agent on the test-only runtime.
+OTHER = {"runtime": "other", "provider": "anthropic", "api_key_secret": "OTHER_KEY"}

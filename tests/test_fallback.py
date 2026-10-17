@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from nexkit import config, report, runlog, state
-from tests.support import AZURE, CALC, MUL, SUB, git, make_config, with_claude
+from tests.support import CALC, MUL, OTHER, SUB, git, make_config, with_claude, with_other_runtime
 from tests.test_agent import DONE, FIX_DONE, StageCase
 from tests.test_report import ReportCase, review_result
 
@@ -52,16 +52,17 @@ class ConfigTests(unittest.TestCase):
             (["claude"], "cannot name the agent itself"),
             (["nobody"], "'nobody' is not an agent"),
             (["spare", "spare"], "names an agent twice"),
-            (["azure"], "'azure' must use the claude-code runtime too"),
+            (["other"], "'other' must use the claude-code runtime too"),
         ]
         for fallback, message in cases:
-            with self.subTest(fallback=fallback):
-                agents = {**AGENTS, "azure": AZURE, "claude": {**claude, "fallback": fallback}}
+            with self.subTest(fallback=fallback), with_other_runtime():
+                agents = {**AGENTS, "other": OTHER, "claude": {**claude, "fallback": fallback}}
                 self.check(agents, message)
 
     def test_a_runtime_without_usage_limits_has_no_fallback(self):
-        agents = {"azure": {**AZURE, "fallback": ["other"]}, "other": AZURE}
-        self.check(agents, "Codex does not report usage limits, so a fallback would never run")
+        agents = {"one": {**OTHER, "fallback": ["two"]}, "two": OTHER}
+        with with_other_runtime():
+            self.check(agents, "Other does not report usage limits, so a fallback would never run")
 
     def test_fallback_secrets_count_for_the_jobs_that_may_run_them(self):
         cfg = fallback_config()
@@ -211,7 +212,7 @@ class ShowTests(unittest.TestCase):
     def test_the_run_summary_names_the_agent_and_each_run(self):
         result = {"stage": "implement", "status": "done", "agent": "api", "attempts": self.ATTEMPTS}
         text = runlog.summary(result, [])
-        self.assertIn("**Agent:** `api` (claude-code on anthropic, model `opus`)", text)
+        self.assertIn("**Agent:** implement `api` (`opus`), claude-code on anthropic", text)
         self.assertIn("| `claude` | `opus` | usage limit | 3s | 900 in, 15 out |", text)
         skipped = "skipped: No secret for the `spare` agent."
         self.assertIn(f"| `spare` | `opus` | {skipped} | N/A | N/A |", text)
@@ -234,22 +235,52 @@ class ShowTests(unittest.TestCase):
         self.assertEqual(
             entries,
             [
-                {"stage": "triage", "agents": ["api"], "paused": False},
-                {"stage": "plan", "agents": ["claude", "api"], "paused": False},
-                {"stage": "review", "agents": ["claude"], "paused": True},
+                {"stage": "triage", "agents": ["api"], "models": ["opus"], "paused": False},
+                {
+                    "stage": "plan",
+                    "agents": ["claude", "api"],
+                    "models": ["opus", "opus"],
+                    "paused": False,
+                },
+                {"stage": "review", "agents": ["claude"], "models": ["opus"], "paused": True},
             ],
         )
         run = {"url": "u", "command": "plan", "status": "success", "agents": entries}
         body = state.render_run(run)
         self.assertIn(
-            "**Agents:** triage `api` · plan `api` after `claude` hit its usage limit · "
-            "review: `claude` hit its usage limit",
+            "**Agents:** triage `api` (`opus`) · plan `api` (`opus`) after `claude` (`opus`) "
+            "hit its usage limit · review: `claude` (`opus`) hit its usage limit",
             body,
         )
         self.assertEqual(state.agents_text([]), "")
-        both = [{"stage": "fix", "agents": ["claude", "spare"], "paused": True}]
+        both = [
+            {"stage": "fix", "agents": ["claude", "spare"], "models": ["a", "b"], "paused": True}
+        ]
         self.assertEqual(
-            state.agents_text(both), "**Agents:** fix: `claude` and `spare` hit their usage limits"
+            state.agents_text(both),
+            "**Agents:** fix: `claude` (`a`) and `spare` (`b`) hit their usage limits",
+        )
+
+    def test_runs_recorded_without_models_show_names(self):
+        old = [
+            {"stage": "triage", "agents": ["claude"], "paused": False},
+            {"stage": "plan", "agents": ["claude", "api"], "paused": False},
+        ]
+        self.assertEqual(
+            state.agents_text(old),
+            "**Agents:** triage `claude` · plan `api` after `claude` hit its usage limit",
+        )
+
+    def test_every_stage_names_its_agent_and_model(self):
+        entries = [
+            {"stage": "plan", "agents": ["claude"], "models": ["claude-opus-5-5"]},
+            {"stage": "implement", "agents": ["sol"], "models": ["gpt-6.1-sol"]},
+            {"stage": "review", "agents": ["claude"], "models": ["claude-fable-5-1"]},
+        ]
+        self.assertEqual(
+            state.agents_text(entries),
+            "**Agents:** plan `claude` (`claude-opus-5-5`) · implement `sol` (`gpt-6.1-sol`) · "
+            "review `claude` (`claude-fable-5-1`)",
         )
 
 
@@ -267,7 +298,10 @@ class ReportTests(ReportCase):
         review["attempts"] = [{**review["attempts"][0], "status": "done"}]
         self.write("nexkit-review", "result.json", review)
         self.run_report()
-        line = "**Agents:** implement `api` after `claude` hit its usage limit · review `claude`"
+        line = (
+            "**Agents:** implement `api` (`opus`) after `claude` (`opus`) hit its usage limit · "
+            "review `claude` (`opus`)"
+        )
         self.assertTrue(self.gh.comments_matching(6, line))
         self.assertTrue(self.gh.comments_matching(5, line))
 

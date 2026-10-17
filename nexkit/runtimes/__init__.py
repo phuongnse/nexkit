@@ -11,11 +11,15 @@ import os
 
 from .base import reserved
 from .claude_code import CREDENTIALS, ClaudeCode
-from .codex import Codex
-from .providers import Anthropic, AzureOpenAI
+from .providers import Anthropic
 
-RUNTIMES = {runtime.name: runtime for runtime in (ClaudeCode(), Codex())}
-PROVIDERS = {provider.name: provider for provider in (Anthropic(), AzureOpenAI())}
+RUNTIMES = {runtime.name: runtime for runtime in (ClaudeCode(),)}
+PROVIDERS = {provider.name: provider for provider in (Anthropic(),)}
+# Runtimes and providers that earlier releases supported, and what to do instead.
+REMOVED = {
+    "codex": "NexKit 4.0.0 removed the codex runtime; run the stage on a claude-code agent",
+    "azure-openai": "NexKit 4.0.0 removed the azure-openai provider, which only codex used",
+}
 # The secrets a Claude agent used before agents were declared; the pipeline still declares
 # them, so a workflow that passes secrets one by one keeps working with those names.
 DECLARED_SECRETS = CREDENTIALS

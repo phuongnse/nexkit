@@ -12,7 +12,7 @@ import base64
 import json
 import re
 
-from .runlog import NO_DATA, tokens_text
+from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
 
 BOT_LOGIN = "github-actions[bot]"
 PLAN_MARKER = "<!-- nexkit:plan -->"
@@ -197,27 +197,33 @@ def render_run(run, text=""):
     return "\n".join(lines) + "\n\n" + _encode(RUN_PREFIX, run)
 
 
-def _names(names):
-    names = [f"`{name}`" for name in names]
-    return ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 else names[0]
+def _names(agents):
+    agents = [agent_text(name, model) for name, model in agents]
+    return ", ".join(agents[:-1]) + f" and {agents[-1]}" if len(agents) > 1 else agents[0]
 
 
 def agents_text(entries):
-    """Which agent ran each stage, from `report.agents_ran`: `**Agents:** plan `claude` ·
-    implement `claude-api` after `claude` hit its usage limit`."""
+    """Which agent ran each stage, with its model, from `report.agents_ran`:
+    `**Agents:** plan `claude` (`claude-opus-5-5`) · implement `claude-api`
+    (`claude-sonnet-5-5`) after `claude` (`claude-sonnet-5-5`) hit its usage limit`.
+    Runs recorded before models were kept show the agents' names only."""
     parts = []
     for entry in entries:
         names, stage = entry.get("agents") or [], entry.get("stage")
         if not names:
             continue
-        limit = "its usage limit" if len(names) == 1 else "their usage limits"
+        models = entry.get("models") or []
+        agents = [(name, models[i] if i < len(models) else None) for i, name in enumerate(names)]
+        limit = "its usage limit" if len(agents) == 1 else "their usage limits"
         if entry.get("paused"):
-            parts.append(f"{stage}: {_names(names)} hit {limit}")
-        elif len(names) > 1:
-            limit = "its usage limit" if len(names) == 2 else "their usage limits"
-            parts.append(f"{stage} `{names[-1]}` after {_names(names[:-1])} hit {limit}")
+            parts.append(f"{stage}: {_names(agents)} hit {limit}")
+        elif len(agents) > 1:
+            limit = "its usage limit" if len(agents) == 2 else "their usage limits"
+            parts.append(
+                f"{stage_agent(stage, *agents[-1])} after {_names(agents[:-1])} hit {limit}"
+            )
         else:
-            parts.append(f"{stage} `{names[0]}`")
+            parts.append(stage_agent(stage, *agents[0]))
     return "**Agents:** " + " · ".join(parts) if parts else ""
 
 

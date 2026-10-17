@@ -135,6 +135,71 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(git(self.repos.origin, "rev-parse", "main"), later)
         self.assertIn(outcome["pr"], self.gh.pulls)
 
+    def publish_implement(self, start, name="publisher", **options):
+        return publish(
+            self.gh,
+            decision("implement"),
+            self.result(start),
+            CONTEXT,
+            self.cfg,
+            self.repos.clone(name),
+            self.out,
+            **options,
+        )
+
+    def test_implement_starts_on_the_current_base_when_it_changed_workflows(self):
+        # lyre#290: a CI change merged while the agent worked; the old ci.yml was refused.
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        later = self.repos.push_commit(
+            "dev", "main", {".github/workflows/ci.yml": "on: push\n"}, "Cache"
+        )
+        outcome = self.publish_implement(start)
+        self.assertTrue(outcome["published"])
+        head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
+        self.assertEqual(git(self.repos.origin, "rev-parse", f"{head}^"), later)
+        self.assertEqual(
+            git(self.repos.origin, "show", f"{head}:.github/workflows/ci.yml"), "on: push"
+        )
+        self.assertEqual(
+            git(self.repos.origin, "show", f"{head}:calc.py"), "def add(a, b):\n    return a + b"
+        )
+
+    def test_implement_that_does_not_apply_on_the_changed_base_says_why(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        self.repos.push_commit(
+            "dev",
+            "main",
+            {
+                ".github/workflows/ci.yml": "on: push\n",
+                "calc.py": "def add(a, b):\n    return b - a\n",
+            },
+            "Cache and swap",
+        )
+        with self.assertRaisesRegex(
+            PublishError,
+            r"`main` changed `\.github/workflows/ci\.yml` while the agent worked.*`/nexkit go`",
+        ):
+            self.publish_implement(start)
+        self.assertEqual(git(self.repos.origin, "branch", "--list", "nexkit/*"), "")
+
+    def test_implement_with_a_workflow_token_starts_where_the_agent_started(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        self.repos.push_commit("dev", "main", {".github/workflows/ci.yml": "on: push\n"}, "Cache")
+        self.publish_implement(start, push_token=True)
+        head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
+        self.assertEqual(git(self.repos.origin, "rev-parse", f"{head}^"), start)
+
+    def test_refused_implement_push_is_explained(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        hook = self.repos.origin / "hooks" / "pre-receive"
+        hook.write_text(
+            "#!/bin/sh\necho 'refusing to allow a GitHub App to create or update workflow "
+            "`.github/workflows/ci.yml` without `workflows` permission' >&2\nexit 1\n"
+        )
+        hook.chmod(0o755)
+        with self.assertRaisesRegex(PublishError, "GitHub refused the push.*`/nexkit go`"):
+            self.publish_implement(start)
+
     def test_implement_start_must_be_on_the_base_branch(self):
         self.make_patch({"calc.py": "x\n"})
         other = self.repos.push_commit("dev", "other", {"x.py": "1\n"}, "Elsewhere")

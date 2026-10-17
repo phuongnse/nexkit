@@ -131,11 +131,13 @@ whether it failed, and for a review the findings.
 |---|---|---|---|
 | done | 3m 41s | 1.24M in (1.1M cached), 15.2k out | approve |
 
-**Agent:** `claude` (claude-code on anthropic, model `opus`)
+**Agent:** review `claude` (`claude-opus-5-5`), claude-code on anthropic
 ```
 
-The run comment on the issue or pull request names the agent of each stage that ran:
-"**Agents:** plan `claude-api` after `claude` hit its usage limit".
+The run comment on the issue or pull request names the agent and model of each stage that
+ran, in the same format as the summary and the plan comment's profile line: "**Agents:**
+triage `claude` (`claude-opus-5-5`) · plan `claude-api` (`claude-opus-5-5`) after `claude`
+(`claude-opus-5-5`) hit its usage limit".
 
 **Tokens** are the one usage number, counted the same way for every runtime: input (cached
 input included), the cached part of it, and output (reasoning included), over every model
@@ -249,7 +251,10 @@ The pull request of an implement round starts at the base commit the agent start
 not at the base branch's tip when `publish` runs. So the patch always applies, even when
 someone merges into the base branch while the agent works. The pull request is then
 behind its base branch, which GitHub shows; `/nexkit fix` brings it up to date and resolves
-any conflict (see below).
+any conflict (see below). The one exception: when the base branch changed files under
+`.github/workflows/` while the agent worked and NexKit pushes with the Actions token, which
+may not change workflow files, the pull request starts at the base branch's tip instead,
+or the round says that the change does not apply there and to run `/nexkit go` again.
 
 **Conflicts with the base branch.** `/nexkit fix` also brings a pull request that no longer
 merges cleanly back in line with its base branch. There is no separate command. By
@@ -405,9 +410,7 @@ agents that stopped. The next run starts on the stage's own agent again, so a fa
 only while the agent is at its limit.
 
 Each runtime says whether it reports usage limits, and recognises them from its CLI's own
-message. Of the current runtimes, `claude-code` does: Claude subscriptions have session and
-weekly limits. `codex` on `azure-openai` does not, because Azure limits requests per minute
-and Codex retries them itself; a run that still fails ends as an error, like any other.
+message. `claude-code` does: Claude subscriptions have session and weekly limits.
 Fallbacks use the same runtime as the agent, and a runtime that does not report limits
 cannot have them.
 
@@ -456,19 +459,17 @@ anything is published. Everything specific to one CLI lives in `nexkit/runtimes/
 
 **What a stage may affect** is the same for every runtime:
 
-| Stage | Access | Claude Code | Codex |
-|---|---|---|---|
-| triage | none: an empty working directory | no tools | read-only sandbox, no network |
-| plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` | read-only sandbox: shell commands that cannot write and have no network |
-| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed | no sandbox |
+| Stage | Access | Claude Code |
+|---|---|---|
+| triage | none: an empty working directory | no tools |
+| plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` |
+| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed, background tasks off |
 
-The levels define what an agent can affect, not the same set of tools: a runtime meets
-each level in its own way. Codex cannot turn its shell off, so in triage it gets a
-read-only sandbox in an empty directory. Codex runs with web search off, an empty
-`CODEX_HOME` holding only the provider's settings, and the repository's `.rules` files
-ignored, so a repository cannot widen what a read-only stage may run. Its sandbox needs
-unprivileged user namespaces, which Ubuntu 24.04 restricts; `nexkit install-agents` lifts
-that restriction on the disposable runner, or a read-only stage could not even read files.
+The levels define what an agent can affect, not a set of tools: a runtime added later
+meets each level in its own way and documents how here. A run ends when the agent ends its
+turn, so Claude Code runs with background tasks turned off: a check started in the
+background would end the run without a result. When Claude Code accepted a result but does
+not repeat it at the end, NexKit uses the result it accepted.
 
 **How secrets reach an agent.** The repository's workflow passes the pipeline
 `secrets: inherit`. `route` works out which agents each job may run and names their
@@ -477,10 +478,7 @@ plan, triage and the plan of every profile, since triage chooses one in the job)
 `review` job those of the review's agent and its fallback agents. The job reads each named secret into one of 8 slots, and NexKit gives it back its
 name. Names that start with `GITHUB_` or `NEXKIT_` are never read. Within the job, each CLI process gets an
 environment without any agent secret, plus the ones its provider names, and setup and
-check commands get none. Keys are never put on a command line or in a file. Codex also
-keeps its secrets out of the environment of the commands it runs; it reads the Azure
-endpoint from the `config.toml` in the run's own `CODEX_HOME`, which is removed afterwards
-and never uploaded.
+check commands get none. Keys are never put on a command line or in a file.
 
 This filtering limits what each process inherits. It is not a wall inside a job: an agent
 that can run commands can read other processes on the runner, so it may see every secret
@@ -573,6 +571,7 @@ new state comment.
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |
 | The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. |
+| The base branch changed workflow files while an implement round was running, and only the default Actions token can push | Opens the pull request on the base branch's tip if the change applies there; otherwise refuses to publish and says to run `/nexkit go` again. |
 | The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
 | The PR branch moved while a fix round was running | Refuses to publish; run `/nexkit fix` again. |
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `conflicts.auto_resolve`, NexKit starts that round itself, at most `conflicts.max_rounds` times per pull request. |
@@ -582,7 +581,7 @@ new state comment.
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `fix.max_auto_rounds` remain, otherwise asks for a person. |
-| The review itself fails | Sets `nexkit/review` to error; comment `/nexkit review` to retry. |
+| The review itself fails | Sets `nexkit/review` to error and says why in the round's comment; comment `/nexkit review` to retry, after fixing the agent's secrets if it was an authentication error. |
 
 Automatic rounds only follow concrete check failures or review findings. Agent errors and
 blocked results always stop, so model usage is never spent repeating a problem the agent

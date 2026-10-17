@@ -32,7 +32,6 @@ a new NexKit release ships it.
 | Platform | GitHub and GitHub Actions | |
 | Runner | GitHub-hosted `ubuntu-24.04` | `ubuntu-24.04` |
 | Claude Code | the version pinned in [`nexkit/__init__.py`](nexkit/__init__.py), installed by the pipeline | that version, with a live smoke test |
-| Codex CLI, for agents on Azure AI Foundry | the version pinned in [`nexkit/__init__.py`](nexkit/__init__.py), installed by the pipeline when a stage uses it | that version, with a live smoke test |
 | Python for NexKit in the pipeline | 3.12, installed without changing your project's Python | 3.12 |
 | Python for the `nexkit` CLI on your machine | 3.12 or newer | 3.12 |
 
@@ -46,8 +45,9 @@ Your project's own commands (`setup`, `checks`) use whatever tools they install 
   names. `nexkit init` declares one agent, `claude`: Claude Code with a Claude Pro or Max
   subscription token from `claude setup-token` in `CLAUDE_CODE_OAUTH_TOKEN`; an Anthropic
   API key works too.
-- Optionally, other agents for some stages, such as OpenAI models deployed in Azure AI
-  Foundry and run with Codex (see [Agents](docs/configuration.md#agents)).
+- Optionally, more agents for some stages, such as a second Claude account or an API key
+  that takes over at a usage limit (see [Agents](docs/configuration.md#agents)). Claude
+  Code is the one runtime NexKit supports and tests today.
 - No server or self-hosted runner. Everything runs on GitHub-hosted runners, which are
   free for public repositories.
 
@@ -167,7 +167,6 @@ python3 -m pip install ruff==0.13.3 && ruff check . && ruff format --check .
 actionlint .github/workflows/*.yml
 claude plugin validate --strict .
 python3 scripts/smoke.py   # real Claude Code, a few cents; needs a Claude login
-python3 scripts/smoke.py --runtime codex   # real Codex on Azure: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT
 ```
 
 See [AGENTS.md](AGENTS.md) for the code layout and conventions.

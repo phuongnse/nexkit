@@ -1,5 +1,4 @@
 import importlib.util
-import json
 import shutil
 import tempfile
 import unittest
@@ -15,7 +14,7 @@ spec = importlib.util.spec_from_file_location(
 versions = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(versions)
 # What each runtime's release URL answers.
-RELEASES = {"claude-code": "{}\n", "codex": json.dumps({"name": "@openai/codex", "version": "{}"})}
+RELEASES = {"claude-code": "{}\n"}
 
 
 class AgentVersionTests(unittest.TestCase):
@@ -29,7 +28,6 @@ class AgentVersionTests(unittest.TestCase):
 
     def test_reads_each_pin(self):
         self.assertEqual(versions.current("claude-code"), nexkit.CLAUDE_CODE)
-        self.assertEqual(versions.current("codex"), nexkit.CODEX)
         self.assertEqual(set(RELEASES), set(RUNTIMES))
 
     def test_update_only_moves_forward(self):
@@ -55,9 +53,9 @@ class AgentVersionTests(unittest.TestCase):
 
     def test_rejects_non_versions(self):
         with self.assertRaises(ValueError):
-            versions.set_version("codex", "latest", self.init)
+            versions.set_version("claude-code", "latest", self.init)
         with self.assertRaises(ValueError):
-            versions.stable("codex", lambda url: '{"version": "0.163.0-alpha.1"}')
+            versions.stable("claude-code", lambda url: "2.2.0-beta.1\n")
         self.assertTrue(versions.newer("2.10.0", "2.9.9"))
 
 

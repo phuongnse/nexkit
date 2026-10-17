@@ -264,16 +264,15 @@ class InitDoctorTests(unittest.TestCase):
             scaffold.doctor(self.root),
         )
         config = self.root / ".nexkit/config.json"
-        azure = {"runtime": "codex", "provider": "azure-openai"}
-        azure.update(endpoint_secret="AZURE_OPENAI_ENDPOINT", api_key_secret="GPT_SOL_KEY")
-        raw = {**json.loads(config.read_text()), "agents": {"sol": azure}}
-        config.write_text(json.dumps({**raw, "agent": "sol", "model": "gpt-sol"}))
+        team = {"runtime": "claude-code", "provider": "anthropic", "api_key_secret": "TEAM_KEY"}
+        raw = {**json.loads(config.read_text()), "agents": {"team": team}}
+        config.write_text(json.dumps({**raw, "agent": "team", "model": "sonnet"}))
         passed = "    secrets:\n      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}\n"
         workflow.write_text(inherit.replace("    secrets: inherit\n", passed))
         self.assertIn(
             (
                 False,
-                "The `sol` agent needs GPT_SOL_KEY, but .github/workflows/nexkit.yml does not "
+                "The `team` agent needs TEAM_KEY, but .github/workflows/nexkit.yml does not "
                 "pass it to the pipeline; write 'secrets: inherit' as 'nexkit init' writes it",
             ),
             scaffold.doctor(self.root),
@@ -453,19 +452,19 @@ class PipelineCommandTests(unittest.TestCase):
         )
 
     def test_route_passes_each_job_the_secrets_of_its_agents(self):
-        from tests.test_codex import MixedRuntimeTests
+        from tests.test_runtimes import MultiAgentTests
 
         path = self.root / "repo/.nexkit/config.json"
-        path.write_text(json.dumps({**json.loads(path.read_text()), **MixedRuntimeTests.RAW}))
+        path.write_text(json.dumps({**json.loads(path.read_text()), **MultiAgentTests.RAW}))
         claude = ["CLAUDE_CODE_OAUTH_TOKEN"]
-        azure = ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]
+        team = ["TEAM_KEY"]
         event = {
             "action": "created",
             "issue": {"number": 5},
             "comment": {"id": 3, "body": "/nexkit plan", "user": {"login": "alice"}},
         }
         out = self.run_route("issue_comment", event)
-        self.assertEqual(json.loads(out["agent_secrets"]), sorted([*claude, *azure]))
+        self.assertEqual(json.loads(out["agent_secrets"]), sorted([*claude, *team]))
         # Without a plan, go runs on default_profile: implement and review on Claude.
         event["comment"]["body"] = "/nexkit go"
         out = self.run_route("issue_comment", event)

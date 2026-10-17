@@ -34,20 +34,18 @@ class RedactTests(unittest.TestCase):
     def test_github_token_and_credentials_are_always_secrets(self):
         redact = Redactor({"GITHUB_TOKEN": "ghs-not-a-real-shape", "ANTHROPIC_API_KEY": "k" * 12})
         self.assertEqual(redact("ghs-not-a-real-shape kkkkkkkkkkkk"), "*** ***")
-        # An Azure key has no known shape; it is redacted by name.
-        azure = Redactor({"AZURE_OPENAI_API_KEY": "0123456789abcdef0123456789abcdef"})
-        self.assertEqual(azure("api-key: 0123456789abcdef0123456789abcdef"), "api-key: ***")
+        # A key with no known shape is redacted by name.
+        team = Redactor({"TEAM_API_KEY": "0123456789abcdef0123456789abcdef"})
+        self.assertEqual(team("api-key: 0123456789abcdef0123456789abcdef"), "api-key: ***")
         # Agent secrets go by the names the configuration gives them.
-        endpoint = "https://acme.openai.azure.com"
-        named = Redactor(
-            {"NEXKIT_AGENT_SECRETS": '["AZURE_OPENAI_ENDPOINT"]', "AZURE_OPENAI_ENDPOINT": endpoint}
-        )
-        self.assertEqual(named(f"url: {endpoint}/openai/v1"), "url: ***/openai/v1")
+        endpoint = "https://gateway.example.com"
+        named = Redactor({"NEXKIT_AGENT_SECRETS": '["TEAM_GATEWAY"]', "TEAM_GATEWAY": endpoint})
+        self.assertEqual(named(f"url: {endpoint}/v1"), "url: ***/v1")
         # And the values an agent runs with, whatever their names.
         local = Redactor({})
-        local.add(["https://other.openai.azure.com", "deployment-key-1234", "", "short"])
+        local.add(["https://other.example.com", "deployment-key-1234", "", "short"])
         self.assertEqual(
-            local("https://other.openai.azure.com deployment-key-1234 short"), "*** *** short"
+            local("https://other.example.com deployment-key-1234 short"), "*** *** short"
         )
 
     def test_encoded_environment_values(self):

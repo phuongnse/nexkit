@@ -55,24 +55,16 @@ files or repository settings, and wait for confirmation.
    If the repository is public, say that anyone signed in to GitHub can read NexKit's
    logs and artifacts. NexKit redacts known secrets, but offer `"transcript": false` in
    the config to stop storing the agents' transcripts.
-   If the user has OpenAI models deployed in Azure AI Foundry, offer an agent that runs
-   chosen stages on them with Codex, for example the review, so a different model family
-   checks the code. Each deployment has its own key and they share the resource's endpoint,
-   so add one agent per deployment:
-   `"agents": {"sol": {"runtime": "codex", "provider": "azure-openai", "endpoint_secret": "AZURE_OPENAI_ENDPOINT", "api_key_secret": "GPT_SOL_KEY"}}`,
-   with secret names the user chooses (not starting with `GITHUB_` or `NEXKIT_`), then
-   `{"agent": "sol", "model": "<deployment name>"}` in that stage or profile. Never write
-   the endpoint, or anything else that identifies the user's resources, into the config:
-   it goes in a secret. A stage that
-   sets `agent` must set `model` too. Codex has no `max_budget_usd`. Add it to
-   `.nexkit/config.json` after step 4.
+   NexKit supports and tests one runtime, Claude Code (`claude-code`). Do not offer other
+   runtimes. An existing configuration with a `codex` agent is rejected since 4.0: remove
+   the agent and give the stages that chose it a Claude agent and model.
    If the user has a second Claude credential, such as an Anthropic API key next to the
    subscription, offer it as a fallback: declare it as another `claude-code` agent,
    `"claude-api": {"runtime": "claude-code", "provider": "anthropic", "api_key_secret": "ANTHROPIC_API_KEY"}`,
    and add `"fallback": ["claude-api"]` to the `claude` agent. A stage then moves to it only when
    `claude` stops at a usage limit, and the next run starts on `claude` again. Say that
    the fallback's runs are billed per token, so `max_budget_usd` is worth setting.
-   Fallbacks must use the same runtime; Codex agents cannot have one.
+   Fallbacks must use the same runtime.
 
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`
@@ -88,10 +80,7 @@ files or repository settings, and wait for confirmation.
    session they can type `! claude setup-token`), then
    `gh secret set CLAUDE_CODE_OAUTH_TOKEN`. With an API key instead:
    `gh secret set ANTHROPIC_API_KEY`, which a `claude-api` fallback also needs next to
-   the subscription token. For Azure agents, also
-   `gh secret set AZURE_OPENAI_ENDPOINT` with the resource URL (`https://<name>.openai.azure.com`,
-   no path) and `gh secret set <name>` with each deployment's key, under the names the
-   agents in the config give. Never ask the user to
+   the subscription token. Never ask the user to
    paste a token or key into the chat, or to put one in `.nexkit/config.json`: the config
    holds only the secret's name.
 

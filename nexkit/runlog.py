@@ -98,6 +98,16 @@ def code(text):
     return f"{ticks}{pad}{text}{pad}{ticks}"
 
 
+def agent_text(name, model=None):
+    """An agent as every comment and summary names it: `claude` (`claude-opus-5-5`)."""
+    return f"{code(name)} ({code(one_line(model))})" if model else code(name)
+
+
+def stage_agent(stage, name, model=None):
+    """A stage and the agent that ran it, or will: plan `claude` (`claude-opus-5-5`)."""
+    return f"{stage} {agent_text(name, model)}"
+
+
 def tool_detail(data):
     """The short description of a tool call shown in its title."""
     data = data if isinstance(data, dict) else {}
@@ -353,10 +363,11 @@ def _agents(result):
     ran = next((a for a in attempts if a["agent"] == result.get("agent")), None)
     if not ran:
         return []
+    stage = result.get("stage", "agent")
     lines = [
         "",
-        f"**Agent:** {code(ran['agent'])} ({ran['runtime']} on {ran['provider']}, "
-        f"model {code(one_line(ran['model']))})",
+        f"**Agent:** {stage_agent(stage, ran['agent'], ran['model'])}, "
+        f"{ran['runtime']} on {ran['provider']}",
     ]
     if len(attempts) < 2:
         return lines

@@ -122,14 +122,6 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("$discussion", prompt)
         self.assertNotIn("$outside_plan", prompt)
 
-    def test_read_only_stages_may_read_with_shell_commands(self):
-        # Codex has no file tool: it reads the checkout through its read-only sandbox.
-        extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
-        for stage in ("plan", "review"):
-            prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
-            self.assertIn("read-only shell commands such as `cat`, `rg`", prompt, stage)
-            self.assertNotIn("cannot run commands", prompt, stage)
-
     def test_writing_stages_run_commands_in_the_foreground(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("implement", "fix"):

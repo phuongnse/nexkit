@@ -54,7 +54,10 @@ class AnthropicTests(unittest.TestCase):
         cfg = config.validate({"agents": {"claude": agent}})
         spec = stage_spec("plan", cfg, "/nonexistent")
         launch = RUNTIMES["claude-code"].launch(agent, spec, {"TEAM_KEY": "sk-ant-x"})
-        self.assertEqual(launch.env, {"ANTHROPIC_API_KEY": "sk-ant-x"})
+        self.assertEqual(
+            launch.env,
+            {"ANTHROPIC_API_KEY": "sk-ant-x", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"},
+        )
         self.assertEqual(PROVIDERS["anthropic"].secrets(agent), [("TEAM_KEY",)])
 
 

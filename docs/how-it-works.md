@@ -460,12 +460,15 @@ anything is published. Everything specific to one CLI lives in `nexkit/runtimes/
 |---|---|---|---|
 | triage | none: an empty working directory | no tools | read-only sandbox, no network |
 | plan, review | read the checkout, never change it | `Read`, `Grep`, `Glob` | read-only sandbox: shell commands such as `cat` and `rg` that cannot write and have no network |
-| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed | no sandbox |
+| implement, fix | anything on the disposable runner, which holds only a read-only GitHub token | every tool, permissions bypassed, background tasks off | no sandbox |
 
 The levels define what an agent can affect, not the same set of tools: a runtime meets
 each level in its own way. The plan and review prompts therefore let the agent read with
 its file tools or with read-only shell commands: Codex has no file tool and reads the
-checkout through its shell. Codex cannot turn its shell off, so in triage it gets a
+checkout through its shell. A run ends when the agent ends its turn, so Claude Code runs
+with background tasks turned off: a check started in the background would end the run
+without a result. When Claude Code accepted a result but does not repeat it at the end,
+NexKit uses the result it accepted. Codex cannot turn its shell off, so in triage it gets a
 read-only sandbox in an empty directory. Codex runs with web search off, an empty
 `CODEX_HOME` holding only the provider's settings, and the repository's `.rules` files
 ignored, so a repository cannot widen what a read-only stage may run. Its sandbox needs

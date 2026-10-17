@@ -36,6 +36,8 @@ $body
 - Keep the change focused. Follow the repository's conventions (CLAUDE.md or AGENTS.md).
 - Before finishing, run the project checks:
 $checks
+- Run every command in the foreground and wait for it to finish. Nothing wakes you once
+  you stop, so a command left running in the background ends the run without a result.
 - Do not modify these protected paths: $protected. NexKit rejects such changes.
 - Do not commit, push or create branches. NexKit commits your working-tree changes.
 - Leave no temporary files, logs or build output in the working tree.

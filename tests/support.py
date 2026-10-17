@@ -59,11 +59,23 @@ def profile_config(**overrides):
 
 
 def interpret_claude(
-    stage, event=None, *, minutes=5, timed_out=False, stderr="", last_text="", returncode=0, **kw
+    stage,
+    event=None,
+    *,
+    minutes=5,
+    timed_out=False,
+    stderr="",
+    last_text="",
+    returncode=0,
+    stream=(),
+    **kw,
 ):
     """Interpret a Claude Code run that ended with the result `event` (None: no result) and
-    whose last message from Claude Code itself was `last_text`."""
+    whose last message from Claude Code itself was `last_text`. `stream` holds the events
+    that came before."""
     reader = ClaudeReader()
+    for raw in stream:
+        reader.events(raw)
     if last_text:
         content = [{"type": "text", "text": last_text}]
         reader.events(

@@ -142,5 +142,78 @@ class InterpretTests(unittest.TestCase):
         self.assertEqual(timeout["status"], "error")
 
 
+def tool_use(tool_id, name, data):
+    return {
+        "type": "assistant",
+        "message": {
+            "id": f"m-{tool_id}",
+            "model": "claude",
+            "content": [{"type": "tool_use", "id": tool_id, "name": name, "input": data}],
+        },
+    }
+
+
+def tool_result(tool_id, text, is_error=False):
+    block = {"type": "tool_result", "tool_use_id": tool_id, "content": text, "is_error": is_error}
+    return {"type": "user", "message": {"content": [block]}}
+
+
+def said(text):
+    content = [{"type": "text", "text": text}]
+    return {"type": "assistant", "message": {"id": text, "model": "claude", "content": content}}
+
+
+class StructuredResultTests(unittest.TestCase):
+    def test_an_accepted_result_survives_more_text(self):
+        # lyre#290: the result was accepted, the model wrote on, and `result` had none.
+        stream = [
+            tool_use("t1", "StructuredOutput", DONE),
+            tool_result("t1", "Structured output provided successfully"),
+            said("I already submitted the final report, so I won't send it again."),
+        ]
+        result = interpret_claude("implement", {"subtype": "success"}, stream=stream)
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["summary"], "Fixed add.")
+
+    def test_the_result_event_wins(self):
+        stream = [
+            tool_use("t1", "StructuredOutput", {**DONE, "summary": "Earlier."}),
+            tool_result("t1", "Structured output provided successfully"),
+        ]
+        event = {"subtype": "success", "structured_output": DONE}
+        result = interpret_claude("implement", event, stream=stream)
+        self.assertEqual(result["summary"], "Fixed add.")
+
+    def test_a_rejected_result_is_not_used(self):
+        stream = [
+            tool_use("t1", "StructuredOutput", {"status": "done"}),
+            tool_result("t1", "Output does not match the schema", is_error=True),
+        ]
+        result = interpret_claude("implement", {"subtype": "success"}, stream=stream)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("finished without the required structured result", result["error"])
+
+    def test_a_run_that_ended_on_background_commands_says_so(self):
+        # lyre#289: checks started with run_in_background, then the turn ended.
+        stream = [
+            tool_use("t1", "Bash", {"command": "scripts/test.sh", "run_in_background": True}),
+            tool_result("t1", "Command running in background with ID: b1."),
+            said("I'll wait for the completion notice."),
+        ]
+        result = interpret_claude("implement", {"subtype": "success"}, stream=stream)
+        self.assertEqual(result["status"], "error")
+        self.assertIn(
+            "Claude ended its turn after starting commands in the background", result["error"]
+        )
+
+    def test_background_commands_do_not_matter_once_a_result_is_in(self):
+        stream = [
+            tool_use("t1", "Bash", {"command": "scripts/test.sh", "run_in_background": True}),
+            tool_result("t1", "Command running in background with ID: b1."),
+        ]
+        event = {"subtype": "success", "structured_output": DONE}
+        self.assertEqual(interpret_claude("implement", event, stream=stream)["status"], "done")
+
+
 if __name__ == "__main__":
     unittest.main()

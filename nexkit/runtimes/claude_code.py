@@ -189,12 +189,23 @@ def _rejected_until(event):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+# The tool through which Claude Code takes the result that `--json-schema` asks for.
+RESULT_TOOL = "StructuredOutput"
+
+
 class ClaudeReader(Reader):
     def __init__(self):
         self.result = None
         self.last_text = ""
         self.resets_at = None
         self._messages = set()
+        # The input of each `StructuredOutput` call, by id, until its tool result arrives.
+        self._submitting = {}
+        # The last result `StructuredOutput` accepted. The `result` event usually carries it
+        # as `structured_output`, but not always when the model kept talking afterwards.
+        self.submitted = None
+        # Commands started with `run_in_background`: a headless run cannot wait for them.
+        self.background = 0
 
     def events(self, raw):
         if raw.get("type") == "result":
@@ -219,6 +230,10 @@ class ClaudeReader(Reader):
                 elif block.get("type") == "tool_use":
                     data = block.get("input") or {}
                     name = block.get("name") or "tool"
+                    if name == RESULT_TOOL:
+                        self._submitting[block.get("id")] = data
+                    if isinstance(data, dict) and data.get("run_in_background"):
+                        self.background += 1
                     command = data.get("command") if isinstance(data, dict) else None
                     found.append(
                         Event(
@@ -232,6 +247,9 @@ class ClaudeReader(Reader):
         elif raw.get("type") == "user":
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
+                    data = self._submitting.pop(block.get("tool_use_id"), None)
+                    if data is not None and not block.get("is_error"):
+                        self.submitted = data
                     found.append(
                         Event(
                             "tool_result",
@@ -253,6 +271,13 @@ class ClaudeReader(Reader):
             outcome.error = f"stopped ({event.get('subtype')}). {event.get('result') or ''}"
         else:
             outcome.output = event.get("structured_output")
+            if outcome.output is None:
+                outcome.output = self.submitted
+            if outcome.output is None and self.background:
+                outcome.error = (
+                    "ended its turn after starting commands in the background, which a "
+                    "NexKit run cannot wait for, and returned no structured result."
+                )
         # Only what Claude Code says about a failed run, never the model's own text.
         said = event.get("result") if event.get("is_error") else None
         outcome.limit = limit_reached((said, stderr, self.last_text), resets_at=self.resets_at)
@@ -300,7 +325,10 @@ class ClaudeCode(Runtime):
             # The job runs on a disposable runner without any GitHub write token.
             cmd += ["--permission-mode", "bypassPermissions"]
         connection = self.connect(agent, spec, secrets)
-        return Launch(cmd + connection.argv, connection.env, connection.files)
+        # Nothing wakes a headless session once its turn ends, so a command left running in
+        # the background would end the run without a result: run everything in the foreground.
+        env = {**connection.env, "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
+        return Launch(cmd + connection.argv, env, connection.files)
 
     def reader(self):
         return ClaudeReader()

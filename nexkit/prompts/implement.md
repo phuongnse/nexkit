@@ -35,6 +35,8 @@ $note
 - Add or update tests for the behaviour you change.
 - Before finishing, run the project checks and fix any failures you caused:
 $checks
+- Run every command in the foreground and wait for it to finish. Nothing wakes you once
+  you stop, so a command left running in the background ends the run without a result.
 - Do not modify these protected paths: $protected. NexKit rejects such changes.
 - Do not commit, push or create branches. NexKit commits your working-tree changes.
 - Leave no temporary files, logs or build output in the working tree.

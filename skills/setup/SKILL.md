@@ -72,8 +72,7 @@ files or repository settings, and wait for confirmation.
    and add `"fallback": ["claude-api"]` to the `claude` agent. A stage then moves to it only when
    `claude` stops at a usage limit, and the next run starts on `claude` again. Say that
    the fallback's runs are billed per token, so `max_budget_usd` is worth setting.
-   Fallbacks must use the same runtime; a Codex agent can fall back to another Azure
-   deployment, for example one in another region with its own rate limit.
+   Fallbacks must use the same runtime; Codex agents cannot have one.
 
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`

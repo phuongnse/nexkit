@@ -8,8 +8,6 @@ so a repository cannot widen what a read-only stage may run.
 from __future__ import annotations
 
 import json
-import re
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .. import CODEX
@@ -28,44 +26,6 @@ INSTALL_DIR = Path.home() / ".nexkit" / "codex"
 SANDBOX = {"none": "read-only", "read": "read-only", "write": "danger-full-access"}
 # Codex's provider id in the generated config.toml.
 PROVIDER_ID = "nexkit"
-# What Codex says when the provider refuses requests for a rate or quota limit, for example
-# "rate limit exceeded: Your requests to <deployment> … have exceeded token rate limit." or
-# "exceeded retry limit, last status: 429 Too Many Requests".
-RATE_LIMIT = re.compile(r"rate limit|too many requests|\b429\b", re.IGNORECASE)
-QUOTA = re.compile(r"quota exceeded|insufficient_quota|exceeded your current quota", re.IGNORECASE)
-# A credential, endpoint or deployment problem: waiting never fixes it.
-NOT_A_LIMIT = re.compile(r"\b(?:401|403|404)\b|unauthori[sz]ed|forbidden", re.IGNORECASE)
-# "Please retry after 60 seconds.", "Please try again in 1.5s."
-WAIT = re.compile(
-    r"(?:try again|retry) (?:in|after)\s*(\d+(?:\.\d+)?)\s*"
-    r"(ms|milliseconds?|s|secs?|seconds?|mins?|minutes?)\b",
-    re.IGNORECASE,
-)
-# Azure counts rate limits per minute, so one that names no wait has passed a minute later.
-RATE_WINDOW = timedelta(minutes=1)
-
-
-def limit_reached(texts, now=None):
-    """When one of `texts`, which Codex itself wrote, says the provider refused requests for
-    a rate or quota limit: the line that says so and when to try again (UTC), or None for
-    that time when a quota names none. Otherwise None."""
-    now = now or datetime.now(UTC)
-    for text in texts:
-        text = str(text or "").strip()
-        line = text.splitlines()[0][:300] if text else ""
-        rate, quota = RATE_LIMIT.search(text), QUOTA.search(text)
-        if not (rate or quota) or NOT_A_LIMIT.search(text):
-            continue
-        when = None
-        wait = WAIT.search(text)
-        if wait:
-            unit = wait.group(2).lower()
-            scale = 0.001 if unit.startswith(("ms", "milli")) else 60 if unit[0] == "m" else 1
-            when = now + timedelta(seconds=float(wait.group(1)) * scale)
-        elif rate and not quota:
-            when = now + RATE_WINDOW
-        return {"message": line, "reset": when}
-    return None
 
 
 def azure_openai(agent, spec, secrets):
@@ -185,10 +145,6 @@ class CodexReader(Reader):
         elif not self.completed:
             said = self.errors[-1] if self.errors else stderr.strip()[-1500:]
             outcome.error = f"exited with code {returncode} without a result. {said}".strip()
-        if outcome.error:
-            # Only what Codex itself said, never the model's messages.
-            said = [self.failed, *reversed(self.errors[-3:]), stderr.strip()[-1500:]]
-            outcome.limit = limit_reached(said)
         else:
             try:
                 outcome.output = json.loads(self.message or "")
@@ -206,7 +162,6 @@ class Codex(Runtime):
     program = "codex"
     efforts = ("none", "minimal", "low", "medium", "high", "xhigh")
     supports_budget = False
-    reports_limits = True
     providers = {"azure-openai": azure_openai}
 
     def release_version(self, text):

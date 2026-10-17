@@ -4,7 +4,6 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -316,103 +315,6 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(result["error"], "Codex finished without the required structured result.")
         self.assertEqual(result["tokens"], {"input": 1200, "cached": 100, "output": 300})
         self.assertIn("| 1.2k in (100 cached), 300 out |", runlog.summary(result, []))
-
-
-def failed(message, *errors):
-    return [
-        {"type": "turn.started"},
-        *({"type": "error", "message": text} for text in errors),
-        {"type": "turn.failed", "error": {"message": message}},
-    ]
-
-
-# axis#416: Sol's token rate limit in southeastasia.
-SOL_LIMIT = (
-    "rate limit exceeded: Your requests to gpt-6.1-sol for gpt-6.1-sol in southeastasia "
-    "have exceeded token rate limit."
-)
-
-
-class LimitTests(unittest.TestCase):
-    def limit(self, events, **kw):
-        before = datetime.now(UTC)
-        _, outcome = read(events, returncode=1, **kw)
-        return outcome, before
-
-    def test_a_token_rate_limit_waits_a_minute(self):
-        outcome, before = self.limit(failed(SOL_LIMIT))
-        self.assertEqual(outcome.error, f"stopped: {SOL_LIMIT}")
-        self.assertEqual(outcome.limit["message"], SOL_LIMIT)
-        wait = outcome.limit["reset"] - before
-        self.assertTrue(timedelta(seconds=55) <= wait <= timedelta(seconds=65), wait)
-
-    def test_the_wait_the_message_names(self):
-        for text, seconds in (
-            ("Rate limit reached. Please retry after 30 seconds.", 30),
-            ("rate limit exceeded: Please try again in 1.5s.", 1.5),
-            (
-                "exceeded retry limit, last status: 429 Too Many Requests, retry after 2 minutes",
-                120,
-            ),
-            ("Too many requests. Try again in 500ms.", 0.5),
-        ):
-            with self.subTest(text=text):
-                outcome, before = self.limit(failed(text))
-                wait = (outcome.limit["reset"] - before).total_seconds()
-                self.assertAlmostEqual(wait, seconds, delta=5)
-
-    def test_a_quota_has_no_known_reset(self):
-        outcome, _ = self.limit(failed("Quota exceeded. Check your plan and billing details."))
-        self.assertEqual(
-            outcome.limit["message"], "Quota exceeded. Check your plan and billing details."
-        )
-        self.assertIsNone(outcome.limit["reset"])
-
-    def test_a_limit_from_the_last_error_or_stderr(self):
-        events = [{"type": "turn.started"}, {"type": "error", "message": SOL_LIMIT}]
-        outcome, _ = self.limit(events)
-        self.assertEqual(outcome.limit["message"], SOL_LIMIT)
-        outcome, _ = self.limit([{"type": "turn.started"}], stderr="ERROR: 429 Too Many Requests")
-        self.assertEqual(outcome.limit["message"], "ERROR: 429 Too Many Requests")
-
-    def test_access_errors_and_other_failures_are_not_limits(self):
-        self.assertIsNone(read(FAILED, returncode=1)[1].limit)
-        for text in (
-            "unexpected status 403 Forbidden: rate limit policy denies this key",
-            "unexpected status 500 Internal Server Error",
-            "exceeded retry limit, last status: 503 Service Unavailable",
-        ):
-            with self.subTest(text=text):
-                self.assertIsNone(self.limit(failed(text))[0].limit)
-
-    def test_the_models_own_words_never_pause_a_run(self):
-        _, outcome = read(codex_events("I hit a rate limit (429) while testing."))
-        self.assertIsNone(outcome.limit)
-        message = {
-            "type": "item.completed",
-            "item": {"id": "m", "type": "agent_message", "text": "429 Too Many Requests"},
-        }
-        outcome, _ = self.limit([{"type": "turn.started"}, message], stderr="boom")
-        self.assertIsNone(outcome.limit)
-
-    def test_a_limited_stage_pauses(self):
-        _, outcome = read(failed(SOL_LIMIT), returncode=1)
-        run = {"seconds": 3.0, "timed_out": False}
-        result = agent.interpret("implement", run, outcome, 45, label="Codex")
-        self.assertEqual(result["status"], "paused")
-        self.assertTrue(result["reset_known"])
-        self.assertIn("exceeded token rate limit", result["limit"])
-
-    def test_a_codex_agent_may_fall_back_to_another_deployment(self):
-        cfg = make_config(
-            agents={
-                "sol": {**AZURE, "fallback": ["luna"]},
-                "luna": {**AZURE, "api_key_secret": "LUNA"},
-            },
-            agent="sol",
-            model="gpt-6-1-sol",
-        )
-        self.assertEqual(config.chain(cfg, "sol"), ["sol", "luna"])
 
 
 class StageTests(unittest.TestCase):

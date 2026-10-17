@@ -410,13 +410,11 @@ agents that stopped. The next run starts on the stage's own agent again, so a fa
 only while the agent is at its limit.
 
 Each runtime says whether it reports usage limits, and recognises them from its CLI's own
-message, never from the model's text. `claude-code` reports the session and weekly limits
-of Claude subscriptions. `codex` reports Azure OpenAI's rate and quota limits: Azure
-counts tokens and requests per minute, and Codex retries a refused request a few times
-before it stops. Its reset is the wait Azure names ("retry after 30 seconds"), a minute
-for a rate limit that names none, and unknown for a quota. A 401, 403 or 404 is never a
-limit: waiting does not fix a key, endpoint or deployment. Fallbacks use the same runtime
-as the agent, and a runtime that does not report limits cannot have them.
+message. Of the current runtimes, `claude-code` does: Claude subscriptions have session and
+weekly limits. `codex` on `azure-openai` does not, because Azure limits requests per minute
+and Codex retries them itself; a run that still fails ends as an error, like any other.
+Fallbacks use the same runtime as the agent, and a runtime that does not report limits
+cannot have them.
 
 - Its comment shows ⏸️, the CLI's message with the reset time, and when NexKit runs the
   command again. `nexkit/checks` and `nexkit/review` stay `pending`. Nothing is published

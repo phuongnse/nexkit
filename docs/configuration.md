@@ -361,9 +361,9 @@ pauses the run, shows the reset time in its comment and keeps `nexkit/checks` an
 With `resume: true` (the default), it runs the same command again after the reset, once,
 with the same note; when the reset time is unknown, after `retry_minutes` (default 60).
 With `false`, the comment still names the limit and the reset time, and a person
-comments the command again. Each runtime recognises its own CLI's limit messages: Claude
-subscription limits for `claude-code`, Azure OpenAI rate and quota limits for `codex` (see
-[How it works](how-it-works.md#usage-limits)).
+comments the command again. Each runtime says whether it reports such limits; of the
+current ones only `claude-code` does (see
+[How it works](how-it-works.md#usage-limits) for why `codex` does not).
 
 When the reset is at most `wait_minutes` away (330, five and a half hours, by default),
 NexKit starts a run that waits for it and resumes the command within ten minutes of the
@@ -453,10 +453,9 @@ the run comments show; see [Logs, summary and artifacts](how-it-works.md#logs-su
 | `anthropic` | none | Exactly one of `oauth_token_secret`, the secret that holds a Claude subscription token from `claude setup-token`, and `api_key_secret`, the secret that holds an Anthropic API key. Claude Code receives it under its own variable, whatever the secret's name. |
 | `azure-openai` | none. `model` is the deployment name. | `endpoint_secret`: the secret that holds the resource URL, `https://<name>.openai.azure.com` (or `.services.ai.azure.com`, `.cognitiveservices.azure.com`), with no path. `api_key_secret`: the secret that holds the deployment's key. |
 
-Both runtimes report usage limits, so their runs pause at one or move to a fallback; see
-[Usage limits](#usage-limits). When Azure refuses a request for its rate limit or quota,
-Codex retries a few times; if it still stops, the run waits for the time Azure names, or a
-minute for a rate limit that names none, and `retry_minutes` for a quota.
+Of the current runtimes, only `claude-code` reports usage limits, so only its runs pause
+at one or move to a fallback; see [Usage limits](#usage-limits). When Azure refuses a request for its rate
+limit or quota, Codex retries a few times, then the run ends as an error.
 
 ### Fallback agents
 
@@ -499,9 +498,8 @@ Anthropic API key behind a Claude subscription:
 - A fallback agent's secrets count like any agent's: the job that may run it receives
   them, they count toward the 8 per job, and `nexkit doctor` checks them. A fallback
   whose secret is not set is skipped, and the run summary says so.
-- `fallback` is a non-empty list of other agents, each named once, of the same runtime:
-  for `codex`, other deployments, such as one in another region. It is rejected for a
-  runtime that does not report usage limits, since it would never run.
+- `fallback` is a non-empty list of other agents, each named once. It is rejected for a
+  runtime that does not report usage limits (currently `codex`), since it would never run.
 
 The run summary names the agent of each stage, and when a fallback ran it lists every
 agent's run with its result, duration and tokens. The run comment on the issue or pull

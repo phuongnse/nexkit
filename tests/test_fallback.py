@@ -5,7 +5,6 @@ import unittest
 from unittest import mock
 
 from nexkit import config, report, runlog, state
-from nexkit.runtimes import RUNTIMES
 from tests.support import AZURE, CALC, MUL, SUB, git, make_config, with_claude
 from tests.test_agent import DONE, FIX_DONE, StageCase
 from tests.test_report import ReportCase, review_result
@@ -62,8 +61,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_a_runtime_without_usage_limits_has_no_fallback(self):
         agents = {"azure": {**AZURE, "fallback": ["other"]}, "other": AZURE}
-        with mock.patch.object(RUNTIMES["codex"], "reports_limits", False):
-            self.check(agents, "Codex does not report usage limits, so a fallback would never run")
+        self.check(agents, "Codex does not report usage limits, so a fallback would never run")
 
     def test_fallback_secrets_count_for_the_jobs_that_may_run_them(self):
         cfg = fallback_config()

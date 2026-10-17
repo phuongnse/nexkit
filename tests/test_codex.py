@@ -384,6 +384,9 @@ class LimitTests(unittest.TestCase):
         ):
             with self.subTest(text=text):
                 self.assertIsNone(self.limit(failed(text))[0].limit)
+        # A retry met the rate limit, but the turn failed for another reason.
+        retried = failed("unexpected status 500", f"Reconnecting... 1/5 ({SOL_LIMIT})")
+        self.assertIsNone(self.limit(retried)[0].limit)
 
     def test_the_models_own_words_never_pause_a_run(self):
         _, outcome = read(codex_events("I hit a rate limit (429) while testing."))

@@ -186,8 +186,9 @@ class CodexReader(Reader):
             said = self.errors[-1] if self.errors else stderr.strip()[-1500:]
             outcome.error = f"exited with code {returncode} without a result. {said}".strip()
         if outcome.error:
-            # Only what Codex itself said, never the model's messages.
-            said = [self.failed, *reversed(self.errors[-3:]), stderr.strip()[-1500:]]
+            # Only what Codex itself said last, never the model's messages: a retry that met a
+            # limit before the turn failed for another reason is not a limit.
+            said = [self.failed] if self.failed else [*self.errors[-1:], stderr.strip()[-1500:]]
             outcome.limit = limit_reached(said)
         else:
             try:

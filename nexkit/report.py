@@ -8,7 +8,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import progress
+from . import autopilot, progress
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
     close_parents_safely,
@@ -19,7 +19,16 @@ from .maintain import (
 )
 from .route import auto_input
 from .runlog import add_tokens, one_line
-from .state import FAILURE, PAUSED, SUCCESS, clip, empty_state, read_state
+from .state import (
+    FAILURE,
+    PAUSED,
+    SUCCESS,
+    clip,
+    empty_state,
+    questions,
+    read_state,
+    round_questions,
+)
 from .usage import parse_iso, shown
 
 ICONS = {True: "✅", False: "❌"}
@@ -242,6 +251,7 @@ def open_conflicts(agent, base):
             f"  - `{base}`: {_text(item, 'base_change')}",
             f"  - This pull request: {_text(item, 'pr_change')}",
             f"  - **Question:** {_text(item, 'question')}",
+            *_options(item),
         ]
     lines += [
         "",
@@ -253,6 +263,38 @@ def open_conflicts(agent, base):
     return "\n".join(lines)
 
 
+def _options(item, indent="    "):
+    recommended = _text(item, "recommended")
+    return [
+        f"{indent}- {option}" + (" (recommended)" if option == recommended else "")
+        for option in (str(o).strip() for o in item.get("options") or [])
+        if option
+    ]
+
+
+def blocked_questions(agent):
+    """The decisions a blocked round asks of a person, other than conflicts."""
+    items = questions((agent.get("output") or {}).get("questions"))
+    if agent.get("status") != "blocked" or not items:
+        return ""
+    lines = ["**Decisions needed**", ""]
+    for item in items:
+        lines += [f"- {item['question']}", *_options(item, "  ")]
+    return "\n".join(lines)
+
+
+def _autopilot_fields(agent):
+    """What autopilot reads from a run that stopped: the questions of a blocked round and
+    whether the agent ran out of time."""
+    fields = {}
+    if agent and agent.get("timed_out"):
+        fields["timed_out"] = True
+    found = round_questions(agent)
+    if found:
+        fields["questions"] = found
+    return fields
+
+
 def _stage_failure(decision, agent, publish):
     """(outcome, message) when the agent or publish stage stopped, otherwise None."""
     action = decision["action"]
@@ -260,8 +302,8 @@ def _stage_failure(decision, agent, publish):
         return "agent_failed", f"NexKit could not run the {action} agent."
     if agent["status"] != "done":
         message = f"NexKit stopped during {action}: {agent['error']}"
-        conflicts = open_conflicts(agent, decision["base"])
-        return "agent_" + agent["status"], message + (f"\n\n{conflicts}" if conflicts else "")
+        extra = [blocked_questions(agent), open_conflicts(agent, decision["base"])]
+        return "agent_" + agent["status"], "\n\n".join([message, *filter(None, extra)])
     if not publish.get("published"):
         reason = publish.get("error") or "the publish job failed"
         return "publish_failed", f"NexKit could not publish the {action} result: {reason}"
@@ -314,6 +356,7 @@ def _stop_round(gh, decision, agent, outcome, message, reason=None):
     status = run_status(outcome)
     row.update(status=status, head=decision["head"], tokens=_tokens(agent), outcome=outcome)
     _show_agents(row, agent)
+    row.update(_autopilot_fields(agent))
     if reason:
         row["attention"] = reason
     progress.save_round(gh, decision["pr"], comment_id, row, message)
@@ -467,7 +510,7 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
     """Post the outcome. Returns a short machine-readable summary for logs and tests."""
     result = _report(gh, decision, cfg, needs, Path(artifacts), workflow_ref, default_branch)
     fields = {"outcome": result["outcome"]}
-    for key in ("resume", "attention", "agents"):
+    for key in ("resume", "attention", "agents", "timed_out", "questions"):
         if result.get(key):
             fields[key] = result[key]
     progress.finish(gh, decision, run_status(result["outcome"]), result["summary"], **fields)
@@ -478,6 +521,10 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         result.get("pr") or decision.get("pr") or decision["issue"],
         result.get("attention"),
     )
+    for line in autopilot.after_run(
+        gh, cfg, decision, result["outcome"], workflow_file(workflow_ref), default_branch
+    ):
+        print(line)
     return result
 
 
@@ -512,6 +559,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         if failure:
             outcome, message = failure
             reason = needs_person(outcome, cfg)
+            if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent):
+                reason = None
+                message += "\n\nNexKit autopilot carries on from here."
             if decision.get("pr"):
                 _stop_round(gh, decision, agent, outcome, message, reason)
             return {
@@ -519,13 +569,19 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 "summary": message,
                 "attention": reason,
                 "agents": agents_ran(agent),
+                **_autopilot_fields(agent),
             }
         if action == "plan":
             plan = publish.get("comment")
+            reason = needs_person("planned", cfg, plan=agent.get("output"))
+            summary = f"[Plan]({plan}) posted." if plan else ""
+            if reason and autopilot.carries_on(gh, cfg, decision, "planned", agent):
+                reason = None
+                summary += " NexKit autopilot carries on from here."
             return {
                 "outcome": "planned",
-                "summary": f"[Plan]({plan}) posted." if plan else "",
-                "attention": needs_person("planned", cfg, plan=agent.get("output")),
+                "summary": summary.strip(),
+                "attention": reason,
                 "agents": agents_ran(agent),
             }
 

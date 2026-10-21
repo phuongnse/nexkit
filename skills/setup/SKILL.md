@@ -114,6 +114,23 @@ files or repository settings, and wait for confirmation.
    of its parts, offer `"close_parent_issues": true`: NexKit then closes a parent when its
    last sub-issue closes and at least one was completed.
 
+   If the user wants NexKit to work through the issues without posting commands, offer
+   `"autopilot": {"enabled": true}`. It plans each ready issue of the earliest open
+   milestone, starts `/nexkit go` on a plan with no questions that is not too large, and
+   moves on when an issue closes; `{"scope": "label", "label": "<label>"}` takes the
+   issues with a label instead. Say that it skips their approval of each plan, that it
+   takes only issues opened by people with write access, and that it stops on questions,
+   blocked or failed runs and mentions `notify`. `"max_parallel": <n>` limits how many
+   issues are in progress at once; without it, every ready issue starts. It pairs with
+   `merge.auto`, `conflicts.auto_resolve`, `close_parent_issues` and `notify`. With
+   `"answer": "recommended"`, it also answers the questions of plans and blocked rounds
+   with the option NexKit recommends, when every question has one; it splits plans that
+   are too large into sub-issues either way. With `merge.after_workflows`, it also runs a
+   failed CI run on the default branch once more and, if it fails again, opens a `bug`
+   issue that it plans first. After the
+   commit, start the first sweep with
+   `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
+
 8. **Commit to the default branch.** Comment events only run workflows from the default
    branch. Commit both files (directly or through a pull request, as the user prefers).
 

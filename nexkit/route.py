@@ -31,8 +31,13 @@ def issue_from_branch(branch):
 
 # The `auto` dispatch input: `true` for an automatic fix round after failures, `conflicts`
 # for an automatic round that merges the base branch, `resume` for a command that NexKit
-# runs again after the agent's usage limit reset. Several are joined with commas.
+# runs again after the agent's usage limit reset, `autopilot` for a command that autopilot
+# started. Several are joined with commas.
 RESUME = "resume"
+# Also the `command` of the dispatch that starts an autopilot sweep.
+AUTOPILOT = "autopilot"
+# Issue events after which an issue may have come into autopilot's scope.
+AUTOPILOT_EVENTS = ("opened", "reopened", "labeled", "milestoned")
 
 
 def auto_kinds(value):
@@ -43,6 +48,7 @@ def auto_kinds(value):
 def auto_input(decision, resume=False):
     """The `auto` input that starts this decision's command again."""
     kinds = ["conflicts" if decision.get("conflicts") else "true"] if decision.get("auto") else []
+    kinds += [AUTOPILOT] if decision.get(AUTOPILOT) else []
     kinds += [RESUME] if resume else []
     return ",".join(kinds) or "false"
 
@@ -98,10 +104,24 @@ def route(gh, event_name, event, inputs=None):
 
     if event_name == "issues":
         # Anyone who may close the issue starts this; it only closes parents whose
-        # sub-issues are all closed, and only with `close_parent_issues` on.
+        # sub-issues are all closed, with `close_parent_issues` on, and starts an
+        # autopilot sweep, with `autopilot.enabled` on.
+        action = event.get("action")
+        if action == "closed":
+            return {"action": "maintain", "task": "parents", "issue": event["issue"]["number"]}
+        if action in AUTOPILOT_EVENTS:
+            # Anyone who may open an issue starts this, so it only starts a sweep, which
+            # takes only issues from people with write access.
+            decision = {"action": "maintain", "task": "autopilot", "event": action}
+            if action == "labeled":
+                decision["label"] = (event.get("label") or {}).get("name")
+            return decision
+        return _none(f"Issue event '{action}' is not handled")
+
+    if event_name == "milestone":
         if event.get("action") != "closed":
-            return _none("Only closed issues are handled")
-        return {"action": "maintain", "task": "parents", "issue": event["issue"]["number"]}
+            return _none("Only closed milestones are handled")
+        return {"action": "maintain", "task": "autopilot", "event": "milestone_closed"}
 
     if event_name == "schedule":
         return {"action": "maintain", "task": "schedule"}
@@ -119,6 +139,14 @@ def route(gh, event_name, event, inputs=None):
         if command == "resume":
             # NexKit's own run that waits for commands paused at the usage limit.
             return {"action": "maintain", "task": "resume"}
+        if command == AUTOPILOT:
+            # A sweep over the issues in scope. Its note names the issue whose closing
+            # started it, if any.
+            decision = {"action": "maintain", "task": "sweep"}
+            note = str(inputs.get("note") or "").strip()
+            if note.isdigit():
+                decision["closed"] = int(note)
+            return decision
         if not number.isdigit():
             return _none("Dispatch input 'number' must be an issue or PR number")
         issue = gh.issue(int(number))
@@ -128,7 +156,9 @@ def route(gh, event_name, event, inputs=None):
         decision = _decide(gh, command, int(number), on_pull, inputs.get("note") or "", auto=auto)
         decision["actor"] = event.get("sender", {}).get("login")
         if decision["action"] != "none":
-            decision.update({kind: True for kind in ("conflicts", "resumed") if kind in kinds})
+            decision.update(
+                {kind: True for kind in ("conflicts", "resumed", AUTOPILOT) if kind in kinds}
+            )
         if decision.get("conflicts"):
             # Which base commit this round resolves, so the same conflict is tried once.
             decision["base_sha"] = gh.branch_sha(decision["base"])

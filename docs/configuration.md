@@ -31,6 +31,7 @@ A complete configuration with every key at its default, except `agents`, `setup`
   "conflicts": {"auto_resolve": false, "max_rounds": 3},
   "usage_limit": {"resume": true, "retry_minutes": 60, "wait_minutes": 330},
   "close_parent_issues": false,
+  "autopilot": {"enabled": false, "scope": "milestone", "label": null, "max_parallel": null, "answer": "never"},
   "notify": [],
   "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
   "protected_paths": [".github/", ".nexkit/"],
@@ -72,6 +73,11 @@ their defaults.
 | `usage_limit.retry_minutes` | `60` | When the reset time is unknown, try again after this many minutes (1 to 1440). |
 | `usage_limit.wait_minutes` | `330` | Start a run that waits for the reset when it is at most this many minutes away (0 to 330); 0 leaves the resume to the hourly schedule. |
 | `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See [Parent issues](#parent-issues). |
+| `autopilot.enabled` | `false` | Work through the open issues in scope without commands: plan each ready issue, start `/nexkit go` on a plan that needs nobody, and move on when an issue closes. See [Autopilot](#autopilot). |
+| `autopilot.scope` | `"milestone"` | Which issues autopilot takes: `"milestone"`, the open issues of the earliest open milestone, or `"label"`, the open issues with `autopilot.label`. |
+| `autopilot.label` | `null` | The label of the issues to take, required with the `"label"` scope. |
+| `autopilot.max_parallel` | `null` | How many issues in scope may have a NexKit run or an open NexKit pull request at once (1 to 100); `null` for no limit. |
+| `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`, each listed once. See [Mentions](#mentions). |
 
 **Limits and safety**
@@ -297,6 +303,86 @@ whether a person or NexKit merged the work. See
 The workflow must listen to `issues: closed`, as `nexkit init` writes it; `nexkit doctor`
 warns when it does not. With the setting off, a closed issue starts a short run that ends
 at once.
+
+## Autopilot
+
+```json
+"autopilot": {"enabled": true, "scope": "milestone", "max_parallel": null, "answer": "never"}
+```
+
+With autopilot on, nobody needs to post `/nexkit plan` and `/nexkit go`. NexKit looks at
+every open issue in scope, oldest first, and starts the one command that moves it on:
+
+| The issue | Autopilot |
+|---|---|
+| Ready, with no plan yet | Starts `/nexkit plan`. |
+| Its latest plan has no questions and is not too large | Starts `/nexkit go`. |
+| Collaborators commented after the latest plan | Starts `/nexkit plan` again, so the plan holds their changes before `/nexkit go`. |
+| Its plan is too large and suggests a split | Creates each part as a sub-issue, in order, with the issue's milestone and labels, closes the issue's open NexKit pull request as superseded, and plans the first part. |
+| Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
+| Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
+| Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session. |
+| A bug issue that autopilot opened for a CI failure on the default branch | Goes first: it is planned before every other issue in scope. |
+| Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout | Nothing: a person decides, as without autopilot, and `notify` mentions them. Other issues go on. |
+| A run on it is running or paused, or its pull request is open | Nothing: the run, or the pull request's automatic rounds, carry it on. |
+| The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. |
+
+- **Scope.** `"milestone"` takes the open issues of the earliest open milestone: by due
+  date, then the oldest, skipping milestones with no issues at all. When all its issues are
+  closed, autopilot stops there until a person closes the milestone, so it never starts
+  the next milestone by itself. `"label"` takes the open issues with `autopilot.label`.
+  Issues outside the scope are never touched.
+- **Ready.** An issue is ready when no issue that blocks it (GitHub's *blocked by*
+  relationships) is open and no earlier sub-issue of its parent is open. A parent issue
+  with sub-issues is never planned itself: its sub-issues are, in order.
+- **Trust.** Autopilot skips a person's approval of the plan, so the issue text drives an
+  implement session, which can read the secrets of its job. It takes only issues opened by
+  someone with write access to the repository; only they and other writers can edit them.
+  `nexkit status` shows the issues it leaves alone and why.
+- **At most `max_parallel` at once.** An issue counts while a run on it is running or
+  paused, while its pull request is open, and while a command that autopilot started has
+  not run yet. With `null`, every ready issue starts at once; NexKit's conflict rounds
+  (see [Conflicts with the base branch](#conflicts-with-the-base-branch)) keep the pull
+  requests mergeable.
+- **One command per step.** Autopilot keeps one comment on each issue that names the
+  command it started last, and for which run. It never starts the same command twice for
+  the same state of the issue, so a command that `route` refused, or that never ran, is
+  not started again; after six hours, `nexkit status` shows it as not run.
+
+- **Answers.** Plans, and implement and fix rounds that stop as `blocked`, give each
+  question its options and the one NexKit recommends, if any; the plan comment marks it
+  `(recommended)`. With `answer: "recommended"`, autopilot answers only when every
+  question has a recommendation, in a NexKit comment that the agents read as the owner's
+  discussion. Comments by other bots never count. When autopilot takes over like this, or
+  splits an issue, `notify` is not mentioned.
+- **CI on the default branch.** With workflows in `merge.after_workflows`, each sweep also
+  looks at the latest run of each of them on the default branch, after NexKit's merges and
+  people's alike. A failed run gets its failed jobs run once more. When it fails again,
+  autopilot opens a `bug` issue in scope, with the failed jobs and steps and the run link,
+  mentions `notify` in it, and plans it before every other issue. A later failure on a
+  newer commit adds a comment to that issue while it is open; a commit is reported once.
+  Sweeps notice a finished run at the next event or on the hourly schedule.
+- **Parts.** Parts that autopilot creates are trusted because they start with a NexKit
+  marker and are sub-issues of an issue it trusts. A part's own plan that is too large is
+  split again.
+
+Commands that autopilot starts are dispatches, shown as `/nexkit plan (autopilot)`. A
+person can still post any command, and autopilot carries on from what it leads to.
+Autopilot pairs well with `merge.auto`, `conflicts.auto_resolve`, `close_parent_issues` and
+`notify`; without `merge.auto`, an issue moves on when a person merges its pull request.
+
+Sweeps, the runs that decide this, start after every NexKit run, when an issue opens,
+closes, is reopened or comes into scope, when a milestone closes, and on the hourly
+schedule, which catches anything the others missed. They run one at a time, run no agent
+and use no agent credential. The workflow must listen to those events, as `nexkit init`
+writes it; `nexkit doctor` warns when it does not. To start a sweep yourself, for example
+right after turning autopilot on:
+
+```sh
+gh workflow run nexkit.yml -f command=autopilot -f number=autopilot
+```
+
+See [How it works](how-it-works.md#autopilot).
 
 ## Mentions
 
@@ -610,10 +696,13 @@ token needs `secrets: inherit`.
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls
 `phuongnse/nexkit/.github/workflows/pipeline.yml` at a fixed release tag. It starts NexKit
 for `/nexkit` comments, *Request changes* reviews on NexKit pull requests, dispatches,
-closed issues (for `close_parent_issues`), pushes to the default branch (for
-`conflicts.auto_resolve`) and an hourly schedule (for `usage_limit.resume` and
-`conflicts.auto_resolve`). With those settings off, these events start short runs that end
-at once; remove the triggers you do not use if you prefer. To upgrade, change both the
+closed issues (for `close_parent_issues` and `autopilot`), opened, reopened, labeled and
+milestoned issues and closed milestones (for `autopilot`), pushes to the default branch
+(for `conflicts.auto_resolve`) and an hourly schedule (for `usage_limit.resume`,
+`conflicts.auto_resolve` and `autopilot`). With those settings off, these events start
+short runs that end at once; remove the triggers you do not use if you prefer. Issue and
+milestone events other than a closed issue join the concurrency group
+`nexkit-autopilot`, so they never replace a command that waits for its issue. To upgrade, change both the
 `uses:` ref and `nexkit_ref` to the new tag (or rerun `nexkit init --force --kit-ref
 vX.Y.Z` and restore your config); each release's notes list its upgrade steps. `nexkit
 doctor` reports a problem when the two refs differ, and mentions a newer release without

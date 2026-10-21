@@ -31,15 +31,28 @@ CONFLICT_MARKER = re.compile(rb"^(<{7}|>{7}|\|{7})( |$)", re.M)
 BOT = ("-c", "user.name=nexkit", "-c", "user.email=nexkit@localhost")
 
 _STRING_LIST = {"type": "array", "items": {"type": "string"}}
+# A question for a person, with the answers the agent sees and the one it recommends, or ""
+# when none is clearly better. With `autopilot.answer: "recommended"`, NexKit answers it.
+_QUESTION = {
+    "question": {"type": "string"},
+    "options": _STRING_LIST,
+    "recommended": {"type": "string"},
+}
+_QUESTIONS = {
+    "type": "array",
+    "items": {"type": "object", "properties": _QUESTION, "required": list(_QUESTION)},
+}
 _CHANGE_RESULT = {
     "type": "object",
     "properties": {
         "status": {"enum": ["done", "blocked"]},
         "summary": {"type": "string"},
         "blocker": {"type": "string"},
+        # The decisions a blocked round needs from a person.
+        "questions": _QUESTIONS,
         "checks_run": _STRING_LIST,
     },
-    "required": ["status", "summary", "blocker", "checks_run"],
+    "required": ["status", "summary", "blocker", "questions", "checks_run"],
 }
 # The pull request description is built from these, in this order, after `summary`.
 _PULL_FIELDS = {
@@ -65,7 +78,7 @@ SCHEMAS = {
             "risks": _STRING_LIST,
             "acceptance_criteria": _STRING_LIST,
             "implementation_notes": _STRING_LIST,
-            "questions": _STRING_LIST,
+            "questions": _QUESTIONS,
             "too_large": {"type": "boolean"},
             "split": {
                 "type": "array",
@@ -113,9 +126,9 @@ SCHEMAS = {
                         "file": {"type": "string"},
                         "base_change": {"type": "string"},
                         "pr_change": {"type": "string"},
-                        "question": {"type": "string"},
+                        **_QUESTION,
                     },
-                    "required": ["file", "base_change", "pr_change", "question"],
+                    "required": ["file", "base_change", "pr_change", *_QUESTION],
                 },
             },
         },
@@ -615,6 +628,7 @@ def interpret(
     found = problems(outcome.output, schema) if schema and outcome.output is not None else []
     if run["timed_out"]:
         result["error"] = f"{label} did not finish within {timeout_minutes} minutes."
+        result["timed_out"] = True
     elif outcome.error:
         result["error"] = f"{label} {outcome.error}"[:2000].strip()
     elif not isinstance(outcome.output, dict):

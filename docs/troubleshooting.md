@@ -97,6 +97,16 @@ stage.
 a new plan and use its suggested split, or raise `timeout_minutes` or `max_budget_usd` for
 the `implement` stage. With fallback agents, each agent's run gets `timeout_minutes`,
 within one stage deadline for all of them.
+With autopilot on, an implement or fix agent that ran out of time leads to one new plan that
+asks for a split; a second time waits for you.
+
+**Autopilot does not start an issue.** Run `nexkit status`: its *Autopilot* section says,
+for each open issue in scope, what the next sweep does and why an issue waits, such as
+another issue that blocks it, an earlier sub-issue of its parent, an author without write
+access, `max_parallel`, or a question without a recommended option. An issue outside the
+earliest open milestone (or without `autopilot.label`) is not in scope. A command that
+autopilot started but that never ran is not started again; post it yourself. To sweep
+again at once: `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 
 **⏸️ "The agent stopped at the account's usage limit" or "Every agent stopped at its usage
 limit".** The account behind the agent's secret, such as a Claude subscription, used up its

@@ -109,6 +109,11 @@ class FakeGitHub:
         self.dispatch_errors = {}
         self.close_errors = {}
         self.parents = {}  # sub-issue number -> parent number
+        self.blockers = defaultdict(list)  # issue number -> numbers of issues that block it
+        self.open_milestones = []
+        self.workflow_history = {}  # workflow file -> its runs, oldest first
+        self.jobs = {}  # run id -> jobs
+        self.reruns = []
         self.branches = {}
         self.runs = {}
         self.dispatch_runs = {}
@@ -121,7 +126,15 @@ class FakeGitHub:
     # fixtures -------------------------------------------------------------------
 
     def add_issue(
-        self, number, title="Add a feature", body="Please add it.", state="open", reason=None
+        self,
+        number,
+        title="Add a feature",
+        body="Please add it.",
+        state="open",
+        reason=None,
+        user="alice",
+        milestone=None,
+        labels=(),
     ):
         self.issues[number] = {
             "number": number,
@@ -129,6 +142,9 @@ class FakeGitHub:
             "body": body,
             "state": state,
             "state_reason": reason,
+            "user": {"login": user},
+            "milestone": {"number": milestone} if milestone else None,
+            "labels": [{"name": label} for label in labels],
         }
         return self.issues[number]
 
@@ -202,6 +218,54 @@ class FakeGitHub:
     def sub_issues(self, number):
         return [self.issues[n] for n, parent in self.parents.items() if parent == number]
 
+    def blocked_by(self, number):
+        return [self.issues[n] for n in self.blockers[number]]
+
+    def milestones(self):
+        found = []
+        for milestone in self.open_milestones:
+            issues = [
+                i
+                for i in self.issues.values()
+                if (i.get("milestone") or {}).get("number") == milestone["number"]
+            ]
+            open_issues = sum(i["state"] == "open" for i in issues)
+            closed = len(issues) - open_issues
+            found.append({**milestone, "open_issues": open_issues, "closed_issues": closed})
+        return found
+
+    def add_milestone(self, number, title=None, due_on=None):
+        self.open_milestones.append(
+            {"number": number, "title": title or f"M{number}", "due_on": due_on}
+        )
+
+    def scoped_issues(self, milestone=None, label=None):
+        found = []
+        for issue in self.issues.values():
+            if issue["state"] != "open":
+                continue
+            if milestone is not None and (issue.get("milestone") or {}).get("number") != milestone:
+                continue
+            if label is not None and label not in {x["name"] for x in issue.get("labels") or []}:
+                continue
+            found.append(issue)
+        return sorted(found, key=lambda i: i["number"])
+
+    def create_issue(self, title, body, milestone=None, labels=()):
+        number = max([*self.issues, *self.pulls, 0]) + 1
+        issue = self.add_issue(
+            number, title, body, user=BOT_LOGIN, milestone=milestone, labels=labels
+        )
+        issue["id"] = 90000 + number
+        return issue
+
+    def add_sub_issue(self, number, child_id):
+        self.parents[child_id - 90000] = number
+
+    def close_pull(self, number):
+        self.pulls[number]["state"] = "closed"
+        self.issues[number]["state"] = "closed"
+
     def close_issue(self, number, reason="completed"):
         if number in self.close_errors:
             raise self.close_errors[number]
@@ -255,6 +319,20 @@ class FakeGitHub:
 
     def workflow_run(self, run_id):
         return self.runs[run_id]
+
+    def workflow_runs(self, workflow, branch, limit=5):
+        found = [r for r in self.workflow_history.get(workflow, []) if r["head_branch"] == branch]
+        return found[::-1][:limit]
+
+    def run_jobs(self, run_id):
+        return list(self.jobs.get(run_id, []))
+
+    def rerun_failed_jobs(self, run_id):
+        self.reruns.append(run_id)
+
+    def issues_by(self, creator, limit=100):
+        found = [i for i in self.issues.values() if (i.get("user") or {}).get("login") == creator]
+        return sorted(found, key=lambda i: -i["number"])[:limit]
 
     def pulls_into(self, base):
         return [p for p in self.pulls.values() if p["state"] == "open" and p["base"]["ref"] == base]

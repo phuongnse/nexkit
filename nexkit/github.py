@@ -118,6 +118,43 @@ class GitHub:
     def sub_issues(self, number):
         return self.paginate(f"{self._repo}/issues/{number}/sub_issues")
 
+    def blocked_by(self, number):
+        """The issues that block this one (GitHub issue dependencies), or [] where the API
+        does not exist, such as on older GitHub Enterprise Server versions."""
+        try:
+            return self.paginate(f"{self._repo}/issues/{number}/dependencies/blocked_by")
+        except GitHubError as exc:
+            if exc.status != 404:
+                raise
+            return []
+
+    def milestones(self):
+        """Open milestones."""
+        return self.paginate(f"{self._repo}/milestones", {"state": "open"})
+
+    def scoped_issues(self, milestone=None, label=None):
+        """Open issues and pull requests in a milestone (its number) or with a label."""
+        params = {"state": "open", "sort": "created", "direction": "asc"}
+        if milestone is not None:
+            params["milestone"] = str(milestone)
+        if label is not None:
+            params["labels"] = label
+        return self.paginate(f"{self._repo}/issues", params)
+
+    def create_issue(self, title, body, milestone=None, labels=()):
+        data = {"title": title, "body": body}
+        if milestone is not None:
+            data["milestone"] = milestone
+        if labels:
+            data["labels"] = list(labels)
+        return self.request("POST", f"{self._repo}/issues", data)
+
+    def add_sub_issue(self, number, child_id):
+        """Add an issue, by its database id (not its number), as the last sub-issue."""
+        return self.request(
+            "POST", f"{self._repo}/issues/{number}/sub_issues", {"sub_issue_id": child_id}
+        )
+
     def close_issue(self, number, reason="completed"):
         return self.request(
             "PATCH", f"{self._repo}/issues/{number}", {"state": "closed", "state_reason": reason}
@@ -166,12 +203,34 @@ class GitHub:
     def workflow_run(self, run_id):
         return self.request("GET", f"{self._repo}/actions/runs/{run_id}")
 
+    def workflow_runs(self, workflow, branch, limit=5):
+        """The latest runs of a workflow on a branch, newest first."""
+        params = {"branch": branch, "per_page": limit}
+        path = f"{self._repo}/actions/workflows/{quote(workflow)}/runs"
+        return self.request("GET", path, params=params).get("workflow_runs") or []
+
+    def run_jobs(self, run_id):
+        """The jobs of a run's latest attempt."""
+        path = f"{self._repo}/actions/runs/{run_id}/jobs"
+        return self.request("GET", path, params={"filter": "latest"}).get("jobs") or []
+
+    def rerun_failed_jobs(self, run_id):
+        return self.request("POST", f"{self._repo}/actions/runs/{run_id}/rerun-failed-jobs")
+
+    def issues_by(self, creator, limit=100):
+        """Open and closed issues that `creator` opened, newest first."""
+        params = {"creator": creator, "state": "all", "sort": "created", "direction": "desc"}
+        return self.paginate(f"{self._repo}/issues", params, limit)
+
     def pulls_into(self, base):
         """Open pull requests whose base branch is `base`."""
         return self.paginate(f"{self._repo}/pulls", {"state": "open", "base": base})
 
     def branch_sha(self, branch):
         return self.request("GET", f"{self._repo}/git/ref/heads/{quote(branch)}")["object"]["sha"]
+
+    def close_pull(self, number):
+        return self.request("PATCH", f"{self._repo}/pulls/{number}", {"state": "closed"})
 
     def create_pull(self, title, head, base, body):
         return self.request(

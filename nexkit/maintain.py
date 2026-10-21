@@ -12,6 +12,8 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 
+from . import autopilot
+from .autopilot import in_repository
 from .config import setting
 from .github import GitHubError
 from .route import issue_from_branch
@@ -20,10 +22,14 @@ from .usage import iso, parse_iso
 
 # Each task runs only when one of its configuration keys is on.
 TASKS = {
-    "parents": ("close_parent_issues",),
-    "schedule": ("usage_limit.resume", "conflicts.auto_resolve"),
+    "parents": ("close_parent_issues", "autopilot.enabled"),
+    "schedule": ("usage_limit.resume", "conflicts.auto_resolve", "autopilot.enabled"),
     "resume": ("usage_limit.resume",),
     "conflicts": ("conflicts.auto_resolve",),
+    # An issue opened, reopened, labeled or milestoned, or a milestone closed.
+    "autopilot": ("autopilot.enabled",),
+    # The run that looks at every issue in scope (nexkit/autopilot.py).
+    "sweep": ("autopilot.enabled",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
@@ -57,7 +63,7 @@ def close_parents(gh, number):
         parent = gh.parent_issue(number)
         if not parent or parent["number"] in seen or parent.get("state") != "open":
             return lines
-        if not _here(gh, parent):
+        if not in_repository(gh, parent):
             return lines
         number = parent["number"]
         seen.add(number)
@@ -88,13 +94,6 @@ def close_parents(gh, number):
             )
         gh.close_issue(number, "completed")
         lines.append(f"Closed #{number} as completed: all its sub-issues are closed.")
-
-
-def _here(gh, issue):
-    """Whether an issue from the sub-issues API belongs to this repository: a parent can be
-    in another repository of the same owner, with a number that means another issue here."""
-    url = issue.get("repository_url")
-    return not url or url.lower().endswith(f"/repos/{gh.repository}".lower())
 
 
 def close_parents_safely(gh, number):
@@ -264,7 +263,14 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
     """Run the decision's task. Returns lines for the job log."""
     task = decision["task"]
     if task == "parents":
-        return close_parents_safely(gh, decision["issue"])
+        lines = close_parents_safely(gh, decision["issue"]) if cfg["close_parent_issues"] else []
+        return lines + autopilot.request_safely(gh, cfg, workflow, ref, decision["issue"])
+    if task == "autopilot":
+        if not autopilot.concerns(cfg, decision):
+            return ["The event does not change autopilot's scope."]
+        return autopilot.request_safely(gh, cfg, workflow, ref)
+    if task == "sweep":
+        return autopilot.sweep(gh, cfg, workflow, ref, decision.get("closed"))
     if task == "conflicts":
         return resolve_conflicts(
             gh, decision["base"], workflow, ref, cfg["conflicts"]["max_rounds"]
@@ -282,5 +288,6 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
         if cfg["conflicts"]["auto_resolve"]:
             # Also catches base branch moves whose push started no run.
             lines += resolve_conflicts(gh, ref, workflow, ref, cfg["conflicts"]["max_rounds"])
-        return lines
+        # Also catches events that started no workflow, such as issues NexKit closed.
+        return lines + autopilot.request_safely(gh, cfg, workflow, ref)
     raise ValueError(f"Unknown maintenance task: {task}")

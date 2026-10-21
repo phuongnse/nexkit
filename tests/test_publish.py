@@ -518,7 +518,12 @@ class MergePublishTests(unittest.TestCase):
         self.rounds = getattr(self, "rounds", 0) + 1
         work = self.repos.clone(f"agent-{self.rounds}")
         git(work, "checkout", "-q", "-B", "nexkit/issue-5", "origin/nexkit/issue-5")
-        done = {"status": "done", "summary": "Kept sub() and mul().", "blocker": ""}
+        done = {
+            "status": "done",
+            "summary": "Kept sub() and mul().",
+            "blocker": "",
+            "questions": [],
+        }
         self.claude.configure(result={**done, "checks_run": [], "open_conflicts": []}, write=write)
         context = {**CONTEXT, "pr": 6, "body": "", "discussion": "", "plan": "", "note": ""}
         result = agent.run_stage(

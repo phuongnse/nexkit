@@ -35,6 +35,7 @@ def trigger(decision):
             ("auto", decision.get("auto")),
             ("conflicts", decision.get("conflicts")),
             ("resumed", decision.get("resumed")),
+            ("autopilot", decision.get("autopilot")),
         )
         if on
     ]
@@ -82,6 +83,8 @@ def show_command(gh, decision, status, text="", comments=None, **fields):
     comments = gh.comments(issue) if comments is None else comments
     comment_id, _ = find_run(comments, url)
     run = {"url": url, "command": COMMANDS[decision["action"]], "status": status, **fields}
+    if decision.get("autopilot"):
+        run["autopilot"] = True
     _save(gh, issue, comment_id, render_run(run, text))
 
 

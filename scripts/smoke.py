@@ -213,6 +213,7 @@ def conflicts(root, program):
     print(f"open conflicts: {json.dumps(questions)}", flush=True)
     if not any(item["file"] == "greet.py" and item["question"] for item in questions):
         raise SystemExit("fix: the open conflict in greet.py was not listed")
+    asked(questions, "fix")
 
     shutil.rmtree(root / "choice")
     shutil.rmtree(root / "choice-work")
@@ -221,6 +222,37 @@ def conflicts(root, program):
     stage("fix", work, root / "fix-note", program, {**context, "note": note}, base="main")
     if (work / "greet.py").read_text() != greet.format('"Hi " + name'):
         raise SystemExit("fix: the note's decision was not followed")
+
+
+def asked(questions, name):
+    """Each question has options, and a recommended option is one of them."""
+    for item in questions:
+        recommended = item["recommended"]
+        if not item["options"] or (recommended and recommended not in item["options"]):
+            raise SystemExit(f"{name}: a question without options or with a stray choice: {item}")
+
+
+def plan_questions(root, work, program):
+    """A plan of an issue that leaves a choice open asks about it, with options, and may
+    recommend one."""
+    context = {
+        **CONTEXT,
+        "title": "Add round_price()",
+        "body": (
+            "Add calc.round_price(x), which rounds a price to two decimals. We have not "
+            "decided whether halves round up or to even: ask us, and say which you recommend."
+        ),
+    }
+    plan = stage("plan", work, root / "plan-questions", program, context)
+    questions = plan["output"]["questions"]
+    print(f"plan questions: {json.dumps(questions)}", flush=True)
+    if not questions:
+        raise SystemExit("plan: the open choice was not asked")
+    asked(questions, "plan")
+    if "(recommended)" not in render_plan(plan["output"]) and any(
+        q["recommended"] for q in questions
+    ):
+        raise SystemExit("plan: the rendered plan does not mark the recommended option")
 
 
 def main():
@@ -250,6 +282,7 @@ def main():
         for field in ("changes", "acceptance_criteria", "implementation_notes"):
             if not plan["output"][field]:
                 raise SystemExit(f"plan: no {field}")
+        plan_questions(root, work, args.program)
         CONTEXT["plan"] = render_plan(plan["output"]).removeprefix(PLAN_MARKER).strip()
         if "<summary>Implementation notes</summary>" not in CONTEXT["plan"]:
             raise SystemExit("plan: the rendered plan lacks the implementation notes")

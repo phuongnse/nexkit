@@ -10,6 +10,7 @@ import copy
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+from . import autopilot
 from .config import DEFAULTS
 from .route import issue_from_branch
 from .state import (
@@ -230,12 +231,32 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
         for item in items
         if item.get("attention")
     ]
-    return {
+    data = {
         "repository": gh.repository,
         "issues": issue_items,
         "pull_requests": pull_items,
         "recent_merges": [m for m in merge_items if m][:merges],
         "needs_person": needs,
+    }
+    if cfg.get("autopilot", {}).get("enabled"):
+        data["autopilot"] = autopilot_item(gh, cfg)
+    return data
+
+
+def autopilot_item(gh, cfg):
+    """What the next autopilot sweep would do with each issue in scope."""
+    where, steps = autopilot.preview(gh, cfg)
+    return {
+        "scope": where["name"],
+        "max_parallel": cfg["autopilot"]["max_parallel"],
+        "issues": [
+            {
+                key: step[key]
+                for key in ("number", "title", "state", "reason", "command")
+                if key in step
+            }
+            for step in steps
+        ],
     }
 
 
@@ -282,6 +303,20 @@ def render(data):
         )
     if not data["recent_merges"]:
         lines.append("  none")
+    if "autopilot" in data:
+        pilot = data["autopilot"]
+        limit = pilot["max_parallel"]
+        limit = f", at most {limit} at once" if limit else ""
+        lines += ["", f"Autopilot: {pilot['scope']}{limit}"]
+        for item in pilot["issues"]:
+            action = (
+                f"start /nexkit {item['command']}" if item["state"] == "start" else item["state"]
+            )
+            lines.append(
+                f"  #{item['number']:<5} {action:<16} {_short(item['title'])}  {item['reason']}"
+            )
+        if not pilot["issues"]:
+            lines.append("  no open issues")
     lines += ["", "Needs a person"]
     for item in data["needs_person"]:
         lines.append(f"  #{item['number']:<5} {item['reason']}")

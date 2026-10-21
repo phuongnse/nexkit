@@ -9,7 +9,7 @@ import re
 
 from .github import TRUSTED_ASSOCIATIONS
 from .route import parse_command
-from .state import by_bot, clip, latest_plan, plan_text, read_state
+from .state import answers_text, by_bot, clip, latest_plan, plan_text, read_state
 
 MAX_COMMENTS = 30
 NO_PLAN = "No plan was posted. Implement the issue as described."
@@ -23,11 +23,19 @@ def _trusted(item):
 
 
 def _discussion(comments, notes=False):
-    """Collaborators' comments. Command comments are left out, or with `notes` kept when
-    they carry a note: the agent that acts on a command gets its note through the
-    decision, the reviewer only through the discussion."""
+    """Collaborators' comments, and the answers autopilot gave for the owner. Command
+    comments are left out, or with `notes` kept when they carry a note: the agent that acts
+    on a command gets its note through the decision, the reviewer only through the
+    discussion."""
     entries = []
     for comment in comments:
+        answered = answers_text(comment)
+        if answered is not None:
+            # Autopilot answered for the owner, with the options NexKit recommended.
+            entries.append(
+                f"NexKit autopilot for the owner ({comment['created_at']}):\n{clip(answered)}"
+            )
+            continue
         if not _trusted(comment):
             continue
         command, note = parse_command(comment.get("body"))

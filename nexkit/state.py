@@ -31,12 +31,23 @@ PROFILE_TEXT_PATTERN = re.compile(
     r"<!-- nexkit:profile-text -->.*?<!-- /nexkit:profile-text -->\n*", re.S
 )
 
+# What autopilot reads from a plan: its questions and its split. A hidden record at the
+# end of the plan comment, after everything the agent wrote.
+PLAN_DATA_PREFIX = "<!-- nexkit:plan-data "
+PLAN_DATA = re.compile(r"\n*<!-- nexkit:plan-data ([A-Za-z0-9+/=]+) -->\s*\Z")
+# Answers that autopilot gave for the owner. Only where the marker ends a bot's comment.
+ANSWERS_PREFIX = "<!-- nexkit:answers "
+ANSWERS = re.compile(r"\n*<!-- nexkit:answers ([A-Za-z0-9+/=]+) -->\s*\Z")
+
 RUNNING, SUCCESS, FAILURE, PAUSED = "running", "success", "failure", "paused"
 # A paused run whose command another run carries on: resumed, replaced by a later command,
 # or continued on the pull request.
 CONTINUED = "continued"
 RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️", CONTINUED: "⏭️"}
 RUN_LABELS = {RUNNING: "running", PAUSED: "paused", CONTINUED: "continued"}
+# Bounds for what a plan's record and a run's marker keep.
+MAX_PARTS = 10
+MAX_QUESTIONS = 10
 
 
 def by_bot(comment):
@@ -61,10 +72,86 @@ def _profile_record(comment):
 
 
 def plan_text(comment):
-    """The plan for the agents: without the profile, which is for people."""
+    """The plan for the agents: without the profile, which is for people, and without the
+    record for autopilot."""
     record = _profile_record(comment)
     body = comment["body"][record.end() if record else len(PLAN_MARKER) :]
-    return PROFILE_TEXT_PATTERN.sub("", body).strip()
+    return PLAN_DATA.sub("", PROFILE_TEXT_PATTERN.sub("", body)).strip()
+
+
+def plan_data_record(output):
+    """The hidden record at the end of a plan comment: its questions, whether it is too
+    large and its split."""
+    data = {
+        "questions": questions(output.get("questions")),
+        "too_large": bool(output.get("too_large")),
+    }
+    if data["too_large"]:
+        data["split"] = [
+            {"title": clip(item.get("title"), 256), "body": clip(item.get("body"), 6000)}
+            for item in (output.get("split") or [])[:MAX_PARTS]
+        ]
+    return _encode(PLAN_DATA_PREFIX, data)
+
+
+def plan_data(comment):
+    """The record of a plan comment, or None for a plan from before it was kept."""
+    match = PLAN_DATA.search(comment.get("body") or "") if by_bot(comment) else None
+    if not match:
+        return None
+    try:
+        data = json.loads(base64.b64decode(match.group(1)))
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def questions(items):
+    """Questions as {question, options, recommended}. Plans from before 4.1 hold plain
+    strings, without options."""
+    found = []
+    for item in items or []:
+        if isinstance(item, str):
+            item = {"question": item}
+        if not isinstance(item, dict) or not str(item.get("question") or "").strip():
+            continue
+        options = [str(o).strip() for o in item.get("options") or [] if str(o).strip()]
+        recommended = str(item.get("recommended") or "").strip()
+        found.append(
+            {
+                "question": clip(item["question"], 1500),
+                "options": [clip(o, 500) for o in options[:6]],
+                "recommended": clip(recommended, 500) if recommended in options else "",
+            }
+        )
+    return found[:MAX_QUESTIONS]
+
+
+def round_questions(agent):
+    """Every question of a blocked implement or fix round, for the run's marker: the
+    decisions, then the conflicts, each with the file it is about."""
+    if not agent or agent.get("status") != "blocked":
+        return []
+    output = agent.get("output") or {}
+    conflicts = [
+        {**item, "question": f"`{item.get('file') or ''}`: {item.get('question') or ''}"}
+        for item in output.get("open_conflicts") or []
+        if isinstance(item, dict)
+    ]
+    return questions([*(output.get("questions") or []), *conflicts])
+
+
+def answers_marker(record):
+    return _encode(ANSWERS_PREFIX, record)
+
+
+def answers_text(comment):
+    """The text of an autopilot answers comment, without its marker, or None for any other
+    comment."""
+    body = comment.get("body") or ""
+    if not by_bot(comment) or not ANSWERS.search(body):
+        return None
+    return ANSWERS.sub("", body).strip()
 
 
 def profile_record(record):

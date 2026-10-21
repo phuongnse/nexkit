@@ -46,6 +46,7 @@ DEFAULTS = {
         "scope": "milestone",
         "label": None,
         "max_parallel": None,
+        "answer": "never",
     },
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -80,6 +81,7 @@ CACHE_KEYS = {"name", "paths", "key_files"}
 MAX_CACHES = 8
 TOOL_OUTPUT = ("none", "truncated")
 AUTOPILOT_SCOPES = ("milestone", "label")
+AUTOPILOT_ANSWERS = ("never", "recommended")
 LABEL = re.compile(r"^[^,\n]{1,50}$")
 
 
@@ -383,6 +385,8 @@ def _autopilot(settings):
         _fail('autopilot.scope "label" needs autopilot.label: the label of the issues to take')
     if settings["max_parallel"] is not None:
         _positive_int(settings["max_parallel"], "autopilot.max_parallel", 100)
+    if settings["answer"] not in AUTOPILOT_ANSWERS:
+        _fail(f"autopilot.answer must be one of {', '.join(AUTOPILOT_ANSWERS)}")
 
 
 def validate(raw, *, layered=False):

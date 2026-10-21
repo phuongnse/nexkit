@@ -12,7 +12,7 @@ from pathlib import Path
 from . import config as configuration
 from .gitutil import BOT_EMAIL, BOT_NAME, GitError, git, is_ancestor, merge_tree, names
 from .runlog import stage_agent
-from .state import PLAN_MARKER, profile_record, profile_text
+from .state import PLAN_MARKER, plan_data_record, profile_record, profile_text, questions
 
 
 class PublishError(RuntimeError):
@@ -81,6 +81,17 @@ def _revision(output):
     return [head, *(["", *changes] if changes else [])]
 
 
+def question_lines(items):
+    """A numbered list of questions, each with its options and the recommended one."""
+    lines = []
+    for number, item in enumerate(questions(items), 1):
+        lines.append(f"{number}. {item['question']}")
+        for option in item["options"]:
+            mark = " (recommended)" if option == item["recommended"] else ""
+            lines.append(f"   - {option}{mark}")
+    return lines
+
+
 def render_plan(output, profile=None, replan=False):
     """The plan comment: the part a person approves, then the agent's notes collapsed.
     `profile` comes from `render_profile`, when profiles are configured. A re-plan says how
@@ -100,9 +111,7 @@ def render_plan(output, profile=None, replan=False):
     parts += _section(
         "Acceptance criteria", [f"- [ ] {item}" for item in output.get("acceptance_criteria", [])]
     )
-    parts += _section(
-        "Questions", [f"{i}. {q}" for i, q in enumerate(output.get("questions") or [], 1)]
-    )
+    parts += _section("Questions", question_lines(output.get("questions")))
     if output.get("too_large"):
         split = output.get("split") or []
         parts += _section(
@@ -136,6 +145,7 @@ def render_plan(output, profile=None, replan=False):
             "Comment `/nexkit go` to implement this plan, or reply with changes and comment "
             "`/nexkit plan` to revise it."
         )
+    parts += ["", plan_data_record(output)]
     return "\n".join(parts)
 
 

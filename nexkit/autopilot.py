@@ -24,11 +24,16 @@ from .route import issue_from_branch, parse_command
 from .state import (
     BOT_LOGIN,
     CONTINUED,
+    FAILURE,
     PAUSED,
     RUNNING,
     SUCCESS,
+    answers_marker,
     by_bot,
     latest_plan,
+    plan_data,
+    questions,
+    round_questions,
     run_comments,
 )
 from .usage import iso, parse_iso
@@ -47,6 +52,25 @@ ACTIVE = {RUNNING, PAUSED, CONTINUED}
 # A command autopilot started that has not posted its run comment after this long did not
 # run, for example because `route` refused it. Autopilot does not start it again.
 LOST = timedelta(hours=6)
+# What the record keeps from one start to the next.
+STICKY = ("split_asked",)
+# A sweep looks again after splitting an issue, at most this often.
+PASSES = 3
+# The note on the plan that autopilot asks for after an agent ran out of time.
+SPLIT_NOTE = (
+    "The last implement or fix round did not finish within its time limit. Split this issue: "
+    "return `too_large` with parts that can each be done and tested in one session. Put "
+    "slow, mechanical work, such as test fixtures or settings in every environment, in its "
+    "own part, apart from the change in behaviour, and order the parts so that each leaves "
+    "the default branch working."
+)
+PART = re.compile(r"\A<!-- nexkit:part (\d+) -->")
+# A bug issue that autopilot opened because a workflow failed twice on the default branch,
+# and the commit each of its reports is about.
+CI_BUG_PREFIX = "<!-- nexkit:ci "
+CI_BUG = re.compile(r"\A<!-- nexkit:ci ([A-Za-z0-9_.-]+) -->")
+CI_SHA_PREFIX = "<!-- nexkit:ci-sha "
+FAILED = {"failure", "timed_out"}
 # Outcomes after which a run already started the next one by itself.
 CHAINED = {"auto_fix", "conflict_fix"}
 
@@ -107,23 +131,41 @@ def current_milestone(gh):
     return found[0] if found else None
 
 
-def scope(gh, cfg):
-    """The scope: its name for people, its milestone or label, and its open issues, oldest
-    first. Without an open milestone, the milestone scope is empty."""
+def locate(gh, cfg):
+    """The scope's name for people and its milestone or label. Without an open milestone,
+    the milestone scope holds nothing."""
     settings = cfg["autopilot"]
     if settings["scope"] == "label":
         label = settings["label"]
-        where = {"name": f"label `{label}`", "label": label, "milestone": None}
-        items = gh.scoped_issues(label=label)
+        return {"name": f"label `{label}`", "label": label, "milestone": None}
+    milestone = current_milestone(gh)
+    if not milestone:
+        return {"name": "no open milestone", "label": None, "milestone": None}
+    return {
+        "name": f"milestone {milestone['title']}",
+        "label": None,
+        "milestone": milestone["number"],
+    }
+
+
+def scope(gh, cfg):
+    """`locate` with the open issues in scope, oldest first, after bug issues for CI."""
+    where = locate(gh, cfg)
+    if where["label"] is not None:
+        items = gh.scoped_issues(label=where["label"])
+    elif where["milestone"] is not None:
+        items = gh.scoped_issues(milestone=where["milestone"])
     else:
-        milestone = current_milestone(gh)
-        if not milestone:
-            return {"name": "no open milestone", "label": None, "milestone": None, "issues": []}
-        where = {"name": f"milestone {milestone['title']}", "label": None}
-        where["milestone"] = milestone["number"]
-        items = gh.scoped_issues(milestone=milestone["number"])
-    issues = sorted((i for i in items if "pull_request" not in i), key=lambda i: i["number"])
+        items = []
+    issues = [i for i in items if "pull_request" not in i]
+    # A bug issue for a CI failure on the default branch goes before everything else.
+    issues.sort(key=lambda i: (ci_workflow(i) is None, i["number"]))
     return {**where, "issues": issues}
+
+
+def taken(gh, cfg, issue):
+    """Whether autopilot works on an issue: in scope, from someone it trusts."""
+    return in_scope(locate(gh, cfg), issue) and trusted(gh, issue)
 
 
 def in_scope(where, issue):
@@ -143,7 +185,23 @@ def trusted(gh, issue):
     session. It takes only issues opened by someone with write access; only they and other
     writers can edit the issue."""
     login = author(issue)
-    return bool(login) and login != BOT_LOGIN and gh.can_write(login)
+    if login == BOT_LOGIN:
+        return ci_workflow(issue) is not None or _trusted_part(gh, issue)
+    return bool(login) and gh.can_write(login)
+
+
+def _trusted_part(gh, issue, depth=0):
+    """A part that autopilot created: it starts with the part marker, and the issue it
+    names is its parent and is trusted itself."""
+    match = PART.match(issue.get("body") or "")
+    if not match or depth > 5:
+        return False
+    parent = gh.parent_issue(issue["number"])
+    if not parent or parent["number"] != int(match.group(1)) or not in_repository(gh, parent):
+        return False
+    if author(parent) == BOT_LOGIN:
+        return _trusted_part(gh, parent, depth + 1)
+    return gh.can_write(author(parent))
 
 
 def in_repository(gh, issue):
@@ -230,12 +288,74 @@ def _lost(record, now):
     return at is not None and now - at > LOST
 
 
+def answers(cfg, items):
+    """[{question, answer}] when `autopilot.answer` is "recommended" and every question
+    has a recommended option, otherwise None."""
+    if cfg["autopilot"]["answer"] != "recommended":
+        return None
+    found = questions(items)
+    if not found or not all(item["recommended"] for item in found):
+        return None
+    return [{"question": item["question"], "answer": item["recommended"]} for item in found]
+
+
+def answer_note(found):
+    lines = ["Answers for the owner, each the option NexKit recommended:"]
+    for number, item in enumerate(found, 1):
+        lines.append(f"{number}. {item['question']} Answer: {item['answer']}")
+    return "\n".join(lines)
+
+
+def _stopped(cfg, issue, run, record, start, command, target):
+    """The step after a `/nexkit go` or a round that stopped: answer a blocked round's
+    questions, ask once for a split after the agent ran out of time, or wait."""
+    found = answers(cfg, run.get("questions")) if run.get("outcome") == "agent_blocked" else None
+    if found:
+        start = {**start, "target": target, "note": answer_note(found)}
+        reason = "autopilot answers the questions of the blocked round"
+        return _step(issue, "start", reason, command=command, answers=found, **start)
+    if run.get("timed_out") and not record.get("split_asked"):
+        start = {**start, "note": SPLIT_NOTE, "remember": {"split_asked": True}}
+        reason = "the agent ran out of time, so autopilot asks for a split"
+        return _step(issue, "start", reason, command="plan", **start)
+    return None
+
+
+def _split(issue, plan, data, start, pull=None):
+    """The step that splits an issue whose latest plan is too large, or None."""
+    if not (data or {}).get("too_large") or not data.get("split"):
+        return None
+    fields = {"parts": data["split"], "plan_url": plan.get("html_url") or "", "pull": pull}
+    return _step(issue, "split", "the plan splits the issue", **fields, **start)
+
+
+def _planned(cfg, issue, plan, last, start):
+    """The step after a plan that needs nobody's comment."""
+    data = plan_data(plan)
+    if data is None:  # a plan from before NexKit kept its record
+        if last.get("attention"):
+            return _step(issue, "waits", last["attention"])
+        return _step(issue, "start", "the plan needs nobody", command="go", **start)
+    if data.get("too_large"):
+        return _split(issue, plan, data, start) or _step(
+            issue, "waits", last.get("attention") or "the plan is too large and suggests no split"
+        )
+    if data.get("questions"):
+        found = answers(cfg, data["questions"])
+        if not found:
+            return _step(issue, "waits", last.get("attention") or "the plan has questions")
+        reason = "autopilot answers the plan's questions"
+        return _step(issue, "start", reason, command="plan", answers=found, **start)
+    return _step(issue, "start", "the plan needs nobody", command="go", **start)
+
+
 def assess(gh, cfg, issue, open_pulls, now=None):
     """What autopilot does for one open issue in scope:
 
     - `active`: a run or pull request carries it on, or a command autopilot started has
       not run yet. It counts toward `autopilot.max_parallel`.
-    - `start`: start `command` on `target`.
+    - `start`: start `command` on `target`, after posting `answers` when there are any.
+    - `split`: create the `parts` of a plan that is too large as sub-issues.
     - `waits`: nothing to start, for `reason`: not ready yet, or a person decides.
     """
     number = issue["number"]
@@ -254,32 +374,71 @@ def assess(gh, cfg, issue, open_pulls, now=None):
         if _lost(record, now or datetime.now(UTC)):
             return _step(issue, "waits", f"the {command} that autopilot started did not run")
         return _step(issue, "active", f"waits for the {command} that autopilot started")
-    if pull:
-        return _step(issue, "active", f"pull request #{pull} is open")
+    start = {"basis": current, "target": number, "note": "", "remember": {}}
     runs = [run for _, run in run_comments(comments) if "command" in run]
     last = runs[-1] if runs else None
     if last and last.get("status") in ACTIVE:
         return _step(issue, "active", f"`/nexkit {last['command']}` is {last['status']}")
+    plan = latest_plan(comments)
+    if pull:
+        # The plan autopilot asked for after the pull request's agent ran out of time may
+        # split the issue. A plan that is too large but that a person chose to implement
+        # anyway does not.
+        asked = record.get("split_asked") and record.get("command") == "plan"
+        split = _split(issue, plan, plan_data(plan), start, pull) if asked and plan else None
+        rounds = [run for _, run in run_comments(pull_comments) if "round" in run]
+        if not split and rounds and rounds[-1].get("status") == FAILURE:
+            split = _stopped(cfg, issue, rounds[-1], record, start, "fix", pull)
+        if split:
+            return {**split, "pull": pull}
+        return _step(issue, "active", f"pull request #{pull} is open")
     blocked = waits_for(gh, issue)
     if blocked:
         return _step(issue, "waits", blocked)
-    start = {"basis": current, "target": number, "note": ""}
-    plan = latest_plan(comments)
     if last is None or plan is None:
         return _step(issue, "start", "no plan yet", command="plan", **start)
     if last["command"] == "go":
         if last.get("status") == SUCCESS:
             return _step(issue, "waits", "its pull request was closed; a person decides")
-        return _step(issue, "waits", last.get("attention") or "the last `/nexkit go` failed")
+        return _stopped(cfg, issue, last, record, start, "go", number) or _step(
+            issue, "waits", last.get("attention") or "the last `/nexkit go` failed"
+        )
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or "the last `/nexkit plan` failed")
     if _after_plan(comments, plan):
         return _step(
             issue, "start", "collaborators commented after the plan", command="plan", **start
         )
-    if last.get("attention"):
-        return _step(issue, "waits", last["attention"])
-    return _step(issue, "start", "the plan needs nobody", command="go", **start)
+    return _planned(cfg, issue, plan, last, start)
+
+
+def carries_on(gh, cfg, decision, outcome, agent):
+    """Whether autopilot takes over after a run that would otherwise need a person, so
+    `report` mentions nobody: it answers a plan's or a blocked round's questions, splits a
+    plan that is too large, or asks for a split after the agent ran out of time."""
+    if not takes(cfg):
+        return False
+    agent = agent or {}
+    output = agent.get("output") or {}
+    if outcome == "planned":
+        if output.get("too_large"):
+            handled = bool(output.get("split"))
+        else:
+            handled = answers(cfg, output.get("questions")) is not None
+    elif outcome == "agent_blocked":
+        handled = answers(cfg, round_questions(agent)) is not None
+    elif outcome == "agent_error" and agent.get("timed_out"):
+        handled = decision["action"] in ("implement", "fix")
+    else:
+        return False
+    try:
+        if not handled or not taken(gh, cfg, gh.issue(decision["issue"])):
+            return False
+        if outcome == "agent_error":
+            return not find_record(gh.comments(decision["issue"]))[1].get("split_asked")
+    except GitHubError:
+        return False
+    return True
 
 
 # -- a sweep -----------------------------------------------------------------------
@@ -304,9 +463,10 @@ def preview(gh, cfg):
     pulls = nexkit_pulls(gh)
     steps = [assess(gh, cfg, issue, pulls) for issue in where["issues"]]
     limit = cfg["autopilot"]["max_parallel"]
-    busy = sum(step["state"] == "active" for step in steps)
+    # An issue with an open pull request is in progress already.
+    busy = sum(step["state"] == "active" or bool(step.get("pull")) for step in steps)
     for step in steps:
-        if step["state"] != "start":
+        if step["state"] != "start" or step.get("pull"):
             continue
         if limit is not None and busy >= limit:
             step.update(state="waits", reason=f"{busy} issues are in progress (max_parallel)")
@@ -315,29 +475,73 @@ def preview(gh, cfg):
     return where, steps
 
 
-def start(gh, step, workflow, ref, now=None):
-    """Start a step's command and record it on the issue. Returns a line for the log."""
-    command, target = step["command"], step["target"]
-    inputs = {"command": command, "number": str(target), "note": step["note"], "auto": AUTO}
-    started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
+def _save_record(gh, step, record, text, now=None):
+    """Edit the issue's record comment, or post it. Flags such as `split_asked` stay."""
+    comment, previous = find_record(gh.comments(step["number"]))
     record = {
-        "command": command,
-        "target": target,
+        **{key: previous[key] for key in STICKY if key in previous},
+        **step.get("remember", {}),
+        **record,
         "basis": step["basis"],
         "at": iso(now or datetime.now(UTC)),
     }
+    body = f"{text}\n\n{record_marker(record)}"
+    if comment:
+        gh.update_comment(comment["id"], body)
+    else:
+        gh.comment(step["number"], body)
+
+
+def post_answers(gh, number, found):
+    """Answer for the owner in a comment that the agents read as the owner's discussion."""
+    lines = ["NexKit autopilot answers for the owner, with the option NexKit recommended:", ""]
+    for index, item in enumerate(found, 1):
+        lines += [f"{index}. {item['question']}", f"   **{item['answer']}**"]
+    gh.comment(number, "\n".join(lines) + "\n\n" + answers_marker({"answers": found}))
+
+
+def start(gh, step, workflow, ref, now=None):
+    """Start a step's command, after posting its answers, and record it on the issue.
+    Returns a line for the log."""
+    command, target = step["command"], step["target"]
+    if step.get("answers"):
+        post_answers(gh, target, step["answers"])
+    inputs = {"command": command, "number": str(target), "note": step["note"], "auto": AUTO}
+    started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
+    record = {"command": command, "target": target}
     if started.get("html_url"):
         record["url"] = started["html_url"]
     run = f" in [a new run]({record['url']})" if record.get("url") else ""
     on = "" if target == step["number"] else f" on #{target}"
     text = f"NexKit autopilot started `/nexkit {command}`{on}{run}: {step['reason']}."
-    body = f"{text}\n\n{record_marker(record)}"
-    comment, _ = find_record(gh.comments(step["number"]))
-    if comment:
-        gh.update_comment(comment["id"], body)
-    else:
-        gh.comment(step["number"], body)
+    _save_record(gh, step, record, text, now)
     return f"Started /nexkit {command} on #{target}: {step['reason']}."
+
+
+def split(gh, step, now=None):
+    """Create the parts of a plan that is too large as sub-issues of the issue, in order,
+    with its milestone and labels, and close its superseded pull request."""
+    number = step["number"]
+    parent = gh.issue(number)
+    milestone = (parent.get("milestone") or {}).get("number")
+    labels = [label["name"] for label in parent.get("labels") or [] if label.get("name")]
+    plan = f" from [its plan]({step['plan_url']})" if step.get("plan_url") else ""
+    created = []
+    for index, part in enumerate(step["parts"], 1):
+        body = (
+            f"<!-- nexkit:part {number} -->\n{part['body'].strip()}\n\n"
+            f"Part {index} of #{number}{plan}, which was too large for one session."
+        )
+        issue = gh.create_issue(part["title"].strip(), body, milestone, labels)
+        gh.add_sub_issue(number, issue["id"])
+        created.append(issue["number"])
+    listing = ", ".join(f"#{n}" for n in created)
+    if step.get("pull"):
+        gh.comment(step["pull"], f"Superseded by {listing}, the parts of #{number}.")
+        gh.close_pull(step["pull"])
+    text = f"NexKit autopilot split this issue as its plan suggests: {listing}."
+    _save_record(gh, step, {"command": "split", "target": number, "parts": created}, text, now)
+    return f"Split #{number} into {listing}."
 
 
 def done(gh, cfg, where, closed):
@@ -360,17 +564,113 @@ def done(gh, cfg, where, closed):
     return [f"Autopilot finished {where['name']}."]
 
 
-def sweep(gh, cfg, workflow, ref, closed=None):
-    """Start what moves each issue in scope on. Returns lines for the job log."""
-    where, steps = preview(gh, cfg)
+# -- the default branch's CI ----------------------------------------------------------
+
+
+def ci_workflow(issue):
+    """The workflow a bug issue that autopilot opened for a CI failure is about, or None."""
+    match = CI_BUG.match(issue.get("body") or "")
+    return match.group(1) if match and author(issue) == BOT_LOGIN else None
+
+
+def _failed_jobs(gh, run):
     lines = []
-    for step in steps:
-        if step["state"] != "start":
+    for job in gh.run_jobs(run["id"]):
+        if job.get("conclusion") not in FAILED:
             continue
+        steps = [s.get("name") for s in job.get("steps") or [] if s.get("conclusion") in FAILED]
+        failed = f": {', '.join(f'`{name}`' for name in steps if name)}" if steps else ""
+        link = f"[{job.get('name')}]({job['html_url']})" if job.get("html_url") else job.get("name")
+        lines.append(f"- {link}{failed}")
+    return lines or ["- The run failed before any job did; open the run for the reason."]
+
+
+def _failure_text(gh, workflow, run, branch):
+    sha = run.get("head_sha") or ""
+    return "\n".join(
+        [
+            f"[`{workflow}` failed]({run.get('html_url')}) on `{branch}` at {sha}, also when "
+            "run again. Failed jobs and steps:",
+            "",
+            *_failed_jobs(gh, run),
+            "",
+            f"{CI_SHA_PREFIX}{sha} -->",
+        ]
+    )
+
+
+def _reported(gh, workflow, sha):
+    """(the open bug issue for `workflow` or None, whether a bug issue for it, open or
+    closed, already reports the commit `sha`)."""
+    marker = f"{CI_SHA_PREFIX}{sha} -->"
+    found, reported = None, False
+    for issue in gh.issues_by(BOT_LOGIN):
+        if ci_workflow(issue) != workflow:
+            continue
+        if issue.get("state") == "open" and found is None:
+            found = issue
+        texts = [issue.get("body") or ""]
+        texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if by_bot(c)]
+        reported = reported or any(marker in text for text in texts)
+    return found, reported
+
+
+def check_ci(gh, cfg, where, branch):
+    """For each workflow of `merge.after_workflows`, the latest run on the default branch:
+    a failure runs its failed jobs once more, and a second failure opens a bug issue in
+    scope, or comments on the one still open. Returns lines for the job log."""
+    lines = []
+    for workflow in cfg["merge"]["after_workflows"]:
         try:
-            lines.append(start(gh, step, workflow, ref))
+            runs = gh.workflow_runs(workflow, branch)
+            run = runs[0] if runs else None
+            if not run or run.get("status") != "completed" or run.get("conclusion") not in FAILED:
+                continue
+            if (run.get("run_attempt") or 1) < 2:
+                gh.rerun_failed_jobs(run["id"])
+                lines.append(f"Running the failed jobs of `{workflow}` on `{branch}` again.")
+                continue
+            sha = run.get("head_sha") or ""
+            issue, reported = _reported(gh, workflow, sha)
+            if reported:
+                continue
+            text = _failure_text(gh, workflow, run, branch)
+            if issue:
+                gh.comment(issue["number"], f"It fails again on a newer commit.\n\n{text}")
+                lines.append(f"`{workflow}` fails again; commented on #{issue['number']}.")
+                continue
+            people = "".join(f"@{login} " for login in cfg["notify"])
+            body = f"{CI_BUG_PREFIX}{workflow} -->\n{people}{text}"
+            labels = ["bug", *([where["label"]] if where.get("label") else [])]
+            title = f"`{workflow}` fails on `{branch}`"
+            created = gh.create_issue(title, body, where.get("milestone"), labels)
+            lines.append(f"`{workflow}` fails on `{branch}`; opened #{created['number']}.")
         except GitHubError as exc:
-            lines.append(f"Could not start /nexkit {step['command']} on #{step['target']}: {exc}")
+            lines.append(f"Could not check `{workflow}` on `{branch}`: {exc}")
+    return lines
+
+
+def sweep(gh, cfg, workflow, ref, closed=None):
+    """Start what moves each issue in scope on. Returns lines for the job log. Parts that
+    a split creates are in scope at once, so the sweep looks again after a split. A CI
+    failure on the default branch comes first, so its bug issue is planned first."""
+    lines = check_ci(gh, cfg, locate(gh, cfg), ref)
+    for _ in range(PASSES):
+        where, steps = preview(gh, cfg)
+        splits = [step for step in steps if step["state"] == "split"]
+        for step in steps:
+            try:
+                if step["state"] == "split":
+                    lines.append(split(gh, step))
+                elif step["state"] == "start":
+                    lines.append(start(gh, step, workflow, ref))
+            except GitHubError as exc:
+                what = (
+                    "split" if step["state"] == "split" else f"start /nexkit {step['command']} on"
+                )
+                lines.append(f"Could not {what} #{step['target']}: {exc}")
+        if not splits:
+            break
     if closed and not where["issues"]:
         lines += done(gh, cfg, where, closed)
     return lines or [f"Autopilot: nothing to start in {where['name']}."]

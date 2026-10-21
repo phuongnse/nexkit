@@ -45,6 +45,41 @@ class AutopilotCase(unittest.TestCase):
         self.run_comment(number, "plan", outcome="planned", **fields)
         return self.gh.comment(number, f"{PLAN_MARKER}\n## Plan\n\nAdd it.")
 
+    def report_plan(self, cfg, output):
+        """`report` after a plan run with this output."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        artifacts = Path(tmp.name)
+        (artifacts / "nexkit-agent").mkdir()
+        result = {"status": "done", "output": output, "tokens": {"input": 1, "output": 1}}
+        (artifacts / "nexkit-agent" / "result.json").write_text(json.dumps(result))
+        decision = {
+            "action": "plan",
+            "issue": 5,
+            "pr": None,
+            "target": 5,
+            "branch": "nexkit/issue-5",
+            "base": "main",
+            "head": None,
+            "note": "",
+            "auto": False,
+            "autopilot": True,
+        }
+        needs = {"publish": {"outputs": {"result": json.dumps({"published": True})}}}
+        self.gh.comment(5, f"{PLAN_MARKER}\n## Plan")
+        env = {"GITHUB_REPOSITORY": "acme/app", "GITHUB_RUN_ID": str(100 + self.runs)}
+        self.runs += 1
+        with mock.patch.dict(os.environ, env):
+            return report(
+                self.gh,
+                decision,
+                cfg,
+                needs,
+                artifacts,
+                workflow_ref=WORKFLOW,
+                default_branch="main",
+            )
+
     def sweep(self, cfg=None, closed=None):
         return autopilot.sweep(self.gh, cfg or self.cfg, "nexkit.yml", "main", closed)
 
@@ -277,37 +312,6 @@ class TriggerTests(AutopilotCase):
 
 
 class ReportTests(AutopilotCase):
-    def setUp(self):
-        super().setUp()
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app", "GITHUB_RUN_ID": "7"})
-        env.start()
-        self.addCleanup(env.stop)
-
-    def report_plan(self, cfg, output):
-        artifacts = Path(self.tmp.name)
-        (artifacts / "nexkit-agent").mkdir(exist_ok=True)
-        result = {"status": "done", "output": output, "tokens": {"input": 1, "output": 1}}
-        (artifacts / "nexkit-agent" / "result.json").write_text(json.dumps(result))
-        decision = {
-            "action": "plan",
-            "issue": 5,
-            "pr": None,
-            "target": 5,
-            "branch": "nexkit/issue-5",
-            "base": "main",
-            "head": None,
-            "note": "",
-            "auto": False,
-            "autopilot": True,
-        }
-        needs = {"publish": {"outputs": {"result": json.dumps({"published": True})}}}
-        self.gh.comment(5, f"{PLAN_MARKER}\n## Plan")
-        return report(
-            self.gh, decision, cfg, needs, artifacts, workflow_ref=WORKFLOW, default_branch="main"
-        )
-
     def test_a_plan_that_needs_nobody_leads_to_go(self):
         self.issue(5)
         self.report_plan(self.cfg, {"questions": [], "too_large": False})
@@ -352,3 +356,370 @@ class StatusTests(AutopilotCase):
         self.assertIn("Autopilot: milestone M1, at most 2 at once", text)
         self.assertIn("start /nexkit plan", text)
         self.assertEqual(self.gh.dispatches, [])  # status changes nothing
+
+
+QUESTION = {"question": "Which port?", "options": ["8080", "9090"], "recommended": "8080"}
+
+
+def plan_output(**kw):
+    return {
+        "summary": "Add it.",
+        "changes": ["It is added."],
+        "decisions": [],
+        "risks": [],
+        "acceptance_criteria": ["It works."],
+        "implementation_notes": ["Edit app.py."],
+        "questions": [],
+        "too_large": False,
+        "split": [],
+        "revision": {"started_over": False, "changes": []},
+        **kw,
+    }
+
+
+class AnswerAndSplitCase(AutopilotCase):
+    def setUp(self):
+        super().setUp()
+        self.cfg = pilot(answer="recommended")
+
+    def posted_plan(self, number, **output):
+        """A plan run and its comment, as `publish` writes it."""
+        from nexkit.publish import render_plan
+
+        self.run_comment(number, "plan", outcome="planned")
+        return self.gh.comment(number, render_plan(plan_output(**output)))
+
+
+class AnswerTests(AnswerAndSplitCase):
+    def test_answers_recommended_questions_and_plans_again(self):
+        from nexkit.context import gather
+
+        self.issue(5)
+        self.posted_plan(5, questions=[QUESTION])
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        [answered] = self.gh.comments_matching(5, "answers for the owner")
+        self.assertIn("1. Which port?\n   **8080**", answered["body"])
+        # The next plan reads the answers as the owner's discussion since the plan.
+        decision = {"action": "plan", "issue": 5, "pr": None, "note": ""}
+        context = gather(self.gh, decision)
+        self.assertIn("NexKit autopilot for the owner", context["since_plan"])
+        self.assertIn("**8080**", context["since_plan"])
+        self.assertNotIn("nexkit:answers", context["since_plan"])
+        # The answer comment is not a collaborator's change: the sweep does not re-plan twice.
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+
+    def test_another_bots_answers_are_not_the_owners(self):
+        from nexkit.context import gather
+
+        self.issue(5)
+        comment = self.gh.comment(5, "x\n\n" + autopilot.answers_marker({"answers": []}))
+        comment["user"] = {"login": "evil[bot]", "type": "Bot"}
+        context = gather(self.gh, {"action": "plan", "issue": 5, "pr": None, "note": ""})
+        self.assertNotIn("for the owner", context["discussion"])
+
+    def test_waits_for_a_person_without_a_recommendation_or_without_answer(self):
+        self.issue(4)
+        self.posted_plan(4, questions=[{**QUESTION, "recommended": ""}])
+        self.issue(5)
+        self.posted_plan(5, questions=[QUESTION])
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual([s["state"] for s in steps], ["waits", "start"])
+        _, steps = autopilot.preview(self.gh, pilot())  # answer: "never"
+        self.assertEqual([s["state"] for s in steps], ["waits", "waits"])
+        # A recommendation that is not one of the options is none.
+        self.assertIsNone(autopilot.answers(self.cfg, [{**QUESTION, "recommended": "80"}]))
+
+    def test_answers_a_blocked_go_and_a_blocked_fix_round(self):
+        self.issue(4)
+        self.posted_plan(4)
+        self.run_comment(
+            4,
+            "go",
+            status="failure",
+            outcome="agent_blocked",
+            attention="blocked",
+            questions=[QUESTION],
+        )
+        self.issue(5)
+        self.posted_plan(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        round_ = {
+            "round": 2,
+            "trigger": "fix",
+            "status": "failure",
+            "url": "u",
+            "outcome": "agent_blocked",
+            "questions": [QUESTION],
+        }
+        self.gh.comment(6, render_run(round_))
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 4), ("fix", 6)])
+        notes = [d["inputs"]["note"] for d in self.gh.dispatches]
+        self.assertTrue(all("Which port? Answer: 8080" in note for note in notes))
+        self.assertTrue(self.gh.comments_matching(6, "answers for the owner"))
+        self.assertTrue(self.gh.comments_matching(4, "answers for the owner"))
+        self.sweep()
+        self.assertEqual(len(self.started()), 2)
+
+    def test_report_mentions_nobody_when_autopilot_answers(self):
+        cfg = make_config(autopilot={"enabled": True, "answer": "recommended"}, notify=["olivia"])
+        self.issue(5)
+        result = self.report_plan(cfg, plan_output(questions=[QUESTION]))
+        self.assertIsNone(result.get("attention"))
+        self.assertIn("NexKit autopilot carries on from here.", result["summary"])
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+        self.report_plan(cfg, plan_output(questions=[{**QUESTION, "recommended": ""}]))
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+        # Outside the scope, autopilot answers nothing, so a person is needed.
+        self.gh.issue_comments[5].clear()
+        self.gh.issues[5]["milestone"] = None
+        self.report_plan(cfg, plan_output(questions=[QUESTION]))
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+
+
+class SplitTests(AnswerAndSplitCase):
+    PARTS = [{"title": "First part", "body": "Do A."}, {"title": "Second part", "body": "Do B."}]
+
+    def test_a_plan_that_is_too_large_becomes_sub_issues_and_the_first_is_planned(self):
+        self.issue(5, labels=["area"])
+        self.posted_plan(5, too_large=True, split=self.PARTS)
+        lines = self.sweep(pilot())  # splits without autopilot.answer
+        self.assertIn("Split #5 into #6, #7.", lines)
+        self.assertEqual(
+            [self.gh.issues[n]["title"] for n in (6, 7)], ["First part", "Second part"]
+        )
+        for number in (6, 7):
+            issue = self.gh.issues[number]
+            self.assertEqual(self.gh.parents[number], 5)
+            self.assertEqual(issue["milestone"], {"number": 1})
+            self.assertEqual(issue["labels"], [{"name": "area"}])
+            self.assertTrue(issue["body"].startswith("<!-- nexkit:part 5 -->"))
+        self.assertEqual(self.started(), [("plan", 6)])
+        self.assertTrue(self.gh.comments_matching(5, "split this issue as its plan suggests"))
+        self.sweep(pilot())
+        self.assertEqual(self.started(), [("plan", 6)])
+
+    def test_only_parts_of_a_trusted_parent_are_trusted(self):
+        self.issue(5, user="bob")
+        self.issue(6, user="github-actions[bot]", body="<!-- nexkit:part 5 -->\nDo A.")
+        self.gh.parents[6] = 5
+        self.issue(7, user="github-actions[bot]", body="<!-- nexkit:part 5 -->\nDo B.")
+        self.assertFalse(autopilot.trusted(self.gh, self.gh.issues[6]))  # bob cannot write
+        self.assertFalse(autopilot.trusted(self.gh, self.gh.issues[7]))  # not a sub-issue
+        self.gh.issues[5]["user"] = {"login": "alice"}
+        self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[6]))
+
+    def test_an_agent_that_ran_out_of_time_leads_to_one_split_plan(self):
+        self.issue(5)
+        self.posted_plan(5)
+        self.run_comment(
+            5,
+            "go",
+            status="failure",
+            outcome="agent_error",
+            timed_out=True,
+            attention="the run stopped on an error",
+        )
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        self.assertIn(
+            "did not finish within its time limit", self.gh.dispatches[0]["inputs"]["note"]
+        )
+        # The new plan is not too large, and go runs out of time again: a person decides.
+        self.posted_plan(5)
+        self.sweep()
+        self.run_comment(
+            5,
+            "go",
+            status="failure",
+            outcome="agent_error",
+            timed_out=True,
+            attention="the run stopped on an error",
+        )
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("go", 5)])
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", "the run stopped on an error"))
+
+    def test_a_fix_round_out_of_time_splits_and_closes_the_pull_request(self):
+        self.issue(5)
+        self.posted_plan(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(9, 5)
+        round_ = {
+            "round": 2,
+            "trigger": "fix",
+            "status": "failure",
+            "url": "u",
+            "outcome": "agent_error",
+            "timed_out": True,
+        }
+        self.gh.comment(9, render_run(round_))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        self.posted_plan(5, too_large=True, split=self.PARTS)
+        self.sweep()
+        self.assertEqual(self.gh.pulls[9]["state"], "closed")
+        self.assertTrue(self.gh.comments_matching(9, "Superseded by #10, #11"))
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 10)])
+
+    def test_a_too_large_plan_that_a_person_implemented_anyway_is_not_split(self):
+        self.issue(5)
+        self.posted_plan(5, too_large=True, split=self.PARTS)
+        self.run_comment(5, "go", outcome="ready")  # a person commented /nexkit go
+        self.gh.add_pull(9, 5)
+        self.sweep()
+        self.assertEqual((self.started(), self.gh.pulls[9]["state"]), ([], "open"))
+
+
+class RecordTests(unittest.TestCase):
+    def test_the_plan_comment_shows_recommendations_and_keeps_a_record_agents_never_see(self):
+        from nexkit.publish import render_plan
+        from nexkit.state import plan_data, plan_text
+
+        body = render_plan(plan_output(questions=[QUESTION, "An old plain question?"]))
+        self.assertIn("1. Which port?\n   - 8080 (recommended)\n   - 9090\n2. An old", body)
+        comment = {"body": body, "user": {"login": "github-actions[bot]"}}
+        data = plan_data(comment)
+        self.assertEqual(data["questions"][0], QUESTION)
+        self.assertEqual(data["questions"][1]["options"], [])
+        self.assertFalse(data["too_large"])
+        self.assertNotIn("nexkit:plan-data", plan_text(comment))
+        self.assertIsNone(plan_data({**comment, "user": {"login": "mallory"}}))
+
+    def test_a_blocked_round_shows_its_questions_and_keeps_them_in_its_marker(self):
+        from tests.test_report import ReportCase, decision
+
+        case = ReportCase("run")
+        case.setUp()
+        self.addCleanup(case.tearDown)
+        conflict = {"file": "a.py", "base_change": "x", "pr_change": "y", **QUESTION}
+        output = {"status": "blocked", "questions": [QUESTION], "open_conflicts": [conflict]}
+        case.write(
+            "nexkit-agent", "result.json", {"status": "blocked", "error": "Stuck", "output": output}
+        )
+        d = decision("fix", pr=6, head="c" * 40, target=6)
+        outcome = case.run_report(d, published=False)
+        self.assertEqual(outcome["outcome"], "agent_blocked")
+        [run] = [c["run"] for c in case.gh.run_comments(6)]
+        self.assertEqual(
+            [q["question"] for q in run["questions"]], ["Which port?", "`a.py`: Which port?"]
+        )
+        [comment] = case.gh.run_comments(6)
+        self.assertIn(
+            "**Decisions needed**\n\n- Which port?\n  - 8080 (recommended)", comment["body"]
+        )
+        self.assertIn("  - **Question:** Which port?\n    - 8080 (recommended)", comment["body"])
+
+    def test_an_agent_that_ran_out_of_time_says_so(self):
+        from tests.support import interpret_claude
+
+        result = interpret_claude("implement", None, timed_out=True)
+        self.assertTrue(result["timed_out"])
+        self.assertNotIn("timed_out", interpret_claude("implement", None))
+
+
+class CITests(AutopilotCase):
+    SHA = "e" * 40
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(
+            autopilot={"enabled": True}, merge={"after_workflows": ["ci.yml"]}, notify=["olivia"]
+        )
+        self.issue(3)
+
+    def ci_run(self, conclusion="failure", attempt=1, sha=SHA, run_id=50):
+        run = {
+            "id": run_id,
+            "head_branch": "main",
+            "head_sha": sha,
+            "status": "completed",
+            "conclusion": conclusion,
+            "run_attempt": attempt,
+            "html_url": f"https://github.com/acme/app/actions/runs/{run_id}",
+        }
+        self.gh.workflow_history.setdefault("ci.yml", []).append(run)
+        self.gh.jobs[run_id] = [
+            {
+                "name": "test",
+                "conclusion": "failure",
+                "html_url": "https://job",
+                "steps": [{"name": "Run tests", "conclusion": "failure"}],
+            },
+            {"name": "lint", "conclusion": "success", "steps": []},
+        ]
+        return run
+
+    def bugs(self):
+        return [i for i in self.gh.issues.values() if autopilot.ci_workflow(i)]
+
+    def test_a_failure_runs_again_once_then_opens_a_bug_that_is_planned_first(self):
+        run = self.ci_run()
+        self.sweep()
+        self.assertEqual(self.gh.reruns, [50])
+        self.assertEqual(self.bugs(), [])
+        run["run_attempt"] = 2
+        self.gh.dispatches.clear()
+        self.sweep()
+        self.assertEqual(self.gh.reruns, [50])
+        [bug] = self.bugs()
+        self.assertEqual(bug["title"], "`ci.yml` fails on `main`")
+        self.assertEqual([x["name"] for x in bug["labels"]], ["bug"])
+        self.assertEqual(bug["milestone"], {"number": 1})
+        self.assertIn(
+            "@olivia [`ci.yml` failed](https://github.com/acme/app/actions/runs/50)", bug["body"]
+        )
+        self.assertIn("- [test](https://job): `Run tests`", bug["body"])
+        self.assertNotIn("lint", bug["body"])
+        self.assertEqual(self.started(), [("plan", bug["number"])])
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual([s["number"] for s in steps], [bug["number"], 3])
+        self.sweep()
+        self.assertEqual(len(self.bugs()), 1)
+
+    def test_a_newer_failing_commit_comments_on_the_open_bug(self):
+        self.ci_run(attempt=2)
+        self.sweep()
+        [bug] = self.bugs()
+        self.ci_run(attempt=2, sha="f" * 40, run_id=51)
+        self.sweep()
+        self.sweep()
+        self.assertEqual(len(self.bugs()), 1)
+        [comment] = self.gh.comments_matching(bug["number"], "fails again on a newer commit")
+        self.assertIn("f" * 40, comment["body"])
+        # Closed without a fix, the same commit is not reported again.
+        bug["state"] = "closed"
+        self.sweep()
+        self.assertEqual(len(self.bugs()), 1)
+
+    def test_passing_or_running_ci_and_other_branches_are_left_alone(self):
+        self.ci_run(conclusion="success")
+        self.ci_run(run_id=52)["head_branch"] = "nexkit/issue-3"
+        running = self.ci_run(run_id=53, conclusion=None)
+        running["status"] = "in_progress"
+        self.sweep()
+        self.assertEqual((self.gh.reruns, self.bugs()), ([], []))
+        self.gh.workflow_history.clear()
+        self.ci_run(attempt=2)
+        self.sweep(pilot())  # no merge.after_workflows
+        self.assertEqual(self.bugs(), [])
+
+    def test_the_label_scope_labels_the_bug(self):
+        self.ci_run(attempt=2)
+        cfg = make_config(
+            autopilot={"enabled": True, "scope": "label", "label": "go"},
+            merge={"after_workflows": ["ci.yml"]},
+        )
+        self.sweep(cfg)
+        [bug] = self.bugs()
+        self.assertEqual([x["name"] for x in bug["labels"]], ["bug", "go"])
+        self.assertIsNone(bug["milestone"])
+        self.assertEqual(self.started(), [("plan", bug["number"])])
+
+    def test_only_nexkits_own_bug_issues_go_first(self):
+        self.issue(4, body="<!-- nexkit:ci ci.yml -->\nForged.")
+        self.assertIsNone(autopilot.ci_workflow(self.gh.issues[4]))

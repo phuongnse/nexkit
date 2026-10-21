@@ -61,10 +61,10 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 
 | Run result | A person is needed |
 |---|---|
-| Plan posted, and it has questions or says the issue is too large | yes |
+| Plan posted, and it has questions or says the issue is too large | yes, unless [autopilot](#autopilot) answers or splits it |
 | Plan posted without either | no |
-| The agent returned `blocked` | yes |
-| The agent failed or errored, publishing failed, or the review did not complete | yes |
+| The agent returned `blocked` | yes, unless autopilot answers it |
+| The agent failed or errored, publishing failed, or the review did not complete | yes, unless autopilot asks for a split after an implement or fix agent ran out of time |
 | Checks or review still fail and no automatic fix rounds remain | yes |
 | Ready, with `merge.auto` off | yes |
 | GitHub refused the automatic merge | yes |
@@ -218,7 +218,7 @@ One or two sentences: what changes and why.
 ### Decisions to check    choices the issue did not settle, each with a short reason
 ### Risks and limits      what could go wrong or is left out
 ### Acceptance criteria   one check each, at most about 30 words
-### Questions             only when answers would change the work
+### Questions             only when answers would change the work; options, one marked (recommended)
 ### Suggested split       only when the work is too large for one session
 
 <details><summary>Implementation notes</summary>
@@ -434,6 +434,27 @@ issue run in that group as well, and start a sweep.
   run and a `needs_human` pull request all stop autopilot on that issue, exactly where they
   stop NexKit without it. A collaborator's comment after the latest plan leads to a new
   plan before `/nexkit go`.
+- **Answers and splits.** Each question in a plan or a blocked round has options and the
+  one the agent recommends, or none. With `autopilot.answer: "recommended"` and a
+  recommendation for every question, autopilot posts the answers in a comment that ends
+  with its own marker, and plans again, or starts the blocked command again with the
+  answers as its note. The prompts include that comment as the owner's discussion; a
+  comment by any other bot never counts. A plan that is too large becomes sub-issues, in
+  order; a NexKit pull request of the split issue is closed as superseded. An implement or
+  fix agent that ran out of time leads to one re-plan with a note to split the work; a
+  second time waits for a person. This is the only case where an agent error leads to more
+  agent work, and it changes the plan rather than repeating the run.
+- **CI on the default branch.** Each sweep looks at the latest run, on the default branch,
+  of each workflow in `merge.after_workflows`. A run that failed gets its failed jobs run
+  once more (`run_attempt` 1). When the next attempt fails too, autopilot opens a `bug`
+  issue in scope, starting with a marker that names the workflow, and that issue goes
+  before all others. Each report holds a marker with its commit, so a commit is reported
+  once, and a newer failing commit adds a comment to the open issue. GitHub may send no
+  `workflow_run` event for runs that the Actions token started, so NexKit learns that a run
+  finished from the next sweep: after a run, an issue event or the hourly schedule.
+- **What autopilot reads.** The plan comment ends with a hidden record of its questions and
+  its split, after everything the agent wrote, and a run comment's marker holds the
+  questions of a blocked round and whether the agent ran out of time.
 
 ### Usage limits
 
@@ -610,7 +631,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | The agent times out, hits its budget, errors, or returns no result or one that does not fit the stage's schema | Reports it; publishes nothing; no automatic retry. |
 | The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |
-| Agent returns `blocked` | Reports its reason; no automatic retry. A person decides. |
+| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |
@@ -629,7 +650,8 @@ state, leaves it as it is and saves the state in a new state comment.
 | NexKit itself fails in the `agent` or `review` job | Reports `NexKit stopped on <exception>` like an agent error; the job log has the traceback. |
 
 Automatic rounds only follow concrete check failures or review findings. Agent errors and
-blocked results always stop, so model usage is never spent repeating a problem the agent
+blocked results always stop, apart from what [autopilot](#autopilot) answers or splits, so
+model usage is never spent repeating a problem the agent
 cannot fix. A run paused at the usage limit is not a retry: it continues the same command
 once the limit has reset.
 
@@ -654,4 +676,7 @@ once the limit has reset.
 - Fork pull requests are never NexKit pull requests: commands on them are refused.
 - Autopilot starts `/nexkit go` without a person's approval of the plan. It takes only
   issues opened by people with write access, and anyone else's issues stay untouched, so
-  an outsider cannot start an implement session by opening or editing an issue.
+  an outsider cannot start an implement session by opening or editing an issue. Issues
+  that NexKit opens itself, the parts of a split and bug issues for CI failures, are
+  trusted by a marker at the start of their text; such an issue opened by the Actions token
+  is NexKit's, unless another workflow of the repository writes untrusted text there.

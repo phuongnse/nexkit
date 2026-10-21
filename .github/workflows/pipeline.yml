@@ -12,8 +12,8 @@
 #          merge.auto, the merge and the base branch's merge.after_workflows
 # maintain work that follows other events: closing a parent issue, resuming commands
 #          paused at the usage limit (waiting for their reset in a run of its own),
-#          starting rounds for conflicts with the base branch; no agent and no repository
-#          checkout
+#          starting rounds for conflicts with the base branch, autopilot sweeps; no agent
+#          and no repository checkout
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # version of each agent runtime in nexkit/__init__.py.
@@ -385,9 +385,9 @@ jobs:
     timeout-minutes: ${{ fromJSON(needs.route.outputs.maintain_timeout) }}
     permissions:
       contents: read
-      issues: write # close parent issues; mark paused runs as resumed
-      pull-requests: write # paused runs on pull requests
-      actions: write # resume paused commands, start conflict rounds
+      issues: write # close parent issues; mark paused runs as resumed; autopilot's issues
+      pull-requests: write # paused runs on pull requests; close a pull request a split supersedes
+      actions: write # resume paused commands, start conflict rounds and autopilot's commands
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

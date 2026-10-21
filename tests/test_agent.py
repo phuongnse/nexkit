@@ -39,6 +39,7 @@ DONE = {
     "status": "done",
     "summary": "Fixed add.",
     "blocker": "",
+    "questions": [],
     "checks_run": ["make test"],
     "changes": ["add() adds."],
     "testing": "make test",
@@ -567,6 +568,8 @@ class ConflictTests(StageCase):
             "base_change": "Adds mul().",
             "pr_change": "Adds sub().",
             "question": "Which one?",
+            "options": ["Keep both"],
+            "recommended": "",
         }
         blocked = {**FIX_DONE, "status": "blocked", "blocker": "Needs a decision"}
         result = self.run_fix(result={**blocked, "open_conflicts": [question]})
@@ -590,7 +593,10 @@ class ConflictTests(StageCase):
         schema = agent.SCHEMAS["fix"]
         self.assertIn("open_conflicts", schema["required"])
         item = schema["properties"]["open_conflicts"]["items"]
-        self.assertEqual(item["required"], ["file", "base_change", "pr_change", "question"])
+        self.assertEqual(
+            item["required"],
+            ["file", "base_change", "pr_change", "question", "options", "recommended"],
+        )
         self.assertNotIn("open_conflicts", agent.SCHEMAS["implement"]["required"])
         for field in item["required"]:
             self.assertIn(f"`{field}`", agent._template("fix"))

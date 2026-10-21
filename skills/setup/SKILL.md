@@ -122,7 +122,12 @@ files or repository settings, and wait for confirmation.
    takes only issues opened by people with write access, and that it stops on questions,
    blocked or failed runs and mentions `notify`. `"max_parallel": <n>` limits how many
    issues are in progress at once; without it, every ready issue starts. It pairs with
-   `merge.auto`, `conflicts.auto_resolve`, `close_parent_issues` and `notify`. After the
+   `merge.auto`, `conflicts.auto_resolve`, `close_parent_issues` and `notify`. With
+   `"answer": "recommended"`, it also answers the questions of plans and blocked rounds
+   with the option NexKit recommends, when every question has one; it splits plans that
+   are too large into sub-issues either way. With `merge.after_workflows`, it also runs a
+   failed CI run on the default branch once more and, if it fails again, opens a `bug`
+   issue that it plans first. After the
    commit, start the first sweep with
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 

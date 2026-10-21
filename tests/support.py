@@ -111,6 +111,9 @@ class FakeGitHub:
         self.parents = {}  # sub-issue number -> parent number
         self.blockers = defaultdict(list)  # issue number -> numbers of issues that block it
         self.open_milestones = []
+        self.workflow_history = {}  # workflow file -> its runs, oldest first
+        self.jobs = {}  # run id -> jobs
+        self.reruns = []
         self.branches = {}
         self.runs = {}
         self.dispatch_runs = {}
@@ -248,6 +251,21 @@ class FakeGitHub:
             found.append(issue)
         return sorted(found, key=lambda i: i["number"])
 
+    def create_issue(self, title, body, milestone=None, labels=()):
+        number = max([*self.issues, *self.pulls, 0]) + 1
+        issue = self.add_issue(
+            number, title, body, user=BOT_LOGIN, milestone=milestone, labels=labels
+        )
+        issue["id"] = 90000 + number
+        return issue
+
+    def add_sub_issue(self, number, child_id):
+        self.parents[child_id - 90000] = number
+
+    def close_pull(self, number):
+        self.pulls[number]["state"] = "closed"
+        self.issues[number]["state"] = "closed"
+
     def close_issue(self, number, reason="completed"):
         if number in self.close_errors:
             raise self.close_errors[number]
@@ -301,6 +319,20 @@ class FakeGitHub:
 
     def workflow_run(self, run_id):
         return self.runs[run_id]
+
+    def workflow_runs(self, workflow, branch, limit=5):
+        found = [r for r in self.workflow_history.get(workflow, []) if r["head_branch"] == branch]
+        return found[::-1][:limit]
+
+    def run_jobs(self, run_id):
+        return list(self.jobs.get(run_id, []))
+
+    def rerun_failed_jobs(self, run_id):
+        self.reruns.append(run_id)
+
+    def issues_by(self, creator, limit=100):
+        found = [i for i in self.issues.values() if (i.get("user") or {}).get("login") == creator]
+        return sorted(found, key=lambda i: -i["number"])[:limit]
 
     def pulls_into(self, base):
         return [p for p in self.pulls.values() if p["state"] == "open" and p["base"]["ref"] == base]

@@ -16,7 +16,7 @@ from pathlib import Path
 from string import Template
 
 from . import config as configuration
-from .checks import environment, known_base
+from .checks import BASE_SHA, environment, known_base
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, summary, write_summary
@@ -413,7 +413,7 @@ def run_process(prompt, argv, *, env, cwd, timeout_seconds, log):
 
 
 def run_agent(
-    stage, prompt, cfg, *, cwd, redact, out, title, base_sha=None, program=None, restore=None
+    stage, prompt, cfg, *, cwd, redact, out, title, commits=None, program=None, restore=None
 ):
     """Run the agent of `stage` on `prompt`. Return the interpreted result and the tool
     calls for the summary. `program` replaces the runtime's executable, for tests.
@@ -424,8 +424,8 @@ def run_agent(
     limit, until the earliest reset. The result names the agent that ran last and lists
     every agent's run in `attempts`.
 
-    `base_sha` becomes NEXKIT_BASE_SHA, so checks that the agent runs see the same base as
-    in the verify job."""
+    `commits` gives NEXKIT_BASE_SHA and NEXKIT_VERIFIED_SHA, so checks that the agent runs
+    see the same commits as in the verify job."""
     settings = configuration.stage(cfg, stage)
     names = configuration.chain(cfg, settings["agent"])
     deadline = time.monotonic() + configuration.stage_minutes(cfg, stage) * 60
@@ -455,7 +455,7 @@ def run_agent(
             redact=redact,
             out=Path(out) / f"agent-{name}" if index else Path(out),
             title=title,
-            base_sha=base_sha,
+            commits=commits,
             program=program,
         )
         attempts.append(_attempt_record(cfg, name, settings, attempt))
@@ -516,7 +516,7 @@ def _totals(result, attempts):
 
 
 def _run_one(
-    stage, prompt, cfg, name, *, fallback, seconds, cwd, redact, out, title, base_sha, program
+    stage, prompt, cfg, name, *, fallback, seconds, cwd, redact, out, title, commits, program
 ):
     """Run the agent `name` once. A fallback without its secret is skipped: the result has
     `skipped` and says why."""
@@ -557,7 +557,7 @@ def _run_one(
         transcript_dir=out if cfg["transcript"] else None,
     )
     # Without any agent credential: the CLI gets only its own, through `launch.env`.
-    env = environment(base_sha)
+    env = environment(commits)
     with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
         spec = stage_spec(stage, cfg, home)
         launch = runtime.launch(agent, spec, secrets, program)
@@ -746,12 +746,12 @@ def run_stage(
     program=None,
     checks=None,
     base=None,
-    base_sha=None,
+    commits=None,
     triage=None,
 ):
     """Run one stage. A plan's `triage` result is stored with it.
 
-    `base_sha` is the merge base with the base branch, for NEXKIT_BASE_SHA."""
+    `commits` gives NEXKIT_BASE_SHA and NEXKIT_VERIFIED_SHA (see `checks.find_commits`)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     extra = {}
@@ -764,7 +764,7 @@ def run_stage(
         extra["conflicts"] = conflicts_text(base, merged, conflicts)
         if merged:
             # Once committed, the merge has the merged base commit as its merge base.
-            base_sha = known_base(repo, merged)
+            commits = {**(commits or {}), BASE_SHA: known_base(repo, merged)}
     if stage == "plan":
         extra["previous"] = previous_plan(context)
     if stage == "review":
@@ -806,7 +806,7 @@ def run_stage(
         redact=redact,
         out=out,
         title=f"NexKit {stage}",
-        base_sha=base_sha,
+        commits=commits,
         program=program,
         restore=restore if base_commit else None,
     )

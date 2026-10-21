@@ -19,7 +19,9 @@ PLAN_MARKER = "<!-- nexkit:plan -->"
 STATE_PREFIX = "<!-- nexkit:state "
 STATE_PATTERN = re.compile(r"<!-- nexkit:state ([A-Za-z0-9+/=]+) -->")
 RUN_PREFIX = "<!-- nexkit:run "
-RUN_PATTERN = re.compile(r"<!-- nexkit:run ([A-Za-z0-9+/=]+) -->")
+# Only the marker that ends the comment: the text before it can quote agent output.
+RUN_PATTERN = re.compile(r"<!-- nexkit:run ([A-Za-z0-9+/=]+) -->\s*\Z")
+COMMIT = re.compile(r"[0-9a-f]{40}")
 # A plan's profile: a hidden record on the line after the plan marker, where agent text
 # cannot be, and lines for people that the agents do not receive.
 PROFILE_PREFIX = "<!-- nexkit:profile "
@@ -149,6 +151,19 @@ def with_run(body, run, line=""):
     if line:
         text += f"\n\n{line}"
     return f"{text}\n\n{run_marker(run)}"
+
+
+def verified_head(comments):
+    """The head of the latest round whose checks all passed, from NexKit's own round
+    comments on the pull request, or None."""
+    passed = [
+        run
+        for _, run in _marked(comments, RUN_PATTERN)
+        if run.get("round")
+        and run.get("checks") == "passed"
+        and COMMIT.fullmatch(str(run.get("head") or ""))
+    ]
+    return max(passed, key=lambda run: run["round"])["head"] if passed else None
 
 
 def next_round(comments):

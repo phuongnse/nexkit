@@ -18,7 +18,7 @@ from nexkit.config import validate
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.base import Launch, Runtime
 from nexkit.runtimes.claude_code import ClaudeReader
-from nexkit.state import BOT_LOGIN, RUN_PATTERN
+from nexkit.state import BOT_LOGIN, RUN_PATTERN, render_run
 
 # The Claude agent that `nexkit init` declares.
 CLAUDE = {
@@ -131,6 +131,19 @@ class FakeGitHub:
             "state_reason": reason,
         }
         return self.issues[number]
+
+    def round_comment(self, number, round, head, checks, text=""):
+        """A NexKit round comment, as `report` leaves it."""
+        run = {
+            "round": round,
+            "trigger": "fix",
+            "status": "success",
+            "url": f"https://github.com/acme/app/actions/runs/{round}",
+            "head": head,
+            "checks": checks,
+            "verdict": "approve",
+        }
+        return self.comment(number, render_run(run, text))
 
     def human_comment(self, number, body, login="alice", association="COLLABORATOR"):
         comment = {
@@ -383,6 +396,7 @@ spec = spec.get("by_token", {}).get(token, spec)
 call = {"args": args, "prompt": prompt, "cwd": os.getcwd(),
         "has_token": bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")), "token": token,
         "base_sha": os.environ.get("NEXKIT_BASE_SHA"),
+        "verified_sha": os.environ.get("NEXKIT_VERIFIED_SHA"),
         "files": sorted(os.listdir(".")),
         "merging": os.path.exists(os.path.join(".git", "MERGE_HEAD"))}
 with open(os.environ["FAKE_CLAUDE_LOG"], "w") as log:

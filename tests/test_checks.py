@@ -61,8 +61,8 @@ class ChecksTests(unittest.TestCase):
         self.assertIn("stopped the command", output)
 
 
-class BaseCommitTests(unittest.TestCase):
-    """NEXKIT_BASE_SHA: the merge base of the checked commit and the base branch."""
+class CommitCase(unittest.TestCase):
+    """A NexKit branch that forked from the base branch at `self.fork`."""
 
     def setUp(self):
         self.repos = GitRepos()
@@ -78,6 +78,10 @@ class BaseCommitTests(unittest.TestCase):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             return function(*args), stdout.getvalue()
+
+
+class BaseCommitTests(CommitCase):
+    """NEXKIT_BASE_SHA: the merge base of the checked commit and the base branch."""
 
     def test_finds_the_merge_base_in_a_full_checkout(self):
         repo = self.repos.clone("agent")
@@ -98,10 +102,61 @@ class BaseCommitTests(unittest.TestCase):
             checks=[{"name": "base", "run": 'cat setup.txt; echo "${NEXKIT_BASE_SHA-unset}"'}],
         )
         with mock.patch.dict(os.environ, {"NEXKIT_BASE_SHA": "stale"}):
-            known = checks.run_checks(cfg, repo, base_sha=self.fork)
+            known = checks.run_checks(cfg, repo, commits={checks.BASE_SHA: self.fork})
             unknown = checks.run_checks(cfg, repo)
         self.assertEqual(known[0]["output"].split(), [self.fork, self.fork])
         self.assertEqual(unknown[0]["output"].split(), ["unset", "unset"])
+
+
+class VerifiedCommitTests(CommitCase):
+    """NEXKIT_VERIFIED_SHA: the last commit of the pull request whose checks all passed."""
+
+    def find(self, repo, verified):
+        decision = {"base": "main", "verified_sha": verified}
+        return self.quietly(checks.find_commits, repo, decision)
+
+    def test_is_the_decision_commit_when_the_checkout_has_it(self):
+        passed = self.repos.push_commit("dev", "nexkit/issue-5", {"c.txt": "c\n"}, "C")
+        repo = self.repos.clone("verify")
+        git(repo, "checkout", "-q", "nexkit/issue-5")
+        commits, log = self.find(repo, passed)
+        self.assertEqual(commits, {checks.BASE_SHA: self.fork, checks.VERIFIED_SHA: passed})
+        self.assertIn(f"NEXKIT_VERIFIED_SHA={passed}", log)
+
+    def test_is_unset_without_an_earlier_passing_round(self):
+        repo = self.repos.clone("verify")
+        commits, log = self.find(repo, None)
+        self.assertIsNone(commits[checks.VERIFIED_SHA])
+        self.assertIn(
+            "NEXKIT_VERIFIED_SHA is not set: no earlier round of this pull request passed its "
+            "checks",
+            log,
+        )
+
+    def test_is_unset_when_the_checkout_lacks_the_commit(self):
+        repo = self.repos.clone("verify")
+        commits, log = self.find(repo, "f" * 40)
+        self.assertIsNone(commits[checks.VERIFIED_SHA])
+        self.assertIn(
+            "NEXKIT_VERIFIED_SHA is not set: the checkout does not have fffffff, the last "
+            "commit whose checks passed",
+            log,
+        )
+
+    def test_setup_and_every_check_see_it(self):
+        repo = self.repos.clone("checks")
+        cfg = make_config(
+            setup=['echo "${NEXKIT_VERIFIED_SHA-unset}" > setup.txt'],
+            checks=[
+                {"name": name, "run": 'cat setup.txt; echo "${NEXKIT_VERIFIED_SHA-unset}"'}
+                for name in ("unit", "integration")
+            ],
+        )
+        with mock.patch.dict(os.environ, {"NEXKIT_VERIFIED_SHA": "stale"}):
+            known = checks.run_checks(cfg, repo, commits={checks.VERIFIED_SHA: self.fork})
+            unknown = checks.run_checks(cfg, repo, commits={checks.VERIFIED_SHA: None})
+        self.assertEqual([r["output"].split() for r in known], [[self.fork, self.fork]] * 2)
+        self.assertEqual([r["output"].split() for r in unknown], [["unset", "unset"]] * 2)
 
 
 class SetupTimeoutTests(unittest.TestCase):

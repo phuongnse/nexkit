@@ -15,7 +15,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
-| `maintain` | closed issues, pushes to the default branch, the schedule, the `resume` dispatch | read; issues, comments, workflows | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | issue and milestone events, pushes to the default branch, the schedule, the `resume` and `autopilot` dispatches | read; issues, comments, workflows | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -396,6 +396,45 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
 - When the round starts and the branch no longer conflicts, for example because another
   round already merged the base branch, it ends at once without running an agent.
 
+### Autopilot
+
+With `autopilot.enabled` (see [Autopilot](configuration.md#autopilot)), NexKit posts no
+commands on its own behalf; it starts them the way it starts automatic rounds, with a
+dispatch of the workflow. A *sweep* decides which:
+
+1. It finds the scope: the open issues of the earliest open milestone, or those with
+   `autopilot.label`, oldest first.
+2. For each issue, it reads the markers of NexKit's run comments on the issue and its pull
+   request, the latest plan, the issue's *blocked by* relationships and its parent's
+   sub-issues. From these alone it decides: start `/nexkit plan`, start `/nexkit go`,
+   leave it to a run or pull request that carries it on, or leave it to a person.
+3. It starts what it decided, oldest first, while fewer than `autopilot.max_parallel`
+   issues are in progress, and records each start on the issue.
+
+A sweep is a `workflow_dispatch` with the command `autopilot`. Its `number` input is
+`autopilot` too, so callers' concurrency groups give every sweep the group
+`nexkit-autopilot`: sweeps run one at a time, and GitHub keeps one waiting sweep, which
+sees everything a replaced one would have. Issue and milestone events other than a closed
+issue run in that group as well, and start a sweep.
+
+- **What starts a sweep.** The end of every NexKit run, except one that started the next
+  automatic round itself or waits for a usage limit. A closed issue, whether a person or
+  NexKit closed it, which also lets the sweep say once that the scope is done. An issue
+  that opens, is reopened, or comes into scope with a label or milestone. A closed
+  milestone, after which the next milestone becomes the scope. The hourly schedule, which
+  catches anything the others missed. Nothing waits in a loop: with nothing to start, a
+  sweep ends.
+- **A command starts once.** The record on the issue holds the command, the issue or pull
+  request it runs on, and the newest NexKit run comment on both when it started. A run
+  that starts posts a new run comment, so the next sweep sees that the command ran.
+  Until then, the issue counts as in progress and nothing else starts on it. A command
+  whose run never started, for example because `route` refused it, is not started again:
+  after six hours the issue waits for a person.
+- **People stay in charge.** A person's command, a plan's questions, a blocked or failed
+  run and a `needs_human` pull request all stop autopilot on that issue, exactly where they
+  stop NexKit without it. A collaborator's comment after the latest plan leads to a new
+  plan before `/nexkit go`.
+
 ### Usage limits
 
 When an agent stops because its account hit a usage limit that resets, in any stage
@@ -541,7 +580,9 @@ comment on the pull request. Run comments only show runs. The state comment, edi
 place, says how many automatic fix rounds were used and holds a hidden JSON record of the
 latest feedback, that count, the last completed review (its commit and all its findings)
 and the recent fix rounds (summary, note and, after a merge, the files that had
-conflicts). Recorded text is clipped so the comment and the prompts stay bounded. Nothing
+conflicts). Recorded text is clipped so the comment and the prompts stay bounded. With
+autopilot, each issue it worked on has one record comment, edited in place, that names the
+command it started last. Nothing
 else is stored, so there is nothing to migrate or repair.
 
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
@@ -611,3 +652,6 @@ once the limit has reset.
   cannot alter its own pipeline or configuration. The default Actions token also cannot
   push workflow changes.
 - Fork pull requests are never NexKit pull requests: commands on them are refused.
+- Autopilot starts `/nexkit go` without a person's approval of the plan. It takes only
+  issues opened by people with write access, and anyone else's issues stay untouched, so
+  an outsider cannot start an implement session by opening or editing an issue.

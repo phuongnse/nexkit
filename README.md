@@ -112,13 +112,18 @@ that start to conflict. When an agent hits its account's usage limit, NexKit mov
 stage to the agent's [fallback agents](docs/configuration.md#fallback-agents), if it has
 any, or pauses and continues after the reset.
 
+With `"autopilot": {"enabled": true}`, nobody needs to post the commands: NexKit plans each
+ready issue of the current milestone, starts `/nexkit go` on a plan that needs nobody and
+moves on when an issue closes, driven by GitHub events. It stops where a person is
+needed, such as a plan with questions; see [Autopilot](docs/configuration.md#autopilot).
+
 ## Local commands
 
 | Command | What it does |
 |---|---|
 | `nexkit init` | Writes `.nexkit/config.json` and `.github/workflows/nexkit.yml`. |
 | `nexkit doctor` | Checks the repository's setup: config, workflow triggers and NexKit ref, each agent's secrets and that the workflow passes them, permissions. Mentions a newer NexKit release. |
-| `nexkit status [--json]` | Lists the open NexKit issues and pull requests with what each waits for and a link to its last run, recent merges by NexKit, and the items that need a person and why. It reads NexKit's hidden markers and changes nothing. |
+| `nexkit status [--json]` | Lists the open NexKit issues and pull requests with what each waits for and a link to its last run, recent merges by NexKit, the items that need a person and why, and with autopilot what its next sweep does with each issue in scope. It reads NexKit's hidden markers and changes nothing. |
 
 The commands use the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`.
 

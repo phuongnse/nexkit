@@ -214,6 +214,8 @@ def _triggers(cfg, workflow):
             )
         else:
             findings.append((True, "Pushes to the default branch start the conflict check"))
+    if cfg["autopilot"]["enabled"]:
+        findings.append(_autopilot_triggers(cfg, workflow))
     if cfg["usage_limit"]["resume"]:
         if trigger(workflow, "schedule") is None:
             findings.append(
@@ -227,6 +229,34 @@ def _triggers(cfg, workflow):
         else:
             findings.append((True, "A schedule resumes runs paused at the agent's usage limit"))
     return findings
+
+
+def _autopilot_triggers(cfg, workflow):
+    """A finding: autopilot needs the events that bring issues into scope, and its own
+    concurrency group so those events never replace a command that waits."""
+    needed = ["opened", "reopened", "closed"]
+    needed += ["labeled"] if cfg["autopilot"]["scope"] == "label" else ["milestoned"]
+    issues = trigger(workflow, "issues")
+    missing = [t for t in needed if issues is None or ("types" in issues and t not in issues)]
+    if cfg["autopilot"]["scope"] == "milestone" and trigger(workflow, "milestone") is None:
+        missing.append("milestone: closed")
+    if trigger(workflow, "schedule") is None:
+        missing.append("schedule")
+    if missing:
+        return (
+            False,
+            f"autopilot is on, but {WORKFLOW_PATH} does not listen to "
+            f"{', '.join(f'{name!r}' for name in missing)}; add the triggers as 'nexkit init' "
+            "writes them",
+        )
+    if "'autopilot'" not in _uncommented(workflow):
+        return (
+            False,
+            f"autopilot is on, but the concurrency group in {WORKFLOW_PATH} does not give "
+            "issue and milestone events the group 'autopilot', so they can replace a command "
+            "that waits; use the group 'nexkit init' writes",
+        )
+    return (True, "Issue and milestone events start autopilot sweeps")
 
 
 def _passed_secrets(cfg, workflow):

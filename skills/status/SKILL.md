@@ -20,6 +20,9 @@ Change nothing. The NexKit CLI ships with this plugin; run it as
    - `recent_merges`: pull requests NexKit merged, newest first by merge time, with the
      state of each `merge.after_workflows` run.
    - `needs_person`: only the items that need a person, with the reason.
+   - `autopilot`, only with `autopilot.enabled`: the scope, `max_parallel`, and for each
+     open issue in scope what the next sweep does with it, a `state` (`start` with its
+     `command`, `active`, `waits`) and the `reason`.
    Rely on these states rather than reading comment text: they come from NexKit's
    markers. Do not post a command for an item whose state is `planning`,
    `implementing` or `running`; it would queue behind the running one. A `paused` item
@@ -38,4 +41,5 @@ Change nothing. The NexKit CLI ships with this plugin; run it as
    can do: answer the plan's questions and comment `/nexkit plan`, or `/nexkit go` to
    implement a plan; `/nexkit fix <instructions>` for another round or to answer a
    blocked conflict; `/nexkit review` after pushing a manual change; or merge when the
-   pull request is ready.
+   pull request is ready. With autopilot on, do not post `/nexkit plan` or `/nexkit go` on an
+   issue whose autopilot state is `start` or `active`: autopilot starts it or already did.

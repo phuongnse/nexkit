@@ -19,7 +19,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py`, `cache.py` | Setup and checks with `NEXKIT_BASE_SHA`/`NEXKIT_VERIFIED_SHA`; cache restore |
 | `report.py`, `state.py`, `progress.py` | Statuses, review, run and state comments and their markers |
-| `maintain.py`, `usage.py` | Work after other events; resuming runs paused at a usage limit |
+| `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; resuming runs paused at a usage limit; autopilot sweeps |
 | `config.py`, `scaffold.py`, `templates/` | Config schema and defaults; `nexkit init` and `doctor` |
 | `status.py`, `github.py`, `gitutil.py` | `nexkit status`; REST and git helpers |
 | `scripts/` | Live smoke test, pin updates, release notes |

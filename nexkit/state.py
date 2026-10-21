@@ -202,7 +202,8 @@ def render_run(run, text=""):
             "| " + " | ".join(_cell(v) for v in cells) + " |",
         ]
     else:
-        lines = [f"### NexKit `/nexkit {run['command']}`", "", run_link(run)]
+        by = " (autopilot)" if run.get("autopilot") else ""
+        lines = [f"### NexKit `/nexkit {run['command']}`{by}", "", run_link(run)]
     agents = agents_text(run.get("agents") or [])
     if agents:
         lines += ["", agents]

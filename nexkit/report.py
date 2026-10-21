@@ -8,7 +8,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import progress
+from . import autopilot, progress
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
     close_parents_safely,
@@ -478,6 +478,10 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         result.get("pr") or decision.get("pr") or decision["issue"],
         result.get("attention"),
     )
+    for line in autopilot.after_run(
+        gh, cfg, decision, result["outcome"], workflow_file(workflow_ref), default_branch
+    ):
+        print(line)
     return result
 
 

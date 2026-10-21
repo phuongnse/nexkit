@@ -85,8 +85,10 @@ class InitDoctorTests(unittest.TestCase):
         path = self.root / ".github/workflows/nexkit.yml"
         text = path.read_text()
         group = (
-            "concurrency:\n      group: nexkit-${{ github.event.issue.number || "
-            "github.event.pull_request.number || inputs.number || github.event_name }}\n"
+            "concurrency:\n      group: nexkit-${{ (github.event_name == 'milestone' || "
+            "(github.event_name == 'issues' && github.event.action != 'closed')) && "
+            "'autopilot' || github.event.issue.number || github.event.pull_request.number || "
+            "inputs.number || github.event_name }}\n"
         )
         self.assertIn("\n    " + group, text.split("\n  nexkit:\n", 1)[1])
         self.assertNotRegex(text, r"(?m)^concurrency:|cancel-in-progress")
@@ -106,9 +108,7 @@ class InitDoctorTests(unittest.TestCase):
         self.assertIn(ok, scaffold.doctor(self.root))
         workflow = self.root / ".github/workflows/nexkit.yml"
         text = workflow.read_text()
-        workflow.write_text(
-            text.replace("  issues:\n    types: [closed]", "  issues:\n    types: [opened]")
-        )
+        workflow.write_text(text.replace("types: [closed, opened,", "types: [opened,"))
         findings = scaffold.doctor(self.root)
         self.assertNotIn(ok, findings)
         self.assertTrue(any("does not listen to 'issues: closed'" in m for _, m in findings))
@@ -130,6 +130,37 @@ class InitDoctorTests(unittest.TestCase):
         cfg["usage_limit"] = {"resume": False}
         path.write_text(json.dumps(cfg))
         self.assertFalse(any("schedule" in m for _, m in scaffold.doctor(self.root)))
+
+    def test_doctor_checks_the_triggers_and_group_of_autopilot(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(cfg))
+        ok = (True, "Issue and milestone events start autopilot sweeps")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        text = workflow.read_text()
+        workflow.write_text(text.replace(", milestoned]", "]"))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("does not listen to 'milestoned'" in m for ok, m in findings if not ok))
+        workflow.write_text(re.sub(r"  milestone:\n.*\n", "", text))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("'milestone: closed'" in m for ok, m in findings if not ok))
+        # The label scope needs `labeled`, not the milestone events.
+        cfg["autopilot"] = {"enabled": True, "scope": "label", "label": "autopilot"}
+        path.write_text(json.dumps(cfg))
+        self.assertIn(ok, scaffold.doctor(self.root))
+        workflow.write_text(text.replace("labeled, ", ""))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("does not listen to 'labeled'" in m for ok, m in findings if not ok))
+        # A workflow from before autopilot: issue events join the issue's group.
+        workflow.write_text(text.replace("&& 'autopilot' ", ""))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("the group 'autopilot'" in m for ok, m in findings if not ok))
+        cfg["autopilot"] = {"enabled": False}
+        path.write_text(json.dumps(cfg))
+        self.assertFalse(any("autopilot" in m for _, m in scaffold.doctor(self.root)))
 
     def test_init_listens_to_pushes_to_the_default_branch(self):
         git(self.root, "init", "-q", "-b", "trunk")
@@ -499,6 +530,34 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(out["action"], "maintain")
         self.assertEqual(json.loads(out["decision"])["task"], "parents")
         self.assertEqual(out["maintain_timeout"], "15")
+        self.assertFalse(self.gh.issue_comments[5])  # no run comment, no reaction
+
+    def test_route_hands_autopilot_events_to_maintain_only_when_enabled(self):
+        events = [
+            ("issues", {"action": "opened", "issue": {"number": 5}}),
+            ("issues", {"action": "labeled", "issue": {"number": 5}, "label": {"name": "x"}}),
+            ("milestone", {"action": "closed", "milestone": {"number": 1}}),
+            ("workflow_dispatch", {"inputs": {"command": "autopilot", "number": "autopilot"}}),
+        ]
+        for name, event in events:
+            self.assertEqual(self.run_route(name, event)["action"], "none")
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(raw))
+        decisions = [json.loads(self.run_route(name, event)["decision"]) for name, event in events]
+        self.assertEqual(
+            decisions,
+            [
+                {"action": "maintain", "task": "autopilot", "event": "opened"},
+                {"action": "maintain", "task": "autopilot", "event": "labeled", "label": "x"},
+                {"action": "maintain", "task": "autopilot", "event": "milestone_closed"},
+                {"action": "maintain", "task": "sweep"},
+            ],
+        )
+        event = {"inputs": {"command": "autopilot", "number": "autopilot", "note": "7"}}
+        decision = json.loads(self.run_route("workflow_dispatch", event)["decision"])
+        self.assertEqual(decision, {"action": "maintain", "task": "sweep", "closed": 7})
         self.assertFalse(self.gh.issue_comments[5])  # no run comment, no reaction
 
     def test_route_gives_the_waiting_run_its_wait(self):

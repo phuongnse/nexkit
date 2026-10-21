@@ -40,6 +40,13 @@ DEFAULTS = {
     "conflicts": {"auto_resolve": False, "max_rounds": 3},
     "usage_limit": {"resume": True, "retry_minutes": 60, "wait_minutes": 330},
     "close_parent_issues": False,
+    # Work through the open issues in scope without commands (nexkit/autopilot.py).
+    "autopilot": {
+        "enabled": False,
+        "scope": "milestone",
+        "label": None,
+        "max_parallel": None,
+    },
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
     "protected_paths": [".github/", ".nexkit/"],
@@ -56,7 +63,7 @@ MAX_WAIT = 330
 # The longest a stage may run, with all of its agents.
 MAX_STAGE_MINUTES = 340
 # Objects whose keys are merged over the defaults one by one.
-GROUPS = ("fix", "merge", "conflicts", "usage_limit", "limits", "log", "publish")
+GROUPS = ("fix", "merge", "conflicts", "usage_limit", "autopilot", "limits", "log", "publish")
 # Keys of earlier releases, with where they live now.
 RENAMED = {
     "max_auto_fixes": "fix.max_auto_rounds",
@@ -72,6 +79,8 @@ CACHE_KEYS = {"name", "paths", "key_files"}
 # The restore action has one step per entry: .github/actions/restore-caches/action.yml.
 MAX_CACHES = 8
 TOOL_OUTPUT = ("none", "truncated")
+AUTOPILOT_SCOPES = ("milestone", "label")
+LABEL = re.compile(r"^[^,\n]{1,50}$")
 
 
 class ConfigError(ValueError):
@@ -363,6 +372,19 @@ def _profiles(cfg):
     cfg["stages"][TRIAGE] = {**TRIAGE_DEFAULTS, **cfg["stages"].get(TRIAGE, {})}
 
 
+def _autopilot(settings):
+    _bool(settings["enabled"], "autopilot.enabled")
+    if settings["scope"] not in AUTOPILOT_SCOPES:
+        _fail(f"autopilot.scope must be one of {', '.join(AUTOPILOT_SCOPES)}")
+    label = settings["label"]
+    if label is not None and (not isinstance(label, str) or not LABEL.match(label.strip())):
+        _fail("autopilot.label must be null or the name of a label")
+    if settings["scope"] == "label" and label is None:
+        _fail('autopilot.scope "label" needs autopilot.label: the label of the issues to take')
+    if settings["max_parallel"] is not None:
+        _positive_int(settings["max_parallel"], "autopilot.max_parallel", 100)
+
+
 def validate(raw, *, layered=False):
     """Return a complete configuration with defaults applied, or raise ConfigError.
 
@@ -461,6 +483,7 @@ def validate(raw, *, layered=False):
         cfg["usage_limit"]["wait_minutes"], "usage_limit.wait_minutes", MAX_WAIT, minimum=0
     )
     _bool(cfg["close_parent_issues"], "close_parent_issues")
+    _autopilot(cfg["autopilot"])
     _positive_int(cfg["limits"]["setup_timeout_minutes"], "limits.setup_timeout_minutes", 120)
     _positive_int(cfg["limits"]["max_patch_mb"], "limits.max_patch_mb", 50)
     people = cfg["notify"]

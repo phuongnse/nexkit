@@ -118,6 +118,29 @@ class GitHub:
     def sub_issues(self, number):
         return self.paginate(f"{self._repo}/issues/{number}/sub_issues")
 
+    def blocked_by(self, number):
+        """The issues that block this one (GitHub issue dependencies), or [] where the API
+        does not exist, such as on older GitHub Enterprise Server versions."""
+        try:
+            return self.paginate(f"{self._repo}/issues/{number}/dependencies/blocked_by")
+        except GitHubError as exc:
+            if exc.status != 404:
+                raise
+            return []
+
+    def milestones(self):
+        """Open milestones."""
+        return self.paginate(f"{self._repo}/milestones", {"state": "open"})
+
+    def scoped_issues(self, milestone=None, label=None):
+        """Open issues and pull requests in a milestone (its number) or with a label."""
+        params = {"state": "open", "sort": "created", "direction": "asc"}
+        if milestone is not None:
+            params["milestone"] = str(milestone)
+        if label is not None:
+            params["labels"] = label
+        return self.paginate(f"{self._repo}/issues", params)
+
     def close_issue(self, number, reason="completed"):
         return self.request(
             "PATCH", f"{self._repo}/issues/{number}", {"state": "closed", "state_reason": reason}

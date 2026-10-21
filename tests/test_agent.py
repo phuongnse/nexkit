@@ -401,6 +401,28 @@ class RunStageTests(StageCase):
         self.assertIn("+    return a + b", prompt)
         self.assertIn("`test` (`true`): passed", prompt)
 
+    def commit_legacy_subtitles(self):
+        """A commit on the NexKit branch that adds a cp1250 file, as git diffs it as text."""
+        git(self.repo, "checkout", "-q", "-b", "nexkit/issue-5")
+        (self.repo / "legacy.srt").write_bytes("1\nPříliš žluťoučký kůň\n".encode("cp1250"))
+        git(self.repo, "add", "-A")
+        self.repos.commit(self.repo, "subtitles")
+
+    def test_review_diff_survives_files_that_are_not_utf8(self):
+        self.commit_legacy_subtitles()
+        diff = agent.review_diff(self.repo, "main")
+        self.assertIn("+++ b/legacy.srt", diff)
+        self.assertIn("+P\ufffd\ufffdli\ufffd \ufffdlu\ufffdou\ufffdk\ufffd k\ufffd\ufffd", diff)
+
+    def test_git_text_output_replaces_bytes_that_are_not_utf8(self):
+        self.commit_legacy_subtitles()
+        self.assertEqual(
+            agent.git(self.repo, "show", "HEAD:legacy.srt"),
+            "1\nP\ufffd\ufffdli\ufffd \ufffdlu\ufffdou\ufffdk\ufffd k\ufffd\ufffd\n",
+        )
+        raw = agent.git(self.repo, "show", "HEAD:legacy.srt", binary=True)
+        self.assertEqual(raw.decode("cp1250"), "1\nPříliš žluťoučký kůň\n")
+
     def test_review_after_a_fix_gets_the_previous_round(self):
         git(self.repo, "checkout", "-q", "-b", "nexkit/issue-5")
         (self.repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")

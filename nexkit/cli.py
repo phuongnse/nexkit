@@ -216,19 +216,41 @@ def cmd_context(args):
 
 
 def cmd_agent(args):
-    from .agent import conflicts_with_base, run_stage, run_triage, up_to_date
-    from .checks import find_base, setup
+    import traceback
+
     from .redact import Redactor
-    from .runlog import summary, write_summary
+    from .runlog import stopped, summary, write_summary
     from .runtimes import unpack_secrets
 
     # Before anything reads the environment: setup, the redactor and the agent's CLI.
     unpack_secrets()
     decision = _decision()
-    cfg = _config()
     stage = args.stage or decision["action"]
-    base = decision["base"]
     out = Path(args.out)
+    try:
+        return _agent(args, decision, stage, out)
+    except Exception as exc:
+        # Without a result the round could only say that the job left none.
+        redact = Redactor()
+        print(stopped(redact(traceback.format_exc()).rstrip()), flush=True)
+        result = {
+            "stage": stage,
+            "status": "error",
+            "error": redact(f"NexKit stopped on {type(exc).__name__}: {exc}"),
+        }
+        (out / "result.json").write_text(json.dumps(result, indent=2))
+        write_summary(summary(result, []), redact)
+        return 0
+
+
+def _agent(args, decision, stage, out):
+    from .agent import conflicts_with_base, run_stage, run_triage, up_to_date
+    from .checks import find_base, setup
+    from .redact import Redactor
+    from .runlog import summary, write_summary
+
+    cfg = _config()
+    base = decision["base"]
     context = json.loads((out / "context.json").read_text())
     base_sha = None
     if stage == "fix" and decision.get("conflicts") and not conflicts_with_base(args.repo, base):

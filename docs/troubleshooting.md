@@ -82,7 +82,9 @@ see [Codex removed in 4.0](configuration.md#codex-removed-in-40).
 status say why the review stopped. When it is a 401, 403 or another authentication error,
 another `/nexkit review` stops the same way: fix the review agent's secret first (see the
 entries above), or point the review at another agent in `.nexkit/config.json`. A timeout
-or a review that returned no verdict can be tried again with `/nexkit review`.
+or a review that returned no verdict can be tried again with `/nexkit review`. "NexKit
+stopped on <exception>" is an error in NexKit itself, and another try usually stops the
+same way: the job's log has the traceback; please report it as a NexKit issue.
 
 **"NexKit configuration error: …".** NexKit replies with this on the command when
 `.nexkit/config.json` on the default branch is invalid; run `nexkit doctor` locally to see

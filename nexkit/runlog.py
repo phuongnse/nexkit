@@ -85,6 +85,15 @@ def command_data(text):
     return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
+def stopped(text):
+    """`text` between workflow commands that stop and resume them, so that commands in it
+    (::set-output, ::add-mask::, ...) are ignored when it is printed."""
+    token = secrets.token_hex(16)
+    while token in text:
+        token = secrets.token_hex(16)
+    return f"::stop-commands::{token}\n{text}\n::{token}::"
+
+
 def fence(text, char="`"):
     """A code fence longer than any run of `char` in the text."""
     runs = re.findall(f"{re.escape(char)}+", text)
@@ -263,13 +272,7 @@ class RunLog:
         )
         if self.tool_output == "truncated":
             self._print(f"::group::{command_data(title)}")
-            token = secrets.token_hex(16)
-            while token in body:
-                token = secrets.token_hex(16)
-            # Workflow commands in the output (::set-output, ::add-mask::, ...) are ignored.
-            self._print(f"::stop-commands::{token}")
-            self._print(body)
-            self._print(f"::{token}::")
+            self._print(stopped(body))
             self._print("::endgroup::")
             if call["is_error"]:
                 first = next((row for row in call["output"].splitlines() if row.strip()), "")

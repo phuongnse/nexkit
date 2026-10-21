@@ -550,7 +550,11 @@ status (running, success, failure, paused, continued), the outcome (for example
 ran each stage, the reason a person is needed when one is, the resume record of a paused
 run, and after an automatic merge each started
 `merge.after_workflows` run. `nexkit status` reads these markers, not the text people
-read, to list the open NexKit work and what each item waits for.
+read, to list the open NexKit work and what each item waits for. NexKit reads a marker only
+from a comment by the Actions bot, and only where it ends the comment: text before it can
+quote agent output. A round's marker also holds its commit and whether its checks passed;
+the next round's checks get the latest commit that passed as `NEXKIT_VERIFIED_SHA` (see
+[Skipping work that a change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect)).
 
 Issues and pull requests from NexKit 1.1.0 have a single status comment. NexKit leaves it
 as it is. On a pull request it still reads that comment's state, then saves the state in a

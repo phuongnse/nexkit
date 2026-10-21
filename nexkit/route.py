@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from . import config as configuration
-from .state import by_bot, latest_plan, plan_profile
+from .state import by_bot, latest_plan, plan_profile, verified_head
 
 BRANCH_PREFIX = "nexkit/issue-"
 COMMAND = re.compile(r"^\s*/nexkit\s+([a-z]+)\b[ \t]*(.*)$", re.DOTALL)
@@ -147,7 +147,7 @@ def _decide(gh, command, number, on_pull, note, *, auto):
             return _none("This pull request was not opened by NexKit", number)
         if pull["state"] != "open":
             return _none("The pull request is closed", number)
-        return {
+        decision = {
             "action": PR_COMMANDS[command],
             "issue": issue,
             "pr": number,
@@ -158,6 +158,11 @@ def _decide(gh, command, number, on_pull, note, *, auto):
             "note": note,
             "auto": auto,
         }
+        # The last commit whose checks passed, for NEXKIT_VERIFIED_SHA.
+        verified = verified_head(gh.comments(number))
+        if verified:
+            decision["verified_sha"] = verified
+        return decision
 
     if command not in ISSUE_COMMANDS:
         return _none(f"`/nexkit {command}` is not an issue command. {USAGE}", number)

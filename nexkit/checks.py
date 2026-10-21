@@ -14,29 +14,31 @@ from .runtimes import NAMES_VAR, secret_names
 
 OUTPUT_TAIL = 12_000
 BASE_SHA = "NEXKIT_BASE_SHA"
+VERIFIED_SHA = "NEXKIT_VERIFIED_SHA"
 
 
-def environment(base_sha=None):
+def environment(commits=None):
     """The environment for repository commands: without any agent credential, and with
-    NEXKIT_BASE_SHA only when it is known."""
-    drop = {BASE_SHA, NAMES_VAR, *secret_names()}
+    NEXKIT_BASE_SHA and NEXKIT_VERIFIED_SHA only when they are known. `commits` maps
+    those names to commits, or to None."""
+    drop = {BASE_SHA, VERIFIED_SHA, NAMES_VAR, *secret_names()}
     env = {k: v for k, v in os.environ.items() if k not in drop}
-    if base_sha:
-        env[BASE_SHA] = base_sha
+    env.update({name: sha for name, sha in (commits or {}).items() if sha})
     return env
 
 
-def known_base(repo, sha):
+def _known(repo, name, sha, why):
     """`sha` when the checkout has that commit, else None. Say which in the log."""
-    if has_commit(repo, sha):
-        print(f"{BASE_SHA}={sha}", flush=True)
+    if sha and has_commit(repo, sha):
+        print(f"{name}={sha}", flush=True)
         return sha
-    print(
-        f"{BASE_SHA} is not set: the merge base with the base branch is unknown, "
-        "so checks should run in full.",
-        flush=True,
-    )
+    print(f"{name} is not set: {why}, so checks should run in full.", flush=True)
     return None
+
+
+def known_base(repo, sha):
+    """`sha` when the checkout has that commit, for NEXKIT_BASE_SHA, else None."""
+    return _known(repo, BASE_SHA, sha, "the merge base with the base branch is unknown")
 
 
 def find_base(repo, base):
@@ -48,6 +50,28 @@ def find_base(repo, base):
         print(f"Could not find the merge base with `{base}`: {exc}", flush=True)
         sha = None
     return known_base(repo, sha)
+
+
+def known_verified(repo, sha):
+    """The decision's `verified_sha` when the checkout has that commit, for
+    NEXKIT_VERIFIED_SHA, else None. `route` read it from NexKit's own round comments."""
+    if not sha:
+        print(
+            f"{VERIFIED_SHA} is not set: no earlier round of this pull request passed its "
+            "checks, so checks should run in full.",
+            flush=True,
+        )
+        return None
+    why = f"the checkout does not have {sha[:7]}, the last commit whose checks passed"
+    return _known(repo, VERIFIED_SHA, sha, why)
+
+
+def find_commits(repo, decision):
+    """NEXKIT_BASE_SHA and NEXKIT_VERIFIED_SHA for a run's setup and checks."""
+    return {
+        BASE_SHA: find_base(repo, decision["base"]),
+        VERIFIED_SHA: known_verified(repo, decision.get("verified_sha")),
+    }
 
 
 def _run(command, cwd, timeout_seconds, env=None):
@@ -73,12 +97,12 @@ def _run(command, cwd, timeout_seconds, env=None):
     return code, output, round(time.monotonic() - started, 1)
 
 
-def setup(cfg, cwd, redact=str, base_sha=None):
+def setup(cfg, cwd, redact=str, commits=None):
     """Run setup commands in order. Return None, or a failed result for the first failure.
 
     In the agent job, pass a redactor: the output may still show other secrets.
     """
-    env = environment(base_sha)
+    env = environment(commits)
     for command in cfg["setup"]:
         print(f"$ {command}", flush=True)
         timeout = cfg["limits"]["setup_timeout_minutes"] * 60
@@ -97,11 +121,11 @@ def setup(cfg, cwd, redact=str, base_sha=None):
     return None
 
 
-def run_checks(cfg, cwd, out_dir=None, base_sha=None):
+def run_checks(cfg, cwd, out_dir=None, commits=None):
     """Run setup, then every check. A setup failure is reported as a failed check."""
-    failed_setup = setup(cfg, cwd, base_sha=base_sha)
+    failed_setup = setup(cfg, cwd, commits=commits)
     results = [failed_setup] if failed_setup else []
-    env = environment(base_sha)
+    env = environment(commits)
     for check in [] if failed_setup else cfg["checks"]:
         print(f"::group::check {check['name']}: {check['run']}", flush=True)
         code, output, seconds = _run(check["run"], cwd, check["timeout_minutes"] * 60, env)

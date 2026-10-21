@@ -12,7 +12,8 @@ import nexkit
 import nexkit.config
 from nexkit import cli, scaffold
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
-from tests.support import CLAUDE, PROFILES, FakeGitHub, GitRepos, git
+from tests.support import CLAUDE, PROFILES, FakeClaude, FakeGitHub, GitRepos, git
+from tests.test_agent import CONTEXT, FIX_DONE
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -624,6 +625,65 @@ class PipelineCommandTests(unittest.TestCase):
             checks = json.loads((self.root / "out" / "checks.json").read_text())
             self.assertEqual(checks[0]["output"].strip(), seen)
         self.assertIn("NEXKIT_BASE_SHA is not set", stdout.getvalue())
+
+    def test_a_fix_round_gets_the_last_commit_whose_checks_passed(self):
+        repos = GitRepos()
+        self.addCleanup(repos.cleanup)
+        passed = repos.push_commit("dev", "nexkit/issue-5", {"a.txt": "a\n"}, "Round 1")
+        failed = repos.push_commit("dev", "nexkit/issue-5", {"b.txt": "b\n"}, "Round 2")
+        self.gh.add_pull(6, 5, head_sha=failed)
+        self.gh.round_comment(6, 1, passed, "passed")
+        self.gh.round_comment(6, 2, failed, "failed")
+        event = {
+            "action": "created",
+            "issue": {"number": 6, "pull_request": {}},
+            "comment": {"id": 3, "body": "/nexkit fix", "user": {"login": "alice"}},
+        }
+        decision = self.run_route("issue_comment", event)["decision"]
+        self.assertEqual(json.loads(decision)["verified_sha"], passed)
+
+        seen = 'echo "${NEXKIT_VERIFIED_SHA-unset}"'
+        cfg = nexkit.config.validate(
+            {
+                "agents": CLAUDE,
+                "setup": [f"{seen} > setup.txt"],
+                "checks": [{"name": n, "run": f"cat setup.txt; {seen}"} for n in ("unit", "e2e")],
+            }
+        )
+        env = {
+            "NEXKIT_DECISION": decision,
+            "NEXKIT_CONFIG": json.dumps(cfg),
+            "NEXKIT_VERIFIED_SHA": "stale",
+            "GITHUB_STEP_SUMMARY": str(self.root / "summary.md"),
+        }
+        # The agent job: setup, then the agent, which may run the checks itself.
+        agent_repo = repos.clone("agent")
+        git(agent_repo, "checkout", "-q", "nexkit/issue-5")
+        out = self.root / "agent-out"
+        out.mkdir()
+        (out / "context.json").write_text(json.dumps(CONTEXT))
+        claude = FakeClaude(self.tmp.name)
+        self.addCleanup(claude.restore)
+        claude.configure(result=FIX_DONE, write={"calc.py": "# fixed\n"})
+        path = f"{claude.dir}{os.pathsep}{os.environ['PATH']}"
+        with (
+            mock.patch.dict(os.environ, {**env, "PATH": path}),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            cli.main(["agent", "--repo", str(agent_repo), "--out", str(out)])
+        self.assertEqual(json.loads((out / "result.json").read_text())["status"], "done")
+        self.assertEqual((agent_repo / "setup.txt").read_text().strip(), passed)
+        self.assertEqual(claude.call()["verified_sha"], passed)
+
+        # The verify job, on the round's new commit.
+        verify_repo = repos.clone("verify")
+        git(verify_repo, "checkout", "-q", "nexkit/issue-5")
+        stdout = io.StringIO()
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(stdout):
+            cli.main(["checks", "--repo", str(verify_repo), "--out", str(self.root / "out")])
+        checks = json.loads((self.root / "out" / "checks.json").read_text())
+        self.assertEqual([c["output"].split() for c in checks], [[passed, passed]] * 2)
+        self.assertIn(f"NEXKIT_VERIFIED_SHA={passed}", stdout.getvalue())
 
 
 class InstallAgentsTests(unittest.TestCase):

@@ -245,14 +245,14 @@ def cmd_agent(args):
 
 def _agent(args, decision, stage, out):
     from .agent import conflicts_with_base, run_stage, run_triage, up_to_date
-    from .checks import find_base, setup
+    from .checks import find_commits, setup
     from .redact import Redactor
     from .runlog import summary, write_summary
 
     cfg = _config()
     base = decision["base"]
     context = json.loads((out / "context.json").read_text())
-    base_sha = None
+    commits = None
     if stage == "fix" and decision.get("conflicts") and not conflicts_with_base(args.repo, base):
         # Another round or a person resolved it since this round was started.
         result = up_to_date(base)
@@ -260,9 +260,9 @@ def _agent(args, decision, stage, out):
         print(json.dumps(result, indent=2))
         return 0
     if stage in ("implement", "fix"):
-        base_sha = find_base(args.repo, decision["base"])
+        commits = find_commits(args.repo, decision)
         redact = Redactor()
-        failed = setup(cfg, args.repo, redact, base_sha)
+        failed = setup(cfg, args.repo, redact, commits)
         if failed:
             result = {
                 "stage": stage,
@@ -293,7 +293,7 @@ def _agent(args, decision, stage, out):
         out,
         checks=checks,
         base=decision["base"],
-        base_sha=base_sha,
+        commits=commits,
         triage=triage,
     )
     print(json.dumps({k: v for k, v in result.items() if k != "output"}, indent=2))
@@ -301,10 +301,10 @@ def _agent(args, decision, stage, out):
 
 
 def cmd_checks(args):
-    from .checks import find_base, run_checks
+    from .checks import find_commits, run_checks
 
-    base_sha = find_base(args.repo, _decision()["base"])
-    results = run_checks(_config(), args.repo, args.out, base_sha)
+    commits = find_commits(args.repo, _decision())
+    results = run_checks(_config(), args.repo, args.out, commits)
     passed = all(r["passed"] for r in results)
     print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
     return 0

@@ -162,18 +162,38 @@ the job log. Outside NexKit it is always unset, so the rule for a check is:
   changed. Otherwise run it in full.
 - Run every check in full on the base branch, for example in your own CI after a merge.
 
+Once a pull request has changed a suite's files, every later round reruns that suite
+against `NEXKIT_BASE_SHA`, even when the round's own change cannot reach it. For that,
+setup and checks also get `NEXKIT_VERIFIED_SHA`: the commit of the latest earlier round of
+the pull request whose checks all passed. Comparing against it instead skips what has not
+changed since the last green round:
+
+```sh
+{ git diff --name-only "$NEXKIT_VERIFIED_SHA"; git ls-files --others --exclude-standard; }
+```
+
+NexKit reads that commit only from its own round comments, never from agent output or
+from comments by anyone else. It leaves the variable unset, and says why in the job log,
+when no earlier round passed (as in the implement round) or the checkout does not have
+that commit. When a fix round merged the base branch after that commit, the diff includes
+the base branch's changes, so a check stays on the safe side. A round counts as passed
+only when each check exited 0, including checks that skipped themselves: skip only work
+that the listed paths cannot affect, or one wrong skip carries into every later round.
+Prefer `NEXKIT_VERIFIED_SHA` when it is set and fall back to `NEXKIT_BASE_SHA`:
+
 ```sh
 # Run the dev tooling smoke tests only when the change can affect them.
+since="${NEXKIT_VERIFIED_SHA:-${NEXKIT_BASE_SHA:-}}"
 changed() {
-  [ -n "${NEXKIT_BASE_SHA:-}" ] || return 0  # unknown base: run everything
-  files=$(git diff --name-only "$NEXKIT_BASE_SHA" &&
+  [ -n "$since" ] || return 0  # unknown base: run everything
+  files=$(git diff --name-only "$since" &&
           git ls-files --others --exclude-standard) || return 0
   grep -qE "$1" <<< "$files"
 }
 if changed '^(docker/|compose\.yaml$|scripts/dev)'; then
   ./scripts/smoke-dev.sh
 else
-  echo "Dev tooling unchanged since $NEXKIT_BASE_SHA: smoke tests skipped."
+  echo "Dev tooling unchanged since $since: smoke tests skipped."
 fi
 ```
 

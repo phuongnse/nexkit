@@ -29,7 +29,9 @@ files or repository settings, and wait for confirmation.
      tests plus lint. They run without secrets or network credentials, so leave out
      anything that needs them. Each check needs a short lowercase name. A slow check that
      covers only part of the repository can skip itself when `NEXKIT_BASE_SHA` is set and
-     none of its paths changed (see the configuration reference, Checks).
+     none of its paths changed, or, in later rounds, none changed since
+     `NEXKIT_VERIFIED_SHA`, the last commit whose checks passed (see the configuration
+     reference, Checks).
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the

@@ -228,7 +228,7 @@ jobs:
         with:
           ref: ${{ needs.publish.outputs.head || needs.route.outputs.head }}
           path: repo
-          # The history of the base branch too, for the merge base in NEXKIT_BASE_SHA.
+          # All history, for the merge base in NEXKIT_BASE_SHA and for NEXKIT_VERIFIED_SHA.
           fetch-depth: 0
           persist-credentials: false
       # Restore only, before setup: this job runs code the agent wrote (see the action).

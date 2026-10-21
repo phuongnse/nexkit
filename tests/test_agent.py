@@ -528,11 +528,14 @@ class ConflictTests(StageCase):
         _, base = self.repos.diverge()
         self.checkout_branch()
         self.claude.configure(result=FIX_DONE, write={"calc.py": CALC + SUB + MUL})
+        commits = {"NEXKIT_BASE_SHA": fork, "NEXKIT_VERIFIED_SHA": fork}
         with mock.patch.dict(os.environ, {"NEXKIT_BASE_SHA": "stale"}):
-            _, log = self.run_quietly("fix", base="main", base_sha=fork)
+            _, log = self.run_quietly("fix", base="main", commits=commits)
         # Once the base branch is merged in, the merged commit is the merge base.
         self.assertEqual(self.claude.call()["base_sha"], base)
         self.assertIn(f"NEXKIT_BASE_SHA={base}", log)
+        # The verified commit stays: the diff from it includes the merged base changes.
+        self.assertEqual(self.claude.call()["verified_sha"], fork)
 
     def test_branch_that_merges_cleanly_is_not_merged(self):
         self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
@@ -541,7 +544,7 @@ class ConflictTests(StageCase):
         self.checkout_branch()
         self.claude.configure(result=FIX_DONE, write={"calc.py": CALC + SUB + "# fixed\n"})
         with mock.patch.dict(os.environ, {"NEXKIT_BASE_SHA": "stale"}):
-            result = self.run_stage("fix", base="main", base_sha=fork)
+            result = self.run_stage("fix", base="main", commits={"NEXKIT_BASE_SHA": fork})
         self.assertEqual(self.claude.call()["base_sha"], fork)
         self.assertEqual(result["status"], "done")
         self.assertIsNone(result["start_base"])

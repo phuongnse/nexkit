@@ -11,7 +11,8 @@ NexKit adds one workflow (`.github/workflows/nexkit.yml`) and one config file
 
 The NexKit CLI ships with this plugin. Run it as
 `python3 <base directory of this skill>/../../bin/nexkit` (Python 3.12 or newer; no
-packages needed). If the installed Python is older, ask the user to install 3.12 first. Below, `nexkit` means that command.
+packages needed). If the installed Python is older, ask the user to install 3.12 first.
+Below, `nexkit` means that command.
 
 Work through these steps in order. Show the user what you will change before changing
 files or repository settings, and wait for confirmation.
@@ -44,9 +45,10 @@ files or repository settings, and wait for confirmation.
    change to the CI workflow too. `nexkit init` does not write `cache`; add it to
    `.nexkit/config.json` after step 4.
 
-3. **Choose the agents and models.** Default: the `claude` agent with `sonnet` for every stage. Mention that `opus` gives
-   stronger results at a higher cost, and that each stage can be set separately in the
-   config (see the configuration reference in the NexKit repository).
+3. **Choose the agents and models.** Default: the `claude` agent with `sonnet` for every
+   stage. Mention that `opus` gives stronger results at a higher cost, and that each stage
+   can be set separately in the config (see the configuration reference in the NexKit
+   repository).
    If the user wants to save cost on easy issues, offer `profiles`: for example a cheap
    `standard` profile and a stronger `hard` one, each with a `when` text that describes
    its issues in terms an issue shows (the parts of the system it touches). Set
@@ -61,12 +63,12 @@ files or repository settings, and wait for confirmation.
    runtimes. An existing configuration with a `codex` agent is rejected since 4.0: remove
    the agent and give the stages that chose it a Claude agent and model.
    If the user has a second Claude credential, such as an Anthropic API key next to the
-   subscription, offer it as a fallback: declare it as another `claude-code` agent,
+   subscription, offer it as a fallback: declare another `claude-code` agent,
    `"claude-api": {"runtime": "claude-code", "provider": "anthropic", "api_key_secret": "ANTHROPIC_API_KEY"}`,
-   and add `"fallback": ["claude-api"]` to the `claude` agent. A stage then moves to it only when
-   `claude` stops at a usage limit, and the next run starts on `claude` again. Say that
-   the fallback's runs are billed per token, so `max_budget_usd` is worth setting.
-   Fallbacks must use the same runtime.
+   and add `"fallback": ["claude-api"]` to the `claude` agent. A stage then moves to it
+   only when `claude` stops at a usage limit, and the next run starts on `claude` again.
+   Say that the fallback's runs are billed per token, so `max_budget_usd` is worth
+   setting.
 
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`
@@ -82,9 +84,8 @@ files or repository settings, and wait for confirmation.
    session they can type `! claude setup-token`), then
    `gh secret set CLAUDE_CODE_OAUTH_TOKEN`. With an API key instead:
    `gh secret set ANTHROPIC_API_KEY`, which a `claude-api` fallback also needs next to
-   the subscription token. Never ask the user to
-   paste a token or key into the chat, or to put one in `.nexkit/config.json`: the config
-   holds only the secret's name.
+   the subscription token. Never ask the user to paste a token or key into the chat, or to
+   put one in `.nexkit/config.json`: the config holds only the secret's name.
 
 6. **Allow Actions to open pull requests.** After confirmation, run
    `gh api -X PUT repos/OWNER/REPO/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true`.
@@ -106,8 +107,8 @@ files or repository settings, and wait for confirmation.
    Offer `"notify": ["<login>"]` so the user gets a GitHub notification when a run needs
    a person, for example a plan with questions or a pull request ready to merge.
 
-   With `merge.auto`, also offer `"conflicts": {"auto_resolve": true}`: NexKit then merges the
-   base branch into its pull requests that start to conflict, by itself.
+   With `merge.auto`, also offer `"conflicts": {"auto_resolve": true}`: NexKit then merges
+   the base branch into its pull requests that start to conflict, by itself.
 
    If the repository splits large issues into sub-issues and a parent means only the sum
    of its parts, offer `"close_parent_issues": true`: NexKit then closes a parent when its

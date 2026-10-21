@@ -98,11 +98,11 @@ workflows from there.
 | NexKit PR | *Request changes* review | Same as `/nexkit fix`, with your review as the instructions. |
 
 Only people with write access can run commands. When checks fail or the review finds a
-blocking problem, NexKit starts up to `fix.max_auto_rounds` repair rounds by itself (default 2),
-then stops and asks for a person. Each run links to its log from the start: its own
-NexKit comment, posted right after the command, shows it running and then its result, the
-tokens its agents used and the next step. Pull requests also get `nexkit/checks` and `nexkit/review` commit statuses, which
-you can make required in branch protection.
+blocking problem, NexKit starts up to `fix.max_auto_rounds` repair rounds by itself
+(default 2), then stops and asks for a person. Each run gets its own NexKit comment right
+after the command, with a link to its log: it shows the run in progress, then its result,
+the tokens its agents used and the next step. Pull requests also get `nexkit/checks` and
+`nexkit/review` commit statuses, which you can make required in branch protection.
 
 Merging is up to you unless you set `"merge": {"auto": true}`. NexKit then merges approved
 pull requests itself, closes their issues and can start your CI on the base branch
@@ -118,7 +118,7 @@ any, or pauses and continues after the reset.
 |---|---|
 | `nexkit init` | Writes `.nexkit/config.json` and `.github/workflows/nexkit.yml`. |
 | `nexkit doctor` | Checks the repository's setup: config, workflow triggers and NexKit ref, each agent's secrets and that the workflow passes them, permissions. Mentions a newer NexKit release. |
-| `nexkit status [--json]` | Lists the open NexKit work and what each item waits for: issues being planned, planned or implemented; pull requests running, ready, blocked, failing, conflicting, paused or refused a merge, each with the link to its last round; recent merges by NexKit with the state of each `merge.after_workflows` run; and, last, only the items that need a person and why. It reads NexKit's hidden markers, not the comment text, and changes nothing. |
+| `nexkit status [--json]` | Lists the open NexKit issues and pull requests with what each waits for and a link to its last run, recent merges by NexKit, and the items that need a person and why. It reads NexKit's hidden markers and changes nothing. |
 
 The commands use the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`.
 
@@ -145,9 +145,8 @@ The commands use the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`.
 ```
 
 Agents, models, time and cost limits can be set per stage, and per profile: a triage step
-reads each issue and picks a profile, so hard issues get stronger models than easy ones,
-and a review can run on a different model family than the one that wrote the code. Caches
-that your CI saves on the default branch can be restored before `setup`. See the
+reads each issue and picks a profile, so hard issues get stronger models than easy ones.
+Caches that your CI saves on the default branch can be restored before `setup`. See the
 [configuration reference](docs/configuration.md).
 
 ## Learn more
@@ -159,17 +158,9 @@ that your CI saves on the default branch can be restored before `setup`. See the
 
 ## Develop NexKit
 
-Python 3.12 or newer, standard library only.
-
-```sh
-python3 -m unittest discover -s tests -t .
-python3 -m pip install ruff==0.13.3 && ruff check . && ruff format --check .
-actionlint .github/workflows/*.yml
-claude plugin validate --strict .
-python3 scripts/smoke.py   # real Claude Code, a few cents; needs a Claude login
-```
-
-See [AGENTS.md](AGENTS.md) for the code layout and conventions.
+Python 3.12 or newer, standard library only. [AGENTS.md](AGENTS.md) has the code layout,
+the rules to keep and the commands that verify a change. The live smoke test
+(`scripts/smoke.py`) costs a few cents and needs a Claude login.
 
 ## License
 

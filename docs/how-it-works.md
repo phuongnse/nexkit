@@ -14,7 +14,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
-| `report` | every action | write | no | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
+| `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
 | `maintain` | closed issues, pushes to the default branch, the schedule, the `resume` dispatch | read; issues, comments, workflows | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
@@ -76,8 +76,8 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 
 Runs for one issue or pull request run one at a time, in order. Only commands, *Request
 changes* reviews, dispatches and the short run for a closed issue wait in this queue;
-other comments do not. GitHub keeps
-one waiting run, so a command posted while another waits replaces it. A command that
+other comments do not. GitHub keeps one waiting run, so a command posted while another
+waits replaces it. A command that
 never got 👀 did not run; post it again.
 
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
@@ -89,9 +89,9 @@ The run link opens the Actions run. The `agent` and `review` jobs show what the 
 while it works.
 
 **Log.** One line `· text` (first 240 characters) per message from the agent, and one line
-`! text` per notice from the CLI itself, such as a move to a fallback agent: "! The
-`claude` agent stopped at its usage limit; running the implement stage on `claude-api`". Each tool call
-is a collapsible group, printed when its result arrives:
+`! text` per notice from the CLI or NexKit, such as a move to a fallback agent: "! The
+`claude` agent stopped at its usage limit; running the implement stage on `claude-api`".
+Each tool call is a collapsible group, printed when its result arrives:
 
 ```text
 [03:12 #14] ▸ Bash scripts/e2e.sh --timeout 600       <- group title; expand for the rest
@@ -112,7 +112,7 @@ session ends shows `no result`. Tool output is printed between `::stop-commands:
 with a random token, so text from the repository or the agent cannot set outputs, add
 masks or create annotations. The model's thinking is never printed. With
 `log.tool_output: "none"` the log has one line per message and per tool call instead
-(`▸ Tool detail`, 200 characters), as in earlier releases.
+(`▸ Tool detail`, 200 characters).
 
 **Run summary.** At the end of the `agent` and `review` jobs, the run's summary page shows
 the stage and a one-row table of its result (done, blocked, paused or error), duration and
@@ -173,13 +173,13 @@ Everything NexKit prints or stores from the agent's session passes through one f
 `nexkit/redact.py`: log lines, both transcripts, `result.json`, the run summary and the
 output of `setup` in the agent job. It replaces with `***`:
 
-- the values of every agent secret (see [Secrets](configuration.md#secrets)),
-  `GITHUB_TOKEN`, the push token and of every environment variable whose name contains `TOKEN`,
-  `SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` (values of 8 characters or more), also
-  URL-encoded or base64-encoded;
-- Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`, `sk-proj-…`, `sk-svcacct-…`, `sk-admin-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
-  `github_pat_`), JWTs, `Authorization:` and `Bearer` header values and PEM private key
-  blocks;
+- the values of every agent secret (see [Secrets](configuration.md#secrets)), of
+  `GITHUB_TOKEN`, of the push token and of every environment variable whose name contains
+  `TOKEN`, `SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` (values of 8 characters or more),
+  also URL-encoded or base64-encoded;
+- Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`, `sk-proj-…`, `sk-svcacct-…`,
+  `sk-admin-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`),
+  JWTs, `Authorization:` and `Bearer` header values and PEM private key blocks;
 - `password=` and `pwd=` values in connection strings and the password in
   `scheme://user:password@host`, in any case.
 
@@ -203,9 +203,8 @@ sentences and one idea per bullet, and say what changes in behaviour, and why, b
 naming classes, files or methods. The agents return fields, and NexKit adds the headings,
 so plans, reviews and pull request descriptions always have the same layout.
 
-**Plan.** Read-only access to the checkout (see [Agents](#agents) for what that means for
-each runtime). Posted as a comment marked
-`<!-- nexkit:plan -->`. The latest plan is the one `/nexkit go` implements. The part a
+**Plan.** Read-only access to the checkout (see [Agents](#agents)). Posted as a comment
+marked `<!-- nexkit:plan -->`. The latest plan is the one `/nexkit go` implements. The part a
 person approves comes first; the detail for the implementing agent is collapsed:
 
 ```markdown
@@ -228,8 +227,7 @@ Files, signatures, commands: the detail the implementing agent needs.
 ```
 
 Empty sections are left out. The implementing agent, and the reviewer, receive the whole
-comment, including the implementation notes, but not the profile lines. Plans posted by
-earlier releases are read the same way.
+comment, including the implementation notes, but not the profile lines.
 
 A re-plan revises the latest plan. The agent gets that plan and the discussion since it,
 keeps what nothing asks to change, and applies what the discussion and the note ask for;
@@ -295,11 +293,11 @@ branch is such a push. Without a push token (`publish.push_token_secret`), NexKi
 before pushing and says that the pull request needs a manual merge or a push token that may
 update workflows.
 
-**Review.** Read-only access, like the plan. Returns `approve` or `request_changes`, a verdict for each
-acceptance criterion with the test that covers it and the evidence, and findings marked
-`blocking` or `suggestion`. The prompt tells the reviewer not to block on things the
-implementer cannot change, such as PR text or CI files. The pull request review starts
-with what a person must act on:
+**Review.** Read-only access, like the plan. Returns `approve` or `request_changes`, a
+verdict for each acceptance criterion with the test that covers it and the evidence, and
+findings marked `blocking` or `suggestion`. The prompt tells the reviewer not to block on
+things the implementer cannot change, such as PR text or CI files. The pull request review
+starts with what a person must act on:
 
 ```markdown
 ### NexKit review: changes requested
@@ -389,12 +387,12 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
 - **Refused merge.** When GitHub refuses an automatic merge because the pull request
   conflicts, the same round starts for it.
 - **Limits.** Each pull request gets at most `conflicts.max_rounds` such rounds (3 by
-  default), apart from
-  `fix.max_auto_rounds`. A round is started once for each base commit, so a blocked round is
-  not repeated until the base branch moves again. A pull request whose latest round is
-  paused at the usage limit is left alone, and so is one with a round running: that
-  round merges the base branch itself when it conflicts, and a new run would replace a
-  command waiting behind it. The next check starts the round if it is still needed.
+  default), apart from `fix.max_auto_rounds`. A round is started once for each base
+  commit, so a blocked round is not repeated until the base branch moves again. A pull
+  request whose latest round is paused at the usage limit is left alone, and so is one
+  with a round running: that round merges the base branch itself when it conflicts, and a
+  new run would replace a command waiting behind it. The next check starts the round if it
+  is still needed.
 - When the round starts and the branch no longer conflicts, for example because another
   round already merged the base branch, it ends at once without running an agent.
 
@@ -414,7 +412,7 @@ message. `claude-code` does: Claude subscriptions have session and weekly limits
 Fallbacks use the same runtime as the agent, and a runtime that does not report limits
 cannot have them.
 
-- Its comment shows ⏸️, the CLI's message with the reset time, and when NexKit runs the
+- The run's comment shows ⏸️, the CLI's message with the reset time, and when NexKit runs the
   command again. `nexkit/checks` and `nexkit/review` stay `pending`. Nothing is published
   from the stage that stopped.
 - After the reset, NexKit starts the same command again, once, with the same note. When
@@ -423,16 +421,17 @@ cannot have them.
   `nexkit-resume` concurrency group, so it never holds up a command on an issue or pull
   request. Its job may run `wait_minutes` plus 15 minutes, which is why `wait_minutes` is
   at most 330: a GitHub-hosted job ends after six hours. It runs no agent and no
-  repository code, looks for due commands every ten
-  minutes until nothing is left within its wait, and also resumes runs that pause
-  meanwhile. Resets further away wait for the hourly `schedule`, which starts the waiting
-  run once one comes within reach; with `wait_minutes: 0`, the schedule resumes commands
-  itself. GitHub runs scheduled workflows when it can, often hours apart, which is why
-  NexKit does not rely on it for resets that are close.
+  repository code, looks for due commands every ten minutes until nothing is left within
+  its wait, and also resumes runs that pause meanwhile. Resets further away wait for the
+  hourly `schedule`, which starts the waiting run once one comes within reach; with
+  `wait_minutes: 0`, the schedule resumes commands itself. GitHub runs scheduled workflows
+  when it can, often hours apart, which is why NexKit does not rely on it for resets that
+  are close.
 - A review that stopped after its round published a commit resumes as `/nexkit review`,
   because the commit is already there. A resumed round shows `(resumed)` and does not
-  count toward `fix.max_auto_rounds`. If it hits the limit again, it pauses again. NexKit recognises the limit only from the CLI's own message, never from
-  what the model wrote, so an issue about rate limits cannot pause a run.
+  count toward `fix.max_auto_rounds`. If it hits the limit again, it pauses again.
+- NexKit recognises the limit only from the CLI's own message, never from what the model
+  wrote, so an issue about rate limits cannot pause a run.
 - When NexKit cannot read the reset time from the message, it tries again after
   `usage_limit.retry_minutes` (one hour by default), and says so. If that run stops at
   the limit again, it waits for a person, so a limit that does not reset cannot start a
@@ -475,8 +474,9 @@ not repeat it at the end, NexKit uses the result it accepted.
 `secrets: inherit`. `route` works out which agents each job may run and names their
 secrets: for the `agent` job those of its stage's agent and its fallback agents (for a
 plan, triage and the plan of every profile, since triage chooses one in the job), for the
-`review` job those of the review's agent and its fallback agents. The job reads each named secret into one of 8 slots, and NexKit gives it back its
-name. Names that start with `GITHUB_` or `NEXKIT_` are never read. Within the job, each CLI process gets an
+`review` job those of the review's agent and its fallback agents. The job reads each
+named secret into one of 8 slots, and NexKit gives it back its name. Names that start with
+`GITHUB_` or `NEXKIT_` are never read. Within the job, each CLI process gets an
 environment without any agent secret, plus the ones its provider names, and setup and
 check commands get none. Keys are never put on a command line or in a file.
 
@@ -541,24 +541,23 @@ comment on the pull request. Run comments only show runs. The state comment, edi
 place, says how many automatic fix rounds were used and holds a hidden JSON record of the
 latest feedback, that count, the last completed review (its commit and all its findings)
 and the recent fix rounds (summary, note and, after a merge, the files that had
-conflicts). Recorded text is clipped so the comment and
-the prompts stay bounded. Nothing else is stored, so there is nothing to migrate or repair.
+conflicts). Recorded text is clipped so the comment and the prompts stay bounded. Nothing
+else is stored, so there is nothing to migrate or repair.
 
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
-status (running, success, failure, paused, continued), the outcome (for example
-`planned`, `ready`, `merged`, `merge_refused`, `agent_blocked`, `paused`), the agents that
-ran each stage, the reason a person is needed when one is, the resume record of a paused
-run, and after an automatic merge each started
-`merge.after_workflows` run. `nexkit status` reads these markers, not the text people
-read, to list the open NexKit work and what each item waits for. NexKit reads a marker only
-from a comment by the Actions bot, and only where it ends the comment: text before it can
-quote agent output. A round's marker also holds its commit and whether its checks passed;
-the next round's checks get the latest commit that passed as `NEXKIT_VERIFIED_SHA` (see
-[Skipping work that a change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect)).
+status (running, success, failure, paused, continued), the outcome (for example `planned`,
+`ready`, `merged`, `merge_refused`, `agent_blocked`, `paused`), the agents that ran each
+stage, the reason a person is needed when one is, the resume record of a paused run, and
+after an automatic merge each started `merge.after_workflows` run. A round's marker also
+holds its commit and whether its checks passed. `nexkit status` reads these markers, not
+the text people read, to list the open NexKit work and what each item waits for. NexKit
+reads a marker only from a comment by the Actions bot, and only where it ends the comment:
+text before it can quote agent output. The latest commit whose checks passed becomes the
+next round's `NEXKIT_VERIFIED_SHA` (see [Skipping work that a change cannot
+affect](configuration.md#skipping-work-that-a-change-cannot-affect)).
 
-Issues and pull requests from NexKit 1.1.0 have a single status comment. NexKit leaves it
-as it is. On a pull request it still reads that comment's state, then saves the state in a
-new state comment.
+A pull request from NexKit 1.1.0 has a single status comment instead. NexKit reads its
+state, leaves it as it is and saves the state in a new state comment.
 
 ## Failure handling
 
@@ -586,6 +585,7 @@ new state comment.
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `fix.max_auto_rounds` remain, otherwise asks for a person. |
 | The review itself fails | Sets `nexkit/review` to error and says why in the round's comment; comment `/nexkit review` to retry, after fixing the agent's secrets if it was an authentication error. |
+| NexKit itself fails in the `agent` or `review` job | Reports `NexKit stopped on <exception>` like an agent error; the job log has the traceback. |
 
 Automatic rounds only follow concrete check failures or review findings. Agent errors and
 blocked results always stop, so model usage is never spent repeating a problem the agent

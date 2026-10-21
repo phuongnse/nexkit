@@ -1,3 +1,5 @@
+import contextlib
+import io
 import itertools
 import json
 import os
@@ -6,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from nexkit import cli
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
 from nexkit.report import report, review_body, workflow_file
@@ -350,6 +353,32 @@ class ReportTests(ReportCase):
         self.assertIn("the review job left no result", outcome["summary"])
         self.assertIn(("nexkit/review", "error"), self.statuses())
         self.assertFalse(self.gh.dispatches)
+
+    def test_a_review_that_raised_names_the_exception(self):
+        self.candidate(review=False)
+        out = self.artifacts / "nexkit-review"
+        self.write("nexkit-review", "context.json", {})
+        env = {
+            "NEXKIT_DECISION": json.dumps(decision("review", pr=6, target=6, head=HEAD)),
+            "NEXKIT_CONFIG": json.dumps(make_config()),
+            "GITHUB_STEP_SUMMARY": str(self.artifacts / "summary.md"),
+        }
+        error = UnicodeDecodeError("utf-8", b"\xc5", 0, 1, "invalid continuation byte")
+        args = ["agent", "--stage", "review", "--repo", self.tmp.name, "--out", str(out)]
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch("nexkit.agent.run_stage", side_effect=error),
+            contextlib.redirect_stdout(stdout),
+        ):
+            self.assertEqual(cli.main(args), 0)
+        self.assertIn("::stop-commands::", stdout.getvalue())
+        self.assertIn("Traceback", stdout.getvalue())
+        outcome = self.run_report(d=decision("review", pr=6, target=6, head=HEAD))
+        self.assertEqual(outcome["outcome"], "review_failed")
+        round_comment = self.gh.run_comments(6)[-1]["body"]
+        self.assertIn("NexKit stopped on UnicodeDecodeError: 'utf-8' codec", round_comment)
+        self.assertNotIn("left no result", round_comment)
 
     def review_status(self):
         return [s["description"] for s in self.gh.statuses if s["context"] == "nexkit/review"]

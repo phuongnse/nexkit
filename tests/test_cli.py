@@ -547,6 +547,37 @@ class PipelineCommandTests(unittest.TestCase):
             self.assertIn("key ***, agent []", text)
         self.assertIn("### NexKit implement: error", summary.read_text())
 
+    def test_agent_that_raises_leaves_a_redacted_error(self):
+        out = self.root / "out"
+        out.mkdir()
+        (out / "context.json").write_text("{}")
+        summary = self.root / "summary.md"
+        env = {
+            "NEXKIT_DECISION": json.dumps({"action": "review", "base": "main"}),
+            "NEXKIT_CONFIG": json.dumps(nexkit.config.validate({"agents": CLAUDE})),
+            "CLAUDE_CODE_OAUTH_TOKEN": "fake-oauth-token-0123456789",
+            "GITHUB_STEP_SUMMARY": str(summary),
+        }
+        error = RuntimeError("git fetch failed for fake-oauth-token-0123456789@github.com")
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch("nexkit.agent.run_stage", side_effect=error),
+            contextlib.redirect_stdout(stdout),
+        ):
+            code = cli.main(
+                ["agent", "--stage", "review", "--repo", str(self.root), "--out", str(out)]
+            )
+        self.assertEqual(code, 0)
+        result = json.loads((out / "result.json").read_text())
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(
+            result["error"], "NexKit stopped on RuntimeError: git fetch failed for ***@github.com"
+        )
+        for text in (stdout.getvalue(), summary.read_text()):
+            self.assertNotIn("fake-oauth-token-0123456789", text)
+        self.assertIn("### NexKit review: error", summary.read_text())
+
     def test_agent_setup_gets_the_base_commit(self):
         repos = GitRepos()
         self.addCleanup(repos.cleanup)

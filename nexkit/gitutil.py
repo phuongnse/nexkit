@@ -14,12 +14,14 @@ class GitError(RuntimeError):
 
 
 def _run(repo, args, binary=False, input=None):
+    # Text output is UTF-8; other bytes, such as a diff of a cp1250 file, become U+FFFD.
     return subprocess.run(
         ["git", *args],
         cwd=repo,
         input=input,
         capture_output=True,
-        text=not binary,
+        encoding=None if binary else "utf-8",
+        errors=None if binary else "replace",
     )
 
 

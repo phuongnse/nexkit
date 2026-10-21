@@ -318,7 +318,7 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Ready, with no plan yet | Starts `/nexkit plan`. |
 | Its latest plan has no questions and is not too large | Starts `/nexkit go`. |
 | Collaborators commented after the latest plan | Starts `/nexkit plan` again, so the plan holds their changes before `/nexkit go`. |
-| Its plan is too large and suggests a split | Creates each part as a sub-issue, in order, with the issue's milestone and labels, closes the issue's open NexKit pull request as superseded, and plans the first part. |
+| Its plan is too large and suggests a split | Creates each part as a sub-issue, in order, with the issue's milestone and labels, marks each part *blocked by* the earlier parts it needs, closes the issue's open NexKit pull request as superseded, and plans the parts that need no other part. |
 | Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
 | Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session. |
@@ -333,8 +333,9 @@ every open issue in scope, oldest first, and starts the one command that moves i
   the next milestone by itself. `"label"` takes the open issues with `autopilot.label`.
   Issues outside the scope are never touched.
 - **Ready.** An issue is ready when no issue that blocks it (GitHub's *blocked by*
-  relationships) is open and no earlier sub-issue of its parent is open. A parent issue
-  with sub-issues is never planned itself: its sub-issues are, in order.
+  relationships) is open. The order of sub-issues does not count, so sub-issues without
+  such relationships start at the same time; text such as "Depends on #12" is not read. A
+  parent issue with sub-issues is never planned itself: its sub-issues are.
 - **Trust.** Autopilot skips a person's approval of the plan, so the issue text drives an
   implement session, which can read the secrets of its job. It takes only issues opened by
   someone with write access to the repository; only they and other writers can edit them.

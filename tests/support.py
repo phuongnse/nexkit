@@ -221,6 +221,9 @@ class FakeGitHub:
     def blocked_by(self, number):
         return [self.issues[n] for n in self.blockers[number]]
 
+    def add_blocked_by(self, number, blocker_id):
+        self.blockers[number].append(blocker_id - 90000)
+
     def milestones(self):
         found = []
         for milestone in self.open_milestones:

@@ -88,10 +88,23 @@ def plan_data_record(output):
     }
     if data["too_large"]:
         data["split"] = [
-            {"title": clip(item.get("title"), 256), "body": clip(item.get("body"), 6000)}
-            for item in (output.get("split") or [])[:MAX_PARTS]
+            {
+                "title": clip(item.get("title"), 256),
+                "body": clip(item.get("body"), 6000),
+                "depends_on": depends_on(item, number),
+            }
+            for number, item in enumerate((output.get("split") or [])[:MAX_PARTS], 1)
         ]
     return _encode(PLAN_DATA_PREFIX, data)
+
+
+def depends_on(part, number):
+    """The earlier parts that part `number` of a split needs, as the agent named them.
+    Only earlier parts count, so the parts never wait for each other in a cycle."""
+    found = part.get("depends_on") or []
+    found = found if isinstance(found, list) else []
+    valid = {d for d in found if isinstance(d, int) and not isinstance(d, bool) and 0 < d < number}
+    return sorted(valid)
 
 
 def plan_data(comment):

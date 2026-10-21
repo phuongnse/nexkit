@@ -84,8 +84,13 @@ SCHEMAS = {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "properties": {"title": {"type": "string"}, "body": {"type": "string"}},
-                    "required": ["title", "body"],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "body": {"type": "string"},
+                        # The 1-based numbers of the earlier parts this part needs first.
+                        "depends_on": {"type": "array", "items": {"type": "integer"}},
+                    },
+                    "required": ["title", "body", "depends_on"],
                 },
             },
             # How a re-plan relates to the latest plan; shown only on a re-plan.

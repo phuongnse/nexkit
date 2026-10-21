@@ -1,5 +1,63 @@
 # Changelog
 
+## 4.1.0
+
+- **Autopilot** works through the open issues in scope by itself (#86, #87, #88, #89):
+  with `"autopilot": {"enabled": true}`, it plans each ready issue, starts `/nexkit go` on
+  a plan that needs nobody, splits a plan that is too large into sub-issues, and moves on
+  when an issue closes. It stops where a person is needed. The scope is the earliest open
+  milestone, or the issues with `autopilot.label`; an issue is ready when no issue that
+  blocks it is open. With `answer: "recommended"`, it answers questions that all have a
+  recommended option. With `merge.after_workflows`, a failure of those workflows on the
+  default branch is re-run once, then gets a `bug` issue that is planned first. Sweeps run
+  in the `maintain` job, without an agent or a repository checkout, after every NexKit
+  run, on issue and milestone events and on the hourly schedule. Autopilot is off by
+  default. See [Autopilot](docs/configuration.md#autopilot).
+- Plan questions, and questions of a `blocked` round, carry their options and the one
+  NexKit recommends; the plan comment marks it `(recommended)` (#88, #94). Each part of a
+  suggested split names the earlier parts it needs, shown as "(after 1 and 2)", and
+  autopilot records them as GitHub *blocked by* relationships, so parts that do not need
+  each other run at the same time (#91).
+- The `request` skill writes a split as a parent issue with sub-issues, *blocked by*
+  relationships only for real prerequisites, and the milestone or label of autopilot's
+  scope (#92).
+- Setup and checks get `NEXKIT_VERIFIED_SHA`: the head of the latest earlier round of the
+  pull request whose checks all passed, unset when there is none (#82). A check can diff
+  against it to skip work that later rounds did not touch. See
+  [Skipping work that a change cannot affect](docs/configuration.md#skipping-work-that-a-change-cannot-affect).
+  Round markers now count only at the end of a NexKit comment, so agent output quoted in
+  a comment cannot pose as a round whose checks passed.
+- A review survives diffs that are not valid UTF-8 (#81): invalid bytes become U+FFFD. A
+  stage that stops on an unexpected exception says so, as
+  `NexKit stopped on <Type>: <message>` in the round's comment and the `nexkit/review`
+  status, instead of "the review job left no result".
+- `nexkit status` shows what the next autopilot sweep does, and `nexkit doctor` checks
+  autopilot's triggers and concurrency group when it is on.
+- The documentation is reorganized: migration notes are under
+  [Upgrading from earlier releases](docs/configuration.md#upgrading-from-earlier-releases),
+  and [Troubleshooting](docs/troubleshooting.md) is grouped by topic.
+
+### Upgrade
+
+- **To use autopilot**, give `.github/workflows/nexkit.yml` the triggers and the
+  concurrency group that `nexkit init` writes, then turn it on in `.nexkit/config.json`.
+  The workflow needs:
+
+  ```yaml
+  issues:
+    types: [closed, opened, reopened, labeled, milestoned]
+  milestone:
+    types: [closed]
+  ```
+
+  `milestone` in the job's `if:` list of events, and the group:
+
+  ```yaml
+  group: nexkit-${{ (github.event_name == 'milestone' || (github.event_name == 'issues' && github.event.action != 'closed')) && 'autopilot' || github.event.issue.number || github.event.pull_request.number || inputs.number || github.event_name }}
+  ```
+
+  Without autopilot, the workflow can stay as it is.
+
 ## 4.0.0
 
 - **Breaking:** NexKit supports and tests one runtime, Claude Code. The `codex` runtime

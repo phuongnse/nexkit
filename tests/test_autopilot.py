@@ -255,15 +255,15 @@ class SweepTests(AutopilotCase):
         self.sweep(pilot())  # no limit
         self.assertEqual(self.started(), [("plan", 5), ("plan", 6), ("plan", 7)])
 
-    def test_sub_issues_go_in_their_parents_order(self):
-        self.issue(2)
-        self.issue(3)
-        self.issue(4)
-        self.gh.parents.update({3: 2, 4: 2})
+    def test_sub_issues_wait_only_for_the_issues_that_block_them(self):
+        for number in (2, 3, 4, 5):
+            self.issue(number)
+        self.gh.parents.update({3: 2, 4: 2, 5: 2})
+        self.gh.blockers[5] = [3]
         _, steps = autopilot.preview(self.gh, self.cfg)
-        self.assertEqual([s["state"] for s in steps], ["waits", "start", "waits"])
+        self.assertEqual([s["state"] for s in steps], ["waits", "start", "start", "waits"])
         self.assertIn("a parent issue", steps[0]["reason"])
-        self.assertIn("waits for #3, an earlier part of #2", steps[2]["reason"])
+        self.assertEqual(steps[3]["reason"], "waits for #3")
 
 
 class TriggerTests(AutopilotCase):
@@ -481,7 +481,10 @@ class AnswerTests(AnswerAndSplitCase):
 
 
 class SplitTests(AnswerAndSplitCase):
-    PARTS = [{"title": "First part", "body": "Do A."}, {"title": "Second part", "body": "Do B."}]
+    PARTS = [
+        {"title": "First part", "body": "Do A.", "depends_on": []},
+        {"title": "Second part", "body": "Do B.", "depends_on": [1]},
+    ]
 
     def test_a_plan_that_is_too_large_becomes_sub_issues_and_the_first_is_planned(self):
         self.issue(5, labels=["area"])
@@ -498,9 +501,36 @@ class SplitTests(AnswerAndSplitCase):
             self.assertEqual(issue["labels"], [{"name": "area"}])
             self.assertTrue(issue["body"].startswith("<!-- nexkit:part 5 -->"))
         self.assertEqual(self.started(), [("plan", 6)])
+        self.assertEqual(self.gh.blockers[7], [6])
         self.assertTrue(self.gh.comments_matching(5, "split this issue as its plan suggests"))
         self.sweep(pilot())
         self.assertEqual(self.started(), [("plan", 6)])
+
+    def test_parts_that_do_not_need_each_other_are_planned_at_once(self):
+        self.issue(5)
+        parts = [
+            {"title": "One", "body": "A.", "depends_on": []},
+            {"title": "Two", "body": "B.", "depends_on": [2, 3, 0, True, "1"]},  # all invalid
+            {"title": "Three", "body": "C.", "depends_on": [1, 1]},
+        ]
+        self.posted_plan(5, too_large=True, split=parts)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 6), ("plan", 7)])
+        self.assertEqual((self.gh.blockers[7], self.gh.blockers[8]), ([], [6]))
+        [plan] = self.gh.comments_matching(5, "### Suggested split")
+        self.assertIn("1. **One**: A.\n2. **Two**: B.\n3. **Three** (after 1): C.", plan["body"])
+
+    def test_a_plan_record_without_dependencies_keeps_the_parts_in_order(self):
+        self.issue(5)
+        self.run_comment(5, "plan", outcome="planned")
+        split = [{"title": t, "body": "x"} for t in ("One", "Two", "Three")]
+        from nexkit.state import PLAN_DATA_PREFIX, _encode
+
+        data = {"questions": [], "too_large": True, "split": split}
+        self.gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\n{_encode(PLAN_DATA_PREFIX, data)}")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 6)])
+        self.assertEqual((self.gh.blockers[7], self.gh.blockers[8]), ([6], [7]))
 
     def test_only_parts_of_a_trusted_parent_are_trusted(self):
         self.issue(5, user="bob")

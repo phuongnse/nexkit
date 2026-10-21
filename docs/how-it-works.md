@@ -219,7 +219,7 @@ One or two sentences: what changes and why.
 ### Risks and limits      what could go wrong or is left out
 ### Acceptance criteria   one check each, at most about 30 words
 ### Questions             only when answers would change the work; options, one marked (recommended)
-### Suggested split       only when the work is too large for one session
+### Suggested split       only when the work is too large for one session; each part says which earlier parts it needs
 
 <details><summary>Implementation notes</summary>
 Files, signatures, commands: the detail the implementing agent needs.
@@ -405,8 +405,8 @@ dispatch of the workflow. A *sweep* decides which:
 1. It finds the scope: the open issues of the earliest open milestone, or those with
    `autopilot.label`, oldest first.
 2. For each issue, it reads the markers of NexKit's run comments on the issue and its pull
-   request, the latest plan, the issue's *blocked by* relationships and its parent's
-   sub-issues. From these alone it decides: start `/nexkit plan`, start `/nexkit go`,
+   request, the latest plan, the issue's *blocked by* relationships and whether it
+   has sub-issues. From these alone it decides: start `/nexkit plan`, start `/nexkit go`,
    leave it to a run or pull request that carries it on, or leave it to a person.
 3. It starts what it decided, oldest first, while fewer than `autopilot.max_parallel`
    issues are in progress, and records each start on the issue.
@@ -440,7 +440,10 @@ issue run in that group as well, and start a sweep.
   with its own marker, and plans again, or starts the blocked command again with the
   answers as its note. The prompts include that comment as the owner's discussion; a
   comment by any other bot never counts. A plan that is too large becomes sub-issues, in
-  order; a NexKit pull request of the split issue is closed as superseded. An implement or
+  order. Each part of the plan names the earlier parts it needs (`depends_on`); NexKit
+  keeps only earlier parts, so the parts cannot wait for each other in a cycle, and records
+  each as a *blocked by* relationship on GitHub. Parts that need no other part start at
+  once. A NexKit pull request of the split issue is closed as superseded. An implement or
   fix agent that ran out of time leads to one re-plan with a note to split the work; a
   second time waits for a person. This is the only case where an agent error leads to more
   agent work, and it changes the plan rather than repeating the run.

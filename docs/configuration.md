@@ -5,7 +5,8 @@ Changes on a pull request branch never affect the run that is checking that bran
 Unknown keys are rejected so typos fail loudly.
 
 The runner (`ubuntu-24.04`), the version of each agent runtime and NexKit's Python
-version are set by the NexKit release and are not configurable. See [supported versions](../README.md#supported-versions).
+version are set by the NexKit release and are not configurable. See
+[supported versions](../README.md#supported-versions).
 
 A complete configuration with every key at its default, except `agents`, `setup` and
 `checks`, which `nexkit init` writes:
@@ -84,44 +85,6 @@ their defaults.
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. |
 | `publish.push_token_secret` | `null` | The secret with the token that pushes NexKit's branches and opens its pull requests, such as `"NEXKIT_PUSH_TOKEN"`; `null` pushes with the Actions token. It cannot be an agent's secret or start with `GITHUB_`. See [Secrets](#secrets). |
 
-### Agents are declared
-
-NexKit 2.1 and earlier ran every stage on a Claude agent that the configuration did not
-mention. Every agent is now declared in `agents`, with the names of the secrets it uses,
-so the configuration shows every secret NexKit reads. A configuration without `agents`
-is rejected with what to add:
-
-```json
-"agents": {
-  "claude": {"runtime": "claude-code", "provider": "anthropic", "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"}
-}
-```
-
-With an Anthropic API key, write `"api_key_secret": "ANTHROPIC_API_KEY"` instead of
-`oauth_token_secret`. If you set a `NEXKIT_PUSH_TOKEN` secret, also add
-`"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}`: NexKit now uses a push token only
-when the configuration names it, and `nexkit doctor` warns about one that it does not.
-
-### Codex removed in 4.0
-
-NexKit 3.x could run stages on Codex with OpenAI models on Azure AI Foundry. NexKit 4.0
-supports and tests only Claude Code, so an agent with `"runtime": "codex"` or
-`"provider": "azure-openai"` is rejected with what to do. Remove such agents from `agents`,
-and give the stages and profiles that chose them a Claude agent and a Claude model, for
-example `"review": {"agent": "claude", "model": "claude-opus-5-5"}`, or drop `agent` to use
-the default. The Azure secrets are no longer read; delete them when nothing else uses them.
-
-### Keys renamed in 2.0
-
-NexKit 1.10 and earlier had three of these keys at the top level. A configuration that
-still uses them is rejected with the new name, so move them:
-
-| Before | Now |
-|---|---|
-| `"max_auto_fixes": 2` | `"fix": {"max_auto_rounds": 2}` |
-| `"auto_merge": true` | `"merge": {"auto": true}` |
-| `"after_merge_workflows": ["ci.yml"]` | `"merge": {"after_workflows": ["ci.yml"]}` |
-
 ## Checks
 
 ```json
@@ -150,10 +113,10 @@ List the paths the pull request changed with both of these commands:
 ```
 
 The first lists changed tracked files, committed or not. The second lists new files that
-are not committed yet: when the agent runs the checks while it works, the files it created are
-still untracked, and without that line a check would skip work it should run. Changes that
-the base branch made after the merge base are not listed. In a fix round that merges the
-base branch, the variable is the merged base commit.
+are not committed yet: when the agent runs the checks while it works, the files it created
+are still untracked, and without that line a check would skip work it should run. Changes
+that the base branch made after the merge base are not listed. In a fix round that merges
+the base branch, the variable is the merged base commit.
 
 When NexKit cannot work out the base, it leaves `NEXKIT_BASE_SHA` unset and says so in
 the job log. Outside NexKit it is always unset, so the rule for a check is:
@@ -162,24 +125,25 @@ the job log. Outside NexKit it is always unset, so the rule for a check is:
   changed. Otherwise run it in full.
 - Run every check in full on the base branch, for example in your own CI after a merge.
 
-Once a pull request has changed a suite's files, every later round reruns that suite
-against `NEXKIT_BASE_SHA`, even when the round's own change cannot reach it. For that,
-setup and checks also get `NEXKIT_VERIFIED_SHA`: the commit of the latest earlier round of
-the pull request whose checks all passed. Comparing against it instead skips what has not
-changed since the last green round:
+Setup and checks also get `NEXKIT_VERIFIED_SHA`: the commit of the latest earlier round
+of the pull request whose checks all passed. Against `NEXKIT_BASE_SHA`, a suite that the
+pull request touched once runs in every later round; against `NEXKIT_VERIFIED_SHA`, it runs
+only when its paths changed since the last green round. List those paths the same way:
 
 ```sh
 { git diff --name-only "$NEXKIT_VERIFIED_SHA"; git ls-files --others --exclude-standard; }
 ```
 
-NexKit reads that commit only from its own round comments, never from agent output or
-from comments by anyone else. It leaves the variable unset, and says why in the job log,
-when no earlier round passed (as in the implement round) or the checkout does not have
-that commit. When a fix round merged the base branch after that commit, the diff includes
-the base branch's changes, so a check stays on the safe side. A round counts as passed
-only when each check exited 0, including checks that skipped themselves: skip only work
-that the listed paths cannot affect, or one wrong skip carries into every later round.
-Prefer `NEXKIT_VERIFIED_SHA` when it is set and fall back to `NEXKIT_BASE_SHA`:
+- NexKit reads the commit only from its own round comments, never from agent output or
+  anyone else's comments.
+- It is unset, and the job log says why, when no earlier round passed (always in the
+  implement round) or the checkout does not have that commit.
+- After a fix round that merged the base branch, the diff also lists the base branch's
+  changes, so a check stays on the safe side.
+- A round passes when each check exits 0, including checks that skipped work. Skip only
+  what the listed paths cannot affect: a wrong skip carries into every later round.
+
+Prefer `NEXKIT_VERIFIED_SHA` and fall back to `NEXKIT_BASE_SHA`:
 
 ```sh
 # Run the dev tooling smoke tests only when the change can affect them.
@@ -295,8 +259,7 @@ merge:
 
 - a required approval from a person;
 - a required check from your own CI, unless `publish.push_token_secret` names a push
-  token, because without one
-  your CI does not run on NexKit pull requests (see
+  token, because without one your CI does not run on NexKit pull requests (see
   [Troubleshooting](troubleshooting.md));
 - a required merge queue, or squash merging turned off for the repository.
 
@@ -386,12 +349,12 @@ See [How it works](how-it-works.md#work-without-a-command).
 
 When an agent stops because its account hit a usage limit that resets, the stage moves to
 the agent's [fallback agents](#fallback-agents), if it has any. When none is left, NexKit
-pauses the run, shows the reset time in its comment and keeps `nexkit/checks` and `nexkit/review` pending.
-With `resume: true` (the default), it runs the same command again after the reset, once,
-with the same note; when the reset time is unknown, after `retry_minutes` (default 60).
-With `false`, the comment still names the limit and the reset time, and a person
-comments the command again. Each runtime says whether it reports such limits; `claude-code`
-does (see [How it works](how-it-works.md#usage-limits)).
+pauses the run, shows the reset time in its comment and keeps `nexkit/checks` and
+`nexkit/review` pending. With `resume: true` (the default), it runs the same command again
+after the reset, once, with the same note; when the reset time is unknown, after
+`retry_minutes` (default 60). With `false`, the comment still names the limit and the
+reset time, and a person comments the command again. Each runtime says whether it reports
+such limits; `claude-code` does (see [How it works](how-it-works.md#usage-limits)).
 
 When the reset is at most `wait_minutes` away (330, five and a half hours, by default),
 NexKit starts a run that waits for it and resumes the command within ten minutes of the
@@ -468,7 +431,8 @@ test in CI.
 | `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` | yes |
 
 Every runtime reports the tokens of its runs in the same form, which the run summary and
-the run comments show; see [Logs, summary and artifacts](how-it-works.md#logs-summary-and-artifacts).
+the run comments show; see [Logs, summary and
+artifacts](how-it-works.md#logs-summary-and-artifacts).
 
 | Provider | Settings | Secret |
 |---|---|---|
@@ -529,8 +493,8 @@ request names the agent and model of each stage, for example
 
 ### Settings and secrets
 
- A provider declares which of its settings are secrets: keys,
-and anything that identifies your own account or resource, such as an endpoint. A secret
+A provider declares which of its settings are secrets: keys, and anything that
+identifies your own account or resource, such as an endpoint. A secret
 lives in a repository secret, and the configuration holds only its name, in a key that
 ends in `_secret`. Choose the names freely, except names that start with `GITHUB_` or
 `NEXKIT_`, which belong to GitHub and NexKit (the push token, such as `NEXKIT_PUSH_TOKEN`,
@@ -594,11 +558,11 @@ ones, without choosing by hand on every issue.
   keys as the top-level `stages`, for `plan`, `implement` and `review`.
 - Settings are layered: the top-level `agent`, `model` and `effort`, then
   `stages.<stage>`, then `profiles.<profile>.stages.<stage>`. What a profile leaves out
-  comes from `stages`. A profile can run a stage on another agent, for example a review by
-  a different model family than the one that wrote the code.
+  comes from `stages`. A profile can also run a stage on another agent, such as a second
+  Claude account.
 - `stages.triage` sets the agent, model, effort, timeout and budget of the triage call. It
-  takes the top-level `agent`, `model` and `effort` unless it sets its own. A profile cannot set it,
-  because triage runs before there is a profile.
+  takes the top-level `agent`, `model` and `effort` unless it sets its own. A profile
+  cannot set it, because triage runs before there is a profile.
 - `default_profile` is used when no plan chose a profile: `/nexkit go` without a plan, a
   plan from before profiles were configured, and a plan whose triage failed. The cheapest
   profile is a safe choice, so a failure never costs more.
@@ -631,10 +595,10 @@ shows what the log, run summary and artifacts contain and what is redacted.
 writes it, so the pipeline can read each agent's secrets by the names in
 `.nexkit/config.json`. It passes a job only the secrets of the agents its stages use, at
 most 8 per job, and each agent's CLI only its own; setup and check commands get none. See
-[How it works](how-it-works.md#agents) for what this does and does not isolate. A
-workflow that lists secrets one by one, as `nexkit init` wrote before, can pass only
-`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` and `NEXKIT_PUSH_TOKEN`; `nexkit doctor`
-says when an agent or the push token needs `secrets: inherit`.
+[How it works](how-it-works.md#agents) for what this does and does not isolate. An older
+workflow that lists secrets one by one can pass only `CLAUDE_CODE_OAUTH_TOKEN`,
+`ANTHROPIC_API_KEY` and `NEXKIT_PUSH_TOKEN`; `nexkit doctor` says when an agent or the push
+token needs `secrets: inherit`.
 
 | Secret | Required | Used by |
 |---|---|---|
@@ -648,9 +612,52 @@ says when an agent or the push token needs `secrets: inherit`.
 for `/nexkit` comments, *Request changes* reviews on NexKit pull requests, dispatches,
 closed issues (for `close_parent_issues`), pushes to the default branch (for
 `conflicts.auto_resolve`) and an hourly schedule (for `usage_limit.resume` and
-`conflicts.auto_resolve`). With those settings off, these events start short runs that
-end at once; remove the triggers you do not use if you prefer. To upgrade,
-change both the `uses:` ref and `nexkit_ref` to the new tag (or rerun
-`nexkit init --force --kit-ref vX.Y.Z` and restore your config); each release's notes
-list its upgrade steps. `nexkit doctor` reports a problem when the two refs differ, and
-mentions a newer release without failing: staying on a release is your choice.
+`conflicts.auto_resolve`). With those settings off, these events start short runs that end
+at once; remove the triggers you do not use if you prefer. To upgrade, change both the
+`uses:` ref and `nexkit_ref` to the new tag (or rerun `nexkit init --force --kit-ref
+vX.Y.Z` and restore your config); each release's notes list its upgrade steps. `nexkit
+doctor` reports a problem when the two refs differ, and mentions a newer release without
+failing: staying on a release is your choice.
+
+## Upgrading from earlier releases
+
+A configuration from an earlier release that no longer fits is rejected with what to
+change. Each release's notes list its own upgrade steps.
+
+### Codex removed in 4.0
+
+NexKit 3.x could run stages on Codex with OpenAI models on Azure AI Foundry. NexKit 4.0
+supports and tests only Claude Code, so an agent with `"runtime": "codex"` or
+`"provider": "azure-openai"` is rejected with what to do. Remove such agents from `agents`,
+and give the stages and profiles that chose them a Claude agent and a Claude model, for
+example `"review": {"agent": "claude", "model": "claude-opus-5-5"}`, or drop `agent` to use
+the default. The Azure secrets are no longer read; delete them when nothing else uses them.
+
+### Agents are declared
+
+NexKit 2.1 and earlier ran every stage on a Claude agent that the configuration did not
+mention. Since 3.0, every agent is declared in `agents`, with the names of the secrets it
+uses, so the configuration shows every secret NexKit reads. A configuration without
+`agents` is rejected with what to add:
+
+```json
+"agents": {
+  "claude": {"runtime": "claude-code", "provider": "anthropic", "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"}
+}
+```
+
+With an Anthropic API key, write `"api_key_secret": "ANTHROPIC_API_KEY"` instead of
+`oauth_token_secret`. If you set a `NEXKIT_PUSH_TOKEN` secret, also add
+`"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}`: NexKit uses a push token only
+when the configuration names it, and `nexkit doctor` warns about one that it does not.
+
+### Keys renamed in 2.0
+
+NexKit 1.10 and earlier had three of these keys at the top level. A configuration that
+still uses them is rejected with the new name, so move them:
+
+| Before | Now |
+|---|---|
+| `"max_auto_fixes": 2` | `"fix": {"max_auto_rounds": 2}` |
+| `"auto_merge": true` | `"merge": {"auto": true}` |
+| `"after_merge_workflows": ["ci.yml"]` | `"merge": {"after_workflows": ["ci.yml"]}` |

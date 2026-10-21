@@ -435,7 +435,8 @@ issue run in that group as well, and start a sweep.
   stop NexKit without it. A collaborator's comment after the latest plan leads to a new
   plan before `/nexkit go`.
 - **Answers and splits.** Each question in a plan or a blocked round has options and the
-  one the agent recommends, or none. With `autopilot.answer: "recommended"` and a
+  number of the one the agent recommends, or 0 for none; a number cannot be copied loosely,
+  as an option's text can, and NexKit records the option's text. With `autopilot.answer: "recommended"` and a
   recommendation for every question, autopilot posts the answers in a comment that ends
   with its own marker, and plans again, or starts the blocked command again with the
   answers as its note. The prompts include that comment as the owner's discussion; a

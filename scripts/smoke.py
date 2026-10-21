@@ -225,10 +225,9 @@ def conflicts(root, program):
 
 
 def asked(questions, name):
-    """Each question has options, and a recommended option is one of them."""
+    """Each question has options, and names the recommended one by its number, or 0."""
     for item in questions:
-        recommended = item["recommended"]
-        if not item["options"] or (recommended and recommended not in item["options"]):
+        if not item["options"] or not 0 <= item["recommended"] <= len(item["options"]):
             raise SystemExit(f"{name}: a question without options or with a stray choice: {item}")
 
 

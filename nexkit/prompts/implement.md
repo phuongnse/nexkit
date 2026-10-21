@@ -62,7 +62,6 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
 - `blocker`: why you stopped, when `status` is `blocked`; otherwise an empty string.
 - `questions`: when `status` is `blocked` because a person must decide something, one entry
   for each decision; otherwise an empty list. Each has the `question`, the `options` you
-  see (two to four short answers) and `recommended`: the option you would choose, copied
-  exactly from `options`, or an empty string when none is clearly better. Put the reason
-  in `question`.
+  see (two to four short answers) and `recommended`: the number of the option you would
+  choose, counting from 1, or 0 when none is clearly better. Put the reason in `question`.
 - `checks_run`: the commands you ran and whether each passed.

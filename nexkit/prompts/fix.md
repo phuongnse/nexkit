@@ -54,9 +54,8 @@ $writing
 - `blocker`: why you stopped, when `status` is `blocked`; otherwise an empty string.
 - `questions`: when `status` is `blocked` because a person must decide something, one entry
   for each decision; otherwise an empty list. Each has the `question`, the `options` you
-  see (two to four short answers) and `recommended`: the option you would choose, copied
-  exactly from `options`, or an empty string when none is clearly better. Put the reason
-  in `question`.
+  see (two to four short answers) and `recommended`: the number of the option you would
+  choose, counting from 1, or 0 when none is clearly better. Put the reason in `question`.
 - `checks_run`: the commands you ran and whether each passed.
 - `open_conflicts`: only when you stop because conflicts with the base branch need a
   person's decision; otherwise an empty list. One entry for each open conflict:
@@ -65,8 +64,8 @@ $writing
   - `pr_change`: what this pull request changed there, in one sentence.
   - `question`: the choice a person has to make, as one question.
   - `options`: the answers you see, two to four, such as keeping one side or the other.
-  - `recommended`: the option you would choose, copied exactly from `options`, when the
-    plan, the issue or the code give a reason to prefer it; otherwise an empty string.
+  - `recommended`: the number of the option you would choose, counting from 1, when the
+    plan, the issue or the code give a reason to prefer it; otherwise 0.
 
   Keep `blocker` short when you list open conflicts, and do not repeat them in
   `questions`. NexKit shows the list to a person, who answers with a note on `/nexkit fix`.

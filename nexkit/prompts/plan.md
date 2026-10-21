@@ -54,9 +54,9 @@ $writing
   empty when the issue is clear enough to proceed with reasonable defaults. Each has:
   - `question`: one question, with what it decides.
   - `options`: the answers you see, two to four, each short enough to answer with as it is.
-  - `recommended`: the option you would choose, copied exactly from `options`, when the
-    issue, the discussion, the docs or the code give a reason to prefer it; otherwise an
-    empty string. Put the reason in `question`.
+  - `recommended`: the number of the option you would choose, counting from 1, when the
+    issue, the discussion, the docs or the code give a reason to prefer it; otherwise 0.
+    Put the reason in `question`.
 - `too_large`: true when the work cannot be finished and tested well in one session.
 - `split`: when `too_large` is true, smaller issues that can each be done in one session,
   in order. Otherwise an empty list. Each has a `title`, a `body`, and `depends_on`: the

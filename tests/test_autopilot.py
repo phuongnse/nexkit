@@ -358,7 +358,10 @@ class StatusTests(AutopilotCase):
         self.assertEqual(self.gh.dispatches, [])  # status changes nothing
 
 
-QUESTION = {"question": "Which port?", "options": ["8080", "9090"], "recommended": "8080"}
+# As an agent returns it: the recommended option by its number, from 1.
+QUESTION = {"question": "Which port?", "options": ["8080", "9090"], "recommended": 1}
+# As NexKit records and shows it: by its text.
+RECORDED = {**QUESTION, "recommended": "8080"}
 
 
 def plan_output(**kw):
@@ -421,15 +424,20 @@ class AnswerTests(AnswerAndSplitCase):
 
     def test_waits_for_a_person_without_a_recommendation_or_without_answer(self):
         self.issue(4)
-        self.posted_plan(4, questions=[{**QUESTION, "recommended": ""}])
+        self.posted_plan(4, questions=[{**QUESTION, "recommended": 0}])
         self.issue(5)
         self.posted_plan(5, questions=[QUESTION])
         _, steps = autopilot.preview(self.gh, self.cfg)
         self.assertEqual([s["state"] for s in steps], ["waits", "start"])
         _, steps = autopilot.preview(self.gh, pilot())  # answer: "never"
         self.assertEqual([s["state"] for s in steps], ["waits", "waits"])
-        # A recommendation that is not one of the options is none.
-        self.assertIsNone(autopilot.answers(self.cfg, [{**QUESTION, "recommended": "80"}]))
+        # A number out of range, a boolean or text that is not an option is no recommendation.
+        for chosen in (3, -1, True, "80"):
+            self.assertIsNone(autopilot.answers(self.cfg, [{**QUESTION, "recommended": chosen}]))
+        # The second option, by number; a record that holds the text still counts.
+        found = autopilot.answers(self.cfg, [{**QUESTION, "recommended": 2}])
+        self.assertEqual(found, [{"question": "Which port?", "answer": "9090"}])
+        self.assertEqual(autopilot.answers(self.cfg, [RECORDED])[0]["answer"], "8080")
 
     def test_answers_a_blocked_go_and_a_blocked_fix_round(self):
         self.issue(4)
@@ -471,7 +479,7 @@ class AnswerTests(AnswerAndSplitCase):
         self.assertIsNone(result.get("attention"))
         self.assertIn("NexKit autopilot carries on from here.", result["summary"])
         self.assertFalse(self.gh.comments_matching(5, "@olivia"))
-        self.report_plan(cfg, plan_output(questions=[{**QUESTION, "recommended": ""}]))
+        self.report_plan(cfg, plan_output(questions=[{**QUESTION, "recommended": 0}]))
         self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
         # Outside the scope, autopilot answers nothing, so a person is needed.
         self.gh.issue_comments[5].clear()
@@ -614,7 +622,7 @@ class RecordTests(unittest.TestCase):
         self.assertIn("1. Which port?\n   - 8080 (recommended)\n   - 9090\n2. An old", body)
         comment = {"body": body, "user": {"login": "github-actions[bot]"}}
         data = plan_data(comment)
-        self.assertEqual(data["questions"][0], QUESTION)
+        self.assertEqual(data["questions"][0], RECORDED)
         self.assertEqual(data["questions"][1]["options"], [])
         self.assertFalse(data["too_large"])
         self.assertNotIn("nexkit:plan-data", plan_text(comment))

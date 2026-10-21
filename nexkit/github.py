@@ -128,6 +128,11 @@ class GitHub:
                 raise
             return []
 
+    def add_blocked_by(self, number, blocker_id):
+        """Record that issue `number` is blocked by the issue with database id `blocker_id`."""
+        path = f"{self._repo}/issues/{number}/dependencies/blocked_by"
+        return self.request("POST", path, {"issue_id": blocker_id})
+
     def milestones(self):
         """Open milestones."""
         return self.paginate(f"{self._repo}/milestones", {"state": "open"})

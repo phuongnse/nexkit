@@ -212,20 +212,11 @@ def in_repository(gh, issue):
 
 
 def waits_for(gh, issue):
-    """Why an issue is not ready yet, or None: an open issue that blocks it, or an open
-    earlier sibling among its parent's sub-issues."""
-    number = issue["number"]
-    blockers = [b["number"] for b in gh.blocked_by(number) if b.get("state") == "open"]
-    if blockers:
-        return "waits for " + ", ".join(f"#{n}" for n in blockers)
-    parent = gh.parent_issue(number)
-    if parent and in_repository(gh, parent):
-        for sibling in gh.sub_issues(parent["number"]):
-            if sibling["number"] == number:
-                break
-            if sibling.get("state") == "open":
-                return f"waits for #{sibling['number']}, an earlier part of #{parent['number']}"
-    return None
+    """Why an issue is not ready yet, or None: open issues that block it on GitHub. The
+    order of sub-issues does not count; a part that needs another says so with a *blocked
+    by* relationship."""
+    blockers = [b["number"] for b in gh.blocked_by(issue["number"]) if b.get("state") == "open"]
+    return "waits for " + ", ".join(f"#{n}" for n in blockers) if blockers else None
 
 
 # -- the record of what autopilot started -------------------------------------------
@@ -534,13 +525,19 @@ def split(gh, step, now=None):
         )
         issue = gh.create_issue(part["title"].strip(), body, milestone, labels)
         gh.add_sub_issue(number, issue["id"])
-        created.append(issue["number"])
-    listing = ", ".join(f"#{n}" for n in created)
+        created.append(issue)
+        # A plan from before parts named their dependencies: each part needs the one before.
+        needs = part["depends_on"] if "depends_on" in part else [index - 1] if index > 1 else []
+        for earlier in needs:
+            if 0 < earlier < index:
+                gh.add_blocked_by(issue["number"], created[earlier - 1]["id"])
+    listing = ", ".join(f"#{issue['number']}" for issue in created)
     if step.get("pull"):
         gh.comment(step["pull"], f"Superseded by {listing}, the parts of #{number}.")
         gh.close_pull(step["pull"])
     text = f"NexKit autopilot split this issue as its plan suggests: {listing}."
-    _save_record(gh, step, {"command": "split", "target": number, "parts": created}, text, now)
+    parts = [issue["number"] for issue in created]
+    _save_record(gh, step, {"command": "split", "target": number, "parts": parts}, text, now)
     return f"Split #{number} into {listing}."
 
 

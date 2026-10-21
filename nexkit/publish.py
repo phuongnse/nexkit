@@ -12,7 +12,14 @@ from pathlib import Path
 from . import config as configuration
 from .gitutil import BOT_EMAIL, BOT_NAME, GitError, git, is_ancestor, merge_tree, names
 from .runlog import stage_agent
-from .state import PLAN_MARKER, plan_data_record, profile_record, profile_text, questions
+from .state import (
+    PLAN_MARKER,
+    depends_on,
+    plan_data_record,
+    profile_record,
+    profile_text,
+    questions,
+)
 
 
 class PublishError(RuntimeError):
@@ -81,6 +88,16 @@ def _revision(output):
     return [head, *(["", *changes] if changes else [])]
 
 
+def _after(part, number):
+    """` (after 1 and 2)` for a part that needs earlier parts first."""
+    found = [str(d) for d in depends_on(part, number)]
+    if not found:
+        return ""
+    return (
+        " (after " + (", ".join(found[:-1]) + " and " if len(found) > 1 else "") + found[-1] + ")"
+    )
+
+
 def question_lines(items):
     """A numbered list of questions, each with its options and the recommended one."""
     lines = []
@@ -116,7 +133,10 @@ def render_plan(output, profile=None, replan=False):
         split = output.get("split") or []
         parts += _section(
             "Suggested split",
-            [f"{i}. **{item['title']}**: {item['body']}" for i, item in enumerate(split, 1)],
+            [
+                f"{i}. **{item['title']}**{_after(item, i)}: {item['body']}"
+                for i, item in enumerate(split, 1)
+            ],
         )
     notes = _numbered(output.get("implementation_notes"))
     if notes:

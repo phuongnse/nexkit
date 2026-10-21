@@ -31,12 +31,13 @@ CONFLICT_MARKER = re.compile(rb"^(<{7}|>{7}|\|{7})( |$)", re.M)
 BOT = ("-c", "user.name=nexkit", "-c", "user.email=nexkit@localhost")
 
 _STRING_LIST = {"type": "array", "items": {"type": "string"}}
-# A question for a person, with the answers the agent sees and the one it recommends, or ""
-# when none is clearly better. With `autopilot.answer: "recommended"`, NexKit answers it.
+# A question for a person, with the answers the agent sees and the number of the one it
+# recommends (from 1), or 0 when none is clearly better. A number cannot be copied loosely,
+# as an option's text can. With `autopilot.answer: "recommended"`, NexKit answers it.
 _QUESTION = {
     "question": {"type": "string"},
     "options": _STRING_LIST,
-    "recommended": {"type": "string"},
+    "recommended": {"type": "integer"},
 }
 _QUESTIONS = {
     "type": "array",
@@ -84,8 +85,13 @@ SCHEMAS = {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "properties": {"title": {"type": "string"}, "body": {"type": "string"}},
-                    "required": ["title", "body"],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "body": {"type": "string"},
+                        # The 1-based numbers of the earlier parts this part needs first.
+                        "depends_on": {"type": "array", "items": {"type": "integer"}},
+                    },
+                    "required": ["title", "body", "depends_on"],
                 },
             },
             # How a re-plan relates to the latest plan; shown only on a re-plan.

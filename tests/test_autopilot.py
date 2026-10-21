@@ -255,15 +255,15 @@ class SweepTests(AutopilotCase):
         self.sweep(pilot())  # no limit
         self.assertEqual(self.started(), [("plan", 5), ("plan", 6), ("plan", 7)])
 
-    def test_sub_issues_go_in_their_parents_order(self):
-        self.issue(2)
-        self.issue(3)
-        self.issue(4)
-        self.gh.parents.update({3: 2, 4: 2})
+    def test_sub_issues_wait_only_for_the_issues_that_block_them(self):
+        for number in (2, 3, 4, 5):
+            self.issue(number)
+        self.gh.parents.update({3: 2, 4: 2, 5: 2})
+        self.gh.blockers[5] = [3]
         _, steps = autopilot.preview(self.gh, self.cfg)
-        self.assertEqual([s["state"] for s in steps], ["waits", "start", "waits"])
+        self.assertEqual([s["state"] for s in steps], ["waits", "start", "start", "waits"])
         self.assertIn("a parent issue", steps[0]["reason"])
-        self.assertIn("waits for #3, an earlier part of #2", steps[2]["reason"])
+        self.assertEqual(steps[3]["reason"], "waits for #3")
 
 
 class TriggerTests(AutopilotCase):
@@ -358,7 +358,10 @@ class StatusTests(AutopilotCase):
         self.assertEqual(self.gh.dispatches, [])  # status changes nothing
 
 
-QUESTION = {"question": "Which port?", "options": ["8080", "9090"], "recommended": "8080"}
+# As an agent returns it: the recommended option by its number, from 1.
+QUESTION = {"question": "Which port?", "options": ["8080", "9090"], "recommended": 1}
+# As NexKit records and shows it: by its text.
+RECORDED = {**QUESTION, "recommended": "8080"}
 
 
 def plan_output(**kw):
@@ -421,15 +424,20 @@ class AnswerTests(AnswerAndSplitCase):
 
     def test_waits_for_a_person_without_a_recommendation_or_without_answer(self):
         self.issue(4)
-        self.posted_plan(4, questions=[{**QUESTION, "recommended": ""}])
+        self.posted_plan(4, questions=[{**QUESTION, "recommended": 0}])
         self.issue(5)
         self.posted_plan(5, questions=[QUESTION])
         _, steps = autopilot.preview(self.gh, self.cfg)
         self.assertEqual([s["state"] for s in steps], ["waits", "start"])
         _, steps = autopilot.preview(self.gh, pilot())  # answer: "never"
         self.assertEqual([s["state"] for s in steps], ["waits", "waits"])
-        # A recommendation that is not one of the options is none.
-        self.assertIsNone(autopilot.answers(self.cfg, [{**QUESTION, "recommended": "80"}]))
+        # A number out of range, a boolean or text that is not an option is no recommendation.
+        for chosen in (3, -1, True, "80"):
+            self.assertIsNone(autopilot.answers(self.cfg, [{**QUESTION, "recommended": chosen}]))
+        # The second option, by number; a record that holds the text still counts.
+        found = autopilot.answers(self.cfg, [{**QUESTION, "recommended": 2}])
+        self.assertEqual(found, [{"question": "Which port?", "answer": "9090"}])
+        self.assertEqual(autopilot.answers(self.cfg, [RECORDED])[0]["answer"], "8080")
 
     def test_answers_a_blocked_go_and_a_blocked_fix_round(self):
         self.issue(4)
@@ -471,7 +479,7 @@ class AnswerTests(AnswerAndSplitCase):
         self.assertIsNone(result.get("attention"))
         self.assertIn("NexKit autopilot carries on from here.", result["summary"])
         self.assertFalse(self.gh.comments_matching(5, "@olivia"))
-        self.report_plan(cfg, plan_output(questions=[{**QUESTION, "recommended": ""}]))
+        self.report_plan(cfg, plan_output(questions=[{**QUESTION, "recommended": 0}]))
         self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
         # Outside the scope, autopilot answers nothing, so a person is needed.
         self.gh.issue_comments[5].clear()
@@ -481,7 +489,10 @@ class AnswerTests(AnswerAndSplitCase):
 
 
 class SplitTests(AnswerAndSplitCase):
-    PARTS = [{"title": "First part", "body": "Do A."}, {"title": "Second part", "body": "Do B."}]
+    PARTS = [
+        {"title": "First part", "body": "Do A.", "depends_on": []},
+        {"title": "Second part", "body": "Do B.", "depends_on": [1]},
+    ]
 
     def test_a_plan_that_is_too_large_becomes_sub_issues_and_the_first_is_planned(self):
         self.issue(5, labels=["area"])
@@ -498,9 +509,36 @@ class SplitTests(AnswerAndSplitCase):
             self.assertEqual(issue["labels"], [{"name": "area"}])
             self.assertTrue(issue["body"].startswith("<!-- nexkit:part 5 -->"))
         self.assertEqual(self.started(), [("plan", 6)])
+        self.assertEqual(self.gh.blockers[7], [6])
         self.assertTrue(self.gh.comments_matching(5, "split this issue as its plan suggests"))
         self.sweep(pilot())
         self.assertEqual(self.started(), [("plan", 6)])
+
+    def test_parts_that_do_not_need_each_other_are_planned_at_once(self):
+        self.issue(5)
+        parts = [
+            {"title": "One", "body": "A.", "depends_on": []},
+            {"title": "Two", "body": "B.", "depends_on": [2, 3, 0, True, "1"]},  # all invalid
+            {"title": "Three", "body": "C.", "depends_on": [1, 1]},
+        ]
+        self.posted_plan(5, too_large=True, split=parts)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 6), ("plan", 7)])
+        self.assertEqual((self.gh.blockers[7], self.gh.blockers[8]), ([], [6]))
+        [plan] = self.gh.comments_matching(5, "### Suggested split")
+        self.assertIn("1. **One**: A.\n2. **Two**: B.\n3. **Three** (after 1): C.", plan["body"])
+
+    def test_a_plan_record_without_dependencies_keeps_the_parts_in_order(self):
+        self.issue(5)
+        self.run_comment(5, "plan", outcome="planned")
+        split = [{"title": t, "body": "x"} for t in ("One", "Two", "Three")]
+        from nexkit.state import PLAN_DATA_PREFIX, _encode
+
+        data = {"questions": [], "too_large": True, "split": split}
+        self.gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\n{_encode(PLAN_DATA_PREFIX, data)}")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 6)])
+        self.assertEqual((self.gh.blockers[7], self.gh.blockers[8]), ([6], [7]))
 
     def test_only_parts_of_a_trusted_parent_are_trusted(self):
         self.issue(5, user="bob")
@@ -584,7 +622,7 @@ class RecordTests(unittest.TestCase):
         self.assertIn("1. Which port?\n   - 8080 (recommended)\n   - 9090\n2. An old", body)
         comment = {"body": body, "user": {"login": "github-actions[bot]"}}
         data = plan_data(comment)
-        self.assertEqual(data["questions"][0], QUESTION)
+        self.assertEqual(data["questions"][0], RECORDED)
         self.assertEqual(data["questions"][1]["options"], [])
         self.assertFalse(data["too_large"])
         self.assertNotIn("nexkit:plan-data", plan_text(comment))

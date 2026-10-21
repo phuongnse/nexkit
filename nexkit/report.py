@@ -25,8 +25,10 @@ from .state import (
     SUCCESS,
     clip,
     empty_state,
+    options_of,
     questions,
     read_state,
+    recommended_option,
     round_questions,
 )
 from .usage import parse_iso, shown
@@ -264,11 +266,10 @@ def open_conflicts(agent, base):
 
 
 def _options(item, indent="    "):
-    recommended = _text(item, "recommended")
+    recommended = recommended_option(item)
     return [
         f"{indent}- {option}" + (" (recommended)" if option == recommended else "")
-        for option in (str(o).strip() for o in item.get("options") or [])
-        if option
+        for option in options_of(item)
     ]
 
 

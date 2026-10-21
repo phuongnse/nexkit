@@ -569,7 +569,7 @@ class ConflictTests(StageCase):
             "pr_change": "Adds sub().",
             "question": "Which one?",
             "options": ["Keep both"],
-            "recommended": "",
+            "recommended": 0,
         }
         blocked = {**FIX_DONE, "status": "blocked", "blocker": "Needs a decision"}
         result = self.run_fix(result={**blocked, "open_conflicts": [question]})

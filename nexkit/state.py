@@ -88,10 +88,23 @@ def plan_data_record(output):
     }
     if data["too_large"]:
         data["split"] = [
-            {"title": clip(item.get("title"), 256), "body": clip(item.get("body"), 6000)}
-            for item in (output.get("split") or [])[:MAX_PARTS]
+            {
+                "title": clip(item.get("title"), 256),
+                "body": clip(item.get("body"), 6000),
+                "depends_on": depends_on(item, number),
+            }
+            for number, item in enumerate((output.get("split") or [])[:MAX_PARTS], 1)
         ]
     return _encode(PLAN_DATA_PREFIX, data)
+
+
+def depends_on(part, number):
+    """The earlier parts that part `number` of a split needs, as the agent named them.
+    Only earlier parts count, so the parts never wait for each other in a cycle."""
+    found = part.get("depends_on") or []
+    found = found if isinstance(found, list) else []
+    valid = {d for d in found if isinstance(d, int) and not isinstance(d, bool) and 0 < d < number}
+    return sorted(valid)
 
 
 def plan_data(comment):
@@ -106,22 +119,36 @@ def plan_data(comment):
     return data if isinstance(data, dict) else None
 
 
+def options_of(item):
+    return [str(o).strip() for o in item.get("options") or [] if str(o).strip()]
+
+
+def recommended_option(item):
+    """The text of a question's recommended option, or "". Agents name it by its number,
+    from 1, with 0 for none; records keep its text."""
+    options, chosen = options_of(item), item.get("recommended")
+    if isinstance(chosen, int) and not isinstance(chosen, bool):
+        return options[chosen - 1] if 0 < chosen <= len(options) else ""
+    chosen = str(chosen or "").strip()
+    return chosen if chosen in options else ""
+
+
 def questions(items):
-    """Questions as {question, options, recommended}. Plans from before 4.1 hold plain
-    strings, without options."""
+    """Questions as {question, options, recommended}, with the recommended option's text
+    or "". Plans from before 4.1 hold plain strings, without options."""
     found = []
     for item in items or []:
         if isinstance(item, str):
             item = {"question": item}
         if not isinstance(item, dict) or not str(item.get("question") or "").strip():
             continue
-        options = [str(o).strip() for o in item.get("options") or [] if str(o).strip()]
-        recommended = str(item.get("recommended") or "").strip()
+        options = [clip(o, 500) for o in options_of(item)[:6]]
+        recommended = recommended_option(item)
         found.append(
             {
                 "question": clip(item["question"], 1500),
-                "options": [clip(o, 500) for o in options[:6]],
-                "recommended": clip(recommended, 500) if recommended in options else "",
+                "options": options,
+                "recommended": clip(recommended, 500) if recommended else "",
             }
         )
     return found[:MAX_QUESTIONS]

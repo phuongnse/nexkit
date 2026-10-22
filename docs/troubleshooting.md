@@ -98,7 +98,8 @@ a new plan and use its suggested split, or raise `timeout_minutes` or `max_budge
 the `implement` stage. With fallback agents, each agent's run gets `timeout_minutes`,
 within one stage deadline for all of them.
 With autopilot on, an implement or fix agent that ran out of time leads to one new plan that
-asks for a split; a second time waits for you.
+asks for a split; a second time waits for you, and so does a part of an issue that already
+asked for one.
 
 **Autopilot does not start an issue.** Run `nexkit status`: its *Autopilot* section says,
 for each open issue in scope, what the next sweep does and why an issue waits, such as

@@ -612,6 +612,114 @@ class SplitTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual((self.started(), self.gh.pulls[9]["state"]), ([], "open"))
 
+    def timed_out(self, number):
+        self.run_comment(
+            number,
+            "go",
+            status="failure",
+            outcome="agent_error",
+            timed_out=True,
+            attention="the run stopped on an error",
+        )
+
+    def part(self, number, parent):
+        """A part that autopilot created, as a sub-issue of `parent`."""
+        body = f"<!-- nexkit:part {parent} -->\nDo it."
+        self.issue(number, user="github-actions[bot]", body=body)
+        self.gh.parents[number] = parent
+
+    def test_a_part_of_an_issue_that_asked_for_a_split_waits_after_its_own_time_out(self):
+        from nexkit.status import collect, render
+
+        self.issue(5)
+        self.posted_plan(5)
+        self.timed_out(5)
+        self.sweep()
+        self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], autopilot.SPLIT_NOTE)
+        self.posted_plan(5, too_large=True, split=self.PARTS)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+        # The part's own agent runs out of time: it inherits #5's split, so a person decides.
+        self.posted_plan(6)
+        self.timed_out(6)
+        decision = {"action": "implement", "issue": 6}
+        agent = {"timed_out": True}
+        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "agent_error", agent))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+        reason = "a part of a split ran out of time again, after #5 asked for a split"
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
+        self.assertEqual((steps[6]["state"], steps[6]["reason"]), ("waits", reason))
+        self.assertIn(reason, render(collect(self.gh, self.cfg, workers=1)))
+        # A part of that part, two levels below #5, inherits it too.
+        self.part(8, 6)
+        self.posted_plan(8)
+        self.timed_out(8)
+        self.assertEqual(autopilot.split_refused(self.gh, self.gh.issues[8]), reason)
+
+    def test_parts_titled_like_their_parent_are_not_created_and_the_plan_is_asked_again(self):
+        self.assertEqual(
+            autopilot.repeated_titles(
+                {"title": " Issue 5. "},
+                [{"title": "issue 5"}, {"title": "ISSUE 5: the rest!"}, {"title": "Add it"}],
+            ),
+            ["issue 5", "ISSUE 5: the rest!"],
+        )
+        self.issue(5)
+        parts = [
+            {"title": "Fixtures for issue 5", "body": "Do A.", "depends_on": []},
+            {"title": "Issue 5.", "body": "Do B.", "depends_on": [1]},
+        ]
+        self.posted_plan(5, too_large=True, split=parts)
+        decision = {"action": "plan", "issue": 5}
+        agent = {"output": {"too_large": True, "split": parts}}
+        self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        self.assertEqual(sorted(self.gh.issues), [5])  # no parts created
+        note = self.gh.dispatches[0]["inputs"]["note"]
+        self.assertEqual(note, autopilot.TITLE_NOTE.format(titles='"Issue 5."'))
+        # The new plan repeats the title again: a person decides, and nothing loops.
+        self.posted_plan(5, too_large=True, split=parts)
+        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
+        self.sweep()
+        self.assertEqual((self.started(), sorted(self.gh.issues)), ([("plan", 5)], [5]))
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        reason = "the parts of its plan are titled like the issue again"
+        self.assertEqual((step["state"], step["reason"]), ("waits", reason))
+        # A plan with parts titled by their own behaviour splits.
+        self.posted_plan(5, too_large=True, split=self.PARTS)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+
+    def test_a_part_at_the_depth_limit_waits_for_a_person(self):
+        self.issue(5)
+        self.part(6, 5)
+        self.part(7, 6)
+        self.part(8, 7)  # depth 3
+        self.part(9, 7)  # depth 3
+        self.issue(10, user="github-actions[bot]", body="<!-- nexkit:part 5 -->\nDo it.")
+        self.gh.parents[10] = 7  # names another parent: not one of autopilot's parts
+        depths = [
+            autopilot.depth(self.gh.issues[n], autopilot.lineage(self.gh, self.gh.issues[n]))
+            for n in (5, 6, 7, 8, 10)
+        ]
+        self.assertEqual(depths, [0, 1, 2, 3, 0])
+        self.posted_plan(8, too_large=True, split=self.PARTS)
+        self.posted_plan(9)
+        self.timed_out(9)  # no issue above asked for a split, but #9 is at the limit
+        decision = {"action": "plan", "issue": 8}
+        agent = {"output": {"too_large": True, "split": self.PARTS}}
+        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
+        self.sweep()
+        self.assertEqual(self.started(), [])
+        self.assertEqual(sorted(self.gh.issues), [5, 6, 7, 8, 9, 10])
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
+        for number in (8, 9):
+            step = steps[number]
+            self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.DEPTH_REASON))
+        self.assertIn("3 levels deep", autopilot.DEPTH_REASON)
+
 
 class RecordTests(unittest.TestCase):
     def test_the_plan_comment_shows_recommendations_and_keeps_a_record_agents_never_see(self):

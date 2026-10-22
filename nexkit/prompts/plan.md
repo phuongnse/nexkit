@@ -62,6 +62,7 @@ $writing
   in order. Otherwise an empty list. Each has a `title`, a `body`, and `depends_on`: the
   numbers (counting from 1) of the earlier parts that must be merged before this one can
   start, or an empty list. Name a part only when this one really needs its code; parts
-  that do not need each other run at the same time.
+  that do not need each other run at the same time. Title each part by its own behaviour,
+  never by this issue's title.
 - `revision`: for a re-plan, as *How to use the latest plan* says. For a first plan,
   `started_over` is false and `changes` is empty.

@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.2.0
+
+- An automatic fix round started after failing checks merges the base branch first
+  whenever the base branch has commits the pull request lacks, conflicts or not (#97). A
+  failure that the base branch already fixed, such as a flaky test, then costs no agent
+  change: the prompt says that the round merged the base branch and asks the agent to fix
+  only what still fails, and when it changes nothing, the merge is published alone and
+  the next checks run on it. When the base branch has not moved, nothing changes. Rounds
+  that a person starts with `/nexkit fix`, and automatic rounds started only by review
+  findings while the checks passed, still merge the base branch only on a conflict. See
+  [Failing checks the base branch fixed](docs/how-it-works.md#failing-checks-the-base-branch-fixed).
+- With `conflicts.auto_resolve`, an automatic merge refused because of a conflict starts
+  its conflict round at once (#96). The round that tried the merge counted itself as a
+  running round and skipped the pull request, which then waited for a person or the
+  hourly schedule. The limits stay: one round per base commit, at most
+  `conflicts.max_rounds`.
+
 ## 4.1.0
 
 - **Autopilot** works through the open issues in scope by itself (#86, #87, #88, #89):

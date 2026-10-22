@@ -34,7 +34,7 @@ $note
   conventions and instructions (CLAUDE.md or AGENTS.md).
 - Add or update tests for the behaviour you change.
 - Before finishing, run the project checks and fix any failures you caused:
-$checks
+$round_checks
 - Run every command in the foreground and wait for it to finish. Nothing wakes you once
   you stop, so a command left running in the background ends the run without a result.
 - Do not modify these protected paths: $protected. NexKit rejects such changes.

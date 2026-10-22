@@ -181,6 +181,43 @@ class PromptTests(unittest.TestCase):
             prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
             for name in ("$issue", "$title", "$plan", "$checks", "$protected", "$diff"):
                 self.assertNotIn(name, prompt, f"{stage} leaves {name}")
+            self.assertNotIn("$round_checks", prompt, stage)
+
+    def test_without_slow_checks_the_prompts_list_every_check_as_before(self):
+        checks = [{"name": "unit", "run": "make test"}, {"name": "lint", "run": "make lint"}]
+        cfg = make_config(checks=checks)
+        listed = "  - `unit`: `make test`\n  - `lint`: `make lint`\n"
+        for stage in ("plan", "implement", "fix"):
+            prompt = agent.build_prompt(stage, CONTEXT, cfg)
+            self.assertIn(listed, prompt, stage)
+            self.assertNotIn("slow", prompt, stage)
+        rule = "- Before finishing, run the project checks and fix any failures you caused:\n"
+        self.assertIn(rule + listed, agent.build_prompt("implement", CONTEXT, cfg))
+        rule = "- Before finishing, run the project checks:\n"
+        self.assertIn(rule + listed, agent.build_prompt("fix", CONTEXT, cfg))
+
+    def test_slow_checks_are_listed_apart_and_not_run_in_full(self):
+        checks = [
+            {"name": "unit", "run": "make test"},
+            {"name": "e2e", "run": "scripts/e2e.sh", "slow": True},
+            {"name": "lint", "run": "make lint"},
+        ]
+        cfg = make_config(checks=checks)
+        for stage in ("implement", "fix"):
+            prompt = agent.build_prompt(stage, CONTEXT, cfg)
+            order = [
+                "  - `unit`: `make test`\n  - `lint`: `make lint`\n",
+                "  - NexKit runs these slow checks after your round. Do not run them in full.",
+                "only the tests in them that cover your change or that failed",
+                "    - `e2e`: `scripts/e2e.sh`\n- Run every command in the foreground",
+            ]
+            positions = [prompt.index(text) for text in order]
+            self.assertEqual(positions, sorted(positions), stage)
+            self.assertEqual(prompt.count("`e2e`"), 1, stage)
+        # The plan lists every check NexKit runs, slow or not.
+        plan = agent.build_prompt("plan", CONTEXT, cfg)
+        self.assertIn("  - `unit`: `make test`\n  - `e2e`: `scripts/e2e.sh`\n", plan)
+        self.assertNotIn("slow", plan)
 
     def argv(self, stage, cfg):
         spec = agent.stage_spec(stage, cfg, "/nonexistent")

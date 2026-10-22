@@ -196,10 +196,30 @@ SCHEMAS = {
 }
 
 
+def _check_lines(checks, indent="  "):
+    return [f"{indent}- `{c['name']}`: `{c['run']}`" for c in checks]
+
+
 def _checks_text(cfg):
     if not cfg["checks"]:
         return "  - No checks are configured. Run the project's usual tests if there are any."
-    return "\n".join(f"  - `{c['name']}`: `{c['run']}`" for c in cfg["checks"])
+    return "\n".join(_check_lines(cfg["checks"]))
+
+
+def _round_checks_text(cfg):
+    """The checks of the implement and fix prompts. The agent runs the fast ones in full; of
+    a slow check, only the tests that cover its change, since NexKit runs every check after
+    the round. With no check marked slow, the list is the same as `_checks_text`."""
+    slow = [c for c in cfg["checks"] if c["slow"]]
+    if not slow:
+        return _checks_text(cfg)
+    lines = _check_lines([c for c in cfg["checks"] if not c["slow"]])
+    lines.append(
+        "  - NexKit runs these slow checks after your round. Do not run them in full. Run\n"
+        "    only the tests in them that cover your change or that failed, as narrowly as\n"
+        "    the repository's instructions allow (for example one test file):"
+    )
+    return "\n".join(lines + _check_lines(slow, indent="    "))
 
 
 def check_results_text(results):
@@ -356,6 +376,7 @@ def build_prompt(stage, context, cfg, extra=None):
     values = {
         **context,
         "checks": _checks_text(cfg),
+        "round_checks": _round_checks_text(cfg),
         "writing": _template("writing"),
         "protected": ", ".join(f"`{p}`" for p in cfg["protected_paths"]),
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],

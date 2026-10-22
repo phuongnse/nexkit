@@ -75,7 +75,7 @@ STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes", "max_budget_usd"}
 AGENT_KEYS = {"runtime", "provider", "fallback"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
-CHECK_KEYS = {"name", "run", "timeout_minutes"}
+CHECK_KEYS = {"name", "run", "timeout_minutes", "slow"}
 CACHE_KEYS = {"name", "paths", "key_files"}
 # The restore action has one step per entry: .github/actions/restore-caches/action.yml.
 MAX_CACHES = 8
@@ -461,6 +461,8 @@ def validate(raw, *, layered=False):
             _fail(f"{where}.run must be a shell command")
         check.setdefault("timeout_minutes", 15)
         _positive_int(check["timeout_minutes"], f"{where}.timeout_minutes", 360)
+        check.setdefault("slow", False)
+        _bool(check["slow"], f"{where}.slow")
     _caches(cfg["cache"])
 
     _profiles(cfg)

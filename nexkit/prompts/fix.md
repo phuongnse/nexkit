@@ -35,7 +35,7 @@ $body
   code unchanged and explain why in `summary`.
 - Keep the change focused. Follow the repository's conventions (CLAUDE.md or AGENTS.md).
 - Before finishing, run the project checks:
-$checks
+$round_checks
 - Run every command in the foreground and wait for it to finish. Nothing wakes you once
   you stop, so a command left running in the background ends the run without a result.
 - Do not modify these protected paths: $protected. NexKit rejects such changes.

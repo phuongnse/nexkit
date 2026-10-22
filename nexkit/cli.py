@@ -60,6 +60,9 @@ def cmd_init(args):
         kit_repo=args.kit_repo,
         kit_ref=args.kit_ref,
         force=args.force,
+        check_timeouts=args.check_timeout,
+        check_slow=args.check_slow,
+        check_results=args.check_results,
     )
     for path in written:
         print(f"wrote {path}")
@@ -396,6 +399,27 @@ def build_parser():
     p = sub.add_parser("init", help="Install NexKit configuration and workflow in a repository")
     p.add_argument("--repo", default=".", help="Repository root (default: current directory)")
     p.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND")
+    p.add_argument(
+        "--check-timeout",
+        action="append",
+        default=[],
+        metavar="NAME=MINUTES",
+        help="timeout_minutes of the check NAME",
+    )
+    p.add_argument(
+        "--check-slow",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Mark the check NAME slow: agents run only the tests their change touches",
+    )
+    p.add_argument(
+        "--check-results",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="A file or folder where the check NAME writes results; repeat for more",
+    )
     p.add_argument("--setup", action="append", default=[], metavar="COMMAND")
     p.add_argument(
         "--model",

@@ -96,6 +96,34 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
                 validate(raw)
 
+    def test_check_results_are_paths_in_the_repository(self):
+        cfg = validate(
+            {
+                "checks": [
+                    {"name": "e2e", "run": "x", "results": ["test-results", "logs/app.log"]},
+                    {"name": "unit", "run": "y"},
+                ]
+            }
+        )
+        self.assertEqual(cfg["checks"][0]["results"], ["test-results", "logs/app.log"])
+        self.assertEqual(cfg["checks"][1]["results"], [])
+        cases = [
+            ("test-results", "must be a list"),
+            ([""], "must be a list"),
+            ([1], "must be a list"),
+            (["a\nb"], "must be a list"),
+            ([f"r{i}" for i in range(config.MAX_RESULTS + 1)], "at most"),
+            (["/tmp/results"], "must be a path inside the repository"),
+            (["~/results"], "must be a path inside the repository"),
+            (["../results"], "must be a path inside the repository"),
+            (["a/../../b"], "must be a path inside the repository"),
+            (["logs", "logs"], "lists a path twice"),
+        ]
+        for results, message in cases:
+            raw = {"checks": [{"name": "e2e", "run": "x", "results": results}]}
+            with self.subTest(results=results), self.assertRaisesRegex(config.ConfigError, message):
+                validate(raw)
+
     def test_autopilot_defaults(self):
         self.assertEqual(
             validate({})["autopilot"],

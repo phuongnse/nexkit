@@ -10,9 +10,9 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | Job | Runs for | Token permissions | Secrets | Does |
 |---|---|---|---|---|
 | `route` | every event | read; comments, reactions, statuses | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
-| `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`. Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
+| `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
-| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit. |
+| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
 | `maintain` | issue and milestone events, pushes to the default branch, the schedule, the `resume` and `autopilot` dispatches | read; issues, comments, workflows | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
@@ -114,7 +114,9 @@ masks or create annotations. The model's thinking is never printed. With
 `log.tool_output: "none"` the log has one line per message and per tool call instead
 (`▸ Tool detail`, 200 characters).
 
-**Run summary.** At the end of the `agent` and `review` jobs, the run's summary page shows
+**Run summary.** When failing checks name result files, the `verify` job's summary says
+how many it kept and lists the paths that were not found and the files that the size limit
+left out. At the end of the `agent` and `review` jobs, the run's summary page shows
 the stage and a one-row table of its result (done, blocked, paused or error), duration and
 tokens, plus the verdict for a review. Below it are the agent that ran the stage, with its
 runtime, provider and model, the profile with profiles, and when the stage moved to a
@@ -152,7 +154,7 @@ implement and review, only when every run in it has a count; otherwise the cell 
 | Artifact | Contains |
 |---|---|
 | `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
-| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. |
+| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round. The next fix round's `agent` job downloads this artifact. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
 artifacts of the stages that ran:
@@ -171,7 +173,8 @@ sets the statuses and edits the comment without that stage's results.
 
 Everything NexKit prints or stores from the agent's session passes through one function,
 `nexkit/redact.py`: log lines, both transcripts, `result.json`, the run summary and the
-output of `setup` in the agent job. It replaces with `***`:
+output of `setup` in the agent job. The text files that failing checks keep in `results`
+pass through it too; binary files are kept as they are. It replaces with `***`:
 
 - the values of every agent secret (see [Secrets](configuration.md#secrets)), of
   `GITHUB_TOKEN`, of the push token and of every environment variable whose name contains
@@ -242,11 +245,20 @@ check output, blocking review findings and collaborators' review comments on the
 commit. It asks the agent to run the checks before it finishes; of a
 [slow check](configuration.md#slow-checks), only the tests that cover the change or that
 failed, since NexKit runs every check after the round. The agent must return `done` or
-`blocked`. A blocked or failed session publishes nothing. NexKit builds the pull request
-description from the implement result, in this order: *Summary* (two or three sentences,
-also the commit message), *What changed* (in behaviour), *How it is tested*, and, only
-when needed, *Outside the plan* and *Notes for the reviewer*. A fix round's summary
-becomes its commit message.
+`blocked`. A blocked or failed session publishes nothing.
+
+When the failing checks of the last round kept
+[result files](configuration.md#result-files-of-failing-checks), `route` puts the id of the
+run that recorded them in the decision, and the fix round's `agent` job downloads that
+run's `nexkit-checks` artifact to a folder under `$RUNNER_TEMP`, outside the working
+tree. The prompt names the folder, and for each failing check its
+folder and the files and folders it kept, and asks the agent to read them before it runs
+anything. A download that fails, for example because the artifact expired, never fails
+the round: the prompt has no such section, and the log of *Collect issue context* says
+why. NexKit builds the pull request description from the implement result, in this
+order: *Summary* (two or three sentences, also the commit message), *What changed* (in
+behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
+the reviewer*. A fix round's summary becomes its commit message.
 
 The pull request of an implement round starts at the base commit the agent started from,
 not at the base branch's tip when `publish` runs. So the patch always applies, even when
@@ -624,12 +636,12 @@ the line after its marker) and one NexKit comment per run on the issue, the
 pull request, its commit statuses, one NexKit comment per round and one NexKit state
 comment on the pull request. Run comments only show runs. The state comment, edited in
 place, says how many automatic fix rounds were used and holds a hidden JSON record of the
-latest feedback, that count, the last completed review (its commit and all its findings)
-and the recent fix rounds (summary, note and, after a merge, the files that had
-conflicts). Recorded text is clipped so the comment and the prompts stay bounded. With
-autopilot, each issue it worked on has one record comment, edited in place, that names the
-command it started last. Nothing
-else is stored, so there is nothing to migrate or repair.
+latest feedback (with the run that holds its checks' result files), that count, the last
+completed review (its commit and all its findings) and the recent fix rounds (summary,
+note and, after a merge, the files that had conflicts). Recorded text is clipped so the
+comment and the prompts stay bounded. With autopilot, each issue it worked on has one
+record comment, edited in place, that names the command it started last. Nothing else is
+stored, so there is nothing to migrate or repair.
 
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
 status (running, success, failure, paused, continued), the outcome (for example `planned`,

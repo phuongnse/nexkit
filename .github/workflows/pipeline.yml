@@ -3,7 +3,8 @@
 # route    decide the action from the event; read config from the default branch;
 #          acknowledge the command and link the run; never runs repo code
 # agent    run the stage's agent (plan / implement / fix); no GitHub write token; restores
-#          caches before setup but never saves one
+#          caches before setup but never saves one; a fix round downloads the result files
+#          that the last round's failing checks kept
 # publish  post the plan, or commit the patch and open the PR; never runs repo code
 # verify   run setup and checks on the exact candidate; no secrets at all; restores
 #          caches but never saves one
@@ -92,6 +93,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ fromJSON(needs.route.outputs.agent_timeout) }}
     permissions:
+      actions: read # the result files of an earlier run's failing checks
       contents: read
       issues: read
       pull-requests: read
@@ -128,8 +130,21 @@ jobs:
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit install-agents
         env:
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+      # A fix round after failing checks that kept result files (checks[].results): the
+      # nexkit-checks artifact of the run that recorded them, outside the working tree.
+      - name: Download check results
+        if: fromJSON(needs.route.outputs.decision).results_run
+        continue-on-error: true # an expired artifact leaves the prompt without the files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nexkit-checks
+          path: ${{ runner.temp }}/nexkit-checks
+          run-id: ${{ fromJSON(needs.route.outputs.decision).results_run }}
+          github-token: ${{ github.token }}
       - name: Collect issue context
-        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit context --out out
+        run: >-
+          ${{ steps.python.outputs.python-path }} kit/bin/nexkit context --out out
+          --results "$RUNNER_TEMP/nexkit-checks"
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}

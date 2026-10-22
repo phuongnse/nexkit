@@ -16,7 +16,7 @@ from pathlib import Path
 from string import Template
 
 from . import config as configuration
-from .checks import BASE_SHA, environment, known_base
+from .checks import BASE_SHA, RESULTS_LIMIT, environment, known_base
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, summary, write_summary
@@ -353,6 +353,32 @@ def conflicts_text(base, commit, files):
         return ""
     text = Template(_template("fix_conflicts" if files else "fix_merged")).safe_substitute(
         base=base, base_commit=commit[:7], files=_files(files)
+    )
+    return text + "\n"
+
+
+def evidence_text(found):
+    """The fix prompt's section about the failing checks' result files, or "" without any.
+    `found` comes from `context.evidence`."""
+    if not found:
+        return ""
+    lines = []
+    for check in found["checks"]:
+        name, run, folder = check["name"], check["run"], check["folder"]
+        lines.append(f"- Failing check `{name}` (`{run}`): `{folder}/`")
+        for item in check["paths"]:
+            if item["folder"]:
+                files = "1 file" if item["files"] == 1 else f"{item['files']} files"
+                lines.append(f"  - `{item['path']}/`: a folder with {files}")
+            else:
+                lines.append(f"  - `{item['path']}`: a file")
+        if check.get("left_out"):
+            lines.append(
+                f"  - {check['left_out']} more files were left out: a round keeps at most "
+                f"{RESULTS_LIMIT // 1_000_000} MB of result files."
+            )
+    text = Template(_template("fix_evidence")).safe_substitute(
+        folder=found["folder"], checks="\n".join(lines)
     )
     return text + "\n"
 
@@ -806,6 +832,7 @@ def run_stage(
     if stage == "fix":
         merged, conflicts = merge_base_branch(repo, base, context.get("merge_moved_base"))
         extra["conflicts"] = conflicts_text(base, merged, conflicts)
+        extra["evidence"] = evidence_text(context.get("evidence"))
         if merged:
             # Once committed, the merge has the merged base commit as its merge base.
             commits = {**(commits or {}), BASE_SHA: known_base(repo, merged)}

@@ -87,6 +87,20 @@ LINEAGE = 8
 CI_BUG_PREFIX = "<!-- nexkit:ci "
 CI_BUG = re.compile(r"\A<!-- nexkit:ci ([A-Za-z0-9_.-]+) -->")
 CI_SHA_PREFIX = "<!-- nexkit:ci-sha "
+CI_SHA = re.compile(r"<!-- nexkit:ci-sha ([0-9a-f]+) -->")
+# An issue that autopilot opened for the runs of a workflow on the default branch that
+# passed only when run again, or that failed and a newer run overtook.
+CI_FLAKY_PREFIX = "<!-- nexkit:ci-flaky "
+CI_FLAKY = re.compile(r"\A<!-- nexkit:ci-flaky ([A-Za-z0-9_.-]+) -->")
+# The run attempts that a bug or flaky-run report records, where it ends the text, so each
+# run and attempt is recorded once.
+CI_RUNS_PREFIX = "<!-- nexkit:ci-runs "
+CI_RUNS = re.compile(r"<!-- nexkit:ci-runs ([0-9. ]+) -->\s*\Z")
+# The runs of each workflow a sweep looks at: one page, newest first, of which the latest
+# run, those created in the last day and those a bug issue reports. Sweeps run at least
+# hourly, so the day covers missed sweeps; the records say what is new.
+CI_RUNS_LIMIT = 100
+CI_LOOK_BACK = timedelta(days=1)
 FAILED = {"failure", "timed_out"}
 # Outcomes after which a run already started the next one by itself.
 CHAINED = {"auto_fix", "conflict_fix"}
@@ -166,7 +180,7 @@ def locate(gh, cfg):
 
 
 def scope(gh, cfg):
-    """`locate` with the open issues in scope, oldest first, after bug issues for CI."""
+    """`locate` with the open issues in scope, oldest first, after the issues for CI."""
     where = locate(gh, cfg)
     if where["label"] is not None:
         items = gh.scoped_issues(label=where["label"])
@@ -175,8 +189,9 @@ def scope(gh, cfg):
     else:
         items = []
     issues = [i for i in items if "pull_request" not in i]
-    # A bug issue for a CI failure on the default branch goes before everything else.
-    issues.sort(key=lambda i: (ci_workflow(i) is None, i["number"]))
+    # A bug issue for a CI failure on the default branch goes before everything else, and
+    # an issue for flaky runs right after.
+    issues.sort(key=lambda i: (_rank(i), i["number"]))
     return {**where, "issues": issues}
 
 
@@ -203,7 +218,7 @@ def trusted(gh, issue):
     writers can edit the issue."""
     login = author(issue)
     if login == BOT_LOGIN:
-        return ci_workflow(issue) is not None or _trusted_part(gh, issue)
+        return _rank(issue) < 2 or _trusted_part(gh, issue)
     return bool(login) and gh.can_write(login)
 
 
@@ -668,78 +683,222 @@ def ci_workflow(issue):
     return match.group(1) if match and author(issue) == BOT_LOGIN else None
 
 
-def _failed_jobs(gh, run):
+def flaky_workflow(issue):
+    """The workflow an issue that autopilot opened for its flaky runs is about, or None."""
+    match = CI_FLAKY.match(issue.get("body") or "")
+    return match.group(1) if match and author(issue) == BOT_LOGIN else None
+
+
+def _rank(issue):
+    """0 for a bug issue for a CI failure, 1 for an issue for flaky runs, else 2."""
+    if ci_workflow(issue) is not None:
+        return 0
+    return 1 if flaky_workflow(issue) is not None else 2
+
+
+def _ci_records(gh, workflow):
+    """What the issues that autopilot opened for `workflow`, open or closed, hold: the
+    open bug and flaky-run issues, the commits bug issues report, the attempts recorded
+    for each run, and for each run a bug issue reports, that issue's number."""
+    found = {"bug": None, "flaky": None, "shas": set(), "seen": {}, "reporter": {}}
+    for issue in gh.issues_by(BOT_LOGIN):
+        bug = ci_workflow(issue) == workflow
+        if not bug and flaky_workflow(issue) != workflow:
+            continue
+        kind = "bug" if bug else "flaky"
+        if issue.get("state") == "open" and found[kind] is None:
+            found[kind] = issue
+        texts = [issue.get("body") or ""]
+        texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if by_bot(c)]
+        for text in texts:
+            if bug:
+                found["shas"].update(CI_SHA.findall(text))
+            match = CI_RUNS.search(text)
+            for item in match.group(1).split() if match else ():
+                run_id, _, attempt = item.partition(".")
+                if not (run_id.isdigit() and attempt.isdigit()):
+                    continue
+                found["seen"].setdefault(int(run_id), set()).add(int(attempt))
+                if bug:
+                    found["reporter"].setdefault(int(run_id), issue["number"])
+    return found
+
+
+def _runs_marker(run, attempts):
+    items = " ".join(f"{run['id']}.{attempt}" for attempt in sorted(attempts))
+    return f"{CI_RUNS_PREFIX}{items} -->"
+
+
+def _failed_jobs(gh, run, attempt):
     lines = []
-    for job in gh.run_jobs(run["id"]):
+    for job in gh.attempt_jobs(run["id"], attempt):
         if job.get("conclusion") not in FAILED:
             continue
         steps = [s.get("name") for s in job.get("steps") or [] if s.get("conclusion") in FAILED]
         failed = f": {', '.join(f'`{name}`' for name in steps if name)}" if steps else ""
         link = f"[{job.get('name')}]({job['html_url']})" if job.get("html_url") else job.get("name")
         lines.append(f"- {link}{failed}")
-    return lines or ["- The run failed before any job did; open the run for the reason."]
+    return lines or ["- The attempt failed before any job did; open it for the reason."]
+
+
+def _failed_attempts(gh, run, attempts):
+    """The attempts among `attempts` that failed. The latest attempt is the run itself."""
+    latest = run.get("run_attempt") or 1
+    failed = []
+    for attempt in attempts:
+        found = run if attempt == latest else gh.run_attempt(run["id"], attempt) or {}
+        if found.get("conclusion") in FAILED:
+            failed.append(attempt)
+    return failed
+
+
+def _failures(gh, run, failed):
+    """Each failed attempt, linked, with its failed jobs and steps."""
+    lines = []
+    for attempt in failed:
+        url = f"{run.get('html_url')}/attempts/{attempt}"
+        lines += ["", f"Attempt [{attempt}]({url}):", *_failed_jobs(gh, run, attempt)]
+    return lines
 
 
 def _failure_text(gh, workflow, run, branch):
     sha = run.get("head_sha") or ""
+    attempts = range(1, (run.get("run_attempt") or 1) + 1)
     return "\n".join(
         [
             f"[`{workflow}` failed]({run.get('html_url')}) on `{branch}` at {sha}, also when "
-            "run again. Failed jobs and steps:",
-            "",
-            *_failed_jobs(gh, run),
+            "run again. Failed jobs and steps of each failed attempt:",
+            *_failures(gh, run, _failed_attempts(gh, run, attempts)),
             "",
             f"{CI_SHA_PREFIX}{sha} -->",
+            _runs_marker(run, attempts),
         ]
     )
 
 
-def _reported(gh, workflow, sha):
-    """(the open bug issue for `workflow` or None, whether a bug issue for it, open or
-    closed, already reports the commit `sha`)."""
-    marker = f"{CI_SHA_PREFIX}{sha} -->"
-    found, reported = None, False
-    for issue in gh.issues_by(BOT_LOGIN):
-        if ci_workflow(issue) != workflow:
-            continue
-        if issue.get("state") == "open" and found is None:
-            found = issue
-        texts = [issue.get("body") or ""]
-        texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if by_bot(c)]
-        reported = reported or any(marker in text for text in texts)
-    return found, reported
+def _flaky_text(gh, workflow, run, branch, unseen):
+    """The record of a run that passed only when run again, or that failed and a newer run
+    overtook, for its attempts in `unseen`; None when none of them failed."""
+    failed = _failed_attempts(gh, run, unseen)
+    if not failed:
+        return None
+    link = f"[A run of `{workflow}`]({run.get('html_url')}) on `{branch}` at {run.get('head_sha')}"
+    if run.get("conclusion") in FAILED:
+        what = f"{link} failed, and a newer run overtook it."
+    else:
+        what = f"{link} passed in attempt {run.get('run_attempt') or 1} after failing."
+    lines = [f"{what} Failed jobs and steps of each failed attempt:"]
+    return "\n".join([*lines, *_failures(gh, run, failed), "", _runs_marker(run, unseen)])
 
 
-def check_ci(gh, cfg, where, branch):
-    """For each workflow of `merge.after_workflows`, the latest run on the default branch:
-    a failure runs its failed jobs once more, and a second failure opens a bug issue in
-    scope, or comments on the one still open. Returns lines for the job log."""
+def _record_flaky(gh, cfg, where, workflow, branch, known, text):
+    issue = known["flaky"]
+    if issue:
+        gh.comment(issue["number"], text)
+        return f"`{workflow}` failed at times; recorded on #{issue['number']}."
+    people = "".join(f"@{login} " for login in cfg["notify"])
+    intro = (
+        f"Runs of `{workflow}` on `{branch}` that passed only when run again, or that failed "
+        "and a newer run overtook. Each record names the commit, the run, and the failed "
+        "jobs and steps of each failed attempt; later records follow as comments."
+    )
+    body = f"{CI_FLAKY_PREFIX}{workflow} -->\n{people}{intro}\n\n{text}"
+    labels = ["bug", *([where["label"]] if where.get("label") else [])]
+    title = f"`{workflow}` fails at times on `{branch}`"
+    known["flaky"] = gh.create_issue(title, body, where.get("milestone"), labels)
+    return f"`{workflow}` failed at times; opened #{known['flaky']['number']}."
+
+
+def _report_failure(gh, cfg, where, workflow, branch, known, run):
+    text = _failure_text(gh, workflow, run, branch)
+    issue = known["bug"]
+    if issue:
+        gh.comment(issue["number"], f"It fails again on a newer commit.\n\n{text}")
+        line = f"`{workflow}` fails again; commented on #{issue['number']}."
+    else:
+        people = "".join(f"@{login} " for login in cfg["notify"])
+        body = f"{CI_BUG_PREFIX}{workflow} -->\n{people}{text}"
+        labels = ["bug", *([where["label"]] if where.get("label") else [])]
+        title = f"`{workflow}` fails on `{branch}`"
+        issue = known["bug"] = gh.create_issue(title, body, where.get("milestone"), labels)
+        line = f"`{workflow}` fails on `{branch}`; opened #{issue['number']}."
+    known["shas"].add(run.get("head_sha") or "")
+    known["reporter"][run["id"]] = issue["number"]
+    return line
+
+
+def _passed_later(gh, workflow, run, number, unseen):
+    """Say on the bug issue that reported a run that a later attempt of it passed."""
+    attempt = run.get("run_attempt") or 1
+    text = (
+        f"Attempt {attempt} of [the run of `{workflow}`]({run.get('html_url')}) at "
+        f"{run.get('head_sha')} passed: the failure did not repeat when run again."
+    )
+    gh.comment(number, f"{text}\n\n{_runs_marker(run, unseen)}")
+    return f"`{workflow}` passed in attempt {attempt}; commented on #{number}."
+
+
+def _check_run(gh, cfg, where, workflow, branch, known, run, latest):
+    """What one completed run on the default branch leads to: a line for the log, or None."""
+    attempt = run.get("run_attempt") or 1
+    seen = known["seen"].get(run["id"], set())
+    unseen = [n for n in range(1, attempt + 1) if n not in seen]
+    line = None
+    if run.get("conclusion") in FAILED:
+        if latest and attempt < 2:
+            gh.rerun_failed_jobs(run["id"])
+            return f"Running the failed jobs of `{workflow}` on `{branch}` again."
+        if not unseen or (run.get("head_sha") or "") in known["shas"]:
+            return None
+        if latest:
+            line = _report_failure(gh, cfg, where, workflow, branch, known, run)
+        else:
+            text = _flaky_text(gh, workflow, run, branch, unseen)
+            line = text and _record_flaky(gh, cfg, where, workflow, branch, known, text)
+    elif run.get("conclusion") == "success" and attempt > 1 and unseen:
+        reporter = known["reporter"].get(run["id"])
+        if reporter:
+            line = _passed_later(gh, workflow, run, reporter, unseen)
+        else:
+            text = _flaky_text(gh, workflow, run, branch, unseen)
+            line = text and _record_flaky(gh, cfg, where, workflow, branch, known, text)
+    if line:
+        known["seen"].setdefault(run["id"], set()).update(unseen)
+    return line
+
+
+def check_ci(gh, cfg, where, branch, now=None):
+    """For each workflow of `merge.after_workflows`, its completed runs on the default
+    branch that a sweep has not looked at. When the latest run fails, its failed jobs run
+    once more, and a second failure opens a bug issue in scope, or comments on the one
+    still open; a later attempt that passes says so there. A run that passed only when run
+    again, or that failed and a newer run overtook, is recorded on the workflow's issue for
+    flaky runs. Markers in those issues record each run and attempt once. Returns lines for
+    the job log."""
+    since = (now or datetime.now(UTC)) - CI_LOOK_BACK
     lines = []
     for workflow in cfg["merge"]["after_workflows"]:
         try:
-            runs = gh.workflow_runs(workflow, branch)
-            run = runs[0] if runs else None
-            if not run or run.get("status") != "completed" or run.get("conclusion") not in FAILED:
-                continue
-            if (run.get("run_attempt") or 1) < 2:
-                gh.rerun_failed_jobs(run["id"])
-                lines.append(f"Running the failed jobs of `{workflow}` on `{branch}` again.")
-                continue
-            sha = run.get("head_sha") or ""
-            issue, reported = _reported(gh, workflow, sha)
-            if reported:
-                continue
-            text = _failure_text(gh, workflow, run, branch)
-            if issue:
-                gh.comment(issue["number"], f"It fails again on a newer commit.\n\n{text}")
-                lines.append(f"`{workflow}` fails again; commented on #{issue['number']}.")
-                continue
-            people = "".join(f"@{login} " for login in cfg["notify"])
-            body = f"{CI_BUG_PREFIX}{workflow} -->\n{people}{text}"
-            labels = ["bug", *([where["label"]] if where.get("label") else [])]
-            title = f"`{workflow}` fails on `{branch}`"
-            created = gh.create_issue(title, body, where.get("milestone"), labels)
-            lines.append(f"`{workflow}` fails on `{branch}`; opened #{created['number']}.")
+            runs = gh.workflow_runs(workflow, branch, CI_RUNS_LIMIT)
+            # Only a run that failed, or that was run again, can lead to anything, so a
+            # sweep after runs that passed at once reads no issue.
+            candidates = [
+                run
+                for run in runs
+                if run.get("status") == "completed"
+                and (run.get("conclusion") in FAILED or (run.get("run_attempt") or 1) > 1)
+            ]
+            known = _ci_records(gh, workflow) if candidates else None
+            # Oldest first, so records follow the order of the runs.
+            for run in reversed(candidates):
+                latest = run is runs[0]
+                created = parse_iso(run.get("created_at"))
+                recent = latest or created is None or created >= since
+                if not recent and run["id"] not in known["reporter"]:
+                    continue
+                line = _check_run(gh, cfg, where, workflow, branch, known, run, latest)
+                if line:
+                    lines.append(line)
         except GitHubError as exc:
             lines.append(f"Could not check `{workflow}` on `{branch}`: {exc}")
     return lines

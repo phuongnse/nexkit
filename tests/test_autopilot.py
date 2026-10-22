@@ -778,7 +778,7 @@ class CITests(AutopilotCase):
         )
         self.issue(3)
 
-    def ci_run(self, conclusion="failure", attempt=1, sha=SHA, run_id=50):
+    def ci_run(self, conclusion="failure", attempt=1, sha=SHA, run_id=50, days=0):
         run = {
             "id": run_id,
             "head_branch": "main",
@@ -787,6 +787,7 @@ class CITests(AutopilotCase):
             "conclusion": conclusion,
             "run_attempt": attempt,
             "html_url": f"https://github.com/acme/app/actions/runs/{run_id}",
+            "created_at": autopilot.iso(datetime.now(UTC) - timedelta(days=days)),
         }
         self.gh.workflow_history.setdefault("ci.yml", []).append(run)
         self.gh.jobs[run_id] = [
@@ -802,6 +803,16 @@ class CITests(AutopilotCase):
 
     def bugs(self):
         return [i for i in self.gh.issues.values() if autopilot.ci_workflow(i)]
+
+    def flaky(self):
+        return [i for i in self.gh.issues.values() if autopilot.flaky_workflow(i)]
+
+    def passed_again(self, run, attempt=2):
+        """`run` passed in `attempt` after every earlier attempt failed."""
+        for earlier in range(1, attempt):
+            self.gh.attempts[(run["id"], earlier)] = "failure"
+        run.update(run_attempt=attempt, conclusion="success")
+        self.gh.jobs[(run["id"], attempt)] = [{"name": "test", "conclusion": "success"}]
 
     def test_a_failure_runs_again_once_then_opens_a_bug_that_is_planned_first(self):
         run = self.ci_run()
@@ -819,13 +830,103 @@ class CITests(AutopilotCase):
         self.assertIn(
             "@olivia [`ci.yml` failed](https://github.com/acme/app/actions/runs/50)", bug["body"]
         )
-        self.assertIn("- [test](https://job): `Run tests`", bug["body"])
+        # The report lists every failed attempt.
+        for attempt in (1, 2):
+            url = f"https://github.com/acme/app/actions/runs/50/attempts/{attempt}"
+            failed = f"Attempt [{attempt}]({url}):\n- [test](https://job): `Run tests`"
+            self.assertIn(failed, bug["body"])
         self.assertNotIn("lint", bug["body"])
+        self.assertTrue(bug["body"].endswith("<!-- nexkit:ci-runs 50.1 50.2 -->"))
         self.assertEqual(self.started(), [("plan", bug["number"])])
         _, steps = autopilot.preview(self.gh, self.cfg)
         self.assertEqual([s["number"] for s in steps], [bug["number"], 3])
         self.sweep()
-        self.assertEqual(len(self.bugs()), 1)
+        self.assertEqual((len(self.bugs()), self.flaky()), (1, []))
+        self.assertEqual(self.gh.comments_matching(bug["number"], "nexkit:ci-runs"), [])
+
+    def test_a_run_that_passes_when_run_again_is_recorded_once_on_its_own_issue(self):
+        run = self.ci_run()
+        self.sweep()
+        self.passed_again(run)
+        self.gh.dispatches.clear()
+        self.sweep()
+        self.assertEqual((self.gh.reruns, self.bugs()), ([50], []))
+        [issue] = self.flaky()
+        self.assertEqual(issue["title"], "`ci.yml` fails at times on `main`")
+        self.assertEqual([x["name"] for x in issue["labels"]], ["bug"])
+        self.assertEqual(issue["milestone"], {"number": 1})
+        body = issue["body"]
+        self.assertTrue(body.startswith("<!-- nexkit:ci-flaky ci.yml -->\n@olivia "))
+        self.assertIn(
+            f"[A run of `ci.yml`](https://github.com/acme/app/actions/runs/50) on `main` at "
+            f"{self.SHA} passed in attempt 2 after failing.",
+            body,
+        )
+        url = "https://github.com/acme/app/actions/runs/50/attempts/1"
+        self.assertIn(f"Attempt [{url[-1]}]({url}):\n- [test](https://job): `Run tests`", body)
+        self.assertNotIn("attempts/2", body)
+        self.assertTrue(body.endswith("<!-- nexkit:ci-runs 50.1 50.2 -->"))
+        self.assertIn(("plan", issue["number"]), self.started())
+        # A second sweep records nothing and reads no attempt again.
+        calls = list(self.gh.calls)
+        self.sweep()
+        self.assertEqual(len(self.flaky()), 1)
+        self.assertEqual(self.gh.comments_matching(issue["number"], "nexkit:ci-runs"), [])
+        self.assertEqual(self.gh.calls, calls)
+        # A failing default branch goes first, its flaky runs right after.
+        self.ci_run(attempt=2, sha="f" * 40, run_id=51)
+        self.sweep()
+        [bug] = self.bugs()
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual([s["number"] for s in steps], [bug["number"], issue["number"], 3])
+        # A later flaky run adds a comment to the open issue.
+        self.passed_again(self.ci_run(sha="a" * 40, run_id=52), attempt=3)
+        self.sweep()
+        self.sweep()
+        self.assertEqual(len(self.flaky()), 1)
+        [comment] = self.gh.comments_matching(issue["number"], "nexkit:ci-runs")
+        self.assertIn("runs/52) on `main` at " + "a" * 40 + " passed in attempt 3", comment["body"])
+        self.assertIn("runs/52/attempts/2):\n- [test]", comment["body"])
+        self.assertTrue(comment["body"].endswith("<!-- nexkit:ci-runs 52.1 52.2 52.3 -->"))
+        self.assertEqual(self.gh.comments_matching(bug["number"], "runs/52"), [])
+
+    def test_a_later_attempt_that_passes_after_the_bug_issue_says_so_there(self):
+        run = self.ci_run(attempt=2)
+        self.sweep()
+        [bug] = self.bugs()
+        # A person runs the jobs again a day later; a newer run passed meanwhile.
+        run["created_at"] = autopilot.iso(datetime.now(UTC) - timedelta(days=3))
+        self.ci_run(conclusion="success", sha="f" * 40, run_id=51)
+        self.passed_again(run, attempt=3)
+        self.sweep()
+        self.sweep()
+        [comment] = self.gh.comments_matching(bug["number"], "nexkit:ci-runs")
+        self.assertIn(
+            "Attempt 3 of [the run of `ci.yml`](https://github.com/acme/app/actions/runs/50) "
+            f"at {self.SHA} passed: the failure did not repeat when run again.",
+            comment["body"],
+        )
+        self.assertTrue(comment["body"].endswith("<!-- nexkit:ci-runs 50.3 -->"))
+        self.assertEqual((self.flaky(), self.gh.reruns), ([], []))
+
+    def test_an_older_failed_run_that_a_newer_run_overtook_is_recorded_not_run_again(self):
+        self.ci_run(run_id=49, sha="d" * 40, days=2)
+        self.ci_run()
+        self.ci_run(conclusion=None, sha="f" * 40, run_id=51)["status"] = "in_progress"
+        self.sweep()
+        self.sweep()
+        self.assertEqual((self.gh.reruns, self.bugs()), ([], []))
+        [issue] = self.flaky()
+        self.assertIn(
+            f"[A run of `ci.yml`](https://github.com/acme/app/actions/runs/50) on `main` at "
+            f"{self.SHA} failed, and a newer run overtook it.",
+            issue["body"],
+        )
+        self.assertIn("runs/50/attempts/1):\n- [test](https://job): `Run tests`", issue["body"])
+        self.assertTrue(issue["body"].endswith("<!-- nexkit:ci-runs 50.1 -->"))
+        # A run from before the last day is left alone.
+        self.assertNotIn("runs/49", issue["body"])
+        self.assertEqual(self.gh.comments_matching(issue["number"], "nexkit:ci-runs"), [])
 
     def test_a_newer_failing_commit_comments_on_the_open_bug(self):
         self.ci_run(attempt=2)
@@ -847,7 +948,9 @@ class CITests(AutopilotCase):
         self.ci_run(run_id=52)["head_branch"] = "nexkit/issue-3"
         running = self.ci_run(run_id=53, conclusion=None)
         running["status"] = "in_progress"
-        self.sweep()
+        # Runs that passed at once lead to nothing, so the sweep reads no issue for them.
+        with mock.patch.object(autopilot, "_ci_records", side_effect=AssertionError):
+            self.sweep()
         self.assertEqual((self.gh.reruns, self.bugs()), ([], []))
         self.gh.workflow_history.clear()
         self.ci_run(attempt=2)
@@ -868,4 +971,8 @@ class CITests(AutopilotCase):
 
     def test_only_nexkits_own_bug_issues_go_first(self):
         self.issue(4, body="<!-- nexkit:ci ci.yml -->\nForged.")
+        self.issue(5, body="<!-- nexkit:ci-flaky ci.yml -->\nForged.")
         self.assertIsNone(autopilot.ci_workflow(self.gh.issues[4]))
+        self.assertIsNone(autopilot.flaky_workflow(self.gh.issues[5]))
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual([s["number"] for s in steps], [3, 4, 5])

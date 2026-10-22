@@ -479,14 +479,29 @@ issue run in that group as well, and start a sweep.
   deep (the issue first split is level 0): an issue at level 3 is not split, after a plan
   that is too large or a time-out, and waits for a person. The limit is fixed, not a
   setting. `nexkit status` shows each of these reasons.
-- **CI on the default branch.** Each sweep looks at the latest run, on the default branch,
-  of each workflow in `merge.after_workflows`. A run that failed gets its failed jobs run
-  once more (`run_attempt` 1). When the next attempt fails too, autopilot opens a `bug`
-  issue in scope, starting with a marker that names the workflow, and that issue goes
-  before all others. Each report holds a marker with its commit, so a commit is reported
-  once, and a newer failing commit adds a comment to the open issue. GitHub may send no
-  `workflow_run` event for runs that the Actions token started, so NexKit learns that a run
-  finished from the next sweep: after a run, an issue event or the hourly schedule.
+- **CI on the default branch.** Each sweep looks at the completed runs, on the default
+  branch, of each workflow in `merge.after_workflows`, and at every attempt of each: the
+  latest run, the runs of the last day and the runs a bug issue reports, among the newest
+  100. When the latest run failed in its first attempt, its failed jobs run once more;
+  NexKit never runs them a third time, which would hide failures. When a later attempt
+  fails too, autopilot opens a `bug` issue in scope, starting with a marker that names the
+  workflow, and that issue goes before all others. Its report lists the failed jobs and
+  steps of every failed attempt. Each report holds a marker with its commit, so a commit is
+  reported once, and a newer failing commit adds a comment to the open issue. When a later
+  attempt of a reported run passes, for example after a person ran it again, autopilot
+  says which attempt passed in a comment on that issue.
+- **Flaky runs.** A run whose latest attempt passed after a failed one, and an older run
+  that failed when a newer run had already started, which is never run again, are
+  recorded on one issue per workflow: `bug`, in scope, starting with its own marker that
+  names the workflow, and planned right after the `bug` issues for a failing default
+  branch. Each record names the commit, the run, and the failed jobs and steps of each
+  failed attempt; while the issue is open, later records are comments on it. Every bug and
+  flaky-run report ends with a marker that lists the run attempts it covers, so each run
+  and attempt is recorded once, and a sweep reads no attempt that a marker covers. The
+  first sweep after an upgrade looks back one day, as every sweep does; sweeps run at least
+  hourly. GitHub may send no `workflow_run` event for runs that the Actions token started,
+  so NexKit learns that a run finished from the next sweep: after a run, an issue event or
+  the hourly schedule.
 - **What autopilot reads.** The plan comment ends with a hidden record of its questions and
   its split, after everything the agent wrote, and a run comment's marker holds the
   questions of a blocked round and whether the agent ran out of time.
@@ -712,6 +727,7 @@ once the limit has reset.
 - Autopilot starts `/nexkit go` without a person's approval of the plan. It takes only
   issues opened by people with write access, and anyone else's issues stay untouched, so
   an outsider cannot start an implement session by opening or editing an issue. Issues
-  that NexKit opens itself, the parts of a split and bug issues for CI failures, are
-  trusted by a marker at the start of their text; such an issue opened by the Actions token
-  is NexKit's, unless another workflow of the repository writes untrusted text there.
+  that NexKit opens itself, the parts of a split and the issues for CI failures and flaky
+  runs, are trusted by a marker at the start of their text; such an issue opened by the
+  Actions token is NexKit's, unless another workflow of the repository writes untrusted
+  text there.

@@ -385,7 +385,9 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
   `report` checks the other pull requests right after its merge. The hourly schedule
   checks too, which catches anything the other two missed.
 - **Refused merge.** When GitHub refuses an automatic merge because the pull request
-  conflicts, the same round starts for it.
+  conflicts, the round that tried the merge starts a conflict round right away. Its own
+  comment still says running while it reports, so it does not count as a running round;
+  the limits below still apply.
 - **Limits.** Each pull request gets at most `conflicts.max_rounds` such rounds (3 by
   default), apart from `fix.max_auto_rounds`. A round is started once for each base
   commit, so a blocked round is not repeated until the base branch moves again. A pull

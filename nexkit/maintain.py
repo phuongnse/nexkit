@@ -213,10 +213,11 @@ def is_conflicting(gh, number, tries=6, delay=5):
     return None
 
 
-def start_conflict_round(gh, number, base, workflow, ref, max_rounds):
+def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
     """Start an automatic fix round that merges `base` into the pull request, unless one
     already tried this base commit, its limit is used up, or its latest round is paused or
-    still running.
+    still running. `own` is the URL of the round that calls this while it reports: its
+    comment still says running, but it is ending.
     Returns a line saying what happened, or "" when nothing was started for a known reason
     that needs no line."""
     rounds = [run for _, run in run_comments(gh.comments(number)) if "round" in run]
@@ -224,7 +225,10 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds):
     sha = gh.branch_sha(base)
     if tried and tried[-1].get("base_sha") == sha:
         return ""
-    if rounds and rounds[-1].get("status") in (PAUSED, RUNNING, CONTINUED):
+    latest = rounds[-1] if rounds else {}
+    if latest.get("status") in (PAUSED, RUNNING, CONTINUED) and not (
+        own and latest.get("url") == own
+    ):
         # A running round merges the base branch itself when it conflicts, and a dispatch
         # now would replace a command waiting behind it. A later check starts the round.
         # A continued round has a run on its way.

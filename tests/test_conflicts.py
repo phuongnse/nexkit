@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import agent, cli
-from nexkit.github import GitHubError
+from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
 from nexkit.route import route
 from nexkit.state import BOT_LOGIN, render_run
@@ -167,6 +167,46 @@ class ConflictReportTests(ReportCase):
         [row] = self.gh.run_comments(6)
         self.assertIn("It conflicts with `main`. Started an automatic round on #6", row["body"])
 
+    def refused_while_running(self, *runs, max_rounds=3):
+        """A merge refused for a conflict, reported by a round whose own comment still says
+        running."""
+        os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
+        for run in runs:
+            self.gh.comment(6, render_run(run))
+        own = {"round": len(runs) + 1, "trigger": "review", "url": run_url(), "status": "running"}
+        self.gh.comment(6, render_run(own))
+        self.candidate()
+        self.gh.merge_error = GitHubError(405, "Pull Request has merge conflicts")
+        self.gh.pulls[6]["mergeable"] = False
+        conflicts = {"auto_resolve": True, "max_rounds": max_rounds}
+        cfg = make_config(merge={"auto": True}, conflicts=conflicts)
+        return self.run_report(cfg=cfg)["outcome"]
+
+    def tried(self, sha):
+        return {
+            "round": 1,
+            "trigger": "fix (auto, conflicts)",
+            "url": "https://x/1",
+            "status": "failure",
+            "conflicts": True,
+            "base_sha": sha,
+        }
+
+    def test_the_reporting_round_does_not_block_its_own_conflict_round(self):
+        self.assertEqual(self.refused_while_running(), "conflict_fix")
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(dispatch["inputs"]["auto"], "conflicts")
+
+    def test_a_refused_merge_tries_each_base_commit_once(self):
+        self.assertEqual(self.refused_while_running(self.tried(BASE_SHA)), "merge_refused")
+        self.assertFalse(self.gh.dispatches)
+
+    def test_a_refused_merge_keeps_the_round_limit(self):
+        outcome = self.refused_while_running(self.tried("e" * 40), max_rounds=1)
+        self.assertEqual(outcome, "merge_refused")
+        self.assertFalse(self.gh.dispatches)
+        self.assertIn("conflict rounds are used up", self.gh.run_comments(6)[-1]["body"])
+
     def test_a_merge_refused_for_another_reason_waits_for_a_person(self):
         self.candidate()
         self.gh.merge_error = GitHubError(405, "Required approving review")
@@ -186,6 +226,19 @@ class ConflictReportTests(ReportCase):
         self.assertEqual([d["inputs"]["number"] for d in self.gh.dispatches], ["7"])
         row = self.gh.run_comments(6)[-1]
         self.assertIn("Started an automatic round on #7 to merge `main`.", row["body"])
+
+    def test_a_merge_skips_another_pull_request_whose_round_is_running(self):
+        self.gh.add_issue(4)
+        self.gh.add_pull(7, 4)
+        self.gh.pulls[7]["mergeable"] = False
+        self.gh.comment(
+            7,
+            render_run({"round": 1, "trigger": "fix", "url": "https://x/7/1", "status": "running"}),
+        )
+        self.candidate()
+        cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
+        self.assertEqual(self.run_report(cfg=cfg)["outcome"], "merged")
+        self.assertFalse(self.gh.dispatches)
 
 
 if __name__ == "__main__":

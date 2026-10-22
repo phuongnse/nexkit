@@ -420,7 +420,8 @@ requests conflict.
 - NexKit's own merges, pushes to the default branch (through the `push` trigger that
   `nexkit init` writes) and the hourly schedule start the check. `nexkit doctor` warns when
   the `push` trigger is missing; the schedule still notices within an hour.
-- When an automatic merge is refused because of a conflict, the same round starts.
+- When an automatic merge is refused because of a conflict, the round that tried it
+  starts a conflict round right away, within the same limits.
 - A conflict that needs a choice ends the round as `blocked` with its questions; a person
   answers with `/nexkit fix <decisions>`.
 - Each pull request gets at most `max_rounds` of these rounds (default 3), apart from

@@ -648,6 +648,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                         workflow,
                         default_branch,
                         cfg["conflicts"]["max_rounds"],
+                        own=row.get("url"),
                     )
                     if started.startswith("Started"):
                         outcome = "conflict_fix"

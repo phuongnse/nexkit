@@ -224,6 +224,53 @@ def conflicts(root, program):
         raise SystemExit("fix: the note's decision was not followed")
 
 
+def moved_base(root, program):
+    """An automatic fix round after failing checks, on a branch behind a base branch that
+    has since fixed the failure: it merges the base branch, and the agent changes nothing
+    else."""
+    origin = root / "moved"
+    origin.mkdir()
+    git(origin, "init", "-q", "-b", "main")
+    commit = ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm"]
+    test = (
+        "import unittest\n\nfrom calc import add\n\n\nclass T(unittest.TestCase):\n"
+        "    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n"
+    )
+    files = {"calc.py": "def add(a, b):\n    return a - b\n", "test_calc.py": test}
+    for name, text in files.items():
+        (origin / name).write_text(text)
+    git(origin, "add", "-A")
+    git(origin, *commit, "init")
+    git(origin, "checkout", "-q", "-b", "nexkit/issue-1")
+    (origin / "greet.py").write_text('def greeting(name):\n    return "Hi " + name\n')
+    git(origin, "add", "-A")
+    git(origin, *commit, "Add greeting()")
+    git(origin, "checkout", "-q", "main")
+    fixed = "def add(a, b):\n    return a + b\n"
+    (origin / "calc.py").write_text(fixed)
+    git(origin, *commit, "Fix add()", "-a")
+    work = root / "moved-work"
+    git(root, "clone", "-q", "-b", "nexkit/issue-1", str(origin), str(work))
+    feedback = (
+        "### Failing check `test` (`python3 -m unittest -v`)\n\nExit code 1. End of output:"
+        "\n\n```\nFAIL: test_add (test_calc.T.test_add)\nAssertionError: -1 != 5\n```"
+    )
+    context = {
+        **CONTEXT,
+        "pr": 2,
+        "title": "Add greeting()",
+        "body": "Add a greeting(name) function.",
+        "plan": "Add greeting() in greet.py.",
+        "feedback": feedback,
+        "merge_moved_base": True,
+    }
+    fix = stage("fix", work, root / "fix-moved", program, context, base="main")
+    if not fix["start_base"] or fix["conflicts"] or (work / "calc.py").read_text() != fixed:
+        raise SystemExit(f"fix: the moved base branch was not merged: {fix}")
+    if fix["changed_files"] != ["calc.py"]:
+        raise SystemExit(f"fix: the agent changed files the merge had fixed: {fix}")
+
+
 def asked(questions, name):
     """Each question has options, and names the recommended one by its number, or 0."""
     for item in questions:
@@ -380,6 +427,7 @@ def main():
         if {item["severity"] for item in previous} != {"blocking", "suggestion"}:
             raise SystemExit(f"second review: severities not kept in {previous}")
         conflicts(root, args.program)
+        moved_base(root, args.program)
     print("Smoke test passed.")
     return 0
 

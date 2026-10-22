@@ -260,6 +260,41 @@ class ContextTests(unittest.TestCase):
         self.assertIn("Rejected the docs finding", text)
         self.assertLess(len(text), 4000)
 
+    def test_only_an_automatic_round_after_failing_checks_merges_a_moved_base(self):
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        state = empty_state(5)
+        failed = {"name": "e2e", "run": "make e2e", "exit_code": 1, "passed": False}
+        state["feedback"] = {"head": HEAD, "checks": [failed], "review": None}
+        self.gh.comment(6, render_state(state))
+        fix = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
+
+        def merges(**decision):
+            return gather(self.gh, {**fix, **decision})["merge_moved_base"]
+
+        self.assertTrue(merges(auto=True))
+        self.assertFalse(merges())  # a person's /nexkit fix
+        self.assertFalse(merges(auto=True, conflicts=True))  # merges only on a conflict
+        # An automatic round for review findings alone, while the checks passed.
+        state["feedback"]["checks"] = [{**failed, "exit_code": 0, "passed": True}]
+        self.gh.comment(6, render_state(state))
+        self.assertFalse(merges(auto=True))
+
+    def test_review_after_a_clean_merge_says_so(self):
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        state = empty_state(5)
+        state["last_review"] = {"round": 1, "head": "a" * 40, "verdict": "approve", "findings": []}
+        self.gh.comment(6, render_state(state))
+        decision = {"action": "fix", "issue": 5, "pr": 6, "head": "b" * 40, "auto": True}
+        fix_result = {
+            "status": "done",
+            "summary": "The merged base fixes the flaky test.",
+            "start_head": "b" * 40,
+            "start_base": "c" * 40,
+            "conflicts": [],
+        }
+        context = gather(self.gh, decision, "review", fix_result)
+        self.assertIn("merged the base branch, which merged without", context["previous_round"])
+
     def test_review_after_a_merge_gets_the_conflicted_files(self):
         self.gh.add_pull(6, 5, head_sha=HEAD)
         state = empty_state(5)

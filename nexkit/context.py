@@ -48,13 +48,27 @@ def _discussion(comments, notes=False):
     return "\n\n---\n\n".join(entries) if entries else "No discussion."
 
 
-def _feedback(gh, decision):
+def _saved_feedback(comments):
+    """The checks and review that NexKit last recorded on the pull request."""
+    _, state = read_state(comments)
+    return (state or {}).get("feedback") or {}
+
+
+def _after_failed_checks(decision, comments):
+    """Whether this is an automatic round started after failing checks. It merges the base
+    branch whenever the base has moved, so a failure that the base branch already fixed
+    goes away without an agent change."""
+    if not decision.get("auto") or decision.get("conflicts"):
+        return False
+    return any(not check.get("passed") for check in _saved_feedback(comments).get("checks") or [])
+
+
+def _feedback(gh, decision, comments):
     """Earlier NexKit results plus current human review feedback on the pull request."""
     pr = decision["pr"]
     head = decision["head"]
     parts = []
-    _, state = read_state(gh.comments(pr))
-    saved = (state or {}).get("feedback") or {}
+    saved = _saved_feedback(comments)
     for check in saved.get("checks") or []:
         if not check.get("passed"):
             parts.append(
@@ -128,6 +142,8 @@ def previous_review(gh, decision, fix_result):
         if fix.get("conflicts"):
             files = ", ".join(f"`{name}`" for name in fix["conflicts"])
             lines += ["", f"This round merged the base branch and resolved conflicts in {files}."]
+        elif fix.get("conflicts") == []:
+            lines += ["", "This round merged the base branch, which merged without conflicts."]
     return {"previous_head": last["head"], "previous_round": "\n".join(lines)}
 
 
@@ -185,7 +201,8 @@ def gather(gh, decision, stage=None, fix_result=None):
                 "conflicts": fix_result.get("conflicts") or [],
             }
     elif stage == "fix":
-        context["feedback"] = _feedback(gh, decision)
         pr_comments = gh.comments(decision["pr"])
+        context["feedback"] = _feedback(gh, decision, pr_comments)
+        context["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
         context["discussion"] += "\n\n---\n\nOn the pull request:\n\n" + _discussion(pr_comments)
     return context

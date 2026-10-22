@@ -312,12 +312,15 @@ def up_to_date(base):
     }
 
 
-def merge_base_branch(repo, base):
-    """When the branch conflicts with its base branch, start merging the base branch and
-    leave the conflicts in the working tree. Return (merged commit, conflicted files), or
-    (None, []) when the branch merges cleanly and nothing was changed."""
+def merge_base_branch(repo, base, moved=False):
+    """When the branch conflicts with its base branch, or with `moved` when the base branch
+    has commits the branch lacks, start merging the base branch and leave any conflicts in
+    the working tree. Return (merged commit, conflicted files), or (None, []) when nothing
+    was changed."""
     commit = git(repo, "rev-parse", "--verify", f"origin/{base}^{{commit}}").strip()
-    if not merge_tree(repo, "HEAD", commit)[1]:
+    if not merge_tree(repo, "HEAD", commit)[1] and not (
+        moved and not is_ancestor(repo, commit, "HEAD")
+    ):
         return None, []
     git(repo, *BOT, "merge", "--no-commit", "--no-ff", "-q", commit, ok=(0, 1))
     conflicts = names(git(repo, "diff", "--name-only", "--diff-filter=U", "-z"))
@@ -328,7 +331,7 @@ def conflicts_text(base, commit, files):
     """The fix prompt's section about a merge of the base branch, or ""."""
     if not commit:
         return ""
-    text = Template(_template("fix_conflicts")).safe_substitute(
+    text = Template(_template("fix_conflicts" if files else "fix_merged")).safe_substitute(
         base=base, base_commit=commit[:7], files=_files(files)
     )
     return text + "\n"
@@ -780,7 +783,7 @@ def run_stage(
     if stage in ("implement", "fix"):
         start, base_commit = baseline(repo)
     if stage == "fix":
-        merged, conflicts = merge_base_branch(repo, base)
+        merged, conflicts = merge_base_branch(repo, base, context.get("merge_moved_base"))
         extra["conflicts"] = conflicts_text(base, merged, conflicts)
         if merged:
             # Once committed, the merge has the merged base commit as its merge base.
@@ -844,7 +847,8 @@ def run_stage(
         elif size > cfg["limits"]["max_patch_mb"] * 1_000_000:
             result.update(status="error", error=f"The change is too large ({size} bytes).")
         elif not files and not merged:
-            # After a merge an empty patch is valid: it keeps this branch's side everywhere.
+            # After a merge an empty patch is valid: it keeps this branch's side everywhere,
+            # or publishes a clean merge alone.
             result.update(status="error", error="The agent finished without changing any files.")
     if triage:
         result.update(profile=triage["profile"], triage=triage)

@@ -696,10 +696,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
     if action == "fix" and agent and agent.get("start_base"):
         files = ", ".join(f"`{name}`" for name in agent.get("conflicts") or [])
-        message = (
-            f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch and "
-            f"resolved conflicts in {files}.\n\n{message}"
-        )
+        merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"
+        done = f" and resolved conflicts in {files}." if files else ", which was behind it."
+        message = f"{merged}{done}\n\n{message}"
     row.update(status=run_status(outcome), outcome=outcome)
     reason = needs_person(outcome, cfg, resume=resume)
     if reason:

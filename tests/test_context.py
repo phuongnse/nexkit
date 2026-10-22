@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nexkit.agent import build_prompt, evidence_text
+from nexkit.agent import build_prompt, diagnosis_text, evidence_text
 from nexkit.context import NO_PLAN, gather, outside_plan
 from nexkit.publish import pull_body
 from nexkit.state import (
@@ -169,6 +169,66 @@ class ContextTests(unittest.TestCase):
         self.assertNotIn("Inject", feedback)
         self.assertEqual(context["pr"], 6)
 
+    def test_fix_prompt_lists_the_earlier_fix_rounds(self):
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        output = "  ✘ 3 desk.spec.ts:42 › picks an option (9.1s)"
+        signature = "✘ desk.spec.ts: › picks an option ()"
+        failing = {"name": "e2e", "run": "e2e.sh", "exit_code": 1, "passed": False}
+        state = empty_state(5)
+        state["feedback"] = {
+            "head": HEAD,
+            "checks": [{**failing, "output": output}],
+            "repeated": ["e2e"],
+        }
+        state["fixes"] = [
+            {
+                "round": 2,
+                "head": "a" * 40,
+                "auto": True,
+                "summary": "Wrapped the select in getPopupContainer.",
+                "note": "",
+                "failing": [{"name": "e2e", "signature": signature}],
+            },
+            {
+                "round": 3,
+                "head": "b" * 40,
+                "auto": False,
+                "summary": "Set popupOverflow.",
+                "note": "Try popupOverflow",
+                "cause": "The popup is clipped by the modal.",
+                "diagnosis": True,
+                "failing": [],
+            },
+            # Recorded before NexKit kept the checks of each fix round.
+            {"round": 4, "head": "c" * 40, "auto": True, "summary": "Edited the helper."},
+        ]
+        self.gh.comment(6, render_state(state))
+        d = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": "", "auto": True}
+        context = gather(self.gh, {**d, "diagnose": ["e2e"]})
+        self.assertEqual(context["diagnose"], [{"name": "e2e", "signature": signature}])
+        extra = {"evidence": "", "diagnosis": diagnosis_text(context["diagnose"])}
+        prompt = build_prompt("fix", context, make_config(), extra)
+        section = prompt.split("## Earlier fix rounds of this pull request", 1)[1]
+        section = section.split("## Diagnosis round", 1)[0]
+        self.assertIn("Do not\nrepeat a change that did not help.", section)
+        for text in (
+            "### Round 2: fix (automatic)\n\nNote: None.\n\nSummary from the fix agent:\n\n"
+            "Wrapped the select in getPopupContainer.",
+            f"Checks that still failed after it, with their first failure: `e2e` (`{signature}`)",
+            "### Round 3: fix (requested by a person, a diagnosis round)\n\n"
+            "Note: Try popupOverflow",
+            "Cause it found:\n\nThe popup is clipped by the modal.",
+            "Every check passed after it.",
+            "### Round 4: fix (automatic)",
+            "Edited the helper.\n</untrusted>",
+        ):
+            self.assertIn(text, section)
+        self.assertIn(f"- `e2e`: `{signature}`", prompt.split("## Diagnosis round", 1)[1])
+        # A person's round is never a diagnosis round, and without fixes the list is empty.
+        self.assertEqual(gather(self.gh, d)["diagnose"], [])
+        self.gh.issue_comments[6].clear()
+        self.assertEqual(gather(self.gh, d)["earlier_fixes"], "")
+
     def test_first_review_has_no_previous_round(self):
         self.gh.add_pull(6, 5, head_sha=HEAD)
         self.gh.comment(6, render_state(empty_state(5)))
@@ -249,10 +309,17 @@ class ContextTests(unittest.TestCase):
         ]
         self.gh.comment(6, render_state(state))
         decision = {"action": "fix", "issue": 5, "pr": 6, "head": "b" * 40, "note": "Add floats"}
-        fix_result = {"status": "done", "summary": "Rejected the docs finding: internal API."}
+        fix_result = {
+            "status": "done",
+            "summary": "Rejected the docs finding: internal API.",
+            "output": {"cause": "add() subtracted: calc.py:2 returns a - b."},
+        }
         context = gather(self.gh, decision, "review", fix_result)
         self.assertEqual(context["previous_head"], "a" * 40)
         text = context["previous_round"]
+        cause = "Cause the fix agent found:\n\nadd() subtracted: calc.py:2 returns a - b."
+        self.assertIn(cause, text)
+        self.assertEqual(text.count("Cause the fix agent found"), 1)  # only the round with one
         self.assertIn("review of commit aaaaaaa (request_changes)", text)
         self.assertIn("1. blocking, `calc.py:2`: Wrong sign", text)
         self.assertIn("2. suggestion, `general`: ", text)

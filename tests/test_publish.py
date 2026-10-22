@@ -262,10 +262,11 @@ class PublishTests(unittest.TestCase):
             self.out,
         )
         start = self.make_patch({"calc.py": "v2\n"}, ref="nexkit/issue-5")
+        cause = "add() subtracted: calc.py:2 returned a - b."
         outcome = publish(
             self.gh,
             decision("fix", pr=6, target=6),
-            self.result(start),
+            self.result(start, output={"cause": cause}),
             CONTEXT,
             self.cfg,
             self.repos.clone("p2"),
@@ -274,6 +275,8 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(outcome["pr"], 6)
         log = git(self.repos.origin, "log", "--format=%s", "nexkit/issue-5")
         self.assertEqual(log.splitlines()[:2], ["Address feedback on #6", "Fix add (#5)"])
+        body = git(self.repos.origin, "log", "-1", "--format=%b", "nexkit/issue-5")
+        self.assertEqual(body, f"Fixed add.\n\nCause: {cause}")
 
     def test_fix_refuses_when_branch_moved(self):
         first = self.make_patch({"calc.py": "v1\n"})
@@ -524,7 +527,8 @@ class MergePublishTests(unittest.TestCase):
             "blocker": "",
             "questions": [],
         }
-        self.claude.configure(result={**done, "checks_run": [], "open_conflicts": []}, write=write)
+        result = {**done, "checks_run": [], "cause": "", "open_conflicts": []}
+        self.claude.configure(result=result, write=write)
         context = {
             **CONTEXT,
             "pr": 6,

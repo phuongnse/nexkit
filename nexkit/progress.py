@@ -28,11 +28,13 @@ STATUS_CONTEXTS = ("nexkit/checks", "nexkit/review")
 
 
 def trigger(decision):
-    """`fix`, `fix (auto)`, `fix (auto, conflicts)`, `review (resumed)`, ..."""
+    """`fix`, `fix (auto)`, `fix (auto, diagnosis)`, `fix (auto, conflicts)`, `review
+    (resumed)`, ..."""
     labels = [
         label
         for label, on in (
             ("auto", decision.get("auto")),
+            ("diagnosis", decision.get("diagnose")),
             ("conflicts", decision.get("conflicts")),
             ("resumed", decision.get("resumed")),
             ("autopilot", decision.get("autopilot")),

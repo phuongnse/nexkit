@@ -296,6 +296,16 @@ def results_run(comments):
     return run_id if kept else None
 
 
+def repeated_failures(comments):
+    """The checks that failed the same way before and after the last fix round, as the
+    state comment recorded them: the next automatic fix round diagnoses them first."""
+    _, state = read_state(comments)
+    repeated = ((state or {}).get("feedback") or {}).get("repeated")
+    if not isinstance(repeated, list):
+        return []
+    return [name for name in repeated if isinstance(name, str)][:MAX_QUESTIONS]
+
+
 def next_round(comments):
     """The number for a new pull request round, counting rounds of v1.1.0 state comments."""
     numbers = [run.get("round") or 0 for _, run in _marked(comments, RUN_PATTERN)]

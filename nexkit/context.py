@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .checks import RESULTS_DIR
+from .checks import RESULTS_DIR, failing_signatures
 from .config import NAME
 from .github import TRUSTED_ASSOCIATIONS
 from .route import parse_command
@@ -122,6 +122,52 @@ def evidence(feedback, decision, folder):
     return {"folder": str(root), "checks": found}
 
 
+def _failing_text(fix):
+    """Which checks still failed after a recorded fix round, or "" when unknown."""
+    failing = fix.get("failing")
+    if not isinstance(failing, list):
+        return ""  # the checks did not run, or the round was recorded before NexKit kept them
+    if not failing:
+        return "Every check passed after it."
+    items = [f"`{item.get('name')}` (`{clip(item.get('signature'), 200)}`)" for item in failing]
+    return "Checks that still failed after it, with their first failure: " + ", ".join(items)
+
+
+def earlier_fixes(comments):
+    """The fix prompt's list of the pull request's earlier fix rounds, oldest first: who
+    started each, its note, the fix agent's summary and cause, and the checks that still
+    failed after it. "" before the first."""
+    _, state = read_state(comments)
+    lines = []
+    for fix in (state or {}).get("fixes") or []:
+        who = "automatic" if fix.get("auto") else "requested by a person"
+        kind = ", a diagnosis round" if fix.get("diagnosis") else ""
+        lines += [
+            f"### Round {fix.get('round')}: fix ({who}{kind})",
+            "",
+            f"Note: {clip(fix.get('note'), 2000) or 'None.'}",
+            "",
+            "Summary from the fix agent:",
+            "",
+            clip(fix.get("summary")) or "None.",
+            "",
+        ]
+        if fix.get("cause"):
+            lines += ["Cause it found:", "", clip(fix["cause"], 2000), ""]
+        failing = _failing_text(fix)
+        if failing:
+            lines += [failing, ""]
+    return "\n".join(lines).strip()
+
+
+def diagnosis(decision, feedback):
+    """The checks that this automatic round diagnoses, each with the failure it repeated,
+    or []. `route` named them in the decision."""
+    names = decision.get("diagnose") or []
+    signatures = failing_signatures(feedback.get("checks"))
+    return [{"name": name, "signature": signatures[name]} for name in names if name in signatures]
+
+
 def _feedback(gh, decision, comments):
     """Earlier NexKit results plus current human review feedback on the pull request."""
     pr = decision["pr"]
@@ -171,6 +217,7 @@ def previous_review(gh, decision, fix_result):
             {
                 "auto": decision.get("auto"),
                 "summary": fix_result.get("summary"),
+                "cause": (fix_result.get("output") or {}).get("cause"),
                 "note": decision.get("note"),
                 "conflicts": fix_result.get("conflicts") if fix_result.get("start_base") else None,
             }
@@ -198,6 +245,8 @@ def previous_review(gh, decision, fix_result):
             "",
             clip(fix.get("summary")) or "None.",
         ]
+        if str(fix.get("cause") or "").strip():
+            lines += ["", "Cause the fix agent found:", "", clip(fix["cause"], 2000)]
         if fix.get("conflicts"):
             files = ", ".join(f"`{name}`" for name in fix["conflicts"])
             lines += ["", f"This round merged the base branch and resolved conflicts in {files}."]
@@ -265,6 +314,9 @@ def gather(gh, decision, stage=None, fix_result=None, results=None):
         pr_comments = gh.comments(decision["pr"])
         context["feedback"] = _feedback(gh, decision, pr_comments)
         context["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
-        context["evidence"] = evidence(_saved_feedback(pr_comments), decision, results)
+        saved = _saved_feedback(pr_comments)
+        context["evidence"] = evidence(saved, decision, results)
+        context["earlier_fixes"] = earlier_fixes(pr_comments)
+        context["diagnose"] = diagnosis(decision, saved)
         context["discussion"] += "\n\n---\n\nOn the pull request:\n\n" + _discussion(pr_comments)
     return context

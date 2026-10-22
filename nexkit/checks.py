@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -23,6 +24,20 @@ RESULTS_DIR = "results"
 RESULTS_LIMIT = 50_000_000
 # How much of a file decides whether it is text, which is redacted, or binary.
 SNIFF = 8192
+# A line of a check's output that reports a failure, for `failure_signature`.
+FAILURE_LINE = re.compile(r"fail|error|✘|✗", re.IGNORECASE)
+# What differs between two runs of the same failure, removed in this order: UUIDs, hex ids,
+# durations, then any other number.
+VOLATILE = (
+    re.compile(r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b", re.IGNORECASE),
+    re.compile(r"\b0x[0-9a-f]+\b", re.IGNORECASE),
+    re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b", re.IGNORECASE),
+    re.compile(
+        r"\d+(?:\.\d+)?\s*(?:ms|s|secs?|seconds?|m|mins?|minutes?|h|hours?)\b", re.IGNORECASE
+    ),
+    re.compile(r"\d+"),
+)
+SIGNATURE_LIMIT = 200
 
 
 def environment(commits=None):
@@ -127,6 +142,26 @@ def setup(cfg, cwd, redact=str, commits=None):
                 "output": output[-OUTPUT_TAIL:],
             }
     return None
+
+
+def failure_signature(output):
+    """What tells one failure of a check from another: the first line of its output that
+    reports a failure (FAIL, Error, failed, AssertionError, ✘), or else its last line,
+    without ids, durations, numbers and runs of whitespace, which differ between runs."""
+    lines = [line for line in (output or "").splitlines() if line.strip()]
+    line = next((x for x in lines if FAILURE_LINE.search(x)), lines[-1] if lines else "")
+    for pattern in VOLATILE:
+        line = pattern.sub("", line)
+    return " ".join(line.split())[:SIGNATURE_LIMIT]
+
+
+def failing_signatures(results):
+    """{check name: failure signature} for each failed check of `results`."""
+    return {
+        str(result.get("name")): failure_signature(result.get("output"))
+        for result in results or []
+        if isinstance(result, dict) and not result.get("passed")
+    }
 
 
 def size_text(size):

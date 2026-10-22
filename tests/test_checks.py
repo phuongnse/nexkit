@@ -195,6 +195,54 @@ class ResultFilesTests(unittest.TestCase):
         self.assertIn("e2e: reports/b.txt (0.0 MB)", summary)
 
 
+class FailureSignatureTests(unittest.TestCase):
+    """The same failure has the same signature in two runs; another failure does not."""
+
+    def test_the_first_failing_line_without_what_changes_between_runs(self):
+        first = (
+            "Running 42 tests using 4 workers\n"
+            "  ✓ 1 [chromium] › login.spec.ts:10:5 › signs in (1.2s)\n"
+            "  ✘ 2 [chromium] › desk.spec.ts:42:5 › picks an option (12.3s)\n"
+            "  1 failed\n"
+        )
+        again = first.replace("12.3s", "9.81s").replace("42 tests", "43 tests")
+        signature = checks.failure_signature(first)
+        self.assertEqual(signature, "✘ [chromium] › desk.spec.ts:: › picks an option ()")
+        self.assertEqual(checks.failure_signature(again), signature)
+        other = first.replace("picks an option", "saves the ticket")
+        self.assertNotEqual(checks.failure_signature(other), signature)
+
+    def test_ids_and_durations_do_not_count(self):
+        first = "Error: request 3f2a9c1e7 failed after 1500ms (trace 0x7ffe12)\n"
+        again = "Error: request 9b8c7d6e5 failed after 2 s (trace 0xdeadbeef)\n"
+        uuid = "Error: request 123e4567-e89b-12d3-a456-426614174000 failed after 1500ms\n"
+        self.assertEqual(checks.failure_signature(first), "Error: request failed after (trace )")
+        self.assertEqual(checks.failure_signature(again), checks.failure_signature(first))
+        self.assertEqual(checks.failure_signature(uuid), "Error: request failed after")
+        # Ordinary words made of hex letters stay.
+        words = "FAIL: added a bad face"
+        self.assertEqual(checks.failure_signature(words), words)
+
+    def test_failure_words_in_any_case(self):
+        for line in ("FAIL test_add", "AssertionError: -1 != 5", "2 tests failed", "npm error"):
+            output = f"collected 3 items\n{line}\nsummary at 10:42\n"
+            self.assertEqual(checks.failure_signature(output), checks.failure_signature(line))
+
+    def test_without_a_failing_line_the_last_line_counts(self):
+        output = "building...\n  step 3 of 7   timed out\n\n"
+        self.assertEqual(checks.failure_signature(output), "step of timed out")
+        self.assertEqual(checks.failure_signature(""), "")
+        self.assertEqual(checks.failure_signature(None), "")
+
+    def test_only_failing_checks_have_a_signature(self):
+        results = [
+            {"name": "unit", "passed": True, "output": "ok"},
+            {"name": "e2e", "passed": False, "output": "FAIL picks an option"},
+        ]
+        self.assertEqual(checks.failing_signatures(results), {"e2e": "FAIL picks an option"})
+        self.assertEqual(checks.failing_signatures(None), {})
+
+
 class CommitCase(unittest.TestCase):
     """A NexKit branch that forked from the base branch at `self.fork`."""
 

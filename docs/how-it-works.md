@@ -262,8 +262,11 @@ a round by itself (see [Work without a command](#work-without-a-command)).
 1. At the start of every fix round, the `agent` job checks with `git merge-tree` whether
    the branch conflicts with the base branch. Only then does it merge the base branch
    into the working tree, without committing. A branch that merges cleanly is not
-   merged, so fix rounds stay small. Branch protection can require up-to-date branches
-   if a repository wants every round to include the latest base.
+   merged, so fix rounds stay small, with one exception: an automatic round started
+   after failing checks merges the base branch whenever it has commits the branch lacks
+   (see [Failing checks the base branch fixed](#failing-checks-the-base-branch-fixed)).
+   Branch protection can require up-to-date branches if a repository wants every round
+   to include the latest base.
 2. The prompt lists the conflicted files. The agent resolves the conflict markers
    together with the round's other feedback; when conflicts are the only problem, the
    round only resolves them. It keeps the intent of both sides when a conflict has one
@@ -283,6 +286,19 @@ a round by itself (see [Work without a command](#work-without-a-command)).
    request keeps the base branch's history clean.
 5. The checks and the review run on the merge commit, as after any fix round. The round's
    comment says that the base branch was merged and which files had conflicts.
+
+**Failing checks the base branch fixed.** A check can fail for a reason that the base
+branch fixed after the pull request branched off, such as a flaky test. An automatic fix
+round started after failing checks therefore merges the base branch first whenever the
+base branch has commits the pull request lacks, conflicts or not. Without a conflict, the
+prompt says that the round merged the base branch cleanly and asks the agent to fix only
+what still fails on the merged code. When the agent changes nothing, `publish` pushes the
+merge alone, an empty patch being valid after a merge, and the next checks run on it.
+When the base branch has not moved, nothing is merged, and an empty patch is still the
+error "The agent finished without changing any files." Rounds that a person starts with
+`/nexkit fix`, and automatic rounds started only by blocking review findings while the
+checks passed, merge the base branch only on a conflict, so they never bring in base
+changes that nobody asked for.
 
 Conflicts in protected paths stop the round before the agent runs, because the agent may not
 change those files. Changes that the base branch brings to protected paths are fine: the
@@ -651,7 +667,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
-| Checks fail or the review requests changes | Starts an automatic fix round while `fix.max_auto_rounds` remain, otherwise asks for a person. |
+| Checks fail or the review requests changes | Starts an automatic fix round while `fix.max_auto_rounds` remain, otherwise asks for a person. After failing checks, that round first merges the base branch when it has moved, so a failure the base branch already fixed costs no agent change. |
 | The review itself fails | Sets `nexkit/review` to error and says why in the round's comment; comment `/nexkit review` to retry, after fixing the agent's secrets if it was an authentication error. |
 | NexKit itself fails in the `agent` or `review` job | Reports `NexKit stopped on <exception>` like an agent error; the job log has the traceback. |
 

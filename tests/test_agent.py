@@ -258,10 +258,10 @@ class StageCase(unittest.TestCase):
         self.tmp.cleanup()
         self.repos.cleanup()
 
-    def run_stage(self, stage, cfg=None, **kw):
+    def run_stage(self, stage, cfg=None, context=CONTEXT, **kw):
         return agent.run_stage(
             stage,
-            CONTEXT,
+            context,
             cfg or make_config(),
             self.repo,
             self.out,
@@ -552,6 +552,41 @@ class ConflictTests(StageCase):
         self.assertEqual(result["changed_files"], ["calc.py"])
         self.assertNotIn("## Conflicts with", self.claude.call()["prompt"])
         self.assertIn("\n</untrusted>\n\n## Approved plan", self.claude.call()["prompt"])
+
+    def behind_base(self):
+        """A branch that merges cleanly into a base branch that has moved since."""
+        self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
+        self.repos.push_commit("dev", "main", {"other.py": "x = 1\n"}, "Fix a flaky test")
+        self.checkout_branch()
+        return git(self.repo, "rev-parse", "HEAD"), git(self.repo, "rev-parse", "origin/main")
+
+    def run_after_failed_checks(self, **spec):
+        self.claude.configure(**{"result": FIX_DONE, **spec})
+        context = {**CONTEXT, "merge_moved_base": True}
+        return self.run_stage("fix", context=context, base="main")
+
+    def test_a_round_after_failed_checks_merges_a_moved_base_branch(self):
+        head, base = self.behind_base()
+        result = self.run_after_failed_checks()
+        self.assertEqual(result["status"], "done")
+        self.assertEqual((result["start_head"], result["start_base"]), (head, base))
+        self.assertEqual(result["conflicts"], [])
+        self.assertEqual(result["changed_files"], ["other.py"])  # the merge alone
+        prompt = self.claude.call()["prompt"]
+        section = prompt.split("## Merge of `main`", 1)[1].split("## Approved plan")[0]
+        self.assertIn(f"merged `main` (commit {base[:7]})", section)
+        self.assertIn("fix only what still fails", section)
+        self.assertNotIn("## Conflicts with", prompt)
+        self.assertIn("+x = 1", (self.out / "changes.patch").read_text())
+
+    def test_a_round_after_failed_checks_on_a_current_branch_merges_nothing(self):
+        self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
+        self.checkout_branch()
+        result = self.run_after_failed_checks()
+        self.assertIsNone(result["start_base"])
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error"], "The agent finished without changing any files.")
+        self.assertNotIn("## Merge of", self.claude.call()["prompt"])
 
     def test_leftover_conflict_markers_are_an_error(self):
         self.repos.diverge()

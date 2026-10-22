@@ -530,6 +530,19 @@ class ReportTests(ReportCase):
         _, state = read_state(self.gh.comments(6))
         self.assertEqual(state["fixes"][-1]["conflicts"], ["Program.cs", "Axis.Server.csproj"])
 
+    def test_round_comment_says_a_moved_base_was_merged(self):
+        self.candidate()
+        merged = {"status": "done", "summary": "", "start_base": "b" * 40, "conflicts": []}
+        self.write("nexkit-agent", "result.json", merged)
+        d = decision("fix", pr=6, target=6, head="a" * 40, auto=True)
+        self.run_report(d=d)
+        [row] = self.gh.run_comments(6)
+        self.assertIn(
+            "Merged `main` (`bbbbbbb`) into the branch, which was behind it.", row["body"]
+        )
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["fixes"][-1]["conflicts"], [])
+
     def test_review_body_shows_previous_findings(self):
         review = review_result()
         review["output"]["previous_findings"] = [

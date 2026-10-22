@@ -513,7 +513,7 @@ class MergePublishTests(unittest.TestCase):
         self.tmp.cleanup()
         self.repos.cleanup()
 
-    def run_fix(self, write):
+    def run_fix(self, write, **context):
         """Run the fix stage in a fresh checkout with a fake agent that writes `write`."""
         self.rounds = getattr(self, "rounds", 0) + 1
         work = self.repos.clone(f"agent-{self.rounds}")
@@ -525,7 +525,15 @@ class MergePublishTests(unittest.TestCase):
             "questions": [],
         }
         self.claude.configure(result={**done, "checks_run": [], "open_conflicts": []}, write=write)
-        context = {**CONTEXT, "pr": 6, "body": "", "discussion": "", "plan": "", "note": ""}
+        context = {
+            **CONTEXT,
+            "pr": 6,
+            "body": "",
+            "discussion": "",
+            "plan": "",
+            "note": "",
+            **context,
+        }
         result = agent.run_stage(
             "fix", context, self.cfg, work, self.out, program=str(self.claude.path), base="main"
         )
@@ -585,6 +593,19 @@ class MergePublishTests(unittest.TestCase):
         self.assertEqual(
             git(self.repos.origin, "show", f"{new_head}:calc.py"), (CALC + SUB).strip()
         )
+
+    def test_a_moved_base_merged_after_failing_checks_is_published_alone(self):
+        head = self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Sub")
+        base = self.repos.push_commit("dev", "main", {"flaky.py": "fixed = True\n"}, "Flaky")
+        result = self.run_fix({}, merge_moved_base=True)
+        self.assertEqual((result["start_base"], result["conflicts"]), (base, []))
+        outcome = self.publish_fix(result)
+        new_head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
+        self.assertEqual(outcome["head"], new_head)
+        parents = git(self.repos.origin, "log", "-1", "--format=%P", new_head).split()
+        self.assertEqual(parents, [head, base])
+        self.assertEqual(git(self.repos.origin, "show", f"{new_head}:flaky.py"), "fixed = True")
+        self.assertEqual(git(self.repos.origin, "diff", base, new_head, "--name-only"), "calc.py")
 
     def test_agent_edit_to_a_protected_path_is_still_rejected(self):
         self.repos.diverge({".nexkit/config.json": "{}\n"})

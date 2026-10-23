@@ -31,6 +31,22 @@ class SchemaTests(unittest.TestCase):
             ["result.too_large must be a boolean"],
         )
 
+    def test_a_criterion_is_met_unmet_or_unverifiable(self):
+        item = {"criterion": "add works", "test": "", "evidence": ""}
+        for status in ("met", "unmet", "unverifiable"):
+            review = {**VERDICT, "criteria": [{**item, "status": status}]}
+            self.assertEqual(problems(review, SCHEMAS["review"]), [], status)
+        review = {**VERDICT, "criteria": [{**item, "status": "unknown"}]}
+        self.assertEqual(
+            problems(review, SCHEMAS["review"]),
+            ["result.criteria[0].status must be one of 'met', 'unmet', 'unverifiable'"],
+        )
+        # A boolean `met` from before criteria had a status is not a result.
+        review = {**VERDICT, "criteria": [{**item, "met": True}]}
+        self.assertEqual(
+            problems(review, SCHEMAS["review"]), ["result.criteria[0].status is missing"]
+        )
+
     def test_booleans_are_not_numbers_and_extra_keys_stay(self):
         schema = {"type": "object", "properties": {"line": {"type": "integer"}}}
         self.assertEqual(problems({"line": True}, schema), ["result.line must be an integer"])

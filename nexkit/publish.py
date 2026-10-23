@@ -178,7 +178,7 @@ def publish_plan(gh, decision, result, context, cfg):
     return {"published": True, "comment": comment.get("html_url")}
 
 
-def pull_body(decision, result):
+def pull_body(decision, result, auto_merge=False):
     """Summary, what changed, how it is tested, then the optional sections."""
     output = result.get("output") or {}
     testing = (output.get("testing") or "").strip()
@@ -188,10 +188,16 @@ def pull_body(decision, result):
     parts += _section("How it is tested", [testing] if testing else [], "##")
     parts += _section("Outside the plan", _bullets(output.get("outside_plan")), "##")
     parts += _section("Notes for the reviewer", _bullets(output.get("reviewer_notes")), "##")
+    merge = (
+        "NexKit merges it once the checks pass and the review approves, unless the review "
+        "leaves a criterion for a person to confirm."
+        if auto_merge
+        else "A person decides whether to merge."
+    )
     parts += [
         "---",
         f"Implemented by NexKit from the plan in #{decision['issue']}. NexKit runs the project "
-        "checks and an AI review on every commit. A person decides whether to merge.",
+        f"checks and an AI review on every commit. {merge}",
     ]
     return "\n".join(parts)
 
@@ -372,7 +378,10 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
     pr = decision["pr"]
     if decision["action"] == "implement":
         pull = (author or gh).create_pull(
-            context["title"], decision["branch"], decision["base"], pull_body(decision, result)
+            context["title"],
+            decision["branch"],
+            decision["base"],
+            pull_body(decision, result, cfg["merge"]["auto"]),
         )
         pr = pull["number"]
         copy_issue_fields(gh, decision["issue"], pr)

@@ -36,6 +36,7 @@ from .state import (
 from .usage import parse_iso, shown
 
 ICONS = {True: "✅", False: "❌"}
+CRITERION_MARKS = {"met": "✅", "unmet": "❌", "unverifiable": "❔"}
 # 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
 RESOLUTIONS = {
     "resolved": "✅ resolved",
@@ -64,6 +65,7 @@ NEEDS_PERSON = {
     "needs_human": "checks or review still need attention and no automatic fix rounds remain",
     "merge_refused": "GitHub refused the automatic merge",
 }
+UNVERIFIED = "the review could not verify every acceptance criterion; confirm them before merging"
 # Bounds for what the state comment keeps for the next review.
 MAX_FINDINGS = 30
 MAX_FIXES = 5
@@ -127,9 +129,46 @@ def _part(title, lines):
     return ["", f"**{title}**", "", *lines] if lines else []
 
 
+def criterion_status(item):
+    """`met`, `unmet` or `unverifiable`. Reviews stored before criteria had a status have a
+    boolean `met`."""
+    if "status" in item:
+        return item["status"]
+    return "met" if item.get("met") else "unmet"
+
+
+def _criteria(review, status):
+    return [c for c in (review or {}).get("criteria") or [] if criterion_status(c) == status]
+
+
+def apply_criteria(review):
+    """The review NexKit acts on. Each unmet criterion is a blocking finding and requests
+    changes, whatever verdict the reviewer returned."""
+    unmet = _criteria(review, "unmet")
+    if not unmet:
+        return review
+    findings = []
+    for c in unmet:
+        body = f"Acceptance criterion not met: {c['criterion']}. {c.get('evidence') or ''}"
+        findings.append({"severity": "blocking", "file": "", "line": 0, "body": body.strip()})
+    return {
+        **review,
+        "verdict": "request_changes",
+        "findings": [*(review.get("findings") or []), *findings],
+    }
+
+
+def unverified(review):
+    """The criteria of an approving review that a person must confirm before a merge."""
+    if not review or review["verdict"] != "approve":
+        return []
+    return [c["criterion"] for c in _criteria(review, "unverifiable")]
+
+
 def review_body(review, checks):
     """What a person acts on comes first: verdict, findings, criteria. Evidence is collapsed."""
-    output = review["output"]
+    given = review["output"]
+    output = apply_criteria(given)
     approved = output["verdict"] == "approve"
     findings = []
     for item in sorted(output.get("findings") or [], key=lambda f: f["severity"] != "blocking"):
@@ -146,7 +185,7 @@ def review_body(review, checks):
             previous_evidence.append(f"- {mark}: {item['finding']}: {item['evidence'].strip()}")
     criteria, criteria_evidence = [], []
     for item in output.get("criteria") or []:
-        mark = ICONS[bool(item["met"])]
+        mark = CRITERION_MARKS[criterion_status(item)]
         test = f"`{item['test']}`" if item.get("test") else "no test"
         criteria.append(f"- {mark} {item['criterion']} ({test})")
         if item.get("evidence"):
@@ -157,6 +196,15 @@ def review_body(review, checks):
         "",
         output["summary"].strip(),
     ]
+    if given["verdict"] == "approve" and not approved:
+        lines += ["", "NexKit requests changes because an acceptance criterion is not met."]
+    confirm = unverified(output)
+    if confirm:
+        lines += [
+            "",
+            "The review could not verify every acceptance criterion (❔). A person confirms "
+            "them before the merge.",
+        ]
     lines += _part("Things to look at", findings)
     lines += _part("Previous findings", previous)
     lines += _part("Acceptance criteria", criteria)
@@ -193,12 +241,14 @@ def _set_statuses(gh, head, checks, review, url, review_error=""):
     )
     verdict = review["verdict"] if review else None
     if verdict:
+        if verdict != "approve":
+            text = "AI review requested changes"
+        elif unverified(review):
+            text = "AI review approved; a person confirms the criteria it could not verify"
+        else:
+            text = "AI review approved"
         gh.set_status(
-            head,
-            "nexkit/review",
-            "success" if verdict == "approve" else "failure",
-            "AI review approved" if verdict == "approve" else "AI review requested changes",
-            url,
+            head, "nexkit/review", "success" if verdict == "approve" else "failure", text, url
         )
     else:
         text = "AI review did not complete"
@@ -313,15 +363,18 @@ def _stage_failure(decision, agent, publish):
     return None
 
 
-def needs_person(outcome, cfg, plan=None, resume=None):
+def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
     """The reason a person is needed after a run, or None. It follows only the outcome and
-    the run's structured output, never a judgment by the agent."""
+    the run's structured output, never a judgment by the agent. `confirm` holds the
+    criteria a ready round's review could not verify."""
     if outcome == "planned":
         plan = plan or {}
         if plan.get("too_large"):
             return "the plan says the issue is too large for one session"
         return "the plan has questions" if plan.get("questions") else None
     if outcome == "ready":
+        if confirm:
+            return UNVERIFIED
         return None if cfg["merge"]["auto"] else "the pull request is ready for a human decision"
     if outcome == "paused":
         return (
@@ -604,7 +657,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     head = publish.get("head") or decision["head"]
     checks = _load(artifacts / "nexkit-checks" / "checks.json")
     reviewed = _load(artifacts / "nexkit-review" / "result.json")
-    review = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
+    given = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
+    review = apply_criteria(given) if given else None
+    confirm = unverified(review)
     review_paused = bool(reviewed) and reviewed.get("status") == "paused"
     url = run_url()
 
@@ -624,7 +679,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         failed = "" if review else review_failure(reviewed)[0]
         checks_ok, verdict = _set_statuses(gh, head, checks, review, url, failed)
     if review:
-        gh.create_review(pr, head, review_body({"output": review}, checks))
+        gh.create_review(pr, head, review_body({"output": given}, checks))
 
     row.update(
         head=head,
@@ -662,7 +717,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             f"✅ Checks passed and the AI review approved `{head[:7]}`. "
             "This pull request is ready for a human decision."
         )
-        if cfg["merge"]["auto"]:
+        if confirm:
+            held = " NexKit does not merge it by itself." if cfg["merge"]["auto"] else ""
+            items = "\n".join(f"- {criterion}" for criterion in confirm)
+            message += (
+                f"{held}\n\nThe review could not verify these acceptance criteria. Confirm "
+                f"them before merging:\n\n{items}"
+            )
+        elif cfg["merge"]["auto"]:
             try:
                 merge = gh.merge(pr, head) or {}
             except GitHubError as exc:
@@ -733,7 +795,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         done = f" and resolved conflicts in {files}." if files else ", which was behind it."
         message = f"{merged}{done}\n\n{message}"
     row.update(status=run_status(outcome), outcome=outcome)
-    reason = needs_person(outcome, cfg, resume=resume)
+    reason = needs_person(outcome, cfg, resume=resume, confirm=confirm)
     if reason:
         row["attention"] = reason
     progress.save_state(gh, pr, comment_id, state)

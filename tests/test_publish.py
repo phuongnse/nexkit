@@ -540,6 +540,14 @@ class PublishTests(unittest.TestCase):
         self.assertNotIn("Outside the plan", plain)
         self.assertNotIn("Notes for the reviewer", plain)
 
+    def test_pull_request_footer_follows_automatic_merge(self):
+        result = {"summary": "S.", "output": {}}
+        manual = pull_body({"issue": 5}, result)
+        self.assertTrue(manual.endswith("A person decides whether to merge."))
+        auto = pull_body({"issue": 5}, result, auto_merge=True)
+        self.assertNotIn("A person decides", auto)
+        self.assertIn("NexKit merges it once the checks pass and the review approves", auto)
+
 
 class MergePublishTests(unittest.TestCase):
     """A fix round that merged the base branch, from the agent's checkout to the push."""

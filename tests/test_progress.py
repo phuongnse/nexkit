@@ -243,6 +243,32 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(self.gh.reactions, [])  # dispatched rounds have no comment
         self.assertFalse(self.gh.dispatches)
 
+    def test_a_review_stored_before_criteria_had_a_status_keeps_its_verdict(self):
+        # A review from before 4.5.0 approved with a boolean `met: false`. Restoring its
+        # statuses keeps that verdict: a stored review is never judged again.
+        state = empty_state(5)
+        passed = [{"name": "test", "run": "t", "exit_code": 0, "passed": True, "output": ""}]
+        criterion = {"criterion": "five runs", "met": False, "test": "", "evidence": "None."}
+        review = {"verdict": "approve", "summary": "OK", "criteria": [criterion], "findings": []}
+        state["feedback"] = {"head": HEAD, "checks": passed, "review": review}
+        self.gh.comment(6, render_state(state))
+        d = decision("fix", comment_id=None, auto=True)
+        progress.start(self.gh, d)
+        self.write("nexkit-agent", "result.json", {"status": "blocked", "error": "Unclear"})
+        self.assertEqual(self.finish(d)["outcome"], "agent_blocked")
+        latest = {
+            s["context"]: (s["state"], s["description"])
+            for s in self.gh.statuses
+            if s["sha"] == HEAD
+        }
+        self.assertEqual(
+            latest,
+            {
+                "nexkit/checks": ("success", "Checks passed"),
+                "nexkit/review": ("success", "AI review approved"),
+            },
+        )
+
     def test_pull_request_from_v1_1_keeps_working(self):
         failing = [{"name": "test", "run": "t", "exit_code": 1, "passed": False, "output": "E"}]
         old = {

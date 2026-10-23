@@ -44,6 +44,18 @@ class InitDoctorTests(unittest.TestCase):
         self.assertEqual(cli.main(["init", "--repo", str(self.root)]), 2)  # refuses overwrite
         self.assertEqual(cli.main(["init", "--repo", str(self.root), "--force"]), 0)
 
+    def test_init_names_the_people_to_notify(self):
+        args = ["init", "--repo", str(self.root), "--notify", "@olivia", "--notify", "alice"]
+        self.assertEqual(cli.main([*args, "--notify", "olivia"]), 0)
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(cfg["notify"], ["olivia", "alice"])
+
+    def test_init_names_the_artifacts_of_ci_runs(self):
+        args = ["init", "--repo", str(self.root), "--evidence-artifact", "test-results-e2e"]
+        self.assertEqual(cli.main(args), 0)
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(cfg["evidence"], {"artifacts": ["test-results-e2e"]})
+
     def test_init_rejects_bad_check(self):
         self.assertEqual(cli.main(["init", "--repo", str(self.root), "--check", "npm test"]), 2)
         self.assertFalse((self.root / ".nexkit").exists())
@@ -991,8 +1003,9 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_jobs_that_run_agents_or_repository_code_hold_only_read_permissions(self):
         read = {"contents": "read", "issues": "read", "pull-requests": "read"}
-        # `actions: read` downloads the result files of an earlier run's failing checks.
-        self.assertEqual(self.permissions("agent"), {"actions": "read", **read})
+        # `actions: read` downloads the result files of an earlier run's failing checks and
+        # the evidence of the CI runs an issue names, `checks: read` their annotations.
+        self.assertEqual(self.permissions("agent"), {"actions": "read", "checks": "read", **read})
         self.assertEqual(self.permissions("verify"), {"contents": "read"})
         self.assertEqual(self.permissions("review"), read)
 
@@ -1007,6 +1020,8 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn(f"run-id: ${{{{ {decision} }}}}\n", step)
         context = agent.split("- name: Collect issue context\n", 1)[1].split("\n      - ", 1)[0]
         self.assertIn('--results "$RUNNER_TEMP/nexkit-checks"', context)
+        # The evidence of CI runs goes outside the checkout too, before the agent runs.
+        self.assertIn('--evidence "$RUNNER_TEMP/nexkit-evidence"', context)
         self.assertLess(agent.index("Download check results"), agent.index("Run agent"))
 
     def test_verify_holds_no_secrets(self):
@@ -1069,7 +1084,8 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_only_publish_and_report_may_write_contents(self):
         writers = [name for name, job in self.jobs.items() if "contents: write" in job]
-        self.assertEqual(writers, ["publish", "report"])
+        # publish pushes; report and maintain only merge, with nothing of the repository.
+        self.assertEqual(writers, ["publish", "report", "maintain"])
 
     def test_report_merges_without_checking_out_the_repository(self):
         # `contents: write` lets report merge; it has nothing of the repository to run or push.
@@ -1087,7 +1103,10 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("fromJSON(needs.route.outputs.maintain_timeout)", maintain)
         self.assertEqual(maintain.count("actions/checkout@"), 1)
         self.assertIn("path: kit", maintain)
-        self.assertNotIn("contents: write", maintain)
+        # `contents: write` lets a sweep merge a pull request whose required checks passed
+        # since; it has nothing of the repository to run or push.
+        self.assertNotIn("persist-credentials: true", maintain)
+        self.assertNotIn("NEXKIT_PUSH_TOKEN", maintain)
         self.assertNotIn("secrets.", maintain)
         self.assertIn('["none","maintain"]', self.jobs["report"])
 

@@ -59,6 +59,19 @@ class SweepTests(unittest.TestCase):
         self.assertIn("automatic conflict rounds are used up", line)
         self.assertFalse(self.gh.dispatches)
 
+    def test_a_round_held_up_by_workflow_changes_is_not_counted(self):
+        for n in range(1, 3):
+            self.round(6, n, conflicts=True, base_sha=str(n) * 40)
+        self.round(6, 3, conflicts=True, base_sha="3" * 40, outcome="needs_merge")
+        # While it is the latest round, a person merges: each push to `main` would only
+        # stop the same way.
+        self.assertEqual(self.sweep(), ["#6 conflicts with `main`, which a person merges."])
+        self.assertFalse(self.gh.dispatches)
+        # Once a person merged and a round ran, conflict rounds start again, and the round
+        # held up does not count.
+        self.round(6, 4, trigger="review")
+        self.assertEqual(self.sweep(), ["Started an automatic round on #6 to merge `main`."])
+
     def test_the_round_limit_is_configured(self):
         self.round(6, 1, conflicts=True, base_sha="1" * 40)
         [line] = resolve_conflicts(self.gh, "main", "nexkit.yml", "main", 1, delay=0)
@@ -243,3 +256,116 @@ class ConflictReportTests(ReportCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MergeRefusalTests(ReportCase):
+    """Refusals of the automatic merge that pass by themselves or by NexKit's own rounds."""
+
+    def setUp(self):
+        super().setUp()
+        sleep = mock.patch("nexkit.report.time.sleep")
+        self.sleeps = sleep.start()
+        self.addCleanup(sleep.stop)
+        self.cfg = make_config(
+            merge={"auto": True},
+            conflicts={"auto_resolve": True, "max_rounds": 1},
+            autopilot={"enabled": True},
+            notify=["olivia"],
+        )
+
+    def test_a_merge_refused_because_the_base_branch_moved_is_tried_again(self):
+        self.candidate()
+        modified = GitHubError(405, "Base branch was modified. Review and try the merge again.")
+        self.gh.merge_error = [modified, modified]
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "merged")
+        self.assertIn("at try 3", outcome["summary"])
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+        # Three refusals in a row: a person decides.
+        self.gh.issues[5]["state"] = "open"
+        self.gh.merge_error = [modified] * 3
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
+
+    def test_a_merge_waiting_for_required_checks_is_merged_by_a_later_sweep(self):
+        from nexkit import autopilot
+
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.candidate()
+        pending = GitHubError(405, 'Required status check "e2e" is expected.')
+        self.gh.merge_error = [pending]
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "merge_waiting")
+        self.assertIsNone(outcome.get("attention"))
+        self.assertIn("The next autopilot sweep merges it", outcome["summary"])
+        # The checks pass: the next sweep merges and closes the issue.
+        self.gh.merge_error = None
+        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        self.assertIn("#6: merged.", lines)
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+        row = self.gh.run_comments(6)[-1]
+        self.assertEqual((row["run"]["outcome"], row["run"]["status"]), ("merged", "success"))
+
+    def test_a_merge_waiting_for_checks_without_a_sweep_to_merge_it_waits_for_a_person(self):
+        self.gh.add_milestone(1)
+        pending = GitHubError(405, 'Required status check "e2e" is expected.')
+        # Without autopilot, or outside its scope, a person merges it.
+        manual = make_config(merge={"auto": True})
+        for cfg in (manual, make_config(merge={"auto": True}, autopilot={"enabled": True})):
+            self.gh.merge_error = [pending]
+            self.candidate()
+            if cfg is not manual:
+                self.gh.issues[5]["milestone"] = None
+            outcome = self.run_report(cfg=cfg)
+            self.assertEqual(outcome["outcome"], "merge_refused")
+            self.assertIn("Merge it once they pass.", outcome["summary"])
+            self.assertTrue(outcome["attention"])
+
+    def test_a_failed_merge_step_says_so_and_the_sweep_goes_on(self):
+        from nexkit import autopilot
+
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.candidate()
+        self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is expected.')]
+        self.run_report(cfg=self.cfg)
+        with mock.patch("nexkit.report.merge_pull", side_effect=GitHubError(502, "Bad")):
+            lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        self.assertIn("Could not merge the pull request of #6: GitHub API 502: Bad", lines)
+
+    def test_a_merge_waiting_whose_checks_fail_waits_for_a_person(self):
+        from nexkit import autopilot
+
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.candidate()
+        self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is in progress.')]
+        self.run_report(cfg=self.cfg)
+        self.gh.merge_error = GitHubError(405, 'Required status check "e2e" is failing.')
+        autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        row = self.gh.run_comments(6)[-1]["run"]
+        self.assertEqual(row["outcome"], "merge_refused")
+        self.assertTrue(self.gh.comments_matching(6, "@olivia a person is needed"))
+
+    def test_a_branch_behind_its_base_is_updated_and_reviewed_again(self):
+        self.candidate()
+        self.gh.merge_error = GitHubError(405, "Head branch is out of date. Review and try again.")
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "branch_updated")
+        self.assertEqual(self.gh.updated, [(6, HEAD)])
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(dispatch["inputs"]["command"], "review")
+        self.assertTrue(self.gh.run_comments(6)[-1]["run"]["updated_branch"])
+        # Once per `conflicts.max_rounds`: a person decides after that.
+        self.gh.pulls[6]["head"]["sha"] = HEAD
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
+        self.assertEqual(len(self.gh.updated), 1)
+
+    def test_a_refusal_that_needs_a_person_names_githubs_reason(self):
+        self.candidate()
+        self.gh.merge_error = GitHubError(405, "At least 1 approving review is required.")
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        self.assertIn("At least 1 approving review is required", outcome["summary"])
+        self.assertFalse(self.gh.dispatches[:-1])  # only the autopilot sweep after the run
+        self.assertEqual(self.gh.updated, [])

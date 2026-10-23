@@ -8,10 +8,21 @@ import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 WRITE_ROLES = {"admin", "maintain", "write"}
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+
+# The most a download from GitHub reads: a job's log or an artifact's zip.
+DOWNLOAD_LIMIT = 64_000_000
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    """Leave redirects to the caller, so the token never goes to another host."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
 
 
 class GitHubError(RuntimeError):
@@ -61,6 +72,42 @@ class GitHub:
                     continue
                 raise GitHubError(0, str(exc.reason)) from None
         raise AssertionError("unreachable")
+
+    def download(self, path, limit=DOWNLOAD_LIMIT):
+        """The bytes behind an API path that redirects to storage, such as a job's log or an
+        artifact's zip, at most `limit + 1` of them. GitHub gets the token; the storage it
+        redirects to never does."""
+        headers = {"User-Agent": "nexkit", "X-GitHub-Api-Version": "2022-11-28"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        try:
+            with build_opener(_NoRedirect).open(
+                Request(f"{self.api_url}{path}", headers=headers), timeout=120
+            ) as resp:
+                return resp.read(limit + 1)
+        except HTTPError as exc:
+            if exc.code not in (301, 302, 303, 307, 308) or not exc.headers.get("Location"):
+                raise GitHubError(exc.code, exc.read().decode(errors="replace")[:500]) from None
+            location = exc.headers["Location"]
+        except URLError as exc:
+            raise GitHubError(0, str(exc.reason)) from None
+        try:
+            with urlopen(Request(location, headers={"User-Agent": "nexkit"}), timeout=120) as resp:
+                return resp.read(limit + 1)
+        except HTTPError as exc:
+            raise GitHubError(exc.code, "the download failed") from None
+        except URLError as exc:
+            raise GitHubError(0, str(exc.reason)) from None
+
+    def job_log(self, job_id):
+        return self.download(f"{self._repo}/actions/jobs/{job_id}/logs")
+
+    def artifact_zip(self, artifact_id, limit=DOWNLOAD_LIMIT):
+        return self.download(f"{self._repo}/actions/artifacts/{artifact_id}/zip", limit)
+
+    def run_artifacts(self, run_id):
+        path = f"{self._repo}/actions/runs/{run_id}/artifacts"
+        return self.request("GET", path, params={"per_page": 100}).get("artifacts") or []
 
     def paginate(self, path, params=None, limit=1000):
         items, page = [], 1
@@ -272,6 +319,13 @@ class GitHub:
             "POST",
             f"{self._repo}/pulls/{number}/reviews",
             {"commit_id": commit_id, "body": body, "event": "COMMENT"},
+        )
+
+    def update_branch(self, number, sha):
+        """Merge the base branch into a pull request's branch on GitHub, when its head is
+        still `sha`."""
+        return self.request(
+            "PUT", f"{self._repo}/pulls/{number}/update-branch", {"expected_head_sha": sha}
         )
 
     def merge(self, number, sha, method="squash"):

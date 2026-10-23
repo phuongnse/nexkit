@@ -13,8 +13,10 @@
 #          merge.auto, the merge and the base branch's merge.after_workflows
 # maintain work that follows other events: closing a parent issue, resuming commands
 #          paused at the usage limit (waiting for their reset in a run of its own),
-#          starting rounds for conflicts with the base branch, autopilot sweeps; no agent
-#          and no repository checkout
+#          starting rounds for conflicts with the base branch, autopilot sweeps, which
+#          also end the comments and statuses of runs that ended without a report and
+#          merge pull requests whose required checks passed since; no agent and no
+#          repository checkout
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # version of each agent runtime in nexkit/__init__.py.
@@ -93,7 +95,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ fromJSON(needs.route.outputs.agent_timeout) }}
     permissions:
-      actions: read # the result files of an earlier run's failing checks
+      actions: read # the result files of an earlier run's failing checks; CI runs' evidence
+      checks: read # the error annotations of the failed jobs of CI runs the issue names
       contents: read
       issues: read
       pull-requests: read
@@ -144,10 +147,11 @@ jobs:
       - name: Collect issue context
         run: >-
           ${{ steps.python.outputs.python-path }} kit/bin/nexkit context --out out
-          --results "$RUNNER_TEMP/nexkit-checks"
+          --results "$RUNNER_TEMP/nexkit-checks" --evidence "$RUNNER_TEMP/nexkit-evidence"
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
       - name: Run agent
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit agent --repo repo --out out
         env:
@@ -399,11 +403,12 @@ jobs:
     # Longer for the run that waits for paused commands to come due (usage_limit.wait_minutes).
     timeout-minutes: ${{ fromJSON(needs.route.outputs.maintain_timeout) }}
     permissions:
-      contents: read
+      contents: write # merge a pull request whose required checks passed since; no checkout
       issues: write # close parent issues; mark paused runs as resumed; autopilot's issues
       pull-requests: write # paused runs on pull requests; close a pull request a split supersedes
       actions: write # resume paused commands, start conflict rounds and autopilot's commands
       checks: read # the annotations that name the failures of flaky runs
+      statuses: write # the pending statuses of a round that ended without a report
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

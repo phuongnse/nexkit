@@ -67,6 +67,10 @@ $writing
   - `recommended`: the number of the option you would choose, counting from 1, when the
     issue, the discussion, the docs or the code give a reason to prefer it; otherwise 0.
     Put the reason in `question`.
+    Recommend only an option that a change to the plan or the code carries out. When
+    an option needs a person to act outside the repository, such as downloading files,
+    granting access or running something by hand, ask the question and set
+    `recommended` to 0.
 - `too_large`: true when the work cannot be finished and tested well in one session.
 - `split`: when `too_large` is true, smaller issues that can each be done in one session,
   in order. Otherwise an empty list. Each has a `title`, a `body`, and `depends_on`: the

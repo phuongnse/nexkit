@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -22,9 +23,11 @@ from .maintain import (
 from .route import auto_input
 from .runlog import add_tokens, one_line
 from .state import (
+    CONTINUED,
     FAILURE,
     PAUSED,
     SUCCESS,
+    UNCOUNTED,
     clip,
     empty_state,
     options_of,
@@ -32,8 +35,10 @@ from .state import (
     read_state,
     recommended_option,
     round_questions,
+    run_comments,
+    with_run,
 )
-from .usage import parse_iso, shown
+from .usage import iso, parse_iso, shown
 
 ICONS = {True: "✅", False: "❌"}
 CRITERION_MARKS = {"met": "✅", "unmet": "❌", "unverifiable": "❔"}
@@ -53,6 +58,8 @@ COMPLETED = {
     "needs_human",
     "up_to_date",
     "conflict_fix",
+    "merge_waiting",
+    "branch_updated",
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
 # NexKit continues by itself (`auto_fix`, `conflict_fix`, a resumed pause) or is done.
@@ -64,6 +71,11 @@ NEEDS_PERSON = {
     "review_failed": "the AI review did not complete",
     "needs_human": "checks or review still need attention and no automatic fix rounds remain",
     "merge_refused": "GitHub refused the automatic merge",
+    "retry_failed": "the run stopped on a transient error twice",
+    "needs_merge": (
+        "the base branch changed workflow files that NexKit may not push; merge it into the "
+        "pull request yourself"
+    ),
 }
 UNVERIFIED = "the review could not verify every acceptance criterion; confirm them before merging"
 # Bounds for what the state comment keeps for the next review.
@@ -353,13 +365,16 @@ def _stage_failure(decision, agent, publish):
     action = decision["action"]
     if agent is None:
         return "agent_failed", f"NexKit could not run the {action} agent."
+    if agent["status"] == "needs_merge":
+        return "needs_merge", f"NexKit did not run the {action} agent: {agent['error']}"
     if agent["status"] != "done":
         message = f"NexKit stopped during {action}: {agent['error']}"
         extra = [blocked_questions(agent), open_conflicts(agent, decision["base"])]
         return "agent_" + agent["status"], "\n\n".join([message, *filter(None, extra)])
     if not publish.get("published"):
         reason = publish.get("error") or "the publish job failed"
-        return "publish_failed", f"NexKit could not publish the {action} result: {reason}"
+        outcome = "needs_merge" if publish.get("workflows") else "publish_failed"
+        return outcome, f"NexKit could not publish the {action} result: {reason}"
     return None
 
 
@@ -372,6 +387,9 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
         if plan.get("too_large"):
             return "the plan says the issue is too large for one session"
         return "the plan has questions" if plan.get("questions") else None
+    if outcome == "merge_waiting":
+        # Only a round whose issue autopilot's sweeps look at waits like this.
+        return None
     if outcome == "ready":
         if confirm:
             return UNVERIFIED
@@ -388,31 +406,109 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
 def notify(gh, cfg, number, reason):
     """Mention the people in `notify` once, in a new comment: GitHub notifies people
     mentioned in a new comment, not in an edited one."""
-    if not reason or not cfg["notify"]:
+    text = autopilot.mention_text(cfg, reason) if reason else None
+    if not text:
         return
-    people = " ".join(f"@{login}" for login in cfg["notify"])
     try:
-        gh.comment(number, f"{people} a person is needed: {reason}.")
+        gh.comment(number, text)
     except GitHubError as exc:
-        print(f"warning: could not mention {people}: {exc}", file=sys.stderr)
+        print(f"warning: could not mention {', '.join(cfg['notify'])}: {exc}", file=sys.stderr)
 
 
 def run_status(outcome):
     if outcome == "paused":
         return PAUSED
+    if outcome == "retry":
+        # The command runs once more in a run of its own.
+        return CONTINUED
     return SUCCESS if outcome in COMPLETED else FAILURE
 
 
-def _stop_round(gh, decision, agent, outcome, message, reason=None):
-    """Show a pull request round that published nothing, with the reason."""
+def _transient(decision, agent, publish, needs, stage="agent"):
+    """The error of a stage that stopped for a reason another try may pass, or None: a
+    transient error of the agent, a job that failed as a whole, or, in a round NexKit
+    started itself, a branch that moved while the agent worked. A job a person cancelled
+    is never one."""
+    result = (needs.get(stage) or {}).get("result")
+    if result == "cancelled":
+        return None
+    if result == "skipped":
+        # The review runs only after the checks: when their job failed as a whole, that
+        # job is what another try may pass.
+        verify = (needs.get("verify") or {}).get("result")
+        return "the verify job ended without a result" if verify == "failure" else None
+    if agent is None:
+        return f"the {stage} job ended without a result"
+    if agent.get("status") == "error" and agent.get("transient"):
+        return agent.get("error") or "a transient error"
+    if stage == "agent" and publish.get("moved") and _automatic(decision):
+        return publish.get("error")
+    return None
+
+
+def _automatic(decision):
+    return bool(decision.get("auto") or decision.get("autopilot"))
+
+
+def _retry(gh, decision, command, number, workflow_ref, default_branch):
+    """Start `command` once more after a transient error, with the same note for the same
+    command. Returns whether it started: never for a run that was itself the retry."""
+    if decision.get("retry"):
+        return False
+    same = command == progress.COMMANDS[decision["action"]]
+    note = (decision.get("note") or "") if same else ""
+    if same:
+        auto = auto_input(decision, retry=True)
+    else:
+        auto = auto_input({"autopilot": decision.get("autopilot")}, retry=True)
+    inputs = {"command": command, "number": str(number), "note": note, "auto": auto}
+    try:
+        gh.dispatch(workflow_file(workflow_ref), default_branch, inputs)
+    except GitHubError as exc:
+        print(f"warning: could not start the command once more: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def _earlier_error(gh, decision):
+    """The transient error that the run before this retry stopped on, or "" ."""
+    number = decision.get("pr") or decision["issue"]
+    for _, run in reversed(list(run_comments(gh.comments(number)))):
+        if run.get("transient_error") and run.get("url") != run_url():
+            return run["transient_error"]
+    return ""
+
+
+RETRY_LINE = (
+    "The error looks transient, from the service, the network or the runner rather than the "
+    "work, so NexKit runs the command once more."
+)
+
+
+def _retried(gh, decision, error, message):
+    """The message of a retry that stopped on a transient error again, with both errors."""
+    earlier = _earlier_error(gh, decision)
+    if earlier:
+        message += f"\n\nThe try before stopped on a transient error too: {earlier}"
+    return message
+
+
+def _stop_round(gh, decision, agent, outcome, message, reason=None, **fields):
+    """Show a pull request round that published nothing, with the reason. An automatic
+    fix round that stopped for a reason outside the agent's work gives its round back."""
     comments = gh.comments(decision["pr"])
-    _, state = read_state(comments)
+    state_id, state = read_state(comments)
     _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
+    counted = decision.get("auto") and not decision.get("conflicts")
+    if outcome in UNCOUNTED and counted and state and state.get("auto_fixes"):
+        state["auto_fixes"] -= 1
+        progress.save_state(gh, decision["pr"], state_id, state)
     comment_id, row = progress.find_round(comments, decision)
     status = run_status(outcome)
     row.update(status=status, head=decision["head"], tokens=_tokens(agent), outcome=outcome)
     _show_agents(row, agent)
     row.update(_autopilot_fields(agent))
+    row.update(fields)
     if reason:
         row["attention"] = reason
     progress.save_round(gh, decision["pr"], comment_id, row, message)
@@ -513,6 +609,151 @@ def after_merge(gh, workflows, base, records=None):
     return "\n".join([f"After the merge, on `{base}`:", *lines]) if lines else ""
 
 
+# Why GitHub refused a merge, for refusals that pass by themselves or by NexKit's rounds:
+# another merge into the base branch at the same moment, required checks that have not
+# reported yet, and a branch that branch protection wants up to date with its base.
+BASE_MODIFIED = re.compile(r"base branch was modified", re.I)
+CHECKS_PENDING = re.compile(
+    r"required status checks? .*\b(?:is|are) (?:expected|pending|in progress|queued)", re.I
+)
+BEHIND = re.compile(r"out of date|not up to date|is behind", re.I)
+# How often a merge refused because the base branch was modified is tried, and the seconds
+# before the first try again; each later try waits that much longer.
+MERGE_TRIES = 3
+MERGE_DELAY = 10
+# How long, and how often, a merge after updating the branch waits for GitHub to move it.
+UPDATE_WAIT = 5
+UPDATE_TRIES = 6
+
+
+def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
+    """Merge a pull request that checks and review approved: `target` names its `pr`,
+    `head`, `issue` and `base`. Returns (outcome, message), `message` being the round's
+    text so far. A merge refused because the base branch was modified meanwhile is tried
+    again a few times; other refusals that pass are handed on (see `_refused`)."""
+    pr, head = target["pr"], target["head"]
+    for attempt in range(MERGE_TRIES):
+        try:
+            merge = gh.merge(pr, head) or {}
+            break
+        except GitHubError as exc:
+            if attempt + 1 < MERGE_TRIES and BASE_MODIFIED.search(str(exc)):
+                time.sleep(MERGE_DELAY * (attempt + 1))
+                continue
+            return _refused(gh, cfg, target, row, message, exc, workflow, default_branch)
+    message = f"✅ Checks and AI review passed; merged `{head[:7]}`."
+    if attempt:
+        message += f" GitHub took it at try {attempt + 1}, after the base branch moved."
+    closed, lines = close_merged_issue(gh, target["issue"], pr, merge.get("sha"))
+    if closed and cfg["close_parent_issues"]:
+        # Closing with the Actions token starts no workflow for `issues: closed`.
+        lines += close_parents_safely(gh, target["issue"])
+    runs = []
+    started = after_merge(gh, cfg["merge"]["after_workflows"], target["base"], runs)
+    if runs:
+        row["after_merge"] = runs
+    if cfg["conflicts"]["auto_resolve"]:
+        # The merge's push starts no workflow, so look for new conflicts here.
+        swept = resolve_conflicts(
+            gh, target["base"], workflow, default_branch, cfg["conflicts"]["max_rounds"], {pr}
+        )
+        started = "\n".join(filter(None, [started, *swept]))
+    parts = ["\n".join(lines), started]
+    return "merged", message + "".join(f"\n\n{part}" for part in parts if part)
+
+
+def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
+    """(outcome, message) after GitHub refused the merge: a conflict round for a conflict,
+    `merge_waiting` for required checks that have not passed yet, which autopilot's next
+    sweeps merge, an update of a branch that is behind with a review of the new commit,
+    and otherwise `merge_refused` for a person."""
+    pr, base = target["pr"], target["base"]
+    message += f" Automatic merge was not possible: {exc}"
+    auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]
+    if auto_resolve and is_conflicting(gh, pr):
+        started = start_conflict_round(
+            gh, pr, base, workflow, default_branch, limit, own=row.get("url")
+        )
+        if started.startswith("Started"):
+            return "conflict_fix", f"{message}\n\nIt conflicts with `{base}`. {started}"
+        return "merge_refused", f"{message}\n\n{started}" if started else message
+    if CHECKS_PENDING.search(str(exc)):
+        if not _swept(gh, cfg, target["issue"]):
+            line = "Required checks have not passed yet. Merge it once they pass."
+            return "merge_refused", f"{message}\n\n{line}"
+        row.setdefault("waiting_since", iso(datetime.now(UTC)))
+        line = (
+            "Required checks have not passed yet. The next autopilot sweep merges it once "
+            "they pass."
+        )
+        return "merge_waiting", f"{message}\n\n{line}"
+    if auto_resolve and BEHIND.search(str(exc)):
+        return _update_branch(gh, target, row, message, limit, workflow, default_branch)
+    return "merge_refused", message
+
+
+def _swept(gh, cfg, number):
+    """Whether autopilot's sweeps look at this issue, so they can merge its pull request."""
+    if not autopilot.takes(cfg):
+        return False
+    try:
+        return autopilot.taken(gh, cfg, gh.issue(number))
+    except GitHubError:
+        return False
+
+
+def _update_branch(gh, target, row, message, limit, workflow, default_branch):
+    """Bring a branch that branch protection wants up to date with its base branch, and
+    check and review the new commit, within `conflicts.max_rounds` per pull request."""
+    pr, head, base = target["pr"], target["head"], target["base"]
+    updated = [run for _, run in run_comments(gh.comments(pr)) if run.get("updated_branch")]
+    if len(updated) >= limit:
+        note = f"Its {limit} automatic updates of the branch from `{base}` are used up."
+        return "merge_refused", f"{message}\n\n{note}"
+    try:
+        gh.update_branch(pr, head)
+        for _ in range(UPDATE_TRIES):
+            if gh.pull(pr)["head"]["sha"] != head:
+                break
+            time.sleep(UPDATE_WAIT)
+        gh.dispatch(
+            workflow,
+            default_branch,
+            {"command": "review", "number": str(pr), "note": "", "auto": "true"},
+        )
+    except GitHubError as error:
+        return "merge_refused", f"{message}\n\nNexKit could not update the branch: {error}"
+    row["updated_branch"] = True
+    line = (
+        f"It is behind `{base}`, which branch protection does not allow: NexKit merged `{base}` "
+        "into it and started `/nexkit review` on the new commit."
+    )
+    return "branch_updated", f"{message}\n\n{line}"
+
+
+def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
+    """Try the merge again for a pull request whose required checks had not passed, from
+    an autopilot sweep. The round's comment shows what happened. Returns a line for the log."""
+    pr = step["pull"]
+    for comment, run in run_comments(gh.comments(pr)):
+        if comment["id"] != step["round_comment"]:
+            continue
+        target = {"pr": pr, "head": run["head"], "issue": step["number"], "base": step["base"]}
+        outcome, text = merge_pull(gh, cfg, target, run, "", workflow, default_branch)
+        if outcome == "merge_waiting":
+            return f"#{pr} still waits for its required checks."
+        run.update(outcome=outcome, status=run_status(outcome))
+        reason = needs_person(outcome, cfg)
+        if reason:
+            run["attention"] = reason
+        else:
+            run.pop("attention", None)
+        gh.update_comment(comment["id"], with_run(comment["body"], run, text.strip()))
+        notify(gh, cfg, pr, reason)
+        return f"#{pr}: {outcome}."
+    return f"#{pr}: its round comment is gone."
+
+
 def close_merged_issue(gh, issue, pr, sha):
     """Close the issue a pull request implements after NexKit merged it.
 
@@ -578,7 +819,7 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
     """Post the outcome. Returns a short machine-readable summary for logs and tests."""
     result = _report(gh, decision, cfg, needs, Path(artifacts), workflow_ref, default_branch)
     fields = {"outcome": result["outcome"]}
-    for key in ("resume", "attention", "agents", "timed_out", "questions"):
+    for key in ("resume", "attention", "agents", "timed_out", "questions", "transient_error"):
         if result.get(key):
             fields[key] = result[key]
     progress.finish(gh, decision, run_status(result["outcome"]), result["summary"], **fields)
@@ -626,17 +867,28 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         failure = _stage_failure(decision, agent, publish)
         if failure:
             outcome, message = failure
+            fields = {}
+            error = _transient(decision, agent, publish, needs)
+            command = progress.COMMANDS[action]
+            if error and _retry(
+                gh, decision, command, decision["target"], workflow_ref, default_branch
+            ):
+                outcome, message = "retry", f"{message}\n\n{RETRY_LINE}"
+                fields["transient_error"] = clip(one_line(error), 500)
+            elif error and decision.get("retry"):
+                outcome, message = "retry_failed", _retried(gh, decision, error, message)
             reason = needs_person(outcome, cfg)
             if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent):
                 reason = None
                 message += "\n\nNexKit autopilot carries on from here."
             if decision.get("pr"):
-                _stop_round(gh, decision, agent, outcome, message, reason)
+                _stop_round(gh, decision, agent, outcome, message, reason, **fields)
             return {
                 "outcome": outcome,
                 "summary": message,
                 "attention": reason,
                 "agents": agents_ran(agent),
+                **fields,
                 **_autopilot_fields(agent),
             }
         if action == "plan":
@@ -725,53 +977,19 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 f"them before merging:\n\n{items}"
             )
         elif cfg["merge"]["auto"]:
-            try:
-                merge = gh.merge(pr, head) or {}
-            except GitHubError as exc:
-                outcome = "merge_refused"
-                message += f" Automatic merge was not possible: {exc}"
-                if cfg["conflicts"]["auto_resolve"] and is_conflicting(gh, pr):
-                    workflow = workflow_file(workflow_ref)
-                    started = start_conflict_round(
-                        gh,
-                        pr,
-                        decision["base"],
-                        workflow,
-                        default_branch,
-                        cfg["conflicts"]["max_rounds"],
-                        own=row.get("url"),
-                    )
-                    if started.startswith("Started"):
-                        outcome = "conflict_fix"
-                        started = f"It conflicts with `{decision['base']}`. {started}"
-                    message += f"\n\n{started}" if started else ""
-            else:
-                outcome, message = "merged", f"✅ Checks and AI review passed; merged `{head[:7]}`."
-                closed, lines = close_merged_issue(gh, decision["issue"], pr, merge.get("sha"))
-                if closed and cfg["close_parent_issues"]:
-                    # Closing with the Actions token starts no workflow for `issues: closed`.
-                    lines += close_parents_safely(gh, decision["issue"])
-                runs = []
-                started = after_merge(gh, cfg["merge"]["after_workflows"], decision["base"], runs)
-                if runs:
-                    row["after_merge"] = runs
-                if cfg["conflicts"]["auto_resolve"]:
-                    # The merge's push starts no workflow, so look for new conflicts here.
-                    workflow = workflow_file(workflow_ref)
-                    swept = resolve_conflicts(
-                        gh,
-                        decision["base"],
-                        workflow,
-                        default_branch,
-                        cfg["conflicts"]["max_rounds"],
-                        {pr},
-                    )
-                    started = "\n".join(filter(None, [started, *swept]))
-                parts = ["\n".join(lines), started]
-                message += "".join(f"\n\n{part}" for part in parts if part)
+            target = {"pr": pr, "head": head, "issue": decision["issue"], "base": decision["base"]}
+            outcome, message = merge_pull(
+                gh, cfg, target, row, message, workflow_file(workflow_ref), default_branch
+            )
     elif verdict is None:
         outcome = "review_failed"
         message = review_failure(reviewed)[1]
+        error = _transient(decision, reviewed, {}, needs, "review")
+        if error and _retry(gh, decision, "review", pr, workflow_ref, default_branch):
+            outcome, message = "retry", f"{message}\n\n{RETRY_LINE}"
+            row["transient_error"] = clip(one_line(error), 500)
+        elif error and decision.get("retry"):
+            outcome, message = "retry_failed", _retried(gh, decision, error, message)
     elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"]:
         state["auto_fixes"] += 1
         outcome = "auto_fix"
@@ -789,6 +1007,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     cause = str(((agent or {}).get("output") or {}).get("cause") or "").strip()
     if action == "fix" and cause:
         message = f"**Cause found by the fix agent:** {clip(cause, 1500)}\n\n{message}"
+    if action == "fix" and agent and agent.get("merge_held"):
+        files = ", ".join(f"`{name}`" for name in agent["merge_held"])
+        message = (
+            f"Did not merge `{decision['base']}`, which changed {files}: the token NexKit "
+            "pushes with may not change workflow files. The pull request stays behind it until "
+            "a person merges it, or `publish.push_token_secret` names a token that may.\n\n"
+            f"{message}"
+        )
     if action == "fix" and agent and agent.get("start_base"):
         files = ", ".join(f"`{name}`" for name in agent.get("conflicts") or [])
         merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"

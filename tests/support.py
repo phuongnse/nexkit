@@ -15,6 +15,7 @@ from unittest import mock
 
 from nexkit.agent import interpret
 from nexkit.config import validate
+from nexkit.github import GitHubError
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.base import Launch, Runtime
 from nexkit.runtimes.claude_code import ClaudeReader
@@ -104,6 +105,7 @@ class FakeGitHub:
         self.statuses = []
         self.dispatches = []
         self.merged = []
+        self.updated = []  # (number, head) for each update of a branch
         self.reactions = []
         self.merge_error = None
         self.dispatch_errors = {}
@@ -117,6 +119,9 @@ class FakeGitHub:
         self.jobs = {}  # run id, or (run id, attempt) -> jobs
         self.attempts = {}  # (run id, attempt) -> conclusion; others: the run's own
         self.annotations = {}  # job id -> its annotations
+        self.logs = {}  # job id -> its log, as bytes
+        self.run_artifact_list = {}  # run id -> its artifacts
+        self.zips = {}  # artifact id -> its zip, as bytes
         self.calls = []  # ("attempt" or "jobs", run id, attempt) for each attempt read
         self.reruns = []
         self.branches = {}
@@ -337,6 +342,8 @@ class FakeGitHub:
         return [p for p in self.pulls.values() if state == "all" or p["state"] == state]
 
     def workflow_run(self, run_id):
+        if run_id not in self.runs:
+            raise GitHubError(404, "Not Found")
         return self.runs[run_id]
 
     def workflow_runs(self, workflow, branch, limit=5):
@@ -363,6 +370,17 @@ class FakeGitHub:
     def check_run_annotations(self, check_run_id):
         self.calls.append(("annotations", check_run_id))
         return list(self.annotations.get(check_run_id, []))
+
+    def job_log(self, job_id):
+        if job_id not in self.logs:
+            raise GitHubError(410, "Gone")
+        return self.logs[job_id]
+
+    def run_artifacts(self, run_id):
+        return list(self.run_artifact_list.get(run_id, []))
+
+    def artifact_zip(self, artifact_id, limit=64_000_000):
+        return self.zips[artifact_id][: limit + 1]
 
     def rerun_failed_jobs(self, run_id):
         self.reruns.append(run_id)
@@ -394,10 +412,18 @@ class FakeGitHub:
         return {}
 
     def merge(self, number, sha, method="squash"):
-        if self.merge_error:
+        if isinstance(self.merge_error, list):
+            # A refusal per try, in order; once none are left, the merge goes through.
+            if self.merge_error:
+                raise self.merge_error.pop(0)
+        elif self.merge_error:
             raise self.merge_error
         self.merged.append((number, sha, method))
         return {"merged": True, "sha": "d" * 40}
+
+    def update_branch(self, number, sha):
+        self.updated.append((number, sha))
+        self.pulls[number]["head"]["sha"] = "e" * 40
 
     def set_status(self, sha, context, state, description, target_url=None):
         self.statuses.append(

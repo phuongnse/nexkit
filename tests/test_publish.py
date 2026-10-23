@@ -11,7 +11,7 @@ from nexkit import agent
 from nexkit.context import gather
 from nexkit.github import GitHubError
 from nexkit.gitutil import BOT_NAME, merge_tree
-from nexkit.publish import PublishError, publish, pull_body, render_plan
+from nexkit.publish import PublishError, WorkflowMergeError, publish, pull_body, render_plan
 from nexkit.state import latest_plan, plan_profile, plan_text
 from tests.support import (
     CALC,
@@ -669,8 +669,11 @@ class MergePublishTests(unittest.TestCase):
 
     def test_merged_workflow_changes_need_a_push_token(self):
         head, _ = self.repos.diverge({".github/workflows/ci.yml": "on: push\n"})
+        # The agent stage stops such a round itself without a push token; publish checks
+        # again, for a token that turns out to be the Actions token.
+        self.cfg = make_config(publish={"push_token_secret": "PUSH_TOKEN"})
         with self.assertRaisesRegex(
-            PublishError, r"`\.github/workflows/ci\.yml`.*publish\.push_token_secret"
+            WorkflowMergeError, r"`\.github/workflows/ci\.yml`.*publish\.push_token_secret"
         ):
             self.fix_round({"calc.py": CALC + SUB + MUL})
         self.assertEqual(git(self.repos.origin, "rev-parse", "nexkit/issue-5"), head)
@@ -685,7 +688,10 @@ class MergePublishTests(unittest.TestCase):
             "workflow `.github/workflows/ci.yml` without `workflow` scope' >&2\nexit 1\n"
         )
         hook.chmod(0o755)
-        with self.assertRaisesRegex(PublishError, "Merge the base branch into the pull request"):
+        self.cfg = make_config(publish={"push_token_secret": "PUSH_TOKEN"})
+        with self.assertRaisesRegex(
+            WorkflowMergeError, "Merge the base branch into the pull request"
+        ):
             self.fix_round({"calc.py": CALC + SUB + MUL}, push_token=True)
         self.assertEqual(git(self.repos.origin, "rev-parse", "nexkit/issue-5"), head)
 

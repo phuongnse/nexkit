@@ -13,7 +13,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `__init__.py` | Version and pins: runner, Python, each runtime |
 | `cli.py` | Every command, local and pipeline |
 | `route.py` | `route`: event → action, authorization, `verified_sha` |
-| `context.py`, `agent.py`, `prompts/` | `agent` and `review`: context, prompt, agent run, patch |
+| `context.py`, `evidence.py`, `agent.py`, `prompts/` | `agent` and `review`: context, CI runs' evidence, prompt, agent run, patch |
 | `runtimes/` | Everything specific to one CLI or model provider |
 | `schema.py`, `redact.py`, `runlog.py` | Result validation, secret removal, log and run summary |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
@@ -35,10 +35,22 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   the comment.
 - State lives only on GitHub (comments, pull requests, statuses).
 - Agent errors and `blocked` results never retry automatically; only check failures and
-  review findings do, up to `fix.max_auto_rounds`. Autopilot may answer a `blocked` result
-  whose questions all have a recommended option (`autopilot.answer: "recommended"`), and
-  asks for one split plan after an implement or fix agent ran out of time; it never
-  repeats a run unchanged.
+  review findings do, up to `fix.max_auto_rounds`. The one exception is a run that stopped
+  on a transient error before it published anything (the service, the network, a lost
+  runner, as `runtimes/` classifies it): it runs once more, and a second such stop waits
+  for a person. Autopilot may answer a `blocked` result
+  whose questions all have a recommended option (`autopilot.answer: "recommended"`), once
+  in a row: when the round its answers started asks again and no person commented since,
+  a person decides. A recommended option is one NexKit can carry out without a person.
+  Autopilot asks for one split plan after an implement or fix agent ran out of time; it
+  never repeats a run unchanged.
+- Every issue in autopilot's scope is either carried on by a run that exists, started only
+  when something changed since the same command last started (a commit, a person's
+  comment or command, a new plan), or waits for a person: listed under *Needs a person*
+  with its reason and mentioned to `notify` once. Each automatic action checks what it
+  needs before it spends agent time, and its budget counts only rounds that ran their
+  agent to its end or published. `tests/test_scenarios.py` plays this over many rounds;
+  a new automatic rule comes with a scenario there.
 - Prompts judge code behaviour, never things an agent cannot change (PR text, approvals,
   workflows).
 - A config key, command or prompt contract changes together with its tests, docs and skills.

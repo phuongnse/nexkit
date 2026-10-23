@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+# Usage limits reset within a week; paused runs older than this are not resumed.
+PAUSE_WINDOW = timedelta(days=8)
+
 
 def schedule(limit, now=None, retry_minutes=60):
     """When to resume after a runtime's `Outcome.limit`, and whether the CLI said so.

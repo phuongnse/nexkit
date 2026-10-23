@@ -174,6 +174,37 @@ failure.
 The artifact can be downloaded by anyone who can read the run, like the rest of NexKit's
 logs and artifacts (see [What is redacted](how-it-works.md#what-is-redacted)).
 
+### Evidence from CI runs
+
+```json
+"evidence": {"artifacts": ["test-results-e2e"]}
+```
+
+An issue about a failing or flaky CI run, such as a `bug` issue that autopilot opened, is
+often answerable only from what that run left: a trace, a screenshot, the end of a log.
+The agent session holds no GitHub token, so it cannot download them; NexKit does, before
+the agent runs.
+
+- **Which runs.** The runs of this repository that the issue names: those NexKit's own bug
+  and flaky-run issues record in their markers, and links to Actions runs, attempts and
+  jobs in the issue and in collaborators' comments. At most the five named last. Runs of
+  other repositories, runs from a fork, and other links are skipped, and the log says
+  which and why.
+- **What.** For each run and each attempt that failed: the end of each failed job's log
+  and its error and warning annotations. Then the run's artifacts that `artifacts` lists
+  by name, as the repository's CI workflows upload them; NexKit's own artifacts are not
+  among them. Without `artifacts`, only logs and annotations.
+- **Where.** The implement and fix rounds' `agent` job downloads them, with `actions: read`
+  and `checks: read`, to a folder outside the working tree, one folder per run. Text files
+  are redacted like the result files of failing checks; binary files are kept as they are.
+  A round keeps at most 50 MB; what would go past it is left out. Plans get nothing.
+- **The prompt** names the folder and, for each run, each file and artifact it holds, and
+  asks the agent to read them before it runs anything slow. When a download fails, for
+  example because an artifact expired, the round still runs: the prompt, the log of
+  *Collect issue context* and the run summary say what is missing and why.
+
+`nexkit init --evidence-artifact NAME`, repeated for each name, sets `artifacts`.
+
 ### Skipping work that a change cannot affect
 
 Setup and checks get `NEXKIT_BASE_SHA`: the merge base of the commit being checked and
@@ -393,12 +424,15 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Its plan is too large and suggests a split | Creates each part as a sub-issue, in order, with the issue's milestone and labels, marks each part *blocked by* the earlier parts it needs, closes the issue's open NexKit pull request as superseded, and plans the parts that need no other part. |
 | Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
+| The plan or round after autopilot's answers asks again, and no person commented since | Nothing: a person decides, and `notify` mentions them. A comment by a person lets autopilot answer again. |
 | Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
-| Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. |
+| Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. When that plan does not split the issue and needs nobody, starts `/nexkit go`, or `/nexkit fix` on its pull request. |
+| A parent issue whose sub-issues are all closed | With `close_parent_issues`, NexKit closed it already; without, it waits for a person to close it. |
 | A bug issue that autopilot opened for a CI failure on the default branch | Goes first: it is planned before every other issue in scope. |
 | An issue that autopilot opened for a failure of flaky runs on the default branch | Goes right after those bug issues. |
-| Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep | Nothing: a person decides, as without autopilot, and `notify` mentions them. Other issues go on. |
-| A run on it is running or paused, or its pull request is open | Nothing: the run, or the pull request's automatic rounds, carry it on. |
+| Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
+| A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
+| Its pull request is approved, and GitHub refused the merge until required checks pass | Tries the merge again, and merges once the checks pass. |
 | The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. |
 
 - **Scope.** `"milestone"` takes the open issues of the earliest open milestone: by due
@@ -415,21 +449,32 @@ every open issue in scope, oldest first, and starts the one command that moves i
   someone with write access to the repository; only they and other writers can edit them.
   `nexkit status` shows the issues it leaves alone and why.
 - **At most `max_parallel` at once.** An issue counts while a run on it is running or
-  paused, while its pull request is open, and while a command that autopilot started has
-  not run yet. With `null`, every ready issue starts at once; NexKit's conflict rounds
+  paused, while its pull request is open and needs nobody, and while a command that
+  autopilot started has not run yet. An issue that waits for a person does not count. With `null`, every ready issue starts at once; NexKit's conflict rounds
   (see [Conflicts with the base branch](#conflicts-with-the-base-branch)) keep the pull
   requests mergeable.
 - **One command per step.** Autopilot keeps one comment on each issue that names the
-  command it started last, and for which run. It never starts the same command twice for
-  the same state of the issue, so a command that `route` refused, or that never ran, is
-  not started again; after six hours, `nexkit status` shows it as not run.
+  command it started last, with its note, and for which run. It starts a command once for
+  a state of the issue. A command that has not run after six hours, because `route`
+  refused it or GitHub dropped it from the queue, starts once more with the same note; if
+  that one does not run either, the issue waits for a person. A run whose comment still
+  says running after its workflow run ended, for example because the runner was lost, is
+  marked as ended without a report and its pending statuses become errors. When NexKit
+  started that run itself, autopilot starts it once more; a person's command, or a second
+  such run, waits for a person. A run paused at the usage limit that NexKit will not
+  resume, and a continued run whose new run has not started after six hours, wait for a
+  person too.
 
 - **Answers.** Plans, and implement and fix rounds that stop as `blocked`, give each
   question its options and the one NexKit recommends, if any; the plan comment marks it
   `(recommended)`. With `answer: "recommended"`, autopilot answers only when every
   question has a recommendation, in a NexKit comment that the agents read as the owner's
   discussion. Comments by other bots never count. When autopilot takes over like this, or
-  splits an issue, `notify` is not mentioned.
+  splits an issue, `notify` is not mentioned. Autopilot answers once in a row: when the
+  plan or round that its answers started asks again, and no person commented on the issue
+  or its pull request since, it waits for a person, whatever the new questions are. The
+  prompts never recommend an option that needs a person to act outside NexKit, such as
+  downloading files or granting access, so such a question waits for a person at once.
 - **CI on the default branch.** With workflows in `merge.after_workflows`, each sweep also
   looks at the runs of each of them on the default branch, after NexKit's merges and
   people's alike, and at every attempt of each run; runs of pull requests, even from a
@@ -505,7 +550,11 @@ The choice follows the run's outcome only, never a judgment by the agent (see
 [How it works](how-it-works.md#when-a-person-is-needed)). A run mentions at most once;
 nobody outside `notify` is ever mentioned. Write logins without `@`. `nexkit doctor`
 warns about a listed login without write access, but NexKit still mentions it. With
-`[]`, nothing is posted.
+`[]`, nothing is posted. With autopilot, an issue that starts to wait for a person without
+a run that mentioned anyone, such as one whose command never ran, is mentioned by the next
+sweep, once for its latest run. Autopilot runs unattended, so `nexkit doctor` says when it
+is on and `notify` is empty; `nexkit init --notify LOGIN`, repeated for each login, sets
+it.
 
 ## Conflicts with the base branch
 

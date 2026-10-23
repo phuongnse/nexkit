@@ -17,8 +17,17 @@ from .autopilot import in_repository
 from .config import setting
 from .github import GitHubError
 from .route import issue_from_branch
-from .state import CONTINUED, PAUSED, RUNNING, by_bot, run_comments, with_run
-from .usage import iso, parse_iso
+from .state import (
+    CONTINUED,
+    PAUSED,
+    RUNNING,
+    UNCOUNTED,
+    by_bot,
+    conflict_rounds_used,
+    run_comments,
+    with_run,
+)
+from .usage import PAUSE_WINDOW, iso, parse_iso
 
 # Each task runs only when one of its configuration keys is on.
 TASKS = {
@@ -34,8 +43,6 @@ TASKS = {
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
 HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "duplicate"}
-# Usage limits reset within a week; paused runs older than this are not resumed.
-PAUSE_WINDOW = timedelta(days=8)
 # The `resume` dispatch: a run that waits for paused commands to come due and starts them.
 # Its `number` input is not a number, so callers' concurrency groups give it a group of its
 # own and it never holds up a command on an issue or pull request.
@@ -233,7 +240,11 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
         # now would replace a command waiting behind it. A later check starts the round.
         # A continued round has a run on its way.
         return ""
-    if len([run for run in tried if not run.get("resumed")]) >= max_rounds:
+    if latest.get("conflicts") and latest.get("outcome") in UNCOUNTED:
+        # The last round stopped because NexKit may not push the merge: a person merges
+        # it, and their next round lets conflict rounds start again.
+        return f"#{number} conflicts with `{base}`, which a person merges."
+    if conflict_rounds_used(tried) >= max_rounds:
         return (
             f"#{number} conflicts with `{base}`, but its {max_rounds} automatic "
             "conflict rounds are used up."

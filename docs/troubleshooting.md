@@ -27,8 +27,10 @@ permission named under `permissions:`, as `nexkit init` writes it.
 **`nexkit doctor`: "autopilot.enabled is on, but publish.push_token_secret is not set".**
 The same for `conflicts.auto_resolve`. Rounds that NexKit starts by itself push with the
 Actions token, which may not push changes to `.github/workflows/`. When a person merges
-such a change into the base branch, the next round that merges it into a pull request
-stops and waits for a person (see below). This is not a problem, and doctor still passes.
+such a change into the base branch, an automatic fix round leaves the merge out and fixes
+the pull request as it is, and a round that must merge it for a conflict stops before its
+agent and waits for a person (see below); neither uses up an automatic round. This is not
+a problem, and doctor still passes.
 To let those rounds go on by themselves, name a fine-grained token with Contents, Pull
 requests and Workflows write access in `publish.push_token_secret` (see
 [Secrets](configuration.md#secrets)).
@@ -125,9 +127,12 @@ asked for one.
 **Autopilot does not start an issue.** Run `nexkit status`: its *Autopilot* section says,
 for each open issue in scope, what the next sweep does and why an issue waits, such as
 another issue that blocks it (GitHub's *blocked by*; "Depends on" text does not count), an author without write
-access, `max_parallel`, or a question without a recommended option. An issue outside the
+access, `max_parallel`, or a question without a recommended option. Every issue that
+waits for a person is also listed under *Needs a person*, and does not count toward
+`max_parallel`. An issue outside the
 earliest open milestone (or without `autopilot.label`) is not in scope. A command that
-autopilot started but that never ran is not started again; post it yourself. To sweep
+autopilot started but that never ran starts once more after six hours; when that one does
+not run either, the issue waits for you, and you can post the command yourself. To sweep
 again at once: `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 
 **⏸️ "The agent stopped at the account's usage limit" or "Every agent stopped at its usage
@@ -177,9 +182,13 @@ them on the base branch after it merges (see
 path you added to `protected_paths`. Make those changes yourself, then use `/nexkit fix`.
 
 **"Automatic merge was not possible".** GitHub refused the merge, and the comment gives
-its reason. Usually a branch protection rule or ruleset is not met, such as a required
-approval or a required check that did not run. Merge the pull request yourself, or change
-the rule (see [Automatic merge](configuration.md#automatic-merge)).
+its reason. NexKit handles the refusals that pass: a base branch that moved meanwhile is
+tried again, required checks that have not passed yet are waited for by autopilot's
+sweeps (`merge_waiting`), and a branch that must be up to date is updated and reviewed
+again with `conflicts.auto_resolve`. What is left is a rule that needs a person, such as
+a required approval, or required checks that failed or never reported within six hours.
+Merge the pull request yourself, or change the rule (see
+[Automatic merge](configuration.md#automatic-merge)).
 
 **"Could not start `ci.yml`" after an automatic merge.** The merge happened; only the
 workflow did not start. Check that `.github/workflows/ci.yml` exists on the base branch
@@ -209,6 +218,9 @@ one pull request, and starts one round per commit of `main`. The `maintain` job'
 what each check did.
 
 **"conflicts with `main` in protected paths" or "brings changes to `.github/workflows/…`".**
-NexKit cannot publish this merge. Merge the base branch into the pull request yourself,
-push, and comment `/nexkit review`. For workflow files, a push token with Workflows write
+NexKit cannot publish this merge, and the round stopped before its agent ran, without using
+up an automatic round. Merge the base branch into the pull request yourself, push, and
+comment `/nexkit review`. **"Did not merge `main`, which changed `.github/workflows/…`"**
+means the round fixed the pull request without the merge; it stays behind `main` until
+you merge it. For workflow files, a push token with Workflows write
 access, named in `publish.push_token_secret`, also lets NexKit push the merge.

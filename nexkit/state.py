@@ -44,6 +44,27 @@ RUNNING, SUCCESS, FAILURE, PAUSED = "running", "success", "failure", "paused"
 # or continued on the pull request.
 CONTINUED = "continued"
 RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️", CONTINUED: "⏭️"}
+# Outcomes of rounds that published nothing for a reason outside the agent's work. They
+# count against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`.
+UNCOUNTED = {"needs_merge"}
+
+
+def conflict_rounds_used(rounds):
+    """How many of a pull request's rounds count against `conflicts.max_rounds`: automatic
+    conflict rounds, a resumed or retried one once, and none that stopped outside the
+    agent's work."""
+    return len(
+        [
+            run
+            for run in rounds
+            if run.get("conflicts")
+            and not run.get("resumed")
+            and not run.get("retry")
+            and run.get("outcome") not in UNCOUNTED
+        ]
+    )
+
+
 RUN_LABELS = {RUNNING: "running", PAUSED: "paused", CONTINUED: "continued"}
 # Bounds for what a plan's record and a run's marker keep.
 MAX_PARTS = 10

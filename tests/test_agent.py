@@ -652,6 +652,37 @@ class ConflictTests(StageCase):
         self.assertEqual(result["error"], "The agent finished without changing any files.")
         self.assertNotIn("## Merge of", self.claude.call()["prompt"])
 
+    def test_a_moved_base_that_changed_workflows_is_left_out_without_a_push_token(self):
+        workflow = {".github/workflows/ci.yml": "on: push\n"}
+        self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
+        self.repos.push_commit("dev", "main", workflow, "Change CI")
+        self.checkout_branch()
+        head = git(self.repo, "rev-parse", "HEAD")
+        result = self.run_after_failed_checks(write={"calc.py": CALC + SUB + "# fixed\n"})
+        self.assertEqual(result["status"], "done")
+        self.assertEqual((result["start_head"], result["start_base"]), (head, None))
+        self.assertEqual(result["merge_held"], [".github/workflows/ci.yml"])
+        self.assertEqual(result["changed_files"], ["calc.py"])
+        self.assertNotIn("## Merge of", self.claude.call()["prompt"])
+        # A token that may push workflows merges as before.
+        self.checkout_branch()
+        cfg = make_config(publish={"push_token_secret": "PUSH_TOKEN"})
+        self.claude.configure(result=FIX_DONE)
+        context = {**CONTEXT, "merge_moved_base": True}
+        result = self.run_stage("fix", cfg, context=context, base="main")
+        self.assertEqual(result["changed_files"], [".github/workflows/ci.yml"])
+        self.assertNotIn("merge_held", result)
+
+    def test_a_conflict_whose_merge_changes_workflows_stops_before_the_agent(self):
+        self.repos.diverge({".github/workflows/ci.yml": "on: push\n"})
+        self.checkout_branch()
+        result = self.run_fix(write={"calc.py": CALC + SUB + MUL})
+        self.assertEqual(result["status"], "needs_merge")
+        self.assertEqual(result["workflows"], [".github/workflows/ci.yml"])
+        self.assertIn("Merge the base branch into the pull request yourself", result["error"])
+        self.assertEqual(self.claude.calls(), [])
+        self.assertFalse(Path(self.repo, ".git", "MERGE_HEAD").exists())
+
     def test_leftover_conflict_markers_are_an_error(self):
         self.repos.diverge()
         self.checkout_branch()

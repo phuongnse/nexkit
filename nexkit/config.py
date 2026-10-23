@@ -55,6 +55,8 @@ DEFAULTS = {
     "log": {"tool_output": "truncated"},
     # The secret with the token that pushes NexKit's branches, or the Actions token.
     "publish": {"push_token_secret": None},
+    # The artifacts of the CI runs an issue names that the implement and fix agents get.
+    "evidence": {"artifacts": []},
 }
 
 TOP_KEYS = set(DEFAULTS)
@@ -64,7 +66,19 @@ MAX_WAIT = 330
 # The longest a stage may run, with all of its agents.
 MAX_STAGE_MINUTES = 340
 # Objects whose keys are merged over the defaults one by one.
-GROUPS = ("fix", "merge", "conflicts", "usage_limit", "autopilot", "limits", "log", "publish")
+GROUPS = (
+    "fix",
+    "merge",
+    "conflicts",
+    "usage_limit",
+    "autopilot",
+    "limits",
+    "log",
+    "publish",
+    "evidence",
+)
+# The most artifact names `evidence.artifacts` may list.
+MAX_ARTIFACTS = 10
 # Keys of earlier releases, with where they live now.
 RENAMED = {
     "max_auto_fixes": "fix.max_auto_rounds",
@@ -526,7 +540,20 @@ def validate(raw, *, layered=False):
     if cfg["log"]["tool_output"] not in TOOL_OUTPUT:
         _fail(f"log.tool_output must be one of {', '.join(TOOL_OUTPUT)}")
     _push_token(cfg)
+    _artifacts(cfg["evidence"]["artifacts"])
     return cfg
+
+
+def _artifacts(names):
+    """`evidence.artifacts`: names of artifacts that the repository's CI workflows upload."""
+    where = "evidence.artifacts"
+    if not isinstance(names, list) or len(names) > MAX_ARTIFACTS:
+        _fail(f"{where} must be a list of at most {MAX_ARTIFACTS} artifact names")
+    for name in names:
+        if not isinstance(name, str) or not name.strip() or len(name) > 100 or "\n" in name:
+            _fail(f'{where} must be a list of artifact names, such as "test-results"')
+    if len(set(names)) != len(names):
+        _fail(f"{where} lists an artifact twice")
 
 
 def setting(cfg, path):

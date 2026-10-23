@@ -82,7 +82,10 @@ files or repository settings, and wait for confirmation.
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`
    For each check that needs more than a name and a command, add the flags that name it:
    `--check-timeout <name>=<minutes>`, `--check-slow <name>`, and
-   `--check-results <name>=<path>` once for each path.
+   `--check-results <name>=<path>` once for each path. When the repository's CI workflows
+   upload artifacts that explain a failure, such as end-to-end test results, add
+   `--evidence-artifact <name>` for each, so implement and fix rounds on an issue that
+   names a failed run get them.
    Show the generated `.nexkit/config.json` and `.github/workflows/nexkit.yml`. The config
    declares the `claude` agent with `"oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"`; if
    the user has an Anthropic API key instead, change it to
@@ -132,11 +135,13 @@ files or repository settings, and wait for confirmation.
    moves on when an issue closes; `{"scope": "label", "label": "<label>"}` takes the
    issues with a label instead. Say that it skips their approval of each plan, that it
    takes only issues opened by people with write access, and that it stops on questions,
-   blocked or failed runs and mentions `notify`. `"max_parallel": <n>` limits how many
+   blocked or failed runs and mentions `notify`, so recommend setting `notify` with it
+   (`nexkit init --notify <login>`, or `"notify": ["<login>"]`). `"max_parallel": <n>` limits how many
    issues are in progress at once; without it, every ready issue starts. It pairs with
    `merge.auto`, `conflicts.auto_resolve`, `close_parent_issues` and `notify`. With
    `"answer": "recommended"`, it also answers the questions of plans and blocked rounds
-   with the option NexKit recommends, when every question has one; it splits plans that
+   with the option NexKit recommends, when every question has one, and waits for a person
+   when the round after its answers asks again; it splits plans that
    are too large into sub-issues either way. With `merge.after_workflows`, it also runs a
    failed CI run on the default branch once more and, if it fails again, opens a `bug`
    issue that it plans first; runs that passed only when run again are recorded on their

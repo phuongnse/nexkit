@@ -28,7 +28,7 @@ $discussion
 $note
 </untrusted>
 
-## Rules
+$ci_evidence## Rules
 
 - Make the change the plan describes and nothing unrelated. Follow the repository's
   conventions and instructions (CLAUDE.md or AGENTS.md).
@@ -64,4 +64,7 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
   for each decision; otherwise an empty list. Each has the `question`, the `options` you
   see (two to four short answers) and `recommended`: the number of the option you would
   choose, counting from 1, or 0 when none is clearly better. Put the reason in `question`.
+  Recommend only an option that a change to the plan or the code carries out. When an
+  option needs a person to act outside the repository, such as downloading files,
+  granting access or running something by hand, set `recommended` to 0.
 - `checks_run`: the commands you ran and whether each passed.

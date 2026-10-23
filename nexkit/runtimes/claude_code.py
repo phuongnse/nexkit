@@ -36,6 +36,15 @@ LIMIT = re.compile(
     re.I,
 )
 EPOCH = re.compile(r"limit reached\|(\d{9,11})\b", re.I)
+# What Claude Code says when the service or the network failed for a while rather than the
+# work: an overloaded or failing API, a rate limit that is not a usage limit, a lost
+# connection. Another try later may pass.
+TRANSIENT = re.compile(
+    r"API Error: (?:5\d\d|429)\b|overloaded|internal server error|service unavailable"
+    r"|bad gateway|gateway timeout|Connection error|ECONNRESET|ECONNREFUSED|ETIMEDOUT"
+    r"|EAI_AGAIN|socket hang up|Request timed out|fetch failed",
+    re.I,
+)
 MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
 RESET = re.compile(
     r"\breset(?:s)?\s+(?:at\s+|on\s+)?"
@@ -206,6 +215,8 @@ class ClaudeReader(Reader):
         self.submitted = None
         # Commands started with `run_in_background`: a headless run cannot wait for them.
         self.background = 0
+        # Whether the model wrote anything, rather than Claude Code alone.
+        self.answered = False
 
     def events(self, raw):
         if raw.get("type") == "result":
@@ -218,6 +229,7 @@ class ClaudeReader(Reader):
             return []
         found = []
         if raw.get("type") == "assistant":
+            self.answered = self.answered or message.get("model") != "<synthetic>"
             message_id = message.get("id")
             if message_id is None or message_id not in self._messages:
                 self._messages.add(message_id)
@@ -281,6 +293,12 @@ class ClaudeReader(Reader):
         # Only what Claude Code says about a failed run, never the model's own text.
         said = event.get("result") if event.get("is_error") else None
         outcome.limit = limit_reached((said, stderr, self.last_text), resets_at=self.resets_at)
+        if outcome.error and not outcome.limit:
+            texts = " ".join(str(text) for text in (said, stderr, self.last_text) if text)
+            # A CLI that exited before the model answered never got to the work.
+            outcome.transient = bool(TRANSIENT.search(texts)) or (
+                not self.result and not self.answered
+            )
         return outcome
 
 

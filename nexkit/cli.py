@@ -63,6 +63,8 @@ def cmd_init(args):
         check_timeouts=args.check_timeout,
         check_slow=args.check_slow,
         check_results=args.check_results,
+        notify=args.notify,
+        evidence=args.evidence_artifact,
     )
     for path in written:
         print(f"wrote {path}")
@@ -211,7 +213,16 @@ def cmd_context(args):
     fix_result = None
     if args.fix_result and Path(args.fix_result).is_file():
         fix_result = json.loads(Path(args.fix_result).read_text())
-    context = gather(_gh(), decision, stage=args.stage, fix_result=fix_result, results=args.results)
+    cfg = _config() if args.evidence and os.environ.get("NEXKIT_CONFIG") else None
+    context = gather(
+        _gh(),
+        decision,
+        stage=args.stage,
+        fix_result=fix_result,
+        results=args.results,
+        ci=args.evidence,
+        cfg=cfg,
+    )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "context.json").write_text(json.dumps(context, indent=2))
@@ -272,6 +283,9 @@ def _agent(args, decision, stage, out):
                 "status": "error",
                 "error": f"Setup command `{failed['run']}` failed with exit code "
                 f"{failed['exit_code']}:\n```\n{failed['output'][-2000:]}\n```",
+                # A registry or mirror that was down: one more try costs a setup, not an
+                # agent run.
+                "transient": True,
             }
             (out / "result.json").write_text(json.dumps(result, indent=2))
             write_summary(summary(result, []), redact)
@@ -329,7 +343,7 @@ def cmd_cache(args):
 def cmd_publish(args):
     from .github import GitHub, GitHubError
     from .gitutil import GitError
-    from .publish import PublishError, publish
+    from .publish import BranchMovedError, PublishError, WorkflowMergeError, publish
 
     decision = _decision()
     out = Path(args.artifacts)
@@ -352,6 +366,10 @@ def cmd_publish(args):
         )
     except (PublishError, GitError, GitHubError) as exc:
         outcome = {"published": False, "error": str(exc)}
+        if isinstance(exc, WorkflowMergeError):
+            outcome["workflows"] = True
+        if isinstance(exc, BranchMovedError):
+            outcome["moved"] = True
     print(json.dumps(outcome, indent=2))
     _output(result=outcome, head=outcome.get("head") or "", pr=str(outcome.get("pr") or ""))
     return 0
@@ -422,6 +440,20 @@ def build_parser():
     )
     p.add_argument("--setup", action="append", default=[], metavar="COMMAND")
     p.add_argument(
+        "--notify",
+        action="append",
+        default=[],
+        metavar="LOGIN",
+        help="Mention LOGIN when a run needs a person; repeat for more",
+    )
+    p.add_argument(
+        "--evidence-artifact",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="An artifact of CI runs that implement and fix rounds download; repeat for more",
+    )
+    p.add_argument(
         "--model",
         default=configuration.DEFAULTS["model"],
         help="Model for every stage of the `claude` agent (default: %(default)s)",
@@ -460,6 +492,9 @@ def build_parser():
     p.add_argument("--stage", choices=["review"], help="Default: the decision's action")
     p.add_argument("--fix-result", help="This run's fix result.json, for the review stage")
     p.add_argument("--results", help="The downloaded nexkit-checks artifact, for a fix round")
+    p.add_argument(
+        "--evidence", help="Where an implement or fix round downloads the CI runs the issue names"
+    )
     p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("agent", help="(pipeline) Run an agent stage")

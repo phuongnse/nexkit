@@ -39,8 +39,10 @@ def issue_from_branch(branch):
 # The `auto` dispatch input: `true` for an automatic fix round after failures, `conflicts`
 # for an automatic round that merges the base branch, `resume` for a command that NexKit
 # runs again after the agent's usage limit reset, `autopilot` for a command that autopilot
-# started. Several are joined with commas.
+# started, `retry` for the one more try after a transient error. Several are joined with
+# commas.
 RESUME = "resume"
+RETRY = "retry"
 # Also the `command` of the dispatch that starts an autopilot sweep.
 AUTOPILOT = "autopilot"
 # Issue events after which an issue may have come into autopilot's scope.
@@ -52,11 +54,12 @@ def auto_kinds(value):
     return {"resumed" if kind == RESUME else kind for kind in kinds if kind}
 
 
-def auto_input(decision, resume=False):
+def auto_input(decision, resume=False, retry=False):
     """The `auto` input that starts this decision's command again."""
     kinds = ["conflicts" if decision.get("conflicts") else "true"] if decision.get("auto") else []
     kinds += [AUTOPILOT] if decision.get(AUTOPILOT) else []
     kinds += [RESUME] if resume else []
+    kinds += [RETRY] if retry or decision.get(RETRY) else []
     return ",".join(kinds) or "false"
 
 
@@ -164,7 +167,7 @@ def route(gh, event_name, event, inputs=None):
         decision["actor"] = event.get("sender", {}).get("login")
         if decision["action"] != "none":
             decision.update(
-                {kind: True for kind in ("conflicts", "resumed", AUTOPILOT) if kind in kinds}
+                {kind: True for kind in ("conflicts", "resumed", AUTOPILOT, RETRY) if kind in kinds}
             )
         if decision.get("conflicts"):
             # Which base commit this round resolves, so the same conflict is tried once.

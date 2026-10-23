@@ -212,15 +212,156 @@ class SweepTests(AutopilotCase):
         self.assertEqual(self.started(), [("plan", 5), ("go", 5)])
         self.assertEqual(len(self.gh.comments_matching(5, "NexKit autopilot started")), 1)
 
-    def test_a_command_that_never_ran_is_not_started_again(self):
+    def test_a_command_that_never_ran_starts_once_more_then_waits(self):
         self.issue(5)
         self.sweep()
         later = datetime.now(UTC) + timedelta(hours=7)
         _, [step] = autopilot.preview(self.gh, self.cfg)
         self.assertEqual(step["state"], "active")
         step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=later)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertIn("did not run, so autopilot starts it once more", step["reason"])
+        autopilot.start(self.gh, step, "nexkit.yml", "main", now=later)
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 5)])
+        # It does not run again either: a person decides.
+        much_later = later + timedelta(hours=7)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=much_later)
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
+        self.assertIn("did not run, again", step["reason"])
+        # A later start of another command can be started once more again.
+        self.run_comment(5, "plan", status="running")
+        self.gh.issue_comments[5].pop()
+        self.planned(5)
+        self.sweep()
+        record = autopilot.find_record(self.gh.comments(5))[1]
+        self.assertEqual((record["command"], record.get("retried")), ("go", None))
+
+    def test_a_note_of_a_command_that_never_ran_is_kept(self):
+        cfg = pilot(answer="recommended")
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", status="failure", outcome="agent_blocked", questions=[QUESTION])
+        self.sweep(cfg)
+        later = datetime.now(UTC) + timedelta(hours=7)
+        step = autopilot.assess(self.gh, cfg, self.gh.issues[5], {}, now=later)
+        self.assertIn("Which port? Answer: 8080", step["note"])
+        self.assertNotIn("answers", step)  # posted once already
+
+    def test_a_run_that_ended_without_a_report_starts_once_more(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", status="running", autopilot=True)
+        self.gh.runs[self.runs] = {"status": "in_progress"}
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(step["state"], "active")
+        self.gh.runs[self.runs] = {"status": "completed", "conclusion": "failure"}
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 5)])
+        [run] = [c["run"] for c in self.gh.run_comments(5) if c["run"]["command"] == "go"]
+        self.assertEqual((run["status"], run["attention"]), ("failure", autopilot.REPORTLESS))
+        # Its start ends without a report too: now a person decides.
+        self.run_comment(5, "go", status="running", autopilot=True)
+        self.gh.runs[self.runs] = {"status": "completed", "conclusion": "cancelled"}
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.REPORTLESS))
+        # A person's command is never started again by autopilot.
+        self.issue(6)
+        self.planned(6)
+        self.run_comment(6, "go", status="running")
+        self.gh.runs[self.runs] = {"status": "completed"}
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
+        self.assertEqual((steps[6]["state"], steps[6]["reason"]), ("waits", autopilot.REPORTLESS))
+
+    def test_a_go_whose_review_continues_on_its_pull_request_follows_the_pull_request(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", status="continued", outcome="retry")
+        self.gh.add_pull(6, 5)
+        row = {"round": 2, "trigger": "review (retry)", "url": "u", "status": "success"}
+        self.gh.comment(6, render_run({**row, "outcome": "needs_human", "attention": "x"}))
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", "x"))
+
+    def test_a_chained_round_whose_next_round_never_ran_waits(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        row = {"round": 1, "trigger": "implement", "url": "u", "status": "success"}
+        comment = self.gh.comment(6, render_run({**row, "outcome": "auto_fix"}))
+        comment["updated_at"] = "2026-01-01T00:00:00Z"
+        soon = datetime(2026, 1, 1, 1, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=soon)
+        self.assertEqual(step["state"], "active")
+        late = datetime(2026, 1, 1, 7, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=late)
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
+
+    def test_a_retry_of_another_command_still_lets_a_stalled_round_start_once_more(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        record = {"command": "go", "target": 5, "retried": True, "basis": [0, 0], "at": "x"}
+        self.gh.comment(5, "Started.\n\n" + autopilot.record_marker(record))
+        row = {
+            "round": 2,
+            "trigger": "fix (auto)",
+            "url": "https://github.com/acme/app/actions/runs/88",
+        }
+        self.gh.comment(6, render_run({**row, "status": "running", "head": "b" * 40}))
+        self.gh.runs[88] = {"status": "completed"}
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["command"]), ("start", "fix"))
+
+    def test_a_round_that_ended_without_a_report_gets_its_statuses_back(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        row = {
+            "round": 2,
+            "trigger": "fix (auto)",
+            "url": "https://github.com/acme/app/actions/runs/77",
+        }
+        self.gh.comment(6, render_run({**row, "status": "running", "head": "b" * 40}))
+        self.gh.runs[77] = {"status": "completed"}
+        self.sweep()
+        self.assertEqual(self.started(), [("fix", 6)])
+        errors = {(s["sha"], s["context"], s["state"]) for s in self.gh.statuses}
+        self.assertIn(("b" * 40, "nexkit/review", "error"), errors)
+
+    def test_a_pause_that_nexkit_does_not_resume_waits_for_a_person(self):
+        self.issue(4)
+        self.run_comment(4, "plan", status="paused", attention="run the command after the reset")
+        self.issue(5)
+        resume = {"command": "plan", "number": 5, "at": "2026-01-01T05:00:00Z"}
+        self.run_comment(5, "plan", status="paused", resume=resume)
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
+        self.assertEqual(
+            (steps[4]["state"], steps[4]["reason"]), ("waits", "run the command after the reset")
+        )
+        # The fake's comments are from 2026-01-01: within the window, then outside it.
+        soon = datetime(2026, 1, 3, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=soon)
+        self.assertEqual(step["state"], "active")
+        late = datetime(2026, 1, 20, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=late)
         self.assertEqual(step["state"], "waits")
-        self.assertIn("did not run", step["reason"])
+        self.assertIn("longer than NexKit resumes runs", step["reason"])
+
+    def test_a_continued_run_whose_new_run_never_started_waits(self):
+        self.issue(5)
+        comment = self.run_comment(5, "plan", status="continued")
+        comment["updated_at"] = "2026-01-01T00:00:00Z"
+        soon = datetime(2026, 1, 1, 2, tzinfo=UTC)
+        self.assertEqual(
+            autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=soon)["state"],
+            "active",
+        )
+        late = datetime(2026, 1, 1, 7, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=late)
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
 
     def test_leaves_issues_with_a_run_or_an_open_pull_request_alone(self):
         self.issue(4)
@@ -480,6 +621,109 @@ class AnswerTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual(len(self.started()), 2)
 
+    def blocked(self, number, **fields):
+        return self.run_comment(
+            number,
+            "go",
+            status="failure",
+            outcome="agent_blocked",
+            attention="the agent is blocked and needs a decision",
+            questions=[QUESTION],
+            **fields,
+        )
+
+    def test_a_round_that_blocks_again_after_autopilots_answer_waits_for_a_person(self):
+        from nexkit.status import collect
+
+        self.issue(4)
+        self.posted_plan(4)
+        self.blocked(4)
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 4)])
+        # The go that autopilot's answers started blocks again, and nobody did anything.
+        self.blocked(4)
+        decision = {"action": "implement", "issue": 4, "pr": None}
+        agent = {"status": "blocked", "output": {"questions": [QUESTION]}}
+        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "agent_blocked", agent))
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 4)])
+        self.assertEqual(len(self.gh.comments_matching(4, "answers for the owner")), 1)
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.REPEATED))
+        data = collect(self.gh, self.cfg, workers=1)
+        self.assertIn(4, [item["number"] for item in data["needs_person"]])
+        # A person's comment since the answers lets autopilot answer again.
+        self.gh.human_comment(4, "I attached the files to the issue.")
+        self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "agent_blocked", agent))
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 4), ("go", 4)])
+
+    def test_a_fix_round_that_blocks_again_after_autopilots_answer_waits(self):
+        self.issue(5)
+        self.posted_plan(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        round_ = {"trigger": "fix", "status": "failure", "outcome": "agent_blocked"}
+        self.gh.comment(6, render_run({**round_, "round": 2, "url": "u2", "questions": [QUESTION]}))
+        self.sweep()
+        self.assertEqual(self.started(), [("fix", 6)])
+        self.gh.comment(6, render_run({**round_, "round": 3, "url": "u3", "questions": [QUESTION]}))
+        self.sweep()
+        self.assertEqual(self.started(), [("fix", 6)])
+        # A round that ran in between, such as one after new commits, is not the answered one.
+        self.gh.comment(6, render_run({**round_, "round": 4, "url": "u4", "questions": [QUESTION]}))
+        self.assertFalse(autopilot.asked_again(self.gh.comments(6)))
+        # A comment by a person on the issue counts as well.
+        self.gh.issue_comments[6].pop()
+        self.gh.human_comment(5, "Use the other port.")
+        self.sweep()
+        self.assertEqual(self.started(), [("fix", 6), ("fix", 6)])
+
+    def test_a_plan_that_asks_again_after_autopilots_answer_waits_for_a_person(self):
+        cfg = make_config(autopilot={"enabled": True, "answer": "recommended"}, notify=["olivia"])
+        self.issue(5)
+        self.posted_plan(5, questions=[QUESTION])
+        self.sweep(cfg)
+        self.assertEqual(self.started(), [("plan", 5)])
+        again = {**QUESTION, "question": "Which host?", "options": ["a", "b"]}
+        self.run_comment(5, "plan", status="running")  # as `route` posts it
+        result = self.report_plan(cfg, plan_output(questions=[again]))
+        self.assertEqual(result["attention"], "the plan has questions")
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+        self.sweep(cfg)
+        self.assertEqual(self.started(), [("plan", 5)])
+        # The same holds for a plan with its record, as `publish` posts it.
+        self.gh.issues[5]["state"] = "closed"
+        self.issue(6)
+        self.posted_plan(6, questions=[QUESTION])
+        self.sweep(cfg)
+        self.posted_plan(6, questions=[again])
+        _, [step] = autopilot.preview(self.gh, cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.REPEATED))
+
+    def test_a_retried_round_between_the_answer_and_the_next_block_changes_nothing(self):
+        self.issue(4)
+        self.posted_plan(4)
+        self.blocked(4)
+        self.sweep()
+        self.run_comment(4, "go", status="continued", outcome="retry")
+        self.blocked(4)
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 4)])
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(step["reason"], autopilot.REPEATED)
+
+    def test_prompts_recommend_only_what_nexkit_can_carry_out(self):
+        from nexkit.agent import _template
+
+        for name in ("plan", "implement", "fix"):
+            text = " ".join(_template(name).split())
+            self.assertIn("Recommend only an option that a change to the plan or the code", text)
+            self.assertIn("needs a person to act outside the repository", text)
+        diagnosis = _template("fix_diagnosis")
+        self.assertIn("add logging or narrow the test in the working tree yourself", diagnosis)
+        self.assertNotIn("such as more logging", diagnosis)
+
     def test_report_mentions_nobody_when_autopilot_answers(self):
         cfg = make_config(autopilot={"enabled": True, "answer": "recommended"}, notify=["olivia"])
         self.issue(5)
@@ -729,6 +973,154 @@ class SplitTests(AnswerAndSplitCase):
         self.assertIn("3 levels deep", autopilot.DEPTH_REASON)
 
 
+class WaitTests(AnswerAndSplitCase):
+    """Issues that need a person wait, are listed, mention `notify` and leave their place."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(
+            autopilot={"enabled": True, "answer": "recommended", "max_parallel": 1},
+            conflicts={"auto_resolve": True, "max_rounds": 1},
+            notify=["olivia"],
+        )
+
+    def with_pull(self, issue, pull, **run):
+        self.issue(issue)
+        self.posted_plan(issue)
+        self.run_comment(issue, "go", outcome="ready")
+        self.gh.add_pull(pull, issue)
+        row = {"round": 1, "trigger": "implement", "url": f"u{pull}", "status": "success"}
+        self.gh.comment(pull, render_run({**row, **run}))
+
+    def test_a_pull_request_that_needs_a_person_waits_and_leaves_its_place(self):
+        from nexkit.status import collect
+
+        attention = "checks or review still need attention and no automatic fix rounds remain"
+        self.with_pull(1, 11, outcome="needs_human", attention=attention)
+        self.with_pull(2, 12, status="failure", outcome="review_failed", attention="no review")
+        self.with_pull(3, 13, outcome="merge_refused", attention="GitHub refused the merge")
+        self.with_pull(4, 14, outcome="ready")
+        self.gh.comment(
+            14,
+            render_run(
+                {
+                    "round": 2,
+                    "trigger": "fix (auto, conflicts)",
+                    "url": "c",
+                    "status": "success",
+                    "conflicts": True,
+                }
+            ),
+        )
+        self.gh.pulls[14]["mergeable"] = False
+        self.issue(5)
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        reasons = {s["number"]: (s["state"], s["reason"]) for s in steps}
+        self.assertEqual(reasons[1], ("waits", attention))
+        self.assertEqual(reasons[2], ("waits", "no review"))
+        self.assertEqual(reasons[3], ("waits", "GitHub refused the merge"))
+        used = "pull request #14 conflicts with `main`, and its conflict rounds are used up"
+        self.assertEqual(reasons[4], ("waits", used))
+        # None of them takes the one place, so the ready issue starts.
+        self.assertEqual(reasons[5][0], "start")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        # Each one mentions `notify` once, and `nexkit status` lists each with its reason.
+        for number in (1, 2, 3, 4):
+            self.assertEqual(
+                len(self.gh.comments_matching(number, "@olivia a person is needed")), 1
+            )
+        self.sweep()
+        for number in (1, 2, 3, 4):
+            self.assertEqual(
+                len(self.gh.comments_matching(number, "@olivia a person is needed")), 1
+            )
+        data = collect(self.gh, self.cfg, workers=1)
+        listed = {(item["number"], item["reason"]) for item in data["needs_person"]}
+        for number in (1, 2, 3, 4):
+            self.assertTrue(
+                {(number, reasons[number][1]), (number + 10, reasons[number][1])} & listed,
+                number,
+            )
+
+    def test_every_reason_to_wait_for_a_person_is_listed_by_status(self):
+        from nexkit.status import collect, render
+
+        self.issue(1, user="bob")
+        self.issue(2)
+        self.posted_plan(2)
+        self.run_comment(2, "go", outcome="ready")  # its pull request was closed since
+        self.issue(3)
+        self.gh.add_issue(9, title="Elsewhere", milestone=None)
+        self.gh.blockers[3] = [9]
+        self.issue(4)
+        self.gh.blockers[4] = [2]  # in scope: autopilot works on it
+        data = collect(self.gh, self.cfg, workers=1)
+        steps = {s["number"]: s for s in data["autopilot"]["issues"]}
+        needs = {item["number"]: item["reason"] for item in data["needs_person"]}
+        for number in (1, 2, 3):
+            self.assertEqual(
+                (steps[number]["state"], needs[number]), ("waits", steps[number]["reason"])
+            )
+        self.assertEqual(needs[3], "waits for #9; #9 is not in scope")
+        self.assertNotIn(4, needs)
+        self.assertNotIn("Needs a person\n  nothing", render(data))
+
+    def test_a_fix_round_out_of_time_is_carried_on_as_report_promised(self):
+        decision = {"action": "fix", "issue": 5, "pr": 9}
+        agent = {"status": "error", "timed_out": True}
+        self.with_pull(5, 9)
+        self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "agent_error", agent))
+        round_ = {
+            "trigger": "fix",
+            "status": "failure",
+            "outcome": "agent_error",
+            "timed_out": True,
+        }
+        self.gh.comment(9, render_run({**round_, "round": 2, "url": "f2"}))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        # The plan is not too large, so a fix round follows it on the pull request.
+        self.posted_plan(5)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("fix", 9)])
+        self.assertIn("the plan was revised since", self.gh.dispatches[-1]["inputs"]["note"])
+        # That one runs out of time too: now a person decides, and `notify` hears it.
+        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "agent_error", agent))
+        self.gh.comment(
+            9, render_run({**round_, "round": 3, "url": "f3", "attention": "out of time"})
+        )
+        self.sweep()
+        self.assertEqual(len(self.started()), 2)
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", "out of time"))
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed: out of time."))
+
+    def test_a_revised_plan_with_questions_on_a_pull_request_is_answered_or_waits(self):
+        self.with_pull(5, 9)
+        round_ = {
+            "trigger": "fix",
+            "status": "failure",
+            "outcome": "agent_error",
+            "timed_out": True,
+        }
+        self.gh.comment(9, render_run({**round_, "round": 2, "url": "f2"}))
+        self.sweep()
+        self.posted_plan(5, questions=[{**QUESTION, "recommended": 0}])
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(step["state"], "waits")
+
+    def test_doctor_says_when_nobody_hears_autopilot_stop(self):
+        from nexkit.scaffold import _unheard
+
+        [finding] = _unheard(pilot())
+        self.assertIn("notify is empty", finding[1])
+        self.assertEqual(_unheard(self.cfg), [])
+        self.assertEqual(_unheard(make_config()), [])
+
+
 class RecordTests(unittest.TestCase):
     def test_the_plan_comment_shows_recommendations_and_keeps_a_record_agents_never_see(self):
         from nexkit.publish import render_plan
@@ -874,6 +1266,28 @@ class CITests(AutopilotCase):
         self.sweep()
         self.assertEqual((len(self.bugs()), self.flaky()), (1, []))
         self.assertEqual(self.gh.comments_matching(bug["number"], "nexkit:ci-runs"), [])
+
+    def test_a_bug_issue_holds_the_annotations_and_the_end_of_each_failed_jobs_log(self):
+        from nexkit.evidence import named_runs
+
+        run = self.ci_run(attempt=2)
+        self.annotate(50, "OrderTests.Totals")
+        token = "ghp_" + "b" * 36
+        log = "".join(f"2026-10-23T03:30:0{i}.1234567Z line {i}\n" for i in range(40))
+        self.gh.logs[501] = f"{log}2026-10-23T03:31:00.0Z Error: boom {token}\n".encode()
+        self.sweep()
+        [bug] = self.bugs()
+        body = bug["body"]
+        self.assertIn("  - `OrderTests.Totals`, `tests/OrderTests.cs:10`", body)
+        self.assertNotIn("Process completed", body)
+        self.assertIn("  The end of its log:\n\n  ```text\n", body)
+        self.assertIn("  Error: boom ***", body)
+        self.assertNotIn(token, body)
+        self.assertNotIn("line 9\n", body)  # only the last lines
+        self.assertNotIn("2026-10-23T03:31", body)
+        # A round on the bug issue collects that run's evidence, as its marker names it.
+        runs, _ = named_runs(self.gh, bug, [])
+        self.assertEqual(runs, [(run["id"], [1, 2])])
 
     def test_a_run_that_passes_when_run_again_is_recorded_once_on_its_own_issue(self):
         run = self.ci_run()

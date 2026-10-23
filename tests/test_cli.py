@@ -106,6 +106,27 @@ class InitDoctorTests(unittest.TestCase):
         self.assertIn((False, "The 'origin' remote is not a GitHub repository"), findings)
         self.assertEqual(cli.main(["doctor", "--repo", str(self.root)]), 1)
 
+    def test_doctor_says_when_unattended_rounds_have_no_push_token(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+
+        def warnings(**changes):
+            path.write_text(json.dumps({**cfg, **changes}))
+            found = [(ok, m) for ok, m in scaffold.doctor(self.root) if "push_token" in m]
+            # Running without a push token is a choice: doctor still passes.
+            self.assertTrue(all(ok for ok, _ in found))
+            return [m for _, m in found]
+
+        self.assertEqual(warnings(), [])
+        [found] = warnings(autopilot={"enabled": True})
+        self.assertTrue(found.startswith("autopilot.enabled is on, but publish.push_token_secret"))
+        self.assertIn("Workflows write access", found)
+        [found] = warnings(autopilot={"enabled": True}, conflicts={"auto_resolve": True})
+        self.assertTrue(found.startswith("autopilot.enabled and conflicts.auto_resolve are on"))
+        token = {"push_token_secret": "NEXKIT_PUSH_TOKEN"}
+        self.assertEqual(warnings(conflicts={"auto_resolve": True}, publish=token), [])
+
     def test_doctor_checks_the_workflows_to_start_after_a_merge(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         path = self.root / ".nexkit/config.json"

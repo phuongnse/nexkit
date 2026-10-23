@@ -335,6 +335,35 @@ def _passed_secrets(cfg, workflow):
     return findings
 
 
+def _unattended_push(cfg):
+    """Findings: whether work that NexKit starts by itself can push every merge of the base
+    branch. The Actions token may not push changes to workflow files, so without a push
+    token a round that merges such changes from the base branch waits for a person. Running
+    without a push token is a choice, so this is information, never a problem."""
+    if cfg["publish"]["push_token_secret"]:
+        return []
+    on = [
+        key
+        for key, enabled in (
+            ("autopilot.enabled", cfg["autopilot"]["enabled"]),
+            ("conflicts.auto_resolve", cfg["conflicts"]["auto_resolve"]),
+        )
+        if enabled
+    ]
+    if not on:
+        return []
+    return [
+        (
+            True,
+            f"{' and '.join(on)} {'is' if len(on) == 1 else 'are'} on, but "
+            "publish.push_token_secret is not set: a round that merges changes to "
+            ".github/workflows/ from the base branch cannot push with the Actions token and "
+            "waits for a person. Name a fine-grained token with Contents, Pull requests and "
+            "Workflows write access (see the configuration reference, Secrets)",
+        )
+    ]
+
+
 def _secrets_set(cfg, names, repo):
     """Findings: a secret of each agent that a stage uses is set in the repository."""
     findings = []
@@ -381,6 +410,7 @@ def doctor(root):
         if not cfg["checks"]:
             findings.append((False, "No checks configured; NexKit cannot verify changes"))
         findings += [_after_merge_workflow(root, name) for name in cfg["merge"]["after_workflows"]]
+        findings += _unattended_push(cfg)
     except configuration.ConfigError as exc:
         findings.append((False, str(exc)))
 

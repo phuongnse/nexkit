@@ -278,7 +278,11 @@ def ci_evidence(gh, cfg, issue, comments, folder):
     if not runs and not skipped:
         return None
     redact = Redactor()
-    found = {**collect(gh, cfg, runs, folder, redact), "skipped": skipped}
+    try:
+        found = {**collect(gh, cfg, runs, folder, redact), "skipped": skipped}
+    except Exception as exc:  # noqa: BLE001 - the round runs without the evidence
+        print(redact(f"Could not collect the evidence of CI runs: {exc}"), flush=True)
+        return None
     lines = [*summary_lines(found), *(f"Not collected: {reason}." for reason in skipped)]
     for line in lines:
         print(redact(line), flush=True)

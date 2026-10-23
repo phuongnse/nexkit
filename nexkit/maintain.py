@@ -21,6 +21,7 @@ from .state import (
     CONTINUED,
     PAUSED,
     RUNNING,
+    UNCOUNTED,
     by_bot,
     conflict_rounds_used,
     run_comments,
@@ -239,6 +240,10 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
         # now would replace a command waiting behind it. A later check starts the round.
         # A continued round has a run on its way.
         return ""
+    if latest.get("conflicts") and latest.get("outcome") in UNCOUNTED:
+        # The last round stopped because NexKit may not push the merge: a person merges
+        # it, and their next round lets conflict rounds start again.
+        return f"#{number} conflicts with `{base}`, which a person merges."
     if conflict_rounds_used(tried) >= max_rounds:
         return (
             f"#{number} conflicts with `{base}`, but its {max_rounds} automatic "

@@ -15,6 +15,7 @@ runs of this repository count, never those of a fork or another repository.
 from __future__ import annotations
 
 import io
+import json
 import re
 import stat
 import zipfile
@@ -122,13 +123,18 @@ def _unzip(data, folder, budget, redact, shown):
                 continue
             relative = _safe_name(info.filename)
             if relative is None:
-                print(f"{shown}: skipped `{info.filename}`, which leads out of it.", flush=True)
+                name = json.dumps(info.filename)  # one line, whatever the zip holds
+                print(f"{shown}: skipped {name}, which leads out of it.", flush=True)
                 continue
             if not budget.take(info.file_size, f"{shown}/{relative}"):
                 continue
             with archive.open(info) as member:
                 content = member.read(info.file_size + 1)[: info.file_size]
-            _write(folder / Path(*relative.parts), content, redact)
+            try:
+                _write(folder / Path(*relative.parts), content, redact)
+            except OSError as exc:  # such as a file and a folder of the same name
+                print(f"{shown}: skipped {json.dumps(info.filename)}: {exc}", flush=True)
+                continue
             kept += 1
     return kept
 
@@ -170,7 +176,8 @@ def _jobs(gh, run_id, attempt, folder, budget, redact, files):
         place = folder / f"attempt-{attempt}"
         log_path, notes_path = place / f"{name}.log", place / f"{name}.annotations.md"
         try:
-            log = gh.job_log(job["id"])[-LOG_TAIL:]
+            tail = gh.job_log(job["id"])[-LOG_TAIL:]
+            log = tail.decode("utf-8", errors="replace").replace("\0", "").encode("utf-8")
         except GitHubError as exc:
             files.append({"path": _shown(log_path, folder), "missing": f"its log: {exc}"})
             log = None
@@ -236,7 +243,7 @@ def _artifact(gh, artifact, folder, budget, redact, item):
         data = gh.artifact_zip(artifact["id"], budget.left)
         target = folder / "artifacts" / UNSAFE.sub("-", name)
         count = _unzip(data, target, budget, redact, f"artifact `{name}`")
-    except (GitHubError, zipfile.BadZipFile) as exc:
+    except (GitHubError, zipfile.BadZipFile, OSError) as exc:
         item["missing"].append(f"the artifact `{name}` could not be downloaded: {exc}")
         return
     files = "1 file" if count == 1 else f"{count} files"

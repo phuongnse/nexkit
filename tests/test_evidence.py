@@ -145,6 +145,25 @@ class EvidenceTests(EvidenceCase):
         self.assertFalse((self.folder.parent / "escape.txt").exists())
         self.assertFalse(Path(self.tmp.name, "..", "escape.txt").resolve().exists())
 
+    def test_a_log_cut_inside_a_character_is_still_redacted_text(self):
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        self.gh.logs[1010] = ("é" * 10).encode() + f" {TOKEN}\n".encode() + ("x" * 10).encode()
+        with mock.patch.object(evidence, "LOG_TAIL", 30 + len(TOKEN)):
+            self.gather()
+        log = (self.folder / "run-101" / "attempt-1" / "e2e-chromium.log").read_text()
+        self.assertNotIn(TOKEN, log)
+
+    def test_an_artifact_with_a_file_and_a_folder_of_the_same_name_keeps_the_rest(self):
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        self.gh.zips[106] = zipped({"a": "1", "a/b": "2", "c\n::error::x": "3", "d": "4"})
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            context = self.gather()
+        artifact = self.folder / "run-101" / "artifacts" / "test-results-e2e"
+        self.assertTrue((artifact / "d").exists())
+        self.assertNotIn("\n::error::", out.getvalue())
+        self.assertIsNotNone(context["ci_evidence"])
+
     def test_issues_that_name_no_run_and_plans_collect_nothing(self):
         self.issue("Create stays disabled.")
         self.assertIsNone(self.gather()["ci_evidence"])

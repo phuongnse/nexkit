@@ -403,6 +403,9 @@ REPLANNED_NOTE = (
     "The last round did not finish within its time limit, and the plan was revised since. "
     "Follow the revised plan."
 )
+# Outcomes of runs that changed nothing about an issue: they only ran a command once more,
+# found nothing to merge, or ended without a report.
+UNCHANGED = {"retry", "lost", "up_to_date"}
 # What every comment that mentions the people in `notify` says before its reason.
 NEEDED = "a person is needed: "
 REPEATED = (
@@ -420,14 +423,15 @@ def asked_again(target_comments, other_comments=()):
     answer on the issue or its pull request. Its questions then follow from autopilot's own
     answers: another answer would only change the wording of the note, so a person decides.
     """
-    runs = [comment["id"] for comment, _ in run_comments(target_comments)]
-    if not runs:
+    found = [(comment["id"], run) for comment, run in run_comments(target_comments)]
+    if not found:
         return False
-    latest = runs[-1]
+    latest = found[-1][0]
     answered = [
         c["id"] for c in target_comments if answers_text(c) is not None and c["id"] < latest
     ]
-    if not answered or any(answered[-1] < run < latest for run in runs):
+    between = [run for at, run in found if answered and answered[-1] < at < latest]
+    if not answered or any(run.get("outcome") not in UNCHANGED for run in between):
         return False
     since = answered[-1]
     return not any(_by_person(c) and c["id"] > since for c in [*target_comments, *other_comments])
@@ -577,7 +581,11 @@ def _stalled(gh, issue, comment, run, record, start, target, now):
     trigger = str(run.get("trigger") or "")
     command = run.get("command") or ("fix" if trigger.startswith("fix") else "review")
     stale = {"number": target, "comment": comment["id"]}
-    if not _automatic(run) or record.get("retried"):
+    again = record.get("retried") and (record.get("command"), record.get("target")) == (
+        command,
+        target,
+    )
+    if not _automatic(run) or again:
         return _step(issue, "waits", REPORTLESS, stale=stale)
     fields = {**start, "target": target, "remember": {"retried": True}}
     reason = f"{REPORTLESS}, so autopilot starts `/nexkit {command}` once more"
@@ -628,6 +636,10 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         stalled = _stalled(gh, issue, comment, latest, record, start, pull, now)
         return stalled or _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") in CHAINED:
+        at = parse_iso(comment.get("updated_at") or comment.get("created_at"))
+        if at is not None and now - at > LOST:
+            reason = f"the round that pull request #{pull} started next did not run"
+            return _step(issue, "waits", reason)
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") == "merge_waiting":
         return _merge_step(gh, issue, pull, comment, latest, now)
@@ -757,7 +769,8 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     start = {"basis": current, "target": number, "note": "", "remember": {}}
     found = [(c, run) for c, run in run_comments(comments) if "command" in run]
     last = found[-1][1] if found else None
-    if last and last.get("status") in ACTIVE:
+    handed_on = pull and last and last.get("status") == CONTINUED
+    if last and last.get("status") in ACTIVE and not handed_on:
         stalled = _stalled(gh, issue, *found[-1], record, start, number, now)
         return stalled or _step(issue, "active", f"`/nexkit {last['command']}` is {last['status']}")
     plan = latest_plan(comments)
@@ -1422,7 +1435,8 @@ def sweep(gh, cfg, workflow, ref, closed=None):
                 what = {"split": "split", "merge": "merge the pull request of"}.get(
                     step["state"], f"start /nexkit {step.get('command')} on"
                 )
-                lines.append(f"Could not {what} #{step['target']}: {exc}")
+                target = step.get("target") or step.get("pull") or step["number"]
+                lines.append(f"Could not {what} #{target}: {exc}")
         if not splits:
             break
     for step in steps:

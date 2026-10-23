@@ -388,9 +388,8 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
             return "the plan says the issue is too large for one session"
         return "the plan has questions" if plan.get("questions") else None
     if outcome == "merge_waiting":
-        if autopilot.takes(cfg):
-            return None
-        return "the pull request waits for its required checks; merge it once they pass"
+        # Only a round whose issue autopilot's sweeps look at waits like this.
+        return None
     if outcome == "ready":
         if confirm:
             return UNVERIFIED
@@ -430,8 +429,14 @@ def _transient(decision, agent, publish, needs, stage="agent"):
     transient error of the agent, a job that failed as a whole, or, in a round NexKit
     started itself, a branch that moved while the agent worked. A job a person cancelled
     is never one."""
-    if (needs.get(stage) or {}).get("result") == "cancelled":
+    result = (needs.get(stage) or {}).get("result")
+    if result == "cancelled":
         return None
+    if result == "skipped":
+        # The review runs only after the checks: when their job failed as a whole, that
+        # job is what another try may pass.
+        verify = (needs.get("verify") or {}).get("result")
+        return "the verify job ended without a result" if verify == "failure" else None
     if agent is None:
         return f"the {stage} job ended without a result"
     if agent.get("status") == "error" and agent.get("transient"):
@@ -673,16 +678,28 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
             return "conflict_fix", f"{message}\n\nIt conflicts with `{base}`. {started}"
         return "merge_refused", f"{message}\n\n{started}" if started else message
     if CHECKS_PENDING.search(str(exc)):
+        if not _swept(gh, cfg, target["issue"]):
+            line = "Required checks have not passed yet. Merge it once they pass."
+            return "merge_refused", f"{message}\n\n{line}"
         row.setdefault("waiting_since", iso(datetime.now(UTC)))
-        later = (
-            "The next autopilot sweep merges it once they pass."
-            if autopilot.takes(cfg)
-            else "Merge it once they pass."
+        line = (
+            "Required checks have not passed yet. The next autopilot sweep merges it once "
+            "they pass."
         )
-        return "merge_waiting", f"{message}\n\nRequired checks have not passed yet. {later}"
+        return "merge_waiting", f"{message}\n\n{line}"
     if auto_resolve and BEHIND.search(str(exc)):
         return _update_branch(gh, target, row, message, limit, workflow, default_branch)
     return "merge_refused", message
+
+
+def _swept(gh, cfg, number):
+    """Whether autopilot's sweeps look at this issue, so they can merge its pull request."""
+    if not autopilot.takes(cfg):
+        return False
+    try:
+        return autopilot.taken(gh, cfg, gh.issue(number))
+    except GitHubError:
+        return False
 
 
 def _update_branch(gh, target, row, message, limit, workflow, default_branch):

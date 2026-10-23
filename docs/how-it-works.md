@@ -358,7 +358,10 @@ failing checks, is left out: the agent fixes the branch as it is, the round's co
 which workflow files kept it from merging, and the pull request stays behind the base
 branch until a person merges it. A merge the round must make, for a conflict, stops the
 round before the agent runs, says that the pull request needs a manual merge or a push
-token that may update workflows, and mentions `notify`. Such a round, and one that
+token that may update workflows, and mentions `notify`. No further conflict round starts
+on that pull request until a round after it runs, such as the `/nexkit review` after a
+person merged the base branch, so a push to the base branch does not stop the same way
+again. Such a round, and one that
 `publish` refuses for the same reason, count against neither `fix.max_auto_rounds` nor
 `conflicts.max_rounds`.
 
@@ -522,7 +525,8 @@ issue run in that group as well, and start a sweep.
   that ended so, waits for a person. A run paused at the usage limit that NexKit does not
   resume (`usage_limit.resume: false`, no known reset, or paused more than eight days ago)
   waits for a person, and so does a continued run whose new run has not started after six
-  hours.
+  hours. A round that started the next one by itself, such as an automatic fix round,
+  whose next one has not run after six hours waits for a person too.
 - **People stay in charge.** A person's command, a plan's questions, a blocked or failed
   run and a `needs_human` pull request all stop autopilot on that issue, exactly where they
   stop NexKit without it. Such an issue waits for a person, with the reason that `nexkit
@@ -804,8 +808,8 @@ state, leaves it as it is and saves the state in a new state comment.
 | The PR conflicts with its base branch in a protected path | Stops before the agent runs; merge the base branch yourself. |
 | The merge brings workflow changes and only the default Actions token can push | Checked before the agent runs. A merge that only brings a moved base branch is left out, and the round fixes the branch as it is. A merge needed for a conflict stops the round before its agent: merge the base branch yourself or name a push token that may update workflows in `publish.push_token_secret`. Neither costs an automatic round. |
 | GitHub refuses the automatic merge because the base branch was modified meanwhile, for example by another part of a split merging at the same time | Tries the merge again, three times in all, a little later each time. |
-| GitHub refuses the automatic merge because required status checks have not passed yet, such as a CI workflow slower than the NexKit round | Ends the round as `merge_waiting`. With autopilot, each sweep tries the merge again while the head is the one approved, and merges once the checks pass, with everything a merge leads to; a failing check, a new commit, or six hours without the checks passing wait for a person. Without autopilot, a person merges it. The `maintain` job has `contents: write` for this; it never checks out the repository. |
-| GitHub refuses the automatic merge because the branch is behind its base branch, under protection that requires it to be up to date | With `conflicts.auto_resolve`, updates the branch from the base branch on GitHub and starts `/nexkit review` on the new commit, which checks, reviews and merges it as usual, at most `conflicts.max_rounds` times per pull request. |
+| GitHub refuses the automatic merge because required status checks have not passed yet, such as a CI workflow slower than the NexKit round | For an issue in autopilot's scope, ends the round as `merge_waiting`: each sweep tries the merge again while the head is the one approved, and merges once the checks pass, with everything a merge leads to; a failing check, a new commit, or six hours without the checks passing wait for a person. Otherwise a person merges it. The `maintain` job has `contents: write` for this; it never checks out the repository. |
+| GitHub refuses the automatic merge because the branch is behind its base branch, under protection that requires it to be up to date | With `conflicts.auto_resolve`, updates the branch from the base branch on GitHub and starts `/nexkit review` on the new commit, which checks, reviews and merges it as usual, at most `conflicts.max_rounds` times per pull request. GitHub starts no CI for that update when it is made with the Actions token, so required checks from the repository's own workflows run only with `publish.push_token_secret`; without it, the merge waits for them and then for a person. |
 | GitHub refuses the automatic merge for another reason (required approvals, a merge method the repository does not allow) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |

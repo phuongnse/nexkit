@@ -239,6 +239,28 @@ class ReportTests(ReportCase):
         # The retried round keeps the label, and the conflict rounds never count it.
         self.assertEqual(trigger(decision("fix", auto=True, retry=True)), "fix (auto, retry)")
 
+    def test_a_review_that_never_ran_is_retried_only_after_a_failed_verify_job(self):
+        self.candidate(review=False)
+        fix = decision("fix", pr=6, target=6, head=HEAD)
+        for verify, expected in (("success", "review_failed"), ("failure", "retry")):
+            os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+            published = {"published": True, "pr": 6, "head": HEAD}
+            needs = {
+                "publish": {"outputs": {"result": json.dumps(published)}},
+                "verify": {"result": verify},
+                "review": {"result": "skipped"},
+            }
+            outcome = report(
+                self.gh,
+                fix,
+                make_config(),
+                needs,
+                self.artifacts,
+                workflow_ref=WORKFLOW,
+                default_branch="main",
+            )
+            self.assertEqual(outcome["outcome"], expected)
+
     def test_a_review_that_failed_on_a_transient_error_runs_once_more(self):
         self.candidate(review={"status": "error", "error": "API Error: 503", "transient": True})
         outcome = self.run_report(d=decision("fix", pr=6, target=6, head=HEAD, autopilot=True))

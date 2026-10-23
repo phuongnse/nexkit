@@ -272,6 +272,48 @@ class SweepTests(AutopilotCase):
         steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
         self.assertEqual((steps[6]["state"], steps[6]["reason"]), ("waits", autopilot.REPORTLESS))
 
+    def test_a_go_whose_review_continues_on_its_pull_request_follows_the_pull_request(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", status="continued", outcome="retry")
+        self.gh.add_pull(6, 5)
+        row = {"round": 2, "trigger": "review (retry)", "url": "u", "status": "success"}
+        self.gh.comment(6, render_run({**row, "outcome": "needs_human", "attention": "x"}))
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", "x"))
+
+    def test_a_chained_round_whose_next_round_never_ran_waits(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        row = {"round": 1, "trigger": "implement", "url": "u", "status": "success"}
+        comment = self.gh.comment(6, render_run({**row, "outcome": "auto_fix"}))
+        comment["updated_at"] = "2026-01-01T00:00:00Z"
+        soon = datetime(2026, 1, 1, 1, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=soon)
+        self.assertEqual(step["state"], "active")
+        late = datetime(2026, 1, 1, 7, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=late)
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
+
+    def test_a_retry_of_another_command_still_lets_a_stalled_round_start_once_more(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        record = {"command": "go", "target": 5, "retried": True, "basis": [0, 0], "at": "x"}
+        self.gh.comment(5, "Started.\n\n" + autopilot.record_marker(record))
+        row = {
+            "round": 2,
+            "trigger": "fix (auto)",
+            "url": "https://github.com/acme/app/actions/runs/88",
+        }
+        self.gh.comment(6, render_run({**row, "status": "running", "head": "b" * 40}))
+        self.gh.runs[88] = {"status": "completed"}
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["command"]), ("start", "fix"))
+
     def test_a_round_that_ended_without_a_report_gets_its_statuses_back(self):
         self.issue(5)
         self.planned(5)
@@ -658,6 +700,18 @@ class AnswerTests(AnswerAndSplitCase):
         self.posted_plan(6, questions=[again])
         _, [step] = autopilot.preview(self.gh, cfg)
         self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.REPEATED))
+
+    def test_a_retried_round_between_the_answer_and_the_next_block_changes_nothing(self):
+        self.issue(4)
+        self.posted_plan(4)
+        self.blocked(4)
+        self.sweep()
+        self.run_comment(4, "go", status="continued", outcome="retry")
+        self.blocked(4)
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 4)])
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(step["reason"], autopilot.REPEATED)
 
     def test_prompts_recommend_only_what_nexkit_can_carry_out(self):
         from nexkit.agent import _template

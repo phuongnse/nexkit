@@ -723,7 +723,12 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     if not trusted(gh, issue):
         login = author(issue) or "an unknown user"
         return _step(issue, "waits", f"opened by @{login}, who cannot write to the repository")
-    if gh.sub_issues(number):
+    parts = gh.sub_issues(number)
+    if parts and all(part.get("state") == "closed" for part in parts):
+        # `close_parent_issues` closes it by itself; without it, a person does.
+        reason = "every sub-issue of this parent issue is closed; a person closes it"
+        return _step(issue, "waits", reason)
+    if parts:
         reason = "a parent issue: autopilot works on its sub-issues"
         return _step(issue, "waits", reason, person=False)
     comments = gh.comments(number)

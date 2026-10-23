@@ -44,6 +44,13 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   a person decides. A recommended option is one NexKit can carry out without a person.
   Autopilot asks for one split plan after an implement or fix agent ran out of time; it
   never repeats a run unchanged.
+- Every issue in autopilot's scope is either carried on by a run that exists, started only
+  when something changed since the same command last started (a commit, a person's
+  comment or command, a new plan), or waits for a person: listed under *Needs a person*
+  with its reason and mentioned to `notify` once. Each automatic action checks what it
+  needs before it spends agent time, and its budget counts only rounds that ran their
+  agent to its end or published. `tests/test_scenarios.py` plays this over many rounds;
+  a new automatic rule comes with a scenario there.
 - Prompts judge code behaviour, never things an agent cannot change (PR text, approvals,
   workflows).
 - A config key, command or prompt contract changes together with its tests, docs and skills.

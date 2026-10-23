@@ -36,6 +36,11 @@ files or repository settings, and wait for confirmation.
      as end-to-end tests: the agent then runs only the tests in it that its change
      touches, and NexKit runs it in full after each round. Suggest saying in CLAUDE.md or
      AGENTS.md how to run part of it (see the configuration reference, Slow checks).
+   - `results` for a check that writes traces, screenshots, test reports or logs, such as
+     an end-to-end suite: the folders or files where it writes them, relative to the
+     repository root (for example `["test-results", "playwright-report"]`). When the check
+     fails, NexKit keeps them, at most 50 MB per round, and the next fix round reads them
+     first (see the configuration reference, Result files of failing checks).
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the
@@ -75,6 +80,9 @@ files or repository settings, and wait for confirmation.
 
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`
+   For each check that needs more than a name and a command, add the flags that name it:
+   `--check-timeout <name>=<minutes>`, `--check-slow <name>`, and
+   `--check-results <name>=<path>` once for each path.
    Show the generated `.nexkit/config.json` and `.github/workflows/nexkit.yml`. The config
    declares the `claude` agent with `"oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"`; if
    the user has an Anthropic API key instead, change it to
@@ -130,7 +138,8 @@ files or repository settings, and wait for confirmation.
    with the option NexKit recommends, when every question has one; it splits plans that
    are too large into sub-issues either way. With `merge.after_workflows`, it also runs a
    failed CI run on the default branch once more and, if it fails again, opens a `bug`
-   issue that it plans first. After the
+   issue that it plans first; runs that passed only when run again are recorded on their
+   own `bug` issue, planned next. After the
    commit, start the first sweep with
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 

@@ -2,7 +2,15 @@ import unittest
 
 from nexkit import config
 from nexkit.route import auto_input, parse_command, route, with_profile
-from nexkit.state import BOT_LOGIN, PLAN_MARKER, profile_record, profile_text, render_run
+from nexkit.state import (
+    BOT_LOGIN,
+    PLAN_MARKER,
+    empty_state,
+    profile_record,
+    profile_text,
+    render_run,
+    render_state,
+)
 from tests.support import FakeGitHub, make_config, profile_config
 
 
@@ -45,6 +53,45 @@ class RouteTests(unittest.TestCase):
 
     def fix_on_pull(self):
         return route(self.gh, "issue_comment", comment_event(6, "/nexkit fix", on_pull=True))
+
+    def test_fix_gets_the_run_whose_failing_checks_kept_result_files(self):
+        self.gh.add_pull(6, 5, head_sha="c" * 40)
+        self.assertNotIn("results_run", self.fix_on_pull())  # no state yet
+        failing = {"name": "e2e", "run": "x", "exit_code": 1, "passed": False, "output": ""}
+        state = empty_state(5)
+        state["feedback"] = {"head": "c" * 40, "checks": [failing], "run_id": 77}
+        comment = self.gh.comment(6, render_state(state))
+        self.assertNotIn("results_run", self.fix_on_pull())  # the check kept no files
+        state["feedback"]["checks"] = [{**failing, "results": ["test-results"]}]
+        self.gh.update_comment(comment["id"], render_state(state))
+        self.assertEqual(self.fix_on_pull()["results_run"], 77)
+        review = route(self.gh, "issue_comment", comment_event(6, "/nexkit review", on_pull=True))
+        self.assertNotIn("results_run", review)
+        # A passing check never keeps files, whatever its record says.
+        state["feedback"]["checks"] = [{**failing, "passed": True, "results": ["test-results"]}]
+        self.gh.update_comment(comment["id"], render_state(state))
+        self.assertNotIn("results_run", self.fix_on_pull())
+
+    def test_only_an_automatic_fix_round_diagnoses_repeated_failures(self):
+        self.gh.add_pull(6, 5, head_sha="c" * 40)
+        state = empty_state(5)
+        state["feedback"] = {"head": "c" * 40, "checks": [], "repeated": ["e2e"]}
+        self.gh.comment(6, render_state(state))
+
+        def dispatch(auto):
+            inputs = {"command": "fix", "number": "6", "auto": auto}
+            return route(self.gh, "workflow_dispatch", {"sender": {"login": "x"}}, inputs)
+
+        self.assertEqual(dispatch("true")["diagnose"], ["e2e"])
+        self.assertEqual(dispatch("true,resume")["diagnose"], ["e2e"])
+        # A person's round follows the person's note, and a conflict round only merges.
+        self.assertNotIn("diagnose", self.fix_on_pull())
+        self.assertNotIn("diagnose", dispatch("false"))
+        self.assertNotIn("diagnose", dispatch("conflicts"))
+        inputs = {"command": "review", "number": "6", "auto": "true"}
+        review = route(self.gh, "workflow_dispatch", {}, inputs)
+        self.assertEqual(review["action"], "review")
+        self.assertNotIn("diagnose", review)
 
     def test_fix_gets_the_last_commit_whose_checks_passed(self):
         self.gh.add_pull(6, 5, head_sha="c" * 40)

@@ -6,7 +6,10 @@ Gathering happens in its own step so the agent process never holds a GitHub toke
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
+from .checks import RESULTS_DIR, failing_signatures
+from .config import NAME
 from .github import TRUSTED_ASSOCIATIONS
 from .route import parse_command
 from .state import answers_text, by_bot, clip, latest_plan, plan_text, read_state
@@ -63,6 +66,108 @@ def _after_failed_checks(decision, comments):
     return any(not check.get("passed") for check in _saved_feedback(comments).get("checks") or [])
 
 
+def _inside(path):
+    """Whether a recorded result path stays inside the folder it is relative to."""
+    return (
+        isinstance(path, str)
+        and bool(path)
+        and not path.startswith(("/", "~"))
+        and ".." not in path.split("/")
+    )
+
+
+def evidence(feedback, decision, folder):
+    """The result files that the failing checks of the run in `results_run` kept, as the
+    agent job downloaded them into `folder`, outside the working tree, or None. Says in
+    the log why there are none."""
+    run_id = decision.get("results_run")
+    if not run_id:
+        return None
+    root = Path(folder).resolve() / RESULTS_DIR if folder else None
+    if not root or not root.is_dir():
+        print(
+            "No result files of the failing checks: the `nexkit-checks` artifact of run "
+            f"{run_id} could not be downloaded, for example because it expired. The fix "
+            "prompt has no section about them.",
+            flush=True,
+        )
+        return None
+    found = []
+    for check in feedback.get("checks") or []:
+        name = check.get("name")
+        if check.get("passed") or not isinstance(name, str) or not NAME.match(name):
+            continue
+        paths = []
+        for path in check.get("results") or []:
+            target = root / name / path if _inside(path) else None
+            if not target or not target.exists():
+                continue
+            files = sum(f.is_file() for f in target.rglob("*")) if target.is_dir() else 1
+            paths.append({"path": path, "folder": target.is_dir(), "files": files})
+        if paths:
+            left_out = check.get("results_left_out")
+            found.append(
+                {
+                    "name": name,
+                    "run": str(check.get("run") or ""),
+                    "folder": str(root / name),
+                    "paths": paths,
+                    "left_out": left_out if isinstance(left_out, int) else 0,
+                }
+            )
+    if not found:
+        print(f"Run {run_id} kept no result files of the failing checks.", flush=True)
+        return None
+    print(f"Result files of the failing checks are in {root}.", flush=True)
+    return {"folder": str(root), "checks": found}
+
+
+def _failing_text(fix):
+    """Which checks still failed after a recorded fix round, or "" when unknown."""
+    failing = fix.get("failing")
+    if not isinstance(failing, list):
+        return ""  # the checks did not run, or the round was recorded before NexKit kept them
+    if not failing:
+        return "Every check passed after it."
+    items = [f"`{item.get('name')}` (`{clip(item.get('signature'), 200)}`)" for item in failing]
+    return "Checks that still failed after it, with their first failure: " + ", ".join(items)
+
+
+def earlier_fixes(comments):
+    """The fix prompt's list of the pull request's earlier fix rounds, oldest first: who
+    started each, its note, the fix agent's summary and cause, and the checks that still
+    failed after it. "" before the first."""
+    _, state = read_state(comments)
+    lines = []
+    for fix in (state or {}).get("fixes") or []:
+        who = "automatic" if fix.get("auto") else "requested by a person"
+        kind = ", a diagnosis round" if fix.get("diagnosis") else ""
+        lines += [
+            f"### Round {fix.get('round')}: fix ({who}{kind})",
+            "",
+            f"Note: {clip(fix.get('note'), 2000) or 'None.'}",
+            "",
+            "Summary from the fix agent:",
+            "",
+            clip(fix.get("summary")) or "None.",
+            "",
+        ]
+        if fix.get("cause"):
+            lines += ["Cause it found:", "", clip(fix["cause"], 2000), ""]
+        failing = _failing_text(fix)
+        if failing:
+            lines += [failing, ""]
+    return "\n".join(lines).strip()
+
+
+def diagnosis(decision, feedback):
+    """The checks that this automatic round diagnoses, each with the failure it repeated,
+    or []. `route` named them in the decision."""
+    names = decision.get("diagnose") or []
+    signatures = failing_signatures(feedback.get("checks"))
+    return [{"name": name, "signature": signatures[name]} for name in names if name in signatures]
+
+
 def _feedback(gh, decision, comments):
     """Earlier NexKit results plus current human review feedback on the pull request."""
     pr = decision["pr"]
@@ -112,6 +217,7 @@ def previous_review(gh, decision, fix_result):
             {
                 "auto": decision.get("auto"),
                 "summary": fix_result.get("summary"),
+                "cause": (fix_result.get("output") or {}).get("cause"),
                 "note": decision.get("note"),
                 "conflicts": fix_result.get("conflicts") if fix_result.get("start_base") else None,
             }
@@ -139,6 +245,8 @@ def previous_review(gh, decision, fix_result):
             "",
             clip(fix.get("summary")) or "None.",
         ]
+        if str(fix.get("cause") or "").strip():
+            lines += ["", "Cause the fix agent found:", "", clip(fix["cause"], 2000)]
         if fix.get("conflicts"):
             files = ", ".join(f"`{name}`" for name in fix["conflicts"])
             lines += ["", f"This round merged the base branch and resolved conflicts in {files}."]
@@ -159,9 +267,11 @@ def _fixed(decision, fix_result):
     return decision["action"] == "fix" and (fix_result or {}).get("status") == "done"
 
 
-def gather(gh, decision, stage=None, fix_result=None):
+def gather(gh, decision, stage=None, fix_result=None, results=None):
     """Context for an agent stage. `stage` defaults to the decision's action; the review
-    stage also gets the previous review round, with `fix_result` from this run's fix."""
+    stage also gets the previous review round, with `fix_result` from this run's fix. A
+    fix round also gets the failing checks' result files, which the agent job downloaded
+    into the folder `results`."""
     issue = gh.issue(decision["issue"])
     comments = gh.comments(decision["issue"])
     plan = latest_plan(comments)
@@ -204,5 +314,9 @@ def gather(gh, decision, stage=None, fix_result=None):
         pr_comments = gh.comments(decision["pr"])
         context["feedback"] = _feedback(gh, decision, pr_comments)
         context["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
+        saved = _saved_feedback(pr_comments)
+        context["evidence"] = evidence(saved, decision, results)
+        context["earlier_fixes"] = earlier_fixes(pr_comments)
+        context["diagnose"] = diagnosis(decision, saved)
         context["discussion"] += "\n\n---\n\nOn the pull request:\n\n" + _discussion(pr_comments)
     return context

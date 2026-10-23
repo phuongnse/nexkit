@@ -1,7 +1,12 @@
 import base64
+import contextlib
+import io
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
+from nexkit.agent import build_prompt, diagnosis_text, evidence_text
 from nexkit.context import NO_PLAN, gather, outside_plan
 from nexkit.publish import pull_body
 from nexkit.state import (
@@ -11,7 +16,7 @@ from nexkit.state import (
     render_run,
     render_state,
 )
-from tests.support import FakeGitHub
+from tests.support import FakeGitHub, make_config
 
 HEAD = "d" * 40
 
@@ -164,6 +169,66 @@ class ContextTests(unittest.TestCase):
         self.assertNotIn("Inject", feedback)
         self.assertEqual(context["pr"], 6)
 
+    def test_fix_prompt_lists_the_earlier_fix_rounds(self):
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        output = "  ✘ 3 desk.spec.ts:42 › picks an option (9.1s)"
+        signature = "✘ desk.spec.ts: › picks an option ()"
+        failing = {"name": "e2e", "run": "e2e.sh", "exit_code": 1, "passed": False}
+        state = empty_state(5)
+        state["feedback"] = {
+            "head": HEAD,
+            "checks": [{**failing, "output": output}],
+            "repeated": ["e2e"],
+        }
+        state["fixes"] = [
+            {
+                "round": 2,
+                "head": "a" * 40,
+                "auto": True,
+                "summary": "Wrapped the select in getPopupContainer.",
+                "note": "",
+                "failing": [{"name": "e2e", "signature": signature}],
+            },
+            {
+                "round": 3,
+                "head": "b" * 40,
+                "auto": False,
+                "summary": "Set popupOverflow.",
+                "note": "Try popupOverflow",
+                "cause": "The popup is clipped by the modal.",
+                "diagnosis": True,
+                "failing": [],
+            },
+            # Recorded before NexKit kept the checks of each fix round.
+            {"round": 4, "head": "c" * 40, "auto": True, "summary": "Edited the helper."},
+        ]
+        self.gh.comment(6, render_state(state))
+        d = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": "", "auto": True}
+        context = gather(self.gh, {**d, "diagnose": ["e2e"]})
+        self.assertEqual(context["diagnose"], [{"name": "e2e", "signature": signature}])
+        extra = {"evidence": "", "diagnosis": diagnosis_text(context["diagnose"])}
+        prompt = build_prompt("fix", context, make_config(), extra)
+        section = prompt.split("## Earlier fix rounds of this pull request", 1)[1]
+        section = section.split("## Diagnosis round", 1)[0]
+        self.assertIn("Do not\nrepeat a change that did not help.", section)
+        for text in (
+            "### Round 2: fix (automatic)\n\nNote: None.\n\nSummary from the fix agent:\n\n"
+            "Wrapped the select in getPopupContainer.",
+            f"Checks that still failed after it, with their first failure: `e2e` (`{signature}`)",
+            "### Round 3: fix (requested by a person, a diagnosis round)\n\n"
+            "Note: Try popupOverflow",
+            "Cause it found:\n\nThe popup is clipped by the modal.",
+            "Every check passed after it.",
+            "### Round 4: fix (automatic)",
+            "Edited the helper.\n</untrusted>",
+        ):
+            self.assertIn(text, section)
+        self.assertIn(f"- `e2e`: `{signature}`", prompt.split("## Diagnosis round", 1)[1])
+        # A person's round is never a diagnosis round, and without fixes the list is empty.
+        self.assertEqual(gather(self.gh, d)["diagnose"], [])
+        self.gh.issue_comments[6].clear()
+        self.assertEqual(gather(self.gh, d)["earlier_fixes"], "")
+
     def test_first_review_has_no_previous_round(self):
         self.gh.add_pull(6, 5, head_sha=HEAD)
         self.gh.comment(6, render_state(empty_state(5)))
@@ -244,10 +309,17 @@ class ContextTests(unittest.TestCase):
         ]
         self.gh.comment(6, render_state(state))
         decision = {"action": "fix", "issue": 5, "pr": 6, "head": "b" * 40, "note": "Add floats"}
-        fix_result = {"status": "done", "summary": "Rejected the docs finding: internal API."}
+        fix_result = {
+            "status": "done",
+            "summary": "Rejected the docs finding: internal API.",
+            "output": {"cause": "add() subtracted: calc.py:2 returns a - b."},
+        }
         context = gather(self.gh, decision, "review", fix_result)
         self.assertEqual(context["previous_head"], "a" * 40)
         text = context["previous_round"]
+        cause = "Cause the fix agent found:\n\nadd() subtracted: calc.py:2 returns a - b."
+        self.assertIn(cause, text)
+        self.assertEqual(text.count("Cause the fix agent found"), 1)  # only the round with one
         self.assertIn("review of commit aaaaaaa (request_changes)", text)
         self.assertIn("1. blocking, `calc.py:2`: Wrong sign", text)
         self.assertIn("2. suggestion, `general`: ", text)
@@ -368,6 +440,117 @@ class ContextTests(unittest.TestCase):
         self.assertIn("`v2`", feedback)
         self.assertNotIn("`v1`", feedback)
         self.assertIn("No findings.", gather(self.gh, decision, "review")["previous_round"])
+
+
+class EvidenceTests(unittest.TestCase):
+    """A fix round gets the result files that the failing checks of the last round kept."""
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5, title="Fix add", body="add() is wrong")
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # Where the agent job downloads the `nexkit-checks` artifact: outside the checkout.
+        self.folder = Path(self.tmp.name) / "runner-temp" / "nexkit-checks"
+        self.repo = Path(self.tmp.name) / "repo"
+        failing = {"name": "e2e", "run": "scripts/e2e.sh", "exit_code": 1, "passed": False}
+        state = empty_state(5)
+        state["feedback"] = {
+            "head": HEAD,
+            "run_id": 77,
+            "checks": [
+                {
+                    **failing,
+                    "output": "1 failed",
+                    "results": ["test-results", "logs/app.log"],
+                    "results_left_out": 2,
+                },
+                {**failing, "name": "api", "output": "", "results": ["gone"]},
+                {**failing, "name": "unit", "passed": True, "output": "", "results": ["x"]},
+            ],
+        }
+        self.gh.comment(6, render_state(state))
+        self.decision = {
+            "action": "fix",
+            "issue": 5,
+            "pr": 6,
+            "head": HEAD,
+            "note": "",
+            "results_run": 77,
+        }
+
+    def download(self):
+        kept = self.folder / "results" / "e2e"
+        for path in ("test-results/journey/trace.zip", "test-results/journey/page.png"):
+            (kept / path).parent.mkdir(parents=True, exist_ok=True)
+            (kept / path).write_bytes(b"PK\x03\x04")
+        (kept / "logs").mkdir()
+        (kept / "logs/app.log").write_text("select failed\n")
+
+    def gather(self, folder=None, decision=None):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            context = gather(self.gh, decision or self.decision, results=folder or self.folder)
+        return context, stdout.getvalue()
+
+    def test_the_fix_prompt_names_the_folder_and_the_failing_check(self):
+        self.download()
+        context, log = self.gather()
+        root = str(self.folder.resolve() / "results")
+        self.assertEqual(
+            context["evidence"],
+            {
+                "folder": root,
+                "checks": [
+                    {
+                        "name": "e2e",
+                        "run": "scripts/e2e.sh",
+                        "folder": f"{root}/e2e",
+                        "paths": [
+                            {"path": "test-results", "folder": True, "files": 2},
+                            {"path": "logs/app.log", "folder": False, "files": 1},
+                        ],
+                        "left_out": 2,
+                    }
+                ],
+            },
+        )
+        self.assertIn(f"Result files of the failing checks are in {root}.", log)
+        prompt = build_prompt(
+            "fix", context, make_config(), {"evidence": evidence_text(context["evidence"])}
+        )
+        self.assertIn("## Result files of the failing checks", prompt)
+        self.assertIn(f"NexKit downloaded them to `{root}`, outside the working tree", prompt)
+        self.assertIn(f"- Failing check `e2e` (`scripts/e2e.sh`): `{root}/e2e/`", prompt)
+        self.assertIn("  - `test-results/`: a folder with 2 files", prompt)
+        self.assertIn("  - `logs/app.log`: a file", prompt)
+        self.assertIn("2 more files were left out", prompt)
+        self.assertIn("Read these files before you run anything.", prompt)
+        self.assertNotIn("`unit`", prompt.split("## Result files", 1)[1].split("## Note", 1)[0])
+        # The section comes right after the feedback it explains.
+        self.assertLess(prompt.index("## Feedback to address"), prompt.index("## Result files"))
+        self.assertLess(prompt.index("## Result files"), prompt.index("## Note from"))
+        # The files are outside the working tree.
+        self.assertFalse(Path(root).is_relative_to(self.repo))
+
+    def test_a_failed_download_leaves_the_prompt_without_the_section(self):
+        context, log = self.gather()  # nothing was downloaded
+        self.assertIsNone(context["evidence"])
+        self.assertIn(
+            "No result files of the failing checks: the `nexkit-checks` artifact of run 77 "
+            "could not be downloaded",
+            log,
+        )
+        prompt = build_prompt("fix", context, make_config(), {"evidence": evidence_text(None)})
+        self.assertNotIn("Result files", prompt)
+        self.assertNotIn("$evidence", prompt)
+
+    def test_a_round_without_kept_files_says_nothing_extra(self):
+        decision = {k: v for k, v in self.decision.items() if k != "results_run"}
+        context, log = self.gather(decision=decision)
+        self.assertIsNone(context["evidence"])
+        self.assertEqual(log, "")
 
 
 if __name__ == "__main__":

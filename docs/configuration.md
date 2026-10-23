@@ -54,7 +54,7 @@ their defaults.
 | `model` | `"sonnet"` | Model for every stage, as the agent's runtime and provider name it. For `claude-code`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
 | `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
-| `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
+| `checks` | `[]` | Commands that decide whether a change is acceptable, and the files where each writes its results. See [Checks](#checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
 | `stages` | see [Stages](#stages) | Per-stage agent, model, effort, timeout and budget. |
 | `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See [Profiles](#profiles). |
@@ -64,7 +64,7 @@ their defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see [How it works](how-it-works.md#failing-checks-the-base-branch-fixed). |
+| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see [How it works](how-it-works.md#failing-checks-the-base-branch-fixed). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
 | `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See [Automatic merge](#automatic-merge). |
 | `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
@@ -96,8 +96,14 @@ their defaults.
 ```json
 "checks": [
   {"name": "test", "run": "pytest -q", "timeout_minutes": 20},
-  {"name": "e2e", "run": "scripts/e2e.sh", "timeout_minutes": 40, "slow": true},
-  {"name": "lint", "run": "ruff check ."}
+  {"name": "lint", "run": "ruff check ."},
+  {
+    "name": "e2e",
+    "run": "scripts/e2e.sh",
+    "timeout_minutes": 40,
+    "slow": true,
+    "results": ["test-results", "artifacts/logs"]
+  }
 ]
 ```
 
@@ -105,6 +111,17 @@ their defaults.
 - `run`: a Bash command run from the repository root with `pipefail`.
 - `timeout_minutes`: default 15, at most 360.
 - `slow`: default `false`. See [Slow checks](#slow-checks).
+- `results`: files or folders, relative to the repository root, where the check writes its
+  results, such as traces, screenshots, test reports and logs. Default `[]`, at most 20.
+  See [Result files of failing checks](#result-files-of-failing-checks).
+
+`nexkit init` writes each check from `--check NAME=COMMAND`, and its other fields from
+flags that name the check: `--check-timeout NAME=MINUTES`, `--check-slow NAME` and
+`--check-results NAME=PATH`, repeated for each path. The example's `e2e` check comes from:
+
+```sh
+nexkit init --check "e2e=scripts/e2e.sh" --check-timeout e2e=40 --check-slow e2e   --check-results e2e=test-results --check-results e2e=artifacts/logs
+```
 
 Checks run in a separate job that has **no secrets and a read-only token**, on the exact
 commit NexKit published. A setup failure counts as a failed check. With no checks
@@ -126,6 +143,36 @@ check `"slow": true`:
 
 With no check marked slow, the agent runs every check, as before. The plan prompt lists
 every check either way.
+
+### Result files of failing checks
+
+NexKit keeps only the end of a check's output: the last 12,000 characters in the round's
+artifact and the last 6,000 in the fix prompt. A failing end-to-end suite often leaves its
+real evidence in files instead. Name them in `results`, and the next fix round's agent
+reads them before it runs anything, rather than running the slow suite again to see the
+failure.
+
+- When a check fails, the `verify` job copies the paths in its `results` that exist into
+  the round's `nexkit-checks` artifact, under `results/<check>/<path>`. Paths that do not
+  exist are skipped. A passing check keeps nothing, and neither does a check without
+  `results`.
+- Text files pass through the same redaction as the agent's output (see
+  [What is redacted](how-it-works.md#what-is-redacted)). Binary files, such as zip files
+  and images, are kept as they are: the `verify` job holds no secrets that could end up in
+  them. Links are not followed, and a path that leads out of the repository is skipped.
+- A round keeps at most 50 MB of result files, in the order of `checks`, then of each
+  check's `results`, then of the file paths. Files that would go past the limit are left
+  out, and the `verify` job's run summary lists them, with the paths that were not found.
+  Playwright traces of one failed test are often 15 to 20 MB, so keep `results` to the
+  folders that explain a failure.
+- The next fix round's `agent` job downloads that artifact to a folder outside the working
+  tree. The fix prompt names the folder and, for each failing check, its folder and each
+  file or folder it kept. When the artifact cannot be downloaded, for example because it
+  expired after 14 days, the round runs without the files and its log says why.
+- Checks without `results` behave as before.
+
+The artifact can be downloaded by anyone who can read the run, like the rest of NexKit's
+logs and artifacts (see [What is redacted](how-it-works.md#what-is-redacted)).
 
 ### Skipping work that a change cannot affect
 
@@ -343,6 +390,7 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
 | Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. |
 | A bug issue that autopilot opened for a CI failure on the default branch | Goes first: it is planned before every other issue in scope. |
+| An issue that autopilot opened for flaky runs on the default branch | Goes right after those bug issues. |
 | Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep | Nothing: a person decides, as without autopilot, and `notify` mentions them. Other issues go on. |
 | A run on it is running or paused, or its pull request is open | Nothing: the run, or the pull request's automatic rounds, carry it on. |
 | The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. |
@@ -377,11 +425,21 @@ every open issue in scope, oldest first, and starts the one command that moves i
   discussion. Comments by other bots never count. When autopilot takes over like this, or
   splits an issue, `notify` is not mentioned.
 - **CI on the default branch.** With workflows in `merge.after_workflows`, each sweep also
-  looks at the latest run of each of them on the default branch, after NexKit's merges and
-  people's alike. A failed run gets its failed jobs run once more. When it fails again,
-  autopilot opens a `bug` issue in scope, with the failed jobs and steps and the run link,
+  looks at the runs of each of them on the default branch, after NexKit's merges and
+  people's alike, and at every attempt of each run. When the latest run fails, its failed
+  jobs run once more, never more often. When it fails again, autopilot opens a `bug` issue
+  in scope, with the run link and the failed jobs and steps of every failed attempt,
   mentions `notify` in it, and plans it before every other issue. A later failure on a
   newer commit adds a comment to that issue while it is open; a commit is reported once.
+  When a later attempt of that run passes, for example because a person ran it again, a
+  comment on the issue says which attempt passed.
+- **Flaky runs.** A run that passed only when run again, and an older run that failed when
+  a newer run had already started, are recorded on their own `bug` issue for the
+  workflow, which mentions `notify` and is planned right after the `bug` issues above. An
+  older run is never run again. Each record names the commit, the run, and the failed jobs
+  and steps of each failed attempt; while the issue is open, later records are comments on
+  it. Each run and attempt is recorded once. Sweeps look at the runs of the last day,
+  including the first sweep after an upgrade, and at the runs a `bug` issue reports.
   Sweeps notice a finished run at the next event or on the hourly schedule.
 - **Parts.** Parts that autopilot creates are trusted because they start with a NexKit
   marker and are sub-issues of an issue it trusts. A part's own plan that is too large is

@@ -60,6 +60,9 @@ def cmd_init(args):
         kit_repo=args.kit_repo,
         kit_ref=args.kit_ref,
         force=args.force,
+        check_timeouts=args.check_timeout,
+        check_slow=args.check_slow,
+        check_results=args.check_results,
     )
     for path in written:
         print(f"wrote {path}")
@@ -208,7 +211,7 @@ def cmd_context(args):
     fix_result = None
     if args.fix_result and Path(args.fix_result).is_file():
         fix_result = json.loads(Path(args.fix_result).read_text())
-    context = gather(_gh(), decision, stage=args.stage, fix_result=fix_result)
+    context = gather(_gh(), decision, stage=args.stage, fix_result=fix_result, results=args.results)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "context.json").write_text(json.dumps(context, indent=2))
@@ -396,6 +399,27 @@ def build_parser():
     p = sub.add_parser("init", help="Install NexKit configuration and workflow in a repository")
     p.add_argument("--repo", default=".", help="Repository root (default: current directory)")
     p.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND")
+    p.add_argument(
+        "--check-timeout",
+        action="append",
+        default=[],
+        metavar="NAME=MINUTES",
+        help="timeout_minutes of the check NAME",
+    )
+    p.add_argument(
+        "--check-slow",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Mark the check NAME slow: agents run only the tests their change touches",
+    )
+    p.add_argument(
+        "--check-results",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="A file or folder where the check NAME writes results; repeat for more",
+    )
     p.add_argument("--setup", action="append", default=[], metavar="COMMAND")
     p.add_argument(
         "--model",
@@ -435,6 +459,7 @@ def build_parser():
     p.add_argument("--pr", default="", help="Pull request number when it was just created")
     p.add_argument("--stage", choices=["review"], help="Default: the decision's action")
     p.add_argument("--fix-result", help="This run's fix result.json, for the review stage")
+    p.add_argument("--results", help="The downloaded nexkit-checks artifact, for a fix round")
     p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("agent", help="(pipeline) Run an agent stage")

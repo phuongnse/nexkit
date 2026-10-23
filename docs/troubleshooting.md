@@ -71,6 +71,12 @@ step, for example because the run was cancelled. Open that stage's log. The run'
 and statuses are still set, without that stage's results. See
 [which artifacts each command produces](how-it-works.md#logs-summary-and-artifacts).
 
+**"Artifact not found" on *Download check results* in the `agent` job.** A fix round
+downloads the `nexkit-checks` artifact of the run whose failing checks kept
+[result files](configuration.md#result-files-of-failing-checks). Artifacts expire after 14
+days, so a round started later runs without those files; the step does not fail the round,
+and the *Collect issue context* log says that the prompt has no section about them.
+
 ## Agents
 
 **"No secret for the `<name>` agent".** Add the secret that the agent's configuration

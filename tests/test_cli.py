@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ import nexkit
 import nexkit.config
 from nexkit import cli, scaffold
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
+from nexkit.state import empty_state, render_state
 from tests.support import CLAUDE, PROFILES, FakeClaude, FakeGitHub, GitRepos, git
 from tests.test_agent import CONTEXT, FIX_DONE
 
@@ -45,6 +47,55 @@ class InitDoctorTests(unittest.TestCase):
     def test_init_rejects_bad_check(self):
         self.assertEqual(cli.main(["init", "--repo", str(self.root), "--check", "npm test"]), 2)
         self.assertFalse((self.root / ".nexkit").exists())
+
+    def test_init_sets_each_field_of_a_check(self):
+        code = cli.main(
+            [
+                "init",
+                "--repo",
+                str(self.root),
+                "--check",
+                "test=npm test",
+                "--check",
+                "e2e=scripts/e2e.sh",
+                "--check-timeout",
+                "e2e=40",
+                "--check-slow",
+                "e2e",
+                "--check-results",
+                "e2e=test-results",
+                "--check-results",
+                "e2e=artifacts/logs",
+            ]
+        )
+        self.assertEqual(code, 0)
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(
+            cfg["checks"],
+            [
+                {"name": "test", "run": "npm test"},
+                {
+                    "name": "e2e",
+                    "run": "scripts/e2e.sh",
+                    "timeout_minutes": 40,
+                    "slow": True,
+                    "results": ["test-results", "artifacts/logs"],
+                },
+            ],
+        )
+
+    def test_init_rejects_a_check_field_without_its_check_or_value(self):
+        for flags in (
+            ["--check-slow", "e2e"],
+            ["--check-timeout", "test"],
+            ["--check-timeout", "test=soon"],
+            ["--check-timeout", "test=0"],
+            ["--check-results", "test=../outside"],
+        ):
+            with self.subTest(flags=flags):
+                code = cli.main(["init", "--repo", str(self.root), "--check", "test=x", *flags])
+                self.assertEqual(code, 2)
+                self.assertFalse((self.root / ".nexkit").exists())
 
     def test_doctor_without_github(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
@@ -744,6 +795,79 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual([c["output"].split() for c in checks], [[passed, passed]] * 2)
         self.assertIn(f"NEXKIT_VERIFIED_SHA={passed}", stdout.getvalue())
 
+    def test_a_fix_round_gets_the_result_files_of_the_failing_checks(self):
+        repos = GitRepos()
+        self.addCleanup(repos.cleanup)
+        head = repos.push_commit("dev", "nexkit/issue-5", {"a.txt": "a\n"}, "Round 1")
+        self.gh.add_pull(6, 5, head_sha=head)
+        run = (
+            "mkdir -p test-results && printf 'select failed ghp_%036d\\n' 0 "
+            "> test-results/e2e.log; exit 1"
+        )
+        cfg = nexkit.config.validate(
+            {
+                "agents": CLAUDE,
+                "checks": [{"name": "e2e", "run": run, "results": ["test-results", "missing"]}],
+            }
+        )
+        quiet = contextlib.redirect_stdout(io.StringIO())
+        # The verify job of the round whose checks failed.
+        verify_repo = repos.clone("verify")
+        git(verify_repo, "checkout", "-q", "nexkit/issue-5")
+        artifact = self.root / "verify-out"
+        env = {
+            "NEXKIT_DECISION": json.dumps({"action": "review", "base": "main"}),
+            "NEXKIT_CONFIG": json.dumps(cfg),
+            "GITHUB_STEP_SUMMARY": str(self.root / "verify-summary.md"),
+        }
+        with mock.patch.dict(os.environ, env), quiet:
+            cli.main(["checks", "--repo", str(verify_repo), "--out", str(artifact)])
+        self.assertIn("e2e: missing", (self.root / "verify-summary.md").read_text())
+        # Its report keeps the checks and the run that holds their files in the state.
+        state = empty_state(5)
+        checks = json.loads((artifact / "checks.json").read_text())
+        state["feedback"] = {"head": head, "checks": checks, "run_id": 4242}
+        self.gh.comment(6, render_state(state))
+
+        event = {
+            "action": "created",
+            "issue": {"number": 6, "pull_request": {}},
+            "comment": {"id": 3, "body": "/nexkit fix", "user": {"login": "alice"}},
+        }
+        decision = self.run_route("issue_comment", event)["decision"]
+        self.assertEqual(json.loads(decision)["results_run"], 4242)
+        # The agent job downloads that run's artifact into RUNNER_TEMP, outside the checkout.
+        downloaded = self.root / "runner-temp" / "nexkit-checks"
+        shutil.copytree(artifact, downloaded)
+        out = self.root / "agent-out"
+        env = {
+            "NEXKIT_DECISION": decision,
+            "NEXKIT_CONFIG": json.dumps(cfg),
+            "GITHUB_STEP_SUMMARY": str(self.root / "summary.md"),
+        }
+        with mock.patch.dict(os.environ, env), quiet:
+            cli.main(["context", "--out", str(out), "--results", str(downloaded)])
+        agent_repo = repos.clone("agent")
+        git(agent_repo, "checkout", "-q", "nexkit/issue-5")
+        claude = FakeClaude(self.tmp.name)
+        self.addCleanup(claude.restore)
+        claude.configure(result=FIX_DONE, write={"calc.py": "# fixed\n"})
+        path = f"{claude.dir}{os.pathsep}{os.environ['PATH']}"
+        with mock.patch.dict(os.environ, {**env, "PATH": path}), quiet:
+            cli.main(["agent", "--repo", str(agent_repo), "--out", str(out)])
+        self.assertEqual(json.loads((out / "result.json").read_text())["status"], "done")
+
+        prompt = claude.call()["prompt"]
+        folder = (downloaded / "results").resolve()
+        self.assertIn(f"NexKit downloaded them to `{folder}`, outside the working tree", prompt)
+        self.assertIn(f"- Failing check `e2e` (`{run}`): `{folder}/e2e/`", prompt)
+        self.assertIn("  - `test-results/`: a folder with 1 file\n", prompt)
+        self.assertNotIn("`missing`", prompt)
+        kept = folder / "e2e/test-results/e2e.log"
+        self.assertEqual(kept.read_text(), "select failed ***\n")
+        self.assertFalse(kept.is_relative_to(agent_repo.resolve()))
+        self.assertNotIn("test-results", claude.call()["files"])
+
 
 class InstallAgentsTests(unittest.TestCase):
     def test_installs_each_runtime_the_config_uses(self):
@@ -817,6 +941,30 @@ class WorkflowSafetyTests(unittest.TestCase):
             self.assertNotIn(": write", self.jobs[name], name)
             self.assertNotIn("persist-credentials: true", self.jobs[name], name)
             self.assertNotIn("NEXKIT_PUSH_TOKEN", self.jobs[name], name)
+
+    def permissions(self, name):
+        block = re.search(r"^    permissions:\n((?:      .*\n)+)", self.jobs[name], re.M)
+        return dict(re.findall(r"^      ([\w-]+): (\w+)", block.group(1), re.M))
+
+    def test_jobs_that_run_agents_or_repository_code_hold_only_read_permissions(self):
+        read = {"contents": "read", "issues": "read", "pull-requests": "read"}
+        # `actions: read` downloads the result files of an earlier run's failing checks.
+        self.assertEqual(self.permissions("agent"), {"actions": "read", **read})
+        self.assertEqual(self.permissions("verify"), {"contents": "read"})
+        self.assertEqual(self.permissions("review"), read)
+
+    def test_a_fix_round_downloads_the_result_files_outside_the_checkout(self):
+        agent = self.jobs["agent"]
+        step = agent.split("- name: Download check results\n", 1)[1].split("\n      - ", 1)[0]
+        decision = "fromJSON(needs.route.outputs.decision).results_run"
+        self.assertIn(f"if: {decision}\n", step)
+        self.assertIn("continue-on-error: true", step)  # an expired artifact never fails
+        self.assertIn("name: nexkit-checks\n", step)
+        self.assertIn("path: ${{ runner.temp }}/nexkit-checks\n", step)
+        self.assertIn(f"run-id: ${{{{ {decision} }}}}\n", step)
+        context = agent.split("- name: Collect issue context\n", 1)[1].split("\n      - ", 1)[0]
+        self.assertIn('--results "$RUNNER_TEMP/nexkit-checks"', context)
+        self.assertLess(agent.index("Download check results"), agent.index("Run agent"))
 
     def test_verify_holds_no_secrets(self):
         self.assertNotIn("secrets.", self.jobs["verify"])

@@ -390,7 +390,7 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
 | Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. |
 | A bug issue that autopilot opened for a CI failure on the default branch | Goes first: it is planned before every other issue in scope. |
-| An issue that autopilot opened for flaky runs on the default branch | Goes right after those bug issues. |
+| An issue that autopilot opened for a failure of flaky runs on the default branch | Goes right after those bug issues. |
 | Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep | Nothing: a person decides, as without autopilot, and `notify` mentions them. Other issues go on. |
 | A run on it is running or paused, or its pull request is open | Nothing: the run, or the pull request's automatic rounds, carry it on. |
 | The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. |
@@ -434,13 +434,21 @@ every open issue in scope, oldest first, and starts the one command that moves i
   When a later attempt of that run passes, for example because a person ran it again, a
   comment on the issue says which attempt passed.
 - **Flaky runs.** A run that passed only when run again, and an older run that failed when
-  a newer run had already started, are recorded on their own `bug` issue for the
-  workflow, which mentions `notify` and is planned right after the `bug` issues above. An
-  older run is never run again. Each record names the commit, the run, and the failed jobs
-  and steps of each failed attempt; while the issue is open, later records are comments on
-  it. Each run and attempt is recorded once. Sweeps look at the runs of the last day,
-  including the first sweep after an upgrade, and at the runs a `bug` issue reports.
-  Sweeps notice a finished run at the next event or on the hourly schedule.
+  a newer run had already started, are recorded under each of their failures, on one
+  `bug` issue per failure, which mentions `notify` and is planned right after the `bug`
+  issues above. An older run is never run again. The error annotations of the failed jobs
+  name the failures, such as each failing test, by title or else by file and line; the
+  runner's own "Process completed with exit code" names nothing, and a job without such
+  an annotation is named by the job and its first failed step. Each record names the
+  commit, the run, and where the failure showed in each failed attempt. While a failure's
+  issue is open, its later records are comments on it; once closed, a new issue opens
+  that links it. A run whose failures would open more than five issues records those on
+  one issue for the run. Each run and attempt is recorded once per failure; an issue from
+  NexKit 4.3.0, with every failure of a workflow on it, gets no new records. Sweeps look
+  at the runs of the last day, including the first sweep after an upgrade, and at the
+  runs a `bug` issue reports. Sweeps notice a finished run at the next event or on the
+  hourly schedule. Reading annotations needs `checks: read` in the workflow's
+  permissions, as `nexkit init` writes them.
 - **Parts.** Parts that autopilot creates are trusted because they start with a NexKit
   marker and are sub-issues of an issue it trusts. A part's own plan that is too large is
   split again, within these limits:

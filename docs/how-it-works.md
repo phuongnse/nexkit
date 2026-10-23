@@ -15,7 +15,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
-| `maintain` | issue and milestone events, pushes to the default branch, the schedule, the `resume` and `autopilot` dispatches | read; issues, comments, workflows | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | issue and milestone events, pushes to the default branch, the schedule, the `resume` and `autopilot` dispatches | read; issues, comments, workflows; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -516,16 +516,30 @@ issue run in that group as well, and start a sweep.
   says which attempt passed in a comment on that issue.
 - **Flaky runs.** A run whose latest attempt passed after a failed one, and an older run
   that failed when a newer run had already started, which is never run again, are
-  recorded on one issue per workflow: `bug`, in scope, starting with its own marker that
-  names the workflow, and planned right after the `bug` issues for a failing default
-  branch. Each record names the commit, the run, and the failed jobs and steps of each
-  failed attempt; while the issue is open, later records are comments on it. Every bug and
-  flaky-run report ends with a marker that lists the run attempts it covers, so each run
-  and attempt is recorded once, and a sweep reads no attempt that a marker covers. The
-  first sweep after an upgrade looks back one day, as every sweep does; sweeps run at least
-  hourly. GitHub may send no `workflow_run` event for runs that the Actions token started,
-  so NexKit learns that a run finished from the next sweep: after a run, an issue event or
-  the hourly schedule.
+  recorded under each of their failures, one issue per failure, so an issue stays one
+  behaviour. The error annotations of a failed job name its failures (read with
+  `checks: read`): test reporters write one per failing test, titled with its name and
+  pointing at its file and line. An annotation names a failure by its title, else by its
+  file and line; one without either, or that points at the workflow, such as the runner's
+  "Process completed with exit code 1.", names nothing. A failed job without an
+  annotation that names a failure is named by the job and its first failed step, and an
+  attempt that failed before any job did by the workflow. Each failure's issue is `bug`,
+  in scope, titled by the failure, for example "`OrderTests.Totals_round_half_up` fails
+  at times on `main`", starts with its own marker that names the workflow and a key for
+  the failure, and is planned right after the `bug` issues for a failing default branch.
+  Each record names the commit, the run, and the job, file and line, and message where
+  the failure showed in each failed attempt. A later record of the same failure is a
+  comment on its issue while that is open; once closed, a new issue opens that links it.
+  A run whose failures would open more than five issues, likely one cause such as a
+  broken runner, records those on one issue for the run instead; failures that have an
+  issue still get their records there. Every bug and flaky-run report ends with a marker
+  that lists the run attempts it covers, so each run and attempt is recorded once per
+  failure, and a sweep reads no attempt that a marker covers. An issue from NexKit 4.3.0,
+  one per workflow with every failure on it, keeps the records it has and gets no new
+  ones; the runs it covers are not recorded again. The first sweep after an upgrade looks
+  back one day, as every sweep does; sweeps run at least hourly. GitHub may send no
+  `workflow_run` event for runs that the Actions token started, so NexKit learns that a
+  run finished from the next sweep: after a run, an issue event or the hourly schedule.
 - **What autopilot reads.** The plan comment ends with a hidden record of its questions and
   its split, after everything the agent wrote, and a run comment's marker holds the
   questions of a blocked round and whether the agent ran out of time.

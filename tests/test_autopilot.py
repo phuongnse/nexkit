@@ -14,6 +14,14 @@ from nexkit.state import PLAN_MARKER, render_run
 from tests.support import FakeGitHub, make_config
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
+# The annotation the runner adds to every job whose step fails.
+GENERIC_ANNOTATION = {
+    "path": ".github",
+    "start_line": 1,
+    "annotation_level": "failure",
+    "title": "",
+    "message": "Process completed with exit code 1.",
+}
 
 
 def pilot(**settings):
@@ -792,14 +800,35 @@ class CITests(AutopilotCase):
         self.gh.workflow_history.setdefault("ci.yml", []).append(run)
         self.gh.jobs[run_id] = [
             {
+                "id": run_id * 10 + 1,
                 "name": "test",
                 "conclusion": "failure",
                 "html_url": "https://job",
                 "steps": [{"name": "Run tests", "conclusion": "failure"}],
             },
-            {"name": "lint", "conclusion": "success", "steps": []},
+            {"id": run_id * 10 + 2, "name": "lint", "conclusion": "success", "steps": []},
         ]
         return run
+
+    def annotate(self, run_id, *names):
+        """Error annotations on the test job of `run_id`: one per test name, then the
+        runner's own."""
+        self.gh.annotations[run_id * 10 + 1] = [
+            *(
+                {
+                    "path": f"tests/{name.split('.')[0]}.cs",
+                    "start_line": 10 + index,
+                    "annotation_level": "failure",
+                    "title": name,
+                    "message": f"Assert.Equal() Failure in {name}",
+                }
+                for index, name in enumerate(names)
+            ),
+            GENERIC_ANNOTATION,
+        ]
+
+    def key(self, issue):
+        return autopilot.flaky_failure(issue)
 
     def bugs(self):
         return [i for i in self.gh.issues.values() if autopilot.ci_workflow(i)]
@@ -852,11 +881,14 @@ class CITests(AutopilotCase):
         self.sweep()
         self.assertEqual((self.gh.reruns, self.bugs()), ([50], []))
         [issue] = self.flaky()
-        self.assertEqual(issue["title"], "`ci.yml` fails at times on `main`")
+        # Without annotations, the failure is named by its job and first failed step.
+        title = "Step `Run tests` of job `test` in `ci.yml` fails at times on `main`"
+        self.assertEqual(issue["title"], title)
         self.assertEqual([x["name"] for x in issue["labels"]], ["bug"])
         self.assertEqual(issue["milestone"], {"number": 1})
         body = issue["body"]
-        self.assertTrue(body.startswith("<!-- nexkit:ci-flaky ci.yml -->\n@olivia "))
+        self.assertRegex(body, r"\A<!-- nexkit:ci-flaky ci\.yml [0-9a-f]{16} -->\n@olivia ")
+        self.assertIn("in which step `Run tests` of job `test` failed:", body)
         self.assertIn(
             f"[A run of `ci.yml`](https://github.com/acme/app/actions/runs/50) on `main` at "
             f"{self.SHA} passed in attempt 2 after failing.",
@@ -927,6 +959,153 @@ class CITests(AutopilotCase):
         # A run from before the last day is left alone.
         self.assertNotIn("runs/49", issue["body"])
         self.assertEqual(self.gh.comments_matching(issue["number"], "nexkit:ci-runs"), [])
+
+    def test_each_failure_of_a_flaky_run_gets_its_own_issue_named_by_its_annotation(self):
+        name = (
+            "ScenarioRunnerTests.Async_event_triggers_that_start_each_other_in_a_loop_fail_"
+            "the_action_at_the_work_item_limit"
+        )
+        run = self.ci_run()
+        self.annotate(50, name, "OrderTests.Totals_round_half_up")
+        self.sweep()
+        self.passed_again(run)
+        self.sweep()
+        first, second = sorted(self.flaky(), key=lambda i: i["number"])
+        self.assertEqual(
+            first["title"],
+            "`ScenarioRunnerTests.Async_eve…action_at_the_work_item_limit` "
+            "fails at times on `main`",
+        )
+        self.assertEqual(
+            second["title"], "`OrderTests.Totals_round_half_up` fails at times on `main`"
+        )
+        self.assertNotEqual(self.key(first), self.key(second))
+        for issue, test, line in (
+            (first, name, 10),
+            (second, "OrderTests.Totals_round_half_up", 11),
+        ):
+            body = issue["body"]
+            self.assertIn(f"in which `{test}` failed:", body)
+            self.assertIn(
+                f"runs/50) on `main` at {self.SHA} passed in attempt 2 after failing.", body
+            )
+            url = "https://github.com/acme/app/actions/runs/50/attempts/1"
+            self.assertIn(
+                f"Attempt [1]({url}):\n- [test](https://job): `{test}`, "
+                f"`tests/{test.split('.')[0]}.cs:{line}`: `Assert.Equal() Failure in {test}`",
+                body,
+            )
+            self.assertTrue(body.endswith("<!-- nexkit:ci-runs 50.1 50.2 -->"))
+            self.assertNotIn("Process completed", body)
+        self.assertNotIn("OrderTests", first["body"])
+        self.assertNotIn("ScenarioRunnerTests", second["body"])
+        # The next sweep records neither again.
+        self.sweep()
+        self.assertEqual(len(self.flaky()), 2)
+        self.assertEqual(self.gh.comments_matching(first["number"], "nexkit:ci-runs"), [])
+
+    def test_a_failure_seen_again_is_recorded_on_its_issue_or_on_a_new_one_once_closed(self):
+        name = "OrderTests.Totals_round_half_up"
+        run = self.ci_run()
+        self.annotate(50, name)
+        self.passed_again(run)
+        self.sweep()
+        [issue] = self.flaky()
+        # A later run with the same failure and a new one.
+        later = self.ci_run(sha="a" * 40, run_id=52)
+        self.annotate(52, name, "CartTests.Empty_cart")
+        self.passed_again(later)
+        self.sweep()
+        [comment] = self.gh.comments_matching(issue["number"], "nexkit:ci-runs")
+        self.assertIn("runs/52) on `main` at " + "a" * 40 + " passed in attempt 2", comment["body"])
+        self.assertIn(f"- [test](https://job): `{name}`, `tests/OrderTests.cs:10`", comment["body"])
+        self.assertNotIn("CartTests", comment["body"])
+        self.assertTrue(comment["body"].endswith("<!-- nexkit:ci-runs 52.1 52.2 -->"))
+        self.assertEqual(len(self.flaky()), 2)
+        # Once its issue is closed, the failure opens a new issue that links the closed one.
+        issue["state"] = "closed"
+        again = self.ci_run(sha="b" * 40, run_id=53)
+        self.annotate(53, name)
+        self.passed_again(again)
+        self.sweep()
+        newest = max(self.flaky(), key=lambda i: i["number"])
+        self.assertEqual((newest["title"], self.key(newest)), (issue["title"], self.key(issue)))
+        self.assertIn(
+            f"#{issue['number']}, now closed, was about the same failure.", newest["body"]
+        )
+        self.assertIn("runs/53) on `main`", newest["body"])
+        self.assertTrue(newest["body"].endswith("<!-- nexkit:ci-runs 53.1 53.2 -->"))
+        self.assertEqual(self.gh.comments_matching(issue["number"], "runs/53"), [])
+
+    def test_a_failure_without_a_usable_annotation_is_named_by_its_job_and_failed_step(self):
+        run = self.ci_run()
+        self.gh.jobs[50][0]["steps"] = [
+            {"name": "Restore", "conclusion": "success"},
+            {"name": "Run tests", "conclusion": "failure"},
+            {"name": "Upload results", "conclusion": "failure"},
+        ]
+        self.gh.annotations[501] = [
+            GENERIC_ANNOTATION,
+            # The workflow file and warnings name nothing either.
+            {**GENERIC_ANNOTATION, "path": ".github/workflows/ci.yml", "message": "Bad input"},
+            {**GENERIC_ANNOTATION, "annotation_level": "warning", "title": "Deprecated"},
+        ]
+        self.passed_again(run)
+        self.sweep()
+        [issue] = self.flaky()
+        title = "Step `Run tests` of job `test` in `ci.yml` fails at times on `main`"
+        self.assertEqual(issue["title"], title)
+        self.assertIn("- [test](https://job): `Run tests`, `Upload results`\n", issue["body"])
+        for text in ("Process completed", "Bad input", "Deprecated"):
+            self.assertNotIn(text, issue["body"])
+        # A failed job without a failed step is named by the job alone.
+        later = self.ci_run(sha="a" * 40, run_id=52)
+        self.gh.jobs[52][0]["steps"] = []
+        self.passed_again(later)
+        self.sweep()
+        newest = max(self.flaky(), key=lambda i: i["number"])
+        self.assertEqual(newest["title"], "Job `test` of `ci.yml` fails at times on `main`")
+        self.assertIn("in which job `test` failed:", newest["body"])
+
+    def test_a_run_with_too_many_new_failures_records_them_on_one_issue_for_the_run(self):
+        known = "OrderTests.Totals_round_half_up"
+        run = self.ci_run()
+        self.annotate(50, known)
+        self.passed_again(run)
+        self.sweep()
+        [issue] = self.flaky()
+        broken = [f"BrokenTests.Case_{n}" for n in range(autopilot.CI_NEW_ISSUES + 1)]
+        later = self.ci_run(sha="a" * 40, run_id=52)
+        self.annotate(52, known, *broken)
+        self.passed_again(later)
+        self.sweep()
+        # The failure with an issue gets its record there; the new ones share one issue.
+        self.assertEqual(len(self.gh.comments_matching(issue["number"], "runs/52")), 1)
+        [for_run] = [i for i in self.flaky() if i is not issue]
+        self.assertEqual(for_run["title"], "Run 52 of `ci.yml` failed in 6 ways at once on `main`")
+        for name in broken:
+            self.assertIn(f"`{name}`, `tests/BrokenTests.cs:", for_run["body"])
+        self.assertNotIn(known, for_run["body"])
+        self.assertTrue(for_run["body"].endswith("<!-- nexkit:ci-runs 52.1 52.2 -->"))
+
+    def test_an_issue_from_4_3_0_keeps_its_records_and_gets_no_new_ones(self):
+        old = self.gh.create_issue(
+            "`ci.yml` fails at times on `main`",
+            "<!-- nexkit:ci-flaky ci.yml -->\nRecords.\n\n<!-- nexkit:ci-runs 50.1 50.2 -->",
+            1,
+            ["bug"],
+        )
+        self.passed_again(self.ci_run())
+        self.passed_again(self.ci_run(sha="a" * 40, run_id=52))
+        self.sweep()
+        self.assertEqual((autopilot.flaky_workflow(old), self.key(old)), ("ci.yml", None))
+        self.assertEqual(self.gh.comments_matching(old["number"], "nexkit:ci-runs"), [])
+        [new] = [i for i in self.flaky() if self.key(i)]
+        self.assertIn("runs/52) on `main`", new["body"])
+        self.assertNotIn("runs/50)", new["body"])
+        # Both are still planned right after the issues for a failing default branch.
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual([s["number"] for s in steps], [old["number"], new["number"], 3])
 
     def test_a_newer_failing_commit_comments_on_the_open_bug(self):
         self.ci_run(attempt=2)

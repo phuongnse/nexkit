@@ -170,6 +170,28 @@ class InitDoctorTests(unittest.TestCase):
         path.write_text(text.replace("    " + group, "").replace("jobs:", "concurrency: x\njobs:"))
         self.assertNotIn(ok, scaffold.doctor(self.root))
 
+    def test_doctor_checks_the_permissions_the_pipeline_needs(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".github/workflows/nexkit.yml"
+        text = path.read_text()
+        ok = (True, "The workflow gives the pipeline the permissions its jobs need")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        # A workflow from NexKit 4.3.0 or earlier does not give `checks: read`.
+        path.write_text(text.replace("  checks: read\n", ""))
+        problem = (
+            False,
+            ".github/workflows/nexkit.yml does not give the pipeline checks: read, so GitHub "
+            "starts none of its runs; add it under 'permissions:' as 'nexkit init' writes it",
+        )
+        self.assertIn(problem, scaffold.doctor(self.root))
+        # Permissions on the job, or all of them, do as well.
+        job = "    permissions: write-all\n    uses:"
+        path.write_text(text.replace("  checks: read\n", "").replace("    uses:", job))
+        self.assertIn(ok, scaffold.doctor(self.root))
+        path.write_text(text.replace("permissions:\n", "permissions: read-all\nunused:\n"))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("does not give the pipeline contents: write" in m for _, m in findings))
+
     def test_doctor_checks_the_trigger_for_parent_issues(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         path = self.root / ".nexkit/config.json"
@@ -1068,6 +1090,18 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertNotIn("contents: write", maintain)
         self.assertNotIn("secrets.", maintain)
         self.assertIn('["none","maintain"]', self.jobs["report"])
+
+    def test_the_workflow_init_writes_gives_every_permission_a_job_asks_for(self):
+        # GitHub starts no run of a workflow whose called jobs ask for more than it gives.
+        given = scaffold.granted(scaffold.workflow_text("acme/kit", "v1.0.0"))
+        levels = scaffold.LEVELS
+        for name, job in self.jobs.items():
+            block = re.search(r"^    permissions:\n((?:      .*\n)*)", job, re.M).group(1)
+            for permission, level in re.findall(r"^      ([a-z-]+): (read|write)", block, re.M):
+                self.assertGreaterEqual(
+                    levels[given.get(permission, "none")], levels[level], f"{name}: {permission}"
+                )
+        self.assertIn("checks: read", self.jobs["maintain"])
 
     def test_route_acknowledges_commands_without_repository_code(self):
         route = self.jobs["route"]

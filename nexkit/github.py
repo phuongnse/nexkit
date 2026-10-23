@@ -223,6 +223,10 @@ class GitHub:
         path = f"{self._repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
         return self.request("GET", path, params={"per_page": 100}).get("jobs") or []
 
+    def check_run_annotations(self, check_run_id):
+        """The annotations of a check run, such as a job of a workflow run: the first 100."""
+        return self.paginate(f"{self._repo}/check-runs/{check_run_id}/annotations", limit=100)
+
     def rerun_failed_jobs(self, run_id):
         return self.request("POST", f"{self._repo}/actions/runs/{run_id}/rerun-failed-jobs")
 

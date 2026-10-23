@@ -72,6 +72,27 @@ class RouteTests(unittest.TestCase):
         self.gh.update_comment(comment["id"], render_state(state))
         self.assertNotIn("results_run", self.fix_on_pull())
 
+    def test_only_an_automatic_fix_round_diagnoses_repeated_failures(self):
+        self.gh.add_pull(6, 5, head_sha="c" * 40)
+        state = empty_state(5)
+        state["feedback"] = {"head": "c" * 40, "checks": [], "repeated": ["e2e"]}
+        self.gh.comment(6, render_state(state))
+
+        def dispatch(auto):
+            inputs = {"command": "fix", "number": "6", "auto": auto}
+            return route(self.gh, "workflow_dispatch", {"sender": {"login": "x"}}, inputs)
+
+        self.assertEqual(dispatch("true")["diagnose"], ["e2e"])
+        self.assertEqual(dispatch("true,resume")["diagnose"], ["e2e"])
+        # A person's round follows the person's note, and a conflict round only merges.
+        self.assertNotIn("diagnose", self.fix_on_pull())
+        self.assertNotIn("diagnose", dispatch("false"))
+        self.assertNotIn("diagnose", dispatch("conflicts"))
+        inputs = {"command": "review", "number": "6", "auto": "true"}
+        review = route(self.gh, "workflow_dispatch", {}, inputs)
+        self.assertEqual(review["action"], "review")
+        self.assertNotIn("diagnose", review)
+
     def test_fix_gets_the_last_commit_whose_checks_passed(self):
         self.gh.add_pull(6, 5, head_sha="c" * 40)
         self.assertNotIn("verified_sha", self.fix_on_pull())  # no earlier round

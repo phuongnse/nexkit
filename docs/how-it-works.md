@@ -255,7 +255,16 @@ tree. The prompt names the folder, and for each failing check its
 folder and the files and folders it kept, and asks the agent to read them before it runs
 anything. A download that fails, for example because the artifact expired, never fails
 the round: the prompt has no such section, and the log of *Collect issue context* says
-why. NexKit builds the pull request description from the implement result, in this
+why.
+
+Every fix round's prompt also lists the pull request's earlier fix rounds, from the state
+comment: for each, whether it was automatic or requested by a person, its note, the fix
+agent's summary and cause, and the checks that still failed after it, each with its
+failure signature (see [Failure handling](#failure-handling)). The agent is told not to
+repeat a change that did not help. Besides `summary`, a fix result has `cause`: the cause
+of the failures the round addressed and the evidence that shows it, such as trace, log or
+output lines, or an empty string. The round's comment and its commit message show a
+cause when there is one, and so does the next review's *Previous round* section. NexKit builds the pull request description from the implement result, in this
 order: *Summary* (two or three sentences, also the commit message), *What changed* (in
 behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
 the reviewer*. A fix round's summary becomes its commit message.
@@ -636,12 +645,14 @@ the line after its marker) and one NexKit comment per run on the issue, the
 pull request, its commit statuses, one NexKit comment per round and one NexKit state
 comment on the pull request. Run comments only show runs. The state comment, edited in
 place, says how many automatic fix rounds were used and holds a hidden JSON record of the
-latest feedback (with the run that holds its checks' result files), that count, the last
-completed review (its commit and all its findings) and the recent fix rounds (summary,
-note and, after a merge, the files that had conflicts). Recorded text is clipped so the
-comment and the prompts stay bounded. With autopilot, each issue it worked on has one
-record comment, edited in place, that names the command it started last. Nothing else is
-stored, so there is nothing to migrate or repair.
+latest feedback (with the run that holds its checks' result files, and the checks that
+failed the same way before and after the last fix round), that count, the last completed
+review (its commit and all its findings) and the recent fix rounds (summary, cause, note,
+the checks that still failed after it with their failure signatures and, after a merge,
+the files that had conflicts). Recorded text is clipped, and only the last five fix
+rounds are kept, so the comment and the prompts stay bounded. With autopilot, each issue
+it worked on has one record comment, edited in place, that names the command it started
+last. Nothing else is stored, so there is nothing to migrate or repair.
 
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
 status (running, success, failure, paused, continued), the outcome (for example `planned`,
@@ -683,8 +694,45 @@ state, leaves it as it is and saves the state in a new state comment.
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `fix.max_auto_rounds` remain, otherwise asks for a person. After failing checks, that round first merges the base branch when it has moved, so a failure the base branch already fixed costs no agent change. |
+| A check fails the same way before and after a fix round | The next automatic fix round is a diagnosis round, shown as `fix (auto, diagnosis)`: the agent names the cause, with evidence, before it changes code, then fixes that cause. Without a cause it changes nothing and ends as `blocked` with a question for a person; a change without a cause is rejected and publishes nothing. |
 | The review itself fails | Sets `nexkit/review` to error and says why in the round's comment; comment `/nexkit review` to retry, after fixing the agent's secrets if it was an authentication error. |
 | NexKit itself fails in the `agent` or `review` job | Reports `NexKit stopped on <exception>` like an agent error; the job log has the traceback. |
+
+**Diagnosis rounds.** A fix round that tries one change after another without the cause
+spends its time and the automatic rounds on guesses. So when a check fails the same way
+in two rounds in a row, NexKit asks for the cause first.
+
+- *The same failure* is the same check with the same failure signature: the first line of
+  the check's output that reports a failure (it contains `fail`, `error`, `✘` or `✗`, in
+  any case, such as `FAIL`, `AssertionError` or `2 tests failed`), or the last non-empty
+  line when none does. UUIDs, hex ids, durations and other numbers are removed and runs of
+  whitespace become one space, so the same failure in another run keeps its signature.
+- `report` compares the failing checks that a fix round was asked to fix with the checks
+  after it. When a check fails with the same signature in both, the state comment records
+  it, and `route` makes the next automatic fix round a diagnosis round. A round that a
+  person starts with `/nexkit fix` follows that person's note instead, and a conflict
+  round only merges the base branch.
+- The diagnosis round runs in one session: its prompt lists the repeated failures and
+  asks for the cause, with the evidence that shows it (the check output, the
+  [result files](configuration.md#result-files-of-failing-checks) the checks kept, the
+  code), before any code change, and then for a fix of that cause. The agent writes the
+  cause in `cause`.
+- A diagnosis result that returns `done` with an empty `cause` and its own code changes is
+  rejected as an error, and nothing is published. Changes that a merge of the base branch
+  brought, and the resolution of conflicted files, do not count as its own.
+- A diagnosis result with an empty `cause` and no changes ends as `blocked`, with what the
+  evidence shows as its reason and the agent's questions, or else a question that asks a
+  person how to go on. Like any blocked result, it publishes nothing and never starts
+  another automatic round. The round itself counts toward `fix.max_auto_rounds` like any
+  automatic round, because NexKit counts a round when it starts it; its blocked end uses
+  no further round.
+- When the round merged a base branch that had moved, and the agent changed nothing
+  itself, the merge is published alone, as in any round after failing checks (see
+  [Failing checks the base branch fixed](#failing-checks-the-base-branch-fixed)): the
+  base branch may have fixed the failure, and the next checks show whether it did.
+- Repeated review findings do not start a diagnosis round: the review already tracks them
+  through its *Previous round* section, and only checks give a failure signature to
+  compare.
 
 Automatic rounds only follow concrete check failures or review findings. Agent errors and
 blocked results always stop, apart from what [autopilot](#autopilot) answers or splits, so

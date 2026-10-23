@@ -11,7 +11,9 @@ from unittest import mock
 from nexkit import cli
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
+from nexkit.progress import trigger
 from nexkit.report import report, review_body, workflow_file
+from nexkit.route import route
 from nexkit.state import read_state
 from tests.support import FakeGitHub, make_config
 
@@ -353,6 +355,47 @@ class ReportTests(ReportCase):
         self.assertEqual(state["feedback"]["run_id"], 1)
         self.assertFalse(state["feedback"]["checks"][0]["passed"])
 
+    def failing(self, output):
+        check = {"name": "e2e", "run": "scripts/e2e.sh", "exit_code": 1, "passed": False}
+        self.write("nexkit-checks", "checks.json", [{**check, "output": output}])
+
+    def fix_round(self, output, head, cause=""):
+        agent = {"status": "done", "summary": "Wrapped the popup.", "output": {"cause": cause}}
+        self.write("nexkit-agent", "result.json", agent)
+        self.failing(output)
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
+        return self.run_report(d=d, cfg=make_config(fix={"max_auto_rounds": 5}), head=head)
+
+    def next_round(self):
+        inputs = self.gh.dispatches[-1]["inputs"]
+        return route(self.gh, "workflow_dispatch", {"sender": {"login": "nexkit"}}, inputs)
+
+    def test_a_check_that_fails_the_same_way_twice_gets_a_diagnosis_round(self):
+        self.candidate(checks_pass=False, review=review_result("request_changes"))
+        self.failing("Running 3 tests\n  ✘ 1 desk.spec.ts:42 › picks an option (12.3s)\n")
+        self.run_report(cfg=make_config(fix={"max_auto_rounds": 5}))
+        self.assertNotIn("diagnose", self.next_round())  # no fix round has run yet
+
+        again = "Running 4 tests\n  ✘ 3 desk.spec.ts:42 › picks an option (9.1s)\n"
+        self.fix_round(again, "e" * 40)
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["feedback"]["repeated"], ["e2e"])
+        signature = "✘ desk.spec.ts: › picks an option ()"
+        self.assertEqual(state["fixes"][-1]["failing"], [{"name": "e2e", "signature": signature}])
+        diagnosis = self.next_round()
+        self.assertEqual(diagnosis["diagnose"], ["e2e"])
+        self.assertEqual(trigger(diagnosis), "fix (auto, diagnosis)")
+
+        # The diagnosis round found the cause; the check now fails another way.
+        cause = "The popup renders outside the modal, so the click misses it (trace.zip)."
+        self.fix_round("  ✘ 1 desk.spec.ts:50 › saves the ticket (1.0s)\n", "f" * 40, cause)
+        _, state = read_state(self.gh.comments(6))
+        self.assertNotIn("repeated", state["feedback"])
+        self.assertEqual(state["fixes"][-1]["cause"], cause)
+        self.assertNotIn("diagnose", self.next_round())
+        text = self.gh.run_comments(6)[-1]["body"]
+        self.assertIn(f"**Cause found by the fix agent:** {cause}", text)
+
     def test_missing_review(self):
         self.candidate(review=False)
         outcome = self.run_report()
@@ -475,6 +518,7 @@ class ReportTests(ReportCase):
                     "auto": False,
                     "summary": "Kept docs.",
                     "note": "Also handle floats",
+                    "failing": [],  # every check passed after it
                 }
             ],
         )

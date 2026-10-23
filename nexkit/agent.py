@@ -26,6 +26,7 @@ from .schema import problems
 from .usage import schedule
 
 MAX_DIFF = 80_000
+NO_EARLIER_FIXES = "None. This is the first fix round of this pull request."
 # A conflict marker at the start of a line: `<<<<<<< ours`, `>>>>>>> theirs`, `||||||| base`.
 CONFLICT_MARKER = re.compile(rb"^(<{7}|>{7}|\|{7})( |$)", re.M)
 BOT = ("-c", "user.name=nexkit", "-c", "user.email=nexkit@localhost")
@@ -123,6 +124,9 @@ SCHEMAS = {
         **_CHANGE_RESULT,
         "properties": {
             **_CHANGE_RESULT["properties"],
+            # The cause of the failures and the evidence that shows it, or "". A diagnosis
+            # round must name it before it changes code.
+            "cause": {"type": "string"},
             # Conflicts with the base branch that need a person's decision.
             "open_conflicts": {
                 "type": "array",
@@ -138,7 +142,7 @@ SCHEMAS = {
                 },
             },
         },
-        "required": [*_CHANGE_RESULT["required"], "open_conflicts"],
+        "required": [*_CHANGE_RESULT["required"], "cause", "open_conflicts"],
     },
     # NexKit adds the configured profile names as an enum when it runs triage.
     "triage": {
@@ -381,6 +385,54 @@ def evidence_text(found):
         folder=found["folder"], checks="\n".join(lines)
     )
     return text + "\n"
+
+
+def diagnosis_text(repeated):
+    """The fix prompt's section for a diagnosis round, or "" for any other round.
+    `repeated` comes from `context.diagnosis`."""
+    if not repeated:
+        return ""
+    items = "\n".join(f"- `{item['name']}`: `{item['signature']}`" for item in repeated)
+    return Template(_template("fix_diagnosis")).safe_substitute(repeated=items)
+
+
+def _cause(result):
+    return str((result.get("output") or {}).get("cause") or "").strip()
+
+
+def no_cause(result, repeated):
+    """A diagnosis round that found no cause and changed nothing ends as `blocked`, with
+    what the evidence shows as the question for a person."""
+    output = result["output"]
+    names = ", ".join(f"`{item['name']}`" for item in repeated)
+    shown = str(output.get("blocker") or output.get("summary") or "").strip()
+    blocker = f"The diagnosis round found no cause for the repeated failure of {names}."
+    if shown:
+        blocker += f" What the evidence shows: {shown}"
+    questions = output.get("questions") or [
+        {
+            "question": f"{names} failed the same way after two fix rounds, and the agent "
+            "found no cause in the evidence. How should NexKit go on?",
+            "options": [
+                "Add logging or a smaller test that shows the failure, then comment `/nexkit fix`",
+                "Name the cause or a direction in a note: `/nexkit fix <note>`",
+                "Fix it yourself and push a commit",
+            ],
+            "recommended": 0,
+        }
+    ]
+    output.update(status="blocked", blocker=blocker, questions=questions)
+    result.update(status="blocked", error=blocker)
+
+
+def own_changes(repo, files, merged, conflicts):
+    """The files the agent changed itself: without what a merge of the base branch brought,
+    and without the conflicted files it had to resolve. Call after `collect_changes`."""
+    if not merged:
+        return files
+    tree = merge_tree(repo, "HEAD", merged)[0]
+    edits = names(git(repo, "diff", "--cached", "--name-only", "--no-renames", "-z", tree))
+    return [name for name in edits if name not in conflicts]
 
 
 def leftover_markers(repo, files):
@@ -833,6 +885,8 @@ def run_stage(
         merged, conflicts = merge_base_branch(repo, base, context.get("merge_moved_base"))
         extra["conflicts"] = conflicts_text(base, merged, conflicts)
         extra["evidence"] = evidence_text(context.get("evidence"))
+        extra["earlier_fixes"] = context.get("earlier_fixes") or NO_EARLIER_FIXES
+        extra["diagnosis"] = diagnosis_text(context.get("diagnose"))
         if merged:
             # Once committed, the merge has the merged base commit as its merge base.
             commits = {**(commits or {}), BASE_SHA: known_base(repo, merged)}
@@ -894,6 +948,21 @@ def run_stage(
             )
         elif size > cfg["limits"]["max_patch_mb"] * 1_000_000:
             result.update(status="error", error=f"The change is too large ({size} bytes).")
+        elif stage == "fix" and context.get("diagnose") and not _cause(result):
+            changed = own_changes(repo, files, merged, conflicts)
+            if changed:
+                result.update(
+                    status="error",
+                    error="The diagnosis round changed code without naming the cause of the "
+                    "repeated failure, so NexKit publishes nothing. Changed: "
+                    + ", ".join(f"`{name}`" for name in changed[:20])
+                    + ".",
+                )
+            elif not merged:
+                no_cause(result, context["diagnose"])
+            # A merge of a moved base branch is published alone, as in any round after
+            # failing checks: the base branch may have fixed the failure, and the next
+            # checks show whether it did.
         elif not files and not merged:
             # After a merge an empty patch is valid: it keeps this branch's side everywhere,
             # or publishes a clean merge alone.

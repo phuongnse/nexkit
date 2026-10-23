@@ -46,7 +46,7 @@ DONE = {
     "outside_plan": [],
     "reviewer_notes": [],
 }
-FIX_DONE = {**DONE, "open_conflicts": []}
+FIX_DONE = {**DONE, "cause": "", "open_conflicts": []}
 PLAN = {
     "summary": "Plan.",
     "changes": ["Fix add()."],
@@ -735,6 +735,83 @@ class ConflictTests(StageCase):
         full = prompt.split("## Diff against main", 1)[1].split("## Merge with", 1)[0]
         self.assertNotIn("+def mul", full)
         self.assertIn("+def sub(a, b):", full)
+
+
+REPEATED = [{"name": "e2e", "signature": "✘ [chromium] › desk.spec.ts:: › picks an option"}]
+
+
+class DiagnosisTests(StageCase):
+    """An automatic fix round after a check failed the same way twice looks for the cause
+    first, and may change code only once it names one."""
+
+    def run_fix(self, context=None, **spec):
+        git(self.repo, "checkout", "-q", "-b", "nexkit/issue-5")
+        self.claude.configure(**{"result": FIX_DONE, **spec})
+        context = {**CONTEXT, "diagnose": REPEATED, **(context or {})}
+        return self.run_stage("fix", context=context, base="main")
+
+    def test_the_prompt_asks_for_the_cause_before_a_change(self):
+        cause = "pickOption clicks before the popup renders: trace.zip shows the click at 0 ms."
+        result = self.run_fix(result={**FIX_DONE, "cause": cause}, write={"calc.py": "# fixed\n"})
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["output"]["cause"], cause)
+        prompt = self.claude.call()["prompt"]
+        section = prompt.split("## Diagnosis round", 1)[1].split("## Note from", 1)[0]
+        self.assertIn("- `e2e`: `✘ [chromium] › desk.spec.ts:: › picks an option`", section)
+        self.assertIn("finds the cause before it changes any code", section)
+        self.assertIn("Write the cause in `cause`", section)
+        self.assertIn("leave `cause` empty and return\n   `status: blocked`", section)
+
+    def test_other_rounds_have_no_diagnosis_section(self):
+        result = self.run_fix({"diagnose": []}, write={"calc.py": "# fixed\n"})
+        self.assertEqual(result["status"], "done")  # without a cause
+        prompt = self.claude.call()["prompt"]
+        self.assertNotIn("## Diagnosis round", prompt)
+        self.assertNotIn("$diagnosis", prompt)
+        self.assertIn("`cause`: the cause of the failures you addressed", prompt)
+        self.assertIn("None. This is the first fix round of this pull request.", prompt)
+
+    def test_a_change_without_a_cause_is_rejected(self):
+        result = self.run_fix(write={"calc.py": "# another try\n"})
+        self.assertEqual(result["status"], "error")
+        self.assertIn("changed code without naming the cause", result["error"])
+        self.assertIn("`calc.py`", result["error"])
+
+    def test_no_cause_and_no_change_ends_blocked_with_a_question(self):
+        shown = "The trace shows the option list opens, then closes before the click."
+        result = self.run_fix(result={**FIX_DONE, "summary": shown})
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("found no cause for the repeated failure of `e2e`", result["error"])
+        self.assertIn(f"What the evidence shows: {shown}", result["error"])
+        question = result["output"]["questions"][0]
+        self.assertIn("`e2e` failed the same way after two fix rounds", question["question"])
+        self.assertEqual(question["recommended"], 0)
+        self.assertFalse((self.out / "changes.patch").read_text())
+
+    def test_a_blocked_result_keeps_the_agents_own_questions(self):
+        asked = {"question": "Is the popup meant to close?", "options": ["Yes", "No"]}
+        blocked = {
+            **FIX_DONE,
+            "status": "blocked",
+            "blocker": "The trace ends before the click.",
+            "questions": [{**asked, "recommended": 0}],
+        }
+        result = self.run_fix(result=blocked)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["error"], "The trace ends before the click.")
+        self.assertEqual(result["output"]["questions"][0]["question"], asked["question"])
+
+    def test_changes_that_a_merge_brought_are_not_the_agents(self):
+        self.repos.push_commit("dev", "main", {"other.py": "x = 1\n"}, "Fix a flaky test")
+        git(self.repo, "fetch", "-q", "origin")
+        self.claude.configure(result=FIX_DONE)
+        git(self.repo, "checkout", "-q", "-b", "nexkit/issue-5", "HEAD")
+        context = {**CONTEXT, "diagnose": REPEATED, "merge_moved_base": True}
+        result = self.run_stage("fix", context=context, base="main")
+        # Only the merge changed files, so the round is not rejected: the merge is
+        # published alone, and the next checks show whether the base branch fixed it.
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["changed_files"], ["other.py"])
 
 
 class AgentLogTests(StageCase):

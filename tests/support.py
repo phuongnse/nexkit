@@ -105,6 +105,7 @@ class FakeGitHub:
         self.statuses = []
         self.dispatches = []
         self.merged = []
+        self.updated = []  # (number, head) for each update of a branch
         self.reactions = []
         self.merge_error = None
         self.dispatch_errors = {}
@@ -397,10 +398,18 @@ class FakeGitHub:
         return {}
 
     def merge(self, number, sha, method="squash"):
-        if self.merge_error:
+        if isinstance(self.merge_error, list):
+            # A refusal per try, in order; once none are left, the merge goes through.
+            if self.merge_error:
+                raise self.merge_error.pop(0)
+        elif self.merge_error:
             raise self.merge_error
         self.merged.append((number, sha, method))
         return {"merged": True, "sha": "d" * 40}
+
+    def update_branch(self, number, sha):
+        self.updated.append((number, sha))
+        self.pulls[number]["head"]["sha"] = "e" * 40
 
     def set_status(self, sha, context, state, description, target_url=None):
         self.statuses.append(

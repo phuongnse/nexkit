@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -35,8 +36,9 @@ from .state import (
     recommended_option,
     round_questions,
     run_comments,
+    with_run,
 )
-from .usage import parse_iso, shown
+from .usage import iso, parse_iso, shown
 
 ICONS = {True: "✅", False: "❌"}
 CRITERION_MARKS = {"met": "✅", "unmet": "❌", "unverifiable": "❔"}
@@ -56,6 +58,8 @@ COMPLETED = {
     "needs_human",
     "up_to_date",
     "conflict_fix",
+    "merge_waiting",
+    "branch_updated",
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
 # NexKit continues by itself (`auto_fix`, `conflict_fix`, a resumed pause) or is done.
@@ -383,6 +387,10 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
         if plan.get("too_large"):
             return "the plan says the issue is too large for one session"
         return "the plan has questions" if plan.get("questions") else None
+    if outcome == "merge_waiting":
+        if autopilot.takes(cfg):
+            return None
+        return "the pull request waits for its required checks; merge it once they pass"
     if outcome == "ready":
         if confirm:
             return UNVERIFIED
@@ -594,6 +602,139 @@ def after_merge(gh, workflows, base, records=None):
             lines.append(f"- Could not start `{workflow}`: {exc}")
             records.append({"workflow": workflow, "error": str(exc)[:300]})
     return "\n".join([f"After the merge, on `{base}`:", *lines]) if lines else ""
+
+
+# Why GitHub refused a merge, for refusals that pass by themselves or by NexKit's rounds:
+# another merge into the base branch at the same moment, required checks that have not
+# reported yet, and a branch that branch protection wants up to date with its base.
+BASE_MODIFIED = re.compile(r"base branch was modified", re.I)
+CHECKS_PENDING = re.compile(
+    r"required status checks? .*\b(?:is|are) (?:expected|pending|in progress|queued)", re.I
+)
+BEHIND = re.compile(r"out of date|not up to date|is behind", re.I)
+# How often a merge refused because the base branch was modified is tried, and the seconds
+# before the first try again; each later try waits that much longer.
+MERGE_TRIES = 3
+MERGE_DELAY = 10
+# How long, and how often, a merge after updating the branch waits for GitHub to move it.
+UPDATE_WAIT = 5
+UPDATE_TRIES = 6
+
+
+def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
+    """Merge a pull request that checks and review approved: `target` names its `pr`,
+    `head`, `issue` and `base`. Returns (outcome, message), `message` being the round's
+    text so far. A merge refused because the base branch was modified meanwhile is tried
+    again a few times; other refusals that pass are handed on (see `_refused`)."""
+    pr, head = target["pr"], target["head"]
+    for attempt in range(MERGE_TRIES):
+        try:
+            merge = gh.merge(pr, head) or {}
+            break
+        except GitHubError as exc:
+            if attempt + 1 < MERGE_TRIES and BASE_MODIFIED.search(str(exc)):
+                time.sleep(MERGE_DELAY * (attempt + 1))
+                continue
+            return _refused(gh, cfg, target, row, message, exc, workflow, default_branch)
+    message = f"✅ Checks and AI review passed; merged `{head[:7]}`."
+    if attempt:
+        message += f" GitHub took it at try {attempt + 1}, after the base branch moved."
+    closed, lines = close_merged_issue(gh, target["issue"], pr, merge.get("sha"))
+    if closed and cfg["close_parent_issues"]:
+        # Closing with the Actions token starts no workflow for `issues: closed`.
+        lines += close_parents_safely(gh, target["issue"])
+    runs = []
+    started = after_merge(gh, cfg["merge"]["after_workflows"], target["base"], runs)
+    if runs:
+        row["after_merge"] = runs
+    if cfg["conflicts"]["auto_resolve"]:
+        # The merge's push starts no workflow, so look for new conflicts here.
+        swept = resolve_conflicts(
+            gh, target["base"], workflow, default_branch, cfg["conflicts"]["max_rounds"], {pr}
+        )
+        started = "\n".join(filter(None, [started, *swept]))
+    parts = ["\n".join(lines), started]
+    return "merged", message + "".join(f"\n\n{part}" for part in parts if part)
+
+
+def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
+    """(outcome, message) after GitHub refused the merge: a conflict round for a conflict,
+    `merge_waiting` for required checks that have not passed yet, which autopilot's next
+    sweeps merge, an update of a branch that is behind with a review of the new commit,
+    and otherwise `merge_refused` for a person."""
+    pr, base = target["pr"], target["base"]
+    message += f" Automatic merge was not possible: {exc}"
+    auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]
+    if auto_resolve and is_conflicting(gh, pr):
+        started = start_conflict_round(
+            gh, pr, base, workflow, default_branch, limit, own=row.get("url")
+        )
+        if started.startswith("Started"):
+            return "conflict_fix", f"{message}\n\nIt conflicts with `{base}`. {started}"
+        return "merge_refused", f"{message}\n\n{started}" if started else message
+    if CHECKS_PENDING.search(str(exc)):
+        row.setdefault("waiting_since", iso(datetime.now(UTC)))
+        later = (
+            "The next autopilot sweep merges it once they pass."
+            if autopilot.takes(cfg)
+            else "Merge it once they pass."
+        )
+        return "merge_waiting", f"{message}\n\nRequired checks have not passed yet. {later}"
+    if auto_resolve and BEHIND.search(str(exc)):
+        return _update_branch(gh, target, row, message, limit, workflow, default_branch)
+    return "merge_refused", message
+
+
+def _update_branch(gh, target, row, message, limit, workflow, default_branch):
+    """Bring a branch that branch protection wants up to date with its base branch, and
+    check and review the new commit, within `conflicts.max_rounds` per pull request."""
+    pr, head, base = target["pr"], target["head"], target["base"]
+    updated = [run for _, run in run_comments(gh.comments(pr)) if run.get("updated_branch")]
+    if len(updated) >= limit:
+        note = f"Its {limit} automatic updates of the branch from `{base}` are used up."
+        return "merge_refused", f"{message}\n\n{note}"
+    try:
+        gh.update_branch(pr, head)
+        for _ in range(UPDATE_TRIES):
+            if gh.pull(pr)["head"]["sha"] != head:
+                break
+            time.sleep(UPDATE_WAIT)
+        gh.dispatch(
+            workflow,
+            default_branch,
+            {"command": "review", "number": str(pr), "note": "", "auto": "true"},
+        )
+    except GitHubError as error:
+        return "merge_refused", f"{message}\n\nNexKit could not update the branch: {error}"
+    row["updated_branch"] = True
+    line = (
+        f"It is behind `{base}`, which branch protection does not allow: NexKit merged `{base}` "
+        "into it and started `/nexkit review` on the new commit."
+    )
+    return "branch_updated", f"{message}\n\n{line}"
+
+
+def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
+    """Try the merge again for a pull request whose required checks had not passed, from
+    an autopilot sweep. The round's comment shows what happened. Returns a line for the log."""
+    pr = step["pull"]
+    for comment, run in run_comments(gh.comments(pr)):
+        if comment["id"] != step["round_comment"]:
+            continue
+        target = {"pr": pr, "head": run["head"], "issue": step["number"], "base": step["base"]}
+        outcome, text = merge_pull(gh, cfg, target, run, "", workflow, default_branch)
+        if outcome == "merge_waiting":
+            return f"#{pr} still waits for its required checks."
+        run.update(outcome=outcome, status=run_status(outcome))
+        reason = needs_person(outcome, cfg)
+        if reason:
+            run["attention"] = reason
+        else:
+            run.pop("attention", None)
+        gh.update_comment(comment["id"], with_run(comment["body"], run, text.strip()))
+        notify(gh, cfg, pr, reason)
+        return f"#{pr}: {outcome}."
+    return f"#{pr}: its round comment is gone."
 
 
 def close_merged_issue(gh, issue, pr, sha):
@@ -819,50 +960,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 f"them before merging:\n\n{items}"
             )
         elif cfg["merge"]["auto"]:
-            try:
-                merge = gh.merge(pr, head) or {}
-            except GitHubError as exc:
-                outcome = "merge_refused"
-                message += f" Automatic merge was not possible: {exc}"
-                if cfg["conflicts"]["auto_resolve"] and is_conflicting(gh, pr):
-                    workflow = workflow_file(workflow_ref)
-                    started = start_conflict_round(
-                        gh,
-                        pr,
-                        decision["base"],
-                        workflow,
-                        default_branch,
-                        cfg["conflicts"]["max_rounds"],
-                        own=row.get("url"),
-                    )
-                    if started.startswith("Started"):
-                        outcome = "conflict_fix"
-                        started = f"It conflicts with `{decision['base']}`. {started}"
-                    message += f"\n\n{started}" if started else ""
-            else:
-                outcome, message = "merged", f"✅ Checks and AI review passed; merged `{head[:7]}`."
-                closed, lines = close_merged_issue(gh, decision["issue"], pr, merge.get("sha"))
-                if closed and cfg["close_parent_issues"]:
-                    # Closing with the Actions token starts no workflow for `issues: closed`.
-                    lines += close_parents_safely(gh, decision["issue"])
-                runs = []
-                started = after_merge(gh, cfg["merge"]["after_workflows"], decision["base"], runs)
-                if runs:
-                    row["after_merge"] = runs
-                if cfg["conflicts"]["auto_resolve"]:
-                    # The merge's push starts no workflow, so look for new conflicts here.
-                    workflow = workflow_file(workflow_ref)
-                    swept = resolve_conflicts(
-                        gh,
-                        decision["base"],
-                        workflow,
-                        default_branch,
-                        cfg["conflicts"]["max_rounds"],
-                        {pr},
-                    )
-                    started = "\n".join(filter(None, [started, *swept]))
-                parts = ["\n".join(lines), started]
-                message += "".join(f"\n\n{part}" for part in parts if part)
+            target = {"pr": pr, "head": head, "issue": decision["issue"], "base": decision["base"]}
+            outcome, message = merge_pull(
+                gh, cfg, target, row, message, workflow_file(workflow_ref), default_branch
+            )
     elif verdict is None:
         outcome = "review_failed"
         message = review_failure(reviewed)[1]

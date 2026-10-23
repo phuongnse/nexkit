@@ -182,9 +182,13 @@ them on the base branch after it merges (see
 path you added to `protected_paths`. Make those changes yourself, then use `/nexkit fix`.
 
 **"Automatic merge was not possible".** GitHub refused the merge, and the comment gives
-its reason. Usually a branch protection rule or ruleset is not met, such as a required
-approval or a required check that did not run. Merge the pull request yourself, or change
-the rule (see [Automatic merge](configuration.md#automatic-merge)).
+its reason. NexKit handles the refusals that pass: a base branch that moved meanwhile is
+tried again, required checks that have not passed yet are waited for by autopilot's
+sweeps (`merge_waiting`), and a branch that must be up to date is updated and reviewed
+again with `conflicts.auto_resolve`. What is left is a rule that needs a person, such as
+a required approval, or required checks that failed or never reported within six hours.
+Merge the pull request yourself, or change the rule (see
+[Automatic merge](configuration.md#automatic-merge)).
 
 **"Could not start `ci.yml`" after an automatic merge.** The merge happened; only the
 workflow did not start. Check that `.github/workflows/ci.yml` exists on the base branch

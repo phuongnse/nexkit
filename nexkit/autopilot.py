@@ -127,7 +127,7 @@ FAILED = {"failure", "timed_out"}
 # Events whose runs test a pull request rather than the branch they name.
 PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
 # Outcomes after which a run already started the next one by itself.
-CHAINED = {"auto_fix", "conflict_fix", "retry"}
+CHAINED = {"auto_fix", "conflict_fix", "retry", "branch_updated"}
 
 
 def takes(cfg):
@@ -628,6 +628,8 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         return stalled or _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") in CHAINED:
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
+    if latest.get("outcome") == "merge_waiting":
+        return _merge_step(gh, issue, pull, comment, latest, now)
     if latest.get("status") == FAILURE:
         found = (pull_comments, comments)
         step = _stopped(gh, cfg, issue, latest, record, start, "fix", pull, found)
@@ -640,6 +642,21 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
     if conflict:
         return _step(issue, "waits", conflict)
     return _step(issue, "active", f"pull request #{pull} is open")
+
+
+def _merge_step(gh, issue, pull, comment, run, now):
+    """The step for a pull request whose merge waits for required checks: try the merge
+    again while its head is the one approved, for at most `LOST`."""
+    details = gh.pull(pull)
+    if details["head"]["sha"] != run.get("head"):
+        return _step(issue, "waits", f"pull request #{pull} changed after its approval")
+    since = parse_iso(run.get("waiting_since"))
+    if since and now - since > LOST:
+        reason = f"the required checks of pull request #{pull} have not passed for hours"
+        return _step(issue, "waits", reason)
+    base = (details.get("base") or {}).get("ref") or ""
+    reason = f"pull request #{pull} waits for its required checks"
+    return _step(issue, "merge", reason, round_comment=comment["id"], base=base)
 
 
 def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
@@ -1360,9 +1377,14 @@ def sweep(gh, cfg, workflow, ref, closed=None):
                     lines.append(split(gh, step))
                 elif step["state"] == "start":
                     lines.append(start(gh, step, workflow, ref))
+                elif step["state"] == "merge":
+                    # `report` holds what a merge leads to; it imports this module.
+                    from .report import merge_waiting
+
+                    lines.append(merge_waiting(gh, cfg, step, workflow, ref))
             except GitHubError as exc:
-                what = (
-                    "split" if step["state"] == "split" else f"start /nexkit {step['command']} on"
+                what = {"split": "split", "merge": "merge the pull request of"}.get(
+                    step["state"], f"start /nexkit {step.get('command')} on"
                 )
                 lines.append(f"Could not {what} #{step['target']}: {exc}")
         if not splits:

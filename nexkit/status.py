@@ -29,7 +29,7 @@ from .state import (
 MERGES = 5
 WORKERS = 8
 # The round started the next one by itself, which is queued or running.
-QUEUED = {"auto_fix", "conflict_fix", "retry"}
+QUEUED = {"auto_fix", "conflict_fix", "retry", "branch_updated"}
 
 
 def _runs(comments):
@@ -101,7 +101,7 @@ def pull_state(run, conflicting):
         return "conflicting"
     if status == FAILURE:
         return "blocked" if outcome == "agent_blocked" else "failed"
-    if outcome in ("ready", "merge_refused"):
+    if outcome in ("ready", "merge_refused", "merge_waiting"):
         return outcome
     if outcome is None:
         # Rounds from releases before outcomes were recorded.

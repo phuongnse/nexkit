@@ -274,6 +274,13 @@ class GitHub:
             {"commit_id": commit_id, "body": body, "event": "COMMENT"},
         )
 
+    def update_branch(self, number, sha):
+        """Merge the base branch into a pull request's branch on GitHub, when its head is
+        still `sha`."""
+        return self.request(
+            "PUT", f"{self._repo}/pulls/{number}/update-branch", {"expected_head_sha": sha}
+        )
+
     def merge(self, number, sha, method="squash"):
         return self.request(
             "PUT", f"{self._repo}/pulls/{number}/merge", {"sha": sha, "merge_method": method}

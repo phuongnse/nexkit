@@ -14,8 +14,9 @@
 # maintain work that follows other events: closing a parent issue, resuming commands
 #          paused at the usage limit (waiting for their reset in a run of its own),
 #          starting rounds for conflicts with the base branch, autopilot sweeps, which
-#          also end the comments and statuses of runs that ended without a report; no
-#          agent and no repository checkout
+#          also end the comments and statuses of runs that ended without a report and
+#          merge pull requests whose required checks passed since; no agent and no
+#          repository checkout
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # version of each agent runtime in nexkit/__init__.py.
@@ -400,7 +401,7 @@ jobs:
     # Longer for the run that waits for paused commands to come due (usage_limit.wait_minutes).
     timeout-minutes: ${{ fromJSON(needs.route.outputs.maintain_timeout) }}
     permissions:
-      contents: read
+      contents: write # merge a pull request whose required checks passed since; no checkout
       issues: write # close parent issues; mark paused runs as resumed; autopilot's issues
       pull-requests: write # paused runs on pull requests; close a pull request a split supersedes
       actions: write # resume paused commands, start conflict rounds and autopilot's commands

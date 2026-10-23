@@ -1075,7 +1075,8 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_only_publish_and_report_may_write_contents(self):
         writers = [name for name, job in self.jobs.items() if "contents: write" in job]
-        self.assertEqual(writers, ["publish", "report"])
+        # publish pushes; report and maintain only merge, with nothing of the repository.
+        self.assertEqual(writers, ["publish", "report", "maintain"])
 
     def test_report_merges_without_checking_out_the_repository(self):
         # `contents: write` lets report merge; it has nothing of the repository to run or push.
@@ -1093,7 +1094,10 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("fromJSON(needs.route.outputs.maintain_timeout)", maintain)
         self.assertEqual(maintain.count("actions/checkout@"), 1)
         self.assertIn("path: kit", maintain)
-        self.assertNotIn("contents: write", maintain)
+        # `contents: write` lets a sweep merge a pull request whose required checks passed
+        # since; it has nothing of the repository to run or push.
+        self.assertNotIn("persist-credentials: true", maintain)
+        self.assertNotIn("NEXKIT_PUSH_TOKEN", maintain)
         self.assertNotIn("secrets.", maintain)
         self.assertIn('["none","maintain"]', self.jobs["report"])
 

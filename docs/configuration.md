@@ -400,6 +400,7 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | An issue that autopilot opened for a failure of flaky runs on the default branch | Goes right after those bug issues. |
 | Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
 | A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
+| Its pull request is approved, and GitHub refused the merge until required checks pass | Tries the merge again, and merges once the checks pass. |
 | The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. |
 
 - **Scope.** `"milestone"` takes the open issues of the earliest open milestone: by due

@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .progress import STATUS_CONTEXTS
+from .redact import Redactor
 from .route import issue_from_branch, parse_command
 from .state import (
     BOT_LOGIN,
@@ -1046,6 +1047,8 @@ def _runs_marker(run, attempts):
 
 
 def _failed_jobs(gh, run, attempt):
+    """Each failed job of an attempt, linked, with its failed steps, the failures its error
+    annotations name and the end of its log, so the issue holds what an agent needs."""
     lines = []
     for job in gh.attempt_jobs(run["id"], attempt):
         if job.get("conclusion") not in FAILED:
@@ -1054,7 +1057,35 @@ def _failed_jobs(gh, run, attempt):
         failed = f": {', '.join(f'`{name}`' for name in steps if name)}" if steps else ""
         link = f"[{job.get('name')}]({job['html_url']})" if job.get("html_url") else job.get("name")
         lines.append(f"- {link}{failed}")
+        notes = gh.check_run_annotations(job["id"]) if job.get("id") else []
+        for found in (_annotated(link, note) for note in notes):
+            if found:
+                lines.append("  " + found["line"].replace(f"- {link}: ", "- ", 1))
+        tail = _log_tail(gh, job)
+        if tail:
+            lines += ["", "  The end of its log:", "", "  ```text", *tail, "  ```", ""]
     return lines or ["- The attempt failed before any job did; open it for the reason."]
+
+
+# The lines of a failed job's log that a CI bug issue shows, at most this many characters.
+LOG_LINES = 30
+LOG_CHARS = 4000
+TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")
+
+
+def _log_tail(gh, job):
+    """The last lines of a failed job's log, redacted and indented for the issue, or []."""
+    if not job.get("id"):
+        return []
+    try:
+        raw = gh.job_log(job["id"])
+    except GitHubError:
+        return []
+    text = raw.decode("utf-8", errors="replace")[-LOG_CHARS * 4 :]
+    lines = [TIMESTAMP.sub("", line).rstrip() for line in text.splitlines()]
+    lines = [line[:300].replace("```", "'''") for line in lines if line.strip()][-LOG_LINES:]
+    shown = Redactor()("\n".join(lines))[-LOG_CHARS:]
+    return [f"  {line}" for line in shown.splitlines()]
 
 
 def _failed_attempts(gh, run, attempts):

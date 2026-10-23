@@ -119,6 +119,9 @@ class FakeGitHub:
         self.jobs = {}  # run id, or (run id, attempt) -> jobs
         self.attempts = {}  # (run id, attempt) -> conclusion; others: the run's own
         self.annotations = {}  # job id -> its annotations
+        self.logs = {}  # job id -> its log, as bytes
+        self.run_artifact_list = {}  # run id -> its artifacts
+        self.zips = {}  # artifact id -> its zip, as bytes
         self.calls = []  # ("attempt" or "jobs", run id, attempt) for each attempt read
         self.reruns = []
         self.branches = {}
@@ -367,6 +370,17 @@ class FakeGitHub:
     def check_run_annotations(self, check_run_id):
         self.calls.append(("annotations", check_run_id))
         return list(self.annotations.get(check_run_id, []))
+
+    def job_log(self, job_id):
+        if job_id not in self.logs:
+            raise GitHubError(410, "Gone")
+        return self.logs[job_id]
+
+    def run_artifacts(self, run_id):
+        return list(self.run_artifact_list.get(run_id, []))
+
+    def artifact_zip(self, artifact_id, limit=64_000_000):
+        return self.zips[artifact_id][: limit + 1]
 
     def rerun_failed_jobs(self, run_id):
         self.reruns.append(run_id)

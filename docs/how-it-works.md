@@ -10,7 +10,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | Job | Runs for | Token permissions | Secrets | Does |
 |---|---|---|---|---|
 | `route` | every event | read; comments, reactions, statuses | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
-| `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
+| `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
@@ -577,7 +577,10 @@ issue run in that group as well, and start a sweep.
   once more; NexKit never runs them a third time, which would hide failures. When a later
   attempt fails too, autopilot opens a `bug` issue in scope, starting with a marker that
   names the workflow, and that issue goes before all others. Its report lists the failed
-  jobs and steps of every failed attempt. Each report holds a marker with its commit, so a
+  jobs and steps of every failed attempt, the failures each job's error annotations name,
+  and the last lines of its log, redacted. A round on the issue downloads the evidence of
+  the runs its marker records (see
+  [Evidence from CI runs](configuration.md#evidence-from-ci-runs)). Each report holds a marker with its commit, so a
   commit is reported once, and a newer failing commit adds a comment to the open issue.
   When a later attempt of a reported run passes, for example after a person ran it again,
   autopilot says which attempt passed in a comment on that issue.

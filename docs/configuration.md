@@ -174,6 +174,37 @@ failure.
 The artifact can be downloaded by anyone who can read the run, like the rest of NexKit's
 logs and artifacts (see [What is redacted](how-it-works.md#what-is-redacted)).
 
+### Evidence from CI runs
+
+```json
+"evidence": {"artifacts": ["test-results-e2e"]}
+```
+
+An issue about a failing or flaky CI run, such as a `bug` issue that autopilot opened, is
+often answerable only from what that run left: a trace, a screenshot, the end of a log.
+The agent session holds no GitHub token, so it cannot download them; NexKit does, before
+the agent runs.
+
+- **Which runs.** The runs of this repository that the issue names: those NexKit's own bug
+  and flaky-run issues record in their markers, and links to Actions runs, attempts and
+  jobs in the issue and in collaborators' comments. At most the five named last. Runs of
+  other repositories, runs from a fork, and other links are skipped, and the log says
+  which and why.
+- **What.** For each run and each attempt that failed: the end of each failed job's log
+  and its error and warning annotations. Then the run's artifacts that `artifacts` lists
+  by name, as the repository's CI workflows upload them; NexKit's own artifacts are not
+  among them. Without `artifacts`, only logs and annotations.
+- **Where.** The implement and fix rounds' `agent` job downloads them, with `actions: read`
+  and `checks: read`, to a folder outside the working tree, one folder per run. Text files
+  are redacted like the result files of failing checks; binary files are kept as they are.
+  A round keeps at most 50 MB; what would go past it is left out. Plans get nothing.
+- **The prompt** names the folder and, for each run, each file and artifact it holds, and
+  asks the agent to read them before it runs anything slow. When a download fails, for
+  example because an artifact expired, the round still runs: the prompt, the log of
+  *Collect issue context* and the run summary say what is missing and why.
+
+`nexkit init --evidence-artifact NAME`, repeated for each name, sets `artifacts`.
+
 ### Skipping work that a change cannot affect
 
 Setup and checks get `NEXKIT_BASE_SHA`: the merge base of the commit being checked and

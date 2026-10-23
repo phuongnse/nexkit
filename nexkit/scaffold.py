@@ -98,6 +98,7 @@ def init(
     check_slow=(),
     check_results=(),
     notify=(),
+    evidence=(),
 ):
     root = Path(root)
     config_path = root / configuration.CONFIG_PATH
@@ -120,6 +121,8 @@ def init(
     }
     if notify:
         raw["notify"] = list(dict.fromkeys(login.lstrip("@") for login in notify))
+    if evidence:
+        raw["evidence"] = {"artifacts": list(dict.fromkeys(evidence))}
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")

@@ -95,7 +95,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ fromJSON(needs.route.outputs.agent_timeout) }}
     permissions:
-      actions: read # the result files of an earlier run's failing checks
+      actions: read # the result files of an earlier run's failing checks; CI runs' evidence
+      checks: read # the error annotations of the failed jobs of CI runs the issue names
       contents: read
       issues: read
       pull-requests: read
@@ -146,10 +147,11 @@ jobs:
       - name: Collect issue context
         run: >-
           ${{ steps.python.outputs.python-path }} kit/bin/nexkit context --out out
-          --results "$RUNNER_TEMP/nexkit-checks"
+          --results "$RUNNER_TEMP/nexkit-checks" --evidence "$RUNNER_TEMP/nexkit-evidence"
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
       - name: Run agent
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit agent --repo repo --out out
         env:

@@ -1211,6 +1211,28 @@ class CITests(AutopilotCase):
         self.assertEqual((len(self.bugs()), self.flaky()), (1, []))
         self.assertEqual(self.gh.comments_matching(bug["number"], "nexkit:ci-runs"), [])
 
+    def test_a_bug_issue_holds_the_annotations_and_the_end_of_each_failed_jobs_log(self):
+        from nexkit.evidence import named_runs
+
+        run = self.ci_run(attempt=2)
+        self.annotate(50, "OrderTests.Totals")
+        token = "ghp_" + "b" * 36
+        log = "".join(f"2026-10-23T03:30:0{i}.1234567Z line {i}\n" for i in range(40))
+        self.gh.logs[501] = f"{log}2026-10-23T03:31:00.0Z Error: boom {token}\n".encode()
+        self.sweep()
+        [bug] = self.bugs()
+        body = bug["body"]
+        self.assertIn("  - `OrderTests.Totals`, `tests/OrderTests.cs:10`", body)
+        self.assertNotIn("Process completed", body)
+        self.assertIn("  The end of its log:\n\n  ```text\n", body)
+        self.assertIn("  Error: boom ***", body)
+        self.assertNotIn(token, body)
+        self.assertNotIn("line 9\n", body)  # only the last lines
+        self.assertNotIn("2026-10-23T03:31", body)
+        # A round on the bug issue collects that run's evidence, as its marker names it.
+        runs, _ = named_runs(self.gh, bug, [])
+        self.assertEqual(runs, [(run["id"], [1, 2])])
+
     def test_a_run_that_passes_when_run_again_is_recorded_once_on_its_own_issue(self):
         run = self.ci_run()
         self.sweep()

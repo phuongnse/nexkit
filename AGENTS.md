@@ -13,7 +13,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `__init__.py` | Version and pins: runner, Python, each runtime |
 | `cli.py` | Every command, local and pipeline |
 | `route.py` | `route`: event → action, authorization, `verified_sha` |
-| `context.py`, `agent.py`, `prompts/` | `agent` and `review`: context, prompt, agent run, patch |
+| `context.py`, `evidence.py`, `agent.py`, `prompts/` | `agent` and `review`: context, CI runs' evidence, prompt, agent run, patch |
 | `runtimes/` | Everything specific to one CLI or model provider |
 | `schema.py`, `redact.py`, `runlog.py` | Result validation, secret removal, log and run summary |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |

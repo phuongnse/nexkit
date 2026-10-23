@@ -28,7 +28,7 @@ $discussion
 $note
 </untrusted>
 
-## Rules
+$ci_evidence## Rules
 
 - Make the change the plan describes and nothing unrelated. Follow the repository's
   conventions and instructions (CLAUDE.md or AGENTS.md).

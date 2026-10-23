@@ -401,6 +401,34 @@ def evidence_text(found):
     return text + "\n"
 
 
+def ci_evidence_text(found):
+    """The implement and fix prompts' section about the CI runs the issue names, or ""
+    without any. `found` comes from `evidence.collect`."""
+    if not found or not (found["runs"] or found.get("skipped")):
+        return ""
+    lines = []
+    for run in found["runs"]:
+        lines.append(f"- Run {run['id']}" + (f", {run['url']}" if run["url"] else "") + ":")
+        for item in run["files"]:
+            if "missing" in item:
+                lines.append(f"  - `{item['path']}`: missing, {item['missing']}")
+            elif item.get("count"):
+                lines.append(f"  - `{item['path']}`: an artifact, {item['count']}")
+            else:
+                lines.append(f"  - `{item['path']}`")
+        lines += [f"  - Missing: {reason}." for reason in run["missing"]]
+    if found.get("left_out"):
+        limit = RESULTS_LIMIT // 1_000_000
+        lines.append(
+            f"- Left out, past the {limit} MB a round keeps: " + "; ".join(found["left_out"])
+        )
+    lines += [f"- Not collected: {reason}." for reason in found.get("skipped") or []]
+    text = Template(_template("ci_evidence")).safe_substitute(
+        folder=found["folder"], runs="\n".join(lines)
+    )
+    return text + "\n"
+
+
 def diagnosis_text(repeated):
     """The fix prompt's section for a diagnosis round, or "" for any other round.
     `repeated` comes from `context.diagnosis`."""
@@ -897,6 +925,7 @@ def run_stage(
     conflicts = []
     if stage in ("implement", "fix"):
         start, base_commit = baseline(repo)
+        extra["ci_evidence"] = ci_evidence_text(context.get("ci_evidence"))
     if stage == "fix":
         moved = bool(context.get("merge_moved_base"))
         if not cfg["publish"]["push_token_secret"]:

@@ -1,5 +1,45 @@
 # Changelog
 
+## 4.3.0
+
+- A check can be marked `"slow": true` (#103). The implement and fix prompts list slow
+  checks apart, as checks NexKit runs after the round, and ask the agent to run only the
+  tests in them that cover its change or that failed, as narrowly as the repository's
+  instructions allow. NexKit's own checks still run every check in full. Without a slow
+  check, the prompts are as before. See [Slow checks](docs/configuration.md#slow-checks).
+- A check can name the files or folders where it writes its results, such as traces,
+  screenshots and logs: `"results": ["test-results"]` (#101). When the check fails, the
+  round's `nexkit-checks` artifact keeps them, text files redacted, at most 50 MB per
+  round. The next fix round's `agent` job downloads them to a folder outside the working
+  tree, and the prompt asks the agent to read them before it runs anything. See
+  [Result files of failing checks](docs/configuration.md#result-files-of-failing-checks).
+- Every fix prompt lists the pull request's earlier fix rounds: the note, the summary,
+  the cause and the checks that still failed after each (#102). When a check fails the
+  same way before and after a fix round, the next automatic round is a diagnosis round,
+  shown as `fix (auto, diagnosis)`: the agent names the cause, with evidence, in the new
+  `cause` field before it changes code, then fixes it. A diagnosis that changes code
+  without a cause is rejected; one that finds no cause and changes nothing ends as
+  `blocked` with a question for a person. See
+  [Failure handling](docs/how-it-works.md#failure-handling).
+- `nexkit init` sets every field of a check: `--check-timeout NAME=MINUTES`,
+  `--check-slow NAME` and `--check-results NAME=PATH` name a check from `--check` (#111).
+- A part of a split issue inherits its parent's time-outs (#104): once an issue above it
+  asked for a split, a part whose agent runs out of time waits for a person instead of
+  splitting again. A part titled like its parent is not created, and the plan is asked
+  for once more. Parts go at most three levels deep. After a time-out, the plan says why
+  the round did not finish, and a failure whose cause was not found makes the first part a
+  diagnosis. See [Autopilot](docs/how-it-works.md#autopilot).
+- Autopilot's check of `merge.after_workflows` on the default branch looks at every
+  attempt of the recent runs, not only the latest (#105). A run that passed only when run
+  again, and an older failed run that a newer run overtook, are recorded on one `bug`
+  issue per workflow for flaky runs, planned right after the issues for a failing default
+  branch. A later attempt that passes after a `bug` issue was opened says so there. Each
+  run and attempt is recorded once.
+- With `autopilot.enabled` or `conflicts.auto_resolve` and no
+  `publish.push_token_secret`, `nexkit doctor` says that a round merging changes to
+  `.github/workflows/` from the base branch waits for a person, and which token to add
+  (#113). Doctor still passes. See [Secrets](docs/configuration.md#secrets).
+
 ## 4.2.0
 
 - An automatic fix round started after failing checks merges the base branch first

@@ -782,6 +782,8 @@ class CITests(AutopilotCase):
         run = {
             "id": run_id,
             "head_branch": "main",
+            "head_repository": {"full_name": "acme/app"},
+            "event": "push",
             "head_sha": sha,
             "status": "completed",
             "conclusion": conclusion,
@@ -956,6 +958,27 @@ class CITests(AutopilotCase):
         self.ci_run(attempt=2)
         self.sweep(pilot())  # no merge.after_workflows
         self.assertEqual(self.bugs(), [])
+
+    def test_runs_of_pull_requests_with_a_head_branch_named_main_are_left_alone(self):
+        run = self.ci_run(run_id=48, sha="d" * 40)
+        run["event"] = "workflow_dispatch"
+        # Pull requests from a fork whose branch is also named `main`, and one from this
+        # repository's `main` into another branch.
+        fork = {"full_name": "mallory/app"}
+        self.ci_run(attempt=2, run_id=49).update(event="pull_request", head_repository=fork)
+        self.ci_run(run_id=50).update(event="pull_request_target", head_repository=fork)
+        self.ci_run(attempt=2, sha="f" * 40, run_id=51)["event"] = "pull_request"
+        self.sweep()
+        # The run of the default branch is still the latest, and the only one run again.
+        self.assertEqual(self.gh.reruns, [48])
+        run["run_attempt"] = 2
+        self.sweep()
+        self.sweep()
+        [bug] = self.bugs()
+        self.assertTrue(bug["body"].endswith("<!-- nexkit:ci-runs 48.1 48.2 -->"))
+        for sha in (self.SHA, "f" * 40):
+            self.assertNotIn(sha, bug["body"])
+        self.assertEqual((self.flaky(), self.gh.reruns), ([], [48]))
 
     def test_the_label_scope_labels_the_bug(self):
         self.ci_run(attempt=2)

@@ -239,11 +239,14 @@ acceptance criterion or scope item that was added, changed or removed.
 **Implement and fix.** Full access to a disposable runner. The prompt contains
 the plan, the issue, the discussion from collaborators, and for fix rounds the failing
 check output, blocking review findings and collaborators' review comments on the current
-commit. The agent must return `done` or `blocked`. A blocked or failed session publishes
-nothing. NexKit builds the pull request description from the implement result, in this
-order: *Summary* (two or three sentences, also the commit message), *What changed* (in
-behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
-the reviewer*. A fix round's summary becomes its commit message.
+commit. It asks the agent to run the checks before it finishes; of a
+[slow check](configuration.md#slow-checks), only the tests that cover the change or that
+failed, since NexKit runs every check after the round. The agent must return `done` or
+`blocked`. A blocked or failed session publishes nothing. NexKit builds the pull request
+description from the implement result, in this order: *Summary* (two or three sentences,
+also the commit message), *What changed* (in behaviour), *How it is tested*, and, only
+when needed, *Outside the plan* and *Notes for the reviewer*. A fix round's summary
+becomes its commit message.
 
 The pull request of an implement round starts at the base commit the agent started from,
 not at the base branch's tip when `publish` runs. So the patch always applies, even when

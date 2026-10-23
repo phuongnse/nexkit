@@ -96,6 +96,7 @@ their defaults.
 ```json
 "checks": [
   {"name": "test", "run": "pytest -q", "timeout_minutes": 20},
+  {"name": "e2e", "run": "scripts/e2e.sh", "timeout_minutes": 40, "slow": true},
   {"name": "lint", "run": "ruff check ."}
 ]
 ```
@@ -103,10 +104,28 @@ their defaults.
 - `name`: short lowercase identifier, shown in reports. Two checks cannot share a name.
 - `run`: a Bash command run from the repository root with `pipefail`.
 - `timeout_minutes`: default 15, at most 360.
+- `slow`: default `false`. See [Slow checks](#slow-checks).
 
 Checks run in a separate job that has **no secrets and a read-only token**, on the exact
 commit NexKit published. A setup failure counts as a failed check. With no checks
 configured, NexKit can still run, but nothing verifies the change except the AI review.
+
+### Slow checks
+
+The implement and fix prompts list the checks and ask the agent to run them before it
+finishes. A long suite, such as end-to-end tests, can use up the agent's time. Mark such a
+check `"slow": true`:
+
+- The prompts list slow checks apart, as checks NexKit runs after the round.
+- The agent does not run a slow check in full. It runs only the tests in it that cover its
+  change or that failed, as narrowly as the repository allows.
+- Say in the repository's instructions (CLAUDE.md or AGENTS.md) how to run part of a slow
+  check, for example `scripts/e2e.sh <spec>`.
+- NexKit's checks after the round run every check in full, slow or not.
+- `checks_run` in the agent's result still lists what the agent ran.
+
+With no check marked slow, the agent runs every check, as before. The plan prompt lists
+every check either way.
 
 ### Skipping work that a change cannot affect
 

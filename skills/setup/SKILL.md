@@ -32,7 +32,10 @@ files or repository settings, and wait for confirmation.
      covers only part of the repository can skip itself when `NEXKIT_BASE_SHA` is set and
      none of its paths changed, or, in later rounds, none changed since
      `NEXKIT_VERIFIED_SHA`, the last commit whose checks passed (see the configuration
-     reference, Checks).
+     reference, Checks). Offer `"slow": true` for a check that takes many minutes, such
+     as end-to-end tests: the agent then runs only the tests in it that its change
+     touches, and NexKit runs it in full after each round. Suggest saying in CLAUDE.md or
+     AGENTS.md how to run part of it (see the configuration reference, Slow checks).
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the

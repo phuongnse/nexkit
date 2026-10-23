@@ -20,6 +20,7 @@ class ConfigTests(unittest.TestCase):
         cfg = validate({"checks": [{"name": "unit", "run": "make test"}]})
         self.assertNotIn("runner", cfg)
         self.assertEqual(cfg["checks"][0]["timeout_minutes"], 15)
+        self.assertFalse(cfg["checks"][0]["slow"])
         self.assertEqual(cfg["fix"], {"max_auto_rounds": 2})
         self.assertEqual(cfg["merge"], {"auto": False, "after_workflows": []})
         self.assertEqual(cfg["conflicts"], {"auto_resolve": False, "max_rounds": 3})
@@ -57,6 +58,7 @@ class ConfigTests(unittest.TestCase):
             ({"checks": [{"name": "Unit Tests", "run": "x"}]}, "lowercase identifier"),
             ({"checks": [{"name": "a", "run": "x"}, {"name": "a", "run": "y"}]}, "Duplicate"),
             ({"checks": [{"name": "a", "run": " "}]}, "shell command"),
+            ({"checks": [{"name": "a", "run": "x", "slow": "yes"}]}, "slow must be true or false"),
             ({"stages": {"deploy": {}}}, "Unknown stage"),
             ({"stages": {"plan": {"timeout_minutes": 0}}}, "timeout_minutes"),
             ({"effort": "extreme"}, "effort"),

@@ -59,6 +59,12 @@ class SweepTests(unittest.TestCase):
         self.assertIn("automatic conflict rounds are used up", line)
         self.assertFalse(self.gh.dispatches)
 
+    def test_a_round_held_up_by_workflow_changes_is_not_counted(self):
+        for n in range(1, 3):
+            self.round(6, n, conflicts=True, base_sha=str(n) * 40)
+        self.round(6, 3, conflicts=True, base_sha="3" * 40, outcome="needs_merge")
+        self.assertEqual(self.sweep(), ["Started an automatic round on #6 to merge `main`."])
+
     def test_the_round_limit_is_configured(self):
         self.round(6, 1, conflicts=True, base_sha="1" * 40)
         [line] = resolve_conflicts(self.gh, "main", "nexkit.yml", "main", 1, delay=0)

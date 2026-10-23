@@ -344,9 +344,15 @@ change those files. Changes that the base branch brings to protected paths are f
 protected-path check compares the result with git's own merge of the two commits, so only
 the agent's edits count. GitHub refuses pushes from the default Actions token that change
 workflow files, and a merge that brings changes to `.github/workflows/` from the base
-branch is such a push. Without a push token (`publish.push_token_secret`), NexKit stops
-before pushing and says that the pull request needs a manual merge or a push token that may
-update workflows.
+branch is such a push. Without a push token (`publish.push_token_secret`), the `agent` job
+checks this before the agent runs. A merge that only brings a moved base branch, after
+failing checks, is left out: the agent fixes the branch as it is, the round's comment says
+which workflow files kept it from merging, and the pull request stays behind the base
+branch until a person merges it. A merge the round must make, for a conflict, stops the
+round before the agent runs, says that the pull request needs a manual merge or a push
+token that may update workflows, and mentions `notify`. Such a round, and one that
+`publish` refuses for the same reason, count against neither `fix.max_auto_rounds` nor
+`conflicts.max_rounds`.
 
 **Review.** Read-only access, like the plan. Returns `approve` or `request_changes`, a
 status for each acceptance criterion with the test that covers it and the evidence, and
@@ -764,7 +770,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | The PR branch moved while a fix round was running | Refuses to publish; run `/nexkit fix` again. |
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `conflicts.auto_resolve`, NexKit starts that round itself, at most `conflicts.max_rounds` times per pull request. |
 | The PR conflicts with its base branch in a protected path | Stops before the agent runs; merge the base branch yourself. |
-| The merge brings workflow changes and only the default Actions token can push | Refuses to publish; merge the base branch yourself or name a push token that may update workflows in `publish.push_token_secret`. |
+| The merge brings workflow changes and only the default Actions token can push | Checked before the agent runs. A merge that only brings a moved base branch is left out, and the round fixes the branch as it is. A merge needed for a conflict stops the round before its agent: merge the base branch yourself or name a push token that may update workflows in `publish.push_token_secret`. Neither costs an automatic round. |
 | GitHub refuses the automatic merge (branch protection, rulesets) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |

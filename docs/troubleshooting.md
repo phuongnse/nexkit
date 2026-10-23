@@ -27,8 +27,10 @@ permission named under `permissions:`, as `nexkit init` writes it.
 **`nexkit doctor`: "autopilot.enabled is on, but publish.push_token_secret is not set".**
 The same for `conflicts.auto_resolve`. Rounds that NexKit starts by itself push with the
 Actions token, which may not push changes to `.github/workflows/`. When a person merges
-such a change into the base branch, the next round that merges it into a pull request
-stops and waits for a person (see below). This is not a problem, and doctor still passes.
+such a change into the base branch, an automatic fix round leaves the merge out and fixes
+the pull request as it is, and a round that must merge it for a conflict stops before its
+agent and waits for a person (see below); neither uses up an automatic round. This is not
+a problem, and doctor still passes.
 To let those rounds go on by themselves, name a fine-grained token with Contents, Pull
 requests and Workflows write access in `publish.push_token_secret` (see
 [Secrets](configuration.md#secrets)).
@@ -209,6 +211,9 @@ one pull request, and starts one round per commit of `main`. The `maintain` job'
 what each check did.
 
 **"conflicts with `main` in protected paths" or "brings changes to `.github/workflows/…`".**
-NexKit cannot publish this merge. Merge the base branch into the pull request yourself,
-push, and comment `/nexkit review`. For workflow files, a push token with Workflows write
+NexKit cannot publish this merge, and the round stopped before its agent ran, without using
+up an automatic round. Merge the base branch into the pull request yourself, push, and
+comment `/nexkit review`. **"Did not merge `main`, which changed `.github/workflows/…`"**
+means the round fixed the pull request without the merge; it stays behind `main` until
+you merge it. For workflow files, a push token with Workflows write
 access, named in `publish.push_token_secret`, also lets NexKit push the merge.

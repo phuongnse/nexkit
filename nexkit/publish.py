@@ -28,6 +28,11 @@ class PublishError(RuntimeError):
     pass
 
 
+class WorkflowMergeError(PublishError):
+    """A fix round's merge of the base branch brings workflow changes that the push token
+    may not make. The round does not count against the automatic rounds."""
+
+
 def _section(title, lines, level="###"):
     """A Markdown section, or nothing when it has no lines."""
     return [f"{level} {title}", "", *lines, ""] if lines else []
@@ -211,14 +216,19 @@ def _changed(repo, *args):
     return names(git(repo, "diff", "--name-only", "--no-renames", "-z", *args))
 
 
-def _workflow_error(base, files):
+def workflow_message(base, files):
+    """Why a merge of the base branch cannot be pushed, and what a person can do."""
     listed = ", ".join(f"`{name}`" for name in files) if files else "workflow files"
-    return PublishError(
+    return (
         f"Merging `{base}` brings changes to {listed}, and the token NexKit pushes with may not "
         "change workflow files. Merge the base branch into the pull request yourself and "
         "comment `/nexkit review`, or name a token that may update workflows in "
         "`publish.push_token_secret`."
     )
+
+
+def _workflow_error(base, files):
+    return WorkflowMergeError(workflow_message(base, files))
 
 
 def _on_base(repo, commit, base):

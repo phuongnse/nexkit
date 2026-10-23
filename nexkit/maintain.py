@@ -17,7 +17,7 @@ from .autopilot import in_repository
 from .config import setting
 from .github import GitHubError
 from .route import issue_from_branch
-from .state import CONTINUED, PAUSED, RUNNING, by_bot, run_comments, with_run
+from .state import CONTINUED, PAUSED, RUNNING, UNCOUNTED, by_bot, run_comments, with_run
 from .usage import iso, parse_iso
 
 # Each task runs only when one of its configuration keys is on.
@@ -233,7 +233,10 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
         # now would replace a command waiting behind it. A later check starts the round.
         # A continued round has a run on its way.
         return ""
-    if len([run for run in tried if not run.get("resumed")]) >= max_rounds:
+    counted = [
+        run for run in tried if not run.get("resumed") and run.get("outcome") not in UNCOUNTED
+    ]
+    if len(counted) >= max_rounds:
         return (
             f"#{number} conflicts with `{base}`, but its {max_rounds} automatic "
             "conflict rounds are used up."

@@ -25,6 +25,7 @@ from .state import (
     FAILURE,
     PAUSED,
     SUCCESS,
+    UNCOUNTED,
     clip,
     empty_state,
     options_of,
@@ -64,6 +65,10 @@ NEEDS_PERSON = {
     "review_failed": "the AI review did not complete",
     "needs_human": "checks or review still need attention and no automatic fix rounds remain",
     "merge_refused": "GitHub refused the automatic merge",
+    "needs_merge": (
+        "the base branch changed workflow files that NexKit may not push; merge it into the "
+        "pull request yourself"
+    ),
 }
 UNVERIFIED = "the review could not verify every acceptance criterion; confirm them before merging"
 # Bounds for what the state comment keeps for the next review.
@@ -353,13 +358,16 @@ def _stage_failure(decision, agent, publish):
     action = decision["action"]
     if agent is None:
         return "agent_failed", f"NexKit could not run the {action} agent."
+    if agent["status"] == "needs_merge":
+        return "needs_merge", f"NexKit did not run the {action} agent: {agent['error']}"
     if agent["status"] != "done":
         message = f"NexKit stopped during {action}: {agent['error']}"
         extra = [blocked_questions(agent), open_conflicts(agent, decision["base"])]
         return "agent_" + agent["status"], "\n\n".join([message, *filter(None, extra)])
     if not publish.get("published"):
         reason = publish.get("error") or "the publish job failed"
-        return "publish_failed", f"NexKit could not publish the {action} result: {reason}"
+        outcome = "needs_merge" if publish.get("workflows") else "publish_failed"
+        return outcome, f"NexKit could not publish the {action} result: {reason}"
     return None
 
 
@@ -404,10 +412,15 @@ def run_status(outcome):
 
 
 def _stop_round(gh, decision, agent, outcome, message, reason=None):
-    """Show a pull request round that published nothing, with the reason."""
+    """Show a pull request round that published nothing, with the reason. An automatic
+    fix round that stopped for a reason outside the agent's work gives its round back."""
     comments = gh.comments(decision["pr"])
-    _, state = read_state(comments)
+    state_id, state = read_state(comments)
     _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
+    counted = decision.get("auto") and not decision.get("conflicts")
+    if outcome in UNCOUNTED and counted and state and state.get("auto_fixes"):
+        state["auto_fixes"] -= 1
+        progress.save_state(gh, decision["pr"], state_id, state)
     comment_id, row = progress.find_round(comments, decision)
     status = run_status(outcome)
     row.update(status=status, head=decision["head"], tokens=_tokens(agent), outcome=outcome)
@@ -789,6 +802,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     cause = str(((agent or {}).get("output") or {}).get("cause") or "").strip()
     if action == "fix" and cause:
         message = f"**Cause found by the fix agent:** {clip(cause, 1500)}\n\n{message}"
+    if action == "fix" and agent and agent.get("merge_held"):
+        files = ", ".join(f"`{name}`" for name in agent["merge_held"])
+        message = (
+            f"Did not merge `{decision['base']}`, which changed {files}: the token NexKit "
+            "pushes with may not change workflow files. The pull request stays behind it until "
+            "a person merges it, or `publish.push_token_secret` names a token that may.\n\n"
+            f"{message}"
+        )
     if action == "fix" and agent and agent.get("start_base"):
         files = ", ".join(f"`{name}`" for name in agent.get("conflicts") or [])
         merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"

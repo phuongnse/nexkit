@@ -329,7 +329,7 @@ def cmd_cache(args):
 def cmd_publish(args):
     from .github import GitHub, GitHubError
     from .gitutil import GitError
-    from .publish import PublishError, publish
+    from .publish import PublishError, WorkflowMergeError, publish
 
     decision = _decision()
     out = Path(args.artifacts)
@@ -352,6 +352,8 @@ def cmd_publish(args):
         )
     except (PublishError, GitError, GitHubError) as exc:
         outcome = {"published": False, "error": str(exc)}
+        if isinstance(exc, WorkflowMergeError):
+            outcome["workflows"] = True
     print(json.dumps(outcome, indent=2))
     _output(result=outcome, head=outcome.get("head") or "", pr=str(outcome.get("pr") or ""))
     return 0

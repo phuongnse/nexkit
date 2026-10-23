@@ -44,6 +44,9 @@ RUNNING, SUCCESS, FAILURE, PAUSED = "running", "success", "failure", "paused"
 # or continued on the pull request.
 CONTINUED = "continued"
 RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️", CONTINUED: "⏭️"}
+# Outcomes of rounds that published nothing for a reason outside the agent's work. They
+# count against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`.
+UNCOUNTED = {"needs_merge"}
 RUN_LABELS = {RUNNING: "running", PAUSED: "paused", CONTINUED: "continued"}
 # Bounds for what a plan's record and a run's marker keep.
 MAX_PARTS = 10

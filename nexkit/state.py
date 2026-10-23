@@ -280,6 +280,22 @@ def verified_head(comments):
     return max(passed, key=lambda run: run["round"])["head"] if passed else None
 
 
+def results_run(comments):
+    """The id of the run whose checks the state comment last recorded, when one of those
+    checks failed and kept result files in that run's `nexkit-checks` artifact, or None."""
+    _, state = read_state(comments)
+    feedback = (state or {}).get("feedback") or {}
+    run_id = feedback.get("run_id")
+    if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+        return None
+    kept = [
+        check
+        for check in feedback.get("checks") or []
+        if not check.get("passed") and check.get("results")
+    ]
+    return run_id if kept else None
+
+
 def next_round(comments):
     """The number for a new pull request round, counting rounds of v1.1.0 state comments."""
     numbers = [run.get("round") or 0 for _, run in _marked(comments, RUN_PATTERN)]

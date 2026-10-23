@@ -10,11 +10,19 @@ import time
 from pathlib import Path
 
 from .gitutil import GitError, git, has_commit
+from .redact import Redactor
+from .runlog import fence, one_line, write_summary
 from .runtimes import NAMES_VAR, secret_names
 
 OUTPUT_TAIL = 12_000
 BASE_SHA = "NEXKIT_BASE_SHA"
 VERIFIED_SHA = "NEXKIT_VERIFIED_SHA"
+# The files that failing checks name in `results` go into the round's `nexkit-checks`
+# artifact under `results/<check>/`, at most this many bytes per round.
+RESULTS_DIR = "results"
+RESULTS_LIMIT = 50_000_000
+# How much of a file decides whether it is text, which is redacted, or binary.
+SNIFF = 8192
 
 
 def environment(commits=None):
@@ -121,8 +129,115 @@ def setup(cfg, cwd, redact=str, commits=None):
     return None
 
 
+def size_text(size):
+    return f"{size / 1_000_000:.1f} MB"
+
+
+def _is_text(data):
+    """Whether a file is text, which is redacted, rather than binary, such as a zip or an
+    image, which is kept as it is."""
+    if b"\0" in data[:SNIFF]:
+        return False
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _result_files(root, path):
+    """The regular files at `path` in the checkout `root`, in path order, without following
+    links, or None when the path does not exist or leads out of the checkout."""
+    target = root / path
+    if target.is_symlink() or not target.exists():
+        return None
+    try:
+        target.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    if target.is_file():
+        return [target]
+    found = []
+    for folder, _, names in os.walk(target):  # does not enter linked folders
+        for name in names:
+            file = Path(folder) / name
+            if file.is_file() and not file.is_symlink():
+                found.append(file)
+    return sorted(found, key=lambda file: file.relative_to(root).as_posix())
+
+
+def keep_results(cfg, results, cwd, out_dir, redact=None):
+    """Copy the files that each failing check names in `results` into
+    `out_dir/results/<check>/<path>`, for the next fix round. Text files are redacted;
+    binary files are copied as they are. Missing paths are skipped. In check order, then
+    path order, files that would take the round past RESULTS_LIMIT are left out.
+
+    Each failing check's result gets `results`, the paths of which files were kept, and
+    `results_left_out`, the number of its files left out. Returns the lines for the run
+    summary, or [] when no failing check names result files."""
+    redact = redact or Redactor()
+    root = Path(cwd)
+    named = {check["name"]: check.get("results") or [] for check in cfg["checks"]}
+    used = kept = 0
+    missing, left_out = [], []
+    for result in results:
+        paths = [] if result["passed"] else named.get(result["name"]) or []
+        if not paths:
+            continue
+        result["results"], result["results_left_out"] = [], 0
+        for path in paths:
+            files = _result_files(root, path)
+            if files is None:
+                missing.append(f"{result['name']}: {path}")
+                print(f"{result['name']}: `{path}` was not found; skipped.", flush=True)
+                continue
+            count = 0
+            for file in files:
+                relative = file.relative_to(root).as_posix()
+                shown = f"{result['name']}: {one_line(relative)}"
+                try:
+                    size = file.stat().st_size
+                    if used + size > RESULTS_LIMIT:
+                        left_out.append(f"{shown} ({size_text(size)})")
+                        result["results_left_out"] += 1
+                        continue
+                    data = file.read_bytes()
+                except OSError as exc:  # removed or unreadable since it was listed
+                    print(f"{shown} could not be read: {exc}", flush=True)
+                    continue
+                if _is_text(data):
+                    data = redact(data.decode("utf-8")).encode("utf-8")
+                target = Path(out_dir) / RESULTS_DIR / result["name"] / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+                used += len(data)
+                count += 1
+            if count:
+                result["results"].append(path)
+            kept += count
+            print(f"{result['name']}: kept {count} of {len(files)} files of `{path}`.", flush=True)
+    if not missing and not left_out and not kept:
+        return []
+    lines = [
+        "### NexKit checks: result files",
+        "",
+        f"Kept {kept} {'file' if kept == 1 else 'files'} ({size_text(used)}) of the failing "
+        "checks for the next fix round.",
+    ]
+    limit = size_text(RESULTS_LIMIT)
+    for title, items in (
+        ("**Not found**", missing),
+        (f"**Left out** ({len(left_out)}): a round keeps at most {limit}", left_out),
+    ):
+        if items:
+            text = "\n".join(items)
+            lines += ["", title, "", fence(text), text, fence(text)]
+    return lines
+
+
 def run_checks(cfg, cwd, out_dir=None, commits=None):
-    """Run setup, then every check. A setup failure is reported as a failed check."""
+    """Run setup, then every check. A setup failure is reported as a failed check. With
+    `out_dir`, the failing checks' result files are kept there too (see `keep_results`)."""
     failed_setup = setup(cfg, cwd, commits=commits)
     results = [failed_setup] if failed_setup else []
     env = environment(commits)
@@ -144,5 +259,9 @@ def run_checks(cfg, cwd, out_dir=None, commits=None):
         print(f"{check['name']}: {'passed' if code == 0 else f'failed (exit {code})'}")
     if out_dir:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
+        redact = Redactor()
+        lines = keep_results(cfg, results, cwd, out_dir, redact)
+        if lines:
+            write_summary("\n".join(lines) + "\n", redact)
         (Path(out_dir) / "checks.json").write_text(json.dumps(results, indent=2))
     return results

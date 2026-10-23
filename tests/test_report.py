@@ -346,6 +346,13 @@ class ReportTests(ReportCase):
             [(1, "implement"), (2, "fix (auto)")],
         )
 
+    def test_state_names_the_run_that_holds_the_checks_result_files(self):
+        self.candidate(checks_pass=False, review=review_result("request_changes"))
+        self.run_report()
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["feedback"]["run_id"], 1)
+        self.assertFalse(state["feedback"]["checks"][0]["passed"])
+
     def test_missing_review(self):
         self.candidate(review=False)
         outcome = self.run_report()

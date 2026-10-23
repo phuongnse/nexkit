@@ -208,7 +208,7 @@ def cmd_context(args):
     fix_result = None
     if args.fix_result and Path(args.fix_result).is_file():
         fix_result = json.loads(Path(args.fix_result).read_text())
-    context = gather(_gh(), decision, stage=args.stage, fix_result=fix_result)
+    context = gather(_gh(), decision, stage=args.stage, fix_result=fix_result, results=args.results)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "context.json").write_text(json.dumps(context, indent=2))
@@ -435,6 +435,7 @@ def build_parser():
     p.add_argument("--pr", default="", help="Pull request number when it was just created")
     p.add_argument("--stage", choices=["review"], help="Default: the decision's action")
     p.add_argument("--fix-result", help="This run's fix result.json, for the review stage")
+    p.add_argument("--results", help="The downloaded nexkit-checks artifact, for a fix round")
     p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("agent", help="(pipeline) Run an agent stage")

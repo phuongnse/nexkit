@@ -54,7 +54,7 @@ their defaults.
 | `model` | `"sonnet"` | Model for every stage, as the agent's runtime and provider name it. For `claude-code`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
 | `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
-| `checks` | `[]` | Commands that decide whether a change is acceptable. See [Checks](#checks). |
+| `checks` | `[]` | Commands that decide whether a change is acceptable, and the files where each writes its results. See [Checks](#checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
 | `stages` | see [Stages](#stages) | Per-stage agent, model, effort, timeout and budget. |
 | `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See [Profiles](#profiles). |
@@ -96,8 +96,14 @@ their defaults.
 ```json
 "checks": [
   {"name": "test", "run": "pytest -q", "timeout_minutes": 20},
-  {"name": "e2e", "run": "scripts/e2e.sh", "timeout_minutes": 40, "slow": true},
-  {"name": "lint", "run": "ruff check ."}
+  {"name": "lint", "run": "ruff check ."},
+  {
+    "name": "e2e",
+    "run": "scripts/e2e.sh",
+    "timeout_minutes": 40,
+    "slow": true,
+    "results": ["test-results", "artifacts/logs"]
+  }
 ]
 ```
 
@@ -105,6 +111,9 @@ their defaults.
 - `run`: a Bash command run from the repository root with `pipefail`.
 - `timeout_minutes`: default 15, at most 360.
 - `slow`: default `false`. See [Slow checks](#slow-checks).
+- `results`: files or folders, relative to the repository root, where the check writes its
+  results, such as traces, screenshots, test reports and logs. Default `[]`, at most 20.
+  See [Result files of failing checks](#result-files-of-failing-checks).
 
 Checks run in a separate job that has **no secrets and a read-only token**, on the exact
 commit NexKit published. A setup failure counts as a failed check. With no checks
@@ -126,6 +135,36 @@ check `"slow": true`:
 
 With no check marked slow, the agent runs every check, as before. The plan prompt lists
 every check either way.
+
+### Result files of failing checks
+
+NexKit keeps only the end of a check's output: the last 12,000 characters in the round's
+artifact and the last 6,000 in the fix prompt. A failing end-to-end suite often leaves its
+real evidence in files instead. Name them in `results`, and the next fix round's agent
+reads them before it runs anything, rather than running the slow suite again to see the
+failure.
+
+- When a check fails, the `verify` job copies the paths in its `results` that exist into
+  the round's `nexkit-checks` artifact, under `results/<check>/<path>`. Paths that do not
+  exist are skipped. A passing check keeps nothing, and neither does a check without
+  `results`.
+- Text files pass through the same redaction as the agent's output (see
+  [What is redacted](how-it-works.md#what-is-redacted)). Binary files, such as zip files
+  and images, are kept as they are: the `verify` job holds no secrets that could end up in
+  them. Links are not followed, and a path that leads out of the repository is skipped.
+- A round keeps at most 50 MB of result files, in the order of `checks`, then of each
+  check's `results`, then of the file paths. Files that would go past the limit are left
+  out, and the `verify` job's run summary lists them, with the paths that were not found.
+  Playwright traces of one failed test are often 15 to 20 MB, so keep `results` to the
+  folders that explain a failure.
+- The next fix round's `agent` job downloads that artifact to a folder outside the working
+  tree. The fix prompt names the folder and, for each failing check, its folder and each
+  file or folder it kept. When the artifact cannot be downloaded, for example because it
+  expired after 14 days, the round runs without the files and its log says why.
+- Checks without `results` behave as before.
+
+The artifact can be downloaded by anyone who can read the run, like the rest of NexKit's
+logs and artifacts (see [What is redacted](how-it-works.md#what-is-redacted)).
 
 ### Skipping work that a change cannot affect
 

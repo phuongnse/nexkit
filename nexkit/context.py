@@ -6,7 +6,10 @@ Gathering happens in its own step so the agent process never holds a GitHub toke
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
+from .checks import RESULTS_DIR
+from .config import NAME
 from .github import TRUSTED_ASSOCIATIONS
 from .route import parse_command
 from .state import answers_text, by_bot, clip, latest_plan, plan_text, read_state
@@ -61,6 +64,62 @@ def _after_failed_checks(decision, comments):
     if not decision.get("auto") or decision.get("conflicts"):
         return False
     return any(not check.get("passed") for check in _saved_feedback(comments).get("checks") or [])
+
+
+def _inside(path):
+    """Whether a recorded result path stays inside the folder it is relative to."""
+    return (
+        isinstance(path, str)
+        and bool(path)
+        and not path.startswith(("/", "~"))
+        and ".." not in path.split("/")
+    )
+
+
+def evidence(feedback, decision, folder):
+    """The result files that the failing checks of the run in `results_run` kept, as the
+    agent job downloaded them into `folder`, outside the working tree, or None. Says in
+    the log why there are none."""
+    run_id = decision.get("results_run")
+    if not run_id:
+        return None
+    root = Path(folder).resolve() / RESULTS_DIR if folder else None
+    if not root or not root.is_dir():
+        print(
+            "No result files of the failing checks: the `nexkit-checks` artifact of run "
+            f"{run_id} could not be downloaded, for example because it expired. The fix "
+            "prompt has no section about them.",
+            flush=True,
+        )
+        return None
+    found = []
+    for check in feedback.get("checks") or []:
+        name = check.get("name")
+        if check.get("passed") or not isinstance(name, str) or not NAME.match(name):
+            continue
+        paths = []
+        for path in check.get("results") or []:
+            target = root / name / path if _inside(path) else None
+            if not target or not target.exists():
+                continue
+            files = sum(f.is_file() for f in target.rglob("*")) if target.is_dir() else 1
+            paths.append({"path": path, "folder": target.is_dir(), "files": files})
+        if paths:
+            left_out = check.get("results_left_out")
+            found.append(
+                {
+                    "name": name,
+                    "run": str(check.get("run") or ""),
+                    "folder": str(root / name),
+                    "paths": paths,
+                    "left_out": left_out if isinstance(left_out, int) else 0,
+                }
+            )
+    if not found:
+        print(f"Run {run_id} kept no result files of the failing checks.", flush=True)
+        return None
+    print(f"Result files of the failing checks are in {root}.", flush=True)
+    return {"folder": str(root), "checks": found}
 
 
 def _feedback(gh, decision, comments):
@@ -159,9 +218,11 @@ def _fixed(decision, fix_result):
     return decision["action"] == "fix" and (fix_result or {}).get("status") == "done"
 
 
-def gather(gh, decision, stage=None, fix_result=None):
+def gather(gh, decision, stage=None, fix_result=None, results=None):
     """Context for an agent stage. `stage` defaults to the decision's action; the review
-    stage also gets the previous review round, with `fix_result` from this run's fix."""
+    stage also gets the previous review round, with `fix_result` from this run's fix. A
+    fix round also gets the failing checks' result files, which the agent job downloaded
+    into the folder `results`."""
     issue = gh.issue(decision["issue"])
     comments = gh.comments(decision["issue"])
     plan = latest_plan(comments)
@@ -204,5 +265,6 @@ def gather(gh, decision, stage=None, fix_result=None):
         pr_comments = gh.comments(decision["pr"])
         context["feedback"] = _feedback(gh, decision, pr_comments)
         context["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
+        context["evidence"] = evidence(_saved_feedback(pr_comments), decision, results)
         context["discussion"] += "\n\n---\n\nOn the pull request:\n\n" + _discussion(pr_comments)
     return context

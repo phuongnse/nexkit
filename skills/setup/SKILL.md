@@ -36,6 +36,13 @@ files or repository settings, and wait for confirmation.
      as end-to-end tests: the agent then runs only the tests in it that its change
      touches, and NexKit runs it in full after each round. Suggest saying in CLAUDE.md or
      AGENTS.md how to run part of it (see the configuration reference, Slow checks).
+   - `results` for a check that writes traces, screenshots, test reports or logs, such as
+     an end-to-end suite: the folders or files where it writes them, relative to the
+     repository root (for example `["test-results", "playwright-report"]`). When the check
+     fails, NexKit keeps them, at most 50 MB per round, and the next fix round reads them
+     first (see the configuration reference, Result files of failing checks). `nexkit
+     init` does not write `results`; add it to the check in `.nexkit/config.json` after
+     step 4.
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the

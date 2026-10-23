@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import string
 from datetime import UTC, datetime, timedelta
 
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
@@ -53,18 +54,34 @@ ACTIVE = {RUNNING, PAUSED, CONTINUED}
 # run, for example because `route` refused it. Autopilot does not start it again.
 LOST = timedelta(hours=6)
 # What the record keeps from one start to the next.
-STICKY = ("split_asked",)
+STICKY = ("split_asked", "titles_asked")
 # A sweep looks again after splitting an issue, at most this often.
 PASSES = 3
 # The note on the plan that autopilot asks for after an agent ran out of time.
 SPLIT_NOTE = (
     "The last implement or fix round did not finish within its time limit. Split this issue: "
-    "return `too_large` with parts that can each be done and tested in one session. Put "
-    "slow, mechanical work, such as test fixtures or settings in every environment, in its "
-    "own part, apart from the change in behaviour, and order the parts so that each leaves "
-    "the default branch working."
+    "return `too_large` with parts that can each be done and tested in one session. Say in "
+    "the summary why the round did not finish: too much work, or a failure whose cause it "
+    "did not find. For too much work, put slow, mechanical work, such as test fixtures or "
+    "settings in every environment, in its own part, apart from the change in behaviour. "
+    "For a failure whose cause was not found, make the first part a diagnosis that finds the "
+    "cause, with evidence, before any part changes code for it. Title each part by its own "
+    "behaviour, never by this issue's title, and order the parts so that each leaves the "
+    "default branch working."
+)
+# The note on the plan that autopilot asks for again when parts are titled like the issue.
+TITLE_NOTE = (
+    "NexKit autopilot did not create the parts of the last plan, because these titles repeat "
+    "this issue's title: {titles}. Return the split again, with each part titled by its own "
+    "behaviour."
 )
 PART = re.compile(r"\A<!-- nexkit:part (\d+) -->")
+# How deep parts go: the issue first split is at depth 0, its parts at 1, their parts at 2.
+# An issue at this depth is not split again; a person decides.
+MAX_DEPTH = 3
+DEPTH_REASON = f"a part {MAX_DEPTH} levels deep, which autopilot does not split; a person decides"
+# The most parent issues that a sweep walks up from an issue: GitHub's own nesting limit.
+LINEAGE = 8
 # A bug issue that autopilot opened because a workflow failed twice on the default branch,
 # and the commit each of its reports is about.
 CI_BUG_PREFIX = "<!-- nexkit:ci "
@@ -211,6 +228,45 @@ def in_repository(gh, issue):
     return not url or url.lower().endswith(f"/repos/{gh.repository}".lower())
 
 
+def lineage(gh, issue):
+    """The issues above an issue in this repository, nearest first: its parent, the
+    parent's parent, and so on."""
+    found, seen, number = [], {issue["number"]}, issue["number"]
+    for _ in range(LINEAGE):
+        parent = gh.parent_issue(number)
+        if not parent or not in_repository(gh, parent) or parent["number"] in seen:
+            break
+        found.append(parent)
+        seen.add(parent["number"])
+        number = parent["number"]
+    return found
+
+
+def depth(issue, above):
+    """How many levels of parts an issue is below the issue first split, given its
+    `lineage`: 0 for an issue that is not a part that autopilot created."""
+    level, child = 0, issue
+    for parent in above:
+        match = PART.match(child.get("body") or "")
+        if not match or author(child) != BOT_LOGIN or int(match.group(1)) != parent["number"]:
+            break
+        level, child = level + 1, parent
+    return level
+
+
+def _bare(title):
+    return (title or "").strip().rstrip(string.punctuation + string.whitespace).casefold()
+
+
+def repeated_titles(issue, parts):
+    """The titles of parts that are the issue's own title or start with it, ignoring case,
+    spaces and trailing punctuation. A part is titled by its own behaviour."""
+    own = _bare(issue.get("title"))
+    if not own:
+        return []
+    return [part.get("title") or "" for part in parts if _bare(part.get("title")).startswith(own)]
+
+
 def waits_for(gh, issue):
     """Why an issue is not ready yet, or None: open issues that block it on GitHub. The
     order of sub-issues does not count; a part that needs another says so with a *blocked
@@ -297,7 +353,20 @@ def answer_note(found):
     return "\n".join(lines)
 
 
-def _stopped(cfg, issue, run, record, start, command, target):
+def split_refused(gh, issue):
+    """Why autopilot does not ask for a split after an agent of this issue ran out of time,
+    although the issue itself did not ask before, or None. A part inherits the time-outs of
+    the issues above it: once one of them asked, a part that runs out of time again waits
+    for a person, however deep it is. A part at `MAX_DEPTH` is not split at all."""
+    above = lineage(gh, issue)
+    for parent in above:
+        if find_record(gh.comments(parent["number"]))[1].get("split_asked"):
+            number = parent["number"]
+            return f"a part of a split ran out of time again, after #{number} asked for a split"
+    return DEPTH_REASON if depth(issue, above) >= MAX_DEPTH else None
+
+
+def _stopped(gh, cfg, issue, run, record, start, command, target):
     """The step after a `/nexkit go` or a round that stopped: answer a blocked round's
     questions, ask once for a split after the agent ran out of time, or wait."""
     found = answers(cfg, run.get("questions")) if run.get("outcome") == "agent_blocked" else None
@@ -306,21 +375,40 @@ def _stopped(cfg, issue, run, record, start, command, target):
         reason = "autopilot answers the questions of the blocked round"
         return _step(issue, "start", reason, command=command, answers=found, **start)
     if run.get("timed_out") and not record.get("split_asked"):
+        refused = split_refused(gh, issue)
+        if refused:
+            return _step(issue, "waits", refused)
         start = {**start, "note": SPLIT_NOTE, "remember": {"split_asked": True}}
         reason = "the agent ran out of time, so autopilot asks for a split"
         return _step(issue, "start", reason, command="plan", **start)
     return None
 
 
-def _split(issue, plan, data, start, pull=None):
-    """The step that splits an issue whose latest plan is too large, or None."""
+def _split(gh, issue, plan, data, record, start, pull=None):
+    """The step for an issue whose latest plan is too large and suggests parts, or None:
+    split it; or, when parts are titled like the issue, ask once for the plan again; or
+    wait for a person at `MAX_DEPTH` and after a second plan with such titles."""
     if not (data or {}).get("too_large") or not data.get("split"):
         return None
+    if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
+        return _step(issue, "waits", DEPTH_REASON)
+    repeated = repeated_titles(issue, data["split"])
+    if repeated and record.get("titles_asked"):
+        return _step(issue, "waits", "the parts of its plan are titled like the issue again")
+    if repeated:
+        titles = ", ".join(f'"{title}"' for title in repeated)
+        start = {
+            **start,
+            "note": TITLE_NOTE.format(titles=titles),
+            "remember": {"titles_asked": True},
+        }
+        reason = "parts of the plan are titled like the issue, so autopilot plans again"
+        return _step(issue, "start", reason, command="plan", **start)
     fields = {"parts": data["split"], "plan_url": plan.get("html_url") or "", "pull": pull}
     return _step(issue, "split", "the plan splits the issue", **fields, **start)
 
 
-def _planned(cfg, issue, plan, last, start):
+def _planned(gh, cfg, issue, plan, last, record, start):
     """The step after a plan that needs nobody's comment."""
     data = plan_data(plan)
     if data is None:  # a plan from before NexKit kept its record
@@ -328,7 +416,7 @@ def _planned(cfg, issue, plan, last, start):
             return _step(issue, "waits", last["attention"])
         return _step(issue, "start", "the plan needs nobody", command="go", **start)
     if data.get("too_large"):
-        return _split(issue, plan, data, start) or _step(
+        return _split(gh, issue, plan, data, record, start) or _step(
             issue, "waits", last.get("attention") or "the plan is too large and suggests no split"
         )
     if data.get("questions"):
@@ -376,10 +464,11 @@ def assess(gh, cfg, issue, open_pulls, now=None):
         # split the issue. A plan that is too large but that a person chose to implement
         # anyway does not.
         asked = record.get("split_asked") and record.get("command") == "plan"
-        split = _split(issue, plan, plan_data(plan), start, pull) if asked and plan else None
+        data = plan_data(plan) if asked and plan else None
+        split = _split(gh, issue, plan, data, record, start, pull) if data else None
         rounds = [run for _, run in run_comments(pull_comments) if "round" in run]
         if not split and rounds and rounds[-1].get("status") == FAILURE:
-            split = _stopped(cfg, issue, rounds[-1], record, start, "fix", pull)
+            split = _stopped(gh, cfg, issue, rounds[-1], record, start, "fix", pull)
         if split:
             return {**split, "pull": pull}
         return _step(issue, "active", f"pull request #{pull} is open")
@@ -391,7 +480,7 @@ def assess(gh, cfg, issue, open_pulls, now=None):
     if last["command"] == "go":
         if last.get("status") == SUCCESS:
             return _step(issue, "waits", "its pull request was closed; a person decides")
-        return _stopped(cfg, issue, last, record, start, "go", number) or _step(
+        return _stopped(gh, cfg, issue, last, record, start, "go", number) or _step(
             issue, "waits", last.get("attention") or "the last `/nexkit go` failed"
         )
     if last.get("status") != SUCCESS:
@@ -400,7 +489,7 @@ def assess(gh, cfg, issue, open_pulls, now=None):
         return _step(
             issue, "start", "collaborators commented after the plan", command="plan", **start
         )
-    return _planned(cfg, issue, plan, last, start)
+    return _planned(gh, cfg, issue, plan, last, record, start)
 
 
 def carries_on(gh, cfg, decision, outcome, agent):
@@ -411,11 +500,11 @@ def carries_on(gh, cfg, decision, outcome, agent):
         return False
     agent = agent or {}
     output = agent.get("output") or {}
-    if outcome == "planned":
-        if output.get("too_large"):
-            handled = bool(output.get("split"))
-        else:
-            handled = answers(cfg, output.get("questions")) is not None
+    splits = outcome == "planned" and bool(output.get("too_large"))
+    if splits:
+        handled = bool(output.get("split"))
+    elif outcome == "planned":
+        handled = answers(cfg, output.get("questions")) is not None
     elif outcome == "agent_blocked":
         handled = answers(cfg, round_questions(agent)) is not None
     elif outcome == "agent_error" and agent.get("timed_out"):
@@ -423,10 +512,19 @@ def carries_on(gh, cfg, decision, outcome, agent):
     else:
         return False
     try:
-        if not handled or not taken(gh, cfg, gh.issue(decision["issue"])):
+        if not handled:
+            return False
+        issue = gh.issue(decision["issue"])
+        if not taken(gh, cfg, issue):
             return False
         if outcome == "agent_error":
-            return not find_record(gh.comments(decision["issue"]))[1].get("split_asked")
+            record = find_record(gh.comments(issue["number"]))[1]
+            return not record.get("split_asked") and not split_refused(gh, issue)
+        if splits:
+            # Autopilot splits the issue, or plans it again for its parts' titles.
+            record = find_record(gh.comments(issue["number"]))[1]
+            start = {"basis": None, "target": issue["number"], "note": "", "remember": {}}
+            return _split(gh, issue, {}, output, record, start)["state"] != "waits"
     except GitHubError:
         return False
     return True

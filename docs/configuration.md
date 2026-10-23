@@ -340,9 +340,10 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Its plan is too large and suggests a split | Creates each part as a sub-issue, in order, with the issue's milestone and labels, marks each part *blocked by* the earlier parts it needs, closes the issue's open NexKit pull request as superseded, and plans the parts that need no other part. |
 | Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
-| Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session. |
+| Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
+| Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. |
 | A bug issue that autopilot opened for a CI failure on the default branch | Goes first: it is planned before every other issue in scope. |
-| Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout | Nothing: a person decides, as without autopilot, and `notify` mentions them. Other issues go on. |
+| Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep | Nothing: a person decides, as without autopilot, and `notify` mentions them. Other issues go on. |
 | A run on it is running or paused, or its pull request is open | Nothing: the run, or the pull request's automatic rounds, carry it on. |
 | The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. |
 
@@ -384,7 +385,17 @@ every open issue in scope, oldest first, and starts the one command that moves i
   Sweeps notice a finished run at the next event or on the hourly schedule.
 - **Parts.** Parts that autopilot creates are trusted because they start with a NexKit
   marker and are sub-issues of an issue it trusts. A part's own plan that is too large is
-  split again.
+  split again, within these limits:
+  - A part inherits the time-outs of the issues above it. When one of them already asked
+    for a split, a part that runs out of time waits for a person instead.
+  - A part titled like its parent, or starting with its parent's title, is not created.
+    Autopilot asks for the plan once more, and then waits for a person.
+  - Parts go at most three levels deep: an issue at level 3 (its parent's parent's parent
+    was the issue first split) is not split again. This limit is not a setting.
+
+  After a time-out, the plan says why the round did not finish. For a failure whose cause
+  was not found, its first part is a diagnosis that finds the cause before the change.
+  With profiles, triage chooses that part's profile as for any other issue.
 
 Commands that autopilot starts are dispatches, shown as `/nexkit plan (autopilot)`. A
 person can still post any command, and autopilot carries on from what it leads to.

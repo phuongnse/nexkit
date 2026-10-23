@@ -61,10 +61,10 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 
 | Run result | A person is needed |
 |---|---|
-| Plan posted, and it has questions or says the issue is too large | yes, unless [autopilot](#autopilot) answers or splits it |
+| Plan posted, and it has questions or says the issue is too large | yes, unless [autopilot](#autopilot) answers or splits it, or plans again for parts titled like the issue |
 | Plan posted without either | no |
 | The agent returned `blocked` | yes, unless autopilot answers it |
-| The agent failed or errored, publishing failed, or the review did not complete | yes, unless autopilot asks for a split after an implement or fix agent ran out of time |
+| The agent failed or errored, publishing failed, or the review did not complete | yes, unless autopilot asks for a split after an implement or fix agent ran out of time (see [limits on parts](#autopilot)) |
 | Checks or review still fail and no automatic fix rounds remain | yes |
 | Ready, with `merge.auto` off | yes |
 | GitHub refused the automatic merge | yes |
@@ -468,7 +468,20 @@ issue run in that group as well, and start a sweep.
   once. A NexKit pull request of the split issue is closed as superseded. An implement or
   fix agent that ran out of time leads to one re-plan with a note to split the work; a
   second time waits for a person. This is the only case where an agent error leads to more
-  agent work, and it changes the plan rather than repeating the run.
+  agent work, and it changes the plan rather than repeating the run. The note asks the
+  plan to say why the round did not finish: too much work splits as before, and a failure
+  whose cause was not found makes the first part a diagnosis that finds the cause, with
+  evidence, before the change. With profiles, triage chooses a diagnosis part's profile
+  like any other's; it is not forced onto `hard`.
+- **Limits on parts.** A part inherits the time-outs of the issues above it, found through
+  GitHub's sub-issue parents: when an issue above it already asked for a split, a part
+  that runs out of time waits for a person instead of asking again, however deep it is. A
+  part whose title is its parent's title, or starts with it (ignoring case, spaces and
+  trailing punctuation), is not created: autopilot plans once more with a note that names
+  those titles, and a second such plan waits for a person. Parts go at most three levels
+  deep (the issue first split is level 0): an issue at level 3 is not split, after a plan
+  that is too large or a time-out, and waits for a person. The limit is fixed, not a
+  setting. `nexkit status` shows each of these reasons.
 - **CI on the default branch.** Each sweep looks at the latest run, on the default branch,
   of each workflow in `merge.after_workflows`. A run that failed gets its failed jobs run
   once more (`run_attempt` 1). When the next attempt fails too, autopilot opens a `bug`

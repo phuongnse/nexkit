@@ -115,6 +115,14 @@ their defaults.
   results, such as traces, screenshots, test reports and logs. Default `[]`, at most 20.
   See [Result files of failing checks](#result-files-of-failing-checks).
 
+`nexkit init` writes each check from `--check NAME=COMMAND`, and its other fields from
+flags that name the check: `--check-timeout NAME=MINUTES`, `--check-slow NAME` and
+`--check-results NAME=PATH`, repeated for each path. The example's `e2e` check comes from:
+
+```sh
+nexkit init --check "e2e=scripts/e2e.sh" --check-timeout e2e=40 --check-slow e2e   --check-results e2e=test-results --check-results e2e=artifacts/logs
+```
+
 Checks run in a separate job that has **no secrets and a read-only token**, on the exact
 commit NexKit published. A setup failure counts as a failed check. With no checks
 configured, NexKit can still run, but nothing verifies the change except the AI review.

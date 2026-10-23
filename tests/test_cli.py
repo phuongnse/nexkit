@@ -48,6 +48,55 @@ class InitDoctorTests(unittest.TestCase):
         self.assertEqual(cli.main(["init", "--repo", str(self.root), "--check", "npm test"]), 2)
         self.assertFalse((self.root / ".nexkit").exists())
 
+    def test_init_sets_each_field_of_a_check(self):
+        code = cli.main(
+            [
+                "init",
+                "--repo",
+                str(self.root),
+                "--check",
+                "test=npm test",
+                "--check",
+                "e2e=scripts/e2e.sh",
+                "--check-timeout",
+                "e2e=40",
+                "--check-slow",
+                "e2e",
+                "--check-results",
+                "e2e=test-results",
+                "--check-results",
+                "e2e=artifacts/logs",
+            ]
+        )
+        self.assertEqual(code, 0)
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(
+            cfg["checks"],
+            [
+                {"name": "test", "run": "npm test"},
+                {
+                    "name": "e2e",
+                    "run": "scripts/e2e.sh",
+                    "timeout_minutes": 40,
+                    "slow": True,
+                    "results": ["test-results", "artifacts/logs"],
+                },
+            ],
+        )
+
+    def test_init_rejects_a_check_field_without_its_check_or_value(self):
+        for flags in (
+            ["--check-slow", "e2e"],
+            ["--check-timeout", "test"],
+            ["--check-timeout", "test=soon"],
+            ["--check-timeout", "test=0"],
+            ["--check-results", "test=../outside"],
+        ):
+            with self.subTest(flags=flags):
+                code = cli.main(["init", "--repo", str(self.root), "--check", "test=x", *flags])
+                self.assertEqual(code, 2)
+                self.assertFalse((self.root / ".nexkit").exists())
+
     def test_doctor_without_github(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         git(self.root, "init", "-q")

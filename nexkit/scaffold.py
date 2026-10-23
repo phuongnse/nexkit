@@ -53,7 +53,51 @@ def parse_check(value):
     return {"name": name.strip(), "run": command.strip()}
 
 
-def init(root, *, checks, setup, model, kit_repo, kit_ref, force):
+def _check_named(checks, flag, name):
+    for check in checks:
+        if check["name"] == name.strip():
+            return check
+    raise configuration.ConfigError(f"{flag} names '{name.strip()}', which no --check defines")
+
+
+def _pair(flag, shape, value):
+    name, sep, rest = value.partition("=")
+    if not sep or not name.strip() or not rest.strip():
+        raise configuration.ConfigError(f"{flag} must look like {shape}, got '{value}'")
+    return name, rest.strip()
+
+
+def build_checks(checks, *, timeouts=(), slow=(), results=()):
+    """`checks` from the `--check` values, with the per-check flags applied: `timeouts`
+    (NAME=MINUTES), `slow` (NAME) and `results` (NAME=PATH, one path each). The
+    configuration's own validation checks the values."""
+    built = [parse_check(c) for c in checks]
+    for value in timeouts:
+        name, minutes = _pair("--check-timeout", "NAME=MINUTES", value)
+        if not minutes.isdigit():
+            raise configuration.ConfigError(f"--check-timeout must give whole minutes: '{value}'")
+        _check_named(built, "--check-timeout", name)["timeout_minutes"] = int(minutes)
+    for name in slow:
+        _check_named(built, "--check-slow", name)["slow"] = True
+    for value in results:
+        name, path = _pair("--check-results", "NAME=PATH", value)
+        _check_named(built, "--check-results", name).setdefault("results", []).append(path)
+    return built
+
+
+def init(
+    root,
+    *,
+    checks,
+    setup,
+    model,
+    kit_repo,
+    kit_ref,
+    force,
+    check_timeouts=(),
+    check_slow=(),
+    check_results=(),
+):
     root = Path(root)
     config_path = root / configuration.CONFIG_PATH
     workflow_path = root / WORKFLOW_PATH
@@ -67,7 +111,9 @@ def init(root, *, checks, setup, model, kit_repo, kit_ref, force):
         "agent": "claude",
         "model": model,
         "setup": setup,
-        "checks": [parse_check(c) for c in checks],
+        "checks": build_checks(
+            checks, timeouts=check_timeouts, slow=check_slow, results=check_results
+        ),
         "fix": dict(configuration.DEFAULTS["fix"]),
         "merge": {"auto": False},
     }

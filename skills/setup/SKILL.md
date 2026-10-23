@@ -40,9 +40,7 @@ files or repository settings, and wait for confirmation.
      an end-to-end suite: the folders or files where it writes them, relative to the
      repository root (for example `["test-results", "playwright-report"]`). When the check
      fails, NexKit keeps them, at most 50 MB per round, and the next fix round reads them
-     first (see the configuration reference, Result files of failing checks). `nexkit
-     init` does not write `results`; add it to the check in `.nexkit/config.json` after
-     step 4.
+     first (see the configuration reference, Result files of failing checks).
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the
@@ -82,6 +80,9 @@ files or repository settings, and wait for confirmation.
 
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`
+   For each check that needs more than a name and a command, add the flags that name it:
+   `--check-timeout <name>=<minutes>`, `--check-slow <name>`, and
+   `--check-results <name>=<path>` once for each path.
    Show the generated `.nexkit/config.json` and `.github/workflows/nexkit.yml`. The config
    declares the `claude` agent with `"oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"`; if
    the user has an Anthropic API key instead, change it to

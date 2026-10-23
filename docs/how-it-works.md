@@ -15,7 +15,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
-| `maintain` | issue and milestone events, pushes to the default branch, the schedule, the `resume` and `autopilot` dispatches | read; issues, comments, workflows; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | issue and milestone events, pushes to the default branch, the schedule, the `resume` and `autopilot` dispatches | read; issues, comments, workflows, statuses; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -511,8 +511,18 @@ issue run in that group as well, and start a sweep.
   request it runs on, and the newest NexKit run comment on both when it started. A run
   that starts posts a new run comment, so the next sweep sees that the command ran.
   Until then, the issue counts as in progress and nothing else starts on it. A command
-  whose run never started, for example because `route` refused it, is not started again:
-  after six hours the issue waits for a person.
+  whose run has not started after six hours, for example because `route` refused it or
+  GitHub dropped it from the queue, starts once more with the same note, and the issue
+  waits for a person when that one does not start either.
+- **Runs that never end.** A sweep reads the workflow run behind each run comment that
+  still says running. When that run has ended, its `report` never wrote the outcome: the
+  sweep marks the comment as ended without a report and sets the round's pending statuses
+  to errors (the `maintain` job has `statuses: write` for this). A command autopilot
+  started, or an automatic round, starts once more; a person's command, or a second run
+  that ended so, waits for a person. A run paused at the usage limit that NexKit does not
+  resume (`usage_limit.resume: false`, no known reset, or paused more than eight days ago)
+  waits for a person, and so does a continued run whose new run has not started after six
+  hours.
 - **People stay in charge.** A person's command, a plan's questions, a blocked or failed
   run and a `needs_human` pull request all stop autopilot on that issue, exactly where they
   stop NexKit without it. Such an issue waits for a person, with the reason that `nexkit

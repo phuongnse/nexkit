@@ -22,6 +22,7 @@ import string
 from datetime import UTC, datetime, timedelta
 
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
+from .progress import STATUS_CONTEXTS
 from .route import issue_from_branch, parse_command
 from .state import (
     BOT_LOGIN,
@@ -39,8 +40,9 @@ from .state import (
     questions,
     round_questions,
     run_comments,
+    with_run,
 )
-from .usage import iso, parse_iso
+from .usage import PAUSE_WINDOW, iso, parse_iso
 
 # The dispatch that starts a sweep. Its `number` input is not a number, so callers'
 # concurrency groups give every sweep the group `nexkit-autopilot`: one runs at a time, and
@@ -54,8 +56,14 @@ DONE = "<!-- nexkit:autopilot-done -->"
 # A run in these states carries on by itself, or a run is on its way.
 ACTIVE = {RUNNING, PAUSED, CONTINUED}
 # A command autopilot started that has not posted its run comment after this long did not
-# run, for example because `route` refused it. Autopilot does not start it again.
+# run, for example because `route` refused it, or GitHub dropped it from the queue.
+# Autopilot starts it once more, then waits for a person. A run that continues a paused one
+# and has not started after this long did not start either.
 LOST = timedelta(hours=6)
+# The run id in a run comment's link.
+RUN_ID = re.compile(r"/actions/runs/(\d+)")
+# What the comment of a run that ended without a report says once a sweep finds it.
+REPORTLESS = "the run ended without a report"
 # What the record keeps from one start to the next.
 STICKY = ("split_asked", "titles_asked")
 # A sweep looks again after splitting an issue, at most this often.
@@ -512,12 +520,86 @@ def _planned(gh, cfg, issue, plan, last, record, start, comments):
 
 
 def _meaningful(rounds):
-    """The latest round that says something about the pull request: a round that found
-    nothing to merge does not."""
-    for run in reversed(rounds):
+    """(comment, round) for the latest round that says something about the pull request:
+    a round that found nothing to merge does not."""
+    for comment, run in reversed(rounds):
         if run.get("outcome") != "up_to_date":
-            return run
-    return rounds[-1] if rounds else None
+            return comment, run
+    return rounds[-1] if rounds else (None, None)
+
+
+def _ended(gh, run):
+    """Whether the workflow run of a run comment that still says running has ended, so its
+    report never wrote the outcome."""
+    match = RUN_ID.search(run.get("url") or "")
+    if not match:
+        return False
+    try:
+        return gh.workflow_run(int(match.group(1))).get("status") == "completed"
+    except GitHubError:
+        return False
+
+
+def _automatic(run):
+    """Whether NexKit started a run by itself: a command autopilot started, or an automatic
+    round. A person's command may carry a note that a new start would not have."""
+    labels = re.search(r"\((.*)\)", str(run.get("trigger") or ""))
+    kinds = {kind.strip() for kind in labels.group(1).split(",")} if labels else set()
+    return bool(run.get("autopilot")) or bool(kinds & {"auto", "autopilot"})
+
+
+def _not_resumed(comment, run, now):
+    """Why a run paused at the usage limit waits for a person, or None while NexKit
+    resumes it by itself."""
+    if not isinstance(run.get("resume"), dict):
+        return run.get("attention") or "paused at the usage limit, and NexKit does not resume it"
+    at = parse_iso(comment.get("created_at"))
+    if at and now - at > PAUSE_WINDOW:
+        return "paused at the usage limit longer than NexKit resumes runs"
+    return None
+
+
+def _stalled(gh, issue, comment, run, record, start, target, now):
+    """The step for a run whose comment says it is running, paused or continued, when that
+    no longer carries the issue on, or None. A run that ended without a report starts once
+    more when NexKit started it by itself; anything else waits for a person."""
+    status = run.get("status")
+    if status == PAUSED:
+        reason = _not_resumed(comment, run, now)
+        return _step(issue, "waits", reason) if reason else None
+    if status == CONTINUED:
+        at = parse_iso(comment.get("updated_at"))
+        lost = at is not None and now - at > LOST
+        return _step(issue, "waits", "the run that continues it did not start") if lost else None
+    if status != RUNNING or not _ended(gh, run):
+        return None
+    trigger = str(run.get("trigger") or "")
+    command = run.get("command") or ("fix" if trigger.startswith("fix") else "review")
+    stale = {"number": target, "comment": comment["id"]}
+    if not _automatic(run) or record.get("retried"):
+        return _step(issue, "waits", REPORTLESS, stale=stale)
+    fields = {**start, "target": target, "remember": {"retried": True}}
+    reason = f"{REPORTLESS}, so autopilot starts `/nexkit {command}` once more"
+    return _step(issue, "start", reason, command=command, stale=stale, **fields)
+
+
+def settle(gh, step):
+    """Show the run of a stale step as ended without a report, with its pending statuses
+    as errors, so it no longer shows as running."""
+    stale = step.get("stale")
+    if not stale:
+        return
+    for comment, run in run_comments(gh.comments(stale["number"])):
+        if comment["id"] != stale["comment"] or run.get("status") != RUNNING:
+            continue
+        run.update(status=FAILURE, outcome="lost", attention=REPORTLESS)
+        line = "The run ended without a report. Its job log has what happened."
+        gh.update_comment(comment["id"], with_run(comment["body"], run, line))
+        if run.get("head"):
+            for context in STATUS_CONTEXTS:
+                gh.set_status(
+                    run["head"], context, "error", "The NexKit round did not finish", run.get("url")
+                )
 
 
 def _conflict_wait(gh, cfg, pull, rounds):
@@ -534,14 +616,17 @@ def _conflict_wait(gh, cfg, pull, rounds):
     return None
 
 
-def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comments):
+def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comments, now):
     """The step for an issue whose NexKit pull request is open, from its latest round: a
     round that runs, or started the next one, carries it on; one that stopped is answered
     or split as after `/nexkit go`; anything that needs a person waits for them."""
-    latest = _meaningful(rounds)
+    comment, latest = _meaningful(rounds)
     if latest is None:
         return _step(issue, "active", f"pull request #{pull} is open")
-    if latest.get("status") in ACTIVE or latest.get("outcome") in CHAINED:
+    if latest.get("status") in ACTIVE:
+        stalled = _stalled(gh, issue, comment, latest, record, start, pull, now)
+        return stalled or _step(issue, "active", f"pull request #{pull} has a round on its way")
+    if latest.get("outcome") in CHAINED:
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("status") == FAILURE:
         found = (pull_comments, comments)
@@ -551,7 +636,7 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         )
     if latest.get("attention"):
         return _step(issue, "waits", latest["attention"])
-    conflict = _conflict_wait(gh, cfg, pull, rounds)
+    conflict = _conflict_wait(gh, cfg, pull, [run for _, run in rounds])
     if conflict:
         return _step(issue, "waits", conflict)
     return _step(issue, "active", f"pull request #{pull} is open")
@@ -628,16 +713,30 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     pull_comments = gh.comments(pull) if pull else []
     current = basis(comments, pull_comments)
     _, record = find_record(comments)
+    now = now or datetime.now(UTC)
     if record.get("basis") == current:
         command = f"`/nexkit {record['command']}`"
-        if _lost(record, now or datetime.now(UTC)):
-            return _step(issue, "waits", f"the {command} that autopilot started did not run")
-        return _step(issue, "active", f"waits for the {command} that autopilot started")
+        if not _lost(record, now):
+            return _step(issue, "active", f"waits for the {command} that autopilot started")
+        reason = f"the {command} that autopilot started did not run"
+        if record.get("retried"):
+            return _step(issue, "waits", f"{reason}, again")
+        return _step(
+            issue,
+            "start",
+            f"{reason}, so autopilot starts it once more",
+            command=record["command"],
+            target=record.get("target") or number,
+            note=record.get("note") or "",
+            basis=current,
+            remember={"retried": True},
+        )
     start = {"basis": current, "target": number, "note": "", "remember": {}}
-    runs = [run for _, run in run_comments(comments) if "command" in run]
-    last = runs[-1] if runs else None
+    found = [(c, run) for c, run in run_comments(comments) if "command" in run]
+    last = found[-1][1] if found else None
     if last and last.get("status") in ACTIVE:
-        return _step(issue, "active", f"`/nexkit {last['command']}` is {last['status']}")
+        stalled = _stalled(gh, issue, *found[-1], record, start, number, now)
+        return stalled or _step(issue, "active", f"`/nexkit {last['command']}` is {last['status']}")
     plan = latest_plan(comments)
     if pull:
         # The plan autopilot asked for after the pull request's agent ran out of time. A
@@ -646,8 +745,10 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         if asked and last and last.get("command") == "plan":
             step = _replanned(gh, cfg, issue, plan, last, record, start, comments, pull)
         else:
-            rounds = [run for _, run in run_comments(pull_comments) if "round" in run]
-            step = _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comments)
+            rounds = [(c, run) for c, run in run_comments(pull_comments) if "round" in run]
+            step = _pull_step(
+                gh, cfg, issue, pull, rounds, record, start, comments, pull_comments, now
+            )
         return {**step, "pull": pull}
     blocked = waits_for(gh, issue, where)
     if blocked:
@@ -793,9 +894,13 @@ def start(gh, step, workflow, ref, now=None):
     command, target = step["command"], step["target"]
     if step.get("answers"):
         post_answers(gh, target, step["answers"])
+    settle(gh, step)
     inputs = {"command": command, "number": str(target), "note": step["note"], "auto": AUTO}
     started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
     record = {"command": command, "target": target}
+    if step["note"]:
+        # A command that never ran starts once more with the same note.
+        record["note"] = step["note"]
     if started.get("html_url"):
         record["url"] = started["html_url"]
     run = f" in [a new run]({record['url']})" if record.get("url") else ""
@@ -1266,6 +1371,7 @@ def sweep(gh, cfg, workflow, ref, closed=None):
         if step["state"] != "waits":
             continue
         try:
+            settle(gh, step)
             line = mention(gh, cfg, step)
         except GitHubError as exc:
             line = f"Could not mention anyone on #{step['number']}: {exc}"

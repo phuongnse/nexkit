@@ -131,7 +131,8 @@ access, `max_parallel`, or a question without a recommended option. Every issue 
 waits for a person is also listed under *Needs a person*, and does not count toward
 `max_parallel`. An issue outside the
 earliest open milestone (or without `autopilot.label`) is not in scope. A command that
-autopilot started but that never ran is not started again; post it yourself. To sweep
+autopilot started but that never ran starts once more after six hours; when that one does
+not run either, the issue waits for you, and you can post the command yourself. To sweep
 again at once: `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 
 **⏸️ "The agent stopped at the account's usage limit" or "Every agent stopped at its usage

@@ -26,7 +26,7 @@ from .state import (
     run_comments,
     with_run,
 )
-from .usage import iso, parse_iso
+from .usage import PAUSE_WINDOW, iso, parse_iso
 
 # Each task runs only when one of its configuration keys is on.
 TASKS = {
@@ -42,8 +42,6 @@ TASKS = {
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
 HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "duplicate"}
-# Usage limits reset within a week; paused runs older than this are not resumed.
-PAUSE_WINDOW = timedelta(days=8)
 # The `resume` dispatch: a run that waits for paused commands to come due and starts them.
 # Its `number` input is not a number, so callers' concurrency groups give it a group of its
 # own and it never holds up a command on an issue or pull request.

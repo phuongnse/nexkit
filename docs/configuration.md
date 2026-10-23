@@ -421,9 +421,16 @@ every open issue in scope, oldest first, and starts the one command that moves i
   (see [Conflicts with the base branch](#conflicts-with-the-base-branch)) keep the pull
   requests mergeable.
 - **One command per step.** Autopilot keeps one comment on each issue that names the
-  command it started last, and for which run. It never starts the same command twice for
-  the same state of the issue, so a command that `route` refused, or that never ran, is
-  not started again; after six hours, `nexkit status` shows it as not run.
+  command it started last, with its note, and for which run. It starts a command once for
+  a state of the issue. A command that has not run after six hours, because `route`
+  refused it or GitHub dropped it from the queue, starts once more with the same note; if
+  that one does not run either, the issue waits for a person. A run whose comment still
+  says running after its workflow run ended, for example because the runner was lost, is
+  marked as ended without a report and its pending statuses become errors. When NexKit
+  started that run itself, autopilot starts it once more; a person's command, or a second
+  such run, waits for a person. A run paused at the usage limit that NexKit will not
+  resume, and a continued run whose new run has not started after six hours, wait for a
+  person too.
 
 - **Answers.** Plans, and implement and fix rounds that stop as `blocked`, give each
   question its options and the one NexKit recommends, if any; the plan comment marks it

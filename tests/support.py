@@ -15,6 +15,7 @@ from unittest import mock
 
 from nexkit.agent import interpret
 from nexkit.config import validate
+from nexkit.github import GitHubError
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.base import Launch, Runtime
 from nexkit.runtimes.claude_code import ClaudeReader
@@ -337,6 +338,8 @@ class FakeGitHub:
         return [p for p in self.pulls.values() if state == "all" or p["state"] == state]
 
     def workflow_run(self, run_id):
+        if run_id not in self.runs:
+            raise GitHubError(404, "Not Found")
         return self.runs[run_id]
 
     def workflow_runs(self, workflow, branch, limit=5):

@@ -212,15 +212,114 @@ class SweepTests(AutopilotCase):
         self.assertEqual(self.started(), [("plan", 5), ("go", 5)])
         self.assertEqual(len(self.gh.comments_matching(5, "NexKit autopilot started")), 1)
 
-    def test_a_command_that_never_ran_is_not_started_again(self):
+    def test_a_command_that_never_ran_starts_once_more_then_waits(self):
         self.issue(5)
         self.sweep()
         later = datetime.now(UTC) + timedelta(hours=7)
         _, [step] = autopilot.preview(self.gh, self.cfg)
         self.assertEqual(step["state"], "active")
         step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=later)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertIn("did not run, so autopilot starts it once more", step["reason"])
+        autopilot.start(self.gh, step, "nexkit.yml", "main", now=later)
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 5)])
+        # It does not run again either: a person decides.
+        much_later = later + timedelta(hours=7)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=much_later)
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
+        self.assertIn("did not run, again", step["reason"])
+        # A later start of another command can be started once more again.
+        self.run_comment(5, "plan", status="running")
+        self.gh.issue_comments[5].pop()
+        self.planned(5)
+        self.sweep()
+        record = autopilot.find_record(self.gh.comments(5))[1]
+        self.assertEqual((record["command"], record.get("retried")), ("go", None))
+
+    def test_a_note_of_a_command_that_never_ran_is_kept(self):
+        cfg = pilot(answer="recommended")
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", status="failure", outcome="agent_blocked", questions=[QUESTION])
+        self.sweep(cfg)
+        later = datetime.now(UTC) + timedelta(hours=7)
+        step = autopilot.assess(self.gh, cfg, self.gh.issues[5], {}, now=later)
+        self.assertIn("Which port? Answer: 8080", step["note"])
+        self.assertNotIn("answers", step)  # posted once already
+
+    def test_a_run_that_ended_without_a_report_starts_once_more(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", status="running", autopilot=True)
+        self.gh.runs[self.runs] = {"status": "in_progress"}
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(step["state"], "active")
+        self.gh.runs[self.runs] = {"status": "completed", "conclusion": "failure"}
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 5)])
+        [run] = [c["run"] for c in self.gh.run_comments(5) if c["run"]["command"] == "go"]
+        self.assertEqual((run["status"], run["attention"]), ("failure", autopilot.REPORTLESS))
+        # Its start ends without a report too: now a person decides.
+        self.run_comment(5, "go", status="running", autopilot=True)
+        self.gh.runs[self.runs] = {"status": "completed", "conclusion": "cancelled"}
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.REPORTLESS))
+        # A person's command is never started again by autopilot.
+        self.issue(6)
+        self.planned(6)
+        self.run_comment(6, "go", status="running")
+        self.gh.runs[self.runs] = {"status": "completed"}
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
+        self.assertEqual((steps[6]["state"], steps[6]["reason"]), ("waits", autopilot.REPORTLESS))
+
+    def test_a_round_that_ended_without_a_report_gets_its_statuses_back(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        row = {
+            "round": 2,
+            "trigger": "fix (auto)",
+            "url": "https://github.com/acme/app/actions/runs/77",
+        }
+        self.gh.comment(6, render_run({**row, "status": "running", "head": "b" * 40}))
+        self.gh.runs[77] = {"status": "completed"}
+        self.sweep()
+        self.assertEqual(self.started(), [("fix", 6)])
+        errors = {(s["sha"], s["context"], s["state"]) for s in self.gh.statuses}
+        self.assertIn(("b" * 40, "nexkit/review", "error"), errors)
+
+    def test_a_pause_that_nexkit_does_not_resume_waits_for_a_person(self):
+        self.issue(4)
+        self.run_comment(4, "plan", status="paused", attention="run the command after the reset")
+        self.issue(5)
+        resume = {"command": "plan", "number": 5, "at": "2026-01-01T05:00:00Z"}
+        self.run_comment(5, "plan", status="paused", resume=resume)
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
+        self.assertEqual(
+            (steps[4]["state"], steps[4]["reason"]), ("waits", "run the command after the reset")
+        )
+        # The fake's comments are from 2026-01-01: within the window, then outside it.
+        soon = datetime(2026, 1, 3, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=soon)
+        self.assertEqual(step["state"], "active")
+        late = datetime(2026, 1, 20, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=late)
         self.assertEqual(step["state"], "waits")
-        self.assertIn("did not run", step["reason"])
+        self.assertIn("longer than NexKit resumes runs", step["reason"])
+
+    def test_a_continued_run_whose_new_run_never_started_waits(self):
+        self.issue(5)
+        comment = self.run_comment(5, "plan", status="continued")
+        comment["updated_at"] = "2026-01-01T00:00:00Z"
+        soon = datetime(2026, 1, 1, 2, tzinfo=UTC)
+        self.assertEqual(
+            autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=soon)["state"],
+            "active",
+        )
+        late = datetime(2026, 1, 1, 7, tzinfo=UTC)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=late)
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
 
     def test_leaves_issues_with_a_run_or_an_open_pull_request_alone(self):
         self.issue(4)

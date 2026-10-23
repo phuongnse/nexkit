@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.5.0
+
+- The review gives each acceptance criterion a status of met, unmet or unverifiable, in
+  place of met or not (#119). An unmet criterion counts as changes requested, whatever the
+  verdict: `nexkit/review` fails, and the criterion goes to the next automatic fix round
+  as a blocking finding. An approved round with an unverifiable criterion, one that the
+  diff, its tests and the check results show neither way, never merges by itself, even
+  with `merge.auto` on. `nexkit/review` stays green, the round's comment lists the
+  criteria a person confirms before merging, and `notify` mentions its people. The review
+  marks them ✅, ❌ and ❔. A review from before this keeps its verdict. See
+  [How it works](docs/how-it-works.md#stages).
+- Plans write only acceptance criteria that the review can verify: a test in the change,
+  or the result of a project check (#120). Steps only the implementing agent can run, such
+  as running a test several times or putting the cause back, go to the implementation
+  notes. For a failure that happens only at times, the plan prefers a test that
+  reproduces the cause on every run, and names under its risks a behaviour that nothing
+  can show.
+- The description of a pull request NexKit opens says who merges it: NexKit with
+  `merge.auto` on, a person with it off.
+- A pull request NexKit opens gets the labels and milestone of its issue (#121), so it
+  shows in the milestone's view and in the issue's label filters.
+
 ## 4.4.0
 
 - Each failure of a flaky run on the default branch gets its own `bug` issue, titled by

@@ -717,7 +717,9 @@ class AnswerTests(AnswerAndSplitCase):
         from nexkit.agent import _template
 
         for name in ("plan", "implement", "fix"):
-            self.assertIn("Never recommend an option that needs a person", _template(name))
+            text = " ".join(_template(name).split())
+            self.assertIn("Recommend only an option that a change to the plan or the code", text)
+            self.assertIn("needs a person to act outside the repository", text)
         diagnosis = _template("fix_diagnosis")
         self.assertIn("add logging or narrow the test in the working tree yourself", diagnosis)
         self.assertNotIn("such as more logging", diagnosis)

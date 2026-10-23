@@ -426,7 +426,8 @@ every open issue in scope, oldest first, and starts the one command that moves i
   splits an issue, `notify` is not mentioned.
 - **CI on the default branch.** With workflows in `merge.after_workflows`, each sweep also
   looks at the runs of each of them on the default branch, after NexKit's merges and
-  people's alike, and at every attempt of each run. When the latest run fails, its failed
+  people's alike, and at every attempt of each run; runs of pull requests, even from a
+  fork's branch of the same name, do not count. When the latest run fails, its failed
   jobs run once more, never more often. When it fails again, autopilot opens a `bug` issue
   in scope, with the run link and the failed jobs and steps of every failed attempt,
   mentions `notify` in it, and plans it before every other issue. A later failure on a

@@ -114,6 +114,8 @@ CI_RUNS = re.compile(r"<!-- nexkit:ci-runs ([0-9. ]+) -->\s*\Z")
 CI_RUNS_LIMIT = 100
 CI_LOOK_BACK = timedelta(days=1)
 FAILED = {"failure", "timed_out"}
+# Events whose runs test a pull request rather than the branch they name.
+PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
 # Outcomes after which a run already started the next one by itself.
 CHAINED = {"auto_fix", "conflict_fix"}
 
@@ -1023,6 +1025,14 @@ def _check_run(gh, cfg, where, workflow, branch, known, run, latest):
     return lines
 
 
+def _on_default_branch(gh, run):
+    """Whether a run tested this repository's default branch. GitHub matches the branch by
+    the name of a run's head branch alone, which a pull request from a fork can share, and
+    such a run's job and step names come from the fork."""
+    repo = (run.get("head_repository") or {}).get("full_name")
+    return repo == gh.repository and run.get("event") not in PULL_REQUEST_EVENTS
+
+
 def check_ci(gh, cfg, where, branch, now=None):
     """For each workflow of `merge.after_workflows`, its completed runs on the default
     branch that a sweep has not looked at. When the latest run fails, its failed jobs run
@@ -1035,7 +1045,11 @@ def check_ci(gh, cfg, where, branch, now=None):
     lines = []
     for workflow in cfg["merge"]["after_workflows"]:
         try:
-            runs = gh.workflow_runs(workflow, branch, CI_RUNS_LIMIT)
+            runs = [
+                run
+                for run in gh.workflow_runs(workflow, branch, CI_RUNS_LIMIT)
+                if _on_default_branch(gh, run)
+            ]
             # Only a run that failed, or that was run again, can lead to anything, so a
             # sweep after runs that passed at once reads no issue.
             candidates = [

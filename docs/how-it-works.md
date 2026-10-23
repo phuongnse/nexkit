@@ -506,14 +506,15 @@ issue run in that group as well, and start a sweep.
 - **CI on the default branch.** Each sweep looks at the completed runs, on the default
   branch, of each workflow in `merge.after_workflows`, and at every attempt of each: the
   latest run, the runs of the last day and the runs a bug issue reports, among the newest
-  100. When the latest run failed in its first attempt, its failed jobs run once more;
-  NexKit never runs them a third time, which would hide failures. When a later attempt
-  fails too, autopilot opens a `bug` issue in scope, starting with a marker that names the
-  workflow, and that issue goes before all others. Its report lists the failed jobs and
-  steps of every failed attempt. Each report holds a marker with its commit, so a commit is
-  reported once, and a newer failing commit adds a comment to the open issue. When a later
-  attempt of a reported run passes, for example after a person ran it again, autopilot
-  says which attempt passed in a comment on that issue.
+  100. Runs of pull requests do not count, nor runs from a fork, whose head branch can
+  have the same name. When the latest run failed in its first attempt, its failed jobs run
+  once more; NexKit never runs them a third time, which would hide failures. When a later
+  attempt fails too, autopilot opens a `bug` issue in scope, starting with a marker that
+  names the workflow, and that issue goes before all others. Its report lists the failed
+  jobs and steps of every failed attempt. Each report holds a marker with its commit, so a
+  commit is reported once, and a newer failing commit adds a comment to the open issue.
+  When a later attempt of a reported run passes, for example after a person ran it again,
+  autopilot says which attempt passed in a comment on that issue.
 - **Flaky runs.** A run whose latest attempt passed after a failed one, and an older run
   that failed when a newer run had already started, which is never run again, are
   recorded under each of their failures, one issue per failure, so an issue stays one

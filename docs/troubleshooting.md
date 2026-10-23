@@ -18,6 +18,15 @@ refs was changed. The jobs check out NexKit's code at `nexkit_ref`, so they woul
 code of another release than the pipeline. Set the `uses:` ref and `nexkit_ref` to the
 same tag.
 
+**`nexkit doctor`: "autopilot.enabled is on, but publish.push_token_secret is not set".**
+The same for `conflicts.auto_resolve`. Rounds that NexKit starts by itself push with the
+Actions token, which may not push changes to `.github/workflows/`. When a person merges
+such a change into the base branch, the next round that merges it into a pull request
+stops and waits for a person (see below). This is not a problem, and doctor still passes.
+To let those rounds go on by themselves, name a fine-grained token with Contents, Pull
+requests and Workflows write access in `publish.push_token_secret` (see
+[Secrets](configuration.md#secrets)).
+
 **`nexkit doctor`: "NexKit vX.Y.Z is available".** A newer release exists. This is not a
 problem, and doctor still passes: upgrade when you choose to, with the steps in that
 release's notes.

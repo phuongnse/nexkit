@@ -139,8 +139,11 @@ files or repository settings, and wait for confirmation.
    are too large into sub-issues either way. With `merge.after_workflows`, it also runs a
    failed CI run on the default branch once more and, if it fails again, opens a `bug`
    issue that it plans first; runs that passed only when run again are recorded on their
-   own `bug` issue, planned next. After the
-   commit, start the first sweep with
+   own `bug` issue, planned next.
+   With `autopilot` or `conflicts.auto_resolve`, recommend the push token above with
+   Workflows write access too: without it, a round that merges a change to
+   `.github/workflows/` from the base branch cannot push and waits for a person.
+   `nexkit doctor` says so. After the commit, start the first sweep with
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 
 8. **Commit to the default branch.** Comment events only run workflows from the default

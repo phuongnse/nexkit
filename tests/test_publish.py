@@ -1,12 +1,15 @@
+import io
 import json
 import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 from nexkit import agent
 from nexkit.context import gather
+from nexkit.github import GitHubError
 from nexkit.gitutil import BOT_NAME, merge_tree
 from nexkit.publish import PublishError, publish, pull_body, render_plan
 from nexkit.state import latest_plan, plan_profile, plan_text
@@ -234,6 +237,45 @@ class PublishTests(unittest.TestCase):
         )
         self.assertIn(outcome["pr"], author.pulls)
         self.assertFalse(self.gh.pulls)
+
+    def test_pull_request_gets_the_labels_and_milestone_of_its_issue(self):
+        self.gh.add_issue(5, milestone=3, labels=("bug", "nexkit"))
+        outcome = self.publish_implement(self.make_patch({"calc.py": "x\n"}))
+        self.assertEqual(self.gh.updates, [(outcome["pr"], 3, ["bug", "nexkit"])])
+        pull = self.gh.issue(outcome["pr"])
+        self.assertEqual(pull["milestone"], {"number": 3})
+        self.assertEqual([label["name"] for label in pull["labels"]], ["bug", "nexkit"])
+
+    def test_pull_request_of_an_issue_without_labels_or_milestone_is_left_alone(self):
+        self.publish_implement(self.make_patch({"calc.py": "x\n"}))
+        self.assertEqual(self.gh.updates, [])
+
+    def test_labels_that_cannot_be_copied_only_warn(self):
+        self.gh.add_issue(5, labels=("bug",))
+        self.gh.update_errors[6] = GitHubError(422, "Validation Failed")
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            outcome = self.publish_implement(self.make_patch({"calc.py": "x\n"}))
+        self.assertTrue(outcome["published"])
+        self.assertEqual(outcome["pr"], 6)
+        self.assertIn("could not copy the labels and milestone of #5", stderr.getvalue())
+
+    def test_fix_round_leaves_labels_and_milestone_to_people(self):
+        self.gh.add_issue(5, milestone=3, labels=("bug",))
+        self.publish_implement(self.make_patch({"calc.py": "x\n"}))
+        self.gh.updates.clear()
+        start = self.make_patch({"calc.py": "y\n"}, ref="nexkit/issue-5")
+        outcome = publish(
+            self.gh,
+            decision("fix", pr=6, head=git(self.repos.origin, "rev-parse", "nexkit/issue-5")),
+            self.result(start),
+            CONTEXT,
+            self.cfg,
+            self.repos.clone("fixer"),
+            self.out,
+        )
+        self.assertTrue(outcome["published"])
+        self.assertEqual(self.gh.updates, [])
 
     def test_protected_paths_are_rejected(self):
         start = self.make_patch({".github/workflows/ci.yml": "on: push\n", "calc.py": "x\n"})

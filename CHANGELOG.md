@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.6.1
+
+- A round's evidence from CI runs takes the runs the issue records again, also after many
+  NexKit rounds (#134). The run-log links in NexKit's own comments counted as runs the
+  issue names, so after a few rounds they filled the five places and the failed CI runs
+  that the issue linked were never downloaded. Links in comments by bots no longer count,
+  and runs of NexKit's own workflow are skipped wherever they are linked, without taking a
+  place. See [Evidence from CI runs](docs/configuration.md#evidence-from-ci-runs).
+
 ## 4.6.0
 
 Autopilot carries each issue in scope on by itself, or waits for a person with a reason,

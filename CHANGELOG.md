@@ -1,5 +1,40 @@
 # Changelog
 
+## 4.4.0
+
+- Each failure of a flaky run on the default branch gets its own `bug` issue, titled by
+  the failure, instead of one issue per workflow (#115). The error annotations of the
+  failed jobs name the failures: a test reporter's title, such as the test's name, else
+  the file and line. The runner's own "Process completed with exit code" names nothing,
+  and a job without such an annotation is named by the job and its first failed step. A
+  later run with the same failure adds a comment to its open issue, or opens a new issue
+  that links the closed one. A run whose failures would open more than five issues
+  records those on one issue for the run. An issue from 4.3.0 keeps its records and gets
+  no new ones. See [Autopilot](docs/configuration.md#autopilot).
+- Autopilot's check of `merge.after_workflows` counts only runs of the default branch
+  itself (#117). Runs of pull requests, including those from a fork whose head branch has
+  the default branch's name, no longer lead to a re-run, a `bug` issue or a flaky-run
+  record.
+- `nexkit doctor` reports a workflow that does not give the pipeline a permission that
+  its jobs ask for, as `nexkit init` writes them. GitHub starts no run of such a workflow.
+  See [Troubleshooting](docs/troubleshooting.md#setup).
+
+### Upgrade
+
+- **Add `checks: read`** to the `permissions:` of `.github/workflows/nexkit.yml`, as
+  `nexkit init` writes it. The `maintain` job reads the annotations of failed jobs with
+  it. Without it, GitHub starts no run of the workflow, autopilot or not:
+
+  ```yaml
+  permissions:
+    contents: write
+    issues: write
+    pull-requests: write
+    statuses: write
+    actions: write
+    checks: read
+  ```
+
 ## 4.3.0
 
 - A check can be marked `"slow": true` (#103). The implement and fix prompts list slow

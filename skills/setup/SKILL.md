@@ -138,7 +138,8 @@ files or repository settings, and wait for confirmation.
    with the option NexKit recommends, when every question has one; it splits plans that
    are too large into sub-issues either way. With `merge.after_workflows`, it also runs a
    failed CI run on the default branch once more and, if it fails again, opens a `bug`
-   issue that it plans first. After the
+   issue that it plans first; runs that passed only when run again are recorded on their
+   own `bug` issue, planned next. After the
    commit, start the first sweep with
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 

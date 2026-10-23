@@ -112,7 +112,9 @@ class FakeGitHub:
         self.blockers = defaultdict(list)  # issue number -> numbers of issues that block it
         self.open_milestones = []
         self.workflow_history = {}  # workflow file -> its runs, oldest first
-        self.jobs = {}  # run id -> jobs
+        self.jobs = {}  # run id, or (run id, attempt) -> jobs
+        self.attempts = {}  # (run id, attempt) -> conclusion; others: the run's own
+        self.calls = []  # ("attempt" or "jobs", run id, attempt) for each attempt read
         self.reruns = []
         self.branches = {}
         self.runs = {}
@@ -327,8 +329,22 @@ class FakeGitHub:
         found = [r for r in self.workflow_history.get(workflow, []) if r["head_branch"] == branch]
         return found[::-1][:limit]
 
-    def run_jobs(self, run_id):
-        return list(self.jobs.get(run_id, []))
+    def _run(self, run_id):
+        for runs in self.workflow_history.values():
+            for run in runs:
+                if run["id"] == run_id:
+                    return run
+        return self.runs[run_id]
+
+    def run_attempt(self, run_id, attempt):
+        self.calls.append(("attempt", run_id, attempt))
+        run = self._run(run_id)
+        conclusion = self.attempts.get((run_id, attempt), run.get("conclusion"))
+        return {**run, "run_attempt": attempt, "status": "completed", "conclusion": conclusion}
+
+    def attempt_jobs(self, run_id, attempt):
+        self.calls.append(("jobs", run_id, attempt))
+        return list(self.jobs.get((run_id, attempt), self.jobs.get(run_id, [])))
 
     def rerun_failed_jobs(self, run_id):
         self.reruns.append(run_id)

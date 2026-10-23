@@ -206,6 +206,7 @@ def cmd_install_agents(args):
 
 def cmd_context(args):
     from .context import gather
+    from .report import workflow_file
 
     decision = _decision()
     if args.pr:
@@ -222,6 +223,7 @@ def cmd_context(args):
         results=args.results,
         ci=args.evidence,
         cfg=cfg,
+        workflow=workflow_file(os.environ.get("GITHUB_WORKFLOW_REF", "")),
     )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

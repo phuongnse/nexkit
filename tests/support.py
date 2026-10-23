@@ -114,6 +114,7 @@ class FakeGitHub:
         self.workflow_history = {}  # workflow file -> its runs, oldest first
         self.jobs = {}  # run id, or (run id, attempt) -> jobs
         self.attempts = {}  # (run id, attempt) -> conclusion; others: the run's own
+        self.annotations = {}  # job id -> its annotations
         self.calls = []  # ("attempt" or "jobs", run id, attempt) for each attempt read
         self.reruns = []
         self.branches = {}
@@ -345,6 +346,10 @@ class FakeGitHub:
     def attempt_jobs(self, run_id, attempt):
         self.calls.append(("jobs", run_id, attempt))
         return list(self.jobs.get((run_id, attempt), self.jobs.get(run_id, [])))
+
+    def check_run_annotations(self, check_run_id):
+        self.calls.append(("annotations", check_run_id))
+        return list(self.annotations.get(check_run_id, []))
 
     def rerun_failed_jobs(self, run_id):
         self.reruns.append(run_id)

@@ -41,6 +41,7 @@ permissions:
   pull-requests: write
   statuses: write
   actions: write
+  checks: read
 
 jobs:
   nexkit:

@@ -18,6 +18,12 @@ refs was changed. The jobs check out NexKit's code at `nexkit_ref`, so they woul
 code of another release than the pipeline. Set the `uses:` ref and `nexkit_ref` to the
 same tag.
 
+**`nexkit doctor`: "does not give the pipeline checks: read".** A pipeline job asks for a
+permission that `.github/workflows/nexkit.yml` does not give, and GitHub then starts no run
+of the workflow at all. Workflows from NexKit 4.3.0 or earlier lack `checks: read`, which
+autopilot needs to read the annotations that name the failures of flaky runs. Add each
+permission named under `permissions:`, as `nexkit init` writes it.
+
 **`nexkit doctor`: "autopilot.enabled is on, but publish.push_token_secret is not set".**
 The same for `conflicts.auto_resolve`. Rounds that NexKit starts by itself push with the
 Actions token, which may not push changes to `.github/workflows/`. When a person merges

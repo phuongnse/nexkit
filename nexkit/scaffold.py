@@ -224,6 +224,45 @@ def _concurrency(workflow):
     )
 
 
+LEVELS = {"none": 0, "read": 1, "write": 2}
+
+
+def granted(workflow):
+    """The token permissions the workflow gives its job: the job's own block, else the
+    workflow's. `read-all` and `write-all` give every permission, under the name `*`."""
+    text = _uncommented(workflow)
+    job = text.split("\njobs:", 1)[1] if "\njobs:" in text else ""
+    for found in (
+        re.search(r"^    permissions:[ \t]*(\S*)[ \t]*\n((?:      .*\n|[ \t]*\n)*)", job, re.M),
+        re.search(r"^permissions:[ \t]*(\S*)[ \t]*\n((?:  .*\n|[ \t]*\n)*)", text, re.M),
+    ):
+        if not found:
+            continue
+        if found.group(1) in ("read-all", "write-all"):
+            return {"*": found.group(1).removesuffix("-all")}
+        return dict(re.findall(r"^\s+([a-z-]+):\s*(read|write|none)\b", found.group(2), re.M))
+    return {}
+
+
+def _permissions(workflow):
+    """A finding: the workflow gives the pipeline every permission that 'nexkit init'
+    writes. GitHub does not start a workflow whose called jobs ask for more than it gives."""
+    have = granted(workflow)
+    needed = granted(workflow_text(KIT_REPOSITORY, "main"))
+    missing = [
+        f"{name}: {level}"
+        for name, level in needed.items()
+        if LEVELS[have.get(name, have.get("*", "none"))] < LEVELS[level]
+    ]
+    if missing:
+        return (
+            False,
+            f"{WORKFLOW_PATH} does not give the pipeline {', '.join(missing)}, so GitHub "
+            "starts none of its runs; add it under 'permissions:' as 'nexkit init' writes it",
+        )
+    return (True, "The workflow gives the pipeline the permissions its jobs need")
+
+
 def trigger(workflow, event):
     """The text under `event:` in the workflow's `on:` block, or None without that trigger."""
     block = re.search(r"^on:[ \t]*\n((?:[ \t]+.*\n|[ \t]*\n)*)", _uncommented(workflow), re.M)
@@ -427,6 +466,7 @@ def doctor(root):
         else:
             findings.append((False, f"{WORKFLOW_PATH} does not call the NexKit pipeline"))
         findings.append(_concurrency(text))
+        findings.append(_permissions(text))
         if cfg:
             findings += _triggers(cfg, text)
             findings += _passed_secrets(cfg, text)

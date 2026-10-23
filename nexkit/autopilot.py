@@ -15,6 +15,7 @@ autopilot started last, and for which state of the issue, so a command starts on
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import string
@@ -88,10 +89,21 @@ CI_BUG_PREFIX = "<!-- nexkit:ci "
 CI_BUG = re.compile(r"\A<!-- nexkit:ci ([A-Za-z0-9_.-]+) -->")
 CI_SHA_PREFIX = "<!-- nexkit:ci-sha "
 CI_SHA = re.compile(r"<!-- nexkit:ci-sha ([0-9a-f]+) -->")
-# An issue that autopilot opened for the runs of a workflow on the default branch that
-# passed only when run again, or that failed and a newer run overtook.
+# An issue that autopilot opened for one failure in the runs of a workflow on the default
+# branch that passed only when run again, or that failed and a newer run overtook. Its
+# marker names the workflow and a key for the failure. One from NexKit 4.3.0 names only the
+# workflow and holds every failure of its runs; it gets no new records.
 CI_FLAKY_PREFIX = "<!-- nexkit:ci-flaky "
-CI_FLAKY = re.compile(r"\A<!-- nexkit:ci-flaky ([A-Za-z0-9_.-]+) -->")
+CI_FLAKY = re.compile(r"\A<!-- nexkit:ci-flaky ([A-Za-z0-9_.-]+)(?: ([0-9a-f]{16}))? -->")
+# Error annotations of a failed job name its failures: test reporters title them with the
+# test's name and point them at its file and line. The runner's own annotation, such as
+# this one, points at the workflow and names nothing.
+CI_GENERIC = re.compile(r"Process completed with exit code \d+")
+# A run whose failures would open more issues than this records those failures on one issue
+# for the run instead: so many at once have one cause, such as a broken runner.
+CI_NEW_ISSUES = 5
+# The longest failure name in an issue title.
+CI_TITLE_NAME = 60
 # The run attempts that a bug or flaky-run report records, where it ends the text, so each
 # run and attempt is recorded once.
 CI_RUNS_PREFIX = "<!-- nexkit:ci-runs "
@@ -684,9 +696,16 @@ def ci_workflow(issue):
 
 
 def flaky_workflow(issue):
-    """The workflow an issue that autopilot opened for its flaky runs is about, or None."""
+    """The workflow an issue that autopilot opened for flaky runs is about, or None."""
     match = CI_FLAKY.match(issue.get("body") or "")
     return match.group(1) if match and author(issue) == BOT_LOGIN else None
+
+
+def flaky_failure(issue):
+    """The key of the failure an issue that autopilot opened for flaky runs is about; None
+    for one from NexKit 4.3.0, which holds every failure of its workflow, and for others."""
+    match = CI_FLAKY.match(issue.get("body") or "")
+    return match.group(2) if match and author(issue) == BOT_LOGIN else None
 
 
 def _rank(issue):
@@ -698,16 +717,20 @@ def _rank(issue):
 
 def _ci_records(gh, workflow):
     """What the issues that autopilot opened for `workflow`, open or closed, hold: the
-    open bug and flaky-run issues, the commits bug issues report, the attempts recorded
-    for each run, and for each run a bug issue reports, that issue's number."""
-    found = {"bug": None, "flaky": None, "shas": set(), "seen": {}, "reporter": {}}
+    open bug issue, the open and the latest closed issue of each flaky failure, the commits
+    bug issues report, the attempts recorded for each run, and for each run a bug issue
+    reports, that issue's number."""
+    found = {"bug": None, "open": {}, "closed": {}, "shas": set(), "seen": {}, "reporter": {}}
+    # Newest first, so the first issue found for a failure is its latest.
     for issue in gh.issues_by(BOT_LOGIN):
         bug = ci_workflow(issue) == workflow
         if not bug and flaky_workflow(issue) != workflow:
             continue
-        kind = "bug" if bug else "flaky"
-        if issue.get("state") == "open" and found[kind] is None:
-            found[kind] = issue
+        state = "open" if issue.get("state") == "open" else "closed"
+        if bug and state == "open" and found["bug"] is None:
+            found["bug"] = issue
+        elif not bug and flaky_failure(issue):
+            found[state].setdefault(flaky_failure(issue), issue)
         texts = [issue.get("body") or ""]
         texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if by_bot(c)]
         for text in texts:
@@ -776,37 +799,172 @@ def _failure_text(gh, workflow, run, branch):
     )
 
 
-def _flaky_text(gh, workflow, run, branch, unseen):
-    """The record of a run that passed only when run again, or that failed and a newer run
-    overtook, for its attempts in `unseen`; None when none of them failed."""
-    failed = _failed_attempts(gh, run, unseen)
-    if not failed:
+def _plain(text, size=200):
+    """`text` on one line, without backticks, at most `size` characters: for a code span."""
+    text = " ".join(str(text or "").split()).replace("`", "'")
+    return text if len(text) <= size else text[: size - 1] + "…"
+
+
+def _shortened(name, size=CI_TITLE_NAME):
+    """A long name's start and end, for an issue title."""
+    half = (size - 1) // 2
+    return name if len(name) <= size else f"{name[:half]}…{name[-half:]}"
+
+
+def _key(*parts):
+    """The key of a failure in its issue's marker."""
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+
+
+def _annotated(link, note):
+    """The failure an error annotation of a failed job names: its title, such as a test's
+    name, else its file and line; None for an annotation of the workflow itself."""
+    message = _plain(note.get("message"))
+    if note.get("annotation_level") != "failure" or CI_GENERIC.match(message):
         return None
+    path = _plain(note.get("path"))
+    if path == ".github" or path.startswith(".github/workflows/"):
+        path = ""
+    place = f"{path}:{note['start_line']}" if path and note.get("start_line") else path
+    name = _plain(note.get("title")) or place
+    if not name:
+        return None
+    names = ", ".join(f"`{text}`" for text in dict.fromkeys((name, place)) if text)
+    return {
+        "key": _key("annotation", name),
+        "title": f"`{_shortened(name)}` fails at times",
+        "about": f"`{name}` failed",
+        "line": f"- {link}: {names}" + (f": `{message}`" if message else ""),
+    }
+
+
+def _job_failure(workflow, job, link):
+    """The failure of a failed job without an annotation that names one: its job and its
+    first failed step."""
+    name = _plain(job.get("name"))
+    steps = [_plain(s.get("name")) for s in job.get("steps") or [] if s.get("conclusion") in FAILED]
+    steps = [step for step in steps if step]
+    if not steps:
+        return {
+            "key": _key("job", name),
+            "title": f"Job `{_shortened(name)}` of `{workflow}` fails at times",
+            "about": f"job `{name}` failed",
+            "line": f"- {link}",
+        }
+    return {
+        "key": _key("step", name, steps[0]),
+        "title": (
+            f"Step `{_shortened(steps[0])}` of job `{_shortened(name)}` in `{workflow}` "
+            "fails at times"
+        ),
+        "about": f"step `{steps[0]}` of job `{name}` failed",
+        "line": f"- {link}: {', '.join(f'`{step}`' for step in steps)}",
+    }
+
+
+def _attempt_failures(gh, workflow, run, attempt):
+    """The failures of one failed attempt, in the order of its jobs."""
+    found = []
+    for job in gh.attempt_jobs(run["id"], attempt):
+        if job.get("conclusion") not in FAILED:
+            continue
+        link = f"[{job.get('name')}]({job['html_url']})" if job.get("html_url") else job.get("name")
+        notes = gh.check_run_annotations(job["id"]) if job.get("id") else []
+        named = [failure for failure in (_annotated(link, note) for note in notes) if failure]
+        found += named or [_job_failure(workflow, job, link)]
+    return found or [
+        {
+            "key": _key("start"),
+            "title": f"Starting `{workflow}` fails at times",
+            "about": "the run failed before any job did",
+            "line": "- The attempt failed before any job did; open it for the reason.",
+        }
+    ]
+
+
+def _flaky_failures(gh, workflow, run, unseen):
+    """The failures of the attempts among `unseen` that failed, each once, with its lines
+    for each attempt it failed in; empty when none of them failed."""
+    found = {}
+    for attempt in _failed_attempts(gh, run, unseen):
+        for item in _attempt_failures(gh, workflow, run, attempt):
+            failure = found.setdefault(item["key"], {**item, "attempts": {}})
+            lines = failure["attempts"].setdefault(attempt, [])
+            if item["line"] not in lines:
+                lines.append(item["line"])
+    return list(found.values())
+
+
+def _run_failure(workflow, run, failures):
+    """The failures of one run that would open too many issues, as one failure of the run."""
+    attempts = {}
+    for failure in failures:
+        for attempt, lines in failure["attempts"].items():
+            attempts.setdefault(attempt, []).extend(lines)
+    count = len(failures)
+    return {
+        "key": _key("run", str(run["id"])),
+        "title": f"Run {run['id']} of `{workflow}` failed in {count} ways at once",
+        "about": (
+            f"{count} failures without an issue showed at once, more than NexKit opens issues "
+            "for, so they likely have one cause, such as the runner or a service"
+        ),
+        "attempts": dict(sorted(attempts.items())),
+    }
+
+
+def _flaky_text(workflow, run, branch, failure, unseen):
+    """The record of a failure in a run that passed only when run again, or that failed and
+    a newer run overtook, for the run's attempts in `unseen`."""
     link = f"[A run of `{workflow}`]({run.get('html_url')}) on `{branch}` at {run.get('head_sha')}"
     if run.get("conclusion") in FAILED:
         what = f"{link} failed, and a newer run overtook it."
     else:
         what = f"{link} passed in attempt {run.get('run_attempt') or 1} after failing."
-    lines = [f"{what} Failed jobs and steps of each failed attempt:"]
-    return "\n".join([*lines, *_failures(gh, run, failed), "", _runs_marker(run, unseen)])
+    lines = [f"{what} Where this failure showed in each failed attempt:"]
+    for attempt, found in failure["attempts"].items():
+        url = f"{run.get('html_url')}/attempts/{attempt}"
+        lines += ["", f"Attempt [{attempt}]({url}):", *found]
+    return "\n".join([*lines, "", _runs_marker(run, unseen)])
 
 
-def _record_flaky(gh, cfg, where, workflow, branch, known, text):
-    issue = known["flaky"]
+def _record_flaky(gh, cfg, where, workflow, branch, known, failure, text):
+    """Add a record to the open issue of its failure, or open one that links the latest
+    closed one."""
+    key, title = failure["key"], f"{failure['title']} on `{branch}`"
+    issue = known["open"].get(key)
     if issue:
         gh.comment(issue["number"], text)
-        return f"`{workflow}` failed at times; recorded on #{issue['number']}."
+        return f"{title}: recorded on #{issue['number']}."
     people = "".join(f"@{login} " for login in cfg["notify"])
+    closed = known["closed"].get(key)
+    earlier = f" #{closed['number']}, now closed, was about the same failure." if closed else ""
     intro = (
-        f"Runs of `{workflow}` on `{branch}` that passed only when run again, or that failed "
-        "and a newer run overtook. Each record names the commit, the run, and the failed "
-        "jobs and steps of each failed attempt; later records follow as comments."
+        f"Runs of `{workflow}` on `{branch}` in which {failure['about']}: runs that passed "
+        "only when run again, or that failed and a newer run overtook. Each record names the "
+        "commit, the run, and where this failure showed in each failed attempt; later "
+        f"records follow as comments.{earlier}"
     )
-    body = f"{CI_FLAKY_PREFIX}{workflow} -->\n{people}{intro}\n\n{text}"
+    body = f"{CI_FLAKY_PREFIX}{workflow} {key} -->\n{people}{intro}\n\n{text}"
     labels = ["bug", *([where["label"]] if where.get("label") else [])]
-    title = f"`{workflow}` fails at times on `{branch}`"
-    known["flaky"] = gh.create_issue(title, body, where.get("milestone"), labels)
-    return f"`{workflow}` failed at times; opened #{known['flaky']['number']}."
+    issue = known["open"][key] = gh.create_issue(title, body, where.get("milestone"), labels)
+    return f"{title}: opened #{issue['number']}."
+
+
+def _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen):
+    """Record a run that passed only when run again, or that failed and a newer run
+    overtook, on the issue of each failure in its attempts among `unseen`. Returns lines for
+    the log, none when none of those attempts failed."""
+    failures = _flaky_failures(gh, workflow, run, unseen)
+    new = [failure for failure in failures if failure["key"] not in known["open"]]
+    if len(new) > CI_NEW_ISSUES:
+        failures = [f for f in failures if f["key"] in known["open"]]
+        failures.append(_run_failure(workflow, run, new))
+    lines = []
+    for failure in failures:
+        text = _flaky_text(workflow, run, branch, failure, unseen)
+        lines.append(_record_flaky(gh, cfg, where, workflow, branch, known, failure, text))
+    return lines
 
 
 def _report_failure(gh, cfg, where, workflow, branch, known, run):
@@ -839,32 +997,30 @@ def _passed_later(gh, workflow, run, number, unseen):
 
 
 def _check_run(gh, cfg, where, workflow, branch, known, run, latest):
-    """What one completed run on the default branch leads to: a line for the log, or None."""
+    """What one completed run on the default branch leads to: lines for the log."""
     attempt = run.get("run_attempt") or 1
     seen = known["seen"].get(run["id"], set())
     unseen = [n for n in range(1, attempt + 1) if n not in seen]
-    line = None
+    lines = []
     if run.get("conclusion") in FAILED:
         if latest and attempt < 2:
             gh.rerun_failed_jobs(run["id"])
-            return f"Running the failed jobs of `{workflow}` on `{branch}` again."
+            return [f"Running the failed jobs of `{workflow}` on `{branch}` again."]
         if not unseen or (run.get("head_sha") or "") in known["shas"]:
-            return None
+            return []
         if latest:
-            line = _report_failure(gh, cfg, where, workflow, branch, known, run)
+            lines = [_report_failure(gh, cfg, where, workflow, branch, known, run)]
         else:
-            text = _flaky_text(gh, workflow, run, branch, unseen)
-            line = text and _record_flaky(gh, cfg, where, workflow, branch, known, text)
+            lines = _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen)
     elif run.get("conclusion") == "success" and attempt > 1 and unseen:
         reporter = known["reporter"].get(run["id"])
         if reporter:
-            line = _passed_later(gh, workflow, run, reporter, unseen)
+            lines = [_passed_later(gh, workflow, run, reporter, unseen)]
         else:
-            text = _flaky_text(gh, workflow, run, branch, unseen)
-            line = text and _record_flaky(gh, cfg, where, workflow, branch, known, text)
-    if line:
+            lines = _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen)
+    if lines:
         known["seen"].setdefault(run["id"], set()).update(unseen)
-    return line
+    return lines
 
 
 def check_ci(gh, cfg, where, branch, now=None):
@@ -872,9 +1028,9 @@ def check_ci(gh, cfg, where, branch, now=None):
     branch that a sweep has not looked at. When the latest run fails, its failed jobs run
     once more, and a second failure opens a bug issue in scope, or comments on the one
     still open; a later attempt that passes says so there. A run that passed only when run
-    again, or that failed and a newer run overtook, is recorded on the workflow's issue for
-    flaky runs. Markers in those issues record each run and attempt once. Returns lines for
-    the job log."""
+    again, or that failed and a newer run overtook, is recorded on an issue for each of its
+    failures, as its failed jobs' error annotations name them. Markers in those issues
+    record each run and attempt once. Returns lines for the job log."""
     since = (now or datetime.now(UTC)) - CI_LOOK_BACK
     lines = []
     for workflow in cfg["merge"]["after_workflows"]:
@@ -896,9 +1052,7 @@ def check_ci(gh, cfg, where, branch, now=None):
                 recent = latest or created is None or created >= since
                 if not recent and run["id"] not in known["reporter"]:
                     continue
-                line = _check_run(gh, cfg, where, workflow, branch, known, run, latest)
-                if line:
-                    lines.append(line)
+                lines += _check_run(gh, cfg, where, workflow, branch, known, run, latest)
         except GitHubError as exc:
             lines.append(f"Could not check `{workflow}` on `{branch}`: {exc}")
     return lines

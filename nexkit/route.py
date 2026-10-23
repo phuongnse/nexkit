@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from . import config as configuration
-from .state import by_bot, latest_plan, plan_profile, verified_head
+from .state import by_bot, latest_plan, plan_profile, results_run, verified_head
 
 BRANCH_PREFIX = "nexkit/issue-"
 COMMAND = re.compile(r"^\s*/nexkit\s+([a-z]+)\b[ \t]*(.*)$", re.DOTALL)
@@ -188,10 +188,15 @@ def _decide(gh, command, number, on_pull, note, *, auto):
             "note": note,
             "auto": auto,
         }
+        comments = gh.comments(number)
         # The last commit whose checks passed, for NEXKIT_VERIFIED_SHA.
-        verified = verified_head(gh.comments(number))
+        verified = verified_head(comments)
         if verified:
             decision["verified_sha"] = verified
+        run_id = results_run(comments)
+        if run_id and decision["action"] == "fix":
+            # The agent job downloads that run's `nexkit-checks` artifact for the prompt.
+            decision["results_run"] = run_id
         return decision
 
     if command not in ISSUE_COMMANDS:

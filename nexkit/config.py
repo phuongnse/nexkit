@@ -75,7 +75,9 @@ STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes", "max_budget_usd"}
 AGENT_KEYS = {"runtime", "provider", "fallback"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
-CHECK_KEYS = {"name", "run", "timeout_minutes", "slow"}
+CHECK_KEYS = {"name", "run", "timeout_minutes", "slow", "results"}
+# The most result paths one check may name.
+MAX_RESULTS = 20
 CACHE_KEYS = {"name", "paths", "key_files"}
 # The restore action has one step per entry: .github/actions/restore-caches/action.yml.
 MAX_CACHES = 8
@@ -170,6 +172,20 @@ def _patterns(value, where, what):
     for pattern in value:
         if not isinstance(pattern, str) or not pattern.strip() or "\n" in pattern:
             _fail(f"{where} must be a non-empty list of {what}")
+
+
+def _results(paths, where):
+    """Check a check's `results`: files or folders inside the repository that NexKit keeps
+    when the check fails."""
+    if not isinstance(paths, list) or len(paths) > MAX_RESULTS:
+        _fail(f"{where} must be a list of at most {MAX_RESULTS} paths in the repository")
+    for path in paths:
+        if not isinstance(path, str) or not path.strip() or "\n" in path:
+            _fail(f"{where} must be a list of at most {MAX_RESULTS} paths in the repository")
+        if path.startswith(("/", "~")) or ".." in path.split("/"):
+            _fail(f"{where}: '{path}' must be a path inside the repository")
+    if len(set(paths)) != len(paths):
+        _fail(f"{where} lists a path twice")
 
 
 def _caches(entries):
@@ -463,6 +479,7 @@ def validate(raw, *, layered=False):
         _positive_int(check["timeout_minutes"], f"{where}.timeout_minutes", 360)
         check.setdefault("slow", False)
         _bool(check["slow"], f"{where}.slow")
+        _results(check.setdefault("results", []), f"{where}.results")
     _caches(cfg["cache"])
 
     _profiles(cfg)

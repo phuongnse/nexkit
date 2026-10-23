@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from datetime import UTC, datetime, timedelta
@@ -621,6 +622,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     _show_agents(row, agent if action != "review" else None, reviewed)
     _record(state, decision, row, agent or {}, review)
     state["feedback"] = {"head": head, "checks": checks, "review": review}
+    run_id = os.environ.get("GITHUB_RUN_ID") or ""
+    if checks is not None and run_id.isdigit():
+        # The run whose `nexkit-checks` artifact holds the failing checks' result files.
+        state["feedback"]["run_id"] = int(run_id)
 
     if review_paused:
         outcome = "paused"

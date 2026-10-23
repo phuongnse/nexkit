@@ -209,15 +209,19 @@ class GitHub:
         return self.request("GET", f"{self._repo}/actions/runs/{run_id}")
 
     def workflow_runs(self, workflow, branch, limit=5):
-        """The latest runs of a workflow on a branch, newest first."""
-        params = {"branch": branch, "per_page": limit}
+        """The latest runs of a workflow on a branch, newest first: one page, at most 100."""
+        params = {"branch": branch, "per_page": min(limit, 100)}
         path = f"{self._repo}/actions/workflows/{quote(workflow)}/runs"
         return self.request("GET", path, params=params).get("workflow_runs") or []
 
-    def run_jobs(self, run_id):
-        """The jobs of a run's latest attempt."""
-        path = f"{self._repo}/actions/runs/{run_id}/jobs"
-        return self.request("GET", path, params={"filter": "latest"}).get("jobs") or []
+    def run_attempt(self, run_id, attempt):
+        """One attempt of a run, with that attempt's status and conclusion."""
+        return self.request("GET", f"{self._repo}/actions/runs/{run_id}/attempts/{attempt}")
+
+    def attempt_jobs(self, run_id, attempt):
+        """The jobs of one attempt of a run: the first 100."""
+        path = f"{self._repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
+        return self.request("GET", path, params={"per_page": 100}).get("jobs") or []
 
     def rerun_failed_jobs(self, run_id):
         return self.request("POST", f"{self._repo}/actions/runs/{run_id}/rerun-failed-jobs")

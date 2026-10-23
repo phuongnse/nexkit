@@ -51,13 +51,15 @@ UNCOUNTED = {"needs_merge"}
 
 def conflict_rounds_used(rounds):
     """How many of a pull request's rounds count against `conflicts.max_rounds`: automatic
-    conflict rounds, a resumed one once, and none that stopped outside the agent's work."""
+    conflict rounds, a resumed or retried one once, and none that stopped outside the
+    agent's work."""
     return len(
         [
             run
             for run in rounds
             if run.get("conflicts")
             and not run.get("resumed")
+            and not run.get("retry")
             and run.get("outcome") not in UNCOUNTED
         ]
     )

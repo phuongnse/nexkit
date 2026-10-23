@@ -28,6 +28,10 @@ class PublishError(RuntimeError):
     pass
 
 
+class BranchMovedError(PublishError):
+    """The pull request branch moved while a fix round's agent worked."""
+
+
 class WorkflowMergeError(PublishError):
     """A fix round's merge of the base branch brings workflow changes that the push token
     may not make. The round does not count against the automatic rounds."""
@@ -296,7 +300,7 @@ def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_wor
         git(repo, "checkout", "-q", "-B", branch, f"origin/{branch}")
         current = git(repo, "rev-parse", "HEAD").strip()
         if current != result["start_head"]:
-            raise PublishError(
+            raise BranchMovedError(
                 f"The branch moved from {result['start_head'][:7]} to {current[:7]} while the "
                 "agent was working. Comment `/nexkit fix` to run again on the new commit."
             )

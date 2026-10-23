@@ -37,6 +37,7 @@ def trigger(decision):
             ("diagnosis", decision.get("diagnose")),
             ("conflicts", decision.get("conflicts")),
             ("resumed", decision.get("resumed")),
+            ("retry", decision.get("retry")),
             ("autopilot", decision.get("autopilot")),
         )
         if on
@@ -57,7 +58,7 @@ def find_round(comments, decision):
     comment_id, row = find_run(comments, url)
     row = row or {"round": next_round(comments), "url": url}
     row["trigger"] = trigger(decision)
-    for key in ("conflicts", "resumed", "base_sha"):
+    for key in ("conflicts", "resumed", "retry", "base_sha"):
         if decision.get(key):
             row[key] = decision[key]
     return comment_id, row
@@ -130,8 +131,8 @@ def start(gh, decision):
 
 def finish(gh, decision, status, text, **fields):
     """Show the outcome of an issue command and react to the command comment. A paused
-    run keeps 👀: it has not finished."""
+    run, or one that runs once more, keeps 👀: it has not finished."""
     if not decision.get("pr"):
         show_command(gh, decision, status, text, **fields)
-    if decision.get("comment_id") and status != PAUSED:
+    if decision.get("comment_id") and status not in (PAUSED, CONTINUED):
         gh.react(decision["comment_id"], "rocket" if status == SUCCESS else "confused")

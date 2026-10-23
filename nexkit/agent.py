@@ -772,6 +772,8 @@ def interpret(
             result["status"] = "done"
     if result["status"] == "error" and not run["timed_out"] and outcome.limit:
         paused(result, schedule(outcome.limit, retry_minutes=retry_minutes), label)
+    elif result["status"] == "error" and not run["timed_out"] and outcome.transient:
+        result["transient"] = True
     return result
 
 

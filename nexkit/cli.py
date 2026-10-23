@@ -273,6 +273,9 @@ def _agent(args, decision, stage, out):
                 "status": "error",
                 "error": f"Setup command `{failed['run']}` failed with exit code "
                 f"{failed['exit_code']}:\n```\n{failed['output'][-2000:]}\n```",
+                # A registry or mirror that was down: one more try costs a setup, not an
+                # agent run.
+                "transient": True,
             }
             (out / "result.json").write_text(json.dumps(result, indent=2))
             write_summary(summary(result, []), redact)
@@ -330,7 +333,7 @@ def cmd_cache(args):
 def cmd_publish(args):
     from .github import GitHub, GitHubError
     from .gitutil import GitError
-    from .publish import PublishError, WorkflowMergeError, publish
+    from .publish import BranchMovedError, PublishError, WorkflowMergeError, publish
 
     decision = _decision()
     out = Path(args.artifacts)
@@ -355,6 +358,8 @@ def cmd_publish(args):
         outcome = {"published": False, "error": str(exc)}
         if isinstance(exc, WorkflowMergeError):
             outcome["workflows"] = True
+        if isinstance(exc, BranchMovedError):
+            outcome["moved"] = True
     print(json.dumps(outcome, indent=2))
     _output(result=outcome, head=outcome.get("head") or "", pr=str(outcome.get("pr") or ""))
     return 0

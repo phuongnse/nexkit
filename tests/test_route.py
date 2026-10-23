@@ -234,6 +234,11 @@ class RouteTests(unittest.TestCase):
         decision = route(self.gh, "workflow_dispatch", event, inputs)
         self.assertEqual((decision["auto"], decision["conflicts"]), (True, True))
         self.assertEqual(auto_input(decision, resume=True), "conflicts,resume")
+        inputs["auto"] = "true,retry"
+        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        self.assertEqual((decision["auto"], decision["retry"]), (True, True))
+        # A retry that pauses at the usage limit resumes as the retry it was.
+        self.assertEqual(auto_input(decision, resume=True), "true,resume,retry")
 
     def test_schedule_is_maintenance(self):
         self.assertEqual(route(self.gh, "schedule", {}), {"action": "maintain", "task": "schedule"})

@@ -22,6 +22,7 @@ from .maintain import (
 from .route import auto_input
 from .runlog import add_tokens, one_line
 from .state import (
+    CONTINUED,
     FAILURE,
     PAUSED,
     SUCCESS,
@@ -33,6 +34,7 @@ from .state import (
     read_state,
     recommended_option,
     round_questions,
+    run_comments,
 )
 from .usage import parse_iso, shown
 
@@ -65,6 +67,7 @@ NEEDS_PERSON = {
     "review_failed": "the AI review did not complete",
     "needs_human": "checks or review still need attention and no automatic fix rounds remain",
     "merge_refused": "GitHub refused the automatic merge",
+    "retry_failed": "the run stopped on a transient error twice",
     "needs_merge": (
         "the base branch changed workflow files that NexKit may not push; merge it into the "
         "pull request yourself"
@@ -408,10 +411,76 @@ def notify(gh, cfg, number, reason):
 def run_status(outcome):
     if outcome == "paused":
         return PAUSED
+    if outcome == "retry":
+        # The command runs once more in a run of its own.
+        return CONTINUED
     return SUCCESS if outcome in COMPLETED else FAILURE
 
 
-def _stop_round(gh, decision, agent, outcome, message, reason=None):
+def _transient(decision, agent, publish, needs, stage="agent"):
+    """The error of a stage that stopped for a reason another try may pass, or None: a
+    transient error of the agent, a job that failed as a whole, or, in a round NexKit
+    started itself, a branch that moved while the agent worked. A job a person cancelled
+    is never one."""
+    if (needs.get(stage) or {}).get("result") == "cancelled":
+        return None
+    if agent is None:
+        return f"the {stage} job ended without a result"
+    if agent.get("status") == "error" and agent.get("transient"):
+        return agent.get("error") or "a transient error"
+    if stage == "agent" and publish.get("moved") and _automatic(decision):
+        return publish.get("error")
+    return None
+
+
+def _automatic(decision):
+    return bool(decision.get("auto") or decision.get("autopilot"))
+
+
+def _retry(gh, decision, command, number, workflow_ref, default_branch):
+    """Start `command` once more after a transient error, with the same note for the same
+    command. Returns whether it started: never for a run that was itself the retry."""
+    if decision.get("retry"):
+        return False
+    same = command == progress.COMMANDS[decision["action"]]
+    note = (decision.get("note") or "") if same else ""
+    if same:
+        auto = auto_input(decision, retry=True)
+    else:
+        auto = auto_input({"autopilot": decision.get("autopilot")}, retry=True)
+    inputs = {"command": command, "number": str(number), "note": note, "auto": auto}
+    try:
+        gh.dispatch(workflow_file(workflow_ref), default_branch, inputs)
+    except GitHubError as exc:
+        print(f"warning: could not start the command once more: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def _earlier_error(gh, decision):
+    """The transient error that the run before this retry stopped on, or "" ."""
+    number = decision.get("pr") or decision["issue"]
+    for _, run in reversed(list(run_comments(gh.comments(number)))):
+        if run.get("transient_error") and run.get("url") != run_url():
+            return run["transient_error"]
+    return ""
+
+
+RETRY_LINE = (
+    "The error looks transient, from the service, the network or the runner rather than the "
+    "work, so NexKit runs the command once more."
+)
+
+
+def _retried(gh, decision, error, message):
+    """The message of a retry that stopped on a transient error again, with both errors."""
+    earlier = _earlier_error(gh, decision)
+    if earlier:
+        message += f"\n\nThe try before stopped on a transient error too: {earlier}"
+    return message
+
+
+def _stop_round(gh, decision, agent, outcome, message, reason=None, **fields):
     """Show a pull request round that published nothing, with the reason. An automatic
     fix round that stopped for a reason outside the agent's work gives its round back."""
     comments = gh.comments(decision["pr"])
@@ -426,6 +495,7 @@ def _stop_round(gh, decision, agent, outcome, message, reason=None):
     row.update(status=status, head=decision["head"], tokens=_tokens(agent), outcome=outcome)
     _show_agents(row, agent)
     row.update(_autopilot_fields(agent))
+    row.update(fields)
     if reason:
         row["attention"] = reason
     progress.save_round(gh, decision["pr"], comment_id, row, message)
@@ -591,7 +661,7 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
     """Post the outcome. Returns a short machine-readable summary for logs and tests."""
     result = _report(gh, decision, cfg, needs, Path(artifacts), workflow_ref, default_branch)
     fields = {"outcome": result["outcome"]}
-    for key in ("resume", "attention", "agents", "timed_out", "questions"):
+    for key in ("resume", "attention", "agents", "timed_out", "questions", "transient_error"):
         if result.get(key):
             fields[key] = result[key]
     progress.finish(gh, decision, run_status(result["outcome"]), result["summary"], **fields)
@@ -639,17 +709,28 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         failure = _stage_failure(decision, agent, publish)
         if failure:
             outcome, message = failure
+            fields = {}
+            error = _transient(decision, agent, publish, needs)
+            command = progress.COMMANDS[action]
+            if error and _retry(
+                gh, decision, command, decision["target"], workflow_ref, default_branch
+            ):
+                outcome, message = "retry", f"{message}\n\n{RETRY_LINE}"
+                fields["transient_error"] = clip(one_line(error), 500)
+            elif error and decision.get("retry"):
+                outcome, message = "retry_failed", _retried(gh, decision, error, message)
             reason = needs_person(outcome, cfg)
             if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent):
                 reason = None
                 message += "\n\nNexKit autopilot carries on from here."
             if decision.get("pr"):
-                _stop_round(gh, decision, agent, outcome, message, reason)
+                _stop_round(gh, decision, agent, outcome, message, reason, **fields)
             return {
                 "outcome": outcome,
                 "summary": message,
                 "attention": reason,
                 "agents": agents_ran(agent),
+                **fields,
                 **_autopilot_fields(agent),
             }
         if action == "plan":
@@ -785,6 +866,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     elif verdict is None:
         outcome = "review_failed"
         message = review_failure(reviewed)[1]
+        error = _transient(decision, reviewed, {}, needs, "review")
+        if error and _retry(gh, decision, "review", pr, workflow_ref, default_branch):
+            outcome, message = "retry", f"{message}\n\n{RETRY_LINE}"
+            row["transient_error"] = clip(one_line(error), 500)
+        elif error and decision.get("retry"):
+            outcome, message = "retry_failed", _retried(gh, decision, error, message)
     elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"]:
         state["auto_fixes"] += 1
         outcome = "auto_fix"

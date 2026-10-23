@@ -103,6 +103,40 @@ class InterpretTests(unittest.TestCase):
         )
         self.assertEqual(missing["resume_at"], "2030-01-01T00:00:00Z")
 
+    def test_errors_of_the_service_or_the_network_are_transient(self):
+        model = {
+            "type": "assistant",
+            "message": {"id": "m1", "model": "claude", "content": [{"type": "text", "text": "Hi"}]},
+        }
+        overloaded = {
+            "subtype": "success",
+            "is_error": True,
+            "result": 'API Error: 529 {"type":"error","error":{"type":"overloaded_error"}}',
+        }
+        for result in (
+            interpret_claude("fix", overloaded, returncode=1, stream=[model]),
+            interpret_claude("plan", None, stderr="Error: read ECONNRESET", stream=[model]),
+            interpret_claude("review", None, last_text="API Error: 500 Internal server error"),
+            # The CLI exited before the model answered at all.
+            interpret_claude("implement", None, returncode=1),
+        ):
+            self.assertEqual((result["status"], result.get("transient")), ("error", True))
+        for result in (
+            interpret_claude(
+                "fix", {"subtype": "error_max_turns", "is_error": False}, returncode=1
+            ),
+            # The model worked, then the CLI exited without a result for no stated reason.
+            interpret_claude("fix", None, returncode=1, stream=[model]),
+            interpret_claude("fix", None, timed_out=True, stderr="ETIMEDOUT"),
+        ):
+            self.assertEqual(result["status"], "error")
+            self.assertNotIn("transient", result)
+        limited = interpret_claude(
+            "fix", None, last_text="API Error: 429 You've hit your session limit · resets 4am"
+        )
+        self.assertEqual(limited["status"], "paused")
+        self.assertNotIn("transient", limited)
+
     def test_the_models_own_words_never_pause_a_run(self):
         prose = 'The handler now returns "Rate limit reached" when the usage limit is hit.'
         stopped = {"subtype": "error_max_turns", "is_error": False, "result": prose}

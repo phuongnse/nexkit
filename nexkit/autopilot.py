@@ -127,7 +127,7 @@ FAILED = {"failure", "timed_out"}
 # Events whose runs test a pull request rather than the branch they name.
 PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
 # Outcomes after which a run already started the next one by itself.
-CHAINED = {"auto_fix", "conflict_fix"}
+CHAINED = {"auto_fix", "conflict_fix", "retry"}
 
 
 def takes(cfg):

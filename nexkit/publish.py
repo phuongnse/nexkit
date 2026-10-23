@@ -318,6 +318,9 @@ def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_wor
     else:
         message = f"Address feedback on #{decision['pr']}"
     message = f"{message}\n\n{result['summary'].strip()}\n"
+    cause = str((result.get("output") or {}).get("cause") or "").strip()
+    if decision["action"] == "fix" and cause:
+        message += f"\nCause: {cause}\n"
     bot = ("-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}")
     if merged:
         tree = git(repo, "write-tree").strip()

@@ -5,7 +5,14 @@ from __future__ import annotations
 import re
 
 from . import config as configuration
-from .state import by_bot, latest_plan, plan_profile, results_run, verified_head
+from .state import (
+    by_bot,
+    latest_plan,
+    plan_profile,
+    repeated_failures,
+    results_run,
+    verified_head,
+)
 
 BRANCH_PREFIX = "nexkit/issue-"
 COMMAND = re.compile(r"^\s*/nexkit\s+([a-z]+)\b[ \t]*(.*)$", re.DOTALL)
@@ -162,6 +169,8 @@ def route(gh, event_name, event, inputs=None):
         if decision.get("conflicts"):
             # Which base commit this round resolves, so the same conflict is tried once.
             decision["base_sha"] = gh.branch_sha(decision["base"])
+            # A conflict round merges the base branch; it diagnoses nothing.
+            decision.pop("diagnose", None)
         return decision
 
     return _none(f"Event '{event_name}' is not handled")
@@ -197,6 +206,11 @@ def _decide(gh, command, number, on_pull, note, *, auto):
         if run_id and decision["action"] == "fix":
             # The agent job downloads that run's `nexkit-checks` artifact for the prompt.
             decision["results_run"] = run_id
+        repeated = repeated_failures(comments)
+        if repeated and auto and decision["action"] == "fix":
+            # Checks that failed the same way before and after the last fix round: this
+            # automatic round looks for their cause first.
+            decision["diagnose"] = repeated
         return decision
 
     if command not in ISSUE_COMMANDS:

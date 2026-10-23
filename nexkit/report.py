@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import autopilot, progress
+from .checks import failing_signatures
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
     close_parents_safely,
@@ -475,8 +476,9 @@ def close_merged_issue(gh, issue, pr, sha):
     return True, [f"Closed #{issue} as completed."]
 
 
-def _record(state, decision, row, agent, review):
-    """Keep what the next review needs: the last review's findings and the fixes since."""
+def _record(state, decision, row, agent, review, checks):
+    """Keep what the next review and the next fix rounds need: the last review's findings
+    and the recent fix rounds, each with the checks that still failed after it."""
     if decision["action"] == "fix":
         fixes = (state.get("fixes") or [])[-(MAX_FIXES - 1) :]
         fixes.append(
@@ -488,6 +490,17 @@ def _record(state, decision, row, agent, review):
                 "note": clip(decision.get("note"), 2000),
             }
         )
+        cause = str((agent.get("output") or {}).get("cause") or "").strip()
+        if cause:
+            fixes[-1]["cause"] = clip(cause, 2000)
+        if decision.get("diagnose"):
+            fixes[-1]["diagnosis"] = True
+        if checks is not None:
+            # Left out when the checks did not run.
+            fixes[-1]["failing"] = [
+                {"name": name, "signature": signature}
+                for name, signature in failing_signatures(checks).items()
+            ][:MAX_FINDINGS]
         if agent.get("start_base"):
             fixes[-1]["conflicts"] = (agent.get("conflicts") or [])[:MAX_FINDINGS]
         state["fixes"] = fixes
@@ -620,8 +633,19 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         tokens=_tokens(agent if action != "review" else None, reviewed),
     )
     _show_agents(row, agent if action != "review" else None, reviewed)
-    _record(state, decision, row, agent or {}, review)
+    _record(state, decision, row, agent or {}, review, checks)
+    # The checks this round's fix was asked to fix, before they are replaced.
+    before = failing_signatures((state.get("feedback") or {}).get("checks"))
     state["feedback"] = {"head": head, "checks": checks, "review": review}
+    repeated = [
+        name
+        for name, signature in failing_signatures(checks).items()
+        if action == "fix" and before.get(name) == signature
+    ]
+    if repeated:
+        # Failed the same way before and after this fix: the next automatic round
+        # diagnoses them first.
+        state["feedback"]["repeated"] = repeated
     run_id = os.environ.get("GITHUB_RUN_ID") or ""
     if checks is not None and run_id.isdigit():
         # The run whose `nexkit-checks` artifact holds the failing checks' result files.
@@ -700,6 +724,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             "Comment `/nexkit fix <instructions>`, push a commit yourself, or close the PR."
         )
 
+    cause = str(((agent or {}).get("output") or {}).get("cause") or "").strip()
+    if action == "fix" and cause:
+        message = f"**Cause found by the fix agent:** {clip(cause, 1500)}\n\n{message}"
     if action == "fix" and agent and agent.get("start_base"):
         files = ", ".join(f"`{name}`" for name in agent.get("conflicts") or [])
         merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"

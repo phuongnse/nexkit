@@ -64,7 +64,7 @@ their defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see [How it works](how-it-works.md#failing-checks-the-base-branch-fixed). |
+| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see [How it works](how-it-works.md#failing-checks-the-base-branch-fixed). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
 | `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See [Automatic merge](#automatic-merge). |
 | `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |

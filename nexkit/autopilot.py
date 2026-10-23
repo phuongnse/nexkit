@@ -31,6 +31,7 @@ from .state import (
     RUNNING,
     SUCCESS,
     answers_marker,
+    answers_text,
     by_bot,
     latest_plan,
     plan_data,
@@ -375,6 +376,34 @@ def answers(cfg, items):
     return [{"question": item["question"], "answer": item["recommended"]} for item in found]
 
 
+REPEATED = (
+    "the round after autopilot's answers asked again, and nobody commented since; a person decides"
+)
+
+
+def _by_person(comment):
+    return comment.get("author_association") in TRUSTED_ASSOCIATIONS and not by_bot(comment)
+
+
+def asked_again(target_comments, other_comments=()):
+    """Whether the latest run on a target, the issue or the pull request a command ran on,
+    is the first run after autopilot answered there, with no comment by a person since that
+    answer on the issue or its pull request. Its questions then follow from autopilot's own
+    answers: another answer would only change the wording of the note, so a person decides.
+    """
+    runs = [comment["id"] for comment, _ in run_comments(target_comments)]
+    if not runs:
+        return False
+    latest = runs[-1]
+    answered = [
+        c["id"] for c in target_comments if answers_text(c) is not None and c["id"] < latest
+    ]
+    if not answered or any(answered[-1] < run < latest for run in runs):
+        return False
+    since = answered[-1]
+    return not any(_by_person(c) and c["id"] > since for c in [*target_comments, *other_comments])
+
+
 def answer_note(found):
     lines = ["Answers for the owner, each the option NexKit recommended:"]
     for number, item in enumerate(found, 1):
@@ -395,10 +424,13 @@ def split_refused(gh, issue):
     return DEPTH_REASON if depth(issue, above) >= MAX_DEPTH else None
 
 
-def _stopped(gh, cfg, issue, run, record, start, command, target):
+def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
     """The step after a `/nexkit go` or a round that stopped: answer a blocked round's
-    questions, ask once for a split after the agent ran out of time, or wait."""
+    questions, ask once for a split after the agent ran out of time, or wait. `comments`
+    holds the comments of the target, then those of the issue or its pull request."""
     found = answers(cfg, run.get("questions")) if run.get("outcome") == "agent_blocked" else None
+    if found and asked_again(*comments):
+        return _step(issue, "waits", REPEATED)
     if found:
         start = {**start, "target": target, "note": answer_note(found)}
         reason = "autopilot answers the questions of the blocked round"
@@ -437,7 +469,7 @@ def _split(gh, issue, plan, data, record, start, pull=None):
     return _step(issue, "split", "the plan splits the issue", **fields, **start)
 
 
-def _planned(gh, cfg, issue, plan, last, record, start):
+def _planned(gh, cfg, issue, plan, last, record, start, comments):
     """The step after a plan that needs nobody's comment."""
     data = plan_data(plan)
     if data is None:  # a plan from before NexKit kept its record
@@ -452,6 +484,8 @@ def _planned(gh, cfg, issue, plan, last, record, start):
         found = answers(cfg, data["questions"])
         if not found:
             return _step(issue, "waits", last.get("attention") or "the plan has questions")
+        if asked_again(comments):
+            return _step(issue, "waits", REPEATED)
         reason = "autopilot answers the plan's questions"
         return _step(issue, "start", reason, command="plan", answers=found, **start)
     return _step(issue, "start", "the plan needs nobody", command="go", **start)
@@ -497,7 +531,9 @@ def assess(gh, cfg, issue, open_pulls, now=None):
         split = _split(gh, issue, plan, data, record, start, pull) if data else None
         rounds = [run for _, run in run_comments(pull_comments) if "round" in run]
         if not split and rounds and rounds[-1].get("status") == FAILURE:
-            split = _stopped(gh, cfg, issue, rounds[-1], record, start, "fix", pull)
+            split = _stopped(
+                gh, cfg, issue, rounds[-1], record, start, "fix", pull, (pull_comments, comments)
+            )
         if split:
             return {**split, "pull": pull}
         return _step(issue, "active", f"pull request #{pull} is open")
@@ -509,7 +545,7 @@ def assess(gh, cfg, issue, open_pulls, now=None):
     if last["command"] == "go":
         if last.get("status") == SUCCESS:
             return _step(issue, "waits", "its pull request was closed; a person decides")
-        return _stopped(gh, cfg, issue, last, record, start, "go", number) or _step(
+        return _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,)) or _step(
             issue, "waits", last.get("attention") or "the last `/nexkit go` failed"
         )
     if last.get("status") != SUCCESS:
@@ -518,7 +554,7 @@ def assess(gh, cfg, issue, open_pulls, now=None):
         return _step(
             issue, "start", "collaborators commented after the plan", command="plan", **start
         )
-    return _planned(gh, cfg, issue, plan, last, record, start)
+    return _planned(gh, cfg, issue, plan, last, record, start, comments)
 
 
 def carries_on(gh, cfg, decision, outcome, agent):
@@ -549,6 +585,11 @@ def carries_on(gh, cfg, decision, outcome, agent):
         if outcome == "agent_error":
             record = find_record(gh.comments(issue["number"]))[1]
             return not record.get("split_asked") and not split_refused(gh, issue)
+        if not splits:
+            # Questions again right after autopilot's answers: a person decides.
+            pr = decision.get("pr")
+            target = gh.comments(pr or issue["number"])
+            return not asked_again(target, gh.comments(issue["number"]) if pr else ())
         if splits:
             # Autopilot splits the issue, or plans it again for its parts' titles.
             record = find_record(gh.comments(issue["number"]))[1]

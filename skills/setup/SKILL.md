@@ -136,7 +136,8 @@ files or repository settings, and wait for confirmation.
    issues are in progress at once; without it, every ready issue starts. It pairs with
    `merge.auto`, `conflicts.auto_resolve`, `close_parent_issues` and `notify`. With
    `"answer": "recommended"`, it also answers the questions of plans and blocked rounds
-   with the option NexKit recommends, when every question has one; it splits plans that
+   with the option NexKit recommends, when every question has one, and waits for a person
+   when the round after its answers asks again; it splits plans that
    are too large into sub-issues either way. With `merge.after_workflows`, it also runs a
    failed CI run on the default branch once more and, if it fails again, opens a `bug`
    issue that it plans first; runs that passed only when run again are recorded on their

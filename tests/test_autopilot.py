@@ -480,6 +480,95 @@ class AnswerTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual(len(self.started()), 2)
 
+    def blocked(self, number, **fields):
+        return self.run_comment(
+            number,
+            "go",
+            status="failure",
+            outcome="agent_blocked",
+            attention="the agent is blocked and needs a decision",
+            questions=[QUESTION],
+            **fields,
+        )
+
+    def test_a_round_that_blocks_again_after_autopilots_answer_waits_for_a_person(self):
+        from nexkit.status import collect
+
+        self.issue(4)
+        self.posted_plan(4)
+        self.blocked(4)
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 4)])
+        # The go that autopilot's answers started blocks again, and nobody did anything.
+        self.blocked(4)
+        decision = {"action": "implement", "issue": 4, "pr": None}
+        agent = {"status": "blocked", "output": {"questions": [QUESTION]}}
+        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "agent_blocked", agent))
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 4)])
+        self.assertEqual(len(self.gh.comments_matching(4, "answers for the owner")), 1)
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.REPEATED))
+        data = collect(self.gh, self.cfg, workers=1)
+        self.assertIn(4, [item["number"] for item in data["needs_person"]])
+        # A person's comment since the answers lets autopilot answer again.
+        self.gh.human_comment(4, "I attached the files to the issue.")
+        self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "agent_blocked", agent))
+        self.sweep()
+        self.assertEqual(self.started(), [("go", 4), ("go", 4)])
+
+    def test_a_fix_round_that_blocks_again_after_autopilots_answer_waits(self):
+        self.issue(5)
+        self.posted_plan(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        round_ = {"trigger": "fix", "status": "failure", "outcome": "agent_blocked"}
+        self.gh.comment(6, render_run({**round_, "round": 2, "url": "u2", "questions": [QUESTION]}))
+        self.sweep()
+        self.assertEqual(self.started(), [("fix", 6)])
+        self.gh.comment(6, render_run({**round_, "round": 3, "url": "u3", "questions": [QUESTION]}))
+        self.sweep()
+        self.assertEqual(self.started(), [("fix", 6)])
+        # A round that ran in between, such as one after new commits, is not the answered one.
+        self.gh.comment(6, render_run({**round_, "round": 4, "url": "u4", "questions": [QUESTION]}))
+        self.assertFalse(autopilot.asked_again(self.gh.comments(6)))
+        # A comment by a person on the issue counts as well.
+        self.gh.issue_comments[6].pop()
+        self.gh.human_comment(5, "Use the other port.")
+        self.sweep()
+        self.assertEqual(self.started(), [("fix", 6), ("fix", 6)])
+
+    def test_a_plan_that_asks_again_after_autopilots_answer_waits_for_a_person(self):
+        cfg = make_config(autopilot={"enabled": True, "answer": "recommended"}, notify=["olivia"])
+        self.issue(5)
+        self.posted_plan(5, questions=[QUESTION])
+        self.sweep(cfg)
+        self.assertEqual(self.started(), [("plan", 5)])
+        again = {**QUESTION, "question": "Which host?", "options": ["a", "b"]}
+        self.run_comment(5, "plan", status="running")  # as `route` posts it
+        result = self.report_plan(cfg, plan_output(questions=[again]))
+        self.assertEqual(result["attention"], "the plan has questions")
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+        self.sweep(cfg)
+        self.assertEqual(self.started(), [("plan", 5)])
+        # The same holds for a plan with its record, as `publish` posts it.
+        self.gh.issues[5]["state"] = "closed"
+        self.issue(6)
+        self.posted_plan(6, questions=[QUESTION])
+        self.sweep(cfg)
+        self.posted_plan(6, questions=[again])
+        _, [step] = autopilot.preview(self.gh, cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.REPEATED))
+
+    def test_prompts_recommend_only_what_nexkit_can_carry_out(self):
+        from nexkit.agent import _template
+
+        for name in ("plan", "implement", "fix"):
+            self.assertIn("Never recommend an option that needs a person", _template(name))
+        diagnosis = _template("fix_diagnosis")
+        self.assertIn("add logging or narrow the test in the working tree yourself", diagnosis)
+        self.assertNotIn("such as more logging", diagnosis)
+
     def test_report_mentions_nobody_when_autopilot_answers(self):
         cfg = make_config(autopilot={"enabled": True, "answer": "recommended"}, notify=["olivia"])
         self.issue(5)

@@ -67,6 +67,9 @@ $writing
   - `recommended`: the number of the option you would choose, counting from 1, when the
     issue, the discussion, the docs or the code give a reason to prefer it; otherwise 0.
     Put the reason in `question`.
+    Never recommend an option that needs a person to act outside NexKit, such as
+    downloading files, granting access or running something by hand: autopilot answers
+    with the recommended option, and it can only change the plan or the code.
 - `too_large`: true when the work cannot be finished and tested well in one session.
 - `split`: when `too_large` is true, smaller issues that can each be done in one session,
   in order. Otherwise an empty list. Each has a `title`, a `body`, and `depends_on`: the

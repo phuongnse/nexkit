@@ -64,4 +64,7 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
   for each decision; otherwise an empty list. Each has the `question`, the `options` you
   see (two to four short answers) and `recommended`: the number of the option you would
   choose, counting from 1, or 0 when none is clearly better. Put the reason in `question`.
+  Never recommend an option that needs a person to act outside NexKit, such as
+  downloading files, granting access or running something by hand: autopilot answers
+  with the recommended option, and it can only change the plan or the code.
 - `checks_run`: the commands you ran and whether each passed.

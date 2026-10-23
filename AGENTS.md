@@ -36,9 +36,11 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 - State lives only on GitHub (comments, pull requests, statuses).
 - Agent errors and `blocked` results never retry automatically; only check failures and
   review findings do, up to `fix.max_auto_rounds`. Autopilot may answer a `blocked` result
-  whose questions all have a recommended option (`autopilot.answer: "recommended"`), and
-  asks for one split plan after an implement or fix agent ran out of time; it never
-  repeats a run unchanged.
+  whose questions all have a recommended option (`autopilot.answer: "recommended"`), once
+  in a row: when the round its answers started asks again and no person commented since,
+  a person decides. A recommended option is one NexKit can carry out without a person.
+  Autopilot asks for one split plan after an implement or fix agent ran out of time; it
+  never repeats a run unchanged.
 - Prompts judge code behaviour, never things an agent cannot change (PR text, approvals,
   workflows).
 - A config key, command or prompt contract changes together with its tests, docs and skills.

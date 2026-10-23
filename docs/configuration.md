@@ -393,6 +393,7 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Its plan is too large and suggests a split | Creates each part as a sub-issue, in order, with the issue's milestone and labels, marks each part *blocked by* the earlier parts it needs, closes the issue's open NexKit pull request as superseded, and plans the parts that need no other part. |
 | Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
+| The plan or round after autopilot's answers asks again, and no person commented since | Nothing: a person decides, and `notify` mentions them. A comment by a person lets autopilot answer again. |
 | Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
 | Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. |
 | A bug issue that autopilot opened for a CI failure on the default branch | Goes first: it is planned before every other issue in scope. |
@@ -429,7 +430,11 @@ every open issue in scope, oldest first, and starts the one command that moves i
   `(recommended)`. With `answer: "recommended"`, autopilot answers only when every
   question has a recommendation, in a NexKit comment that the agents read as the owner's
   discussion. Comments by other bots never count. When autopilot takes over like this, or
-  splits an issue, `notify` is not mentioned.
+  splits an issue, `notify` is not mentioned. Autopilot answers once in a row: when the
+  plan or round that its answers started asks again, and no person commented on the issue
+  or its pull request since, it waits for a person, whatever the new questions are. The
+  prompts never recommend an option that needs a person to act outside NexKit, such as
+  downloading files or granting access, so such a question waits for a person at once.
 - **CI on the default branch.** With workflows in `merge.after_workflows`, each sweep also
   looks at the runs of each of them on the default branch, after NexKit's merges and
   people's alike, and at every attempt of each run; runs of pull requests, even from a

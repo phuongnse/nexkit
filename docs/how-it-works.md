@@ -269,6 +269,11 @@ order: *Summary* (two or three sentences, also the commit message), *What change
 behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
 the reviewer*. A fix round's summary becomes its commit message.
 
+The new pull request also gets the issue's labels and milestone. The Actions bot sets them,
+so no workflow starts for it, and a failure there only warns, since the pull request
+already exists. Later rounds leave them to people. Autopilot takes only issues, so its
+scope's label or milestone on the pull request changes nothing.
+
 The pull request of an implement round starts at the base commit the agent started from,
 not at the base branch's tip when `publish` runs. So the patch always applies, even when
 someone merges into the base branch while the agent works. The pull request is then

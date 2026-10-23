@@ -29,7 +29,9 @@ succeeds. Help the user write issues that one session can finish and test.
    NexKit takes the open issues of the earliest open milestone (`autopilot.scope`
    `"milestone"`, the default) or those with `autopilot.label` (`"label"`). Give each issue
    that milestone or label; ask the user which milestone when that is not clear
-   (`gh api repos/{owner}/{repo}/milestones --jq '.[].title'`).
+   (`gh api repos/{owner}/{repo}/milestones --jq '.[].title'`). With or without
+   autopilot, the pull request NexKit opens for an issue gets that issue's labels and
+   milestone, so give each issue the ones its change should carry.
 
 5. **Show the drafts** with the structure you will create: the parent, its parts in order,
    which part is blocked by which, and the milestone or labels. Adjust them with the user.

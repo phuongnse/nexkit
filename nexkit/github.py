@@ -154,6 +154,15 @@ class GitHub:
             data["labels"] = list(labels)
         return self.request("POST", f"{self._repo}/issues", data)
 
+    def update_issue(self, number, milestone=None, labels=()):
+        """Set the milestone and replace the labels of an issue or pull request."""
+        data = {}
+        if milestone is not None:
+            data["milestone"] = milestone
+        if labels:
+            data["labels"] = list(labels)
+        return self.request("PATCH", f"{self._repo}/issues/{number}", data)
+
     def add_sub_issue(self, number, child_id):
         """Add an issue, by its database id (not its number), as the last sub-issue."""
         return self.request(

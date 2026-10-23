@@ -7,9 +7,11 @@ agent's patch with git and calls the GitHub API.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 from . import config as configuration
+from .github import GitHubError
 from .gitutil import BOT_EMAIL, BOT_NAME, GitError, git, is_ancestor, merge_tree, names
 from .runlog import stage_agent
 from .state import (
@@ -373,4 +375,21 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
             context["title"], decision["branch"], decision["base"], pull_body(decision, result)
         )
         pr = pull["number"]
+        copy_issue_fields(gh, decision["issue"], pr)
     return {"published": True, "pr": pr, "head": head}
+
+
+def copy_issue_fields(gh, issue, pr):
+    """Give a new pull request the labels and milestone of its issue. The Actions bot sets
+    them, so no workflow starts for it. The pull request exists by now, so a failure only
+    warns."""
+    try:
+        found = gh.issue(issue)
+        milestone = (found.get("milestone") or {}).get("number")
+        labels = [label["name"] for label in found.get("labels") or [] if label.get("name")]
+        if milestone is not None or labels:
+            gh.update_issue(pr, milestone=milestone, labels=labels)
+    except GitHubError as exc:
+        print(
+            f"warning: could not copy the labels and milestone of #{issue}: {exc}", file=sys.stderr
+        )

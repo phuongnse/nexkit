@@ -108,6 +108,8 @@ class FakeGitHub:
         self.merge_error = None
         self.dispatch_errors = {}
         self.close_errors = {}
+        self.update_errors = {}
+        self.updates = []  # (number, milestone, labels) for each update_issue
         self.parents = {}  # sub-issue number -> parent number
         self.blockers = defaultdict(list)  # issue number -> numbers of issues that block it
         self.open_milestones = []
@@ -263,6 +265,17 @@ class FakeGitHub:
             number, title, body, user=BOT_LOGIN, milestone=milestone, labels=labels
         )
         issue["id"] = 90000 + number
+        return issue
+
+    def update_issue(self, number, milestone=None, labels=()):
+        if number in self.update_errors:
+            raise self.update_errors[number]
+        self.updates.append((number, milestone, list(labels)))
+        issue = self.issues[number]
+        if milestone is not None:
+            issue["milestone"] = {"number": milestone}
+        if labels:
+            issue["labels"] = [{"name": label} for label in labels]
         return issue
 
     def add_sub_issue(self, number, child_id):

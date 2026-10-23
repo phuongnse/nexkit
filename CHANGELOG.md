@@ -1,5 +1,63 @@
 # Changelog
 
+## 4.6.0
+
+Autopilot carries each issue in scope on by itself, or waits for a person with a reason,
+and nothing in between. See [Autopilot](docs/how-it-works.md#autopilot) and
+[Failure handling](docs/how-it-works.md#failure-handling).
+
+- Autopilot answers a plan's or a blocked round's questions once in a row (#125): when
+  the plan or round that its answers started asks again, and no person commented on the
+  issue or its pull request since, it waits for a person. The prompts recommend only an
+  option that a change to the plan or the code carries out, and a diagnosis round adds
+  logging or narrows a test itself before it asks a person.
+- A fix or conflict round checks its merge of the base branch before the agent runs
+  (#126). Without a push token that may change workflow files, a merge that only brings
+  a moved base branch with workflow changes is left out, and the round fixes the branch
+  as it is; a merge needed for a conflict stops the round before its agent, as
+  `needs_merge`. Neither counts against `fix.max_auto_rounds` or `conflicts.max_rounds`,
+  and no further conflict round starts until a person merged.
+- An issue whose pull request needs a person waits for that person and leaves its place
+  in `autopilot.max_parallel` to the other issues (#129). Every issue that waits for a
+  person is listed under *Needs a person* in `nexkit status` with the same reason, and a
+  sweep mentions `notify` once for it. After a fix round ran out of time, a revised plan
+  that does not split the issue is followed by a fix round on the pull request. A
+  blocker outside the scope, and a parent issue whose sub-issues are all closed, wait for
+  a person. `nexkit doctor` says when autopilot is on and `notify` is empty, and
+  `nexkit init --notify LOGIN` sets it. See [Mentions](docs/configuration.md#mentions).
+- A command autopilot started that has not run after six hours starts once more, with
+  the same note, then waits for a person (#130). A run comment that still says running
+  after its workflow run ended is marked as ended without a report, its pending statuses
+  become errors, and a run NexKit started itself starts once more. A pause NexKit will
+  not resume, a continued run whose new run never started, and a round whose next round
+  never ran wait for a person.
+- A run that stopped on a transient error, before it published anything, runs once more
+  with the same note, shown as `(retry)` (#127): an overloaded or failing API, a lost
+  connection, a CLI that exited before the model answered, a job that failed as a whole,
+  a failed setup, a review without a result, and an automatic fix round whose branch
+  moved meanwhile. A second such stop waits for a person, and its comment shows both
+  errors. The retry counts against no automatic round limit.
+- An automatic merge that GitHub refuses because the base branch was modified meanwhile
+  is tried again, three times in all (#128). One refused until required checks pass ends
+  the round as `merge_waiting` for an issue in autopilot's scope, and the next sweeps
+  merge it once they pass; a branch that branch protection wants up to date is updated
+  on GitHub and reviewed again, within `conflicts.max_rounds`. Other refusals wait for a
+  person, as before.
+- Implement and fix rounds get the evidence of the CI runs their issue names (#124):
+  runs that NexKit's bug and flaky-run issues record, and links to runs in the issue and
+  collaborators' comments. Before the agent runs, the agent job downloads the end of
+  each failed job's log, its annotations, and the artifacts that the new
+  `evidence.artifacts` lists, to a folder outside the working tree, redacted, at most
+  50 MB per round, and the prompt names each file. The `bug` issues that autopilot opens
+  for a failing default branch list each failed job's annotations and the end of its
+  log. `nexkit init --evidence-artifact NAME` sets the setting. See
+  [Evidence from CI runs](docs/configuration.md#evidence-from-ci-runs).
+- `tests/test_scenarios.py` plays autopilot over many rounds and checks, after every
+  sweep, that each issue is carried on or waits for a person, listed and mentioned (#131).
+- The `maintain` job asks for `contents: write`, to merge a pull request whose required
+  checks passed since, and `statuses: write`; the `agent` job asks for `checks: read`.
+  The workflow `nexkit init` writes has granted all three since 4.4.0.
+
 ## 4.5.0
 
 - The review gives each acceptance criterion a status of met, unmet or unverifiable, in

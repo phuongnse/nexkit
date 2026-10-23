@@ -270,32 +270,35 @@ def _fixed(decision, fix_result):
     return decision["action"] == "fix" and (fix_result or {}).get("status") == "done"
 
 
-def ci_evidence(gh, cfg, issue, comments, folder):
+def ci_evidence(gh, cfg, issue, comments, folder, workflow=""):
     """Download the evidence of the CI runs the issue names into `folder`, before the agent
-    runs, and say in the log and the run summary what was kept, missing or skipped. None
-    when the issue names no run."""
+    runs, and say in the log and the run summary what was kept, missing or skipped. Runs of
+    NexKit's own workflow, the file `workflow`, are skipped. None when the issue names no
+    run."""
     runs, skipped = named_runs(gh, issue, comments)
     if not runs and not skipped:
         return None
     redact = Redactor()
     try:
-        found = {**collect(gh, cfg, runs, folder, redact), "skipped": skipped}
+        found = collect(gh, cfg, runs, folder, redact, workflow)
+        found["skipped"] = [*skipped, *found["skipped"]]
     except Exception as exc:  # noqa: BLE001 - the round runs without the evidence
         print(redact(f"Could not collect the evidence of CI runs: {exc}"), flush=True)
         return None
-    lines = [*summary_lines(found), *(f"Not collected: {reason}." for reason in skipped)]
+    lines = [*summary_lines(found), *(f"Not collected: {reason}." for reason in found["skipped"])]
     for line in lines:
         print(redact(line), flush=True)
     write_summary("\n".join(["### NexKit: evidence from CI runs", "", *lines]) + "\n", redact)
     return found
 
 
-def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg=None):
+def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg=None, workflow=""):
     """Context for an agent stage. `stage` defaults to the decision's action; the review
     stage also gets the previous review round, with `fix_result` from this run's fix. A
     fix round also gets the failing checks' result files, which the agent job downloaded
     into the folder `results`. With `ci` and `cfg`, an implement or fix round also gets
-    the evidence of the CI runs the issue names, downloaded into the folder `ci`."""
+    the evidence of the CI runs the issue names, downloaded into the folder `ci`, other
+    than runs of NexKit's own workflow, the file `workflow`."""
     issue = gh.issue(decision["issue"])
     comments = gh.comments(decision["issue"])
     plan = latest_plan(comments)
@@ -312,7 +315,7 @@ def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg
     }
     stage = stage or decision["action"]
     if stage in ("implement", "fix") and ci and cfg:
-        context["ci_evidence"] = ci_evidence(gh, cfg, issue, comments, ci)
+        context["ci_evidence"] = ci_evidence(gh, cfg, issue, comments, ci, workflow)
     if stage == "plan":
         # Triage reads the notes on earlier commands too: a later note can change the
         # profile that an earlier comment asked for.

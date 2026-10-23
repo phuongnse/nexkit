@@ -71,7 +71,9 @@ class EvidenceCase(unittest.TestCase):
     def gather(self, stage="implement"):
         decision = {"action": stage, "issue": 5, "pr": None, "note": ""}
         with mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(self.folder.parent / "s")}):
-            return gather(self.gh, decision, ci=str(self.folder), cfg=self.cfg)
+            return gather(
+                self.gh, decision, ci=str(self.folder), cfg=self.cfg, workflow="nexkit.yml"
+            )
 
 
 class EvidenceTests(EvidenceCase):
@@ -126,6 +128,54 @@ class EvidenceTests(EvidenceCase):
         self.assertIn("its log: GitHub API 410", section)
         self.assertEqual([run["id"] for run in found["runs"]], [303, 404])
         self.assertFalse((self.folder / "run-404").exists())
+
+    def test_the_runs_the_issue_records_count_after_many_nexkit_rounds(self):
+        # The issue links its two failed CI runs; a dozen NexKit rounds since link their
+        # run logs, and another bot's comment links a run too.
+        self.issue(
+            "Failed in https://github.com/acme/app/actions/runs/101/job/1010 and "
+            "https://github.com/acme/app/actions/runs/202."
+        )
+        for round in range(1, 13):
+            self.add_run(round)
+            self.gh.round_comment(5, round, "a" * 40, "failed")
+        self.add_run(303)
+        bot = self.gh.human_comment(
+            5, "https://github.com/acme/app/actions/runs/303", login="ci-bot[bot]"
+        )
+        bot["user"]["type"] = "Bot"
+        found = self.gather()["ci_evidence"]
+        self.assertEqual([run["id"] for run in found["runs"]], [101, 202])
+        self.assertEqual(found["skipped"], [])
+        self.assertTrue((self.folder / "run-101" / "artifacts" / "test-results-e2e").is_dir())
+
+    def test_runs_of_nexkits_own_workflow_never_count_wherever_they_are_linked(self):
+        for run_id in range(701, 707):
+            self.add_run(run_id, path=".github/workflows/nexkit.yml")
+        for run_id in (303, 304, 305):
+            self.add_run(run_id, path=".github/workflows/ci.yml")
+        self.issue(
+            "https://github.com/acme/app/actions/runs/701 broke in "
+            + ", ".join(f"https://github.com/acme/app/actions/runs/{r}" for r in (101, 202, 303))
+        )
+        links = [f"https://github.com/acme/app/actions/runs/{r}" for r in range(702, 707)]
+        self.gh.human_comment(5, "Also https://github.com/acme/app/actions/runs/304")
+        self.gh.human_comment(
+            5, "\n".join([*links[:3], "https://github.com/acme/app/actions/runs/305", *links[3:]])
+        )
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            found = self.gather()["ci_evidence"]
+        # The five named last that are not NexKit's own fill the five places.
+        self.assertEqual([run["id"] for run in found["runs"]], [101, 202, 303, 304, 305])
+        own = "a run of NexKit's own workflow, `nexkit.yml`"
+        self.assertEqual(found["skipped"], [f"run {r}: {own}" for r in range(702, 707)])
+        self.assertIn(f"Not collected: run 706: {own}.", out.getvalue())
+        self.assertIn(f"run 702: {own}", ci_evidence_text(found))
+        # Outside a NexKit run, nothing names NexKit's workflow.
+        runs, _ = evidence.named_runs(self.gh, self.gh.issue(5), self.gh.comments(5))
+        chosen, skipped = evidence._latest(self.gh, runs, "")
+        self.assertEqual(([r for r, _, _ in chosen], skipped), ([703, 704, 305, 705, 706], []))
 
     def test_the_size_limit_leaves_files_out_with_a_note_in_the_run_summary(self):
         self.issue("https://github.com/acme/app/actions/runs/101")

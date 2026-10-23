@@ -8,8 +8,10 @@ redacted, like the result files of failing checks, and a round keeps at most
 `RESULTS_LIMIT` of it.
 
 A run counts when NexKit's own records name it, in the markers of the bug and flaky-run
-issues that autopilot opens, or when the issue or a collaborator's comment links it. Only
-runs of this repository count, never those of a fork or another repository.
+issues that autopilot opens, or when the issue or a collaborator's comment links it. Links
+in comments by bots, such as the run logs that NexKit's round comments link, never count.
+Only runs of this repository count, never those of a fork or another repository, nor those
+of NexKit's own workflow, wherever they are linked.
 """
 
 from __future__ import annotations
@@ -41,24 +43,30 @@ UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def named_runs(gh, issue, comments):
-    """[(run id, attempt or None)] for the runs of this repository that the issue names:
-    links in its body and in collaborators' comments, and the runs that NexKit's own
-    records hold. In the order they were named, without repeats, at most `MAX_RUNS` of
-    the latest. Returns (runs, lines saying what was skipped)."""
+    """[(run id, [attempts])] for the runs of this repository that the issue names: links
+    in its body and in collaborators' comments, and the runs that NexKit's own records
+    hold. Comments by bots name runs only in NexKit's markers. In the order they were
+    named, without repeats; `collect` keeps the latest. Returns (runs, lines saying what
+    was skipped)."""
     found, skipped = [], []
-    texts = [(issue.get("body") or "", by_bot(issue))]
+    # (text, whether its NexKit markers count, whether its links count)
+    texts = [(issue.get("body") or "", by_bot(issue), True)]
     for comment in comments:
         if by_bot(comment):
-            texts.append((comment.get("body") or "", True))
+            texts.append((comment.get("body") or "", True, False))
+        elif (comment.get("user") or {}).get("type") == "Bot":
+            continue
         elif comment.get("author_association") in TRUSTED_ASSOCIATIONS:
-            texts.append((comment.get("body") or "", False))
-    for text, ours in texts:
-        if ours:
+            texts.append((comment.get("body") or "", False, True))
+    for text, records, links in texts:
+        if records:
             match = CI_RUNS.search(text)
             for item in match.group(1).split() if match else ():
                 run, _, attempt = item.partition(".")
                 if run.isdigit() and attempt.isdigit():
                     found.append((int(run), int(attempt)))
+        if not links:
+            continue
         for link in ACTIONS_LINK.finditer(text):
             skipped.append(f"{link.group(0)}: not a run")
         for link in RUN_LINK.finditer(text):
@@ -72,8 +80,28 @@ def named_runs(gh, issue, comments):
         attempts = runs.setdefault(run, set())
         if attempt is not None:
             attempts.add(attempt)
-    named = list(runs.items())[-MAX_RUNS:]
-    return [(run, sorted(attempts)) for run, attempts in named], list(dict.fromkeys(skipped))
+    return [(run, sorted(attempts)) for run, attempts in runs.items()], list(dict.fromkeys(skipped))
+
+
+def _latest(gh, runs, workflow):
+    """The latest `MAX_RUNS` of `runs` that are not runs of NexKit's own workflow, the file
+    `workflow`, in the order they were named, each with the run GitHub returned or the
+    error reading it. Returns (runs, lines saying what was skipped)."""
+    chosen, skipped = [], []
+    for run_id, attempts in reversed(runs):
+        if len(chosen) == MAX_RUNS:
+            break
+        try:
+            run = gh.workflow_run(run_id)
+        except GitHubError as exc:
+            run = exc
+        else:
+            path = (run.get("path") or "").split("@", 1)[0]
+            if workflow and path.rsplit("/", 1)[-1] == workflow:
+                skipped.append(f"run {run_id}: a run of NexKit's own workflow, `{workflow}`")
+                continue
+        chosen.append((run_id, attempts, run))
+    return chosen[::-1], skipped[::-1]
 
 
 class Budget:
@@ -190,20 +218,21 @@ def _jobs(gh, run_id, attempt, folder, budget, redact, files):
             files.append({"path": _shown(notes_path, folder)})
 
 
-def collect(gh, cfg, runs, folder, redact, budget=None):
-    """Download the evidence of `runs`, from `named_runs`, into `folder`. Returns a
-    record for the prompt: the folder and, for each run, its files and what is missing."""
+def collect(gh, cfg, runs, folder, redact, workflow="", budget=None):
+    """Download the evidence of the latest `MAX_RUNS` of `runs`, from `named_runs`, into
+    `folder`, leaving out runs of NexKit's own workflow, the file `workflow`. Returns a
+    record for the prompt: the folder, for each run its files and what is missing, and
+    the runs skipped."""
     root = Path(folder)
     budget = budget or Budget()
     names = cfg["evidence"]["artifacts"]
+    chosen, skipped = _latest(gh, runs, workflow)
     found = []
-    for run_id, attempts in runs:
+    for run_id, attempts, run in chosen:
         item = {"id": run_id, "url": "", "files": [], "missing": []}
         found.append(item)
-        try:
-            run = gh.workflow_run(run_id)
-        except GitHubError as exc:
-            item["missing"].append(f"the run could not be read: {exc}")
+        if isinstance(run, GitHubError):
+            item["missing"].append(f"the run could not be read: {run}")
             continue
         item["url"] = run.get("html_url") or ""
         head = (run.get("head_repository") or {}).get("full_name")
@@ -227,7 +256,13 @@ def collect(gh, cfg, runs, folder, redact, budget=None):
                 item["missing"].append(f"no artifact named `{name}`")
             for artifact in matching:
                 _artifact(gh, artifact, folder, budget, redact, item)
-    return {"folder": str(root), "runs": found, "left_out": budget.left_out, "used": budget.used}
+    return {
+        "folder": str(root),
+        "runs": found,
+        "skipped": skipped,
+        "left_out": budget.left_out,
+        "used": budget.used,
+    }
 
 
 def _artifact(gh, artifact, folder, budget, redact, item):

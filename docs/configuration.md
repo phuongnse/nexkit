@@ -187,9 +187,12 @@ the agent runs.
 
 - **Which runs.** The runs of this repository that the issue names: those NexKit's own bug
   and flaky-run issues record in their markers, and links to Actions runs, attempts and
-  jobs in the issue and in collaborators' comments. At most the five named last. Runs of
-  other repositories, runs from a fork, and other links are skipped, and the log says
-  which and why.
+  jobs in the issue's description and in comments by the repository's owner, members and
+  collaborators. Links in comments by bots never count, so the run logs that NexKit's own
+  comments link take no place. Nor do runs of NexKit's own workflow, wherever they are
+  linked. At most the five named last of the runs that count. Runs of NexKit's workflow,
+  runs of other repositories, runs from a fork, and other links are skipped, and the log
+  says which and why.
 - **What.** For each run and each attempt that failed: the end of each failed job's log
   and its error and warning annotations. Then the run's artifacts that `artifacts` lists
   by name, as the repository's CI workflows upload them; NexKit's own artifacts are not

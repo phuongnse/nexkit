@@ -51,7 +51,9 @@ $diff
 $merge$previous
 ## How to review
 
-- Check each acceptance criterion in the plan against the code and its tests.
+- Check each acceptance criterion in the plan against the code, its tests and the check
+  results. A criterion that a collaborator dropped or replaced in the discussion is judged
+  as they changed it, or left out when they dropped it.
 - Look for bugs, missing or meaningless tests, security problems, and changes outside the
   scope of the issue. Read surrounding code when the diff is not enough.
 - A collaborator can change the plan in the discussion, for example while approving it.
@@ -64,8 +66,9 @@ $merge$previous
   `suggestion` for improvements and style.
 - Do not raise findings about things the implementation agent cannot change: the pull
   request description, approvals, CI configuration or the protected paths $protected.
-- Return `approve` when there are no blocking findings and every check passed. Otherwise
-  return `request_changes`.
+- Return `approve` when there are no blocking findings, no criterion is `unmet` and every
+  check passed. Otherwise return `request_changes`. NexKit turns each `unmet` criterion
+  into a blocking finding, so do not raise it as a finding as well.
 
 $writing
 ## What to return
@@ -81,7 +84,11 @@ A person reads the review to decide what to do next. NexKit shows the verdict an
   sentences. NexKit shows the file and line.
 - `criteria`: one entry for each acceptance criterion in the plan:
   - `criterion`: the criterion, shortened to about ten words.
-  - `met`: whether the code meets it.
+  - `status`: `met` when the diff, its tests or the check results show the code meets
+    it; `unmet` when they show it does not, or it is missing; `unverifiable` when they
+    hold no evidence either way, such as a step only the implementing agent could run.
+    NexKit does not merge a pull request with an `unverifiable` criterion by itself; a
+    person confirms it.
   - `test`: the name of the test that covers it, or an empty string when no test does.
   - `evidence`: the detail behind your judgement, such as `file:line` references and the
     assertions that check it.

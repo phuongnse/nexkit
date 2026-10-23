@@ -83,6 +83,32 @@ class PromptTests(unittest.TestCase):
         self.assertIn("</untrusted>\n\n## Note from the person", prompt)
         self.assertNotRegex(prompt, r"\$(previous|since_plan)\b")
 
+    def test_plan_criteria_are_what_the_review_can_verify(self):
+        prompt = " ".join(agent.build_prompt("plan", CONTEXT, make_config()).split())
+        self.assertIn(
+            "each verifiable by the review from what it sees: a test in the change, or the "
+            "result of a project check above, run once on the candidate commit.",
+            prompt,
+        )
+        self.assertIn(
+            "a step only the implementing agent can do, such as repeated runs, putting the "
+            "cause back or a manual probe, is not a criterion; put it in `implementation_notes`",
+            prompt,
+        )
+        # A flaky failure gets a test that reproduces its cause, not repeated passes.
+        self.assertIn(
+            "For a failure that happens only at times, such as a flaky test, make the "
+            "criterion a test that reproduces the cause on every run",
+            prompt,
+        )
+        self.assertIn("cannot be shown by a test or a check, say so in `risks`", prompt)
+
+    def test_review_judges_each_criterion_and_unmet_ones_request_changes(self):
+        prompt = " ".join(agent.build_prompt("review", CONTEXT, make_config()).split())
+        self.assertIn("no criterion is `unmet` and every check passed", prompt)
+        self.assertIn("`unverifiable` when they hold no evidence either way", prompt)
+        self.assertIn("A criterion that a collaborator dropped or replaced", prompt)
+
     def test_replan_revises_the_latest_plan(self):
         context = {**CONTEXT, "since_plan": "@olivia: Also accept `label`."}
         extra = {"previous": agent.previous_plan(context)}
@@ -161,7 +187,8 @@ class PromptTests(unittest.TestCase):
 
     def test_review_schema_keeps_evidence_apart_from_the_criterion(self):
         item = agent.SCHEMAS["review"]["properties"]["criteria"]["items"]
-        self.assertEqual(item["required"], ["criterion", "met", "test", "evidence"])
+        self.assertEqual(item["required"], ["criterion", "status", "test", "evidence"])
+        self.assertEqual(item["properties"]["status"]["enum"], ["met", "unmet", "unverifiable"])
 
     def test_review_schema_requires_previous_findings(self):
         schema = agent.SCHEMAS["review"]

@@ -12,7 +12,7 @@ from nexkit import cli
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
 from nexkit.progress import trigger
-from nexkit.report import report, review_body, workflow_file
+from nexkit.report import criterion_status, report, review_body, workflow_file
 from nexkit.route import route
 from nexkit.state import read_state
 from tests.support import FakeGitHub, make_config
@@ -49,7 +49,7 @@ def review_result(verdict="approve", findings=()):
             "criteria": [
                 {
                     "criterion": "add works",
-                    "met": True,
+                    "status": "met",
                     "test": "test_add",
                     "evidence": "test_calc.py:5 asserts add(2, 3) == 5",
                 }
@@ -315,6 +315,73 @@ class ReportTests(ReportCase):
         self.run_report(cfg=make_config(merge={"after_workflows": ["ci.yml"]}))
         self.assertFalse(self.gh.merged)
         self.assertFalse(self.gh.dispatches)
+
+    def criterion(self, status, name="floats add"):
+        review = review_result()
+        review["output"]["criteria"].append(
+            {"criterion": name, "status": status, "test": "", "evidence": "No float test."}
+        )
+        return review
+
+    def test_an_unmet_criterion_requests_changes_whatever_the_verdict(self):
+        self.candidate(review=self.criterion("unmet"))
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(outcome["outcome"], "auto_fix")
+        self.assertFalse(self.gh.merged)
+        self.assertIn(("nexkit/review", "failure"), self.statuses())
+        self.assertEqual(self.gh.dispatches[0]["inputs"]["command"], "fix")
+        # The fix round and the next review get the criterion as a blocking finding.
+        _, state = read_state(self.gh.comments(6))
+        [finding] = state["feedback"]["review"]["findings"]
+        self.assertEqual(finding["severity"], "blocking")
+        self.assertEqual(
+            finding["body"], "Acceptance criterion not met: floats add. No float test."
+        )
+        self.assertEqual(state["last_review"]["verdict"], "request_changes")
+        body = self.gh.created_reviews[0]["body"]
+        self.assertIn("### NexKit review: changes requested", body)
+        self.assertIn("because an acceptance criterion is not met", body)
+        self.assertIn("- ❌ floats add (no test)", body)
+
+    def test_an_unverifiable_criterion_leaves_the_merge_to_a_person(self):
+        self.candidate(review=self.criterion("unverifiable", "passes five runs in a row"))
+        cfg = make_config(merge={"auto": True}, notify=["owner"])
+        outcome = self.run_report(cfg=cfg)
+        self.assertEqual(outcome["outcome"], "ready")
+        self.assertFalse(self.gh.merged)
+        self.assertFalse(self.gh.dispatches)
+        [review] = [s for s in self.gh.statuses if s["context"] == "nexkit/review"]
+        self.assertEqual(review["state"], "success")
+        self.assertIn("could not verify", review["description"])
+        [row] = self.gh.run_comments(6)
+        self.assertIn("NexKit does not merge it by itself.", row["body"])
+        self.assertIn("Confirm them before merging:\n\n- passes five runs in a row", row["body"])
+        self.assertIn("could not verify", row["run"]["attention"])
+        [mention] = [c["body"] for c in self.gh.comments(6) if c["body"].startswith("@owner")]
+        self.assertIn("confirm them before merging", mention)
+        body = self.gh.created_reviews[0]["body"]
+        self.assertIn("- ❔ passes five runs in a row (no test)", body)
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+
+    def test_an_unverifiable_criterion_without_auto_merge_is_listed(self):
+        self.candidate(review=self.criterion("unverifiable"))
+        self.assertEqual(self.run_report()["outcome"], "ready")
+        [row] = self.gh.run_comments(6)
+        self.assertNotIn("does not merge it by itself", row["body"])
+        self.assertIn("- floats add", row["body"])
+
+    def test_an_unverifiable_criterion_of_a_rejected_review_changes_nothing(self):
+        finding = {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Wrong sign"}
+        review = self.criterion("unverifiable")
+        review["output"].update(verdict="request_changes", findings=[finding])
+        self.candidate(review=review)
+        self.assertEqual(self.run_report()["outcome"], "auto_fix")
+        self.assertNotIn("could not verify", self.gh.created_reviews[0]["body"])
+
+    def test_a_stored_review_from_before_criteria_had_a_status(self):
+        self.assertEqual(criterion_status({"met": True}), "met")
+        self.assertEqual(criterion_status({"met": False}), "unmet")
+        self.assertEqual(criterion_status({"status": "unverifiable"}), "unverifiable")
 
     def test_failures_schedule_bounded_automatic_fixes(self):
         finding = {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Wrong sign"}
@@ -654,7 +721,7 @@ class ReportTests(ReportCase):
         ]
         review = review_result("request_changes", findings)
         review["output"]["criteria"].append(
-            {"criterion": "floats add", "met": False, "test": "", "evidence": "No float test."}
+            {"criterion": "floats add", "status": "unmet", "test": "", "evidence": "No float test."}
         )
         checks = [{"name": "test", "passed": True}]
         body = review_body(review, checks)

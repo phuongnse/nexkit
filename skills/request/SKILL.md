@@ -21,8 +21,11 @@ succeeds. Help the user write issues that one session can finish and test.
    - A title that states the outcome ("Reject empty passwords at sign-up").
    - **Context**: what exists today, with file paths when known.
    - **Expected behaviour**: concrete and observable.
-   - **Acceptance criteria**: two to five checks that a test can verify. Only code
-     behaviour; never process steps such as approvals or PR text.
+   - **Acceptance criteria**: two to five checks that a test in the change or one of the
+     project's checks can show. NexKit's review reads the code and the check results and
+     runs nothing, so steps such as "passes five runs in a row" or a manual probe are not
+     criteria. For a flaky failure, ask for a test that reproduces the cause every time.
+     Only code behaviour; never process steps such as approvals or PR text.
    - **Out of scope**, when helpful.
 
 4. **Check autopilot.** Read `.nexkit/config.json`. When `autopilot.enabled` is true,

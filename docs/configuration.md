@@ -65,7 +65,7 @@ their defaults.
 | Key | Default | Meaning |
 |---|---|---|
 | `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see [How it works](how-it-works.md#failing-checks-the-base-branch-fixed). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
-| `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves. Branch protection still applies. See [Automatic merge](#automatic-merge). |
+| `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves, unless it leaves a criterion for a person to confirm. Branch protection still applies. See [Automatic merge](#automatic-merge). |
 | `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
 | `conflicts.max_rounds` | `3` | Those rounds per pull request (1 to 10), apart from `fix.max_auto_rounds`. |
@@ -315,7 +315,13 @@ older key, or missed, with the key it looked for.
 
 With `merge.auto: false` (the default) a person decides every merge. With `true`, the
 `report` job squash-merges a NexKit pull request as soon as every check passes and the AI
-review approves. It merges with the default Actions token; no extra secret is needed.
+review approves. It merges with the default Actions token; no extra secret is needed. The
+pull request description says which of the two applies.
+
+The review approves only when no acceptance criterion is unmet. When it could not verify a
+criterion from the diff, its tests and the check results, NexKit does not merge: the
+round's comment lists the criteria for a person to confirm before merging by hand, and
+`notify` mentions its people. See [How it works](how-it-works.md#stages).
 
 After the merge, NexKit closes the issue the pull request implements as completed and
 comments a link to the pull request and the merge commit on it. GitHub does this itself

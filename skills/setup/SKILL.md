@@ -109,8 +109,9 @@ files or repository settings, and wait for confirmation.
    `"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}`. NexKit uses a push token only
    when the config names it.
 
-   If the user wants `"merge": {"auto": true}`, say that branch protection still applies and
-   that a merge by NexKit starts no `push` CI on the base branch. Offer to list those CI
+   If the user wants `"merge": {"auto": true}`, say that branch protection still applies,
+   that a pull request whose review could not verify an acceptance criterion waits for a
+   person, and that a merge by NexKit starts no `push` CI on the base branch. Offer to list those CI
    workflows in `merge.after_workflows` (for example `["ci.yml"]`) so NexKit starts them
    after each merge; each one needs a `workflow_dispatch` trigger, which is a change the
    user makes to that workflow file.

@@ -67,6 +67,7 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 | The agent failed or errored, publishing failed, or the review did not complete | yes, unless autopilot asks for a split after an implement or fix agent ran out of time (see [limits on parts](#autopilot)) |
 | Checks or review still fail and no automatic fix rounds remain | yes |
 | Ready, with `merge.auto` off | yes |
+| Ready, with an acceptance criterion the review could not verify | yes, also with `merge.auto` on |
 | GitHub refused the automatic merge | yes |
 | Merged, or an automatic fix or conflict round started | no |
 | Paused at the usage limit, resuming by itself | no |
@@ -232,6 +233,15 @@ Files, signatures, commands: the detail the implementing agent needs.
 Empty sections are left out. The implementing agent, and the reviewer, receive the whole
 comment, including the implementation notes, but not the profile lines.
 
+Each acceptance criterion is something the review can verify from what it sees: a test in
+the change, or the result of a project check on the candidate commit. Steps that only the
+implementing agent can run, such as running a test several times, putting the cause back
+or a manual probe, go to the implementation notes instead. For a failure that happens only
+at times, the plan prefers a test that reproduces the cause on every run, for example by
+forcing the delay or the race, since repeated passes do not show the cause is gone. A
+behaviour that no test or check can show is named under the risks, so a person knows to
+confirm it.
+
 A re-plan revises the latest plan. The agent gets that plan and the discussion since it,
 keeps what nothing asks to change, and applies what the discussion and the note ask for;
 where the issue now differs from the plan, the issue wins. A note that asks for a plan
@@ -339,10 +349,22 @@ before pushing and says that the pull request needs a manual merge or a push tok
 update workflows.
 
 **Review.** Read-only access, like the plan. Returns `approve` or `request_changes`, a
-verdict for each acceptance criterion with the test that covers it and the evidence, and
+status for each acceptance criterion with the test that covers it and the evidence, and
 findings marked `blocking` or `suggestion`. The prompt tells the reviewer not to block on
-things the implementer cannot change, such as PR text or CI files. The pull request review
-starts with what a person must act on:
+things the implementer cannot change, such as PR text or CI files.
+
+A criterion is `met` or `unmet` when the diff, its tests or the check results show either,
+and `unverifiable` when they show neither, such as a step only the implementing agent could
+run. NexKit decides from the criteria as well as the verdict:
+
+- An `unmet` criterion counts as changes requested, whatever the verdict: `nexkit/review`
+  fails, and the criterion goes to the next fix round as a blocking finding, so it starts
+  an automatic fix round while `fix.max_auto_rounds` remain.
+- An approved round with an `unverifiable` criterion never merges by itself, even with
+  `merge.auto` on. `nexkit/review` succeeds, so a person can merge by hand; the round's
+  comment lists the criteria to confirm, and `notify` mentions its people.
+
+The pull request review starts with what a person must act on:
 
 ```markdown
 ### NexKit review: changes requested
@@ -350,7 +372,7 @@ One or two sentences: the main reason for the verdict.
 
 **Things to look at**         findings, blocking first, with file and line
 **Previous findings**         what happened to each earlier finding (later rounds)
-**Acceptance criteria**       ✅ or ❌ and the covering test, one line each
+**Acceptance criteria**       ✅ met, ❌ unmet or ❔ unverifiable, and the covering test
 **Checks**: ✅ `test`
 
 <details><summary>Evidence</summary>

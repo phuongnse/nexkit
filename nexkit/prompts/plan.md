@@ -42,14 +42,24 @@ $writing
   issue settles everything.
 - `risks`: what could go wrong, and what the plan leaves out on purpose. One sentence
   each. Empty when there is nothing worth saying.
-- `acceptance_criteria`: one to six observable behaviours, each verifiable by an automated
-  test or a command. One check per criterion, at most about 30 words. Describe code
-  behaviour only. Never write criteria about pull request text, approvals, releases or
-  other process, because no agent can satisfy them.
+- `acceptance_criteria`: one to six observable behaviours, each verifiable by the review
+  from what it sees: a test in the change, or the result of a project check above, run
+  once on the candidate commit. The review reads the code and cannot run anything, so a
+  step only the implementing agent can do, such as repeated runs, putting the cause back
+  or a manual probe, is not a criterion; put it in `implementation_notes`. One check per
+  criterion, at most about 30 words. Describe code behaviour only. Never write criteria
+  about pull request text, approvals, releases or other process, because no agent can
+  satisfy them.
+
+  For a failure that happens only at times, such as a flaky test, make the criterion a
+  test that reproduces the cause on every run, for example by forcing the delay or the
+  race, when one is possible. Repeated passes do not show the cause is gone. When a
+  behaviour cannot be shown by a test or a check, say so in `risks`, so the person knows
+  to confirm it.
 - `implementation_notes`: the steps for the implementing agent, in order, one step each:
-  the files to change, signatures, data mappings and commands to run. This is the place
-  for that detail. A step may hold a short fenced code block when a signature or command
-  does not fit on one line. NexKit shows the notes to the person collapsed.
+  the files to change, signatures, data mappings and commands to run, including checks
+  only it can run. This is the place for that detail. A step may hold a short fenced code
+  block when a signature or command does not fit on one line. NexKit shows the notes to the person collapsed.
 - `questions`: only questions whose answers would change the implementation. Leave the list
   empty when the issue is clear enough to proceed with reasonable defaults. Each has:
   - `question`: one question, with what it decides.

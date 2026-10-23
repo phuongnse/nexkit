@@ -161,11 +161,11 @@ SCHEMAS = {
                     "type": "object",
                     "properties": {
                         "criterion": {"type": "string"},
-                        "met": {"type": "boolean"},
+                        "status": {"enum": ["met", "unmet", "unverifiable"]},
                         "test": {"type": "string"},
                         "evidence": {"type": "string"},
                     },
-                    "required": ["criterion", "met", "test", "evidence"],
+                    "required": ["criterion", "status", "test", "evidence"],
                 },
             },
             "findings": {

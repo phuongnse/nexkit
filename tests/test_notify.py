@@ -40,6 +40,11 @@ class RuleTests(unittest.TestCase):
         self.assertIn("ready", needs_person("ready", self.cfg))
         self.assertIsNone(needs_person("ready", make_config(merge={"auto": True})))
 
+    def test_ready_with_criteria_to_confirm(self):
+        for cfg in (self.cfg, make_config(merge={"auto": True})):
+            reason = needs_person("ready", cfg, confirm=["passes five runs"])
+            self.assertIn("could not verify every acceptance criterion", reason)
+
     def test_merge_refused(self):
         self.assertIn("refused", needs_person("merge_refused", self.cfg))
 

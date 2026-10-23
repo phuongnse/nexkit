@@ -72,6 +72,14 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 | Merged, or an automatic fix or conflict round started | no |
 | Paused at the usage limit, resuming by itself | no |
 | Paused, and NexKit will not resume it (`usage_limit.resume: false`, or a second pause with an unknown reset time) | yes |
+| The base branch changed workflow files that a round must merge, without a push token that may push them | yes |
+
+With autopilot on, its sweeps come to the same answers for the issues in scope, and say
+what else waits for a person: an issue whose pull request needs one, an author without
+write access, a blocker outside the scope, a command that never ran. When an issue starts
+to wait for a person and nobody was mentioned since its latest run, the sweep mentions
+`notify` once, on the issue. `nexkit status` lists every such issue under *Needs a person*
+with the same reason.
 
 ### One run at a time
 
@@ -507,7 +515,14 @@ issue run in that group as well, and start a sweep.
   after six hours the issue waits for a person.
 - **People stay in charge.** A person's command, a plan's questions, a blocked or failed
   run and a `needs_human` pull request all stop autopilot on that issue, exactly where they
-  stop NexKit without it. A collaborator's comment after the latest plan leads to a new
+  stop NexKit without it. Such an issue waits for a person, with the reason that `nexkit
+  status` lists under *Needs a person*, `notify` is mentioned once for it, and it leaves its
+  place within `max_parallel` to the other issues. So does an issue whose pull request
+  needs a person: its round stopped and autopilot cannot answer or split it, it needs a
+  human decision to merge, GitHub refused the merge, or it conflicts with the base branch
+  and its conflict rounds are used up (or `conflicts.auto_resolve` is off). An issue blocked
+  by an open issue outside the scope waits for a person too; one blocked inside the scope
+  waits for that issue. A collaborator's comment after the latest plan leads to a new
   plan before `/nexkit go`.
 - **Answers and splits.** Each question in a plan or a blocked round has options and the
   number of the one the agent recommends, or 0 for none; a number cannot be copied loosely,
@@ -526,7 +541,9 @@ issue run in that group as well, and start a sweep.
   each as a *blocked by* relationship on GitHub. Parts that need no other part start at
   once. A NexKit pull request of the split issue is closed as superseded. An implement or
   fix agent that ran out of time leads to one re-plan with a note to split the work; a
-  second time waits for a person. This is the only case where an agent error leads to more
+  second time waits for a person. When the re-plan after a fix round does not split the
+  issue and needs nobody, autopilot starts a fix round on the pull request that follows
+  the revised plan. This is the only case where an agent error leads to more
   agent work, and it changes the plan rather than repeating the run. The note asks the
   plan to say why the round did not finish: too much work splits as before, and a failure
   whose cause was not found makes the first part a diagnosis that finds the cause, with

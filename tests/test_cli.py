@@ -44,6 +44,12 @@ class InitDoctorTests(unittest.TestCase):
         self.assertEqual(cli.main(["init", "--repo", str(self.root)]), 2)  # refuses overwrite
         self.assertEqual(cli.main(["init", "--repo", str(self.root), "--force"]), 0)
 
+    def test_init_names_the_people_to_notify(self):
+        args = ["init", "--repo", str(self.root), "--notify", "@olivia", "--notify", "alice"]
+        self.assertEqual(cli.main([*args, "--notify", "olivia"]), 0)
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(cfg["notify"], ["olivia", "alice"])
+
     def test_init_rejects_bad_check(self):
         self.assertEqual(cli.main(["init", "--repo", str(self.root), "--check", "npm test"]), 2)
         self.assertFalse((self.root / ".nexkit").exists())

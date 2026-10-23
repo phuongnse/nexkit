@@ -395,11 +395,11 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
 | The plan or round after autopilot's answers asks again, and no person commented since | Nothing: a person decides, and `notify` mentions them. A comment by a person lets autopilot answer again. |
 | Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
-| Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. |
+| Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. When that plan does not split the issue and needs nobody, starts `/nexkit go`, or `/nexkit fix` on its pull request. |
 | A bug issue that autopilot opened for a CI failure on the default branch | Goes first: it is planned before every other issue in scope. |
 | An issue that autopilot opened for a failure of flaky runs on the default branch | Goes right after those bug issues. |
-| Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep | Nothing: a person decides, as without autopilot, and `notify` mentions them. Other issues go on. |
-| A run on it is running or paused, or its pull request is open | Nothing: the run, or the pull request's automatic rounds, carry it on. |
+| Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
+| A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
 | The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. |
 
 - **Scope.** `"milestone"` takes the open issues of the earliest open milestone: by due
@@ -416,8 +416,8 @@ every open issue in scope, oldest first, and starts the one command that moves i
   someone with write access to the repository; only they and other writers can edit them.
   `nexkit status` shows the issues it leaves alone and why.
 - **At most `max_parallel` at once.** An issue counts while a run on it is running or
-  paused, while its pull request is open, and while a command that autopilot started has
-  not run yet. With `null`, every ready issue starts at once; NexKit's conflict rounds
+  paused, while its pull request is open and needs nobody, and while a command that
+  autopilot started has not run yet. An issue that waits for a person does not count. With `null`, every ready issue starts at once; NexKit's conflict rounds
   (see [Conflicts with the base branch](#conflicts-with-the-base-branch)) keep the pull
   requests mergeable.
 - **One command per step.** Autopilot keeps one comment on each issue that names the
@@ -510,7 +510,11 @@ The choice follows the run's outcome only, never a judgment by the agent (see
 [How it works](how-it-works.md#when-a-person-is-needed)). A run mentions at most once;
 nobody outside `notify` is ever mentioned. Write logins without `@`. `nexkit doctor`
 warns about a listed login without write access, but NexKit still mentions it. With
-`[]`, nothing is posted.
+`[]`, nothing is posted. With autopilot, an issue that starts to wait for a person without
+a run that mentioned anyone, such as one whose command never ran, is mentioned by the next
+sweep, once for its latest run. Autopilot runs unattended, so `nexkit doctor` says when it
+is on and `notify` is empty; `nexkit init --notify LOGIN`, repeated for each login, sets
+it.
 
 ## Conflicts with the base branch
 

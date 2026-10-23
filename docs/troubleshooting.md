@@ -127,7 +127,9 @@ asked for one.
 **Autopilot does not start an issue.** Run `nexkit status`: its *Autopilot* section says,
 for each open issue in scope, what the next sweep does and why an issue waits, such as
 another issue that blocks it (GitHub's *blocked by*; "Depends on" text does not count), an author without write
-access, `max_parallel`, or a question without a recommended option. An issue outside the
+access, `max_parallel`, or a question without a recommended option. Every issue that
+waits for a person is also listed under *Needs a person*, and does not count toward
+`max_parallel`. An issue outside the
 earliest open milestone (or without `autopilot.label`) is not in scope. A command that
 autopilot started but that never ran is not started again; post it yourself. To sweep
 again at once: `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.

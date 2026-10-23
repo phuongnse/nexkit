@@ -132,7 +132,8 @@ files or repository settings, and wait for confirmation.
    moves on when an issue closes; `{"scope": "label", "label": "<label>"}` takes the
    issues with a label instead. Say that it skips their approval of each plan, that it
    takes only issues opened by people with write access, and that it stops on questions,
-   blocked or failed runs and mentions `notify`. `"max_parallel": <n>` limits how many
+   blocked or failed runs and mentions `notify`, so recommend setting `notify` with it
+   (`nexkit init --notify <login>`, or `"notify": ["<login>"]`). `"max_parallel": <n>` limits how many
    issues are in progress at once; without it, every ready issue starts. It pairs with
    `merge.auto`, `conflicts.auto_resolve`, `close_parent_issues` and `notify`. With
    `"answer": "recommended"`, it also answers the questions of plans and blocked rounds

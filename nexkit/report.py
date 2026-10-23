@@ -396,13 +396,13 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
 def notify(gh, cfg, number, reason):
     """Mention the people in `notify` once, in a new comment: GitHub notifies people
     mentioned in a new comment, not in an edited one."""
-    if not reason or not cfg["notify"]:
+    text = autopilot.mention_text(cfg, reason) if reason else None
+    if not text:
         return
-    people = " ".join(f"@{login}" for login in cfg["notify"])
     try:
-        gh.comment(number, f"{people} a person is needed: {reason}.")
+        gh.comment(number, text)
     except GitHubError as exc:
-        print(f"warning: could not mention {people}: {exc}", file=sys.stderr)
+        print(f"warning: could not mention {', '.join(cfg['notify'])}: {exc}", file=sys.stderr)
 
 
 def run_status(outcome):

@@ -63,6 +63,7 @@ def cmd_init(args):
         check_timeouts=args.check_timeout,
         check_slow=args.check_slow,
         check_results=args.check_results,
+        notify=args.notify,
     )
     for path in written:
         print(f"wrote {path}")
@@ -423,6 +424,13 @@ def build_parser():
         help="A file or folder where the check NAME writes results; repeat for more",
     )
     p.add_argument("--setup", action="append", default=[], metavar="COMMAND")
+    p.add_argument(
+        "--notify",
+        action="append",
+        default=[],
+        metavar="LOGIN",
+        help="Mention LOGIN when a run needs a person; repeat for more",
+    )
     p.add_argument(
         "--model",
         default=configuration.DEFAULTS["model"],

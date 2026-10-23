@@ -97,6 +97,7 @@ def init(
     check_timeouts=(),
     check_slow=(),
     check_results=(),
+    notify=(),
 ):
     root = Path(root)
     config_path = root / configuration.CONFIG_PATH
@@ -117,6 +118,8 @@ def init(
         "fix": dict(configuration.DEFAULTS["fix"]),
         "merge": {"auto": False},
     }
+    if notify:
+        raw["notify"] = list(dict.fromkeys(login.lstrip("@") for login in notify))
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")
@@ -403,6 +406,21 @@ def _unattended_push(cfg):
     ]
 
 
+def _unheard(cfg):
+    """Findings: whether anyone hears when autopilot stops for a person. Autopilot runs
+    unattended, so a stop that mentions nobody looks like a stall."""
+    if not cfg["autopilot"]["enabled"] or cfg["notify"]:
+        return []
+    return [
+        (
+            True,
+            "autopilot.enabled is on, but notify is empty: nobody is mentioned when autopilot "
+            'stops for a person. Name the logins to mention, such as "notify": ["owner"], or '
+            "run 'nexkit init --notify LOGIN'",
+        )
+    ]
+
+
 def _secrets_set(cfg, names, repo):
     """Findings: a secret of each agent that a stage uses is set in the repository."""
     findings = []
@@ -450,6 +468,7 @@ def doctor(root):
             findings.append((False, "No checks configured; NexKit cannot verify changes"))
         findings += [_after_merge_workflow(root, name) for name in cfg["merge"]["after_workflows"]]
         findings += _unattended_push(cfg)
+        findings += _unheard(cfg)
     except configuration.ConfigError as exc:
         findings.append((False, str(exc)))
 

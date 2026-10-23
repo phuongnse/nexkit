@@ -818,6 +818,154 @@ class SplitTests(AnswerAndSplitCase):
         self.assertIn("3 levels deep", autopilot.DEPTH_REASON)
 
 
+class WaitTests(AnswerAndSplitCase):
+    """Issues that need a person wait, are listed, mention `notify` and leave their place."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(
+            autopilot={"enabled": True, "answer": "recommended", "max_parallel": 1},
+            conflicts={"auto_resolve": True, "max_rounds": 1},
+            notify=["olivia"],
+        )
+
+    def with_pull(self, issue, pull, **run):
+        self.issue(issue)
+        self.posted_plan(issue)
+        self.run_comment(issue, "go", outcome="ready")
+        self.gh.add_pull(pull, issue)
+        row = {"round": 1, "trigger": "implement", "url": f"u{pull}", "status": "success"}
+        self.gh.comment(pull, render_run({**row, **run}))
+
+    def test_a_pull_request_that_needs_a_person_waits_and_leaves_its_place(self):
+        from nexkit.status import collect
+
+        attention = "checks or review still need attention and no automatic fix rounds remain"
+        self.with_pull(1, 11, outcome="needs_human", attention=attention)
+        self.with_pull(2, 12, status="failure", outcome="review_failed", attention="no review")
+        self.with_pull(3, 13, outcome="merge_refused", attention="GitHub refused the merge")
+        self.with_pull(4, 14, outcome="ready")
+        self.gh.comment(
+            14,
+            render_run(
+                {
+                    "round": 2,
+                    "trigger": "fix (auto, conflicts)",
+                    "url": "c",
+                    "status": "success",
+                    "conflicts": True,
+                }
+            ),
+        )
+        self.gh.pulls[14]["mergeable"] = False
+        self.issue(5)
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        reasons = {s["number"]: (s["state"], s["reason"]) for s in steps}
+        self.assertEqual(reasons[1], ("waits", attention))
+        self.assertEqual(reasons[2], ("waits", "no review"))
+        self.assertEqual(reasons[3], ("waits", "GitHub refused the merge"))
+        used = "pull request #14 conflicts with `main`, and its conflict rounds are used up"
+        self.assertEqual(reasons[4], ("waits", used))
+        # None of them takes the one place, so the ready issue starts.
+        self.assertEqual(reasons[5][0], "start")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        # Each one mentions `notify` once, and `nexkit status` lists each with its reason.
+        for number in (1, 2, 3, 4):
+            self.assertEqual(
+                len(self.gh.comments_matching(number, "@olivia a person is needed")), 1
+            )
+        self.sweep()
+        for number in (1, 2, 3, 4):
+            self.assertEqual(
+                len(self.gh.comments_matching(number, "@olivia a person is needed")), 1
+            )
+        data = collect(self.gh, self.cfg, workers=1)
+        listed = {(item["number"], item["reason"]) for item in data["needs_person"]}
+        for number in (1, 2, 3, 4):
+            self.assertTrue(
+                {(number, reasons[number][1]), (number + 10, reasons[number][1])} & listed,
+                number,
+            )
+
+    def test_every_reason_to_wait_for_a_person_is_listed_by_status(self):
+        from nexkit.status import collect, render
+
+        self.issue(1, user="bob")
+        self.issue(2)
+        self.posted_plan(2)
+        self.run_comment(2, "go", outcome="ready")  # its pull request was closed since
+        self.issue(3)
+        self.gh.add_issue(9, title="Elsewhere", milestone=None)
+        self.gh.blockers[3] = [9]
+        self.issue(4)
+        self.gh.blockers[4] = [2]  # in scope: autopilot works on it
+        data = collect(self.gh, self.cfg, workers=1)
+        steps = {s["number"]: s for s in data["autopilot"]["issues"]}
+        needs = {item["number"]: item["reason"] for item in data["needs_person"]}
+        for number in (1, 2, 3):
+            self.assertEqual(
+                (steps[number]["state"], needs[number]), ("waits", steps[number]["reason"])
+            )
+        self.assertEqual(needs[3], "waits for #9; #9 is not in scope")
+        self.assertNotIn(4, needs)
+        self.assertNotIn("Needs a person\n  nothing", render(data))
+
+    def test_a_fix_round_out_of_time_is_carried_on_as_report_promised(self):
+        decision = {"action": "fix", "issue": 5, "pr": 9}
+        agent = {"status": "error", "timed_out": True}
+        self.with_pull(5, 9)
+        self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "agent_error", agent))
+        round_ = {
+            "trigger": "fix",
+            "status": "failure",
+            "outcome": "agent_error",
+            "timed_out": True,
+        }
+        self.gh.comment(9, render_run({**round_, "round": 2, "url": "f2"}))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        # The plan is not too large, so a fix round follows it on the pull request.
+        self.posted_plan(5)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("fix", 9)])
+        self.assertIn("the plan was revised since", self.gh.dispatches[-1]["inputs"]["note"])
+        # That one runs out of time too: now a person decides, and `notify` hears it.
+        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "agent_error", agent))
+        self.gh.comment(
+            9, render_run({**round_, "round": 3, "url": "f3", "attention": "out of time"})
+        )
+        self.sweep()
+        self.assertEqual(len(self.started()), 2)
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", "out of time"))
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed: out of time."))
+
+    def test_a_revised_plan_with_questions_on_a_pull_request_is_answered_or_waits(self):
+        self.with_pull(5, 9)
+        round_ = {
+            "trigger": "fix",
+            "status": "failure",
+            "outcome": "agent_error",
+            "timed_out": True,
+        }
+        self.gh.comment(9, render_run({**round_, "round": 2, "url": "f2"}))
+        self.sweep()
+        self.posted_plan(5, questions=[{**QUESTION, "recommended": 0}])
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(step["state"], "waits")
+
+    def test_doctor_says_when_nobody_hears_autopilot_stop(self):
+        from nexkit.scaffold import _unheard
+
+        [finding] = _unheard(pilot())
+        self.assertIn("notify is empty", finding[1])
+        self.assertEqual(_unheard(self.cfg), [])
+        self.assertEqual(_unheard(make_config()), [])
+
+
 class RecordTests(unittest.TestCase):
     def test_the_plan_comment_shows_recommendations_and_keeps_a_record_agents_never_see(self):
         from nexkit.publish import render_plan

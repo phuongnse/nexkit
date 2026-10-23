@@ -33,6 +33,7 @@ from .state import (
     answers_marker,
     answers_text,
     by_bot,
+    conflict_rounds_used,
     latest_plan,
     plan_data,
     questions,
@@ -297,12 +298,20 @@ def repeated_titles(issue, parts):
     return [part.get("title") or "" for part in parts if _bare(part.get("title")).startswith(own)]
 
 
-def waits_for(gh, issue):
-    """Why an issue is not ready yet, or None: open issues that block it on GitHub. The
-    order of sub-issues does not count; a part that needs another says so with a *blocked
-    by* relationship."""
-    blockers = [b["number"] for b in gh.blocked_by(issue["number"]) if b.get("state") == "open"]
-    return "waits for " + ", ".join(f"#{n}" for n in blockers) if blockers else None
+def waits_for(gh, issue, where=None):
+    """(why an issue is not ready yet, whether a person must act), or None: open issues
+    that block it on GitHub. The order of sub-issues does not count; a part that needs
+    another says so with a *blocked by* relationship. Autopilot works on the blockers in
+    its scope by itself; one outside it waits for a person."""
+    blockers = [b for b in gh.blocked_by(issue["number"]) if b.get("state") == "open"]
+    if not blockers:
+        return None
+    reason = "waits for " + ", ".join(f"#{b['number']}" for b in blockers)
+    outside = [b for b in blockers if where is not None and not in_scope(where, b)]
+    if outside:
+        listed = ", ".join(f"#{b['number']}" for b in outside)
+        return f"{reason}; {listed} {'is' if len(outside) == 1 else 'are'} not in scope", True
+    return reason, False
 
 
 # -- the record of what autopilot started -------------------------------------------
@@ -351,6 +360,10 @@ def _after_plan(comments, plan):
 
 
 def _step(issue, state, reason="", **fields):
+    """One issue's step. A step that waits waits for a person, unless `person` is False:
+    for another issue, or for a place within `max_parallel`."""
+    if state == "waits":
+        fields.setdefault("person", True)
     return {
         "number": issue["number"],
         "title": issue.get("title", ""),
@@ -376,6 +389,13 @@ def answers(cfg, items):
     return [{"question": item["question"], "answer": item["recommended"]} for item in found]
 
 
+# The note on the fix round that follows a revised plan after a round ran out of time.
+REPLANNED_NOTE = (
+    "The last round did not finish within its time limit, and the plan was revised since. "
+    "Follow the revised plan."
+)
+# What every comment that mentions the people in `notify` says before its reason.
+NEEDED = "a person is needed: "
 REPEATED = (
     "the round after autopilot's answers asked again, and nobody commented since; a person decides"
 )
@@ -491,21 +511,118 @@ def _planned(gh, cfg, issue, plan, last, record, start, comments):
     return _step(issue, "start", "the plan needs nobody", command="go", **start)
 
 
-def assess(gh, cfg, issue, open_pulls, now=None):
+def _meaningful(rounds):
+    """The latest round that says something about the pull request: a round that found
+    nothing to merge does not."""
+    for run in reversed(rounds):
+        if run.get("outcome") != "up_to_date":
+            return run
+    return rounds[-1] if rounds else None
+
+
+def _conflict_wait(gh, cfg, pull, rounds):
+    """Why a pull request that conflicts with its base branch waits for a person, or None:
+    without `conflicts.auto_resolve`, or when its automatic conflict rounds are used up."""
+    details = gh.pull(pull)
+    if details.get("mergeable") is not False:
+        return None
+    base = (details.get("base") or {}).get("ref") or "its base branch"
+    if not cfg["conflicts"]["auto_resolve"]:
+        return f"pull request #{pull} conflicts with `{base}`; comment `/nexkit fix` on it"
+    if conflict_rounds_used(rounds) >= cfg["conflicts"]["max_rounds"]:
+        return f"pull request #{pull} conflicts with `{base}`, and its conflict rounds are used up"
+    return None
+
+
+def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comments):
+    """The step for an issue whose NexKit pull request is open, from its latest round: a
+    round that runs, or started the next one, carries it on; one that stopped is answered
+    or split as after `/nexkit go`; anything that needs a person waits for them."""
+    latest = _meaningful(rounds)
+    if latest is None:
+        return _step(issue, "active", f"pull request #{pull} is open")
+    if latest.get("status") in ACTIVE or latest.get("outcome") in CHAINED:
+        return _step(issue, "active", f"pull request #{pull} has a round on its way")
+    if latest.get("status") == FAILURE:
+        found = (pull_comments, comments)
+        step = _stopped(gh, cfg, issue, latest, record, start, "fix", pull, found)
+        return step or _step(
+            issue, "waits", latest.get("attention") or f"the last round of #{pull} failed"
+        )
+    if latest.get("attention"):
+        return _step(issue, "waits", latest["attention"])
+    conflict = _conflict_wait(gh, cfg, pull, rounds)
+    if conflict:
+        return _step(issue, "waits", conflict)
+    return _step(issue, "active", f"pull request #{pull} is open")
+
+
+def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
+    """The step after the plan autopilot asked for when a round of the pull request ran out
+    of time: split the issue as the plan suggests, answer its questions, or, when it needs
+    nobody, a fix round on the pull request that follows the revised plan."""
+    if last.get("status") != SUCCESS:
+        return _step(issue, "waits", last.get("attention") or "the last `/nexkit plan` failed")
+    data = plan_data(plan) if plan else None
+    split = _split(gh, issue, plan, data, record, start, pull) if data else None
+    if split:
+        return split
+    step = _planned(gh, cfg, issue, plan, last, record, start, comments)
+    if step["state"] != "start" or step["command"] != "go":
+        return step
+    reason = "the plan after the round that ran out of time needs nobody"
+    fields = {**start, "target": pull, "note": REPLANNED_NOTE}
+    return _step(issue, "start", reason, command="fix", **fields)
+
+
+def assess(gh, cfg, issue, open_pulls, now=None, where=None):
     """What autopilot does for one open issue in scope:
 
     - `active`: a run or pull request carries it on, or a command autopilot started has
       not run yet. It counts toward `autopilot.max_parallel`.
     - `start`: start `command` on `target`, after posting `answers` when there are any.
     - `split`: create the `parts` of a plan that is too large as sub-issues.
-    - `waits`: nothing to start, for `reason`: not ready yet, or a person decides.
+    - `waits`: nothing to start, for `reason`. With `person`, a person decides, and
+      `mentioned` says whether `notify` was mentioned since the latest run; otherwise it
+      waits for another issue or for a place within `max_parallel`.
+
+    `where` is the scope, from `locate`.
     """
+    step = _assess(gh, cfg, issue, open_pulls, now, where)
+    if step.get("person"):
+        pull = step.get("pull")
+        found = [gh.comments(issue["number"]), gh.comments(pull) if pull else []]
+        step["mentioned"] = mentioned(*found)
+    return step
+
+
+def mentioned(*groups):
+    """Whether NexKit mentioned a person in these comments since the latest run comment
+    in any of them."""
+    latest = max((c["id"] for found in groups for c, _ in run_comments(found)), default=0)
+    return any(
+        by_bot(c) and NEEDED in (c.get("body") or "") and c["id"] > latest
+        for found in groups
+        for c in found
+    )
+
+
+def mention_text(cfg, reason):
+    """The comment that mentions the people in `notify`, or None without any."""
+    if not cfg["notify"]:
+        return None
+    people = " ".join(f"@{login}" for login in cfg["notify"])
+    return f"{people} {NEEDED}{reason}."
+
+
+def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     number = issue["number"]
     if not trusted(gh, issue):
         login = author(issue) or "an unknown user"
         return _step(issue, "waits", f"opened by @{login}, who cannot write to the repository")
     if gh.sub_issues(number):
-        return _step(issue, "waits", "a parent issue: autopilot works on its sub-issues")
+        reason = "a parent issue: autopilot works on its sub-issues"
+        return _step(issue, "waits", reason, person=False)
     comments = gh.comments(number)
     pull = open_pulls.get(number)
     pull_comments = gh.comments(pull) if pull else []
@@ -523,23 +640,18 @@ def assess(gh, cfg, issue, open_pulls, now=None):
         return _step(issue, "active", f"`/nexkit {last['command']}` is {last['status']}")
     plan = latest_plan(comments)
     if pull:
-        # The plan autopilot asked for after the pull request's agent ran out of time may
-        # split the issue. A plan that is too large but that a person chose to implement
-        # anyway does not.
+        # The plan autopilot asked for after the pull request's agent ran out of time. A
+        # plan that is too large but that a person chose to implement anyway is not one.
         asked = record.get("split_asked") and record.get("command") == "plan"
-        data = plan_data(plan) if asked and plan else None
-        split = _split(gh, issue, plan, data, record, start, pull) if data else None
-        rounds = [run for _, run in run_comments(pull_comments) if "round" in run]
-        if not split and rounds and rounds[-1].get("status") == FAILURE:
-            split = _stopped(
-                gh, cfg, issue, rounds[-1], record, start, "fix", pull, (pull_comments, comments)
-            )
-        if split:
-            return {**split, "pull": pull}
-        return _step(issue, "active", f"pull request #{pull} is open")
-    blocked = waits_for(gh, issue)
+        if asked and last and last.get("command") == "plan":
+            step = _replanned(gh, cfg, issue, plan, last, record, start, comments, pull)
+        else:
+            rounds = [run for _, run in run_comments(pull_comments) if "round" in run]
+            step = _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comments)
+        return {**step, "pull": pull}
+    blocked = waits_for(gh, issue, where)
     if blocked:
-        return _step(issue, "waits", blocked)
+        return _step(issue, "waits", blocked[0], person=blocked[1])
     if last is None or plan is None:
         return _step(issue, "start", "no plan yet", command="plan", **start)
     if last["command"] == "go":
@@ -620,18 +732,34 @@ def preview(gh, cfg):
     if not where["issues"]:
         return where, []
     pulls = nexkit_pulls(gh)
-    steps = [assess(gh, cfg, issue, pulls) for issue in where["issues"]]
+    steps = [assess(gh, cfg, issue, pulls, where=where) for issue in where["issues"]]
     limit = cfg["autopilot"]["max_parallel"]
-    # An issue with an open pull request is in progress already.
-    busy = sum(step["state"] == "active" or bool(step.get("pull")) for step in steps)
+    # An issue whose pull request autopilot carries on is in progress already. One that
+    # waits for a person leaves its place to the others.
+    busy = sum(
+        step["state"] == "active" or (bool(step.get("pull")) and step["state"] != "waits")
+        for step in steps
+    )
     for step in steps:
         if step["state"] != "start" or step.get("pull"):
             continue
         if limit is not None and busy >= limit:
-            step.update(state="waits", reason=f"{busy} issues are in progress (max_parallel)")
+            reason = f"{busy} issues are in progress (max_parallel)"
+            step.update(state="waits", reason=reason, person=False)
             continue
         busy += 1
     return where, steps
+
+
+def mention(gh, cfg, step):
+    """Mention the people in `notify` on an issue that started to wait for a person, once
+    for its latest run, whether or not that run's `report` did. Returns a line or None."""
+    text = mention_text(cfg, step["reason"])
+    if not text or not step.get("person") or step.get("mentioned"):
+        return None
+    gh.comment(step["number"], text)
+    step["mentioned"] = True
+    return f"#{step['number']} waits for a person: {step['reason']}."
 
 
 def _save_record(gh, step, record, text, now=None):
@@ -1134,6 +1262,14 @@ def sweep(gh, cfg, workflow, ref, closed=None):
                 lines.append(f"Could not {what} #{step['target']}: {exc}")
         if not splits:
             break
+    for step in steps:
+        if step["state"] != "waits":
+            continue
+        try:
+            line = mention(gh, cfg, step)
+        except GitHubError as exc:
+            line = f"Could not mention anyone on #{step['number']}: {exc}"
+        lines += [line] if line else []
     if closed and not where["issues"]:
         lines += done(gh, cfg, where, closed)
     return lines or [f"Autopilot: nothing to start in {where['name']}."]

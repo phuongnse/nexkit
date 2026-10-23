@@ -20,6 +20,7 @@ from .state import (
     PAUSED,
     RUNNING,
     SUCCESS,
+    conflict_rounds_used,
     latest_plan,
     plan_profile,
     run_comments,
@@ -137,8 +138,11 @@ def pull_item(pull, comments, cfg):
     if state == "paused":
         item["resume_at"] = (run.get("resume") or {}).get("at")
     attention = (meaningful if run.get("status") == SUCCESS else run).get("attention")
+    used = conflict_rounds_used([r for _, r in rounds]) >= cfg["conflicts"]["max_rounds"]
     if state == "conflicting" and not cfg["conflicts"]["auto_resolve"]:
         attention = f"conflicts with `{pull['base']['ref']}`; comment `/nexkit fix`"
+    elif state == "conflicting" and used:
+        attention = f"conflicts with `{pull['base']['ref']}`, and its conflict rounds are used up"
     elif state in ("running", "conflicting"):
         attention = None
     elif not attention and state in ("failed", "blocked"):
@@ -240,7 +244,32 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
     }
     if cfg.get("autopilot", {}).get("enabled"):
         data["autopilot"] = autopilot_item(gh, cfg)
+        _autopilot_needs(data)
     return data
+
+
+def _autopilot_needs(data):
+    """List every issue that autopilot says waits for a person under what needs a person,
+    with autopilot's reason, unless its pull request is listed there for the same one."""
+    needs = data["needs_person"]
+    for step in data["autopilot"]["issues"]:
+        if step["state"] != "waits" or not step.get("person"):
+            continue
+        if any(
+            item["number"] == step.get("pull") and item["reason"] == step["reason"]
+            for item in needs
+        ):
+            continue
+        entry = {"number": step["number"], "kind": "issue", "reason": step["reason"]}
+        found = [
+            i
+            for i, item in enumerate(needs)
+            if (item["kind"], item["number"]) == ("issue", step["number"])
+        ]
+        if found:
+            needs[found[0]] = entry
+        else:
+            needs.append(entry)
 
 
 def autopilot_item(gh, cfg):
@@ -252,7 +281,7 @@ def autopilot_item(gh, cfg):
         "issues": [
             {
                 key: step[key]
-                for key in ("number", "title", "state", "reason", "command")
+                for key in ("number", "title", "state", "reason", "command", "person", "pull")
                 if key in step
             }
             for step in steps

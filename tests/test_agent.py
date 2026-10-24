@@ -46,7 +46,7 @@ DONE = {
     "outside_plan": [],
     "reviewer_notes": [],
 }
-FIX_DONE = {**DONE, "cause": "", "open_conflicts": []}
+FIX_DONE = {**DONE, "cause": "", "cause_outside": False, "open_conflicts": []}
 PLAN = {
     "summary": "Plan.",
     "changes": ["Fix add()."],
@@ -649,8 +649,32 @@ class ConflictTests(StageCase):
         result = self.run_after_failed_checks()
         self.assertIsNone(result["start_base"])
         self.assertEqual(result["status"], "error")
-        self.assertEqual(result["error"], "The agent finished without changing any files.")
+        self.assertEqual(
+            result["error"],
+            "The agent finished without changing any files. What it found: Fixed add.",
+        )
+        self.assertTrue(result["unchanged"])
         self.assertNotIn("## Merge of", self.claude.call()["prompt"])
+
+    def test_a_round_after_failed_checks_with_a_cause_outside_the_code_checks_again(self):
+        self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
+        self.checkout_branch()
+        cause = "The registry returned 500 Internal Server Error: e2e log line 812."
+        outside = {**FIX_DONE, "cause": cause, "cause_outside": True}
+        result = self.run_after_failed_checks(result=outside)
+        self.assertEqual((result["status"], result.get("recheck")), ("done", True))
+        self.assertIn("`cause_outside: true`", self.claude.call()["prompt"])
+        # Without a cause, or in a round a person started, it is still an error.
+        for spec, context in (
+            ({"result": {**outside, "cause": ""}}, {"merge_moved_base": True}),
+            ({"result": outside}, {}),
+        ):
+            self.checkout_branch()
+            self.claude.configure(**spec)
+            result = self.run_stage("fix", context={**CONTEXT, **context}, base="main")
+            self.assertEqual(result["status"], "error")
+            self.assertNotIn("recheck", result)
+        self.assertIn(f"What it found: {cause}", result["error"])
 
     def test_a_moved_base_that_changed_workflows_is_left_out_without_a_push_token(self):
         workflow = {".github/workflows/ci.yml": "on: push\n"}

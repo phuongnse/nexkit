@@ -66,6 +66,7 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 | The agent returned `blocked` | yes, unless autopilot answers it |
 | The agent failed or errored, publishing failed, or the review did not complete | yes, unless the error was transient and the command runs once more, or autopilot asks for a split after an implement or fix agent ran out of time (see [limits on parts](#autopilot)) |
 | Checks or review still fail and no automatic fix rounds remain | yes |
+| Checks or review still fail after a fix round found nothing to change for a cause outside the code and ran them again | yes |
 | Ready, with `merge.auto` off | yes |
 | Ready, with an acceptance criterion the review could not verify | yes, also with `merge.auto` on |
 | GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](#failure-handling) |
@@ -296,7 +297,9 @@ agent's summary and cause, and the checks that still failed after it, each with 
 failure signature (see [Failure handling](#failure-handling)). The agent is told not to
 repeat a change that did not help. Besides `summary`, a fix result has `cause`: the cause
 of the failures the round addressed and the evidence that shows it, such as trace, log or
-output lines, or an empty string. The round's comment and its commit message show a
+output lines, or an empty string, and `cause_outside`: whether that cause lies outside the
+code, which only an automatic round after failing checks uses (see [Failing checks the
+base branch fixed](#failing-checks-the-base-branch-fixed)). The round's comment and its commit message show a
 cause when there is one, and so does the next review's *Previous round* section. NexKit builds the pull request description from the implement result, in this
 order: *Summary* (two or three sentences, also the commit message), *What changed* (in
 behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
@@ -357,7 +360,12 @@ prompt says that the round merged the base branch cleanly and asks the agent to 
 what still fails on the merged code. When the agent changes nothing, `publish` pushes the
 merge alone, an empty patch being valid after a merge, and the next checks run on it.
 When the base branch has not moved, nothing is merged, and an empty patch is still the
-error "The agent finished without changing any files." Rounds that a person starts with
+error "The agent finished without changing any files.", with what the agent found, unless
+the agent names a cause outside the code: a package registry, a service or the network
+that failed while a check ran, with its evidence in `cause` and `cause_outside` set. Then
+the round publishes nothing, and its checks and review run once more on the same commit,
+in the same run and within the same automatic round. When they still fail, the round ends
+as `recheck_failed`, and a person decides with the agent's finding in the mention. Rounds that a person starts with
 `/nexkit fix`, and automatic rounds started only by blocking review findings while the
 checks passed, merge the base branch only on a conflict, so they never bring in base
 changes that nobody asked for.

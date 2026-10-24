@@ -128,6 +128,9 @@ SCHEMAS = {
             # The cause of the failures and the evidence that shows it, or "". A diagnosis
             # round must name it before it changes code.
             "cause": {"type": "string"},
+            # Whether that cause lies outside the code, such as a registry or service that
+            # failed, so that the checks may pass on the same commit when they run again.
+            "cause_outside": {"type": "boolean"},
             # Conflicts with the base branch that need a person's decision.
             "open_conflicts": {
                 "type": "array",
@@ -143,7 +146,7 @@ SCHEMAS = {
                 },
             },
         },
-        "required": [*_CHANGE_RESULT["required"], "cause", "open_conflicts"],
+        "required": [*_CHANGE_RESULT["required"], "cause", "cause_outside", "open_conflicts"],
     },
     # NexKit adds the configured profile names as an enum when it runs triage.
     "triage": {
@@ -440,6 +443,19 @@ def diagnosis_text(repeated):
 
 def _cause(result):
     return str((result.get("output") or {}).get("cause") or "").strip()
+
+
+def outside_cause(result):
+    """Whether a fix result names a cause outside the code, with its evidence."""
+    return bool(_cause(result)) and (result.get("output") or {}).get("cause_outside") is True
+
+
+def unchanged(result):
+    """The error of an implement or fix round that changed no files, with what the agent
+    found: its cause, else its summary."""
+    found = _cause(result) or str((result.get("output") or {}).get("summary") or "").strip()
+    error = "The agent finished without changing any files."
+    return f"{error} What it found: {found}" if found else error
 
 
 def no_cause(result, repeated):
@@ -1027,7 +1043,13 @@ def run_stage(
         elif not files and not merged:
             # After a merge an empty patch is valid: it keeps this branch's side everywhere,
             # or publishes a clean merge alone.
-            result.update(status="error", error="The agent finished without changing any files.")
+            if stage == "fix" and context.get("merge_moved_base") and outside_cause(result):
+                # An automatic round after failing checks whose cause lies outside the code,
+                # such as a registry that failed: the checks and the review run once more
+                # on the same commit.
+                result["recheck"] = True
+            else:
+                result.update(status="error", error=unchanged(result), unchanged=True)
     if triage:
         result.update(profile=triage["profile"], triage=triage)
     if held:

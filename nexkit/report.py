@@ -61,6 +61,7 @@ COMPLETED = {
     "merge_waiting",
     "branch_updated",
     "head_moved",
+    "recheck_failed",
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
 # NexKit continues by itself (`auto_fix`, `conflict_fix`, a resumed pause) or is done.
@@ -73,6 +74,10 @@ NEEDS_PERSON = {
     "needs_human": "checks or review still need attention and no automatic fix rounds remain",
     "merge_refused": "GitHub refused the automatic merge",
     "retry_failed": "the run stopped on a transient error twice",
+    "recheck_failed": (
+        "the checks or review still fail after the fix agent found nothing to change and "
+        "NexKit ran them again"
+    ),
     "needs_merge": (
         "the base branch changed workflow files that NexKit may not push; merge it into the "
         "pull request yourself"
@@ -372,11 +377,21 @@ def _stage_failure(decision, agent, publish):
         message = f"NexKit stopped during {action}: {agent['error']}"
         extra = [blocked_questions(agent), open_conflicts(agent, decision["base"])]
         return "agent_" + agent["status"], "\n\n".join([message, *filter(None, extra)])
-    if not publish.get("published"):
+    if not publish.get("published") and not publish.get("recheck"):
         reason = publish.get("error") or "the publish job failed"
         outcome = "needs_merge" if publish.get("workflows") else "publish_failed"
         return outcome, f"NexKit could not publish the {action} result: {reason}"
     return None
+
+
+def _with_finding(reason, agent):
+    """`reason` with what the fix agent found when it changed nothing, so that a person
+    sees it in the mention and in `nexkit status`."""
+    output = (agent or {}).get("output") or {}
+    found = str(output.get("cause") or output.get("summary") or "").strip()
+    if not reason or not found:
+        return reason
+    return f"{reason}; the agent found: {clip(one_line(found), 300)}"
 
 
 def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
@@ -927,6 +942,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             elif error and decision.get("retry"):
                 outcome, message = "retry_failed", _retried(gh, decision, error, message)
             reason = needs_person(outcome, cfg)
+            if agent and agent.get("unchanged"):
+                reason = _with_finding(reason, agent)
             if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent):
                 reason = None
                 message += "\n\nNexKit autopilot carries on from here."
@@ -956,6 +973,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
     pr = publish.get("pr") or decision["pr"]
     head = publish.get("head") or decision["head"]
+    recheck = action == "fix" and bool(publish.get("recheck"))
     checks = _load(artifacts / "nexkit-checks" / "checks.json")
     reviewed = _load(artifacts / "nexkit-review" / "result.json")
     given = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
@@ -1039,6 +1057,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             row["transient_error"] = clip(one_line(error), 500)
         elif error and decision.get("retry"):
             outcome, message = "retry_failed", _retried(gh, decision, error, message)
+    elif recheck:
+        # The fix agent found nothing to change for a cause outside the code, and the
+        # checks and the review ran once more: what still fails waits for a person.
+        outcome = "recheck_failed"
+        message = (
+            "Checks or review still fail on the same commit. Comment `/nexkit fix "
+            "<instructions>` or `/nexkit review`, push a commit yourself, or close the PR."
+        )
     elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"]:
         state["auto_fixes"] += 1
         outcome = "auto_fix"
@@ -1054,6 +1080,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         )
 
     cause = str(((agent or {}).get("output") or {}).get("cause") or "").strip()
+    if recheck:
+        message = (
+            "The fix agent changed nothing: the cause lies outside the code. NexKit ran the "
+            f"checks and the review again on `{head[:7]}`.\n\n{message}"
+        )
     if action == "fix" and cause:
         message = f"**Cause found by the fix agent:** {clip(cause, 1500)}\n\n{message}"
     if action == "fix" and agent and agent.get("merge_held"):
@@ -1075,6 +1106,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         )
     row.update(status=run_status(outcome), outcome=outcome)
     reason = needs_person(outcome, cfg, resume=resume, confirm=confirm)
+    if outcome == "recheck_failed":
+        reason = _with_finding(reason, agent)
     if reason:
         row["attention"] = reason
     progress.save_state(gh, pr, comment_id, state)

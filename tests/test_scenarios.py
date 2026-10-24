@@ -204,6 +204,9 @@ class Pipeline:
             if outcome.get("meanwhile"):
                 # What happens elsewhere while the round checks and reviews its pull request.
                 outcome["meanwhile"](self, pull["number"])
+        elif decision["action"] == "fix" and agent and agent.get("recheck"):
+            published = {"published": False, "recheck": True, "pr": decision["pr"]}
+            published["head"] = decision["head"]
         elif decision["action"] == "fix" and agent and agent["status"] == "done":
             published = {"published": True, "pr": decision["pr"], "head": self.head(decision["pr"])}
         published.update(outcome.get("publish") or {})
@@ -451,6 +454,36 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual([outcome for *_, outcome in pipe.played[1:]], ["head_moved", "merged"])
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_axis_1104_a_fix_round_with_a_cause_outside_the_code_checks_again_once(self):
+        cause = "The registry returned 500 Internal Server Error during `docker compose up`."
+        outside = {"cause": cause, "cause_outside": True}
+
+        def script(passes):
+            def play(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                if inputs["command"] == "go":
+                    return done(checks=False)
+                found = {**done(checks=passes), "recheck": True}
+                found["agent"] = {**found["agent"], "recheck": True, "output": outside}
+                return found
+
+            return play
+
+        pipe = Pipeline(self, config(), script(passes=True))
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
+        # When the checks still fail on the same commit, a person decides, and sees what
+        # the agent found.
+        pipe = Pipeline(self, config(), script(passes=False))
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(pipe.played[-1][2], "recheck_failed")
+        [mention] = pipe.gh.comments_matching(6, "a person is needed")
+        self.assertIn(cause.rstrip("."), mention["body"])
 
     def test_a_fix_round_out_of_time_replans_then_fixes_then_waits(self):
         fixes = itertools.count()

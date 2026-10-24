@@ -114,6 +114,21 @@ class PublishTests(unittest.TestCase):
         self.assertTrue(pull["body"].startswith("Closes #5"))
         self.assertEqual(pull["head"]["ref"], "nexkit/issue-5")
 
+    def test_a_fix_round_that_checks_again_pushes_nothing_and_keeps_the_head(self):
+        before = git(self.repos.origin, "rev-parse", "main")
+        fix = decision("fix", pr=6, target=6, head="a" * 40)
+        outcome = publish(
+            self.gh,
+            fix,
+            self.result(before, recheck=True),
+            CONTEXT,
+            self.cfg,
+            self.repos.clone("publisher"),
+            self.out,
+        )
+        self.assertEqual(outcome, {"published": False, "recheck": True, "pr": 6, "head": "a" * 40})
+        self.assertEqual(git(self.repos.origin, "rev-parse", "main"), before)
+
     def test_implement_starts_where_the_agent_started_when_the_base_moved(self):
         start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
         # The base branch changes the same line while the agent works.
@@ -577,7 +592,13 @@ class MergePublishTests(unittest.TestCase):
             "blocker": "",
             "questions": [],
         }
-        result = {**done, "checks_run": [], "cause": "", "open_conflicts": []}
+        result = {
+            **done,
+            "checks_run": [],
+            "cause": "",
+            "cause_outside": False,
+            "open_conflicts": [],
+        }
         self.claude.configure(result=result, write=write)
         context = {
             **CONTEXT,

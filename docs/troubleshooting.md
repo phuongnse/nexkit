@@ -160,6 +160,16 @@ another `/nexkit review` stops the same way: fix the review agent's secret first
 the review at another agent in `.nexkit/config.json`. A timeout or a review that returned
 no verdict can be tried again with `/nexkit review`.
 
+**"The agent finished without changing any files".** The implement or fix agent found
+nothing to change; the comment says what it found. When an automatic fix round after
+failing checks names a cause outside the code, such as a package registry or a service
+that failed while a check ran (`cause_outside`), NexKit does not stop: it runs the checks
+and the review once more on the same commit, within the same automatic round, and merges
+or reports as usual when they pass. When they fail again, the round ends as
+`recheck_failed` and waits for a person, and the mention gives the agent's finding. Check
+the service, then comment `/nexkit review`, or `/nexkit fix <instructions>` if the
+failure does come from the code.
+
 **"NexKit stopped on <exception>".** An error in NexKit itself, and another try usually
 stops the same way. The job's log has the traceback; please report it as a NexKit issue.
 

@@ -1,5 +1,39 @@
 # Changelog
 
+## 4.7.0
+
+Fewer rounds that end with a person doing what NexKit could have done itself. See
+[How it works](docs/how-it-works.md#one-run-at-a-time) and
+[Failure handling](docs/how-it-works.md#failure-handling).
+
+- A pull request runs one NexKit round at a time (#138). A conflict round no longer
+  starts while the `/nexkit go` run that opened the pull request still checks, reviews
+  and merges it; when that round ends and the pull request conflicts, it starts the
+  conflict round itself. A person's command or *Request changes* review on the pull
+  request meanwhile gets a reply to post it again once the round ends. A merge refused
+  because the head branch was modified starts `/nexkit review` on the new head, as
+  `head_moved`, instead of waiting for a person. The `route` job reads workflow runs
+  (`actions: read`), which the caller workflow already grants.
+- An automatic fix round after failing checks whose agent changes nothing and names a
+  cause outside the code, such as a package registry that failed, runs the checks and
+  the review once more on the same commit, within the same automatic round (#139). The
+  fix result's new `cause_outside` says so. When they still fail, the round ends as
+  `recheck_failed` and waits for a person. An empty patch for any other reason stays an
+  error, and both now give the agent's finding in the comment and the mention.
+- A round that finds no change is needed closes the issue (#140). The implement result's
+  new `no_change` holds the finding and its evidence. When the issue, its plan or the
+  discussion says to stop without a change in that case, NexKit opens no pull request
+  and closes the issue as completed with the finding, as `no_change`. Otherwise the
+  round blocks with closing as its one recommended answer, and autopilot, with
+  `autopilot.answer: "recommended"`, closes the issue instead of starting `/nexkit go`
+  again.
+- Issues for CI failures get one plain title form that keeps the whole failing name
+  (#137): what fails, where, and "fails at times on main", or "fails on main" when the
+  branch is red, with names in double quotes and no backticks. A test is named by the
+  last segment of its annotation's title and its file name. Issues opened with an older
+  title keep getting their records. See
+  [Autopilot](docs/configuration.md#autopilot).
+
 ## 4.6.1
 
 - A round's evidence from CI runs takes the runs the issue records again, also after many

@@ -504,6 +504,30 @@ every open issue in scope, oldest first, and starts the one command that moves i
   runs a `bug` issue reports. Sweeps notice a finished run at the next event or on the
   hourly schedule. Reading annotations needs `checks: read` in the workflow's
   permissions, as `nexkit init` writes them.
+- **Titles of CI issues.** An issue for a CI failure says what fails, where, and
+  "fails at times on" the branch for a flaky failure, or "fails on" it when the branch is
+  red, in plain words. Double quotes mark a test, job or step name; there are no
+  backticks, and a name is never shortened. A test is named by the last segment of its
+  annotation's title, after the last ` › ` or ` > `, and its file name. A title is cut only
+  past GitHub's 256 characters, at a word boundary. The body keeps the full name, file and
+  line. A red branch's title names the failures of its latest attempt: one, or up to three
+  of one kind, else how many.
+
+  | Failure | Title |
+  |---|---|
+  | A test | Test "an author publishes from Studio and the site shows the new release" in purchase-request-release.spec.ts fails at times on main |
+  | A Vitest test | Test "pages through more than twenty entries" in RecordHistory.test.tsx fails at times on main |
+  | An annotation with only a file and line | Line 12 of src/orders.ts fails at times on main |
+  | A job, or a step named like its job | Job "Integration tests" in ci.yml fails at times on main |
+  | A step | Step "Unit tests" of job "Lint and unit tests" in ci.yml fails at times on main |
+  | A run that failed before any job | ci.yml does not start at times on main |
+  | A run with more than five new failures | Run 123 of ci.yml failed in 7 ways at once on main |
+  | A red branch | Steps "Lint" and "Unit tests" in ci.yml fail on main |
+  | A red branch, failures of several kinds or more than three | ci.yml fails in 4 ways on main |
+  | A red branch, before any job | ci.yml does not start on main |
+
+  The marker, not the title, ties a failure to its issue, so an issue opened with an
+  older title keeps getting its records.
 - **Parts.** Parts that autopilot creates are trusted because they start with a NexKit
   marker and are sub-issues of an issue it trusts. A part's own plan that is too large is
   split again, within these limits:

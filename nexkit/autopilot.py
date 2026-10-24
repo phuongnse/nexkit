@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import posixpath
 import re
 import string
 from datetime import UTC, datetime, timedelta
@@ -113,8 +114,14 @@ CI_GENERIC = re.compile(r"Process completed with exit code \d+")
 # A run whose failures would open more issues than this records those failures on one issue
 # for the run instead: so many at once have one cause, such as a broken runner.
 CI_NEW_ISSUES = 5
-# The longest failure name in an issue title.
-CI_TITLE_NAME = 60
+# GitHub's longest issue title. A CI failure's title keeps its whole name and is cut, at a
+# word boundary, only past this.
+CI_TITLE = 256
+# A test reporter's annotation title names a test by its path of describe blocks, such as
+# "RecordHistory > pages through more than twenty entries"; the last segment is the test.
+CI_TEST_SEGMENT = re.compile(r" (?:›|>) ")
+# The most failures a red branch's title names one by one.
+CI_TITLE_FAILURES = 3
 # The run attempts that a bug or flaky-run report records, where it ends the text, so each
 # run and attempt is recorded once.
 CI_RUNS_PREFIX = "<!-- nexkit:ci-runs "
@@ -1147,10 +1154,54 @@ def _plain(text, size=200):
     return text if len(text) <= size else text[: size - 1] + "…"
 
 
-def _shortened(name, size=CI_TITLE_NAME):
-    """A long name's start and end, for an issue title."""
-    half = (size - 1) // 2
-    return name if len(name) <= size else f"{name[:half]}…{name[-half:]}"
+def _quoted(text):
+    """A whole name in double quotes, on one line, for an issue title."""
+    text = " ".join(str(text or "").split()).replace("`", "'").replace('"', "'")
+    return f'"{text}"'
+
+
+def _test_subject(title, path, place):
+    """What an annotation's title or place names in an issue title: the test, by the last
+    segment of its title and its file name, else the file and line."""
+    if title:
+        name = CI_TEST_SEGMENT.split(" ".join(title.split()))[-1]
+        where = f" in {posixpath.basename(path)}" if path else ""
+        return {"kind": "test", "name": name, "subject": f"Test {_quoted(name)}{where}"}
+    line = place.removeprefix(path).removeprefix(":")
+    subject = f"Line {line} of {path}" if line else path
+    return {"kind": "place", "name": place, "subject": subject}
+
+
+def ci_title(failure, branch):
+    """The title of a flaky failure's issue: what fails, where, and how often."""
+    if failure["kind"] == "start":
+        return _fit(f"{failure['subject']} does not start at times on {branch}")
+    if failure["kind"] == "run":
+        return _fit(f"{failure['subject']} on {branch}")
+    return _fit(f"{failure['subject']} fails at times on {branch}")
+
+
+def red_title(workflow, failures, branch):
+    """The title of a red branch's bug issue, from the failures of its latest attempt."""
+    failures = list({failure["key"]: failure for failure in failures}.values())
+    if len(failures) == 1:
+        [failure] = failures
+        verb = "does not start" if failure["kind"] == "start" else "fails"
+        return _fit(f"{failure['subject']} {verb} on {branch}")
+    kinds = {failure["kind"] for failure in failures}
+    if len(failures) > CI_TITLE_FAILURES or len(kinds) > 1 or kinds & {"place", "start"}:
+        return _fit(f"{workflow} fails in {len(failures)} ways on {branch}")
+    names = [_quoted(failure["name"]) for failure in failures]
+    listed = f"{', '.join(names[:-1])} and {names[-1]}"
+    return _fit(f"{kinds.pop().capitalize()}s {listed} in {workflow} fail on {branch}")
+
+
+def _fit(title):
+    """`title` as it is, or cut at the last word boundary within GitHub's limit."""
+    if len(title) <= CI_TITLE:
+        return title
+    cut = title[: CI_TITLE + 1].rsplit(" ", 1)[0]
+    return cut if cut else title[:CI_TITLE]
 
 
 def _key(*parts):
@@ -1172,9 +1223,10 @@ def _annotated(link, note):
     if not name:
         return None
     names = ", ".join(f"`{text}`" for text in dict.fromkeys((name, place)) if text)
+    title = " ".join(str(note.get("title") or "").split()).replace("`", "'")
     return {
         "key": _key("annotation", name),
-        "title": f"`{_shortened(name)}` fails at times",
+        **_test_subject(title, path, place),
         "about": f"`{name}` failed",
         "line": f"- {link}: {names}" + (f": `{message}`" if message else ""),
     }
@@ -1184,21 +1236,30 @@ def _job_failure(workflow, job, link):
     """The failure of a failed job without an annotation that names one: its job and its
     first failed step."""
     name = _plain(job.get("name"))
-    steps = [_plain(s.get("name")) for s in job.get("steps") or [] if s.get("conclusion") in FAILED]
-    steps = [step for step in steps if step]
+    failed = [s.get("name") for s in job.get("steps") or [] if s.get("conclusion") in FAILED]
+    failed = [step for step in failed if _plain(step)]
+    steps = [_plain(step) for step in failed]
+    as_job = {
+        "kind": "job",
+        "name": job.get("name"),
+        "subject": f"Job {_quoted(job.get('name'))} in {workflow}",
+    }
     if not steps:
         return {
             "key": _key("job", name),
-            "title": f"Job `{_shortened(name)}` of `{workflow}` fails at times",
+            **as_job,
             "about": f"job `{name}` failed",
             "line": f"- {link}",
         }
+    # A step named like its job, such as the only step of a job, is named as the job.
+    if steps[0].casefold() == name.casefold():
+        subject = as_job
+    else:
+        what = f"Step {_quoted(failed[0])} of job {_quoted(job.get('name'))} in {workflow}"
+        subject = {"kind": "step", "name": failed[0], "subject": what}
     return {
         "key": _key("step", name, steps[0]),
-        "title": (
-            f"Step `{_shortened(steps[0])}` of job `{_shortened(name)}` in `{workflow}` "
-            "fails at times"
-        ),
+        **subject,
         "about": f"step `{steps[0]}` of job `{name}` failed",
         "line": f"- {link}: {', '.join(f'`{step}`' for step in steps)}",
     }
@@ -1217,7 +1278,9 @@ def _attempt_failures(gh, workflow, run, attempt):
     return found or [
         {
             "key": _key("start"),
-            "title": f"Starting `{workflow}` fails at times",
+            "kind": "start",
+            "name": workflow,
+            "subject": workflow,
             "about": "the run failed before any job did",
             "line": "- The attempt failed before any job did; open it for the reason.",
         }
@@ -1246,7 +1309,9 @@ def _run_failure(workflow, run, failures):
     count = len(failures)
     return {
         "key": _key("run", str(run["id"])),
-        "title": f"Run {run['id']} of `{workflow}` failed in {count} ways at once",
+        "kind": "run",
+        "name": str(run["id"]),
+        "subject": f"Run {run['id']} of {workflow} failed in {count} ways at once",
         "about": (
             f"{count} failures without an issue showed at once, more than NexKit opens issues "
             "for, so they likely have one cause, such as the runner or a service"
@@ -1273,7 +1338,7 @@ def _flaky_text(workflow, run, branch, failure, unseen):
 def _record_flaky(gh, cfg, where, workflow, branch, known, failure, text):
     """Add a record to the open issue of its failure, or open one that links the latest
     closed one."""
-    key, title = failure["key"], f"{failure['title']} on `{branch}`"
+    key, title = failure["key"], ci_title(failure, branch)
     issue = known["open"].get(key)
     if issue:
         gh.comment(issue["number"], text)
@@ -1319,9 +1384,10 @@ def _report_failure(gh, cfg, where, workflow, branch, known, run):
         people = "".join(f"@{login} " for login in cfg["notify"])
         body = f"{CI_BUG_PREFIX}{workflow} -->\n{people}{text}"
         labels = ["bug", *([where["label"]] if where.get("label") else [])]
-        title = f"`{workflow}` fails on `{branch}`"
+        failures = _attempt_failures(gh, workflow, run, run.get("run_attempt") or 1)
+        title = red_title(workflow, failures, branch)
         issue = known["bug"] = gh.create_issue(title, body, where.get("milestone"), labels)
-        line = f"`{workflow}` fails on `{branch}`; opened #{issue['number']}."
+        line = f"{title}; opened #{issue['number']}."
     known["shas"].add(run.get("head_sha") or "")
     known["reporter"][run["id"]] = issue["number"]
     return line

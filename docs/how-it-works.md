@@ -598,8 +598,9 @@ issue run in that group as well, and start a sweep.
   "Process completed with exit code 1.", names nothing. A failed job without an
   annotation that names a failure is named by the job and its first failed step, and an
   attempt that failed before any job did by the workflow. Each failure's issue is `bug`,
-  in scope, titled by the failure, for example "`OrderTests.Totals_round_half_up` fails
-  at times on `main`", starts with its own marker that names the workflow and a key for
+  in scope, titled by the failure in plain words, for example 'Test "pages through more
+  than twenty entries" in RecordHistory.test.tsx fails at times on main' (see [the title
+  forms](configuration.md#autopilot)), starts with its own marker that names the workflow and a key for
   the failure, and is planned right after the `bug` issues for a failing default branch.
   Each record names the commit, the run, and the job, file and line, and message where
   the failure showed in each failed attempt. A later record of the same failure is a

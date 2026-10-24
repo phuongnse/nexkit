@@ -40,17 +40,19 @@ def branch_for(issue):
 def implementing(gh, issue):
     """The run of `/nexkit go` that still runs on `issue`, or None. It opened the issue's
     pull request and checks, reviews and merges it before it ends, so it is a round of that
-    pull request too. A run whose workflow run ended without a report does not count."""
+    pull request too. A run whose workflow run ended without a report does not count, nor
+    one whose workflow run cannot be read, so a lost run never holds the pull request up."""
     runs = [run for _, run in run_comments(gh.comments(issue)) if run.get("command") == "go"]
     if not runs or runs[-1].get("status") != RUNNING:
         return None
     match = RUN_ID.search(runs[-1].get("url") or "")
-    if match:
-        try:
-            if gh.workflow_run(int(match.group(1))).get("status") == "completed":
-                return None
-        except GitHubError:
-            pass
+    if not match:
+        return None
+    try:
+        if gh.workflow_run(int(match.group(1))).get("status") == "completed":
+            return None
+    except GitHubError:
+        return None
     return runs[-1]
 
 

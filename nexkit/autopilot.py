@@ -469,7 +469,7 @@ def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
     found = answers(cfg, run.get("questions")) if run.get("outcome") == "agent_blocked" else None
     if found and asked_again(*comments):
         return _step(issue, "waits", REPEATED)
-    if found and command == "go" and run.get("no_change"):
+    if found and len(found) == 1 and command == "go" and run.get("no_change"):
         # The recommended answer only closes the issue: another round would find the same.
         reason = "the last round found no change is needed and recommends closing the issue"
         return _step(issue, "close", reason, finding=run["no_change"], run_url=run.get("url"))

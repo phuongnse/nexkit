@@ -47,8 +47,8 @@ $round_checks
   the base branch already fixed, change nothing and write the finding in `no_change`. When
   the issue, the plan or the discussion says to stop without a change in that case,
   return `status: done`, and NexKit closes the issue with the finding. Otherwise return
-  `status: blocked` with a question whose recommended option is to close the issue with
-  that finding.
+  `status: blocked` with a single question, whose recommended option is to close the
+  issue with that finding.
 
 $writing
 ## What to return

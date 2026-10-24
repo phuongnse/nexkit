@@ -169,7 +169,9 @@ class ReportTests(ReportCase):
         self.gh.issues[5]["state"] = "open"
         self.gh.close_errors[5] = GitHubError(403, "Forbidden")
         outcome = self.no_change()
-        self.assertEqual(outcome["attention"], "no change is needed; close the issue yourself")
+        self.assertEqual(outcome["outcome"], "close_failed")
+        self.assertIn("could not close the issue; close it yourself", outcome["attention"])
+        self.assertEqual(self.gh.run_comments(5)[-1]["run"]["status"], "failure")
         self.assertIn("could not close #5", outcome["summary"])
 
     def test_agent_failures_are_explained_on_the_issue(self):

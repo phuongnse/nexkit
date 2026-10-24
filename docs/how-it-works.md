@@ -9,7 +9,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 
 | Job | Runs for | Token permissions | Secrets | Does |
 |---|---|---|---|---|
-| `route` | every event | read; comments, reactions, statuses | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
+| `route` | every event | read; comments, reactions, statuses; workflow runs (`actions: read`) | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
 | `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. |
@@ -582,7 +582,7 @@ issue run in that group as well, and start a sweep.
   or round that its answers started asks again, with no comment by a person on the issue
   or its pull request since the answers, it waits for a person, so new wording of the
   same question cannot start another run. When a blocked `/nexkit go` found that no change
-  is needed, its recommended answer only closes the issue, so autopilot closes it as
+  is needed and asks one question, its recommended answer only closes the issue, so autopilot closes it as
   completed with the round's finding and starts no other round. A recommended option is
   one NexKit can carry
   out itself, a change to the plan or the code; the prompts never recommend one that

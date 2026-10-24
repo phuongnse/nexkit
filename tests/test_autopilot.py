@@ -640,6 +640,18 @@ class AnswerTests(AnswerAndSplitCase):
         self.blocked(5, no_change=finding)
         _, steps = autopilot.preview(self.gh, pilot())
         self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "waits")])
+        # With a second question, closing may not be all the agent recommends: it is
+        # answered as any blocked round.
+        self.run_comment(
+            5,
+            "go",
+            status="failure",
+            outcome="agent_blocked",
+            questions=[QUESTION, {**QUESTION, "question": "Q2?"}],
+            no_change=finding,
+        )
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "start")])
 
     def blocked(self, number, **fields):
         return self.run_comment(

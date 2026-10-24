@@ -90,9 +90,10 @@ class SweepTests(unittest.TestCase):
     def test_a_pull_request_whose_implement_round_runs_gets_no_conflict_round(self):
         go = {"command": "go", "url": "https://github.com/acme/app/actions/runs/40"}
         self.gh.comment(5, render_run({**go, "status": "running"}))
+        self.gh.runs[40] = {"status": "in_progress"}
         self.assertEqual(self.sweep(), [])
         self.assertFalse(self.gh.dispatches)
-        # A run that ended without a report holds nothing up.
+        # A run that ended without a report, or whose run cannot be read, holds nothing up.
         self.gh.runs[40] = {"status": "completed"}
         self.assertEqual(self.sweep(), ["Started an automatic round on #6 to merge `main`."])
 
@@ -133,6 +134,7 @@ class RouteTests(unittest.TestCase):
     def test_a_persons_command_waits_while_the_implement_round_runs(self):
         go = {"command": "go", "url": "https://github.com/acme/app/actions/runs/40"}
         self.gh.comment(5, render_run({**go, "status": "running"}))
+        self.gh.runs[40] = {"status": "in_progress"}
         for event_name, event in (
             ("issue_comment", comment_event(6, "/nexkit fix Tidy it", on_pull=True)),
             (

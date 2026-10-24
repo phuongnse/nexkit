@@ -53,6 +53,7 @@ jobs:
       issues: write
       pull-requests: write # reactions and the status comment on pull requests
       statuses: write # pending statuses while a round runs
+      actions: read # whether the implement round of a pull request still runs
     outputs:
       action: ${{ steps.route.outputs.action }}
       decision: ${{ steps.route.outputs.decision }}

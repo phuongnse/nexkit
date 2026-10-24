@@ -75,6 +75,7 @@ NEEDS_PERSON = {
     "needs_human": "checks or review still need attention and no automatic fix rounds remain",
     "merge_refused": "GitHub refused the automatic merge",
     "retry_failed": "the run stopped on a transient error twice",
+    "close_failed": "no change is needed, but NexKit could not close the issue; close it yourself",
     "recheck_failed": (
         "the checks or review still fail after the fix agent found nothing to change and "
         "NexKit ran them again"
@@ -386,9 +387,9 @@ def _no_change(gh, cfg, decision, agent):
     except GitHubError as exc:
         message = f"No change is needed, but NexKit could not close #{issue}: {exc}"
         return {
-            "outcome": "no_change",
+            "outcome": "close_failed",
             "summary": f"{message}\n\n{finding}",
-            "attention": "no change is needed; close the issue yourself",
+            "attention": needs_person("close_failed", cfg),
             "agents": agents_ran(agent),
         }
     lines = [f"No change is needed, so NexKit closed #{issue} as completed.", "", finding]

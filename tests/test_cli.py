@@ -1124,7 +1124,12 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_route_acknowledges_commands_without_repository_code(self):
         route = self.jobs["route"]
-        for permission in ("issues: write", "pull-requests: write", "statuses: write"):
+        for permission in (
+            "issues: write",
+            "pull-requests: write",
+            "statuses: write",
+            "actions: read",
+        ):
             self.assertIn(permission, route)
         self.assertNotIn("contents: write", route)
         self.assertIn("sparse-checkout: .nexkit", route)

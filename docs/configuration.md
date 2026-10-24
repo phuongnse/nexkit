@@ -480,7 +480,7 @@ every open issue in scope, oldest first, and starts the one command that moves i
   prompts never recommend an option that needs a person to act outside NexKit, such as
   downloading files or granting access, so such a question waits for a person at once.
   When a blocked `/nexkit go` found that no change is needed (its `no_change` finding)
-  and recommends closing the issue, autopilot starts no other round: it closes the issue
+  and its one question recommends closing the issue, autopilot starts no other round: it closes the issue
   as completed with a comment that holds the finding.
 - **CI on the default branch.** With workflows in `merge.after_workflows`, each sweep also
   looks at the runs of each of them on the default branch, after NexKit's merges and

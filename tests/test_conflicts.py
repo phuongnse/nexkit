@@ -16,6 +16,7 @@ from nexkit.route import route
 from nexkit.state import BOT_LOGIN, render_run
 from tests.support import FakeGitHub, GitRepos, git, make_config
 from tests.test_report import HEAD, ReportCase, decision
+from tests.test_route import comment_event
 
 BASE_SHA = "f" * 40
 
@@ -86,6 +87,16 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(self.sweep(), [])
         self.assertFalse(self.gh.dispatches)
 
+    def test_a_pull_request_whose_implement_round_runs_gets_no_conflict_round(self):
+        go = {"command": "go", "url": "https://github.com/acme/app/actions/runs/40"}
+        self.gh.comment(5, render_run({**go, "status": "running"}))
+        self.gh.runs[40] = {"status": "in_progress"}
+        self.assertEqual(self.sweep(), [])
+        self.assertFalse(self.gh.dispatches)
+        # A run that ended without a report, or whose run cannot be read, holds nothing up.
+        self.gh.runs[40] = {"status": "completed"}
+        self.assertEqual(self.sweep(), ["Started an automatic round on #6 to merge `main`."])
+
     def test_unknown_mergeability(self):
         self.gh.pulls[6]["mergeable"] = None
         self.assertIsNone(is_conflicting(self.gh, 6, tries=2, delay=0))
@@ -119,6 +130,36 @@ class RouteTests(unittest.TestCase):
         )
         event["ref"] = "refs/heads/feature"
         self.assertEqual(route(self.gh, "push", event)["action"], "none")
+
+    def test_a_persons_command_waits_while_the_implement_round_runs(self):
+        go = {"command": "go", "url": "https://github.com/acme/app/actions/runs/40"}
+        self.gh.comment(5, render_run({**go, "status": "running"}))
+        self.gh.runs[40] = {"status": "in_progress"}
+        for event_name, event in (
+            ("issue_comment", comment_event(6, "/nexkit fix Tidy it", on_pull=True)),
+            (
+                "pull_request_review",
+                {
+                    "action": "submitted",
+                    "pull_request": {"number": 6},
+                    "review": {"state": "changes_requested", "user": {"login": "alice"}},
+                },
+            ),
+        ):
+            decision = route(self.gh, event_name, event)
+            self.assertEqual((decision["action"], decision["reply_to"]), ("none", 6))
+            self.assertIn(
+                "[implement round](https://github.com/acme/app/actions/runs/40)", decision["reason"]
+            )
+            self.assertIn("one NexKit round at a time", decision["reason"])
+        # The rounds that the implement round starts itself as it ends go on.
+        inputs = {"command": "review", "number": "6", "note": "", "auto": "retry"}
+        dispatch = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        self.assertEqual(dispatch["action"], "review")
+        # Once it ended, the command runs.
+        self.gh.comment(5, render_run({**go, "status": "success"}))
+        fix = route(self.gh, "issue_comment", comment_event(6, "/nexkit fix", on_pull=True))
+        self.assertEqual(fix["action"], "fix")
 
     def test_a_conflict_round_records_the_base_commit(self):
         self.gh.branches["main"] = "e" * 40
@@ -285,6 +326,47 @@ class MergeRefusalTests(ReportCase):
         self.gh.issues[5]["state"] = "open"
         self.gh.merge_error = [modified] * 3
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
+
+    def test_a_merge_refused_because_the_head_moved_reviews_the_new_head(self):
+        self.candidate()
+        self.gh.merge_error = GitHubError(
+            409, "Head branch was modified. Review and try the merge again."
+        )
+        self.gh.pulls[6]["head"]["sha"] = "c" * 40
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "head_moved")
+        self.assertIsNone(outcome.get("attention"))
+        self.assertIn(
+            "The branch moved to `ccccccc` after this round checked it", outcome["summary"]
+        )
+        # The review is the next round; no sweep starts, and nobody is mentioned.
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(
+            dispatch["inputs"], {"command": "review", "number": "6", "note": "", "auto": "true"}
+        )
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+        self.assertFalse(self.gh.comments_matching(6, "@olivia"))
+
+    def test_an_implement_round_that_ends_with_a_conflict_starts_its_conflict_round(self):
+        os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
+        self.gh.comment(5, render_run({"command": "go", "url": run_url(), "status": "running"}))
+        self.candidate()
+        self.gh.pulls[6]["mergeable"] = False
+        cfg = make_config(conflicts={"auto_resolve": True})
+        outcome = self.run_report(cfg=cfg)
+        self.assertEqual(outcome["outcome"], "ready")
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(
+            (dispatch["inputs"]["number"], dispatch["inputs"]["auto"]), ("6", "conflicts")
+        )
+        self.assertIn(
+            "It conflicts with `main`. Started an automatic round on #6", outcome["summary"]
+        )
+        # Without a conflict, nothing more starts.
+        self.gh.dispatches.clear()
+        self.gh.pulls[6]["mergeable"] = True
+        self.run_report(cfg=cfg)
+        self.assertFalse(self.gh.dispatches)
 
     def test_a_merge_waiting_for_required_checks_is_merged_by_a_later_sweep(self):
         from nexkit import autopilot

@@ -41,8 +41,9 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   for a person. Autopilot may answer a `blocked` result
   whose questions all have a recommended option (`autopilot.answer: "recommended"`), once
   in a row: when the round its answers started asks again and no person commented since,
-  a person decides. A recommended option is one NexKit can carry out without a person.
-  Autopilot asks for one split plan after an implement or fix agent ran out of time; it
+  a person decides. A recommended option is one NexKit can carry out without a person;
+  one that only closes the issue, after a round found no change is needed, closes it
+  without another round. Autopilot asks for one split plan after an implement or fix agent ran out of time; it
   never repeats a run unchanged.
 - Every issue in autopilot's scope is either carried on by a run that exists, started only
   when something changed since the same command last started (a commit, a person's

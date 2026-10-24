@@ -621,6 +621,38 @@ class AnswerTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual(len(self.started()), 2)
 
+    def test_an_answer_that_only_closes_the_issue_closes_it_without_a_round(self):
+        finding = "8b9cb87 fixed it; the last 20 runs passed."
+        self.issue(4)
+        self.posted_plan(4)
+        self.blocked(4, no_change=finding)
+        self.sweep()
+        self.assertEqual(self.started(), [])
+        self.assertEqual(self.gh.issues[4]["state"], "closed")
+        [comment] = self.gh.comments_matching(4, "NexKit autopilot closes this issue")
+        self.assertIn("[the last round](https://github.com/acme/app/actions/runs/", comment["body"])
+        self.assertTrue(comment["body"].endswith(finding))
+        # A sweep follows, for the issues it blocked and the end of the scope.
+        self.assertEqual(self.gh.dispatches[-1]["inputs"]["command"], "autopilot")
+        # Without `autopilot.answer: "recommended"` a person decides, as for any question.
+        self.issue(5)
+        self.posted_plan(5)
+        self.blocked(5, no_change=finding)
+        _, steps = autopilot.preview(self.gh, pilot())
+        self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "waits")])
+        # With a second question, closing may not be all the agent recommends: it is
+        # answered as any blocked round.
+        self.run_comment(
+            5,
+            "go",
+            status="failure",
+            outcome="agent_blocked",
+            questions=[QUESTION, {**QUESTION, "question": "Q2?"}],
+            no_change=finding,
+        )
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "start")])
+
     def blocked(self, number, **fields):
         return self.run_comment(
             number,
@@ -1247,7 +1279,7 @@ class CITests(AutopilotCase):
         self.sweep()
         self.assertEqual(self.gh.reruns, [50])
         [bug] = self.bugs()
-        self.assertEqual(bug["title"], "`ci.yml` fails on `main`")
+        self.assertEqual(bug["title"], 'Step "Run tests" of job "test" in ci.yml fails on main')
         self.assertEqual([x["name"] for x in bug["labels"]], ["bug"])
         self.assertEqual(bug["milestone"], {"number": 1})
         self.assertIn(
@@ -1298,7 +1330,7 @@ class CITests(AutopilotCase):
         self.assertEqual((self.gh.reruns, self.bugs()), ([50], []))
         [issue] = self.flaky()
         # Without annotations, the failure is named by its job and first failed step.
-        title = "Step `Run tests` of job `test` in `ci.yml` fails at times on `main`"
+        title = 'Step "Run tests" of job "test" in ci.yml fails at times on main'
         self.assertEqual(issue["title"], title)
         self.assertEqual([x["name"] for x in issue["labels"]], ["bug"])
         self.assertEqual(issue["milestone"], {"number": 1})
@@ -1388,12 +1420,11 @@ class CITests(AutopilotCase):
         self.sweep()
         first, second = sorted(self.flaky(), key=lambda i: i["number"])
         self.assertEqual(
-            first["title"],
-            "`ScenarioRunnerTests.Async_eve…action_at_the_work_item_limit` "
-            "fails at times on `main`",
+            first["title"], f'Test "{name}" in ScenarioRunnerTests.cs fails at times on main'
         )
         self.assertEqual(
-            second["title"], "`OrderTests.Totals_round_half_up` fails at times on `main`"
+            second["title"],
+            'Test "OrderTests.Totals_round_half_up" in OrderTests.cs fails at times on main',
         )
         self.assertNotEqual(self.key(first), self.key(second))
         for issue, test, line in (
@@ -1469,7 +1500,7 @@ class CITests(AutopilotCase):
         self.passed_again(run)
         self.sweep()
         [issue] = self.flaky()
-        title = "Step `Run tests` of job `test` in `ci.yml` fails at times on `main`"
+        title = 'Step "Run tests" of job "test" in ci.yml fails at times on main'
         self.assertEqual(issue["title"], title)
         self.assertIn("- [test](https://job): `Run tests`, `Upload results`\n", issue["body"])
         for text in ("Process completed", "Bad input", "Deprecated"):
@@ -1480,8 +1511,112 @@ class CITests(AutopilotCase):
         self.passed_again(later)
         self.sweep()
         newest = max(self.flaky(), key=lambda i: i["number"])
-        self.assertEqual(newest["title"], "Job `test` of `ci.yml` fails at times on `main`")
+        self.assertEqual(newest["title"], 'Job "test" in ci.yml fails at times on main')
         self.assertIn("in which job `test` failed:", newest["body"])
+
+    def test_titles_name_what_fails_and_where_in_plain_words(self):
+        spec = "e2e/purchase-request-release.spec.ts"
+
+        def test(title, path=spec):
+            note = {"annotation_level": "failure", "title": title, "path": path, "start_line": 12}
+            return autopilot._annotated("[e2e](https://job)", note)
+
+        def job(name, *steps):
+            failed = [{"name": step, "conclusion": "failure"} for step in steps]
+            return autopilot._job_failure("ci.yml", {"name": name, "steps": failed}, "job")
+
+        prefix = "[chromium] › purchase-request-release.spec.ts:12:5 › purchase request release › "
+        short = "an author publishes from Studio and the site shows the new release"
+        long = (
+            "an author takes a change from edit to preview, publish and rollback without the "
+            "admin CLI, and a waiting request finishes on its release"
+        )
+        file = "in purchase-request-release.spec.ts fails at times on main"
+        for failure, title in (
+            (test(prefix + short), f'Test "{short}" {file}'),
+            (test(prefix + long), f'Test "{long}" {file}'),
+            (
+                test(
+                    "RecordHistory > pages through more than twenty entries",
+                    "src/x/RecordHistory.test.tsx",
+                ),
+                'Test "pages through more than twenty entries" in RecordHistory.test.tsx '
+                "fails at times on main",
+            ),
+            (job("Integration tests"), 'Job "Integration tests" in ci.yml fails at times on main'),
+            (
+                job("Integration tests", "Integration tests"),
+                'Job "Integration tests" in ci.yml fails at times on main',
+            ),
+            (
+                job("Lint and unit tests", "Unit tests", "Upload results"),
+                'Step "Unit tests" of job "Lint and unit tests" in ci.yml fails at times on main',
+            ),
+            (test(""), f"Line 12 of {spec} fails at times on main"),
+            (test('says "hi" in `code`'), f"Test \"says 'hi' in 'code'\" {file}"),
+        ):
+            self.assertEqual(autopilot.ci_title(failure, "main"), title)
+        # The body keeps the whole annotation title, its file and line, with backticks.
+        self.assertEqual(
+            test(prefix + short)["line"], f"- [e2e](https://job): `{prefix + short}`, `{spec}:12`"
+        )
+        # A red branch names what failed in its latest attempt.
+        steps = [job("Static checks", "Lint"), job("Lint and unit tests", "Unit tests")]
+        self.assertEqual(
+            autopilot.red_title("ci.yml", steps, "main"),
+            'Steps "Lint" and "Unit tests" in ci.yml fail on main',
+        )
+        self.assertEqual(
+            autopilot.red_title("ci.yml", steps[1:], "main"),
+            'Step "Unit tests" of job "Lint and unit tests" in ci.yml fails on main',
+        )
+        mixed = [*steps, test(prefix + short)]
+        self.assertEqual(
+            autopilot.red_title("ci.yml", mixed, "main"), "ci.yml fails in 3 ways on main"
+        )
+        nothing = mock.Mock(attempt_jobs=lambda *_: [])
+        [start] = autopilot._attempt_failures(nothing, "ci.yml", {"id": 50}, 1)
+        self.assertEqual(
+            autopilot.red_title("ci.yml", [start], "main"), "ci.yml does not start on main"
+        )
+        self.assertEqual(
+            autopilot.ci_title(start, "main"), "ci.yml does not start at times on main"
+        )
+        # Only past GitHub's limit is a title cut, at a word boundary and without "…".
+        words = " ".join(f"step{n}" for n in range(60))
+        title = autopilot.ci_title(test(f"Suite > {words}"), "main")
+        self.assertLessEqual(len(title), autopilot.CI_TITLE)
+        self.assertTrue(f'Test "{words}"'.startswith(title))
+        self.assertRegex(title, r"step\d+\Z")
+
+    def test_a_failure_whose_issue_has_a_title_from_before_is_still_recorded_there(self):
+        name = "OrderTests.Totals_round_half_up"
+        key = autopilot._key("annotation", name)
+        old = self.gh.create_issue(
+            f"`{name}` fails at times on `main`",
+            f"<!-- nexkit:ci-flaky ci.yml {key} -->\nRecords.\n\n<!-- nexkit:ci-runs 49.1 -->",
+            1,
+            ["bug"],
+        )
+        run = self.ci_run()
+        self.annotate(50, name)
+        self.passed_again(run)
+        self.sweep()
+        self.assertEqual(self.flaky(), [old])
+        [comment] = self.gh.comments_matching(old["number"], "nexkit:ci-runs")
+        self.assertIn("runs/50) on `main`", comment["body"])
+
+    def test_a_red_branch_with_two_failed_steps_names_both(self):
+        self.ci_run(attempt=2)
+        self.gh.jobs[50][1].update(
+            name="Static checks",
+            conclusion="failure",
+            steps=[{"name": "Lint", "conclusion": "failure"}],
+        )
+        self.gh.jobs[50][0]["steps"][0]["name"] = "Unit tests"
+        self.sweep()
+        [bug] = self.bugs()
+        self.assertEqual(bug["title"], 'Steps "Unit tests" and "Lint" in ci.yml fail on main')
 
     def test_a_run_with_too_many_new_failures_records_them_on_one_issue_for_the_run(self):
         known = "OrderTests.Totals_round_half_up"
@@ -1498,7 +1633,7 @@ class CITests(AutopilotCase):
         # The failure with an issue gets its record there; the new ones share one issue.
         self.assertEqual(len(self.gh.comments_matching(issue["number"], "runs/52")), 1)
         [for_run] = [i for i in self.flaky() if i is not issue]
-        self.assertEqual(for_run["title"], "Run 52 of `ci.yml` failed in 6 ways at once on `main`")
+        self.assertEqual(for_run["title"], "Run 52 of ci.yml failed in 6 ways at once on main")
         for name in broken:
             self.assertIn(f"`{name}`, `tests/BrokenTests.cs:", for_run["body"])
         self.assertNotIn(known, for_run["body"])

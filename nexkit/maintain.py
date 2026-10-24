@@ -16,7 +16,7 @@ from . import autopilot
 from .autopilot import in_repository
 from .config import setting
 from .github import GitHubError
-from .route import issue_from_branch
+from .route import implementing, issue_from_branch
 from .state import (
     CONTINUED,
     PAUSED,
@@ -222,9 +222,10 @@ def is_conflicting(gh, number, tries=6, delay=5):
 
 def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
     """Start an automatic fix round that merges `base` into the pull request, unless one
-    already tried this base commit, its limit is used up, or its latest round is paused or
-    still running. `own` is the URL of the round that calls this while it reports: its
-    comment still says running, but it is ending.
+    already tried this base commit, its limit is used up, or its latest round, or the
+    implement round that opened it, is paused or still running. `own` is the URL of the
+    round that calls this while it reports: its comment still says running, but it is
+    ending.
     Returns a line saying what happened, or "" when nothing was started for a known reason
     that needs no line."""
     rounds = [run for _, run in run_comments(gh.comments(number)) if "round" in run]
@@ -239,6 +240,13 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
         # A running round merges the base branch itself when it conflicts, and a dispatch
         # now would replace a command waiting behind it. A later check starts the round.
         # A continued round has a run on its way.
+        return ""
+    issue = issue_from_branch(gh.pull(number)["head"]["ref"])
+    running = implementing(gh, issue) if issue else None
+    if running and running.get("url") != own:
+        # The implement round still checks, reviews and merges the pull request; a round
+        # that pushed now would make its merge fail. Its report, or a later check, starts
+        # this round with the branch as that round left it.
         return ""
     if latest.get("conflicts") and latest.get("outcome") in UNCOUNTED:
         # The last round stopped because NexKit may not push the merge: a person merges

@@ -428,6 +428,7 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
 | The plan or round after autopilot's answers asks again, and no person commented since | Nothing: a person decides, and `notify` mentions them. A comment by a person lets autopilot answer again. |
+| A blocked `/nexkit go` found that no change is needed and recommends closing the issue | Closes the issue as completed with the round's finding, with `answer: "recommended"`; no other round runs. |
 | Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
 | Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. When that plan does not split the issue and needs nobody, starts `/nexkit go`, or `/nexkit fix` on its pull request. |
 | A parent issue whose sub-issues are all closed | With `close_parent_issues`, NexKit closed it already; without, it waits for a person to close it. |
@@ -478,6 +479,9 @@ every open issue in scope, oldest first, and starts the one command that moves i
   or its pull request since, it waits for a person, whatever the new questions are. The
   prompts never recommend an option that needs a person to act outside NexKit, such as
   downloading files or granting access, so such a question waits for a person at once.
+  When a blocked `/nexkit go` found that no change is needed (its `no_change` finding)
+  and its one question recommends closing the issue, autopilot starts no other round: it closes the issue
+  as completed with a comment that holds the finding.
 - **CI on the default branch.** With workflows in `merge.after_workflows`, each sweep also
   looks at the runs of each of them on the default branch, after NexKit's merges and
   people's alike, and at every attempt of each run; runs of pull requests, even from a
@@ -504,6 +508,30 @@ every open issue in scope, oldest first, and starts the one command that moves i
   runs a `bug` issue reports. Sweeps notice a finished run at the next event or on the
   hourly schedule. Reading annotations needs `checks: read` in the workflow's
   permissions, as `nexkit init` writes them.
+- **Titles of CI issues.** An issue for a CI failure says what fails, where, and
+  "fails at times on" the branch for a flaky failure, or "fails on" it when the branch is
+  red, in plain words. Double quotes mark a test, job or step name; there are no
+  backticks, and a name is never shortened. A test is named by the last segment of its
+  annotation's title, after the last ` › ` or ` > `, and its file name. A title is cut only
+  past GitHub's 256 characters, at a word boundary. The body keeps the full name, file and
+  line. A red branch's title names the failures of its latest attempt: one, or up to three
+  of one kind, else how many.
+
+  | Failure | Title |
+  |---|---|
+  | A test | Test "an author publishes from Studio and the site shows the new release" in purchase-request-release.spec.ts fails at times on main |
+  | A Vitest test | Test "pages through more than twenty entries" in RecordHistory.test.tsx fails at times on main |
+  | An annotation with only a file and line | Line 12 of src/orders.ts fails at times on main |
+  | A job, or a step named like its job | Job "Integration tests" in ci.yml fails at times on main |
+  | A step | Step "Unit tests" of job "Lint and unit tests" in ci.yml fails at times on main |
+  | A run that failed before any job | ci.yml does not start at times on main |
+  | A run with more than five new failures | Run 123 of ci.yml failed in 7 ways at once on main |
+  | A red branch | Steps "Lint" and "Unit tests" in ci.yml fail on main |
+  | A red branch, failures of several kinds or more than three | ci.yml fails in 4 ways on main |
+  | A red branch, before any job | ci.yml does not start on main |
+
+  The marker, not the title, ties a failure to its issue, so an issue opened with an
+  older title keeps getting its records.
 - **Parts.** Parts that autopilot creates are trusted because they start with a NexKit
   marker and are sub-issues of an issue it trusts. A part's own plan that is too large is
   split again, within these limits:

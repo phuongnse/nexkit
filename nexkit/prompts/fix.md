@@ -52,6 +52,11 @@ $round_checks
 - Leave no temporary files, logs or build output in the working tree.
 - Never skip, delete or weaken tests or checks to make them pass.
 - If you cannot make progress, stop and return `status: blocked` with the reason.
+- When a check failed for a cause outside the repository's code, such as a package
+  registry, a service or the network that failed while it ran, and no change to the code
+  would prevent it, change nothing. Return `status: done` with the cause and its evidence
+  in `cause`, and `cause_outside: true`. After failing checks, NexKit then runs the checks
+  and the review once more on the same commit.
 
 $writing
 ## What to return
@@ -64,6 +69,8 @@ $writing
   such as trace, log or output lines with the file each comes from. A diagnosis round
   must fill it before it changes code. In other rounds, fill it when you found a cause;
   otherwise leave it empty.
+- `cause_outside`: `true` only when that cause lies outside the repository's code and you
+  changed nothing for it; otherwise `false`.
 - `blocker`: why you stopped, when `status` is `blocked`; otherwise an empty string.
 - `questions`: when `status` is `blocked` because a person must decide something, one entry
   for each decision; otherwise an empty list. Each has the `question`, the `options` you

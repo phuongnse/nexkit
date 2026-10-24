@@ -131,6 +131,49 @@ class ReportCase(unittest.TestCase):
 
 
 class ReportTests(ReportCase):
+    def no_change(self, cfg=None):
+        output = {
+            "status": "done",
+            "summary": "Nothing to change.",
+            "no_change": "Fixed by 8b9cb87.",
+        }
+        self.write(
+            "nexkit-agent", "result.json", {"status": "done", "no_change": True, "output": output}
+        )
+        needs = {
+            "publish": {"outputs": {"result": json.dumps({"published": False, "no_change": True})}}
+        }
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        return report(
+            self.gh,
+            decision(),
+            cfg or make_config(),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+
+    def test_a_round_that_finds_no_change_needed_closes_the_issue_with_the_finding(self):
+        self.gh.add_issue(3)
+        self.gh.parents[5] = 3
+        outcome = self.no_change(make_config(close_parent_issues=True))
+        self.assertEqual((outcome["outcome"], outcome.get("attention")), ("no_change", None))
+        self.assertEqual(self.gh.issues[5]["state_reason"], "completed")
+        [row] = self.gh.run_comments(5)
+        self.assertEqual(row["run"]["status"], "success")
+        self.assertIn("No change is needed, so NexKit closed #5 as completed.", row["body"])
+        self.assertIn("Fixed by 8b9cb87.", row["body"])
+        self.assertEqual(self.gh.issues[3]["state"], "closed")  # its only sub-issue closed
+        # When the issue cannot be closed, a person closes it.
+        self.gh.issues[5]["state"] = "open"
+        self.gh.close_errors[5] = GitHubError(403, "Forbidden")
+        outcome = self.no_change()
+        self.assertEqual(outcome["outcome"], "close_failed")
+        self.assertIn("could not close the issue; close it yourself", outcome["attention"])
+        self.assertEqual(self.gh.run_comments(5)[-1]["run"]["status"], "failure")
+        self.assertIn("could not close #5", outcome["summary"])
+
     def test_agent_failures_are_explained_on_the_issue(self):
         # The try after a job that failed as a whole: a person decides.
         outcome = self.run_report(d=decision(retry=True), published=False)

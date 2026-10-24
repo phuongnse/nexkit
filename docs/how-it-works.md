@@ -9,7 +9,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 
 | Job | Runs for | Token permissions | Secrets | Does |
 |---|---|---|---|---|
-| `route` | every event | read; comments, reactions, statuses | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
+| `route` | every event | read; comments, reactions, statuses; workflow runs (`actions: read`) | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
 | `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. |
@@ -66,6 +66,7 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 | The agent returned `blocked` | yes, unless autopilot answers it |
 | The agent failed or errored, publishing failed, or the review did not complete | yes, unless the error was transient and the command runs once more, or autopilot asks for a split after an implement or fix agent ran out of time (see [limits on parts](#autopilot)) |
 | Checks or review still fail and no automatic fix rounds remain | yes |
+| Checks or review still fail after a fix round found nothing to change for a cause outside the code and ran them again | yes |
 | Ready, with `merge.auto` off | yes |
 | Ready, with an acceptance criterion the review could not verify | yes, also with `merge.auto` on |
 | GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](#failure-handling) |
@@ -88,6 +89,21 @@ changes* reviews, dispatches and the short run for a closed issue wait in this q
 other comments do not. GitHub keeps one waiting run, so a command posted while another
 waits replaces it. A command that
 never got 👀 did not run; post it again.
+
+A pull request runs one NexKit round at a time. Its rounds (fix, review, automatic and
+conflict rounds) share the pull request's queue, and the `/nexkit go` run that opened it is
+one of its rounds too, until that run has checked, reviewed and, with `merge.auto`, merged
+it. That run waits in the issue's queue, so NexKit orders the two itself:
+
+- A conflict round does not start while the implement round runs. When the implement
+  round ends and the pull request conflicts, that round starts the conflict round, on the
+  branch as it left it: after a refused merge, or when it ends ready, with findings and no
+  automatic round left, or without a review.
+- A person's command or *Request changes* review on the pull request meanwhile gets a
+  reply that the implement round still runs; comment it again once it ends.
+- The rounds that a run starts as it ends, such as an automatic fix round or the one more
+  try, run after it in the pull request's queue.
+- A run whose workflow run ended without a report holds nothing up.
 
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
 own run started. If that comment was deleted, `report` posts a new one.
@@ -265,6 +281,15 @@ commit. It asks the agent to run the checks before it finishes; of a
 failed, since NexKit runs every check after the round. The agent must return `done` or
 `blocked`. A blocked or failed session publishes nothing.
 
+An implement agent that finds no change is needed, such as for a failure that a commit on
+the base branch already fixed, changes nothing and writes the finding, with its evidence,
+in `no_change`. When the issue, the plan or the discussion says to stop without a change
+in that case, it returns `done`: NexKit opens no pull request, closes the issue as
+completed, and the run's comment shows the finding (outcome `no_change`). Otherwise it
+returns `blocked` with a question whose recommended option is to close the issue, which
+[autopilot](#autopilot) answers by closing it. A `no_change` result that changed files is
+an error and publishes nothing.
+
 When the failing checks of the last round kept
 [result files](configuration.md#result-files-of-failing-checks), `route` puts the id of the
 run that recorded them in the decision, and the fix round's `agent` job downloads that
@@ -281,7 +306,9 @@ agent's summary and cause, and the checks that still failed after it, each with 
 failure signature (see [Failure handling](#failure-handling)). The agent is told not to
 repeat a change that did not help. Besides `summary`, a fix result has `cause`: the cause
 of the failures the round addressed and the evidence that shows it, such as trace, log or
-output lines, or an empty string. The round's comment and its commit message show a
+output lines, or an empty string, and `cause_outside`: whether that cause lies outside the
+code, which only an automatic round after failing checks uses (see [Failing checks the
+base branch fixed](#failing-checks-the-base-branch-fixed)). The round's comment and its commit message show a
 cause when there is one, and so does the next review's *Previous round* section. NexKit builds the pull request description from the implement result, in this
 order: *Summary* (two or three sentences, also the commit message), *What changed* (in
 behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
@@ -342,7 +369,12 @@ prompt says that the round merged the base branch cleanly and asks the agent to 
 what still fails on the merged code. When the agent changes nothing, `publish` pushes the
 merge alone, an empty patch being valid after a merge, and the next checks run on it.
 When the base branch has not moved, nothing is merged, and an empty patch is still the
-error "The agent finished without changing any files." Rounds that a person starts with
+error "The agent finished without changing any files.", with what the agent found, unless
+the agent names a cause outside the code: a package registry, a service or the network
+that failed while a check ran, with its evidence in `cause` and `cause_outside` set. Then
+the round publishes nothing, and its checks and review run once more on the same commit,
+in the same run and within the same automatic round. When they still fail, the round ends
+as `recheck_failed`, and a person decides with the agent's finding in the mention. Rounds that a person starts with
 `/nexkit fix`, and automatic rounds started only by blocking review findings while the
 checks passed, merge the base branch only on a conflict, so they never bring in base
 changes that nobody asked for.
@@ -477,7 +509,9 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
   commit, so a blocked round is not repeated until the base branch moves again. A pull
   request whose latest round is paused at the usage limit is left alone, and so is one
   with a round running: that round merges the base branch itself when it conflicts, and a
-  new run would replace a command waiting behind it. The next check starts the round if it
+  new run would replace a command waiting behind it. While the implement round that opened
+  the pull request runs, the conflict round waits for it (see [One run at a
+  time](#one-run-at-a-time)). The next check starts the round if it
   is still needed.
 - When the round starts and the branch no longer conflicts, for example because another
   round already merged the base branch, it ends at once without running an agent.
@@ -547,7 +581,10 @@ issue run in that group as well, and start a sweep.
   comment by any other bot never counts. Autopilot answers once in a row: when the plan
   or round that its answers started asks again, with no comment by a person on the issue
   or its pull request since the answers, it waits for a person, so new wording of the
-  same question cannot start another run. A recommended option is one NexKit can carry
+  same question cannot start another run. When a blocked `/nexkit go` found that no change
+  is needed and asks one question, its recommended answer only closes the issue, so autopilot closes it as
+  completed with the round's finding and starts no other round. A recommended option is
+  one NexKit can carry
   out itself, a change to the plan or the code; the prompts never recommend one that
   needs a person to act outside NexKit, such as downloading files or granting access. A plan that is too large becomes sub-issues, in
   order. Each part of the plan names the earlier parts it needs (`depends_on`); NexKit
@@ -598,8 +635,9 @@ issue run in that group as well, and start a sweep.
   "Process completed with exit code 1.", names nothing. A failed job without an
   annotation that names a failure is named by the job and its first failed step, and an
   attempt that failed before any job did by the workflow. Each failure's issue is `bug`,
-  in scope, titled by the failure, for example "`OrderTests.Totals_round_half_up` fails
-  at times on `main`", starts with its own marker that names the workflow and a key for
+  in scope, titled by the failure in plain words, for example 'Test "pages through more
+  than twenty entries" in RecordHistory.test.tsx fails at times on main' (see [the title
+  forms](configuration.md#autopilot)), starts with its own marker that names the workflow and a key for
   the failure, and is planned right after the `bug` issues for a failing default branch.
   Each record names the commit, the run, and the job, file and line, and message where
   the failure showed in each failed attempt. A later record of the same failure is a
@@ -796,7 +834,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | The agent stops on a transient error: an overloaded or failing API, a rate limit that is not a usage limit, a lost connection, or a CLI that exited before the model answered; or the agent job fails as a whole, for example on a lost runner | Reports it, publishes nothing, and runs the same command once more with the same note, shown as `(retry)`; the comment shows ⏭️ until the new run starts. The retry counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. A second such stop waits for a person, and its comment shows both errors. A job a person cancelled is never run again. |
 | The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |
-| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. |
+| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. When a blocked `/nexkit go` found that no change is needed, that answer closes the issue with the round's finding, without another round. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |
@@ -808,6 +846,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | The PR conflicts with its base branch in a protected path | Stops before the agent runs; merge the base branch yourself. |
 | The merge brings workflow changes and only the default Actions token can push | Checked before the agent runs. A merge that only brings a moved base branch is left out, and the round fixes the branch as it is. A merge needed for a conflict stops the round before its agent: merge the base branch yourself or name a push token that may update workflows in `publish.push_token_secret`. Neither costs an automatic round. |
 | GitHub refuses the automatic merge because the base branch was modified meanwhile, for example by another part of a split merging at the same time | Tries the merge again, three times in all, a little later each time. |
+| GitHub refuses the automatic merge because the head branch was modified, after a push to the branch since the round checked it | Starts `/nexkit review` on the new head, which checks, reviews and merges it as usual; nobody is mentioned. |
 | GitHub refuses the automatic merge because required status checks have not passed yet, such as a CI workflow slower than the NexKit round | For an issue in autopilot's scope, ends the round as `merge_waiting`: each sweep tries the merge again while the head is the one approved, and merges once the checks pass, with everything a merge leads to; a failing check, a new commit, or six hours without the checks passing wait for a person. Otherwise a person merges it. The `maintain` job has `contents: write` for this; it never checks out the repository. |
 | GitHub refuses the automatic merge because the branch is behind its base branch, under protection that requires it to be up to date | With `conflicts.auto_resolve`, updates the branch from the base branch on GitHub and starts `/nexkit review` on the new commit, which checks, reviews and merges it as usual, at most `conflicts.max_rounds` times per pull request. GitHub starts no CI for that update when it is made with the Actions token, so required checks from the repository's own workflows run only with `publish.push_token_secret`; without it, the merge waits for them and then for a person. |
 | GitHub refuses the automatic merge for another reason (required approvals, a merge method the repository does not allow) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |

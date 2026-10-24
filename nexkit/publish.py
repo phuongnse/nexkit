@@ -381,6 +381,12 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
         return {"published": False}
     if decision["action"] == "plan":
         return publish_plan(gh, decision, result, context, cfg)
+    if result.get("no_change"):
+        # Nothing to publish: `report` closes the issue with the agent's finding.
+        return {"published": False, "no_change": True}
+    if result.get("recheck"):
+        # Nothing to publish: the checks and the review run again on the same commit.
+        return {"published": False, "recheck": True, "pr": decision["pr"], "head": decision["head"]}
     patch = (Path(out_dir) / "changes.patch").resolve()
     # A merge whose resolution keeps this branch's side everywhere has an empty patch.
     empty_ok = decision["action"] == "fix" and result.get("start_base")

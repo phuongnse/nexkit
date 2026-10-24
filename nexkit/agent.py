@@ -118,8 +118,14 @@ SCHEMAS = {
     },
     "implement": {
         **_CHANGE_RESULT,
-        "properties": {**_CHANGE_RESULT["properties"], **_PULL_FIELDS},
-        "required": [*_CHANGE_RESULT["required"], *_PULL_FIELDS],
+        "properties": {
+            **_CHANGE_RESULT["properties"],
+            **_PULL_FIELDS,
+            # The finding and its evidence when no change is needed, or "". Done, NexKit
+            # closes the issue with it; blocked, closing it is the recommended answer.
+            "no_change": {"type": "string"},
+        },
+        "required": [*_CHANGE_RESULT["required"], *_PULL_FIELDS, "no_change"],
     },
     "fix": {
         **_CHANGE_RESULT,
@@ -128,6 +134,9 @@ SCHEMAS = {
             # The cause of the failures and the evidence that shows it, or "". A diagnosis
             # round must name it before it changes code.
             "cause": {"type": "string"},
+            # Whether that cause lies outside the code, such as a registry or service that
+            # failed, so that the checks may pass on the same commit when they run again.
+            "cause_outside": {"type": "boolean"},
             # Conflicts with the base branch that need a person's decision.
             "open_conflicts": {
                 "type": "array",
@@ -143,7 +152,7 @@ SCHEMAS = {
                 },
             },
         },
-        "required": [*_CHANGE_RESULT["required"], "cause", "open_conflicts"],
+        "required": [*_CHANGE_RESULT["required"], "cause", "cause_outside", "open_conflicts"],
     },
     # NexKit adds the configured profile names as an enum when it runs triage.
     "triage": {
@@ -440,6 +449,24 @@ def diagnosis_text(repeated):
 
 def _cause(result):
     return str((result.get("output") or {}).get("cause") or "").strip()
+
+
+def no_change(result):
+    """The finding of an implement result that says no change is needed, or ""."""
+    return str((result.get("output") or {}).get("no_change") or "").strip()
+
+
+def outside_cause(result):
+    """Whether a fix result names a cause outside the code, with its evidence."""
+    return bool(_cause(result)) and (result.get("output") or {}).get("cause_outside") is True
+
+
+def unchanged(result):
+    """The error of an implement or fix round that changed no files, with what the agent
+    found: its cause, else its summary."""
+    found = _cause(result) or str((result.get("output") or {}).get("summary") or "").strip()
+    error = "The agent finished without changing any files."
+    return f"{error} What it found: {found}" if found else error
 
 
 def no_cause(result, repeated):
@@ -1024,10 +1051,28 @@ def run_stage(
             # A merge of a moved base branch is published alone, as in any round after
             # failing checks: the base branch may have fixed the failure, and the next
             # checks show whether it did.
+        elif stage == "implement" and no_change(result):
+            if files:
+                result.update(
+                    status="error",
+                    error="The agent found that no change is needed but changed "
+                    + ", ".join(f"`{name}`" for name in files[:20])
+                    + ", so NexKit publishes nothing.",
+                )
+            else:
+                # The issue or its plan says to stop without a change here: NexKit closes
+                # the issue with the finding.
+                result["no_change"] = True
         elif not files and not merged:
             # After a merge an empty patch is valid: it keeps this branch's side everywhere,
             # or publishes a clean merge alone.
-            result.update(status="error", error="The agent finished without changing any files.")
+            if stage == "fix" and context.get("merge_moved_base") and outside_cause(result):
+                # An automatic round after failing checks whose cause lies outside the code,
+                # such as a registry that failed: the checks and the review run once more
+                # on the same commit.
+                result["recheck"] = True
+            else:
+                result.update(status="error", error=unchanged(result), unchanged=True)
     if triage:
         result.update(profile=triage["profile"], triage=triage)
     if held:

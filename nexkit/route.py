@@ -5,12 +5,15 @@ from __future__ import annotations
 import re
 
 from . import config as configuration
+from .github import GitHubError
 from .state import (
+    RUNNING,
     by_bot,
     latest_plan,
     plan_profile,
     repeated_failures,
     results_run,
+    run_comments,
     verified_head,
 )
 
@@ -26,8 +29,48 @@ USAGE = (
 )
 
 
+# The run id in a run comment's link.
+RUN_ID = re.compile(r"/actions/runs/(\d+)")
+
+
 def branch_for(issue):
     return f"{BRANCH_PREFIX}{issue}"
+
+
+def implementing(gh, issue):
+    """The run of `/nexkit go` that still runs on `issue`, or None. It opened the issue's
+    pull request and checks, reviews and merges it before it ends, so it is a round of that
+    pull request too. A run whose workflow run ended without a report does not count, nor
+    one whose workflow run cannot be read, so a lost run never holds the pull request up."""
+    runs = [run for _, run in run_comments(gh.comments(issue)) if run.get("command") == "go"]
+    if not runs or runs[-1].get("status") != RUNNING:
+        return None
+    match = RUN_ID.search(runs[-1].get("url") or "")
+    if not match:
+        return None
+    try:
+        if gh.workflow_run(int(match.group(1))).get("status") == "completed":
+            return None
+    except GitHubError:
+        return None
+    return runs[-1]
+
+
+def _one_round(gh, decision):
+    """A person's command on a pull request whose implement round still runs: a refusal,
+    since a pull request runs one NexKit round at a time; otherwise `decision`."""
+    if not decision.get("pr"):
+        return decision
+    running = implementing(gh, decision["issue"])
+    if not running:
+        return decision
+    run = f"[implement round]({running['url']})" if running.get("url") else "implement round"
+    return _none(
+        f"The {run} on #{decision['issue']} still checks and reviews this pull request, and "
+        "a pull request runs one NexKit round at a time. Comment the command again once it "
+        "ends.",
+        decision["pr"],
+    )
 
 
 def issue_from_branch(branch):
@@ -95,7 +138,7 @@ def route(gh, event_name, event, inputs=None):
         if not gh.can_write(actor):
             return _none(f"@{actor} needs write access to run NexKit commands", number)
         on_pull = "pull_request" in event["issue"]
-        decision = _decide(gh, command, number, on_pull, note, auto=False)
+        decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
         decision.update(actor=actor, comment_id=event["comment"]["id"])
         return decision
 
@@ -109,6 +152,7 @@ def route(gh, event_name, event, inputs=None):
         decision = _decide(
             gh, "fix", event["pull_request"]["number"], True, review.get("body") or "", auto=False
         )
+        decision = _one_round(gh, decision)
         decision["actor"] = actor
         return decision
 

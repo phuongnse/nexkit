@@ -23,6 +23,7 @@ from unittest import mock
 
 from nexkit import autopilot, progress
 from nexkit.github import GitHubError
+from nexkit.maintain import maintain
 from nexkit.publish import publish_plan
 from nexkit.report import report
 from nexkit.route import route
@@ -162,7 +163,7 @@ class Pipeline:
             self.gh.runs[run_id] = {"status": "completed", "conclusion": "failure"}
             self.played.append((inputs["command"], int(inputs["number"]), "stall"))
             return
-        self.gh.runs[run_id] = {"status": "completed"}
+        self.gh.runs[run_id] = {"status": "in_progress"}
         artifacts = Path(self.tmp.name) / str(run_id)
         needs = self.stages(decision, outcome, artifacts)
         result = report(
@@ -174,6 +175,7 @@ class Pipeline:
             workflow_ref=WORKFLOW,
             default_branch="main",
         )
+        self.gh.runs[run_id] = {"status": "completed"}
         self.played.append((inputs["command"], decision["target"], result["outcome"]))
 
     def stages(self, decision, outcome, artifacts):
@@ -196,9 +198,17 @@ class Pipeline:
         if decision["action"] == "plan" and agent and agent["status"] == "done":
             context = {"title": "x"}
             published = publish_plan(self.gh, decision, agent, context, self.cfg)
+        elif decision["action"] == "implement" and agent and agent.get("no_change"):
+            published = {"published": False, "no_change": True}
         elif decision["action"] == "implement" and agent and agent["status"] == "done":
             pull = self.gh.create_pull("x", decision["branch"], "main", "Closes it.")
             published = {"published": True, "pr": pull["number"], "head": self.head(pull["number"])}
+            if outcome.get("meanwhile"):
+                # What happens elsewhere while the round checks and reviews its pull request.
+                outcome["meanwhile"](self, pull["number"])
+        elif decision["action"] == "fix" and agent and agent.get("recheck"):
+            published = {"published": False, "recheck": True, "pr": decision["pr"]}
+            published["head"] = decision["head"]
         elif decision["action"] == "fix" and agent and agent["status"] == "done":
             published = {"published": True, "pr": decision["pr"], "head": self.head(decision["pr"])}
         published.update(outcome.get("publish") or {})
@@ -390,6 +400,138 @@ class ScenarioTests(unittest.TestCase):
         pipe.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is expected.')]
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_axis_1129_a_base_branch_move_waits_for_the_implement_round(self):
+        pushed = []
+
+        def move_base(pipe, pull):
+            # A person merges into `main` while the round reviews; the pull request now
+            # conflicts, and the push starts NexKit's conflict check.
+            pipe.gh.branches["main"] = "e" * 40
+            pipe.gh.pulls[pull]["mergeable"] = False
+            pipe.gh.merge_error = [GitHubError(405, "Pull Request is not mergeable")]
+            event = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}}
+            before = len(pipe.gh.dispatches)
+            maintain(
+                pipe.gh, route(pipe.gh, "push", event), pipe.cfg, workflow="nexkit.yml", ref="main"
+            )
+            pushed.append(pipe.gh.dispatches[before:])
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": move_base}
+            # The conflict round merges `main`.
+            pipe.gh.pulls[int(inputs["number"])]["mergeable"] = True
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        # The push started nothing while the implement round ran; its refused merge started
+        # the conflict round, which merged.
+        self.assertEqual(pushed, [[]])
+        self.assertEqual([outcome for *_, outcome in pipe.played[1:]], ["conflict_fix", "merged"])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_a_merge_refused_because_the_head_moved_reviews_the_new_head(self):
+        def push(pipe, pull):
+            # A person pushes to the branch while the round reviews.
+            pipe.gh.merge_error = [GitHubError(409, "Head branch was modified.")]
+            pipe.head(pull)
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": push}
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+        self.assertEqual([outcome for *_, outcome in pipe.played[1:]], ["head_moved", "merged"])
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_axis_1104_a_fix_round_with_a_cause_outside_the_code_checks_again_once(self):
+        cause = "The registry returned 500 Internal Server Error during `docker compose up`."
+        outside = {"cause": cause, "cause_outside": True}
+
+        def script(passes):
+            def play(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                if inputs["command"] == "go":
+                    return done(checks=False)
+                found = {**done(checks=passes), "recheck": True}
+                found["agent"] = {**found["agent"], "recheck": True, "output": outside}
+                return found
+
+            return play
+
+        pipe = Pipeline(self, config(), script(passes=True))
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
+        # When the checks still fail on the same commit, a person decides, and sees what
+        # the agent found.
+        pipe = Pipeline(self, config(), script(passes=False))
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(pipe.played[-1][2], "recheck_failed")
+        [mention] = pipe.gh.comments_matching(6, "a person is needed")
+        self.assertIn(cause.rstrip("."), mention["body"])
+
+    def test_axis_1089_an_answer_that_only_closes_the_issue_closes_it(self):
+        finding = "8b9cb87 already fixed it: the last 20 runs of `e2e` on `main` passed."
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            question = {
+                "question": "The failure is already fixed. Close the issue?",
+                "options": ["Close it as fixed by 8b9cb87", "Keep it open"],
+                "recommended": 1,
+            }
+            output = {"status": "blocked", "blocker": "Already fixed.", "questions": [question]}
+            output["no_change"] = finding
+            return {"agent": {"status": "blocked", "error": "Already fixed.", "output": output}}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        [closing] = pipe.gh.comments_matching(5, "NexKit autopilot closes this issue")
+        self.assertIn(finding, closing["body"])
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+        self.assertFalse(pipe.gh.comments_matching(5, "answers for the owner"))
+
+    def test_a_round_that_finds_no_change_needed_closes_the_issue(self):
+        finding = "The page already shows the release: test_release passes on main."
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            output = {"status": "done", "summary": "Nothing to change.", "no_change": finding}
+            return {"agent": {"status": "done", "no_change": True, "output": output}}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "no_change")
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(pipe.gh.pulls, {})
+        [run] = [
+            comment
+            for comment, _ in run_comments(pipe.gh.comments(5))
+            if finding in comment["body"]
+        ]
+        self.assertIn("No change is needed, so NexKit closed #5 as completed.", run["body"])
 
     def test_a_fix_round_out_of_time_replans_then_fixes_then_waits(self):
         fixes = itertools.count()

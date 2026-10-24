@@ -25,6 +25,9 @@ succeeds. Help the user write issues that one session can finish and test.
      project's checks can show. NexKit's review reads the code and the check results and
      runs nothing, so steps such as "passes five runs in a row" or a manual probe are not
      criteria. For a flaky failure, ask for a test that reproduces the cause every time.
+     When the work may turn out to be unneeded, such as a failure that may be fixed
+     already, say when to stop with no change ("If a commit already fixed it, close the
+     issue with that evidence"): NexKit then closes the issue with its finding.
      Only code behaviour; never process steps such as approvals or PR text.
    - **Out of scope**, when helpful.
 

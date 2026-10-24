@@ -281,6 +281,15 @@ commit. It asks the agent to run the checks before it finishes; of a
 failed, since NexKit runs every check after the round. The agent must return `done` or
 `blocked`. A blocked or failed session publishes nothing.
 
+An implement agent that finds no change is needed, such as for a failure that a commit on
+the base branch already fixed, changes nothing and writes the finding, with its evidence,
+in `no_change`. When the issue, the plan or the discussion says to stop without a change
+in that case, it returns `done`: NexKit opens no pull request, closes the issue as
+completed, and the run's comment shows the finding (outcome `no_change`). Otherwise it
+returns `blocked` with a question whose recommended option is to close the issue, which
+[autopilot](#autopilot) answers by closing it. A `no_change` result that changed files is
+an error and publishes nothing.
+
 When the failing checks of the last round kept
 [result files](configuration.md#result-files-of-failing-checks), `route` puts the id of the
 run that recorded them in the decision, and the fix round's `agent` job downloads that
@@ -572,7 +581,10 @@ issue run in that group as well, and start a sweep.
   comment by any other bot never counts. Autopilot answers once in a row: when the plan
   or round that its answers started asks again, with no comment by a person on the issue
   or its pull request since the answers, it waits for a person, so new wording of the
-  same question cannot start another run. A recommended option is one NexKit can carry
+  same question cannot start another run. When a blocked `/nexkit go` found that no change
+  is needed, its recommended answer only closes the issue, so autopilot closes it as
+  completed with the round's finding and starts no other round. A recommended option is
+  one NexKit can carry
   out itself, a change to the plan or the code; the prompts never recommend one that
   needs a person to act outside NexKit, such as downloading files or granting access. A plan that is too large becomes sub-issues, in
   order. Each part of the plan names the earlier parts it needs (`depends_on`); NexKit
@@ -822,7 +834,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | The agent stops on a transient error: an overloaded or failing API, a rate limit that is not a usage limit, a lost connection, or a CLI that exited before the model answered; or the agent job fails as a whole, for example on a lost runner | Reports it, publishes nothing, and runs the same command once more with the same note, shown as `(retry)`; the comment shows ⏭️ until the new run starts. The retry counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. A second such stop waits for a person, and its comment shows both errors. A job a person cancelled is never run again. |
 | The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |
-| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. |
+| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. When a blocked `/nexkit go` found that no change is needed, that answer closes the issue with the round's finding, without another round. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |

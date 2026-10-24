@@ -62,6 +62,7 @@ COMPLETED = {
     "branch_updated",
     "head_moved",
     "recheck_failed",
+    "no_change",
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
 # NexKit continues by itself (`auto_fix`, `conflict_fix`, a resumed pause) or is done.
@@ -363,7 +364,42 @@ def _autopilot_fields(agent):
     found = round_questions(agent)
     if found:
         fields["questions"] = found
+    finding = no_change_finding(agent)
+    if finding and agent.get("stage") == "implement":
+        # The round recommends closing the issue with this finding.
+        fields["no_change"] = finding
     return fields
+
+
+def no_change_finding(agent):
+    """What an implement agent found when it says no change is needed, or ""."""
+    return clip(str(((agent or {}).get("output") or {}).get("no_change") or "").strip(), 3000)
+
+
+def _no_change(gh, cfg, decision, agent):
+    """An implement round that found no change is needed, where the issue or its plan says
+    to stop then: close the issue as completed, with the agent's finding."""
+    issue = decision["issue"]
+    finding = no_change_finding(agent)
+    try:
+        gh.close_issue(issue, "completed")
+    except GitHubError as exc:
+        message = f"No change is needed, but NexKit could not close #{issue}: {exc}"
+        return {
+            "outcome": "no_change",
+            "summary": f"{message}\n\n{finding}",
+            "attention": "no change is needed; close the issue yourself",
+            "agents": agents_ran(agent),
+        }
+    lines = [f"No change is needed, so NexKit closed #{issue} as completed.", "", finding]
+    if cfg["close_parent_issues"]:
+        # Closing with the Actions token starts no workflow for `issues: closed`.
+        lines += ["", *close_parents_safely(gh, issue)]
+    return {
+        "outcome": "no_change",
+        "summary": "\n".join(lines).strip(),
+        "agents": agents_ran(agent),
+    }
 
 
 def _stage_failure(decision, agent, publish):
@@ -377,7 +413,7 @@ def _stage_failure(decision, agent, publish):
         message = f"NexKit stopped during {action}: {agent['error']}"
         extra = [blocked_questions(agent), open_conflicts(agent, decision["base"])]
         return "agent_" + agent["status"], "\n\n".join([message, *filter(None, extra)])
-    if not publish.get("published") and not publish.get("recheck"):
+    if not publish.get("published") and not publish.get("recheck") and not publish.get("no_change"):
         reason = publish.get("error") or "the publish job failed"
         outcome = "needs_merge" if publish.get("workflows") else "publish_failed"
         return outcome, f"NexKit could not publish the {action} result: {reason}"
@@ -883,7 +919,16 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
     """Post the outcome. Returns a short machine-readable summary for logs and tests."""
     result = _report(gh, decision, cfg, needs, Path(artifacts), workflow_ref, default_branch)
     fields = {"outcome": result["outcome"]}
-    for key in ("resume", "attention", "agents", "timed_out", "questions", "transient_error"):
+    kept = (
+        "resume",
+        "attention",
+        "agents",
+        "timed_out",
+        "questions",
+        "transient_error",
+        "no_change",
+    )
+    for key in kept:
         if result.get(key):
             fields[key] = result[key]
     progress.finish(gh, decision, run_status(result["outcome"]), result["summary"], **fields)
@@ -957,6 +1002,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 **fields,
                 **_autopilot_fields(agent),
             }
+        if action == "implement" and publish.get("no_change"):
+            return _no_change(gh, cfg, decision, agent)
         if action == "plan":
             plan = publish.get("comment")
             reason = needs_person("planned", cfg, plan=agent.get("output"))

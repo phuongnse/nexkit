@@ -174,7 +174,7 @@ def after_run(gh, cfg, decision, outcome, workflow, ref):
     waits for a usage limit. A merge closed the issue, which may empty the scope."""
     if not takes(cfg) or outcome in CHAINED or outcome == "paused":
         return []
-    closed = decision["issue"] if outcome == "merged" else None
+    closed = decision["issue"] if outcome in ("merged", "no_change") else None
     return request_safely(gh, cfg, workflow, ref, closed)
 
 
@@ -469,6 +469,10 @@ def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
     found = answers(cfg, run.get("questions")) if run.get("outcome") == "agent_blocked" else None
     if found and asked_again(*comments):
         return _step(issue, "waits", REPEATED)
+    if found and command == "go" and run.get("no_change"):
+        # The recommended answer only closes the issue: another round would find the same.
+        reason = "the last round found no change is needed and recommends closing the issue"
+        return _step(issue, "close", reason, finding=run["no_change"], run_url=run.get("url"))
     if found:
         start = {**start, "target": target, "note": answer_note(found)}
         reason = "autopilot answers the questions of the blocked round"
@@ -949,6 +953,28 @@ def start(gh, step, workflow, ref, now=None):
     text = f"NexKit autopilot started `/nexkit {command}`{on}{run}: {step['reason']}."
     _save_record(gh, step, record, text, now)
     return f"Started /nexkit {command} on #{target}: {step['reason']}."
+
+
+def close(gh, cfg, step, workflow, ref):
+    """Close an issue as completed with the finding of its last round, which found no
+    change is needed and recommended closing it. Returns lines for the log."""
+    number = step["number"]
+    url = step.get("run_url")
+    round_ = f"[the last round]({url})" if url else "the last round"
+    gh.comment(
+        number,
+        f"NexKit autopilot closes this issue with the answer {round_} recommended: no change "
+        f"is needed.\n\n{step['finding']}",
+    )
+    gh.close_issue(number, "completed")
+    lines = [f"Closed #{number}: {step['reason']}."]
+    if cfg["close_parent_issues"]:
+        # `maintain` imports this module. Closing with the Actions token starts no workflow.
+        from .maintain import close_parents_safely
+
+        lines += close_parents_safely(gh, number)
+    # Issues it blocked may start now, and the scope may be done.
+    return lines + request_safely(gh, cfg, workflow, ref, number)
 
 
 def split(gh, step, now=None):
@@ -1488,6 +1514,8 @@ def sweep(gh, cfg, workflow, ref, closed=None):
             try:
                 if step["state"] == "split":
                     lines.append(split(gh, step))
+                elif step["state"] == "close":
+                    lines += close(gh, cfg, step, workflow, ref)
                 elif step["state"] == "start":
                     lines.append(start(gh, step, workflow, ref))
                 elif step["state"] == "merge":
@@ -1496,9 +1524,11 @@ def sweep(gh, cfg, workflow, ref, closed=None):
 
                     lines.append(merge_waiting(gh, cfg, step, workflow, ref))
             except GitHubError as exc:
-                what = {"split": "split", "merge": "merge the pull request of"}.get(
-                    step["state"], f"start /nexkit {step.get('command')} on"
-                )
+                what = {
+                    "split": "split",
+                    "merge": "merge the pull request of",
+                    "close": "close",
+                }.get(step["state"], f"start /nexkit {step.get('command')} on")
                 target = step.get("target") or step.get("pull") or step["number"]
                 lines.append(f"Could not {what} #{target}: {exc}")
         if not splits:

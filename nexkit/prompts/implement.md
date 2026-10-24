@@ -43,6 +43,12 @@ $round_checks
 - Never skip, delete or weaken tests or checks to make them pass.
 - If you cannot finish (missing information, a contradictory requirement, a broken
   environment), stop and return `status: blocked` with the reason in `blocker`.
+- When the evidence shows that no change is needed, such as a failure that a commit on
+  the base branch already fixed, change nothing and write the finding in `no_change`. When
+  the issue, the plan or the discussion says to stop without a change in that case,
+  return `status: done`, and NexKit closes the issue with the finding. Otherwise return
+  `status: blocked` with a question whose recommended option is to close the issue with
+  that finding.
 
 $writing
 ## What to return
@@ -68,3 +74,6 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
   option needs a person to act outside the repository, such as downloading files,
   granting access or running something by hand, set `recommended` to 0.
 - `checks_run`: the commands you ran and whether each passed.
+- `no_change`: only when you changed nothing because no change is needed: the finding,
+  followed by the evidence that shows it, such as the commit, log or test output lines.
+  Otherwise an empty string.

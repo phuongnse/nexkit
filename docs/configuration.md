@@ -428,6 +428,7 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
 | The plan or round after autopilot's answers asks again, and no person commented since | Nothing: a person decides, and `notify` mentions them. A comment by a person lets autopilot answer again. |
+| A blocked `/nexkit go` found that no change is needed and recommends closing the issue | Closes the issue as completed with the round's finding, with `answer: "recommended"`; no other round runs. |
 | Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
 | Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. When that plan does not split the issue and needs nobody, starts `/nexkit go`, or `/nexkit fix` on its pull request. |
 | A parent issue whose sub-issues are all closed | With `close_parent_issues`, NexKit closed it already; without, it waits for a person to close it. |
@@ -478,6 +479,9 @@ every open issue in scope, oldest first, and starts the one command that moves i
   or its pull request since, it waits for a person, whatever the new questions are. The
   prompts never recommend an option that needs a person to act outside NexKit, such as
   downloading files or granting access, so such a question waits for a person at once.
+  When a blocked `/nexkit go` found that no change is needed (its `no_change` finding)
+  and recommends closing the issue, autopilot starts no other round: it closes the issue
+  as completed with a comment that holds the finding.
 - **CI on the default branch.** With workflows in `merge.after_workflows`, each sweep also
   looks at the runs of each of them on the default branch, after NexKit's merges and
   people's alike, and at every attempt of each run; runs of pull requests, even from a

@@ -621,6 +621,26 @@ class AnswerTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual(len(self.started()), 2)
 
+    def test_an_answer_that_only_closes_the_issue_closes_it_without_a_round(self):
+        finding = "8b9cb87 fixed it; the last 20 runs passed."
+        self.issue(4)
+        self.posted_plan(4)
+        self.blocked(4, no_change=finding)
+        self.sweep()
+        self.assertEqual(self.started(), [])
+        self.assertEqual(self.gh.issues[4]["state"], "closed")
+        [comment] = self.gh.comments_matching(4, "NexKit autopilot closes this issue")
+        self.assertIn("[the last round](https://github.com/acme/app/actions/runs/", comment["body"])
+        self.assertTrue(comment["body"].endswith(finding))
+        # A sweep follows, for the issues it blocked and the end of the scope.
+        self.assertEqual(self.gh.dispatches[-1]["inputs"]["command"], "autopilot")
+        # Without `autopilot.answer: "recommended"` a person decides, as for any question.
+        self.issue(5)
+        self.posted_plan(5)
+        self.blocked(5, no_change=finding)
+        _, steps = autopilot.preview(self.gh, pilot())
+        self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "waits")])
+
     def blocked(self, number, **fields):
         return self.run_comment(
             number,

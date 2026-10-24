@@ -45,6 +45,7 @@ DONE = {
     "testing": "make test",
     "outside_plan": [],
     "reviewer_notes": [],
+    "no_change": "",
 }
 FIX_DONE = {**DONE, "cause": "", "cause_outside": False, "open_conflicts": []}
 PLAN = {
@@ -443,6 +444,18 @@ class RunStageTests(StageCase):
         result = self.run_stage("implement")
         self.assertEqual(result["status"], "error")
         self.assertIn("without changing", result["error"])
+
+    def test_no_change_needed_closes_the_issue_and_a_change_with_it_is_an_error(self):
+        finding = "8b9cb87 already fixed it: test_add passes on main."
+        self.claude.configure(result={**DONE, "no_change": finding})
+        result = self.run_stage("implement")
+        self.assertEqual((result["status"], result.get("no_change")), ("done", True))
+        self.assertEqual(result["output"]["no_change"], finding)
+        self.assertIn("`no_change`", self.claude.call()["prompt"])
+        self.claude.configure(result={**DONE, "no_change": finding}, write={"calc.py": "x\n"})
+        result = self.run_stage("implement")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("found that no change is needed but changed `calc.py`", result["error"])
 
     def test_blocked_agent_publishes_nothing(self):
         self.claude.configure(

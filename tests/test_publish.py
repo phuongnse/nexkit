@@ -550,7 +550,10 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         plain = pull_body(
             {"issue": 5},
-            {"summary": "S.", "output": {**output, "outside_plan": [], "reviewer_notes": []}},
+            {
+                "summary": "S.",
+                "output": {**output, "outside_plan": [], "reviewer_notes": [], "no_change": ""},
+            },
         )
         self.assertNotIn("Outside the plan", plain)
         self.assertNotIn("Notes for the reviewer", plain)

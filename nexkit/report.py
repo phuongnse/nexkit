@@ -60,6 +60,7 @@ COMPLETED = {
     "conflict_fix",
     "merge_waiting",
     "branch_updated",
+    "head_moved",
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
 # NexKit continues by itself (`auto_fix`, `conflict_fix`, a resumed pause) or is done.
@@ -613,6 +614,8 @@ def after_merge(gh, workflows, base, records=None):
 # another merge into the base branch at the same moment, required checks that have not
 # reported yet, and a branch that branch protection wants up to date with its base.
 BASE_MODIFIED = re.compile(r"base branch was modified", re.I)
+# A push to the pull request's branch after the round checked it, such as a person's.
+HEAD_MODIFIED = re.compile(r"head branch was modified", re.I)
 CHECKS_PENDING = re.compile(
     r"required status checks? .*\b(?:is|are) (?:expected|pending|in progress|queued)", re.I
 )
@@ -689,7 +692,28 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
         return "merge_waiting", f"{message}\n\n{line}"
     if auto_resolve and BEHIND.search(str(exc)):
         return _update_branch(gh, target, row, message, limit, workflow, default_branch)
+    if HEAD_MODIFIED.search(str(exc)):
+        return _head_moved(gh, target, message, workflow, default_branch)
     return "merge_refused", message
+
+
+def _head_moved(gh, target, message, workflow, default_branch):
+    """Check and review the new head of a pull request whose branch moved after the round
+    checked it: the round's approval is for a commit that is no longer its head."""
+    try:
+        head = gh.pull(target["pr"])["head"]["sha"]
+        gh.dispatch(
+            workflow,
+            default_branch,
+            {"command": "review", "number": str(target["pr"]), "note": "", "auto": "true"},
+        )
+    except GitHubError as error:
+        return "merge_refused", f"{message}\n\nNexKit could not start a review: {error}"
+    line = (
+        f"The branch moved to `{head[:7]}` after this round checked it, so NexKit started "
+        "`/nexkit review` on the new commit."
+    )
+    return "head_moved", f"{message}\n\n{line}"
 
 
 def _swept(gh, cfg, number):
@@ -729,6 +753,31 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
         "into it and started `/nexkit review` on the new commit."
     )
     return "branch_updated", f"{message}\n\n{line}"
+
+
+# Outcomes of an implement round that leave its pull request as it is, with no round on
+# its way: a conflict round skipped while it ran starts when it ends.
+IMPLEMENT_LEFT = {"ready", "needs_human", "review_failed", "retry_failed"}
+
+
+def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
+    """Start the conflict round that NexKit left out while this implement round ran, when
+    the pull request conflicts with its base branch now. Returns text for the round."""
+    try:
+        if not is_conflicting(gh, pr):
+            return ""
+        started = start_conflict_round(
+            gh,
+            pr,
+            decision["base"],
+            workflow,
+            default_branch,
+            cfg["conflicts"]["max_rounds"],
+            own=row.get("url"),
+        )
+    except GitHubError as exc:
+        return f"\n\nCould not check #{pr} for conflicts with `{decision['base']}`: {exc}"
+    return f"\n\nIt conflicts with `{decision['base']}`. {started}" if started else ""
 
 
 def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
@@ -1020,6 +1069,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"
         done = f" and resolved conflicts in {files}." if files else ", which was behind it."
         message = f"{merged}{done}\n\n{message}"
+    if action == "implement" and outcome in IMPLEMENT_LEFT and cfg["conflicts"]["auto_resolve"]:
+        message += _conflicts_after(
+            gh, cfg, decision, pr, row, workflow_file(workflow_ref), default_branch
+        )
     row.update(status=run_status(outcome), outcome=outcome)
     reason = needs_person(outcome, cfg, resume=resume, confirm=confirm)
     if reason:

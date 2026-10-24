@@ -29,7 +29,7 @@ from .state import (
 MERGES = 5
 WORKERS = 8
 # The round started the next one by itself, which is queued or running.
-QUEUED = {"auto_fix", "conflict_fix", "retry", "branch_updated"}
+QUEUED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved"}
 
 
 def _runs(comments):

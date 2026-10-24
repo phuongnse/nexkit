@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .progress import STATUS_CONTEXTS
 from .redact import Redactor
-from .route import issue_from_branch, parse_command
+from .route import RUN_ID, issue_from_branch, parse_command
 from .state import (
     BOT_LOGIN,
     CONTINUED,
@@ -62,8 +62,6 @@ ACTIVE = {RUNNING, PAUSED, CONTINUED}
 # Autopilot starts it once more, then waits for a person. A run that continues a paused one
 # and has not started after this long did not start either.
 LOST = timedelta(hours=6)
-# The run id in a run comment's link.
-RUN_ID = re.compile(r"/actions/runs/(\d+)")
 # What the comment of a run that ended without a report says once a sweep finds it.
 REPORTLESS = "the run ended without a report"
 # What the record keeps from one start to the next.
@@ -135,7 +133,7 @@ FAILED = {"failure", "timed_out"}
 # Events whose runs test a pull request rather than the branch they name.
 PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
 # Outcomes after which a run already started the next one by itself.
-CHAINED = {"auto_fix", "conflict_fix", "retry", "branch_updated"}
+CHAINED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved"}
 
 
 def takes(cfg):

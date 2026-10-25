@@ -1132,6 +1132,30 @@ class SplitTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
 
+    def test_a_plan_too_large_without_parts_is_planned_once_more_then_waits(self):
+        self.issue(5)
+        self.posted_plan(5, too_large=True)
+        decision = {"action": "plan", "issue": 5}
+        agent = {"output": {"too_large": True, "split": []}}
+        self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
+        self.sweep(pilot())  # without autopilot.answer too
+        self.assertEqual(self.started(), [("plan", 5)])
+        self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], autopilot.PARTS_NOTE)
+        self.sweep()  # nothing changed since: it starts once
+        self.assertEqual(self.started(), [("plan", 5)])
+        # The new plan suggests no parts again: a person decides, and nothing loops.
+        self.posted_plan(5, too_large=True)
+        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        reason = "its plan is too large and suggests no parts again"
+        self.assertEqual((step["state"], step["reason"], step["person"]), ("waits", reason, True))
+        # A plan with parts splits.
+        self.posted_plan(5, too_large=True, split=self.PARTS)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+
     def test_a_part_at_the_depth_limit_waits_for_a_person(self):
         self.issue(5)
         self.part(6, 5)
@@ -1159,6 +1183,90 @@ class SplitTests(AnswerAndSplitCase):
             step = steps[number]
             self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.DEPTH_REASON))
         self.assertIn("3 levels deep", autopilot.DEPTH_REASON)
+
+
+class StoppedGoTests(AnswerAndSplitCase):
+    """A `/nexkit go` that stopped is planned again once something changed since it started."""
+
+    WAITS = "the agent returned blocked: wait for #7"
+
+    def stopped(self, number, **fields):
+        """A plan, then a `/nexkit go` that stopped, whose question has no recommendation."""
+        self.issue(number)
+        self.posted_plan(number)
+        fields.setdefault("outcome", "agent_blocked")
+        fields.setdefault("questions", [{**QUESTION, "recommended": 0}])
+        return self.run_comment(number, "go", status="failure", attention=self.WAITS, **fields)
+
+    def step(self, number):
+        return {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}[number]
+
+    def test_plans_again_after_a_collaborator_commented_and_not_before(self):
+        self.stopped(5)
+        self.stopped(6, outcome="agent_error", questions=[])  # failed, not blocked
+        for number in (5, 6):
+            self.gh.human_comment(number, "/nexkit plan")  # a command is not a change
+            self.gh.human_comment(number, "Hi", login="eve", association="NONE")
+            self.gh.comment(number, "@olivia a person is needed: blocked.")
+        self.sweep()
+        self.assertEqual(self.started(), [])
+        self.assertEqual((self.step(5)["state"], self.step(5)["reason"]), ("waits", self.WAITS))
+        for number in (5, 6):
+            self.gh.human_comment(number, "Use the staging API instead.")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+        self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], "")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+        # The new plan, and a go that stops again: the comment before it is no change.
+        self.posted_plan(5)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6), ("go", 5)])
+        self.run_comment(5, "go", status="failure", outcome="agent_blocked", attention=self.WAITS)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6), ("go", 5)])
+        self.assertEqual(self.step(5)["state"], "waits")
+
+    def test_plans_again_when_a_blocker_added_since_the_stop_closes(self):
+        stop = self.stopped(5)
+        stop["created_at"] = "2026-01-01T00:00:00Z"
+        # A blocker that closed before the round started changes nothing.
+        self.issue(4, state="closed")
+        self.gh.issues[4]["closed_at"] = "2025-12-31T00:00:00Z"
+        self.gh.blockers[5] = [4]
+        self.sweep()
+        self.assertEqual(self.started(), [])
+        # A person marks the issue the round waits for as its blocker: #5 waits for it.
+        self.issue(7)
+        self.gh.blockers[5].append(7)
+        step = self.step(5)
+        self.assertEqual(
+            (step["state"], step["reason"], step["person"]), ("waits", "waits for #7", False)
+        )
+        self.gh.close_issue(7)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        reason = (
+            "#7, which blocked it, closed after the stopped `/nexkit go`, so autopilot plans again"
+        )
+        [record] = self.gh.comments_matching(5, "NexKit autopilot started")
+        self.assertIn(reason, record["body"])
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+
+    def test_a_go_that_ran_out_of_time_keeps_its_rules(self):
+        self.stopped(5, outcome="agent_error", questions=[], timed_out=True)
+        self.sweep()
+        self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], autopilot.SPLIT_NOTE)
+        self.posted_plan(5)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("go", 5)])
+        self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
+        # A second time-out waits for a person, even after a comment.
+        self.gh.human_comment(5, "Try again.")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("go", 5)])
+        self.assertEqual(self.step(5)["state"], "waits")
 
 
 class WaitTests(AnswerAndSplitCase):

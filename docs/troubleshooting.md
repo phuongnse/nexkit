@@ -116,13 +116,21 @@ structured result lacks a field or has one of the wrong type. NexKit publishes n
 Run the command again; if it keeps happening with one model, use a stronger one for that
 stage.
 
-**The agent timed out or stopped on its budget.** The issue is probably too large. Ask for
-a new plan and use its suggested split, or raise `timeout_minutes` or `max_budget_usd` for
-the `implement` stage. With fallback agents, each agent's run gets `timeout_minutes`,
+**The agent timed out or stopped on its budget.** The issue is probably too large. Without
+autopilot, ask for a new plan and use its suggested split; or raise `timeout_minutes` or
+`max_budget_usd` for the `implement` stage. With fallback agents, each agent's run gets `timeout_minutes`,
 within one stage deadline for all of them.
 With autopilot on, an implement or fix agent that ran out of time leads to one new plan that
 asks for a split; a second time waits for you, and so does a part of an issue that already
-asked for one.
+asked for one. A plan that is too large but suggests no parts is planned once more with a
+note that asks for parts; when the second plan suggests none either, split the issue
+yourself or edit it and comment `/nexkit plan`.
+
+**Autopilot waits after a `/nexkit go` that was blocked or failed.** Answer in a comment on
+the issue, or mark the issue the round waits for as its blocker (GitHub's *blocked by*):
+the next sweep after your comment, or after that blocker closes, starts `/nexkit plan` by
+itself, so the plan holds the change. You need not post the command. A round that ran out
+of time follows the rules above instead.
 
 **Autopilot does not start an issue.** Run `nexkit status`: its *Autopilot* section says,
 for each open issue in scope, what the next sweep does and why an issue waits, such as

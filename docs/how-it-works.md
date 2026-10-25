@@ -62,7 +62,7 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 
 | Run result | A person is needed |
 |---|---|
-| Plan posted, and it has questions or says the issue is too large | yes, unless [autopilot](#autopilot) answers or splits it, or plans again for parts titled like the issue |
+| Plan posted, and it has questions or says the issue is too large | yes, unless [autopilot](#autopilot) answers or splits it, or plans again for parts it lacks or that are titled like the issue |
 | Plan posted without either | no |
 | The agent returned `blocked` | yes, unless autopilot answers it |
 | The agent failed or errored, publishing failed, or the review did not complete | yes, unless the error was transient and the command runs once more, or autopilot asks for a split after an implement or fix agent ran out of time (see [limits on parts](#autopilot)) |
@@ -661,7 +661,12 @@ issue run in that group as well, and start a sweep.
   and its conflict rounds are used up (or `conflicts.auto_resolve` is off). An issue blocked
   by an open issue outside the scope waits for a person too; one blocked inside the scope
   waits for that issue. With `null`, a blocker in another milestone is inside the scope. A collaborator's comment after the latest plan leads to a new
-  plan before `/nexkit go`.
+  plan before `/nexkit go`. After a `/nexkit go` that stopped as blocked or failed, not
+  for running out of time, the issue waits for a person until something changed since that
+  round started: a collaborator's comment, other than a command, or an issue that blocks
+  it and closed after the round started, such as one a person marked as its blocker after
+  the round asked to wait for it. Either leads to a new `/nexkit plan`, so the plan holds
+  what changed. A blocker that closed before the round started changes nothing.
 - **Answers and splits.** Each question in a plan or a blocked round has options and the
   number of the one the agent recommends, or 0 for none; a number cannot be copied loosely,
   as an option's text can, and NexKit records the option's text. With `autopilot.answer: "recommended"` and a
@@ -677,7 +682,8 @@ issue run in that group as well, and start a sweep.
   one NexKit can carry
   out itself, a change to the plan or the code; the prompts never recommend one that
   needs a person to act outside NexKit, such as downloading files or granting access. A plan that is too large becomes sub-issues, in
-  order. Each part of the plan names the earlier parts it needs (`depends_on`); NexKit
+  order. A plan that is too large but suggests no parts is planned once more, with a note
+  that asks for parts that each fit one session; a second such plan waits for a person. Each part of the plan names the earlier parts it needs (`depends_on`); NexKit
   keeps only earlier parts, so the parts cannot wait for each other in a cycle, and records
   each as a *blocked by* relationship on GitHub. Parts that need no other part start at
   once. A NexKit pull request of the split issue is closed as superseded. An implement or
@@ -937,7 +943,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | The agent stops on a transient error: an overloaded or failing API, a rate limit that is not a usage limit, a lost connection, or a CLI that exited before the model answered; or the agent job fails as a whole, for example on a lost runner | Reports it, publishes nothing, and runs the same command once more with the same note, shown as `(retry)`; the comment shows ⏭️ until the new run starts. The retry counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. A second such stop waits for a person, and its comment shows both errors. A job a person cancelled is never run again. |
 | The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |
-| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. When a blocked `/nexkit go` found that no change is needed, that answer closes the issue with the round's finding, without another round. |
+| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. When a blocked `/nexkit go` found that no change is needed, that answer closes the issue with the round's finding, without another round. After a blocked or failed `/nexkit go` that it does not answer, autopilot plans again once a collaborator commented or an issue that blocks it closed since the round started. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |

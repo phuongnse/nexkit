@@ -251,8 +251,12 @@ class Pipeline:
         return sha
 
     def later(self, step):
-        """Move every record and comment of NexKit back by `step`, as if that much time
-        passed."""
+        """Move every record and comment of NexKit, and the time each issue closed, back by
+        `step`, as if that much time passed."""
+        for issue in self.gh.issues.values():
+            if issue.get("closed_at"):
+                at = datetime.fromisoformat(issue["closed_at"].replace("Z", "+00:00"))
+                issue["closed_at"] = (at - step).strftime("%Y-%m-%dT%H:%M:%SZ")
         for comments in self.gh.issue_comments.values():
             for comment in comments:
                 for key in ("created_at", "updated_at"):
@@ -720,6 +724,78 @@ class ScenarioTests(unittest.TestCase):
         pipe.play()
         self.assertEqual(pipe.gh.issues[5]["state"], "open")
         self.assertTrue(pipe.gh.comments_matching(5, "every sub-issue of this parent issue"))
+
+    def test_a_plan_too_large_without_parts_plans_once_more_then_waits(self):
+        def script(pipe, inputs):
+            return plan(too_large=True)
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("plan", 5)])
+        notes = [
+            d["inputs"]["note"] for d in pipe.gh.dispatches if d["inputs"]["command"] == "plan"
+        ]
+        self.assertEqual(notes, ["", autopilot.PARTS_NOTE])
+        self.assertEqual(len(pipe.gh.comments_matching(5, "@olivia a person is needed")), 1)
+        # When the plan asked for again suggests parts, each part is carried through.
+        parts = [
+            {"title": "First part", "body": "A.", "depends_on": []},
+            {"title": "Second part", "body": "B.", "depends_on": [1]},
+        ]
+        plans = itertools.count()
+
+        def splits(pipe, inputs):
+            if inputs["command"] == "plan" and inputs["number"] == "5":
+                return plan(too_large=True, split=parts if next(plans) else ())
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(close_parent_issues=True), splits)
+        pipe.issue(5)
+        played = pipe.play()
+        self.assertEqual(played[:3], [("plan", 5), ("plan", 5), ("plan", 6)])
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7)), played)
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
+    def test_a_stopped_go_plans_again_once_a_person_answers_or_its_blocker_closes(self):
+        def script():
+            gos = itertools.count()
+
+            def play(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                # The first go of #5 asks to wait for another issue, with no recommendation.
+                if inputs["number"] == "5" and next(gos) < 1:
+                    return blocked(recommended=0)
+                return done()
+
+            return play
+
+        pipe = Pipeline(self, config(), script())
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        # Nothing changed since the stop: hours of sweeps start nothing.
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        pipe.gh.human_comment(5, "The artifacts are in the release; use those.")
+        played = pipe.play()
+        self.assertEqual(played, [("plan", 5), ("go", 5), ("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        # The same stop, after which a person marks the issue it waits for as its blocker.
+        pipe = Pipeline(self, config(), script())
+        comment = pipe.gh.comment
+
+        def stamped(number, body):
+            made = comment(number, body)
+            made["created_at"] = autopilot.iso(datetime.now(autopilot.UTC))
+            return made
+
+        pipe.gh.comment = stamped
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        pipe.issue(7)
+        pipe.gh.blockers[5] = [7]
+        played = pipe.play()
+        self.assertEqual(played[2:], [("plan", 7), ("go", 7), ("plan", 5), ("go", 5)])
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 7)))
 
     def test_the_null_scope_runs_two_milestones_at_once_with_a_blocker_across_them(self):
         # Issue 6 keeps failing its checks, so it waits for a person; the others go on.

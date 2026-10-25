@@ -68,7 +68,7 @@ LOST = timedelta(hours=6)
 # What the comment of a run that ended without a report says once a sweep finds it.
 REPORTLESS = "the run ended without a report"
 # What the record keeps from one start to the next.
-STICKY = ("split_asked", "titles_asked")
+STICKY = ("split_asked", "titles_asked", "parts_asked")
 # A sweep looks again after splitting an issue, at most this often.
 PASSES = 3
 # The note on the plan that autopilot asks for after an agent ran out of time.
@@ -88,6 +88,15 @@ TITLE_NOTE = (
     "NexKit autopilot did not create the parts of the last plan, because these titles repeat "
     "this issue's title: {titles}. Return the split again, with each part titled by its own "
     "behaviour."
+)
+# The note on the plan that autopilot asks for again when a plan is too large and suggests
+# no parts.
+PARTS_NOTE = (
+    "NexKit autopilot could not split this issue, because the last plan says it is too large "
+    "for one session but suggests no parts. Return `too_large` with parts that can each be "
+    "done and tested in one session, each titled by its own behaviour, and order them so "
+    "that each leaves the default branch working. If the work fits one session after all, "
+    "return a plan that is not too large."
 )
 PART = re.compile(r"\A<!-- nexkit:part (\d+) -->")
 # How deep parts go: the issue first split is at depth 0, its parts at 1, their parts at 2.
@@ -437,10 +446,11 @@ def basis(issue_comments, pull_comments=()):
     return latest
 
 
-def _after_plan(comments, plan):
-    """Collaborators' comments after the latest plan, other than commands: changes that
-    the plan does not hold yet."""
-    at = next(i for i, c in enumerate(comments) if c["id"] == plan["id"])
+def _commented_after(comments, since):
+    """Collaborators' comments after the comment `since`, such as the latest plan or the
+    run comment of a round, other than commands: changes that the plan or the round did
+    not hold."""
+    at = next(i for i, c in enumerate(comments) if c["id"] == since["id"])
     return [
         c
         for c in comments[at + 1 :]
@@ -584,14 +594,47 @@ def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
     return None
 
 
+def _later(text, since):
+    """Whether the time `text` is known and after `since`."""
+    at = parse_iso(text)
+    return at is not None and since is not None and at > since
+
+
+def _since_stop(gh, issue, comments, stop):
+    """Why autopilot plans again after a `/nexkit go` that stopped, or None when nothing
+    changed since that round started: `stop` is its run comment. Collaborators commented
+    after it, other than with commands, or an issue that blocks it closed after it started,
+    such as one a person marked as a blocker after the round asked to wait for it. A
+    blocker that closed earlier was closed while the round ran, so it changes nothing."""
+    if _commented_after(comments, stop):
+        return "collaborators commented after the stopped `/nexkit go`, so autopilot plans again"
+    started = parse_iso(stop.get("created_at"))
+    closed = [
+        blocker["number"]
+        for blocker in gh.blocked_by(issue["number"])
+        if blocker.get("state") == "closed" and _later(blocker.get("closed_at"), started)
+    ]
+    if closed:
+        listed = ", ".join(f"#{n}" for n in closed)
+        reason = f"{listed}, which blocked it, closed after the stopped `/nexkit go`"
+        return f"{reason}, so autopilot plans again"
+    return None
+
+
 def _split(gh, issue, plan, data, record, start, pull=None):
-    """The step for an issue whose latest plan is too large and suggests parts, or None:
-    split it; or, when parts are titled like the issue, ask once for the plan again; or
-    wait for a person at `MAX_DEPTH` and after a second plan with such titles."""
-    if not (data or {}).get("too_large") or not data.get("split"):
+    """The step for an issue whose latest plan is too large, or None: split it as the plan
+    suggests; or, when it suggests no parts or parts titled like the issue, ask once for
+    the plan again; or wait for a person at `MAX_DEPTH` and after a second such plan."""
+    if not (data or {}).get("too_large"):
         return None
     if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
         return _step(issue, "waits", DEPTH_REASON)
+    if not data.get("split") and record.get("parts_asked"):
+        return _step(issue, "waits", "its plan is too large and suggests no parts again")
+    if not data.get("split"):
+        start = {**start, "note": PARTS_NOTE, "remember": {"parts_asked": True}}
+        reason = "the plan is too large and suggests no parts, so autopilot plans again"
+        return _step(issue, "start", reason, command="plan", **start)
     repeated = repeated_titles(issue, data["split"])
     if repeated and record.get("titles_asked"):
         return _step(issue, "waits", "the parts of its plan are titled like the issue again")
@@ -616,9 +659,7 @@ def _planned(gh, cfg, issue, plan, last, record, start, comments):
             return _step(issue, "waits", last["attention"])
         return _step(issue, "start", "the plan needs nobody", command="go", **start)
     if data.get("too_large"):
-        return _split(gh, issue, plan, data, record, start) or _step(
-            issue, "waits", last.get("attention") or "the plan is too large and suggests no split"
-        )
+        return _split(gh, issue, plan, data, record, start)
     if data.get("questions"):
         found = answers(cfg, data["questions"])
         if not found:
@@ -903,12 +944,16 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     if last["command"] == "go":
         if last.get("status") == SUCCESS:
             return _step(issue, "waits", "its pull request was closed; a person decides")
-        return _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,)) or _step(
-            issue, "waits", last.get("attention") or "the last `/nexkit go` failed"
-        )
+        step = _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,))
+        if step:
+            return step
+        changed = None if last.get("timed_out") else _since_stop(gh, issue, comments, found[-1][0])
+        if changed:
+            return _step(issue, "start", changed, command="plan", **start)
+        return _step(issue, "waits", last.get("attention") or "the last `/nexkit go` failed")
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or "the last `/nexkit plan` failed")
-    if _after_plan(comments, plan):
+    if _commented_after(comments, plan):
         return _step(
             issue, "start", "collaborators commented after the plan", command="plan", **start
         )
@@ -918,14 +963,15 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
 def carries_on(gh, cfg, decision, outcome, agent):
     """Whether autopilot takes over after a run that would otherwise need a person, so
     `report` mentions nobody: it answers a plan's or a blocked round's questions, splits a
-    plan that is too large, or asks for a split after the agent ran out of time."""
+    plan that is too large or plans it again for its parts, or asks for a split after the
+    agent ran out of time."""
     if not takes(cfg):
         return False
     agent = agent or {}
     output = agent.get("output") or {}
     splits = outcome == "planned" and bool(output.get("too_large"))
     if splits:
-        handled = bool(output.get("split"))
+        handled = True
     elif outcome == "planned":
         handled = answers(cfg, output.get("questions")) is not None
     elif outcome == "agent_blocked":
@@ -949,7 +995,8 @@ def carries_on(gh, cfg, decision, outcome, agent):
             target = gh.comments(pr or issue["number"])
             return not asked_again(target, gh.comments(issue["number"]) if pr else ())
         if splits:
-            # Autopilot splits the issue, or plans it again for its parts' titles.
+            # Autopilot splits the issue, or plans it again for parts that it lacks or
+            # that are titled like the issue.
             record = find_record(gh.comments(issue["number"]))[1]
             start = {"basis": None, "target": issue["number"], "note": "", "remember": {}}
             return _split(gh, issue, {}, output, record, start)["state"] != "waits"

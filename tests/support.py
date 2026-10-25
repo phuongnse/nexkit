@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import textwrap
 from collections import defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -291,7 +292,8 @@ class FakeGitHub:
     def close_issue(self, number, reason="completed"):
         if number in self.close_errors:
             raise self.close_errors[number]
-        self.issues[number].update(state="closed", state_reason=reason)
+        closed_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.issues[number].update(state="closed", state_reason=reason, closed_at=closed_at)
         return self.issues[number]
 
     def recent_comments(self, since, limit=2000):

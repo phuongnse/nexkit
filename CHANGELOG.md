@@ -1,5 +1,63 @@
 # Changelog
 
+## 5.0.0
+
+Autopilot can take every open issue, across milestones, with *blocked by* relationships
+as the only order. Several stops for a person and several hour-long waits are gone. And
+what people, and a scheduled agent playing them, do around NexKit is now in NexKit's own
+docs and skills. See [Autopilot](docs/configuration.md#autopilot),
+[Who does what](docs/how-it-works.md#who-does-what) and
+[Troubleshooting](docs/troubleshooting.md#when-nexkit-waits-for-a-person).
+
+- `autopilot.scope: null` takes every open issue (#143). Issues for CI failures come
+  first, then flaky-run issues, then each open milestone in order, then issues without a
+  milestone. A blocker in another milestone is waited for, not "outside the scope". Each
+  finished milestone gets one done notice, posted from state. Issues for CI failures get
+  no milestone under `null`. The `label` scope is removed.
+- A pull request whose failing checks and tests also fail on the default branch, for an
+  open CI issue, waits as `ci_waiting` instead of spending fix rounds (#144). When the
+  branch passes again or the issue closes, it gets one fix round that merges the base
+  branch first.
+- Lost commands, stuck *running* comments and finished after-merge runs are handled
+  within minutes, not at the hourly schedule (#148). A new `finish` job, a
+  `workflow_run` trigger and a `nexkit-sweep` job at the end of each after-merge
+  workflow start the sweep. The new `autopilot.lost_after_minutes` (default 30) bounds a
+  dispatch that never ran.
+- Sweeps start the conflict round of every conflicting pull request with nothing
+  running, also with autopilot off (#149). A round held back while another ran was not
+  released when that round stopped without a merge.
+- Autopilot plans once more after a too-large plan without parts, and after a stopped
+  `/nexkit go` once a collaborator commented or a blocker closed (#150).
+- A pull request waiting to merge gets an automatic fix round when a required check
+  fails, also at the first merge attempt, and `/nexkit review` for a new commit (#151).
+- The `request` skill marks only real prerequisites, gives each mark a reason line,
+  asks for a test that finds every case, and gives a readiness verdict before work is
+  broken down (#145).
+- How it works, Configuration and Troubleshooting say who does what, how to change a
+  plan, how to review a pull request, how to write profiles, how to upgrade, and what a
+  person does at each stop (#146).
+- A new `drive` skill runs one pass of a scheduled agent that plays the person at
+  autopilot's stops, within limits the repository sets (#147).
+
+### Upgrade
+
+- **Remove the label scope.** A configuration with `"scope": "label"` or a label name
+  in `autopilot.label` fails. Set `autopilot.scope` to `null` or `"milestone"` and
+  remove `autopilot.label`; `"label": null` is still accepted. See
+  [Label scope removed in 5.0](docs/configuration.md#label-scope-removed-in-50).
+- **With autopilot and `merge.after_workflows`:**
+  - add `"workflow_run"` to the event list in the `nexkit` job's `if:`;
+  - add a `workflow_run` trigger that names each after-merge workflow, with
+    `types: [completed]` and the default branch;
+  - end each after-merge workflow with the `nexkit-sweep` job, which needs
+    `actions: write`.
+
+  `nexkit init --after-workflow <file>` prints both, and `nexkit doctor` checks them.
+  See [Autopilot](docs/configuration.md#autopilot).
+- **Remove `labeled`** from the `issues:` trigger types, as `nexkit init` now writes
+  them.
+- On the first sweep, every finished milestone that is still open gets one done notice.
+
 ## 4.7.0
 
 Fewer rounds that end with a person doing what NexKit could have done itself. See

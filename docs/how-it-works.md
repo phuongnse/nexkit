@@ -533,6 +533,11 @@ dispatch of the workflow. A *sweep* decides which:
 3. It starts what it decided, in that order, while fewer than `autopilot.max_parallel`
    issues are in progress, and records each start on the issue.
 
+Only the *blocked by* relationships make one issue wait for another, so a relationship
+belongs only where an issue really needs another first; a needless one only slows the
+work. The
+[`request` skill](../skills/request/SKILL.md) says when to make one.
+
 A sweep is a `workflow_dispatch` with the command `autopilot`. Its `number` input is
 `autopilot` too, so callers' concurrency groups give every sweep the group
 `nexkit-autopilot`: sweeps run one at a time, and GitHub keeps one waiting sweep, which

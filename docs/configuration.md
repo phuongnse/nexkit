@@ -459,7 +459,11 @@ every open issue in scope, in order, and starts the one command that moves it on
 - **Ready.** An issue is ready when no issue that blocks it (GitHub's *blocked by*
   relationships) is open. The order of sub-issues does not count, so sub-issues without
   such relationships start at the same time; text such as "Depends on #12" is not read. A
-  parent issue with sub-issues is never planned itself: its sub-issues are.
+  parent issue with sub-issues is never planned itself: its sub-issues are. Mark an issue
+  *blocked by* another only for a real prerequisite, such as something new that the other
+  issue adds: a mark that is not needed only slows the work, and touching the same files
+  is no reason, since NexKit resolves conflicts. The [`request`
+  skill](../skills/request/SKILL.md) has the rules.
 - **Trust.** Autopilot skips a person's approval of the plan, so the issue text drives an
   implement session, which can read the secrets of its job. It takes only issues opened by
   someone with write access to the repository; only they and other writers can edit them.

@@ -212,6 +212,9 @@ class Pipeline:
                 else artifacts / name / "checks.json"
             ).write_text(json.dumps(data))
 
+        if outcome.get("meanwhile") and decision["action"] != "implement":
+            # What happens elsewhere while the round runs on its pull request.
+            outcome["meanwhile"](self, decision["pr"])
         agent = outcome.get("agent")
         if agent is not None and decision["action"] != "review":
             write("nexkit-agent", {"stage": decision["action"], **agent})
@@ -523,6 +526,54 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_axis_977_a_base_branch_move_during_a_round_starts_the_conflict_round_at_its_end(
+        self,
+    ):
+        pushed = []
+
+        def move_base(pipe, pull):
+            # A merge into `main` while the automatic fix round runs: the pull request now
+            # conflicts, and the check that the merge starts holds the conflict round back.
+            pipe.gh.branches["main"] = "e" * 40
+            pipe.gh.pulls[pull]["mergeable"] = False
+            event = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}}
+            before = len(pipe.gh.dispatches)
+            maintain(
+                pipe.gh, route(pipe.gh, "push", event), pipe.cfg, workflow="nexkit.yml", ref="main"
+            )
+            pushed.append(pipe.gh.dispatches[before:])
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return done(checks=False)
+            if inputs["auto"] == "conflicts":
+                # The conflict round merges `main`.
+                pipe.gh.pulls[int(inputs["number"])]["mergeable"] = True
+                return done()
+            # The automatic fix round stops on an error, without trying a merge.
+            return {**error(), "meanwhile": move_base}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()  # no time passes, and no hourly schedule
+        self.assertEqual(pushed, [[]])
+        self.assertEqual(
+            [(c, n, o) for c, n, o in pipe.played],
+            [
+                ("plan", 5, "planned"),
+                ("go", 5, "auto_fix"),
+                ("fix", 6, "agent_error"),
+                ("fix", 6, "merged"),
+            ],
+        )
+        conflict_rounds = [d for d in pipe.gh.dispatches if d["inputs"].get("auto") == "conflicts"]
+        self.assertEqual(len(conflict_rounds), 1)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        pipe.check(quiet=True)
 
     def test_a_merge_refused_because_the_head_moved_reviews_the_new_head(self):
         def push(pipe, pull):

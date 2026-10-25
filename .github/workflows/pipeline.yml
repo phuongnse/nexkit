@@ -18,8 +18,9 @@
 #          merge pull requests whose required checks passed since; no agent and no
 #          repository checkout
 # finish   when report did not finish, such as after a lost runner or a cancelled run:
-#          start an autopilot sweep that waits for this run to end and handles its run
-#          comment; no agent and no repository checkout
+#          start a sweep that waits for this run to end, handles its run comment and
+#          starts the conflict round held back while it ran; no agent and no repository
+#          checkout
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # version of each agent runtime in nexkit/__init__.py.
@@ -445,7 +446,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read # NexKit's own code; nothing of the repository
-      actions: write # start the autopilot sweep
+      actions: write # start the sweep
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

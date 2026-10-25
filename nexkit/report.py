@@ -728,9 +728,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     message += f" Automatic merge was not possible: {exc}"
     auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]
     if auto_resolve and is_conflicting(gh, pr):
-        started = start_conflict_round(
-            gh, pr, base, workflow, default_branch, limit, own=row.get("url")
-        )
+        started = start_conflict_round(gh, pr, base, workflow, default_branch, limit, row=row)
         if started.startswith("Started"):
             return "conflict_fix", f"{message}\n\nIt conflicts with `{base}`. {started}"
         return "merge_refused", f"{message}\n\n{started}" if started else message
@@ -827,7 +825,7 @@ def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
             workflow,
             default_branch,
             cfg["conflicts"]["max_rounds"],
-            own=row.get("url"),
+            row=row,
         )
     except GitHubError as exc:
         return f"\n\nCould not check #{pr} for conflicts with `{decision['base']}`: {exc}"

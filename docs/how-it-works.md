@@ -16,7 +16,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
 | `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches | contents (to merge); issues, comments, workflows, statuses; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
-| `finish` | a command whose `report` did not finish | workflows | none | When `report` failed, was cancelled or lost its runner, starts an [autopilot](#autopilot) sweep that waits for the run to end and then handles its run comment. Runs no agent, and never checks out or executes repository code. |
+| `finish` | a command whose `report` did not finish | workflows | none | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](#work-without-a-command)). Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -104,6 +104,10 @@ it. That run waits in the issue's queue, so NexKit orders the two itself:
   reply that the implement round still runs; comment it again once it ends.
 - The rounds that a run starts as it ends, such as an automatic fix round or the one more
   try, run after it in the pull request's queue.
+- A conflict round does not start while any other round of the pull request runs either.
+  When the base branch moved meanwhile, the sweep at the end of that round starts it,
+  however the round ended (see *Resolving conflicts* under [Work without a
+  command](#work-without-a-command)).
 - A run whose workflow run ended without a report holds nothing up.
 
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
@@ -552,21 +556,34 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
 
 - **What starts the check.** A push to the default branch, such as a merge by a person,
   starts it through the `push` trigger. A merge by NexKit starts no `push` workflow, so
-  `report` checks the other pull requests right after its merge. The hourly schedule
-  checks too, which catches anything the other two missed.
+  `report` checks the other pull requests right after its merge. The end of every NexKit
+  run, except one that waits for a usage limit or started the next round itself, starts
+  a sweep that checks every open NexKit pull request, as autopilot's sweeps do; a run
+  whose `report` did not finish starts it from its `finish` job, once the run ended. So
+  a round held back while another ran starts when that round ends, however it ended. The
+  hourly schedule checks too, which catches anything the others missed.
+- **Unknown mergeability.** GitHub works out whether a pull request conflicts in the
+  background after the base branch moves. While it has not (`mergeable` is `null` for
+  half a minute), the check decides nothing for that pull request, and the next sweep or
+  check asks again.
 - **Refused merge.** When GitHub refuses an automatic merge because the pull request
   conflicts, the round that tried the merge starts a conflict round right away. Its own
   comment still says running while it reports, so it does not count as a running round;
   the limits below still apply.
 - **Limits.** Each pull request gets at most `conflicts.max_rounds` such rounds (3 by
-  default), apart from `fix.max_auto_rounds`. A round is started once for each base
-  commit, so a blocked round is not repeated until the base branch moves again. A pull
-  request whose latest round is paused at the usage limit is left alone, and so is one
-  with a round running: that round merges the base branch itself when it conflicts, and a
-  new run would replace a command waiting behind it. While the implement round that opened
-  the pull request runs, the conflict round waits for it (see [One run at a
-  time](#one-run-at-a-time)). The next check starts the round if it
-  is still needed.
+  default), apart from `fix.max_auto_rounds`. A round starts once for each base commit
+  and each round of the pull request that ended since, so a blocked round is not
+  repeated until the base branch moves again or another round ran. The start is
+  recorded on the pull request's latest round, so a sweep that looks before the new
+  round posts its comment does not start it twice. A pull request whose latest round is
+  paused at the usage limit is left alone, and so is one with a round running or on its
+  way, such as an automatic fix round that a round started: that round merges the base
+  branch itself when it conflicts, and a new run would replace a command waiting behind
+  it. A round that started the next one, which has not run within six hours, holds
+  nothing up. While the implement round that opened the pull request runs, the conflict
+  round waits for it (see [One run at a time](#one-run-at-a-time)). A sweep leaves alone
+  a pull request that autopilot started a command on in the same sweep. The end of the
+  round that held it back starts the round if it is still needed.
 - When the round starts and the branch no longer conflicts, for example because another
   round already merged the base branch, it ends at once without running an agent.
 
@@ -586,6 +603,10 @@ dispatch of the workflow. A *sweep* decides which:
    leave it to a run or pull request that carries it on, or leave it to a person.
 3. It starts what it decided, in that order, while fewer than `autopilot.max_parallel`
    issues are in progress, and records each start on the issue.
+4. With `conflicts.auto_resolve`, it then starts the conflict round of each open NexKit
+   pull request that conflicts with its base branch, as described in *Resolving
+   conflicts* under [Work without a command](#work-without-a-command). With
+   `conflicts.auto_resolve` and autopilot off, sweeps do only this.
 
 A sweep is a `workflow_dispatch` with the command `autopilot`. Its `number` input is
 `autopilot` too, so callers' concurrency groups give every sweep the group

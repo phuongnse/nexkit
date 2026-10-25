@@ -37,8 +37,9 @@ TASKS = {
     "conflicts": ("conflicts.auto_resolve",),
     # An issue opened, reopened or milestoned, or a milestone closed.
     "autopilot": ("autopilot.enabled",),
-    # The run that looks at every issue in scope (nexkit/autopilot.py).
-    "sweep": ("autopilot.enabled",),
+    # The run that looks at every issue in scope (nexkit/autopilot.py) and at every pull
+    # request that conflicts with its base branch.
+    "sweep": ("autopilot.enabled", "conflicts.auto_resolve"),
     # A run of another workflow finished, such as one of merge.after_workflows.
     "ci": ("autopilot.enabled",),
 }
@@ -240,26 +241,61 @@ def is_conflicting(gh, number, tries=6, delay=5):
     return None
 
 
-def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
+def _queued(comment, run, now):
+    """Whether the round `run` started the next one by itself, which has not posted its
+    comment yet. One that did not run within `autopilot.LOST` holds nothing up."""
+    if run.get("outcome") not in autopilot.CHAINED:
+        return False
+    at = parse_iso(comment.get("updated_at") or comment.get("created_at"))
+    return at is None or now - at <= autopilot.LOST
+
+
+def _tried(rounds):
+    """(index into `rounds`, base commit) of the latest conflict round started: a conflict
+    round itself, or the start that a round recorded as it ended (`conflicts_started`)."""
+    found = None
+    for index, (_, run) in enumerate(rounds):
+        if run.get("conflicts"):
+            found = (index, run.get("base_sha"))
+        if run.get("conflicts_started"):
+            found = (index, run["conflicts_started"])
+    return found
+
+
+def start_conflict_round(gh, number, base, workflow, ref, max_rounds, row=None, now=None):
     """Start an automatic fix round that merges `base` into the pull request, unless one
-    already tried this base commit, its limit is used up, or its latest round, or the
-    implement round that opened it, is paused or still running. `own` is the URL of the
-    round that calls this while it reports: its comment still says running, but it is
-    ending.
+    started since the base branch last moved and since the pull request's last round
+    ended, its limit is used up, or a round is on its way: its latest round, or the
+    implement round that opened it, is paused or still running, or started the next round
+    by itself. `row` is the round that calls this while it reports: its comment still says
+    running, but it is ending, and it records the start as it saves.
+
+    A start is recorded on the pull request's latest round (`conflicts_started`), so a
+    sweep that looks before the new round posts its comment does not start it twice.
     Returns a line saying what happened, or "" when nothing was started for a known reason
     that needs no line."""
-    rounds = [run for _, run in run_comments(gh.comments(number)) if "round" in run]
-    tried = [run for run in rounds if run.get("conflicts")]
+    now = now or datetime.now(UTC)
+    own = (row or {}).get("url")
+    rounds = [(c, run) for c, run in run_comments(gh.comments(number)) if "round" in run]
+    if own and not any(run.get("url") == own for _, run in rounds):
+        # The implement round posts its round comment on the pull request as it reports.
+        rounds.append(({}, row))
+    tried = [run for _, run in rounds if run.get("conflicts")]
     sha = gh.branch_sha(base)
-    if tried and tried[-1].get("base_sha") == sha:
+    last = _tried(rounds)
+    if last and last == (len(rounds) - 1, sha):
+        # Tried on this base commit, and no round ended since: a blocked round waits for a
+        # person or the next move of the base branch.
         return ""
-    latest = rounds[-1] if rounds else {}
-    if latest.get("status") in (PAUSED, RUNNING, CONTINUED) and not (
-        own and latest.get("url") == own
-    ):
+    comment, latest = rounds[-1] if rounds else ({}, {})
+    ending = bool(own) and latest.get("url") == own
+    if latest.get("status") in (PAUSED, RUNNING, CONTINUED) and not ending:
         # A running round merges the base branch itself when it conflicts, and a dispatch
-        # now would replace a command waiting behind it. A later check starts the round.
+        # now would replace a command waiting behind it. Its end starts the round.
         # A continued round has a run on its way.
+        return ""
+    if not ending and _queued(comment, latest, now):
+        # The round it started next merges the base branch itself when it conflicts.
         return ""
     issue = issue_from_branch(gh.pull(number)["head"]["ref"])
     running = implementing(gh, issue) if issue else None
@@ -279,6 +315,11 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
         )
     inputs = {"command": "fix", "number": str(number), "note": conflict_note(base)}
     gh.dispatch(workflow, ref, {**inputs, "auto": "conflicts"})
+    if ending:
+        row["conflicts_started"] = sha
+    elif comment.get("id"):
+        latest["conflicts_started"] = sha
+        gh.update_comment(comment["id"], with_run(comment["body"], latest))
     return f"Started an automatic round on #{number} to merge `{base}`."
 
 
@@ -313,8 +354,15 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
             return ["The event does not change autopilot's scope."]
         return autopilot.request_safely(gh, cfg, workflow, ref)
     if task == "sweep":
-        waited = [wait_for_end(gh, decision["after"])] if decision.get("after") else []
-        return waited + autopilot.sweep(gh, cfg, workflow, ref, decision.get("closed"))
+        lines = [wait_for_end(gh, decision["after"])] if decision.get("after") else []
+        busy = set()
+        if autopilot.takes(cfg):
+            lines += autopilot.sweep(gh, cfg, workflow, ref, decision.get("closed"), busy)
+        if cfg["conflicts"]["auto_resolve"]:
+            # After the commands it started, which merge the base branch themselves.
+            max_rounds = cfg["conflicts"]["max_rounds"]
+            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, skip=busy)
+        return lines or ["Nothing to start."]
     if task == "ci":
         return autopilot.after_ci_run(gh, cfg, decision, workflow, ref)
     if task == "conflicts":

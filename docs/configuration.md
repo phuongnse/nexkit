@@ -697,14 +697,20 @@ round that merges the base branch and keeps both sides. This matters most with
 requests conflict.
 
 - NexKit's own merges, pushes to the default branch (through the `push` trigger that
-  `nexkit init` writes) and the hourly schedule start the check. `nexkit doctor` warns when
-  the `push` trigger is missing; the schedule still notices within an hour.
+  `nexkit init` writes), the end of every NexKit run and the hourly schedule start the
+  check. A round that ran while the base branch moved holds its conflict round back, and
+  the sweep at its end starts it, also without autopilot. `nexkit doctor` warns when the
+  `push` trigger is missing; the end of the next run, or the schedule within an hour,
+  still notices.
+- A pull request whose mergeability GitHub has not worked out yet is checked again by
+  the next sweep.
 - When an automatic merge is refused because of a conflict, the round that tried it
   starts a conflict round right away, within the same limits.
 - A conflict that needs a choice ends the round as `blocked` with its questions; a person
   answers with `/nexkit fix <decisions>`.
 - Each pull request gets at most `max_rounds` of these rounds (default 3), apart from
-  `fix.max_auto_rounds`, and one per base commit.
+  `fix.max_auto_rounds`, and one per base commit until another round of the pull request
+  ran.
 
 See [How it works](how-it-works.md#work-without-a-command).
 

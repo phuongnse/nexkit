@@ -159,6 +159,12 @@ def takes(cfg):
     return bool(cfg.get("autopilot", {}).get("enabled"))
 
 
+def sweeps(cfg):
+    """Whether NexKit sweeps at all: for autopilot, or to start the conflict rounds of
+    `conflicts.auto_resolve` (see `maintain.resolve_conflicts`)."""
+    return takes(cfg) or bool(cfg.get("conflicts", {}).get("auto_resolve"))
+
+
 def request(gh, workflow, ref, closed=None, after=None):
     """Start a sweep. `closed` is the issue whose closing started it: when that empties
     the scope, the sweep says so on it. `after` is a workflow run that the sweep waits for
@@ -167,9 +173,11 @@ def request(gh, workflow, ref, closed=None, after=None):
     gh.dispatch(workflow, ref, {**SWEEP, "note": note})
 
 
-def request_safely(gh, cfg, workflow, ref, closed=None, after=None):
-    """`request` for a run that must not fail because of it: errors become a line."""
-    if not takes(cfg):
+def request_safely(gh, cfg, workflow, ref, closed=None, after=None, gate=takes):
+    """`request` for a run that must not fail because of it: errors become a line. Only
+    when `gate(cfg)`: autopilot is on, or with `sweeps`, conflict rounds start by themselves
+    too."""
+    if not gate(cfg):
         return []
     try:
         request(gh, workflow, ref, closed, after)
@@ -189,21 +197,22 @@ def concerns(cfg, decision):
 def after_run(gh, cfg, decision, outcome, workflow, ref):
     """Start a sweep after a run, unless it waits for a usage limit, or it already started
     the next one itself and no finished run on the default branch `ref` needs a sweep. A
-    merge closed the issue, which may empty the scope."""
-    if not takes(cfg) or outcome == "paused":
+    merge closed the issue, which may empty the scope. With `conflicts.auto_resolve`, the
+    sweep also starts the conflict rounds that were held back while a round ran."""
+    if not sweeps(cfg) or outcome == "paused":
         return []
-    if outcome in CHAINED and not ci_due(gh, cfg, ref):
+    if outcome in CHAINED and not (takes(cfg) and ci_due(gh, cfg, ref)):
         return []
     closed = decision["issue"] if outcome in ("merged", "no_change") else None
-    return request_safely(gh, cfg, workflow, ref, closed)
+    return request_safely(gh, cfg, workflow, ref, closed, gate=sweeps)
 
 
 def after_unreported(gh, cfg, workflow, ref, run_id):
     """Start a sweep at the end of a run whose `report` did not finish, for example
     because its runner was lost or the run was cancelled: the sweep waits for the run to
     end, then handles its comment that still says running, as for any run that ended
-    without a report."""
-    return request_safely(gh, cfg, workflow, ref, after=run_id)
+    without a report, and starts the conflict round held back while it ran."""
+    return request_safely(gh, cfg, workflow, ref, after=run_id, gate=sweeps)
 
 
 def after_ci_run(gh, cfg, decision, workflow, ref):
@@ -1889,15 +1898,19 @@ def _count_round(gh, pull):
     save_state(gh, pull, comment_id, state)
 
 
-def sweep(gh, cfg, workflow, ref, closed=None):
+def sweep(gh, cfg, workflow, ref, closed=None, busy=None):
     """Start what moves each issue in scope on. Returns lines for the job log. Parts that
     a split creates are in scope at once, so the sweep looks again after a split. A CI
-    failure on the default branch comes first, so its bug issue is planned first."""
+    failure on the default branch comes first, so its bug issue is planned first. Adds
+    each pull request it started a command on, or merged, to `busy`."""
+    busy = set() if busy is None else busy
     lines = check_ci(gh, cfg, locate(gh, cfg), ref)
     for _ in range(PASSES):
         where, steps = preview(gh, cfg)
         splits = [step for step in steps if step["state"] == "split"]
         for step in steps:
+            if step["state"] in ("start", "merge", "close"):
+                busy.update(n for n in (step.get("target"), step.get("pull")) if n)
             try:
                 if step["state"] == "split":
                     lines.append(split(gh, step))

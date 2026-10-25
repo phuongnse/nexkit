@@ -1,5 +1,62 @@
 # How NexKit works
 
+## Who does what
+
+Three parts are played around NexKit:
+
+- **The person who decides:** the people in [`notify`](configuration.md#mentions), whom
+  NexKit mentions when a run needs a person. They answer the questions that have no
+  recommended option, and those asked again after autopilot answered them. They decide
+  each merge while `merge.auto` is off, and confirm the acceptance criteria that the
+  review could not verify. They change what NexKit may not change: the settings in
+  `.nexkit/`, the workflow and anything else in `protected_paths`, in pull requests they
+  make by hand. [Troubleshooting](troubleshooting.md#when-nexkit-waits-for-a-person) says
+  what to do at each stop.
+- **A local agent session:** a Claude Code session with NexKit's plugin, working for the
+  person who decides. It writes issues and the *blocked by* relationships between them
+  with the `request` skill, reads each plan as it is posted and comments the changes it
+  needs (see *Changing a plan* under [Stages](#stages)), reviews pull requests (below),
+  watches the work with the `status` skill, and steps in where autopilot stops. It asks
+  the person who decides wherever the choice is theirs.
+- **NexKit's agents** plan, implement, fix and review inside the pipeline (see [One run,
+  seven jobs](#one-run-seven-jobs)). They read the repository's agent instructions, such
+  as CLAUDE.md or AGENTS.md, and never hold a token that can write to the repository.
+
+NexKit carries the work on by itself wherever these docs say it does: automatic fix and
+conflict rounds, one more try after a transient error, and with autopilot its plans,
+answers and splits. So nobody needs to act until NexKit mentions `notify`, or
+`nexkit status` lists an item under *Needs a person*.
+
+### Reviewing a pull request
+
+A person reviews a NexKit pull request before merging one that waits for them, and after
+NexKit merged one with `merge.auto`, opening an issue for anything wrong. Check that:
+
+- The change does what the issue and its latest plan ask, with the changes commented
+  since. What the pull request did outside the plan has a reason in its *Outside the
+  plan* section.
+- The checks that the default branch requires are green. Rulesets and classic branch
+  protection list them:
+
+  ```sh
+  gh api repos/{owner}/{repo}/rules/branches/<branch> \
+    --jq '.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context'
+  gh api repos/{owner}/{repo}/branches/<branch>/protection/required_status_checks --jq '.contexts[]'
+  ```
+
+- Nothing in a protected path changed. NexKit rejects such a change from its agents, so
+  this matters when someone pushed to the branch by hand.
+- When the change alters what `setup` downloads, such as a new toolchain or a lock file in
+  a new place, the [`cache`](configuration.md#caches) entries and the CI workflow's
+  `actions/cache` steps change with it. Both are in protected paths, so a person makes
+  that change by hand.
+- An approved pull request whose review marked a criterion ❔ unverifiable does not merge
+  by itself (see [Review](#stages)). Check each listed criterion against the diff and the
+  check results before merging. When a test could show a criterion, `/nexkit fix Add tests
+  that show these criteria, so the review can verify them: <criteria>` lets the review
+  verify it. When nothing can show it, note what the diff and the check results do show,
+  and the person who decides confirms it.
+
 ## One run, seven jobs
 
 Every command starts one run of the reusable workflow
@@ -272,6 +329,29 @@ where the issue now differs from the plan, the issue wins. A note that asks for 
 from scratch, such as `/nexkit plan from scratch`, makes it plan again without the latest
 plan's choices. *Since the last plan* says which happened and lists each decision,
 acceptance criterion or scope item that was added, changed or removed.
+
+**Changing a plan.** The plan is the contract: it holds the acceptance criteria that the
+review checks the pull request against, and it is the record a later reader looks at. A
+change that lives only in a follow-up issue is missing from both, so every change to a
+plan, however small, goes into the plan or the round that implements it:
+
+- Before `/nexkit go`, comment the change on the issue, so the next plan holds it. With
+  autopilot, a collaborator's comment after the latest plan makes it plan again before
+  `/nexkit go`; without, comment `/nexkit plan`. This is also how to change an answer that
+  autopilot gave.
+- Once `/nexkit go` has started, post the change on the pull request as
+  `/nexkit fix <change>`.
+- State only the changes. A re-plan keeps what no newer comment changes, so choices
+  accepted as they are need no comment. Write one short line per change, with the exact
+  values, names and rules, and nothing that the issue or the docs already say: link them
+  instead. For example: `Change: limit 2,000 characters; trim before saving; no new
+  endpoint.`
+- To change the profile, comment `/nexkit plan Use the <profile> profile` (see
+  [Profiles](#profiles)).
+- After the re-plan, check that *Since the last plan* lists every change that was asked
+  for, and that nothing else changed without a reason.
+- Use `/nexkit plan from scratch` only when the plan has gone wrong. It drops the latest
+  plan's choices, so first comment every choice to keep.
 
 **Implement and fix.** Full access to a disposable runner. The prompt contains
 the plan, the issue, the discussion from collaborators, and for fix rounds the failing
@@ -829,6 +909,21 @@ reads a marker only from a comment by the Actions bot, and only where it ends th
 text before it can quote agent output. The latest commit whose checks passed becomes the
 next round's `NEXKIT_VERIFIED_SHA` (see [Skipping work that a change cannot
 affect](configuration.md#skipping-work-that-a-change-cannot-affect)).
+
+The markers are NexKit's own format and can change between releases. Read them through
+`nexkit status --json`, whose `attention` field gives the reason an item needs a person.
+Names a person meets in run comments and in that output:
+
+| Name | Meaning |
+|---|---|
+| `too_large` | The plan says the work does not fit one agent session, and suggests a split when it can. |
+| `needs_merge` | A fix round must merge the base branch for a conflict, and NexKit cannot push that merge because it brings changes to `.github/workflows/` without a push token that may push them. The round stopped before its agent. |
+| `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. |
+| `merge_waiting` | The automatic merge waits for required checks; see [Failure handling](#failure-handling). |
+| `recheck_failed` | The checks failed again after a fix round named a cause outside the code; see *Failing checks the base branch fixed* under [Stages](#stages). |
+| `no_change` | An implement round found that no change is needed. The issue closes with its finding, at once or through autopilot's answer (see [Stages](#stages)). |
+| `attention` | The reason a person is needed, when one is. |
+| `conflicts`, `base_sha` | The round was a conflict round, started for that commit of the base branch. |
 
 A pull request from NexKit 1.1.0 has a single status comment instead. NexKit reads its
 state, leaves it as it is and saves the state in a new state comment.

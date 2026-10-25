@@ -176,9 +176,9 @@ def sweeps(cfg):
 
 
 def request(gh, workflow, ref, closed=None, after=None):
-    """Start a sweep. `closed` is the issue whose closing started it: when that empties
-    the scope, the sweep says so on it. `after` is a workflow run that the sweep waits for
-    to end first."""
+    """Start a sweep. `closed` is the issue whose closing started it, for the log; every
+    sweep says when a milestone is done (see `done`). `after` is a workflow run that the
+    sweep waits for to end first."""
     note = str(closed) if closed else AFTER_RUN.format(after) if after else ""
     gh.dispatch(workflow, ref, {**SWEEP, "note": note})
 
@@ -276,6 +276,7 @@ def locate(gh, cfg):
         "name": f"milestone {milestone['title']}",
         "every": False,
         "milestone": milestone["number"],
+        "milestones": [milestone],
     }
 
 
@@ -1211,37 +1212,38 @@ def split(gh, step, now=None):
     return f"Split #{number} into {listing}."
 
 
-def done(gh, cfg, where, closed):
-    """Say once, on the issue whose closing emptied the scope, that the scope is done. With
-    `null`, the scope never empties for good, so this says it of the issue's milestone
-    instead, while the other milestones go on."""
-    if not where["every"] and where["issues"]:
-        return []
-    try:
-        issue = gh.issue(closed)
-    except GitHubError:
-        return []
-    if issue.get("state") != "closed" or not in_scope(where, issue):
-        return []
-    if where["every"]:
-        milestone = issue.get("milestone") or {}
-        number = milestone.get("number")
-        if number is None or any(
-            (i.get("milestone") or {}).get("number") == number for i in where["issues"]
+def done(gh, cfg, where):
+    """Say once that a milestone is done: each open milestone in scope that has issues, all
+    of them closed, gets a done notice on its most recently closed issue, mentioning
+    `notify`, unless that issue has one from NexKit already. For the milestone scope
+    that is the current milestone, which stays current until a person closes it; with
+    `null`, any open milestone, while the others go on. It comes from what GitHub shows,
+    not from the note of the sweep that a closed issue started, so a sweep that replaced
+    that one in the queue says it as well."""
+    lines = []
+    for milestone in where.get("milestones") or []:
+        number = milestone["number"]
+        if not milestone.get("closed_issues") or any(
+            (issue.get("milestone") or {}).get("number") == number for issue in where["issues"]
         ):
-            return []
-        titles = {m["number"]: m.get("title") for m in where["milestones"]}
-        name = f"milestone {milestone.get('title') or titles.get(number) or number}"
-    else:
-        name = where["name"]
-    if any(by_bot(c) and DONE in (c.get("body") or "") for c in gh.comments(closed)):
-        return []
-    people = "".join(f"@{login} " for login in cfg["notify"])
-    text = f"{DONE}\n{people}NexKit autopilot finished {name}: every issue in it is closed."
-    if where["milestone"] is not None:
-        text += " Close the milestone to let autopilot start on the next one."
-    gh.comment(closed, text)
-    return [f"Autopilot finished {name}."]
+            continue
+        try:
+            issue = gh.latest_closed_issue(number)
+            if not issue or any(
+                by_bot(c) and DONE in (c.get("body") or "") for c in gh.comments(issue["number"])
+            ):
+                continue
+            name = f"milestone {milestone.get('title') or number}"
+            people = "".join(f"@{login} " for login in cfg["notify"])
+            text = f"{DONE}\n{people}NexKit autopilot finished {name}: every issue in it is closed."
+            if not where["every"]:
+                text += " Close the milestone to let autopilot start on the next one."
+            gh.comment(issue["number"], text)
+        except GitHubError as exc:
+            lines.append(f"Could not say whether milestone {number} is done: {exc}")
+            continue
+        lines.append(f"Autopilot finished {name}.")
+    return lines
 
 
 # -- the default branch's CI ----------------------------------------------------------
@@ -2045,7 +2047,9 @@ def sweep(gh, cfg, workflow, ref, closed=None, busy=None):
     """Start what moves each issue in scope on. Returns lines for the job log. Parts that
     a split creates are in scope at once, so the sweep looks again after a split. A CI
     failure on the default branch comes first, so its bug issue is planned first. Adds
-    each pull request it started a command on, or merged, to `busy`."""
+    each pull request it started a command on, or merged, to `busy`. `closed`, the issue
+    whose closing started the sweep, changes nothing: `done` reads what is done from
+    GitHub, so a sweep that replaced this one loses nothing."""
     busy = set() if busy is None else busy
     lines = check_ci(gh, cfg, locate(gh, cfg), ref)
     for _ in range(PASSES):
@@ -2085,6 +2089,7 @@ def sweep(gh, cfg, workflow, ref, closed=None, busy=None):
         except GitHubError as exc:
             line = f"Could not mention anyone on #{step['number']}: {exc}"
         lines += [line] if line else []
-    if closed:
-        lines += done(gh, cfg, where, closed)
+    # A sweep that a closed issue started names it in its note, but what it says comes
+    # from what GitHub shows, so a sweep that replaced it in the queue says it too.
+    lines += done(gh, cfg, where)
     return lines or [f"Autopilot: nothing to start in {where['name']}."]

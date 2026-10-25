@@ -456,7 +456,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 | A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
 | Its pull request is approved, and GitHub refused the merge until required checks pass | Tries the merge again, and merges once the checks pass. A required check that fails gets an automatic fix round within `fix.max_auto_rounds`, unless it fails as the default branch does while its bug issue is open; a new commit gets `/nexkit review`. Checks that neither pass nor fail within six hours wait for a person. |
 | Its pull request waits for a bug issue about the default branch, whose failure its checks repeat | Nothing while that workflow fails on the default branch and the bug issue is open; then starts the automatic fix round the pull request waited for. It keeps its place within `max_parallel`. |
-| The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. With `null`, the same for the last open issue of each milestone, while the other milestones go on. |
+| The last issue in scope closed | Mentions `notify` once, on the milestone's most recently closed issue, that the milestone is done, and asks a person to close it. With `null`, the same for each open milestone whose issues are all closed, without asking, while the other milestones go on. Any sweep says it, whichever event started it. |
 
 - **Scope.** `"milestone"` takes the open issues of the earliest open milestone: by due
   date, then the oldest, skipping milestones with no issues at all. When all its issues are

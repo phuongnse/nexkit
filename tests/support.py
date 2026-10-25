@@ -254,6 +254,14 @@ class FakeGitHub:
             {"number": number, "title": title or f"M{number}", "due_on": due_on}
         )
 
+    def latest_closed_issue(self, milestone):
+        closed = [
+            i
+            for i in self.issues.values()
+            if i["state"] == "closed" and (i.get("milestone") or {}).get("number") == milestone
+        ]
+        return max(closed, key=lambda i: (i.get("closed_at") or "", i["number"]), default=None)
+
     def scoped_issues(self, milestone=None):
         found = []
         for issue in self.issues.values():

@@ -151,6 +151,32 @@ class SweepTests(AutopilotCase):
         self.sweep()
         self.assertEqual(self.started(), [("plan", 6)])
 
+    def test_the_done_note_comes_from_state_when_the_sweep_with_the_note_is_replaced(self):
+        # #5 closes, and its sweep, whose note names it, waits in the group
+        # `nexkit-autopilot`; a milestone event replaces it with a plain sweep.
+        cfg = make_config(autopilot={"enabled": True}, notify=["olivia"])
+        for scope, text in (("milestone", "Close the milestone"), (None, "")):
+            with self.subTest(scope=scope):
+                self.gh = FakeGitHub()
+                self.gh.add_milestone(1)
+                self.issue(4, milestone=1, state="closed", reason="completed")
+                self.issue(5, milestone=1)
+                self.gh.close_issue(5)
+                self.gh.add_milestone(2)
+                self.issue(6, milestone=2)
+                cfg["autopilot"]["scope"] = scope
+                lines = self.sweep(cfg)
+                # Said once, on the issue that closed last, mentioning `notify`.
+                self.assertIn("Autopilot finished milestone M1.", lines)
+                self.assertEqual(self.gh.comments_matching(4, autopilot.DONE), [])
+                [note] = self.gh.comments_matching(5, autopilot.DONE)
+                self.assertIn("@olivia NexKit autopilot finished milestone M1", note["body"])
+                self.assertEqual("Close the milestone" in note["body"], bool(text))
+                # Later sweeps, with the note or without, say it no more.
+                self.sweep(cfg, closed=5)
+                self.sweep(cfg)
+                self.assertEqual(len(self.gh.comments_matching(5, autopilot.DONE)), 1)
+
     def test_the_done_note_mentions_the_people_to_notify(self):
         self.issue(5, state="closed", reason="completed")
         self.sweep(pilot(), closed=5)

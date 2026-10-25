@@ -714,9 +714,10 @@ work. The
 A sweep is a `workflow_dispatch` with the command `autopilot`. Its `number` input is
 `autopilot` too, so callers' concurrency groups give every sweep the group
 `nexkit-autopilot`: sweeps run one at a time, and GitHub keeps one waiting sweep, which
-sees everything a replaced one would have, except its note: a replaced sweep after a
-closed issue does not say the scope is done, and one after a run whose report did not
-finish does not wait for that run to end, so a later sweep handles the run once it ended.
+sees everything a replaced one would have. A replaced sweep's note changes little: what
+is done comes from GitHub (see *Done notices* below), and a sweep that replaced one
+after a run whose report did not finish does not wait for that run to end, so it or a
+later sweep handles the run once it ended.
 Issue and milestone events other than a closed issue run in that group as well, and each
 starts a sweep, even one that changes nothing in scope, such as a milestone event with
 the `null` scope, since it may have replaced a sweep that waited.
@@ -727,9 +728,7 @@ the `null` scope, since it may have replaced a sweep that waited.
   did not finish, because it failed, was cancelled or lost its runner, starts one from its
   `finish` job, and a run whose `route` refused a command that NexKit started by itself
   starts one from its `maintain` job, both waiting for the run to end. A closed issue,
-  whether a person or
-  NexKit closed it, which also lets the sweep say once that the scope is done, or with
-  `null` that the issue's milestone is done, while the other milestones go on. An issue
+  whether a person or NexKit closed it. An issue
   that opens or is reopened. An issue that gets a milestone, and a closed milestone: for
   the milestone scope, the issue comes into scope, or the next milestone becomes the
   scope.
@@ -738,6 +737,14 @@ the `null` scope, since it may have replaced a sweep that waited.
   a sweep that waits for its run to end. The hourly schedule, which
   catches anything the others missed. Nothing waits in a loop: with nothing to start, a
   sweep ends.
+- **Done notices.** Every sweep looks at each open milestone in scope: the current one
+  for the milestone scope, every open one with `null`. One that has issues, all of them
+  closed, gets a notice once, on its most recently closed issue, which mentions `notify`;
+  a sweep that finds NexKit's notice on that issue already says nothing. For the
+  milestone scope it asks a person to close the milestone, which stays current until
+  then; with `null`, the other milestones go on. The notice comes from what GitHub
+  shows, not from the note of the sweep that the closed issue started, so a sweep that
+  replaced that one in the queue says it as well.
 - **A command starts once.** The record on the issue holds the command, the issue or pull
   request it runs on, and the newest NexKit run comment on both when it started. A run
   that starts posts a new run comment, so the next sweep sees that the command ran.

@@ -192,6 +192,21 @@ class GitHub:
             params["milestone"] = str(milestone)
         return self.paginate(f"{self._repo}/issues", params)
 
+    def latest_closed_issue(self, milestone):
+        """The issue in a milestone (its number) that closed last, or None. Issues sort by
+        their last update, which closing is, so the one that closed last is on the first
+        page unless more than a page of closed issues changed since."""
+        params = {
+            "state": "closed",
+            "milestone": str(milestone),
+            "sort": "updated",
+            "direction": "desc",
+            "per_page": "50",
+        }
+        found = self.request("GET", f"{self._repo}/issues", params=params) or []
+        issues = [i for i in found if "pull_request" not in i and i.get("closed_at")]
+        return max(issues, key=lambda i: (i["closed_at"], i["number"]), default=None)
+
     def create_issue(self, title, body, milestone=None, labels=()):
         data = {"title": title, "body": body}
         if milestone is not None:

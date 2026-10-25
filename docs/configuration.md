@@ -445,6 +445,13 @@ every open issue in scope, in order, and starts the one command that moves it on
   without one, so the *blocked by* relationships alone decide what starts, across
   milestones; to hold an issue back, do not open it yet. Issues outside the scope are
   never touched.
+- **Changing the scope.** Work under way is not stopped. A run that is running ends as
+  usual, and an open pull request keeps its automatic fix and conflict rounds, which do not
+  depend on the scope. Two things then wait for a person: an approved pull request whose
+  issue left the scope and whose merge waits for checks, because only sweeps retry that
+  merge and they look at the scope alone; and an issue in scope blocked by an open issue
+  that left it. Issues that left the scope and have not started stay open and wait until
+  they are in scope again.
 - **Order.** Bug issues for CI failures go first and issues for flaky runs next. Then,
   with `null`, come the issues of each open milestone, in the milestone scope's order,
   then the issues without one; each group oldest first. With `max_parallel`, an earlier

@@ -35,10 +35,15 @@ TASKS = {
     "schedule": ("usage_limit.resume", "conflicts.auto_resolve", "autopilot.enabled"),
     "resume": ("usage_limit.resume",),
     "conflicts": ("conflicts.auto_resolve",),
-    # An issue opened, reopened, labeled or milestoned, or a milestone closed.
+    # An issue opened, reopened or milestoned, or a milestone closed.
     "autopilot": ("autopilot.enabled",),
-    # The run that looks at every issue in scope (nexkit/autopilot.py).
-    "sweep": ("autopilot.enabled",),
+    # The run that looks at every issue in scope (nexkit/autopilot.py) and at every pull
+    # request that conflicts with its base branch.
+    "sweep": ("autopilot.enabled", "conflicts.auto_resolve"),
+    # A run of another workflow finished, such as one of merge.after_workflows.
+    "ci": ("autopilot.enabled",),
+    # `route` refused a command that NexKit started by itself.
+    "lost": ("autopilot.enabled",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
@@ -49,6 +54,10 @@ HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "dup
 WAIT_INPUTS = {"command": "resume", "number": "resume", "note": "", "auto": "false"}
 # How often a waiting run looks again for runs that paused while it waits.
 POLL = timedelta(minutes=10)
+# How often, and how many times, a sweep after a run whose report did not finish looks
+# whether that run ended, before it sweeps anyway.
+END_POLL = 10
+END_TRIES = 30
 
 
 def enabled(task, cfg):
@@ -201,6 +210,20 @@ def check_paused(gh, workflow, ref, wait_minutes, now=None):
     return ["Started a run that resumes paused commands as they come due."]
 
 
+def wait_for_end(gh, run_id, tries=END_TRIES, delay=END_POLL):
+    """Wait until the workflow run `run_id` ended, for at most `tries` looks. The run that
+    asked for this sweep is still ending when it asks. Returns a line for the log."""
+    for attempt in range(tries):
+        try:
+            if gh.workflow_run(run_id).get("status") == "completed":
+                return f"Run {run_id} ended."
+        except GitHubError as exc:
+            return f"Could not read run {run_id}: {exc}"
+        if attempt < tries - 1:
+            time.sleep(delay)
+    return f"Run {run_id} has not ended yet; a later sweep handles it."
+
+
 def conflict_note(base):
     return (
         f"Merge `{base}` into this branch and resolve the conflicts. Keep the intent of both "
@@ -220,26 +243,70 @@ def is_conflicting(gh, number, tries=6, delay=5):
     return None
 
 
-def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
+def _queued(comment, run, now):
+    """Whether the round `run` started the next one by itself, which has not posted its
+    comment yet. One that did not run within `autopilot.LOST` holds nothing up."""
+    if run.get("outcome") not in autopilot.CHAINED:
+        return False
+    at = parse_iso(comment.get("updated_at") or comment.get("created_at"))
+    return at is None or now - at <= autopilot.LOST
+
+
+def _tried(rounds):
+    """(index into `rounds`, base commit) of the latest conflict round started: a conflict
+    round itself, or the start that a round recorded as it ended (`conflicts_started`)."""
+    found = None
+    for index, (_, run) in enumerate(rounds):
+        if run.get("conflicts"):
+            found = (index, run.get("base_sha"))
+        if run.get("conflicts_started"):
+            found = (index, run["conflicts_started"])
+    return found
+
+
+def _rounds(gh, number):
+    return [(c, run) for c, run in run_comments(gh.comments(number)) if "round" in run]
+
+
+def start_conflict_round(
+    gh, number, base, workflow, ref, max_rounds, row=None, now=None, settle=False
+):
     """Start an automatic fix round that merges `base` into the pull request, unless one
-    already tried this base commit, its limit is used up, or its latest round, or the
-    implement round that opened it, is paused or still running. `own` is the URL of the
-    round that calls this while it reports: its comment still says running, but it is
-    ending.
-    Returns a line saying what happened, or "" when nothing was started for a known reason
-    that needs no line."""
-    rounds = [run for _, run in run_comments(gh.comments(number)) if "round" in run]
-    tried = [run for run in rounds if run.get("conflicts")]
+    started since the base branch last moved and since the pull request's last round
+    ended, its limit is used up, or a round is on its way: its latest round, or the
+    implement round that opened it, is paused or still running, or started the next round
+    by itself. `row` is the round that calls this while it reports: its comment still says
+    running, but it is ending, and it records the start as it saves.
+
+    A start is recorded on the pull request's latest round (`conflicts_started`), so a
+    sweep that looks before the new round posts its comment does not start it twice.
+    With `settle`, when autopilot does not, a latest round whose run ended without a
+    report is shown as ended first, so it holds nothing up. Returns a line saying what
+    happened, or "" when nothing was started for a known reason that needs no line."""
+    now = now or datetime.now(UTC)
+    own = (row or {}).get("url")
+    rounds = _rounds(gh, number)
+    if settle and rounds and autopilot.settle_ended(gh, number, *rounds[-1]):
+        rounds = _rounds(gh, number)
+    if own and not any(run.get("url") == own for _, run in rounds):
+        # The implement round posts its round comment on the pull request as it reports.
+        rounds.append(({}, row))
+    tried = [run for _, run in rounds if run.get("conflicts")]
     sha = gh.branch_sha(base)
-    if tried and tried[-1].get("base_sha") == sha:
+    last = _tried(rounds)
+    if last and last == (len(rounds) - 1, sha):
+        # Tried on this base commit, and no round ended since: a blocked round waits for a
+        # person or the next move of the base branch.
         return ""
-    latest = rounds[-1] if rounds else {}
-    if latest.get("status") in (PAUSED, RUNNING, CONTINUED) and not (
-        own and latest.get("url") == own
-    ):
+    comment, latest = rounds[-1] if rounds else ({}, {})
+    ending = bool(own) and latest.get("url") == own
+    if latest.get("status") in (PAUSED, RUNNING, CONTINUED) and not ending:
         # A running round merges the base branch itself when it conflicts, and a dispatch
-        # now would replace a command waiting behind it. A later check starts the round.
+        # now would replace a command waiting behind it. Its end starts the round.
         # A continued round has a run on its way.
+        return ""
+    if not ending and _queued(comment, latest, now):
+        # The round it started next merges the base branch itself when it conflicts.
         return ""
     issue = issue_from_branch(gh.pull(number)["head"]["ref"])
     running = implementing(gh, issue) if issue else None
@@ -259,12 +326,18 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds, own=None):
         )
     inputs = {"command": "fix", "number": str(number), "note": conflict_note(base)}
     gh.dispatch(workflow, ref, {**inputs, "auto": "conflicts"})
+    if ending:
+        row["conflicts_started"] = sha
+    elif comment.get("id"):
+        latest["conflicts_started"] = sha
+        gh.update_comment(comment["id"], with_run(comment["body"], latest))
     return f"Started an automatic round on #{number} to merge `{base}`."
 
 
-def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5):
+def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5, settle=False):
     """Start a conflict round for each open NexKit pull request into `base` that conflicts
-    with it. Returns lines for a log or comment."""
+    with it. With `settle`, a latest round whose run ended without a report holds nothing
+    up (see `start_conflict_round`). Returns lines for a log or comment."""
     lines = []
     for pull in gh.pulls_into(base):
         number = pull["number"]
@@ -276,7 +349,9 @@ def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5):
             if conflicting is None:
                 lines.append(f"GitHub has not worked out yet whether #{number} conflicts.")
             elif conflicting:
-                lines.append(start_conflict_round(gh, number, base, workflow, ref, max_rounds))
+                lines.append(
+                    start_conflict_round(gh, number, base, workflow, ref, max_rounds, settle=settle)
+                )
         except GitHubError as exc:
             lines.append(f"Could not check #{number} for conflicts with `{base}`: {exc}")
     return [line for line in lines if line]
@@ -289,14 +364,35 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
         lines = close_parents_safely(gh, decision["issue"]) if cfg["close_parent_issues"] else []
         return lines + autopilot.request_safely(gh, cfg, workflow, ref, decision["issue"])
     if task == "autopilot":
-        if not autopilot.concerns(cfg, decision):
-            return ["The event does not change autopilot's scope."]
+        # Even an event that changes nothing in scope, such as a milestoned issue with
+        # `null`, starts a sweep: its run joins the group `nexkit-autopilot`, where it may
+        # have replaced a sweep that waited.
         return autopilot.request_safely(gh, cfg, workflow, ref)
     if task == "sweep":
-        return autopilot.sweep(gh, cfg, workflow, ref, decision.get("closed"))
+        lines = [wait_for_end(gh, decision["after"])] if decision.get("after") else []
+        busy = set()
+        if autopilot.takes(cfg):
+            lines += autopilot.sweep(gh, cfg, workflow, ref, decision.get("closed"), busy)
+        if cfg["conflicts"]["auto_resolve"]:
+            # After the commands it started, which merge the base branch themselves.
+            max_rounds = cfg["conflicts"]["max_rounds"]
+            # Without autopilot, nothing else ends a round whose report did not finish.
+            settle = not autopilot.takes(cfg)
+            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, skip=busy, settle=settle)
+        return lines or ["Nothing to start."]
+    if task == "ci":
+        return autopilot.after_ci_run(gh, cfg, decision, workflow, ref)
+    if task == "lost":
+        # The sweep waits for this run to end, so it sees that the command never ran.
+        return autopilot.request_safely(gh, cfg, workflow, ref, after=decision["after"])
     if task == "conflicts":
         return resolve_conflicts(
-            gh, decision["base"], workflow, ref, cfg["conflicts"]["max_rounds"]
+            gh,
+            decision["base"],
+            workflow,
+            ref,
+            cfg["conflicts"]["max_rounds"],
+            settle=not autopilot.takes(cfg),
         )
     wait = cfg["usage_limit"]["wait_minutes"]
     if task == "resume":
@@ -310,7 +406,9 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
                 print(f"warning: could not resume paused runs: {exc}", file=sys.stderr)
         if cfg["conflicts"]["auto_resolve"]:
             # Also catches base branch moves whose push started no run.
-            lines += resolve_conflicts(gh, ref, workflow, ref, cfg["conflicts"]["max_rounds"])
+            settle = not autopilot.takes(cfg)
+            max_rounds = cfg["conflicts"]["max_rounds"]
+            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, settle=settle)
         # Also catches events that started no workflow, such as issues NexKit closed.
         return lines + autopilot.request_safely(gh, cfg, workflow, ref)
     raise ValueError(f"Unknown maintenance task: {task}")

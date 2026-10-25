@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import signal
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .gitutil import GitError, git, has_commit
@@ -38,6 +40,18 @@ VOLATILE = (
     re.compile(r"\d+"),
 )
 SIGNATURE_LIMIT = 200
+# A test reporter names a test by its path of describe blocks, such as
+# "OrderHistory > pages through more than twenty orders"; the last segment is the test.
+TEST_SEGMENT = re.compile(r"\s+(?:›|>)\s+")
+# The arguments of a test named as code, such as `Totals(count: 2)`, and the line and
+# column after a file, such as `orders.test.ts:12:3`.
+TEST_ARGUMENTS = re.compile(r"\s*\(.*\)\Z")
+TEST_LINE = re.compile(r"(?::\d+){1,2}\Z")
+# A JUnit `classname` that names the test's file rather than its class.
+TEST_FILE = re.compile(r"[/\\]|\.(?:[cm]?[jt]sx?|py|rb|go|java|kt|cs|fs|vb|php|rs|swift|exs?)\Z")
+# The most failing tests a check records from its JUnit files. A check with more records
+# none, and is compared as a check that names no test (see `autopilot.same_failure`).
+FAILED_TESTS_LIMIT = 200
 
 
 def environment(commits=None):
@@ -164,6 +178,62 @@ def failing_signatures(results):
     }
 
 
+def test_name(title, file=""):
+    """The name a failing test is compared by, the same for a JUnit test case and a test
+    reporter's error annotation of that test. A test named as code, such as
+    `Shop.Tests.OrderTests.Totals(count: 2)`, is its class and method: `ordertests.totals`.
+    Any other is the last segment of its title, after its describe blocks, behind the name
+    of its file without folders, line or column, or behind nothing when the file is not
+    known: `orders.test.ts::adds tax`, `::adds tax`. Case and runs of whitespace do not
+    count. "" when there is no title."""
+    title = " ".join(str(title or "").split())
+    last = TEST_SEGMENT.split(title)[-1] if title else ""
+    code = TEST_ARGUMENTS.sub("", last)
+    if code and " " not in code and "." in code.strip("."):
+        return ".".join(code.strip(".").split(".")[-2:]).casefold()
+    if not last:
+        return ""
+    path = TEST_LINE.sub("", str(file or "").strip().replace("\\", "/"))
+    return f"{posixpath.basename(path)}::{last}".casefold()
+
+
+def same_test(one, other):
+    """Whether two names from `test_name` name the same test: the same name, in the same
+    file when both say which."""
+    if one == other:
+        return True
+    if "::" not in one or "::" not in other:
+        return False
+    file, _, name = one.partition("::")
+    other_file, _, other_name = other.partition("::")
+    return name == other_name and not (file and other_file)
+
+
+def junit_failures(data):
+    """The names (see `test_name`) of the test cases that failed or erred in a JUnit XML
+    report, or None when `data` is not one. A case's `classname` is its class, joined to
+    its name, unless it names a file, as JavaScript reporters do; a `file` attribute names
+    the file."""
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        return None
+    if root.tag not in ("testsuites", "testsuite"):
+        return None
+    found = []
+    for case in root.iter("testcase"):
+        if case.find("failure") is None and case.find("error") is None:
+            continue
+        name, owner = case.get("name") or "", case.get("classname") or ""
+        file = case.get("file") or ""
+        if TEST_FILE.search(owner):
+            file = file or owner
+        elif owner and " " not in TEST_ARGUMENTS.sub("", name) and not name.startswith(f"{owner}."):
+            name = f"{owner}.{name}"
+        found.append(test_name(name, file))
+    return [name for name in dict.fromkeys(found) if name]
+
+
 def size_text(size):
     return f"{size / 1_000_000:.1f} MB"
 
@@ -208,8 +278,11 @@ def keep_results(cfg, results, cwd, out_dir, redact=None):
     path order, files that would take the round past RESULTS_LIMIT are left out.
 
     Each failing check's result gets `results`, the paths of which files were kept, and
-    `results_left_out`, the number of its files left out. Returns the lines for the run
-    summary, or [] when no failing check names result files."""
+    `results_left_out`, the number of its files left out. When kept files are JUnit XML
+    reports, it also gets `failed_tests`, the names of their failed test cases (see
+    `junit_failures`), which a round compares with the default branch's failing tests;
+    none past FAILED_TESTS_LIMIT. Returns the lines for the run summary, or [] when no
+    failing check names result files."""
     redact = redact or Redactor()
     root = Path(cwd)
     named = {check["name"]: check.get("results") or [] for check in cfg["checks"]}
@@ -220,6 +293,7 @@ def keep_results(cfg, results, cwd, out_dir, redact=None):
         if not paths:
             continue
         result["results"], result["results_left_out"] = [], 0
+        tests = None
         for path in paths:
             files = _result_files(root, path)
             if files is None:
@@ -242,6 +316,9 @@ def keep_results(cfg, results, cwd, out_dir, redact=None):
                     continue
                 if _is_text(data):
                     data = redact(data.decode("utf-8")).encode("utf-8")
+                    failures = junit_failures(data) if file.suffix == ".xml" else None
+                    if failures is not None:
+                        tests = [*(tests or []), *failures]
                 target = Path(out_dir) / RESULTS_DIR / result["name"] / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
@@ -251,6 +328,9 @@ def keep_results(cfg, results, cwd, out_dir, redact=None):
                 result["results"].append(path)
             kept += count
             print(f"{result['name']}: kept {count} of {len(files)} files of `{path}`.", flush=True)
+        if tests is not None:
+            tests = list(dict.fromkeys(tests))
+            result["failed_tests"] = tests if len(tests) <= FAILED_TESTS_LIMIT else []
     if not missing and not left_out and not kept:
         return []
     lines = [

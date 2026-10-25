@@ -65,9 +65,17 @@ def cmd_init(args):
         check_results=args.check_results,
         notify=args.notify,
         evidence=args.evidence_artifact,
+        after_workflows=args.after_workflow,
     )
     for path in written:
         print(f"wrote {path}")
+    for name in dict.fromkeys(args.after_workflow):
+        # NexKit never edits another workflow; it shows the job to add.
+        print(
+            f"With autopilot, add this job to .github/workflows/{name}, so a sweep looks at "
+            f"each of its runs on the default branch as soon as it ends:\n"
+        )
+        print(scaffold.sweep_job(Path(args.repo), name))
     print(
         "Next: review the files, set the secret each agent in .nexkit/config.json names "
         "(gh secret set CLAUDE_CODE_OAUTH_TOKEN), commit both files to the default branch, "
@@ -111,6 +119,31 @@ def cmd_status(args):
     return 0
 
 
+def _refused_dispatch(args, decision, inputs):
+    """(decision, config) for a sweep after `route` refused a command that NexKit started
+    by itself, with autopilot on, or None. The sweep waits for this run to end, then finds
+    that the command never ran and starts it once more, instead of an hourly sweep finding
+    it later."""
+    from .maintain import enabled
+    from .route import auto_kinds
+
+    if decision["action"] != "none" or not inputs:
+        return None
+    if not auto_kinds(inputs.get("auto")) - {"false"}:
+        return None
+    if inputs.get("command") in ("autopilot", "resume"):
+        return None
+    run_id = os.environ.get("GITHUB_RUN_ID") or ""
+    try:
+        cfg = configuration.load(args.repo)
+    except configuration.ConfigError:
+        return None
+    if not run_id.isdigit() or not enabled("lost", cfg):
+        return None
+    found = {"action": "maintain", "task": "lost", "after": int(run_id)}
+    return {**found, "reason": decision["reason"]}, cfg
+
+
 def cmd_route(args):
     from . import progress
     from .github import GitHubError
@@ -136,6 +169,15 @@ def cmd_route(args):
         keys = " and ".join(TASKS[decision["task"]])
         decision = {"action": "none", "reason": f"Nothing to do: {keys} off"}
     print(json.dumps(decision, indent=2))
+    if decision["action"] == "none" and decision.get("reply_to"):
+        try:
+            gh.comment(decision["reply_to"], decision["reason"])
+        except GitHubError as exc:
+            print(f"Could not reply: {exc}", file=sys.stderr)
+    refused = _refused_dispatch(args, decision, event.get("inputs"))
+    if refused:
+        decision, cfg = refused
+        print(f"Starting an autopilot sweep after this run: {decision['reason']}")
     if decision["action"] == "maintain":
         # A run that waits for paused commands needs the wait and time to start them.
         waits = decision["task"] == "resume"
@@ -143,11 +185,6 @@ def cmd_route(args):
         _output(action="maintain", decision=decision, config=cfg, maintain_timeout=str(minutes))
         return 0
     if decision["action"] == "none":
-        if decision.get("reply_to"):
-            try:
-                gh.comment(decision["reply_to"], decision["reason"])
-            except GitHubError as exc:
-                print(f"Could not reply: {exc}", file=sys.stderr)
         _output(action="none", decision=decision, config={})
         return 0
     progress.start(gh, decision)
@@ -411,6 +448,23 @@ def cmd_maintain(args):
     return 0
 
 
+def cmd_finish(args):
+    from .autopilot import after_unreported
+    from .report import workflow_file
+
+    gh = _gh()
+    lines = after_unreported(
+        gh,
+        _config(),
+        workflow_file(os.environ.get("GITHUB_WORKFLOW_REF", "")),
+        os.environ.get("NEXKIT_DEFAULT_BRANCH") or gh.default_branch(),
+        os.environ["GITHUB_RUN_ID"],
+    )
+    for line in lines:
+        print(line)
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="nexkit", description=nexkit.__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"nexkit {__version__}")
@@ -454,6 +508,14 @@ def build_parser():
         default=[],
         metavar="NAME",
         help="An artifact of CI runs that implement and fix rounds download; repeat for more",
+    )
+    p.add_argument(
+        "--after-workflow",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="A workflow file, such as ci.yml, to start after a merge (merge.after_workflows); "
+        "repeat for more",
     )
     p.add_argument(
         "--model",
@@ -527,6 +589,9 @@ def build_parser():
     p = sub.add_parser("report", help="(pipeline) Report results and schedule the next round")
     p.add_argument("--artifacts", required=True)
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("finish", help="(pipeline) Start a sweep after a run that did not report")
+    p.set_defaults(func=cmd_finish)
     return parser
 
 

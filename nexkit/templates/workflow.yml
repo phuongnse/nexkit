@@ -8,13 +8,19 @@ on:
   pull_request_review:
     types: [submitted]
   issues:
-    types: [closed, opened, reopened, labeled, milestoned] # close_parent_issues, autopilot
+    types: [closed, opened, reopened, milestoned] # close_parent_issues, autopilot
   milestone:
     types: [closed] # autopilot: the next milestone comes into scope
   push:
     branches: [__DEFAULT_BRANCH__] # conflicts.auto_resolve: the default branch moved
   schedule:
     - cron: "23 * * * *" # usage_limit.resume, conflicts.auto_resolve, autopilot
+  # autopilot with merge.after_workflows: a finished run of those workflows on the default
+  # branch starts a sweep at once. Name each workflow as its `name:` does.
+  # workflow_run:
+  #   workflows: [CI]
+  #   types: [completed]
+  #   branches: [__DEFAULT_BRANCH__]
   workflow_dispatch:
     inputs:
       command:
@@ -46,7 +52,7 @@ permissions:
 jobs:
   nexkit:
     if: >-
-      contains(fromJSON('["workflow_dispatch","issues","milestone","push","schedule"]'), github.event_name) ||
+      contains(fromJSON('["workflow_dispatch","issues","milestone","push","schedule","workflow_run"]'), github.event_name) ||
       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/nexkit')) ||
       (github.event_name == 'pull_request_review' &&
        github.event.review.state == 'changes_requested' &&

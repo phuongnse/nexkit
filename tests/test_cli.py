@@ -11,7 +11,7 @@ from unittest import mock
 
 import nexkit
 import nexkit.config
-from nexkit import cli, scaffold
+from nexkit import cli, maintain, scaffold
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
 from nexkit.state import empty_state, render_state
 from tests.support import CLAUDE, PROFILES, FakeClaude, FakeGitHub, GitRepos, git
@@ -253,13 +253,21 @@ class InitDoctorTests(unittest.TestCase):
         workflow.write_text(re.sub(r"  milestone:\n.*\n", "", text))
         findings = scaffold.doctor(self.root)
         self.assertTrue(any("'milestone: closed'" in m for ok, m in findings if not ok))
-        # The label scope needs `labeled`, not the milestone events.
-        cfg["autopilot"] = {"enabled": True, "scope": "label", "label": "autopilot"}
+        # With null, milestones change nothing: only issues opening and closing count.
+        cfg["autopilot"] = {"enabled": True, "scope": None}
         path.write_text(json.dumps(cfg))
+        no_milestones = re.sub(r"  milestone:\n.*\n", "", text).replace(", milestoned]", "]")
+        workflow.write_text(no_milestones)
         self.assertIn(ok, scaffold.doctor(self.root))
-        workflow.write_text(text.replace("labeled, ", ""))
+        for needed in ("opened", "reopened", "closed"):
+            workflow.write_text(re.sub(rf"\b{needed}, |, {needed}\b", "", no_milestones, count=1))
+            findings = scaffold.doctor(self.root)
+            failed = [m for ok, m in findings if not ok and "autopilot" in m]
+            self.assertEqual(len(failed), 1, needed)
+            self.assertIn(f"does not listen to '{needed}'", failed[0])
+        workflow.write_text(re.sub(r"  schedule:\n.*\n", "", no_milestones))
         findings = scaffold.doctor(self.root)
-        self.assertTrue(any("does not listen to 'labeled'" in m for ok, m in findings if not ok))
+        self.assertTrue(any("does not listen to 'schedule'" in m for ok, m in findings if not ok))
         # A workflow from before autopilot: issue events join the issue's group.
         workflow.write_text(text.replace("&& 'autopilot' ", ""))
         findings = scaffold.doctor(self.root)
@@ -267,6 +275,130 @@ class InitDoctorTests(unittest.TestCase):
         cfg["autopilot"] = {"enabled": False}
         path.write_text(json.dumps(cfg))
         self.assertFalse(any("autopilot" in m for _, m in scaffold.doctor(self.root)))
+
+    def test_doctor_checks_that_runs_of_the_workflows_after_a_merge_start_sweeps(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["merge"]["after_workflows"] = ["ci.yml", "e2e.yml"]
+        path.write_text(json.dumps(cfg))
+        workflows = self.root / ".github/workflows"
+        ci = 'name: "CI tests" # the checks\non: [workflow_dispatch]\n'
+        (workflows / "ci.yml").write_text(ci)
+        (workflows / "e2e.yml").write_text("on: [workflow_dispatch]\n")
+        workflow = workflows / "nexkit.yml"
+        text = workflow.read_text()
+        # Without autopilot, no sweep acts on those runs.
+        self.assertFalse(any("workflow_run" in m for _, m in scaffold.doctor(self.root)))
+        cfg["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(cfg))
+        # The workflow `nexkit init` writes shows the trigger in a comment only.
+        failed = [m for ok, m in scaffold.doctor(self.root) if not ok and "workflow_run" in m]
+        self.assertEqual(len(failed), 1)
+        self.assertIn("does not name 'CI tests', '.github/workflows/e2e.yml'", failed[0])
+        self.assertIn("the end of the next NexKit run or the hourly schedule", failed[0])
+        listened = text.replace(
+            "  workflow_dispatch:\n",
+            "  workflow_run:\n    workflows: [CI tests, .github/workflows/e2e.yml]\n"
+            "    types: [completed]\n    branches: [main]\n  workflow_dispatch:\n",
+            1,
+        )
+        workflow.write_text(listened)
+        ok = (True, "Finished runs of merge.after_workflows on the default branch start sweeps")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        workflow.write_text(listened.replace("[completed]", "[requested]"))
+        failed = [m for ok, m in scaffold.doctor(self.root) if not ok and "workflow_run" in m]
+        self.assertIn("does not listen to 'completed'", failed[0])
+        # A workflow from before: the job lets no workflow_run event through.
+        workflow.write_text(listened.replace(',"workflow_run"]', "]"))
+        failed = [m for ok, m in scaffold.doctor(self.root) if not ok and "workflow_run" in m]
+        self.assertIn("does not let 'workflow_run' events through its 'if'", failed[0])
+
+    def test_doctor_checks_that_each_workflow_after_a_merge_starts_a_sweep_when_it_ends(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["merge"]["after_workflows"] = ["ci.yml", "e2e.yml"]
+        cfg["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(cfg))
+        workflows = self.root / ".github/workflows"
+        ci = (
+            "name: CI\non: [push, workflow_dispatch]\njobs:\n"
+            "  test:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make test\n"
+            "  lint:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make lint\n"
+        )
+        (workflows / "ci.yml").write_text(ci)
+        # One that calls another workflow may start the sweep there: doctor cannot tell.
+        e2e = "on: [workflow_dispatch]\njobs:\n  e2e:\n    uses: ./.github/workflows/x.yml\n"
+        (workflows / "e2e.yml").write_text(e2e)
+
+        def sweeps():
+            return [(ok, m) for ok, m in scaffold.doctor(self.root) if "sweep when" in m]
+
+        self.assertEqual(
+            sweeps(),
+            [
+                (
+                    False,
+                    "merge.after_workflows: ci.yml has no job that starts an autopilot sweep "
+                    "when it ends, so a failure in a run NexKit started after its merge waits "
+                    "for the end of the next NexKit run or the hourly schedule; see "
+                    "docs/configuration.md#autopilot or 'nexkit init --after-workflow ci.yml'",
+                ),
+                (
+                    True,
+                    "merge.after_workflows: could not tell whether e2e.yml starts an autopilot "
+                    "sweep when it ends, since it calls another workflow; see "
+                    "docs/configuration.md#autopilot or 'nexkit init --after-workflow e2e.yml'",
+                ),
+            ],
+        )
+        job = scaffold.sweep_job(self.root, "ci.yml")
+        self.assertIn("    needs: [test, lint]\n", job)
+        (workflows / "ci.yml").write_text(ci + job)
+        ok = (True, "merge.after_workflows: ci.yml starts an autopilot sweep when it ends")
+        self.assertIn(ok, sweeps())
+        # Needs as a list of lines count too.
+        listed = job.replace("needs: [test, lint]", "needs:\n      - test\n      - lint")
+        (workflows / "ci.yml").write_text(ci + listed)
+        self.assertIn(ok, sweeps())
+        # A job that does not wait for every other one starts the sweep too early.
+        (workflows / "ci.yml").write_text(ci + job.replace("[test, lint]", "[test]"))
+        [(found, message), _] = sweeps()
+        self.assertFalse(found)
+        self.assertIn("the job 'nexkit-sweep' of ci.yml does not need lint", message)
+        (workflows / "ci.yml").write_text(ci + job.replace("always() && ", ""))
+        self.assertIn("has no 'if: always()'", sweeps()[0][1])
+        # Without autopilot, nothing reads the sweep.
+        cfg["autopilot"] = {"enabled": False}
+        path.write_text(json.dumps(cfg))
+        self.assertEqual(sweeps(), [])
+
+    def test_init_offers_the_trigger_and_the_job_for_workflows_after_a_merge(self):
+        workflows = self.root / ".github/workflows"
+        workflows.mkdir(parents=True)
+        ci = "name: CI tests\non: [push, workflow_dispatch]\njobs:\n  test:\n    runs-on: x\n"
+        (workflows / "ci.yml").write_text(ci)
+        out = io.StringIO()
+        args = ["init", "--repo", str(self.root), "--check", "test=true"]
+        with contextlib.redirect_stdout(out):
+            cli.main([*args, "--after-workflow", "ci.yml"])
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(cfg["merge"]["after_workflows"], ["ci.yml"])
+        workflow = (workflows / "nexkit.yml").read_text()
+        self.assertIn('workflows: ["CI tests"]', scaffold.trigger(workflow, "workflow_run"))
+        job = scaffold.sweep_job(self.root, "ci.yml")
+        self.assertIn("add this job to .github/workflows/ci.yml, so a sweep", out.getvalue())
+        self.assertIn(job, out.getvalue())
+        (workflows / "ci.yml").write_text(ci + job)
+        cfg["autopilot"] = {"enabled": True}
+        (self.root / ".nexkit/config.json").write_text(json.dumps(cfg))
+        findings = scaffold.doctor(self.root)
+        for ok in (
+            "Finished runs of merge.after_workflows on the default branch start sweeps",
+            "merge.after_workflows: ci.yml starts an autopilot sweep when it ends",
+        ):
+            self.assertIn((True, ok), findings)
 
     def test_init_listens_to_pushes_to_the_default_branch(self):
         git(self.root, "init", "-q", "-b", "trunk")
@@ -638,10 +770,40 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(out["maintain_timeout"], "15")
         self.assertFalse(self.gh.issue_comments[5])  # no run comment, no reaction
 
+    def test_a_refused_command_that_autopilot_started_starts_a_sweep_after_the_run(self):
+        # `route` refuses a `/nexkit go` that autopilot started: the issue's pull request
+        # is open. A sweep that waits for this run to end finds the command lost.
+        self.gh.add_pull(6, 5)
+        inputs = {"command": "go", "number": "5", "note": "", "auto": "autopilot"}
+        event = {"inputs": inputs, "sender": {"login": "github-actions[bot]"}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "81"}):
+            out = self.run_route("workflow_dispatch", event)
+        self.assertEqual(out["action"], "none")
+        self.assertTrue(self.gh.comments_matching(5, "Pull request #6 is already open"))
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(raw))
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "81"}):
+            out = self.run_route("workflow_dispatch", event)
+        decision = json.loads(out["decision"])
+        self.assertEqual(out["action"], "maintain")
+        self.assertEqual((decision["task"], decision["after"]), ("lost", 81))
+        cfg = json.loads(out["config"])
+        lines = maintain.maintain(self.gh, decision, cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(lines, ["Started an autopilot sweep."])
+        [sweep] = [d["inputs"] for d in self.gh.dispatches]
+        self.assertEqual(sweep["note"], "after run 81")
+        # A person's command that route refuses starts nothing.
+        self.gh.dispatches.clear()
+        event = {"inputs": {**inputs, "auto": "false"}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "82"}):
+            self.assertEqual(self.run_route("workflow_dispatch", event)["action"], "none")
+
     def test_route_hands_autopilot_events_to_maintain_only_when_enabled(self):
         events = [
             ("issues", {"action": "opened", "issue": {"number": 5}}),
-            ("issues", {"action": "labeled", "issue": {"number": 5}, "label": {"name": "x"}}),
+            ("issues", {"action": "milestoned", "issue": {"number": 5}}),
             ("milestone", {"action": "closed", "milestone": {"number": 1}}),
             ("workflow_dispatch", {"inputs": {"command": "autopilot", "number": "autopilot"}}),
         ]
@@ -656,7 +818,7 @@ class PipelineCommandTests(unittest.TestCase):
             decisions,
             [
                 {"action": "maintain", "task": "autopilot", "event": "opened"},
-                {"action": "maintain", "task": "autopilot", "event": "labeled", "label": "x"},
+                {"action": "maintain", "task": "autopilot", "event": "milestoned"},
                 {"action": "maintain", "task": "autopilot", "event": "milestone_closed"},
                 {"action": "maintain", "task": "sweep"},
             ],
@@ -665,6 +827,24 @@ class PipelineCommandTests(unittest.TestCase):
         decision = json.loads(self.run_route("workflow_dispatch", event)["decision"])
         self.assertEqual(decision, {"action": "maintain", "task": "sweep", "closed": 7})
         self.assertFalse(self.gh.issue_comments[5])  # no run comment, no reaction
+
+    def test_route_hands_finished_runs_and_sweeps_after_a_run_to_maintain(self):
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(raw))
+        run = {"id": 31, "path": ".github/workflows/ci.yml"}
+        decision = json.loads(
+            self.run_route("workflow_run", {"action": "completed", "workflow_run": run})["decision"]
+        )
+        self.assertEqual(
+            decision, {"action": "maintain", "task": "ci", "workflow": "ci.yml", "run": 31}
+        )
+        out = self.run_route("workflow_run", {"action": "requested", "workflow_run": run})
+        self.assertEqual(out["action"], "none")
+        event = {"inputs": {"command": "autopilot", "number": "autopilot", "note": "after run 9"}}
+        decision = json.loads(self.run_route("workflow_dispatch", event)["decision"])
+        self.assertEqual(decision, {"action": "maintain", "task": "sweep", "after": 9})
 
     def test_route_gives_the_waiting_run_its_wait(self):
         event = {"inputs": {"command": "resume", "number": "resume"}}
@@ -988,7 +1168,7 @@ class WorkflowSafetyTests(unittest.TestCase):
     def test_jobs(self):
         self.assertEqual(
             list(self.jobs),
-            ["route", "agent", "publish", "verify", "review", "report", "maintain"],
+            ["route", "agent", "publish", "verify", "review", "report", "maintain", "finish"],
         )
 
     def test_jobs_that_run_agents_or_repository_code_cannot_write(self):
@@ -1030,7 +1210,7 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_jobs_with_write_tokens_never_receive_model_credentials(self):
         push = "secrets[fromJSON(needs.route.outputs.config).publish.push_token_secret]"
-        for name in ("publish", "report", "route", "maintain"):
+        for name in ("publish", "report", "route", "maintain", "finish"):
             job = self.jobs[name].replace(push, "")
             for text in (
                 "CLAUDE_CODE_OAUTH_TOKEN",
@@ -1073,7 +1253,7 @@ class WorkflowSafetyTests(unittest.TestCase):
             self.assertNotIn("curl ", self.jobs[name])
 
     def test_jobs_with_write_tokens_run_only_nexkit(self):
-        for name in ("route", "publish", "report", "maintain"):
+        for name in ("route", "publish", "report", "maintain", "finish"):
             runs = re.findall(r"^\s+run: (.*)$", self.jobs[name], re.M)
             self.assertTrue(runs, name)
             for run in runs:
@@ -1109,6 +1289,19 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertNotIn("NEXKIT_PUSH_TOKEN", maintain)
         self.assertNotIn("secrets.", maintain)
         self.assertIn('["none","maintain"]', self.jobs["report"])
+
+    def test_finish_starts_a_sweep_only_after_a_command_whose_report_did_not_finish(self):
+        finish = self.jobs["finish"]
+        self.assertIn("needs: [route, report]", finish)
+        # Also after a cancelled run, and only for a command that report did not finish.
+        self.assertIn("always() && needs.route.result == 'success'", finish)
+        self.assertIn('["plan","implement","fix","review"]', finish)
+        self.assertIn("needs.report.result != 'success'", finish)
+        self.assertEqual(self.permissions("finish"), {"contents": "read", "actions": "write"})
+        self.assertEqual(finish.count("actions/checkout@"), 1)
+        self.assertIn("path: kit", finish)
+        self.assertNotIn("persist-credentials: true", finish)
+        self.assertNotIn("secrets.", finish)
 
     def test_the_workflow_init_writes_gives_every_permission_a_job_asks_for(self):
         # GitHub starts no run of a workflow whose called jobs ask for more than it gives.

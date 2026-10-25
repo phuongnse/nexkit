@@ -479,5 +479,21 @@ class DispatchTests(unittest.TestCase):
         )
 
 
+class LatestClosedIssueTests(unittest.TestCase):
+    def test_the_issue_that_closed_last_not_a_pull_request_or_the_latest_updated(self):
+        gh = GitHub(repository="acme/app", token="t")
+        found = [
+            {"number": 4, "closed_at": "2026-10-20T00:00:00Z"},  # commented on since
+            {"number": 9, "closed_at": "2026-10-24T00:00:00Z", "pull_request": {}},
+            {"number": 5, "closed_at": "2026-10-22T00:00:00Z"},
+        ]
+        with mock.patch.object(gh, "request", return_value=found) as request:
+            self.assertEqual(gh.latest_closed_issue(1)["number"], 5)
+        params = request.call_args.kwargs["params"]
+        self.assertEqual((params["state"], params["milestone"]), ("closed", "1"))
+        with mock.patch.object(gh, "request", return_value=[]):
+            self.assertIsNone(gh.latest_closed_issue(1))
+
+
 if __name__ == "__main__":
     unittest.main()

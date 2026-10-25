@@ -115,9 +115,10 @@ files or repository settings, and wait for confirmation.
    If the user wants `"merge": {"auto": true}`, say that branch protection still applies,
    that a pull request whose review could not verify an acceptance criterion waits for a
    person, and that a merge by NexKit starts no `push` CI on the base branch. Offer to list those CI
-   workflows in `merge.after_workflows` (for example `["ci.yml"]`) so NexKit starts them
-   after each merge; each one needs a `workflow_dispatch` trigger, which is a change the
-   user makes to that workflow file.
+   workflows in `merge.after_workflows` (for example `["ci.yml"]`, or
+   `nexkit init --after-workflow ci.yml`) so NexKit starts them after each merge; each one
+   needs a `workflow_dispatch` trigger, which is a change the user makes to that workflow
+   file.
 
    Offer `"notify": ["<login>"]` so the user gets a GitHub notification when a run needs
    a person, for example a plan with questions or a pull request ready to merge.
@@ -132,10 +133,12 @@ files or repository settings, and wait for confirmation.
    If the user wants NexKit to work through the issues without posting commands, offer
    `"autopilot": {"enabled": true}`. It plans each ready issue of the earliest open
    milestone, starts `/nexkit go` on a plan with no questions that is not too large, and
-   moves on when an issue closes; `{"scope": "label", "label": "<label>"}` takes the
-   issues with a label instead. Say that it skips their approval of each plan, that it
+   moves on when an issue closes; `"scope": null` takes every open issue instead, in
+   every milestone and without one, so *blocked by* relationships alone order the work
+   across milestones. Say that it skips their approval of each plan, that it
    takes only issues opened by people with write access, and that it stops on questions,
-   blocked or failed runs and mentions `notify`, so recommend setting `notify` with it
+   blocked or failed runs and mentions `notify` (after a stopped `/nexkit go`, a person's
+   comment or a blocker that closes lets it plan again), so recommend setting `notify` with it
    (`nexkit init --notify <login>`, or `"notify": ["<login>"]`). `"max_parallel": <n>` limits how many
    issues are in progress at once; without it, every ready issue starts. It pairs with
    `merge.auto`, `conflicts.auto_resolve`, `close_parent_issues` and `notify`. With
@@ -145,12 +148,24 @@ files or repository settings, and wait for confirmation.
    are too large into sub-issues either way. With `merge.after_workflows`, it also runs a
    failed CI run on the default branch once more and, if it fails again, opens a `bug`
    issue that it plans first; runs that passed only when run again are recorded on their
-   own `bug` issue, planned next.
+   own `bug` issue, planned next. Then also add the `workflow_run` trigger that names
+   those workflows by their `name:` (`nexkit init --after-workflow` writes it), and offer
+   to add the `nexkit-sweep` job that `nexkit init --after-workflow` prints to the end of
+   each of those workflows, with the user's agreement since it changes their CI: GitHub
+   sends no `workflow_run` event for the runs NexKit starts after its merges, and that
+   job starts the sweep instead, so a failure is noticed within minutes.
+   A command that autopilot started and that never ran starts once more as soon as its
+   workflow run ended, or after `"lost_after_minutes"` (30 by default) when that run
+   cannot be read.
    With `autopilot` or `conflicts.auto_resolve`, recommend the push token above with
    Workflows write access too: without it, a round that merges a change to
    `.github/workflows/` from the base branch cannot push and waits for a person.
    `nexkit doctor` says so. After the commit, start the first sweep with
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
+   If the work should go on while nobody watches, mention the `drive` skill: a Claude Code
+   session on a schedule, such as a routine, runs it to act where autopilot stops for a
+   person. The repository's own instructions for that session set its limits: what it may
+   decide, whether it may push, and whom it notifies.
 
 8. **Commit to the default branch.** Comment events only run workflows from the default
    branch. Commit both files (directly or through a pull request, as the user prefers).

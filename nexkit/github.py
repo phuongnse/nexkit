@@ -184,14 +184,28 @@ class GitHub:
         """Open milestones."""
         return self.paginate(f"{self._repo}/milestones", {"state": "open"})
 
-    def scoped_issues(self, milestone=None, label=None):
-        """Open issues and pull requests in a milestone (its number) or with a label."""
+    def scoped_issues(self, milestone=None):
+        """Open issues and pull requests, oldest first: those in a milestone (its number), or
+        all of them."""
         params = {"state": "open", "sort": "created", "direction": "asc"}
         if milestone is not None:
             params["milestone"] = str(milestone)
-        if label is not None:
-            params["labels"] = label
         return self.paginate(f"{self._repo}/issues", params)
+
+    def latest_closed_issue(self, milestone):
+        """The issue in a milestone (its number) that closed last, or None. Issues sort by
+        their last update, which closing is, so the one that closed last is on the first
+        page unless more than a page of closed issues changed since."""
+        params = {
+            "state": "closed",
+            "milestone": str(milestone),
+            "sort": "updated",
+            "direction": "desc",
+            "per_page": "50",
+        }
+        found = self.request("GET", f"{self._repo}/issues", params=params) or []
+        issues = [i for i in found if "pull_request" not in i and i.get("closed_at")]
+        return max(issues, key=lambda i: (i["closed_at"], i["number"]), default=None)
 
     def create_issue(self, title, body, milestone=None, labels=()):
         data = {"title": title, "body": body}
@@ -278,6 +292,13 @@ class GitHub:
         """The jobs of one attempt of a run: the first 100."""
         path = f"{self._repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
         return self.request("GET", path, params={"per_page": 100}).get("jobs") or []
+
+    def check_runs(self, sha):
+        """The latest check run of each name on a commit, such as the jobs of the workflow
+        runs that tested it: the first 100."""
+        path = f"{self._repo}/commits/{sha}/check-runs"
+        params = {"filter": "latest", "per_page": 100}
+        return self.request("GET", path, params=params).get("check_runs") or []
 
     def check_run_annotations(self, check_run_id):
         """The annotations of a check run, such as a job of a workflow run: the first 100."""

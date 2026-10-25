@@ -113,9 +113,15 @@ stage to the agent's [fallback agents](docs/configuration.md#fallback-agents), i
 any, or pauses and continues after the reset.
 
 With `"autopilot": {"enabled": true}`, nobody needs to post the commands: NexKit plans each
-ready issue of the current milestone, starts `/nexkit go` on a plan that needs nobody and
-moves on when an issue closes, driven by GitHub events. It stops where a person is
-needed, such as a plan with questions; see [Autopilot](docs/configuration.md#autopilot).
+ready issue of the current milestone, or every open issue with `"scope": null`, starts
+`/nexkit go` on a plan that needs nobody and moves on when an issue closes, driven by
+GitHub events. It stops where a person is needed, such as a plan with questions; see [Autopilot](docs/configuration.md#autopilot).
+
+To keep work moving while nobody watches, run Claude Code on a schedule, such as a
+routine, with the plugin's `drive` skill (`/nexkit:drive`). It acts at the stops where
+autopilot waits for a person, within the limits your repository's own instructions set,
+and notifies you only for what it may not decide. See [Who does
+what](docs/how-it-works.md#who-does-what).
 
 ## Local commands
 

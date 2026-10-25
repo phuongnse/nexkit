@@ -44,9 +44,11 @@ DEFAULTS = {
     "autopilot": {
         "enabled": False,
         "scope": "milestone",
-        "label": None,
         "max_parallel": None,
         "answer": "never",
+        # A command autopilot started with no run and no run comment after this long
+        # starts once more.
+        "lost_after_minutes": 30,
     },
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -96,9 +98,12 @@ CACHE_KEYS = {"name", "paths", "key_files"}
 # The restore action has one step per entry: .github/actions/restore-caches/action.yml.
 MAX_CACHES = 8
 TOOL_OUTPUT = ("none", "truncated")
-AUTOPILOT_SCOPES = ("milestone", "label")
+# `null` takes every open issue.
+AUTOPILOT_SCOPES = ("milestone", None)
+AUTOPILOT_SCOPE_CHOICES = (
+    'null for every open issue, or "milestone" for the open issues of the earliest open milestone'
+)
 AUTOPILOT_ANSWERS = ("never", "recommended")
-LABEL = re.compile(r"^[^,\n]{1,50}$")
 
 
 class ConfigError(ValueError):
@@ -406,17 +411,15 @@ def _profiles(cfg):
 
 def _autopilot(settings):
     _bool(settings["enabled"], "autopilot.enabled")
+    if settings["scope"] == "label":
+        _fail(f'autopilot.scope "label" is gone; use {AUTOPILOT_SCOPE_CHOICES}')
     if settings["scope"] not in AUTOPILOT_SCOPES:
-        _fail(f"autopilot.scope must be one of {', '.join(AUTOPILOT_SCOPES)}")
-    label = settings["label"]
-    if label is not None and (not isinstance(label, str) or not LABEL.match(label.strip())):
-        _fail("autopilot.label must be null or the name of a label")
-    if settings["scope"] == "label" and label is None:
-        _fail('autopilot.scope "label" needs autopilot.label: the label of the issues to take')
+        _fail(f"autopilot.scope must be {AUTOPILOT_SCOPE_CHOICES}")
     if settings["max_parallel"] is not None:
         _positive_int(settings["max_parallel"], "autopilot.max_parallel", 100)
     if settings["answer"] not in AUTOPILOT_ANSWERS:
         _fail(f"autopilot.answer must be one of {', '.join(AUTOPILOT_ANSWERS)}")
+    _positive_int(settings["lost_after_minutes"], "autopilot.lost_after_minutes", 1440, minimum=5)
 
 
 def validate(raw, *, layered=False):
@@ -449,6 +452,14 @@ def validate(raw, *, layered=False):
         elif key in GROUPS:
             if not isinstance(value, dict):
                 _fail(f"{key} must be an object")
+            if key == "autopilot" and "label" in value:
+                if value["label"] is not None:
+                    _fail(
+                        'autopilot.label is gone with the "label" scope; remove it and set '
+                        f"autopilot.scope to {AUTOPILOT_SCOPE_CHOICES}"
+                    )
+                # `"label": null`, as the full example of NexKit 4.x showed, set nothing.
+                value = {k: v for k, v in value.items() if k != "label"}
             extra = set(value) - set(DEFAULTS[key])
             if extra:
                 _fail(f"Unknown keys in {key}: {', '.join(sorted(extra))}")

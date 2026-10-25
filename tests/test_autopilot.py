@@ -1,3 +1,6 @@
+import base64
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -10,7 +13,7 @@ from nexkit import autopilot
 from nexkit.maintain import maintain
 from nexkit.report import report
 from nexkit.route import route
-from nexkit.state import PLAN_MARKER, render_run
+from nexkit.state import BOT_LOGIN, PLAN_MARKER, render_run
 from tests.support import FakeGitHub, make_config
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -115,14 +118,13 @@ class SweepTests(AutopilotCase):
         [record] = self.gh.comments(4)
         self.assertIn("NexKit autopilot started `/nexkit plan`", record["body"])
 
-    def test_issues_without_a_milestone_or_label_are_never_taken(self):
+    def test_issues_without_a_milestone_are_taken_only_with_the_null_scope(self):
         self.issue(3, milestone=None)
         self.gh.add_milestone(1)
         self.sweep()
         self.assertEqual(self.started(), [])
-        self.issue(4, labels=["autopilot"])
-        self.sweep(pilot(scope="label", label="autopilot"))
-        self.assertEqual(self.started(), [("plan", 4)])
+        self.sweep(pilot(scope=None))
+        self.assertEqual(self.started(), [("plan", 3)])
 
     def test_the_milestone_with_the_earliest_due_date_comes_first(self):
         self.gh.add_milestone(1)
@@ -149,6 +151,32 @@ class SweepTests(AutopilotCase):
         self.sweep()
         self.assertEqual(self.started(), [("plan", 6)])
 
+    def test_the_done_note_comes_from_state_when_the_sweep_with_the_note_is_replaced(self):
+        # #5 closes, and its sweep, whose note names it, waits in the group
+        # `nexkit-autopilot`; a milestone event replaces it with a plain sweep.
+        cfg = make_config(autopilot={"enabled": True}, notify=["olivia"])
+        for scope, text in (("milestone", "Close the milestone"), (None, "")):
+            with self.subTest(scope=scope):
+                self.gh = FakeGitHub()
+                self.gh.add_milestone(1)
+                self.issue(4, milestone=1, state="closed", reason="completed")
+                self.issue(5, milestone=1)
+                self.gh.close_issue(5)
+                self.gh.add_milestone(2)
+                self.issue(6, milestone=2)
+                cfg["autopilot"]["scope"] = scope
+                lines = self.sweep(cfg)
+                # Said once, on the issue that closed last, mentioning `notify`.
+                self.assertIn("Autopilot finished milestone M1.", lines)
+                self.assertEqual(self.gh.comments_matching(4, autopilot.DONE), [])
+                [note] = self.gh.comments_matching(5, autopilot.DONE)
+                self.assertIn("@olivia NexKit autopilot finished milestone M1", note["body"])
+                self.assertEqual("Close the milestone" in note["body"], bool(text))
+                # Later sweeps, with the note or without, say it no more.
+                self.sweep(cfg, closed=5)
+                self.sweep(cfg)
+                self.assertEqual(len(self.gh.comments_matching(5, autopilot.DONE)), 1)
+
     def test_the_done_note_mentions_the_people_to_notify(self):
         self.issue(5, state="closed", reason="completed")
         self.sweep(pilot(), closed=5)
@@ -157,6 +185,62 @@ class SweepTests(AutopilotCase):
         self.sweep(cfg, closed=5)
         [note] = self.gh.comments_matching(5, autopilot.DONE)
         self.assertIn("@olivia NexKit autopilot finished", note["body"])
+
+    def test_the_null_scope_takes_every_open_issue_by_milestone_then_age(self):
+        self.gh.add_milestone(1)
+        self.gh.add_milestone(2, due_on="2026-11-01T00:00:00Z")
+        self.issue(3, milestone=None)
+        self.issue(4, milestone=1)
+        self.issue(5, milestone=2)
+        self.issue(6, milestone=1)
+        self.issue(7, milestone=2)
+        self.issue(8, milestone=9)  # a closed milestone: with those without one
+        self.gh.blockers[7] = [4]  # in another milestone, and in scope
+        cfg = pilot(scope=None)
+        where, steps = autopilot.preview(self.gh, cfg)
+        self.assertEqual(where["name"], "every open issue")
+        self.assertEqual([s["number"] for s in steps], [5, 7, 4, 6, 3, 8])
+        self.assertEqual(
+            (steps[1]["state"], steps[1]["reason"], steps[1]["person"]),
+            ("waits", "waits for #4", False),
+        )
+        # Within max_parallel, the earlier milestone's work goes first.
+        _, steps = autopilot.preview(self.gh, pilot(scope=None, max_parallel=2))
+        self.assertEqual([s["number"] for s in steps if s["state"] == "start"], [5, 4])
+        self.sweep(cfg)
+        self.assertEqual(
+            self.started(), [("plan", 5), ("plan", 4), ("plan", 6), ("plan", 3), ("plan", 8)]
+        )
+        self.gh.dispatches.clear()
+        self.gh.close_issue(4)
+        self.sweep(cfg, closed=4)
+        self.assertEqual(self.started(), [("plan", 7)])
+
+    def test_the_null_scope_says_once_that_a_milestone_is_done(self):
+        self.gh.add_milestone(1)
+        self.gh.add_milestone(2)
+        self.issue(4, milestone=1)
+        self.issue(5, milestone=1)
+        self.issue(6, milestone=2)
+        cfg = pilot(scope=None)
+        cfg["notify"] = ["olivia"]
+        self.gh.close_issue(4)
+        self.assertFalse(any("finished" in line for line in self.sweep(cfg, closed=4)))
+        self.assertEqual(self.gh.comments_matching(4, autopilot.DONE), [])
+        self.gh.close_issue(5)
+        lines = self.sweep(cfg, closed=5)
+        [note] = self.gh.comments_matching(5, autopilot.DONE)
+        self.assertIn("@olivia NexKit autopilot finished milestone M1", note["body"])
+        self.assertNotIn("Close the milestone", note["body"])
+        self.assertIn("Autopilot finished milestone M1.", lines)
+        self.sweep(cfg, closed=5)
+        self.assertEqual(len(self.gh.comments_matching(5, autopilot.DONE)), 1)
+        # Milestone M2 goes on, and each issue is started once.
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+        # An issue without a milestone ends no milestone.
+        self.issue(7, milestone=None, state="closed")
+        self.sweep(cfg, closed=7)
+        self.assertEqual(self.gh.comments_matching(7, autopilot.DONE), [])
 
     def test_takes_only_issues_opened_by_people_who_can_write(self):
         self.issue(3, user="bob")  # read access
@@ -235,6 +319,64 @@ class SweepTests(AutopilotCase):
         self.sweep()
         record = autopilot.find_record(self.gh.comments(5))[1]
         self.assertEqual((record["command"], record.get("retried")), ("go", None))
+
+    def test_a_lost_command_starts_once_more_as_soon_as_its_run_ended(self):
+        self.gh.dispatch_runs["nexkit.yml"] = "https://github.com/acme/app/actions/runs/77"
+        self.issue(5)
+        start = datetime.now(UTC)
+        self.sweep()
+
+        def step(minutes, cfg=None):
+            later = start + timedelta(minutes=minutes)
+            return autopilot.assess(self.gh, cfg or self.cfg, self.gh.issues[5], {}, now=later)
+
+        # Its run waits in the queue, or runs and has not posted its comment yet.
+        for status in ("queued", "pending", "in_progress"):
+            self.gh.runs[77] = {"status": status}
+            self.assertEqual(step(300)["state"], "active", status)
+        # It ended without a run comment: `route` refused it, or a newer run in its group
+        # replaced it in the queue. It is lost at once, not after `lost_after_minutes`.
+        self.gh.runs[77] = {"status": "completed", "conclusion": "cancelled"}
+        lost = step(1)
+        self.assertEqual((lost["state"], lost["command"]), ("start", "plan"))
+        self.assertIn("did not run, so autopilot starts it once more", lost["reason"])
+        autopilot.start(self.gh, lost, "nexkit.yml", "main", now=start + timedelta(minutes=1))
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 5)])
+        # Started once more, and only once: the second start that never runs waits.
+        again = step(2)
+        self.assertEqual((again["state"], again["person"]), ("waits", True))
+        self.assertIn("did not run, again", again["reason"])
+
+    def test_a_lost_command_whose_run_is_unknown_starts_after_lost_after_minutes(self):
+        self.gh.dispatch_runs["nexkit.yml"] = "https://github.com/acme/app/actions/runs/77"
+        self.issue(5)
+        start = datetime.now(UTC)
+        self.sweep()
+
+        def step(minutes, cfg=None):
+            later = start + timedelta(minutes=minutes)
+            return autopilot.assess(self.gh, cfg or self.cfg, self.gh.issues[5], {}, now=later)
+
+        # GitHub has no such run yet, or cannot say.
+        self.assertEqual(step(29)["state"], "active")
+        self.assertEqual(step(31)["state"], "start")
+        self.assertEqual(step(91, pilot(lost_after_minutes=90))["state"], "start")
+        self.assertEqual(step(89, pilot(lost_after_minutes=90))["state"], "active")
+
+    def test_a_lost_command_whose_run_cannot_be_read_is_lost_by_time_alone(self):
+        self.issue(5)
+        start = datetime.now(UTC)
+        self.sweep()  # a dispatch that returns no run, as on older GitHub Enterprise Servers
+        later = start + timedelta(minutes=31)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=later)
+        self.assertEqual(step["state"], "start")
+        self.gh.dispatches.clear()
+        self.gh.dispatch_runs["nexkit.yml"] = "https://github.com/acme/app/actions/runs/78"
+        self.issue(6)
+        self.sweep()
+        # GitHub has no such run.
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[6], {}, now=later)
+        self.assertEqual(step["state"], "start")
 
     def test_a_note_of_a_command_that_never_ran_is_kept(self):
         cfg = pilot(answer="recommended")
@@ -432,20 +574,71 @@ class TriggerTests(AutopilotCase):
         self.maintain({"action": "maintain", "task": "parents", "issue": 5}, make_config())
         self.assertEqual(self.sweeps(), [])
 
-    def test_only_events_that_can_change_the_scope_start_a_sweep(self):
+    def test_every_scope_event_starts_a_sweep(self):
+        # With null a milestone changes nothing in scope, but the event's run joins the
+        # group `nexkit-autopilot`, where it replaces a sweep that waited, such as one that
+        # says the scope is done: it starts one in its place.
         events = [
             ({"event": "opened"}, pilot(), 1),
             ({"event": "milestoned"}, pilot(), 1),
             ({"event": "milestone_closed"}, pilot(), 1),
-            ({"event": "labeled", "label": "bug"}, pilot(), 0),
-            ({"event": "milestoned"}, pilot(scope="label", label="go"), 0),
-            ({"event": "labeled", "label": "bug"}, pilot(scope="label", label="go"), 0),
-            ({"event": "labeled", "label": "go"}, pilot(scope="label", label="go"), 1),
+            ({"event": "opened"}, pilot(scope=None), 1),
+            ({"event": "reopened"}, pilot(scope=None), 1),
+            ({"event": "milestoned"}, pilot(scope=None), 1),
+            ({"event": "milestone_closed"}, pilot(scope=None), 1),
+            ({"event": "milestoned"}, make_config(), 0),
         ]
         for event, cfg, sweeps in events:
             self.gh.dispatches.clear()
             self.maintain({"action": "maintain", "task": "autopilot", **event}, cfg)
             self.assertEqual(len(self.sweeps()), sweeps, event)
+
+    def test_a_run_whose_report_did_not_finish_is_handled_at_its_own_end(self):
+        # The `finish` job of a run whose report did not finish, such as after a lost
+        # runner, starts a sweep that waits for the run to end, so the hourly schedule
+        # need not find it.
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", status="running", autopilot=True)
+        self.gh.runs[self.runs] = {"status": "in_progress"}
+        lines = autopilot.after_unreported(self.gh, self.cfg, "nexkit.yml", "main", self.runs)
+        self.assertEqual(lines, ["Started an autopilot sweep."])
+        [inputs] = self.sweeps()
+        self.assertEqual(inputs["note"], f"after run {self.runs}")
+        decision = route(self.gh, "workflow_dispatch", {}, inputs)
+        self.assertEqual(decision, {"action": "maintain", "task": "sweep", "after": self.runs})
+        self.gh.dispatches.clear()
+
+        def ended(_seconds):
+            self.gh.runs[self.runs] = {"status": "completed", "conclusion": "failure"}
+
+        with mock.patch("nexkit.maintain.time.sleep", side_effect=ended) as sleep:
+            lines = self.maintain(decision)
+        sleep.assert_called_once()
+        self.assertEqual(lines[0], f"Run {self.runs} ended.")
+        self.assertEqual(self.started(), [("go", 5)])
+        [run] = [c["run"] for c in self.gh.run_comments(5) if c["run"]["command"] == "go"]
+        self.assertEqual((run["status"], run["attention"]), ("failure", autopilot.REPORTLESS))
+        # Without autopilot nothing starts; a run that does not end in time is left to a
+        # later sweep.
+        self.gh.dispatches.clear()
+        self.assertEqual(autopilot.after_unreported(self.gh, make_config(), "n", "main", 1), [])
+        self.gh.runs[9] = {"status": "in_progress"}
+        with mock.patch("nexkit.maintain.time.sleep") as sleep:
+            lines = self.maintain({"action": "maintain", "task": "sweep", "after": 9})
+        self.assertEqual(sleep.call_count, 29)
+        self.assertEqual(lines[0], "Run 9 has not ended yet; a later sweep handles it.")
+
+    def test_a_stuck_run_is_handled_at_the_end_of_the_next_run(self):
+        self.issue(4)
+        self.planned(4)
+        self.run_comment(4, "go", status="running", autopilot=True)
+        self.gh.runs[self.runs] = {"status": "completed", "conclusion": "cancelled"}
+        self.issue(5)
+        self.report_plan(self.cfg, {"questions": ["Which port?"], "too_large": False})
+        [inputs] = self.sweeps()
+        self.maintain(route(self.gh, "workflow_dispatch", {}, inputs))
+        self.assertEqual(self.started(), [("go", 4)])
 
     def test_the_schedule_starts_a_sweep(self):
         self.maintain({"action": "maintain", "task": "schedule"})
@@ -504,6 +697,11 @@ class StatusTests(AutopilotCase):
         text = render(data)
         self.assertIn("Autopilot: milestone M1, at most 2 at once", text)
         self.assertIn("start /nexkit plan", text)
+        self.issue(6, milestone=None)
+        data = collect(self.gh, pilot(scope=None), workers=1)
+        self.assertEqual(data["autopilot"]["scope"], "every open issue")
+        self.assertEqual([i["number"] for i in data["autopilot"]["issues"]], [4, 5, 6])
+        self.assertIn("Autopilot: every open issue", render(data))
         self.assertEqual(self.gh.dispatches, [])  # status changes nothing
 
 
@@ -976,6 +1174,30 @@ class SplitTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
 
+    def test_a_plan_too_large_without_parts_is_planned_once_more_then_waits(self):
+        self.issue(5)
+        self.posted_plan(5, too_large=True)
+        decision = {"action": "plan", "issue": 5}
+        agent = {"output": {"too_large": True, "split": []}}
+        self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
+        self.sweep(pilot())  # without autopilot.answer too
+        self.assertEqual(self.started(), [("plan", 5)])
+        self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], autopilot.PARTS_NOTE)
+        self.sweep()  # nothing changed since: it starts once
+        self.assertEqual(self.started(), [("plan", 5)])
+        # The new plan suggests no parts again: a person decides, and nothing loops.
+        self.posted_plan(5, too_large=True)
+        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        reason = "its plan is too large and suggests no parts again"
+        self.assertEqual((step["state"], step["reason"], step["person"]), ("waits", reason, True))
+        # A plan with parts splits.
+        self.posted_plan(5, too_large=True, split=self.PARTS)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+
     def test_a_part_at_the_depth_limit_waits_for_a_person(self):
         self.issue(5)
         self.part(6, 5)
@@ -1003,6 +1225,90 @@ class SplitTests(AnswerAndSplitCase):
             step = steps[number]
             self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.DEPTH_REASON))
         self.assertIn("3 levels deep", autopilot.DEPTH_REASON)
+
+
+class StoppedGoTests(AnswerAndSplitCase):
+    """A `/nexkit go` that stopped is planned again once something changed since it started."""
+
+    WAITS = "the agent returned blocked: wait for #7"
+
+    def stopped(self, number, **fields):
+        """A plan, then a `/nexkit go` that stopped, whose question has no recommendation."""
+        self.issue(number)
+        self.posted_plan(number)
+        fields.setdefault("outcome", "agent_blocked")
+        fields.setdefault("questions", [{**QUESTION, "recommended": 0}])
+        return self.run_comment(number, "go", status="failure", attention=self.WAITS, **fields)
+
+    def step(self, number):
+        return {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}[number]
+
+    def test_plans_again_after_a_collaborator_commented_and_not_before(self):
+        self.stopped(5)
+        self.stopped(6, outcome="agent_error", questions=[])  # failed, not blocked
+        for number in (5, 6):
+            self.gh.human_comment(number, "/nexkit plan")  # a command is not a change
+            self.gh.human_comment(number, "Hi", login="eve", association="NONE")
+            self.gh.comment(number, "@olivia a person is needed: blocked.")
+        self.sweep()
+        self.assertEqual(self.started(), [])
+        self.assertEqual((self.step(5)["state"], self.step(5)["reason"]), ("waits", self.WAITS))
+        for number in (5, 6):
+            self.gh.human_comment(number, "Use the staging API instead.")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+        self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], "")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+        # The new plan, and a go that stops again: the comment before it is no change.
+        self.posted_plan(5)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6), ("go", 5)])
+        self.run_comment(5, "go", status="failure", outcome="agent_blocked", attention=self.WAITS)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6), ("go", 5)])
+        self.assertEqual(self.step(5)["state"], "waits")
+
+    def test_plans_again_when_a_blocker_added_since_the_stop_closes(self):
+        stop = self.stopped(5)
+        stop["created_at"] = "2026-01-01T00:00:00Z"
+        # A blocker that closed before the round started changes nothing.
+        self.issue(4, state="closed")
+        self.gh.issues[4]["closed_at"] = "2025-12-31T00:00:00Z"
+        self.gh.blockers[5] = [4]
+        self.sweep()
+        self.assertEqual(self.started(), [])
+        # A person marks the issue the round waits for as its blocker: #5 waits for it.
+        self.issue(7)
+        self.gh.blockers[5].append(7)
+        step = self.step(5)
+        self.assertEqual(
+            (step["state"], step["reason"], step["person"]), ("waits", "waits for #7", False)
+        )
+        self.gh.close_issue(7)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        reason = (
+            "#7, which blocked it, closed after the stopped `/nexkit go`, so autopilot plans again"
+        )
+        [record] = self.gh.comments_matching(5, "NexKit autopilot started")
+        self.assertIn(reason, record["body"])
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+
+    def test_a_go_that_ran_out_of_time_keeps_its_rules(self):
+        self.stopped(5, outcome="agent_error", questions=[], timed_out=True)
+        self.sweep()
+        self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], autopilot.SPLIT_NOTE)
+        self.posted_plan(5)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("go", 5)])
+        self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
+        # A second time-out waits for a person, even after a comment.
+        self.gh.human_comment(5, "Try again.")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5), ("go", 5)])
+        self.assertEqual(self.step(5)["state"], "waits")
 
 
 class WaitTests(AnswerAndSplitCase):
@@ -1515,7 +1821,7 @@ class CITests(AutopilotCase):
         self.assertIn("in which job `test` failed:", newest["body"])
 
     def test_titles_name_what_fails_and_where_in_plain_words(self):
-        spec = "e2e/purchase-request-release.spec.ts"
+        spec = "e2e/order-checkout.spec.ts"
 
         def test(title, path=spec):
             note = {"annotation_level": "failure", "title": title, "path": path, "start_line": 12}
@@ -1525,22 +1831,22 @@ class CITests(AutopilotCase):
             failed = [{"name": step, "conclusion": "failure"} for step in steps]
             return autopilot._job_failure("ci.yml", {"name": name, "steps": failed}, "job")
 
-        prefix = "[chromium] › purchase-request-release.spec.ts:12:5 › purchase request release › "
-        short = "an author publishes from Studio and the site shows the new release"
+        prefix = "[chromium] › order-checkout.spec.ts:12:5 › order checkout › "
+        short = "a customer pays for an order and the shop shows the receipt"
         long = (
-            "an author takes a change from edit to preview, publish and rollback without the "
-            "admin CLI, and a waiting request finishes on its release"
+            "a customer takes an order from cart to checkout, payment and refund without the "
+            "admin console, and a pending order finishes with its receipt"
         )
-        file = "in purchase-request-release.spec.ts fails at times on main"
+        file = "in order-checkout.spec.ts fails at times on main"
         for failure, title in (
             (test(prefix + short), f'Test "{short}" {file}'),
             (test(prefix + long), f'Test "{long}" {file}'),
             (
                 test(
-                    "RecordHistory > pages through more than twenty entries",
-                    "src/x/RecordHistory.test.tsx",
+                    "OrderHistory > pages through more than twenty orders",
+                    "src/x/OrderHistory.test.tsx",
                 ),
-                'Test "pages through more than twenty entries" in RecordHistory.test.tsx '
+                'Test "pages through more than twenty orders" in OrderHistory.test.tsx '
                 "fails at times on main",
             ),
             (job("Integration tests"), 'Job "Integration tests" in ci.yml fails at times on main'),
@@ -1605,6 +1911,96 @@ class CITests(AutopilotCase):
         self.assertEqual(self.flaky(), [old])
         [comment] = self.gh.comments_matching(old["number"], "nexkit:ci-runs")
         self.assertIn("runs/50) on `main`", comment["body"])
+
+    def sweeps(self):
+        return [d["inputs"] for d in self.gh.dispatches if d["inputs"]["command"] == "autopilot"]
+
+    def test_a_finished_run_on_the_default_branch_is_acted_on_by_its_own_trigger(self):
+        run = self.ci_run()
+        self.gh.runs[50] = run
+        decision = route(
+            self.gh,
+            "workflow_run",
+            {"action": "completed", "workflow_run": {"id": 50, "path": ".github/workflows/ci.yml"}},
+        )
+
+        def maintain_(decision):
+            return maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+
+        self.assertEqual(maintain_(decision), ["Started an autopilot sweep."])
+        [inputs] = self.sweeps()
+        self.gh.dispatches.clear()
+        maintain_(route(self.gh, "workflow_dispatch", {}, inputs))
+        self.assertEqual(self.gh.reruns, [50])  # what a sweep does for a first failure
+        # Runs a sweep has nothing to do for start none.
+        quiet = [
+            ({**run, "conclusion": "success"}, "ci.yml"),
+            ({**run, "head_branch": "feature"}, "ci.yml"),
+            ({**run, "event": "pull_request"}, "ci.yml"),
+            (run, "lint.yml"),
+        ]
+        for found, workflow in quiet:
+            self.gh.runs[50] = found
+            maintain_({"action": "maintain", "task": "ci", "workflow": workflow, "run": 50})
+            self.assertEqual(self.sweeps(), [], (found, workflow))
+        # A pass while a bug issue about the workflow is open ends the waits on it.
+        self.gh.runs[50] = {**run, "conclusion": "success"}
+        self.gh.add_issue(8, body="<!-- nexkit:ci ci.yml -->\nRed.", user=BOT_LOGIN)
+        maintain_({"action": "maintain", "task": "ci", "workflow": "ci.yml", "run": 50})
+        self.assertEqual(len(self.sweeps()), 1)
+
+    def test_a_finished_run_is_acted_on_when_its_own_last_job_starts_a_sweep(self):
+        # The `nexkit-sweep` job that ends an after-merge workflow dispatches a sweep, which
+        # the Actions token may do, while its own run still runs; the sweep waits for it.
+        run = self.ci_run()
+        self.gh.runs[50] = {**run, "status": "in_progress"}
+        inputs = {"command": "autopilot", "number": "autopilot", "note": "after run 50"}
+        decision = route(self.gh, "workflow_dispatch", {}, inputs)
+        self.assertEqual(decision, {"action": "maintain", "task": "sweep", "after": 50})
+
+        def ended(_seconds):
+            self.gh.runs[50] = run
+
+        with mock.patch("nexkit.maintain.time.sleep", side_effect=ended):
+            lines = maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(
+            lines[:2], ["Run 50 ended.", "Running the failed jobs of `ci.yml` on `main` again."]
+        )
+        self.assertEqual(self.gh.reruns, [50])
+
+    def test_a_finished_run_on_the_default_branch_is_acted_on_at_the_end_of_the_next_run(self):
+        # GitHub sends no workflow_run event for a run that the Actions token started, such
+        # as one NexKit starts after its merge. The end of the next NexKit run notices it,
+        # also when that run started the next round by itself.
+        decision = {"issue": 3, "action": "fix"}
+
+        def after(outcome):
+            self.gh.dispatches.clear()
+            autopilot.after_run(self.gh, self.cfg, decision, outcome, "nexkit.yml", "main")
+            return len(self.sweeps())
+
+        self.assertEqual((after("auto_fix"), after("ready")), (0, 1))
+        self.ci_run(conclusion="success", run_id=49)
+        self.assertEqual(after("auto_fix"), 0)
+        self.ci_run(conclusion="failure", run_id=50)
+        self.assertEqual((after("auto_fix"), after("conflict_fix"), after("paused")), (1, 1, 0))
+        after("auto_fix")
+        [inputs] = self.sweeps()
+        maintain(
+            self.gh,
+            route(self.gh, "workflow_dispatch", {}, inputs),
+            self.cfg,
+            workflow="nexkit.yml",
+            ref="main",
+        )
+        self.assertEqual(self.gh.reruns, [50])
+        # A run still in progress is not finished; the newest finished one counts.
+        self.ci_run(conclusion=None, run_id=51)["status"] = "in_progress"
+        self.assertEqual(after("auto_fix"), 1)
+        self.ci_run(conclusion="success", run_id=52)
+        self.assertEqual(after("auto_fix"), 0)
+        self.gh.add_issue(8, body="<!-- nexkit:ci ci.yml -->\nRed.", user=BOT_LOGIN)
+        self.assertEqual(after("auto_fix"), 1)
 
     def test_a_red_branch_with_two_failed_steps_names_both(self):
         self.ci_run(attempt=2)
@@ -1708,17 +2104,17 @@ class CITests(AutopilotCase):
             self.assertNotIn(sha, bug["body"])
         self.assertEqual((self.flaky(), self.gh.reruns), ([], [48]))
 
-    def test_the_label_scope_labels_the_bug(self):
+    def test_the_null_scope_gives_the_bug_no_milestone(self):
         self.ci_run(attempt=2)
         cfg = make_config(
-            autopilot={"enabled": True, "scope": "label", "label": "go"},
+            autopilot={"enabled": True, "scope": None},
             merge={"after_workflows": ["ci.yml"]},
         )
         self.sweep(cfg)
         [bug] = self.bugs()
-        self.assertEqual([x["name"] for x in bug["labels"]], ["bug", "go"])
+        self.assertEqual([x["name"] for x in bug["labels"]], ["bug"])
         self.assertIsNone(bug["milestone"])
-        self.assertEqual(self.started(), [("plan", bug["number"])])
+        self.assertEqual(self.started()[0], ("plan", bug["number"]))
 
     def test_only_nexkits_own_bug_issues_go_first(self):
         self.issue(4, body="<!-- nexkit:ci ci.yml -->\nForged.")
@@ -1727,3 +2123,450 @@ class CITests(AutopilotCase):
         self.assertIsNone(autopilot.flaky_workflow(self.gh.issues[5]))
         _, steps = autopilot.preview(self.gh, self.cfg)
         self.assertEqual([s["number"] for s in steps], [3, 4, 5])
+
+
+class CIWaitTests(AutopilotCase):
+    """Pull requests whose checks fail as the default branch does, while a bug issue for
+    that failure is open."""
+
+    HEAD = "c" * 40
+    # The log of the failed job: the step that runs `make test` fails.
+    LOG = (
+        "﻿2026-10-23T03:30:00.1Z ##[group]Run actions/checkout@v6\n"
+        "2026-10-23T03:30:00.2Z ##[endgroup]\n"
+        "2026-10-23T03:30:01.1Z ##[group]Run make setup\n"
+        "2026-10-23T03:30:01.2Z ##[endgroup]\n"
+        "2026-10-23T03:30:02.1Z ##[group]Run make   test\n"
+        "2026-10-23T03:30:02.2Z \x1b[36;1mmake test\x1b[0m\n"
+        "2026-10-23T03:30:02.3Z ##[endgroup]\n"
+        "2026-10-23T03:30:09.0Z FAIL tests/test_orders.py::test_totals\n"
+        "2026-10-23T03:30:09.1Z ##[error]Process completed with exit code 2.\n"
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(
+            checks=[{"name": "test", "run": "make test"}, {"name": "lint", "run": "make lint"}],
+            autopilot={"enabled": True},
+            merge={"after_workflows": ["ci.yml"]},
+            notify=["olivia"],
+        )
+        self.env = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.issue(5)
+        self.issue(7)
+        self.bug = self.red_main()
+
+    def ci_run(self, conclusion, run_id, attempt=1):
+        run = {
+            "id": run_id,
+            "head_branch": "main",
+            "head_repository": {"full_name": "acme/app"},
+            "event": "push",
+            "head_sha": f"{run_id:040x}",
+            "status": "completed",
+            "conclusion": conclusion,
+            "run_attempt": attempt,
+            "html_url": f"https://github.com/acme/app/actions/runs/{run_id}",
+            "created_at": autopilot.iso(datetime.now(UTC)),
+        }
+        self.gh.workflow_history.setdefault("ci.yml", []).append(run)
+        return run
+
+    def red_main(self):
+        """`ci.yml` fails twice on `main`, in the step that runs `make test`, and the sweep
+        opens its bug issue."""
+        self.ci_run("failure", 50, attempt=2)
+        job = {
+            "id": 501,
+            "name": "Unit tests",
+            "conclusion": "failure",
+            "html_url": "https://job",
+            "steps": [{"name": "Tests", "conclusion": "failure"}],
+        }
+        self.gh.jobs[50] = [job]
+        self.gh.logs[501] = self.LOG.encode()
+        # Its test reporter names the failing test; the runner's own annotation names none.
+        self.gh.annotations[501] = [
+            {
+                "annotation_level": "failure",
+                "title": "Orders > adds tax",
+                "path": "web/src/orders.test.ts",
+                "start_line": 12,
+                "message": "expected 2 to be 3",
+            },
+            {
+                "annotation_level": "failure",
+                "path": ".github",
+                "message": "Process completed with exit code 2.",
+            },
+        ]
+        self.sweep(self.cfg)
+        [bug] = [i for i in self.gh.issues.values() if autopilot.ci_workflow(i)]
+        self.gh.dispatches.clear()
+        return bug["number"]
+
+    def open_pull(self, issue, pull):
+        self.gh.add_pull(pull, issue, head_sha=self.HEAD)
+        return pull
+
+    # The failing test that the annotation on `main` names, as JUnit results name it.
+    TEST = "orders.test.ts::adds tax"
+
+    def report_round(self, issue, pull, failing=("make test",), action="implement", tests=(TEST,)):
+        """`report` after a round of `pull` whose checks running `failing` failed, with
+        `tests` as the failing tests their JUnit results name, if any: by default the test
+        that fails on `main`."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        artifacts = Path(tmp.name)
+
+        def write(folder, name, data):
+            (artifacts / folder).mkdir(exist_ok=True)
+            (artifacts / folder / name).write_text(json.dumps(data))
+
+        tokens = {"input": 1, "output": 1}
+        write("nexkit-agent", "result.json", {"status": "done", "tokens": tokens})
+        checks = [
+            {
+                "name": name,
+                "run": run,
+                "exit_code": 1 if run in failing else 0,
+                "passed": run not in failing,
+                "output": "FAIL" if run in failing else "",
+                **({"failed_tests": list(tests)} if run in failing and tests is not None else {}),
+            }
+            for name, run in (("test", "make test"), ("lint", "make lint"))
+        ]
+        write("nexkit-checks", "checks.json", checks)
+        output = {"verdict": "request_changes", "summary": "Checks fail.", "criteria": []}
+        write(
+            "nexkit-review",
+            "result.json",
+            {"status": "done", "tokens": tokens, "output": {**output, "findings": []}},
+        )
+        fix = action == "fix"
+        decision = {
+            "action": action,
+            "issue": issue,
+            "pr": pull if fix else None,
+            "target": pull if fix else issue,
+            "branch": f"nexkit/issue-{issue}",
+            "base": "main",
+            "head": self.HEAD if fix else None,
+            "note": "",
+            "auto": fix,
+        }
+        published = {"published": True, "pr": pull, "head": self.HEAD}
+        needs = {"publish": {"outputs": {"result": json.dumps(published)}}}
+        self.runs += 1
+        env = {"GITHUB_RUN_ID": str(200 + self.runs)}
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
+            return report(
+                self.gh,
+                decision,
+                self.cfg,
+                needs,
+                artifacts,
+                workflow_ref=WORKFLOW,
+                default_branch="main",
+            )
+
+    def state(self, pull):
+        from nexkit.state import read_state
+
+        return read_state(self.gh.comments(pull))[1]
+
+    def fixes(self):
+        return [d["inputs"] for d in self.gh.dispatches if d["inputs"]["command"] == "fix"]
+
+    def test_the_bug_issue_records_the_failed_commands_of_the_latest_failed_attempt(self):
+        self.assertEqual(autopilot.failed_commands(self.LOG), ["make test"])
+        timed_out = (
+            "##[group]Run make e2e\n##[error]The action 'e2e' has timed out after 40 minutes.\n"
+        )
+        passed = "##[group]Run make lint\n##[error]Process completed with exit code 0.\n"
+        self.assertEqual(autopilot.failed_commands(timed_out + passed), ["make e2e"])
+        recorded = autopilot._recorded_failure(self.gh, self.gh.issues[self.bug])
+        tests = {"make test": {"orders.test.ts::adds tax"}}
+        self.assertEqual(recorded, {"run": 50, "commands": {"make test"}, "tests": tests})
+        body = self.gh.issues[self.bug]["body"]
+        self.assertTrue(body.endswith("<!-- nexkit:ci-runs 50.1 50.2 -->"))
+
+    def test_a_pull_request_failing_as_the_default_branch_waits_without_a_round(self):
+        pull = self.open_pull(5, 10)
+        outcome = self.report_round(5, pull)
+        self.assertEqual(outcome["outcome"], "ci_waiting")
+        self.assertIsNone(outcome["attention"])
+        self.assertEqual(self.fixes(), [])
+        state = self.state(pull)
+        self.assertEqual(state["auto_fixes"], 0)
+        self.assertEqual(state["ci_wait"]["bug"], self.bug)
+        [shown] = [c for c in self.gh.comments(pull) if "nexkit:state" in c["body"]]
+        self.assertIn(f"waits for #{self.bug}: its failing checks fail as `ci.yml`", shown["body"])
+        [round_] = self.gh.run_comments(pull)
+        self.assertIn(f"which #{self.bug} is about", round_["body"])
+        # `nexkit status` and the sweep say what it waits for, and no person is needed.
+        from nexkit.status import collect, render
+
+        data = collect(self.gh, self.cfg, workers=1)
+        [item] = data["pull_requests"]
+        self.assertEqual((item["state"], item["waits_for"]), ("waiting", self.bug))
+        self.assertIn(f"waits for #{self.bug}", render(data))
+        self.assertNotIn(pull, [n["number"] for n in data["needs_person"]])
+        self.assertNotIn(5, [n["number"] for n in data["needs_person"]])
+        [step] = [s for s in autopilot.preview(self.gh, self.cfg)[1] if s["number"] == 5]
+        self.assertEqual((step["state"], step["person"]), ("waits", False))
+        self.assertIn(f"pull request #{pull} waits for #{self.bug}", step["reason"])
+        # A sweep while `ci.yml` still fails starts nothing on it.
+        self.sweep(self.cfg)
+        self.assertEqual(self.fixes(), [])
+        # A fix round that fails the same way waits again, and uses no round either.
+        outcome = self.report_round(5, pull, action="fix")
+        self.assertEqual((outcome["outcome"], self.state(pull)["auto_fixes"]), ("ci_waiting", 0))
+
+    def test_each_waiting_pull_request_gets_one_round_that_merges_main_once_it_passes(self):
+        from nexkit.context import _after_failed_checks
+        from nexkit.state import BOT_LOGIN
+
+        pulls = {5: self.open_pull(5, 10), 7: self.open_pull(7, 11)}
+        for issue, pull in pulls.items():
+            self.assertEqual(self.report_round(issue, pull)["outcome"], "ci_waiting")
+        self.ci_run("success", 52)
+        self.sweep(self.cfg)
+        self.assertEqual(
+            self.fixes(),
+            [{"command": "fix", "number": str(p), "note": "", "auto": "true"} for p in (10, 11)],
+        )
+        for pull in pulls.values():
+            state = self.state(pull)
+            self.assertEqual(state["auto_fixes"], 1)
+            self.assertNotIn("ci_wait", state)
+            # The round is an automatic round after failing checks, so it merges `main`.
+            inputs = {"command": "fix", "number": str(pull), "note": "", "auto": "true"}
+            decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+            self.assertEqual((decision["action"], decision["auto"]), ("fix", True))
+            self.assertTrue(_after_failed_checks(decision, self.gh.comments(pull)))
+        [record] = self.gh.comments_matching(5, "NexKit autopilot started `/nexkit fix` on #10")
+        self.assertIn("`ci.yml` passes on `main` again", record["body"])
+        # The next sweep does not start it again before it runs.
+        self.sweep(self.cfg)
+        self.assertEqual(len(self.fixes()), 2)
+
+    def test_a_failed_dispatch_of_the_round_waited_for_takes_its_count_back(self):
+        from nexkit.github import GitHubError
+
+        pull = self.open_pull(5, 10)
+        self.assertEqual(self.report_round(5, pull)["outcome"], "ci_waiting")
+        self.ci_run("success", 52)
+        self.gh.dispatch_errors["nexkit.yml"] = GitHubError(502, "Bad gateway")
+        lines = self.sweep(self.cfg)
+        self.assertTrue(any("Could not start /nexkit fix on #10" in line for line in lines))
+        state = self.state(pull)
+        self.assertEqual((state["auto_fixes"], state["ci_wait"]["bug"]), (0, self.bug))
+        # The next sweep starts it and counts it, once.
+        del self.gh.dispatch_errors["nexkit.yml"]
+        self.sweep(self.cfg)
+        self.assertEqual([f["number"] for f in self.fixes()], ["10"])
+        self.assertEqual(self.state(pull)["auto_fixes"], 1)
+        # A count that fails starts nothing, so the next sweep cannot count it twice.
+        self.gh.dispatches.clear()
+        other = self.open_pull(7, 11)
+        self.ci_run("failure", 53)
+        self.assertEqual(self.report_round(7, other)["outcome"], "ci_waiting")
+        self.ci_run("success", 54)
+        with mock.patch.object(autopilot, "save_state", side_effect=GitHubError(502, "Bad")):
+            self.sweep(self.cfg)
+        self.assertEqual(self.fixes(), [])
+
+    def test_a_round_waited_for_that_ends_without_a_report_starts_as_the_same_kind(self):
+        from nexkit.context import _after_failed_checks
+        from nexkit.state import BOT_LOGIN
+
+        pull = self.open_pull(5, 10)
+        self.report_round(5, pull)
+        self.ci_run("success", 52)
+        self.sweep(self.cfg)
+        [fix] = self.fixes()
+        # The round runs, and its runner is lost before it reports.
+        url = "https://github.com/acme/app/actions/runs/90"
+        self.gh.runs[90] = {"status": "completed", "conclusion": "failure"}
+        row = {"round": 2, "url": url, "trigger": "fix (auto)", "status": "running"}
+        self.gh.comment(pull, render_run(row))
+        self.sweep(self.cfg)
+        again = self.fixes()[1]
+        self.assertEqual(again["auto"], fix["auto"])
+        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, again)
+        self.assertTrue(_after_failed_checks(decision, self.gh.comments(pull)))
+
+    def test_closing_the_bug_issue_ends_the_wait(self):
+        pull = self.open_pull(5, 10)
+        self.report_round(5, pull)
+        self.gh.close_issue(self.bug, "not_planned")
+        self.sweep(self.cfg)
+        self.assertEqual([f["number"] for f in self.fixes()], [str(pull)])
+
+    def test_a_run_of_main_still_running_again_does_not_end_the_wait(self):
+        pull = self.open_pull(5, 10)
+        self.report_round(5, pull)
+        # The reported run runs again; only an older run, which passed, has completed.
+        self.ci_run("success", 40)
+        history = self.gh.workflow_history["ci.yml"]
+        history.insert(0, history.pop())
+        history[1]["status"] = "in_progress"
+        self.sweep(self.cfg)
+        self.assertEqual(self.fixes(), [])
+        # It passes this time.
+        history[1].update(status="completed", conclusion="success", run_attempt=3)
+        self.sweep(self.cfg)
+        self.assertEqual([f["number"] for f in self.fixes()], [str(pull)])
+
+    def test_other_failures_get_the_usual_fix_round_while_the_bug_issue_is_open(self):
+        # One check fails that `main` passes.
+        pull = self.open_pull(5, 10)
+        outcome = self.report_round(5, pull, failing=("make test", "make lint"))
+        self.assertEqual(outcome["outcome"], "auto_fix")
+        self.assertEqual(self.state(pull)["auto_fixes"], 1)
+        # The bug issue's own pull request, which fixes the failure, does not wait.
+        own = self.open_pull(self.bug, 11)
+        self.assertEqual(self.report_round(self.bug, own)["outcome"], "auto_fix")
+        # Nor do its parts, a pull request into another branch, or one outside the scope.
+        other = self.open_pull(7, 12)
+        decision = {"issue": 7, "base": "main"}
+        checks = [{"name": "test", "run": "make test", "passed": False}]
+        checks[0]["failed_tests"] = [self.TEST]
+        self.assertIsNotNone(autopilot.ci_wait(self.gh, self.cfg, decision, checks, "main"))
+        self.gh.parents[7] = self.bug
+        self.assertIsNone(autopilot.ci_wait(self.gh, self.cfg, decision, checks, "main"))
+        del self.gh.parents[7]
+        decision["base"] = "release"
+        self.assertIsNone(autopilot.ci_wait(self.gh, self.cfg, decision, checks, "main"))
+        self.gh.issues[7]["milestone"] = {"number": 2}
+        decision["base"] = "main"
+        self.assertIsNone(autopilot.ci_wait(self.gh, self.cfg, decision, checks, "main"))
+        # Once `ci.yml` passes on `main`, the same failure is the pull request's own.
+        self.gh.issues[7]["milestone"] = {"number": 1}
+        self.ci_run("success", 52)
+        self.assertEqual(self.report_round(7, other)["outcome"], "auto_fix")
+
+    def test_a_pull_request_failing_the_same_test_in_the_same_command_waits(self):
+        # Its JUnit results name the test the annotation on `main` names.
+        pull = self.open_pull(5, 10)
+        tests = ["orders.test.ts::adds tax"]
+        self.assertEqual(self.report_round(5, pull, tests=tests)["outcome"], "ci_waiting")
+        self.assertEqual(self.state(pull)["auto_fixes"], 0)
+
+    def test_a_different_failing_test_in_the_same_command_gets_the_usual_round(self):
+        pull = self.open_pull(5, 10)
+        tests = ["cart.test.ts::empties the cart"]
+        self.assertEqual(self.report_round(5, pull, tests=tests)["outcome"], "auto_fix")
+        self.assertEqual(self.state(pull)["auto_fixes"], 1)
+        # The same title in another file is another test.
+        other = self.open_pull(7, 11)
+        tests = ["cart.test.ts::adds tax"]
+        self.assertEqual(self.report_round(7, other, tests=tests)["outcome"], "auto_fix")
+
+    def test_one_shared_and_one_extra_failing_test_gets_the_usual_round(self):
+        pull = self.open_pull(5, 10)
+        tests = ["orders.test.ts::adds tax", "orders.test.ts::rounds"]
+        self.assertEqual(self.report_round(5, pull, tests=tests)["outcome"], "auto_fix")
+        self.assertNotIn("ci_wait", self.state(pull))
+
+    def test_a_required_check_failing_as_main_does_while_a_merge_waits_waits_too(self):
+        from nexkit.context import _after_failed_checks
+        from nexkit.github import GitHubError
+
+        # Issue 5's and issue 7's approved pull requests wait for the required check
+        # `Unit tests`, a job of `ci.yml`, which then fails in `make test`: for #10 in the
+        # test that fails on `main`, for #11 in a test of its own.
+        heads = {10: self.HEAD, 11: "d" * 40}
+        failing = ((5, 10, "Orders > adds tax", "orders"), (7, 11, "Cart > empties", "cart"))
+        for issue, pull, title, file in failing:
+            self.gh.add_pull(pull, issue, head_sha=heads[pull])
+            run = {
+                "round": 1,
+                "trigger": "implement (autopilot)",
+                "status": "success",
+                "outcome": "merge_waiting",
+                "head": heads[pull],
+                "waiting_since": autopilot.iso(datetime.now(UTC)),
+            }
+            self.gh.comment(pull, render_run(run))
+            job = 900 + pull
+            self.gh.commit_checks[heads[pull]] = [
+                {"id": job, "name": "Unit tests", "conclusion": "failure", "html_url": "https://j"}
+            ]
+            self.gh.logs[job] = self.LOG.encode()
+            path = f"web/src/{file}.test.ts"
+            self.gh.annotations[job] = [
+                {"annotation_level": "failure", "title": title, "path": path}
+            ]
+        self.gh.merge_error = GitHubError(405, 'Required status check "Unit tests" is failing.')
+        lines = self.sweep(self.cfg)
+        self.assertIn("#10: ci_waiting.", lines)
+        self.assertIn("#11: auto_fix.", lines)
+        self.assertEqual(
+            self.fixes(), [{"command": "fix", "number": "11", "note": "", "auto": "true"}]
+        )
+        self.assertEqual(self.state(11)["auto_fixes"], 1)
+        # #10 waits for the bug issue, using no round, and nobody is needed.
+        state = self.state(10)
+        self.assertEqual((state["auto_fixes"], state["ci_wait"]["bug"]), (0, self.bug))
+        [round_] = self.gh.run_comments(10)
+        self.assertEqual(round_["run"]["outcome"], "ci_waiting")
+        self.assertIn(f"which #{self.bug} is about", round_["body"])
+        [step] = [s for s in autopilot.preview(self.gh, self.cfg)[1] if s["number"] == 5]
+        self.assertEqual((step["state"], step["person"]), ("waits", False))
+        self.sweep(self.cfg)
+        self.assertEqual(len(self.fixes()), 1)
+        # `ci.yml` passes on `main` again: #10 gets the counted round, which merges `main`.
+        self.ci_run("success", 52)
+        self.sweep(self.cfg)
+        self.assertEqual(
+            self.fixes()[1:], [{"command": "fix", "number": "10", "note": "", "auto": "true"}]
+        )
+        self.assertEqual(self.state(10)["auto_fixes"], 1)
+        inputs = self.fixes()[1]
+        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        self.assertTrue(_after_failed_checks(decision, self.gh.comments(10)))
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+        self.assertFalse(self.gh.comments_matching(10, "@olivia"))
+
+    def test_tests_named_on_one_side_only_are_another_failure(self):
+        decision = {"issue": 5, "base": "main"}
+
+        def wait(tests):
+            check = {"name": "test", "run": "make test", "passed": False}
+            if tests is not None:
+                check["failed_tests"] = tests
+            return autopilot.ci_wait(self.gh, self.cfg, decision, [check], "main")
+
+        self.assertIsNotNone(wait([self.TEST]))
+        self.assertIsNone(wait(["cart.test.ts::empties the cart"]))
+        # `main` names a failing test, and the check names none: it has no JUnit results,
+        # or they name no failing test, as when the tests did not build. That is not the
+        # failure `main` has, so no wait.
+        self.assertIsNone(wait(None))
+        self.assertIsNone(wait([]))
+        # A report from before NexKit recorded tests, or a failed job without annotations
+        # that name tests, has none. A check that names tests then fails otherwise too.
+        bug = self.gh.issues[self.bug]
+        record = {"run": 50, "jobs": [{"job": "Unit tests", "commands": ["make test"]}]}
+        data = base64.b64encode(json.dumps(record).encode()).decode()
+        bug["body"] = autopilot.CI_FAILED.sub(f"<!-- nexkit:ci-failed {data} -->", bug["body"])
+        self.assertEqual(autopilot._recorded_failure(self.gh, bug)["tests"], {"make test": set()})
+        self.assertIsNone(wait(["cart.test.ts::empties the cart"]))
+        # With test names on neither side, as for a build or lint step, the command decides.
+        self.assertIsNotNone(wait(None))
+        self.assertIsNotNone(wait([]))
+        # Another command never waits.
+        self.assertIsNone(
+            autopilot.ci_wait(
+                self.gh,
+                self.cfg,
+                decision,
+                [{"name": "lint", "run": "make lint", "passed": False}],
+                "main",
+            )
+        )

@@ -419,12 +419,31 @@ def read_state(comments):
     return _find(comments, STATE_PATTERN)
 
 
+def ci_wait_reason(wait):
+    """Why a pull request's round waits for a bug issue about the default branch, from the
+    round's `ci_wait` record."""
+    return (
+        f"waits for #{wait.get('bug')}: its failing checks fail as "
+        f"`{wait.get('workflow')}` does on `{wait.get('branch')}`"
+    )
+
+
 def render_state(state):
     lines = [
         "### NexKit",
         "",
         f"Working on #{state['issue']}. Automatic fix rounds used: {state['auto_fixes']}. "
         "Each round has its own NexKit comment with a link to its run.",
+    ]
+    wait = state.get("ci_wait")
+    if isinstance(wait, dict):
+        lines += [
+            "",
+            f"⏳ This pull request {ci_wait_reason(wait)}. Once `{wait.get('workflow')}` "
+            f"passes there again, or #{wait.get('bug')} is closed, NexKit autopilot starts "
+            f"an automatic fix round that merges `{wait.get('branch')}` first.",
+        ]
+    lines += [
         "",
         "Comment `/nexkit fix <instructions>` to request another round, or `/nexkit review` "
         "to re-check the current commit.",

@@ -15,8 +15,13 @@
 #          paused at the usage limit (waiting for their reset in a run of its own),
 #          starting rounds for conflicts with the base branch, autopilot sweeps, which
 #          also end the comments and statuses of runs that ended without a report and
-#          merge pull requests whose required checks passed since; no agent and no
-#          repository checkout
+#          merge pull requests whose required checks passed since, and the sweep after
+#          a command NexKit started that route refused; no agent and no repository
+#          checkout
+# finish   when report did not finish, such as after a lost runner or a cancelled run:
+#          start a sweep that waits for this run to end, handles its run comment and
+#          starts the conflict round held back while it ran; no agent and no repository
+#          checkout
 #
 # Supported versions are fixed: ubuntu-24.04, Python 3.12 for NexKit itself, and the
 # version of each agent runtime in nexkit/__init__.py.
@@ -408,7 +413,7 @@ jobs:
       issues: write # close parent issues; mark paused runs as resumed; autopilot's issues
       pull-requests: write # paused runs on pull requests; close a pull request a split supersedes
       actions: write # resume paused commands, start conflict rounds and autopilot's commands
-      checks: read # the annotations that name the failures of flaky runs
+      checks: read # failures of flaky runs; the failed required checks of a merge that waits
       statuses: write # the pending statuses of a round that ended without a report
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -427,5 +432,37 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+          NEXKIT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
+  finish:
+    needs: [route, report]
+    # Also when the run was cancelled: a run that ends without a report is noticed now,
+    # not at the next sweep.
+    if: >-
+      always() && needs.route.result == 'success' &&
+      contains(fromJSON('["plan","implement","fix","review"]'), needs.route.outputs.action) &&
+      needs.report.result != 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # NexKit's own code; nothing of the repository
+      actions: write # start the sweep
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false
+      - name: Finish
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit finish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
           NEXKIT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import textwrap
 from collections import defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -119,6 +120,7 @@ class FakeGitHub:
         self.jobs = {}  # run id, or (run id, attempt) -> jobs
         self.attempts = {}  # (run id, attempt) -> conclusion; others: the run's own
         self.annotations = {}  # job id -> its annotations
+        self.commit_checks = {}  # commit sha -> its check runs
         self.logs = {}  # job id -> its log, as bytes
         self.run_artifact_list = {}  # run id -> its artifacts
         self.zips = {}  # artifact id -> its zip, as bytes
@@ -252,14 +254,20 @@ class FakeGitHub:
             {"number": number, "title": title or f"M{number}", "due_on": due_on}
         )
 
-    def scoped_issues(self, milestone=None, label=None):
+    def latest_closed_issue(self, milestone):
+        closed = [
+            i
+            for i in self.issues.values()
+            if i["state"] == "closed" and (i.get("milestone") or {}).get("number") == milestone
+        ]
+        return max(closed, key=lambda i: (i.get("closed_at") or "", i["number"]), default=None)
+
+    def scoped_issues(self, milestone=None):
         found = []
         for issue in self.issues.values():
             if issue["state"] != "open":
                 continue
             if milestone is not None and (issue.get("milestone") or {}).get("number") != milestone:
-                continue
-            if label is not None and label not in {x["name"] for x in issue.get("labels") or []}:
                 continue
             found.append(issue)
         return sorted(found, key=lambda i: i["number"])
@@ -293,7 +301,8 @@ class FakeGitHub:
     def close_issue(self, number, reason="completed"):
         if number in self.close_errors:
             raise self.close_errors[number]
-        self.issues[number].update(state="closed", state_reason=reason)
+        closed_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.issues[number].update(state="closed", state_reason=reason, closed_at=closed_at)
         return self.issues[number]
 
     def recent_comments(self, since, limit=2000):
@@ -321,6 +330,8 @@ class FakeGitHub:
             for comment in comments:
                 if comment["id"] == comment_id:
                     comment["body"] = body
+                    # GitHub moves `updated_at` with each edit.
+                    comment["updated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
                     return comment
         raise KeyError(comment_id)
 
@@ -366,6 +377,9 @@ class FakeGitHub:
     def attempt_jobs(self, run_id, attempt):
         self.calls.append(("jobs", run_id, attempt))
         return list(self.jobs.get((run_id, attempt), self.jobs.get(run_id, [])))
+
+    def check_runs(self, sha):
+        return list(self.commit_checks.get(sha, []))
 
     def check_run_annotations(self, check_run_id):
         self.calls.append(("annotations", check_run_id))

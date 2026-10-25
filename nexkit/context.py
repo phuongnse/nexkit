@@ -61,12 +61,16 @@ def _saved_feedback(comments):
 
 
 def _after_failed_checks(decision, comments):
-    """Whether this is an automatic round started after failing checks. It merges the base
+    """Whether this is an automatic round started after failing checks, NexKit's own or
+    required checks that failed when NexKit merged. It merges the base
     branch whenever the base has moved, so a failure that the base branch already fixed
     goes away without an agent change."""
     if not decision.get("auto") or decision.get("conflicts"):
         return False
-    return any(not check.get("passed") for check in _saved_feedback(comments).get("checks") or [])
+    feedback = _saved_feedback(comments)
+    if feedback.get("required"):
+        return True
+    return any(not check.get("passed") for check in feedback.get("checks") or [])
 
 
 def _inside(path):
@@ -171,6 +175,26 @@ def diagnosis(decision, feedback):
     return [{"name": name, "signature": signatures[name]} for name in names if name in signatures]
 
 
+def _required_text(item):
+    """A required check that failed, so GitHub refused the merge, after NexKit's own
+    checks and review passed: its job's failed commands and the tests it names."""
+    name = item.get("name") or "a required check"
+    lines = [f"### Required check `{name}` failed, so GitHub refused the merge", ""]
+    lines.append(
+        "NexKit's own checks and review passed on this commit, but this check of the "
+        "repository's CI, which branch protection requires, failed."
+    )
+    if item.get("url"):
+        lines.append(f"Its job: {item['url']}")
+    commands = [f"`{clip(command, 300)}`" for command in item.get("commands") or []]
+    if commands:
+        lines.append(f"Commands that failed in it: {', '.join(commands)}.")
+    tests = [f"`{clip(test, 300)}`" for test in (item.get("tests") or [])[:30]]
+    if tests:
+        lines.append(f"Tests its annotations name: {', '.join(tests)}.")
+    return "\n".join(lines)
+
+
 def _feedback(gh, decision, comments):
     """Earlier NexKit results plus current human review feedback on the pull request."""
     pr = decision["pr"]
@@ -184,6 +208,8 @@ def _feedback(gh, decision, comments):
                 f"Exit code {check.get('exit_code')}. End of output:\n\n```\n"
                 f"{clip(check.get('output'), 6000)}\n```"
             )
+    for item in saved.get("required") or []:
+        parts.append(_required_text(item))
     review = saved.get("review") or {}
     findings = [f for f in review.get("findings") or [] if f.get("severity") == "blocking"]
     if findings:

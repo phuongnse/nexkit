@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import posixpath
 import re
 
 from . import config as configuration
 from .github import GitHubError
 from .state import (
+    FAILURE,
     RUNNING,
+    SUCCESS,
     by_bot,
     latest_plan,
     plan_profile,
@@ -88,8 +91,11 @@ RESUME = "resume"
 RETRY = "retry"
 # Also the `command` of the dispatch that starts an autopilot sweep.
 AUTOPILOT = "autopilot"
+# The note of a sweep that waits for a workflow run to end first, and how route reads it.
+AFTER_RUN = "after run {}"
+AFTER_RUN_PATTERN = re.compile(r"after run (\d+)")
 # Issue events after which an issue may have come into autopilot's scope.
-AUTOPILOT_EVENTS = ("opened", "reopened", "labeled", "milestoned")
+AUTOPILOT_EVENTS = ("opened", "reopened", "milestoned")
 
 
 def auto_kinds(value):
@@ -166,10 +172,7 @@ def route(gh, event_name, event, inputs=None):
         if action in AUTOPILOT_EVENTS:
             # Anyone who may open an issue starts this, so it only starts a sweep, which
             # takes only issues from people with write access.
-            decision = {"action": "maintain", "task": "autopilot", "event": action}
-            if action == "labeled":
-                decision["label"] = (event.get("label") or {}).get("name")
-            return decision
+            return {"action": "maintain", "task": "autopilot", "event": action}
         return _none(f"Issue event '{action}' is not handled")
 
     if event_name == "milestone":
@@ -187,6 +190,15 @@ def route(gh, event_name, event, inputs=None):
             return _none("Only pushes to the default branch are handled")
         return {"action": "maintain", "task": "conflicts", "base": branch}
 
+    if event_name == "workflow_run":
+        # A run of another workflow finished. Maintain starts a sweep when it is a run of a
+        # workflow in merge.after_workflows on the default branch that a sweep acts on.
+        run = event.get("workflow_run") or {}
+        if event.get("action") != "completed" or not isinstance(run.get("id"), int):
+            return _none("Only finished workflow runs are handled")
+        workflow = posixpath.basename(str(run.get("path") or ""))
+        return {"action": "maintain", "task": "ci", "workflow": workflow, "run": run["id"]}
+
     if event_name == "workflow_dispatch":
         command = (inputs.get("command") or "").strip()
         number = str(inputs.get("number") or "").strip()
@@ -195,11 +207,14 @@ def route(gh, event_name, event, inputs=None):
             return {"action": "maintain", "task": "resume"}
         if command == AUTOPILOT:
             # A sweep over the issues in scope. Its note names the issue whose closing
-            # started it, if any.
+            # started it, or the run whose report did not finish, if any.
             decision = {"action": "maintain", "task": "sweep"}
             note = str(inputs.get("note") or "").strip()
+            after = AFTER_RUN_PATTERN.fullmatch(note)
             if note.isdigit():
                 decision["closed"] = int(note)
+            elif after:
+                decision["after"] = int(after.group(1))
             return decision
         if not number.isdigit():
             return _none("Dispatch input 'number' must be an issue or PR number")
@@ -218,9 +233,34 @@ def route(gh, event_name, event, inputs=None):
             decision["base_sha"] = gh.branch_sha(decision["base"])
             # A conflict round merges the base branch; it diagnoses nothing.
             decision.pop("diagnose", None)
+            if _conflicts_tried(gh, decision):
+                return _none(
+                    f"A conflict round already ran on `{decision['base']}` at "
+                    f"`{decision['base_sha'][:7]}`; this one, started at the same time, "
+                    "has nothing to add"
+                )
         return decision
 
     return _none(f"Event '{event_name}' is not handled")
+
+
+def _conflicts_tried(gh, decision):
+    """Whether this conflict round repeats the pull request's latest round: a conflict
+    round on the same base commit that ended. Two starters that looked at the same time,
+    such as a push to the default branch and a sweep, can each start one; the second
+    waits in the pull request's concurrency group and then has nothing to add. A round
+    that resumes or retries one, or starts once more after one ended without a report,
+    goes on."""
+    if decision.get("resumed") or decision.get(RETRY):
+        return False
+    rounds = [run for _, run in run_comments(gh.comments(decision["pr"])) if "round" in run]
+    latest = rounds[-1] if rounds else {}
+    return (
+        bool(latest.get("conflicts"))
+        and latest.get("base_sha") == decision["base_sha"]
+        and latest.get("status") in (SUCCESS, FAILURE)
+        and latest.get("outcome") != "lost"
+    )
 
 
 def _decide(gh, command, number, on_pull, note, *, auto):

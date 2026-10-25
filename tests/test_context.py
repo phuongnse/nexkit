@@ -388,21 +388,21 @@ class ContextTests(unittest.TestCase):
             "summary": "Kept both endpoints.",
             "start_head": "b" * 40,
             "start_base": "c" * 40,
-            "conflicts": ["Axis.Server.csproj"],
+            "conflicts": ["Shop.Server.csproj"],
         }
         context = gather(self.gh, decision, "review", fix_result)
         self.assertEqual(
             context["merged"],
-            {"head": "b" * 40, "base": "c" * 40, "conflicts": ["Axis.Server.csproj"]},
+            {"head": "b" * 40, "base": "c" * 40, "conflicts": ["Shop.Server.csproj"]},
         )
         previous = context["previous_round"]
         self.assertIn("resolved conflicts in `Program.cs`.", previous)
-        self.assertIn("resolved conflicts in `Axis.Server.csproj`.", previous)
+        self.assertIn("resolved conflicts in `Shop.Server.csproj`.", previous)
         # A fix round without a merge adds nothing.
         no_merge = {**fix_result, "start_base": None}
         context = gather(self.gh, decision, "review", no_merge)
         self.assertNotIn("merged", context)
-        self.assertNotIn("Axis.Server.csproj", context["previous_round"])
+        self.assertNotIn("Shop.Server.csproj", context["previous_round"])
 
     def test_state_is_read_past_round_comments_and_v1_1_comments(self):
         self.gh.add_pull(6, 5, head_sha=HEAD)

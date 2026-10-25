@@ -74,14 +74,16 @@ Where the instructions say nothing, the driver does not act and notifies instead
   or by answering with a guess.
 - One command per state. Never post a command on an issue or pull request while a NexKit
   run for it is queued or running, and never post the same command twice for the same
-  state. A command that got the reply that the implement round still runs, or never got
-  👀, did not run: post it again once that run has ended.
+  state. When a command of the driver's did not run (see [One run at a
+  time](../../docs/how-it-works.md#one-run-at-a-time)), post it again once the run ahead
+  of it has ended.
 - Do not post `/nexkit plan` or `/nexkit go` on an issue whose autopilot state is `start`
-  or `active`. Start a sweep instead, at most one every 10 minutes:
+  or `active`, nor where a comment without a command lets autopilot plan again (see the
+  configuration's [Autopilot](../../docs/configuration.md#autopilot)). Start a sweep
+  instead, at most one every 10 minutes:
   `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
-- Answer and command in one comment per issue per pass, since a collaborator's comment
-  after the latest plan leads to a new plan (see the configuration's
-  [Autopilot](../../docs/configuration.md#autopilot)).
+- Write one comment per issue or pull request per pass, with every answer and at most one
+  command, since each comment by a collaborator can lead to a new plan.
 - Do not review plans or merged pull requests. NexKit's review checks every round, and a
   person's review belongs to an attended session (see [Who does
   what](../../docs/how-it-works.md#who-does-what)).
@@ -90,17 +92,18 @@ Where the instructions say nothing, the driver does not act and notifies instead
 
 ## At each stop
 
-Act on an item when it waits for a person and no newer command started for it. Leave it
-while a `(retry)` is pending (⏭️), and leave a `merge_waiting` pull request until it waits
-for a person. Re-read its latest comments first. Then apply its entry, within these
+Act on an item when it waits for a person and no newer command started for it. Leave
+what NexKit still carries on by itself, such as a pending `(retry)` (⏭️), a `merge_waiting`
+or `waiting` pull request that needs nobody, or a command autopilot started that has not
+run yet. Re-read the item's latest comments first. Then apply its entry, within these
 bounds:
 
 - **[Questions](../../docs/troubleshooting.md#a-question-without-a-recommended-option-or-asked-again):**
   answer with the recommended option, or from the plan, the issue and the repository's
-  docs where the repository lets the driver take that choice. Answer the same question at
-  most twice per issue, then notify. When the answer is to wait for another issue, mark the
-  issue *blocked by* it with its reason line, and start a sweep. A diagnosis round's
-  question belongs to the diagnosis stop below.
+  docs where the repository lets the driver take that choice, in the form the entry gives.
+  Answer the same question at most twice per issue, then notify. When the answer is to
+  wait for another issue, mark the issue *blocked by* it with its reason line. A diagnosis
+  round's question belongs to the diagnosis stop below.
 - **[A transient failure after NexKit's retry](../../docs/troubleshooting.md#a-run-stopped-twice-on-a-transient-error):**
   post the command once more only when the log shows the cause has passed; otherwise
   notify.
@@ -109,6 +112,10 @@ bounds:
   evidence when the failure comes from the code. When the service is still down, notify.
 - **[A time-out that NexKit leaves waiting](../../docs/troubleshooting.md#an-implement-or-fix-round-ran-out-of-time-again):**
   never split it again. Act only on a cause that the evidence shows; otherwise notify.
+- **[A plan that is too large again](../../docs/troubleshooting.md#a-plan-is-too-large-again):**
+  split the issue by hand with the [`request` skill](../request/SKILL.md) only when the
+  plan's steps give parts that each fit one session, and never at three levels deep;
+  otherwise notify.
 - **[No automatic fix rounds left](../../docs/troubleshooting.md#no-automatic-fix-rounds-left):**
   post one round: the cause first when the same check keeps failing the same way, or the
   review's blocking findings and unmet criteria. When that round leaves the pull request
@@ -120,9 +127,9 @@ bounds:
 - **[The review job errored](../../docs/troubleshooting.md#the-review-job-errored):**
   comment `/nexkit review` once. For an authentication error, notify.
 - **[A refused merge](../../docs/troubleshooting.md#the-automatic-merge-was-refused):**
-  act on a failed check or a new commit as the entry says. When the checks did not pass
-  within six hours, act on what their runs show, or notify. For a rule on the default
-  branch, notify with the rule. Never merge.
+  only what NexKit leaves to a person. When the checks neither passed nor failed within
+  six hours, act on what their runs show, or notify. For a rule on the default branch, or
+  an issue that left the scope, notify. Never merge.
 - **[A diagnosis round with no cause](../../docs/troubleshooting.md#a-diagnosis-round-stopped-as-blocked):**
   act only on a cause that the evidence shows; otherwise notify.
 - **[A `no_change` closing](../../docs/troubleshooting.md#an-issue-closed-as-no_change-that-still-needs-a-change):**
@@ -136,6 +143,12 @@ bounds:
   closes. Start a sweep after opening issues.
 - **[A run that ended without a report twice](../../docs/troubleshooting.md#a-run-ended-without-a-report-twice):**
   post the command once more; when it ends so again, notify.
+- **[A command or round that did not start](../../docs/troubleshooting.md#a-command-or-round-did-not-start):**
+  post it once when the reason it did not run has passed; otherwise notify.
+- **[A usage-limit pause with an unknown reset time](../../docs/troubleshooting.md#a-usage-limit-pause-with-an-unknown-reset-time):**
+  post the command once, in a pass after the pause; when it pauses so again, notify.
+- **[Every run misses a cache](../../docs/troubleshooting.md#every-run-misses-a-cache):**
+  the fix is in protected paths: treat it as a change in protected paths below.
 - **[Evidence from a CI run is missing](../../docs/troubleshooting.md#evidence-from-a-ci-run-is-missing):**
   post the command again once; when the artifacts expired, notify.
 - **[A round failed because of its plan](../../docs/troubleshooting.md#a-round-failed-because-of-its-plan)**,
@@ -152,8 +165,9 @@ bounds:
   the log shows.
 - **[An issue opened without write access](../../docs/troubleshooting.md#autopilot-leaves-an-issue-alone):**
   notify. The driver never opens an issue from untrusted text.
-- **A missing relationship:** when an issue's text has a `Depends on #N: …` line, #N is
-  open, and the issue lacks that *blocked by* relationship, add it as the [`request`
+- **[A missing relationship](../../docs/troubleshooting.md#agents):** "Depends on" text
+  does not count. When an issue's text has a `Depends on #N: …` line, #N is open, and the
+  issue lacks that *blocked by* relationship, add it as the [`request`
   skill](../request/SKILL.md) shows, and start a sweep.
 
 ## Notify
@@ -165,19 +179,23 @@ Notify only for:
 - a diagnosis or a time-out whose evidence shows no cause;
 - a split that would go below three levels;
 - an authentication error;
-- a merge refused by a rule on the default branch;
+- a merge refused by a rule on the default branch, or one that waits while its issue is
+  outside the scope;
 - an approved pull request with a criterion that no test or check can show, or that
   stayed unverifiable after the round that adds tests;
 - a question still asked after two answers;
 - a transient failure that has not passed after NexKit's retry, or a service still down
   after `recheck_failed`;
 - an issue reopened after a wrong `no_change`;
-- a `merge_waiting` pull request whose checks did not pass for a reason the driver cannot
-  act on;
+- a `merge_waiting` pull request whose checks neither passed nor failed within six hours,
+  for a reason the driver cannot act on;
+- a plan too large again that the driver may not split;
 - a blocker outside the scope, or a parent whose parts all closed without one completed;
 - an issue opened by someone without write access;
 - a CI run's evidence that expired;
-- a run that ended without a report twice, or a command or dispatch that failed twice in a
+- a command paused again at a usage limit with an unknown reset time;
+- a run that ended without a report twice, a command that did not start for a reason
+  that has not passed, or a command or dispatch of the driver's that failed twice in a
   row;
 - any stop above that the repository does not let the driver handle, and the cases the
   repository adds.

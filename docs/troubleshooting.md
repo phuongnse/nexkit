@@ -53,6 +53,10 @@ the same message. Some of them:
 - **"… runtime must be one of claude-code: NexKit 4.0.0 removed the codex runtime …".**
   The configuration still declares a Codex agent. Remove it and give its stages a Claude
   agent (see [Codex removed in 4.0](configuration.md#codex-removed-in-40)).
+- **"autopilot.scope "label" is gone …" or "autopilot.label is gone …".** NexKit 5.0
+  removed the label scope. Set `autopilot.scope` to `null` or `"milestone"` and remove
+  `autopilot.label` (see [Label scope removed in
+  5.0](configuration.md#label-scope-removed-in-50)).
 - **"provider must be one of …".** That runtime does not support the provider. The
   [Agents](configuration.md#agents) table lists the pairs NexKit supports.
 - **"names that start with GITHUB_ or NEXKIT_ are reserved".** An agent's secret has a
@@ -123,8 +127,8 @@ within one stage deadline for all of them.
 With autopilot on, an implement or fix agent that ran out of time leads to one new plan that
 asks for a split; a second time waits for you, and so does a part of an issue that already
 asked for one. A plan that is too large but suggests no parts is planned once more with a
-note that asks for parts; when the second plan suggests none either, split the issue
-yourself or edit it and comment `/nexkit plan`.
+note that asks for parts; when the second plan suggests none either, see [A plan is too
+large again](#a-plan-is-too-large-again).
 
 **Autopilot waits after a `/nexkit go` that was blocked or failed.** Answer in a comment on
 the issue, or mark the issue the round waits for as its blocker (GitHub's *blocked by*):
@@ -141,8 +145,9 @@ waits for a person is also listed under *Needs a person*, and does not count tow
 milestone is not in scope; `null` takes every open issue. A command that
 autopilot started but that never ran starts once more after `autopilot.lost_after_minutes`
 (30 by default), once its workflow run is no longer queued or running; when that one does
-not run either, the issue waits for you, and you can post the command yourself. To sweep
-again at once: `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
+not run either, the issue waits for you (see [A command or round did not
+start](#a-command-or-round-did-not-start)). To sweep again at once:
+`gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 
 **⏸️ "The agent stopped at the account's usage limit" or "Every agent stopped at its usage
 limit".** The account behind the agent's secret, such as a Claude subscription, used up its
@@ -210,8 +215,8 @@ error annotations that name tests; otherwise the command alone decides, so a pul
 that breaks another test in the same script also waits. To tell the two apart, name the
 check's JUnit output in its `results` and let your CI's test reporter annotate failures.
 A pull request whose checks are not compared this way, because your CI runs its commands
-differently from NexKit's checks, gets the usual fix rounds (see [How it
-works](how-it-works.md#failing-checks-the-default-branch-has)).
+differently from NexKit's checks, gets the usual fix rounds (see *Failing checks the
+default branch has* under [How it works](how-it-works.md#stages)).
 
 **"The change modifies protected paths".** The agent edited `.github/` or `.nexkit/`, or a
 path you added to `protected_paths`. Make those changes yourself, then use `/nexkit fix`.
@@ -237,8 +242,9 @@ the Actions tab.
 
 **A new NexKit pull request is behind `main`.** Something was merged into the base branch
 while the agent worked. NexKit opens the pull request on the commit the agent started
-from, so the work is not lost. Comment `/nexkit fix` to merge the base branch and resolve
-any conflicts.
+from, so the work is not lost. When it conflicts, `conflicts.auto_resolve` starts a
+conflict round by itself; without it, comment `/nexkit fix` to merge the base branch and
+resolve the conflicts.
 
 **"The agent started from …, which is no longer on `main`".** The base branch was
 rewritten (for example force-pushed) while the agent worked, so the commit the change is
@@ -250,11 +256,16 @@ base branch, and some conflicts need a choice that the plan, the issue and your 
 not settle. Answer every question in one comment: `/nexkit fix` followed by your
 decisions. The next round merges the base branch again and follows your note.
 
-**A pull request still conflicts with `main` with `conflicts.auto_resolve` on.** Its latest
-round may be blocked on a conflict that needs your decision; answer it with `/nexkit fix`.
-NexKit also stops after `conflicts.max_rounds` (3 by default) automatic conflict rounds on
-one pull request, and starts one round per commit of `main`. The `maintain` job's log lists
-what each check did.
+**A pull request still conflicts with `main` with `conflicts.auto_resolve` on.** Every
+sweep, and the end of every NexKit run, starts the conflict round of a pull request that
+GitHub reports as conflicting while no round of it is queued or running, once for each
+commit of `main` and each round of the pull request that ended since; while GitHub has
+not worked out mergeability yet, the next sweep asks again (see *Resolving conflicts*
+under [How it works](how-it-works.md#work-without-a-command)). So a conflict that stays
+has one of these reasons: the latest round is blocked on a conflict that needs your
+decision, which you answer with `/nexkit fix`; `conflicts.max_rounds` (3 by default)
+rounds are used up; or the conflict needs a manual merge (below). The `maintain` job's
+log lists what each check did.
 
 **"conflicts with `main` in protected paths" or "brings changes to `.github/workflows/…`".**
 NexKit cannot publish this merge, and the round stopped before its agent ran, without using
@@ -283,18 +294,20 @@ and stops the same way while the cause stays.
 
 Answer every question in one comment, one short line each:
 
-- A plan's questions: comment `/nexkit plan <answers>` on the issue. With autopilot, a
-  comment with the answers is enough: the next sweep plans again.
-- A blocked `/nexkit go`: `/nexkit go <answers>`, or `/nexkit plan <answers>` when the
-  answers change the plan.
+- A plan's questions, or those of a blocked `/nexkit go`: with autopilot, comment the
+  answers on the issue, without a command; the next sweep plans again with them (see
+  ["Autopilot waits after a `/nexkit go` that was blocked or failed"](#agents)). Without
+  autopilot, comment `/nexkit plan <answers>`, or for a blocked `/nexkit go` whose
+  answers leave the plan as it is, `/nexkit go <answers>`.
 - A blocked round on a pull request: `/nexkit fix <answers>`.
 
 When a question comes back after autopilot's answers, or after yours, the recommended
 option did not settle it. Read what is new in the question and why, and answer from the
 plan, the issue and the repository's docs, not with the same option again. When the
 answer is to wait for another issue, mark the issue *blocked by* it, with its reason line
-(see the [`request` skill](../skills/request/SKILL.md)). A question that asks a person to
-download or attach a CI run's files: see [Evidence from a CI run is
+(see the [`request` skill](../skills/request/SKILL.md)); with autopilot, the issue is
+planned again once that issue closes. A question that asks a person to download or attach
+a CI run's files: see [Evidence from a CI run is
 missing](#evidence-from-a-ci-run-is-missing).
 
 ### A run stopped twice on a transient error
@@ -335,10 +348,10 @@ When the evidence contradicts the finding, reopen the issue and comment
 
 ### Conflict rounds used up
 
-The pull request had `conflicts.max_rounds` automatic conflict rounds. Read the last one:
-when it was blocked on a choice, answer it with `/nexkit fix <decisions>`. Otherwise
-comment `/nexkit fix` yourself, with any rule the conflict needs, such as which side's
-numbering to keep.
+The pull request had `conflicts.max_rounds` automatic conflict rounds, and no more start
+by themselves. Read the last one: when it was blocked on a choice, answer it with
+`/nexkit fix <decisions>`. Otherwise comment `/nexkit fix` yourself, with any rule the
+conflict needs, such as which side's numbering to keep.
 
 ### A round needs a manual merge (`needs_merge`)
 
@@ -362,6 +375,17 @@ When they show no cause, find it first, for example by running the slow check lo
 then split the issue by hand with the `request` skill, or comment a smaller plan. An
 issue three levels of parts deep is not split again.
 
+### A plan is too large again
+
+Autopilot already planned once more after a plan that was too large and suggested no
+parts, or suggested parts titled like the issue (see [Autopilot](configuration.md#autopilot)),
+and the second plan did the same; or the issue is three levels of parts deep, where
+NexKit splits no further. Read the plan: its *What changes* and implementation notes
+usually show the steps. Split the issue by hand into parts that each fit one session, with
+the [`request` skill](../skills/request/SKILL.md), or make the issue smaller and comment
+the change on it, which with autopilot plans it again. At three levels deep, make the
+issue smaller rather than splitting it once more.
+
 ### A diagnosis round stopped as `blocked`
 
 It found no cause in the evidence (see [Diagnosis
@@ -374,8 +398,10 @@ cause first.
 ### A round failed because of its plan
 
 When the run log or the result files show that the plan asked for the wrong thing, change
-the plan as [Changing a plan](how-it-works.md#stages) says: `/nexkit plan <what to change>`
-before `/nexkit go`, or `/nexkit fix <what to change>` on the pull request.
+the plan as *Changing a plan* under [Stages](how-it-works.md#stages) says. For a
+`/nexkit go` that stopped, comment the change on the issue: with autopilot, the next sweep
+plans again with it; without, comment `/nexkit plan <what to change>`. On a pull request,
+post `/nexkit fix <what to change>`.
 
 ### The plan's change is in protected paths
 
@@ -418,12 +444,18 @@ stops the same way (see ["The AI review did not complete"](#agents)).
 ### The automatic merge was refused
 
 The round's comment says why, and NexKit handles the refusals that pass (see
-["Automatic merge was not possible"](#pull-requests-and-merges)). For a pull request that
-waited for required checks (`merge_waiting`) and now waits for a person:
+["Automatic merge was not possible"](#pull-requests-and-merges)). While a pull request
+waits for required checks (`merge_waiting`), a required check that fails gets an
+automatic fix round and a new commit gets `/nexkit review`, so nobody needs to post
+either. It waits for a person only:
 
-- When a check failed, post `/nexkit fix` naming the failing check.
-- When a new commit came and no review started for it, comment `/nexkit review`.
-- When the checks did not pass within six hours, find out why from their runs.
+- when a required check failed and no automatic fix round is left: see [No automatic fix
+  rounds left](#no-automatic-fix-rounds-left);
+- when the checks neither passed nor failed within six hours: find out why from their
+  runs, for example a workflow that never started on the branch, start it again, and
+  comment `/nexkit review` once they can pass;
+- when its issue left autopilot's scope, since only sweeps try the merge again: merge it
+  yourself, or bring the issue back into the scope.
 
 For any other rule, such as a required approval, merge the pull request yourself or
 change the rule.
@@ -443,6 +475,17 @@ ended the same way; or it was a person's command (see [Runs that never
 end](how-it-works.md#autopilot)). Read the workflow run for why it ended, such as a
 cancelled run or a lost runner, then post the same command once more. When it ends
 without a report again, find the cause in the Actions run before you try again.
+
+### A command or round did not start
+
+Autopilot starts a command that never ran once more after `autopilot.lost_after_minutes`,
+and waits for a person when that one does not run either (see ["Autopilot does not start
+an issue"](#agents)). A continued run whose new run has not started after six hours, and
+an automatic round that a round started but that has not run after six hours, wait too
+(see [Runs that never end](how-it-works.md#autopilot)). Read the dispatched run in the
+Actions tab, or the reply on the issue or pull request, for why it did not run, such as a
+refusal by `route` or a run cancelled in the queue. Once the cause is gone, post the
+command yourself, once.
 
 ### Evidence from a CI run is missing
 
@@ -466,9 +509,10 @@ reads it as untrusted text, and opens a new issue with what they trust.
 
 ### An issue is blocked by an issue outside the scope
 
-Autopilot does not work on the blocker, so the issue waits. Bring the blocker into the
-scope, for example by giving it the scope's milestone, or remove the *blocked by*
-relationship when the issue does not really need it.
+Autopilot does not work on the blocker, so the issue waits. With the `"milestone"` scope,
+bring the blocker into the scope by giving it the scope's milestone. With `null`, only a
+blocker in another repository is outside the scope: finish it there. Or remove the
+*blocked by* relationship when the issue does not really need it.
 
 ### A parent's parts all closed and none was completed
 

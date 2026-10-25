@@ -64,7 +64,7 @@ their defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings, or after a required check failed while an automatic merge waited for it (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see [How it works](how-it-works.md#failing-checks-the-base-branch-fixed). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
+| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings, or after a required check failed while an automatic merge waited for it (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see *Failing checks the base branch fixed* under [How it works](how-it-works.md#stages). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
 | `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves, unless it leaves a criterion for a person to confirm. Branch protection still applies. See [Automatic merge](#automatic-merge). |
 | `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
@@ -173,8 +173,8 @@ failure.
   expired after 14 days, the round runs without the files and its log says why.
 - When a kept file is a JUnit XML report (a `.xml` file whose root is `testsuites` or
   `testsuite`), the check also records the test cases that failed or erred in it, which
-  autopilot compares with the default branch's failing tests (see [How it
-  works](how-it-works.md#failing-checks-the-default-branch-has)).
+  autopilot compares with the default branch's failing tests (see *Failing checks the
+  default branch has* under [How it works](how-it-works.md#stages)).
 - Checks without `results` behave as before.
 
 The artifact can be downloaded by anyone who can read the run, like the rest of NexKit's
@@ -546,8 +546,8 @@ every open issue in scope, in order, and starts the one command that moves it on
   failed there too. The check names them from the JUnit XML files in its `results`, the
   workflow from its failed jobs' error annotations, so with a test reporter that writes
   JUnit files and annotates failures, a pull request that breaks another test in the same
-  script gets its fix round at once. See [How
-  it works](how-it-works.md#failing-checks-the-default-branch-has).
+  script gets its fix round at once. See *Failing checks the default branch has* under
+  [How it works](how-it-works.md#stages).
 - **Flaky runs.** A run that passed only when run again, and an older run that failed when
   a newer run had already started, are recorded under each of their failures, on one
   `bug` issue per failure, which mentions `notify` and is planned right after the `bug`
@@ -1042,6 +1042,14 @@ pull request:
 
 A configuration from an earlier release that no longer fits is rejected with what to
 change.
+
+### Label scope removed in 5.0
+
+NexKit 4.x could limit autopilot to the open issues with one label (`"scope": "label"`
+with `autopilot.label`). NexKit 5.0 rejects both keys with what to set instead. Set
+`autopilot.scope` to `null`, which takes every open issue and lets the *blocked by*
+relationships order the work, or to `"milestone"`, and remove `autopilot.label`. Issues
+for CI failures no longer get a scope label.
 
 ### Codex removed in 4.0
 

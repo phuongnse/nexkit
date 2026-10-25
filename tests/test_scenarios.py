@@ -348,7 +348,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertTrue(pipe.gh.comments_matching(5, "NexKit autopilot finished milestone M1"))
 
-    def test_axis_1089_a_round_that_blocks_after_autopilots_answer_waits(self):
+    def test_a_round_that_blocks_after_autopilots_answer_waits(self):
         # Every go blocks, recommending that a person download the artifacts.
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else blocked()
@@ -359,7 +359,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(pipe.gh.comments_matching(5, "answers for the owner")), 1)
         self.assertEqual(len(pipe.gh.comments_matching(5, "@olivia a person is needed")), 1)
 
-    def test_axis_1091_a_fix_round_held_up_by_workflow_changes_keeps_its_rounds(self):
+    def test_a_fix_round_held_up_by_workflow_changes_keeps_its_rounds(self):
         def script(pipe, inputs):
             if inputs["command"] == "plan":
                 return plan()
@@ -533,7 +533,7 @@ class ScenarioTests(unittest.TestCase):
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
-    def test_axis_1129_a_base_branch_move_waits_for_the_implement_round(self):
+    def test_a_base_branch_move_waits_for_the_implement_round(self):
         pushed = []
 
         def move_base(pipe, pull):
@@ -569,9 +569,7 @@ class ScenarioTests(unittest.TestCase):
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
-    def test_axis_977_a_base_branch_move_during_a_round_starts_the_conflict_round_at_its_end(
-        self,
-    ):
+    def test_a_base_branch_move_during_a_round_starts_the_conflict_round_at_its_end(self):
         pushed = []
 
         def move_base(pipe, pull):
@@ -637,7 +635,7 @@ class ScenarioTests(unittest.TestCase):
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
-    def test_axis_1104_a_fix_round_with_a_cause_outside_the_code_checks_again_once(self):
+    def test_a_fix_round_with_a_cause_outside_the_code_checks_again_once(self):
         cause = "The registry returned 500 Internal Server Error during `docker compose up`."
         outside = {"cause": cause, "cause_outside": True}
 
@@ -667,7 +665,7 @@ class ScenarioTests(unittest.TestCase):
         [mention] = pipe.gh.comments_matching(6, "a person is needed")
         self.assertIn(cause.rstrip("."), mention["body"])
 
-    def test_axis_1089_an_answer_that_only_closes_the_issue_closes_it(self):
+    def test_an_answer_that_only_closes_the_issue_closes_it(self):
         finding = "8b9cb87 already fixed it: the last 20 runs of `e2e` on `main` passed."
 
         def script(pipe, inputs):

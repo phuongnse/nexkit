@@ -27,8 +27,10 @@ Three parts are played around NexKit:
 
 NexKit carries the work on by itself wherever these docs say it does: automatic fix and
 conflict rounds, one more try after a transient error, and with autopilot its plans,
-answers and splits. So nobody needs to act until NexKit mentions `notify`, or
-`nexkit status` lists an item under *Needs a person*.
+answers and splits, a new plan once a stopped `/nexkit go` has an answer, one more start
+of a command that never ran or a run that ended without a report, and the fix rounds and
+reviews of a pull request whose merge waits for required checks. So nobody needs to act
+until NexKit mentions `notify`, or `nexkit status` lists an item under *Needs a person*.
 
 ### Reviewing a pull request
 
@@ -126,6 +128,7 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 | Plan posted without either | no |
 | The agent returned `blocked` | yes, unless autopilot answers it |
 | The agent failed or errored, publishing failed, or the review did not complete | yes, unless the error was transient and the command runs once more, or autopilot asks for a split after an implement or fix agent ran out of time (see [limits on parts](#autopilot)) |
+| Checks fail only as the default branch does while autopilot's `bug` issue about that is open (`ci_waiting`) | no: an automatic fix round starts once the default branch passes (see *Failing checks the default branch has* under [Stages](#stages)) |
 | Checks or review still fail and no automatic fix rounds remain | yes |
 | Checks or review still fail after a fix round found nothing to change for a cause outside the code and ran them again | yes |
 | Ready, with `merge.auto` off | yes |
@@ -138,10 +141,10 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 
 With autopilot on, its sweeps come to the same answers for the issues in scope, and say
 what else waits for a person: an issue whose pull request needs one, an author without
-write access, a blocker outside the scope, a command that never ran. When an issue starts
-to wait for a person and nobody was mentioned since its latest run, the sweep mentions
-`notify` once, on the issue. `nexkit status` lists every such issue under *Needs a person*
-with the same reason.
+write access, a blocker outside the scope, a command that did not run after one more
+start. When an issue starts to wait for a person and nobody was mentioned since its latest
+run, the sweep mentions `notify` once, on the issue. `nexkit status` lists every such
+issue under *Needs a person* with the same reason.
 
 ### One run at a time
 
@@ -343,10 +346,10 @@ review checks the pull request against, and it is the record a later reader look
 change that lives only in a follow-up issue is missing from both, so every change to a
 plan, however small, goes into the plan or the round that implements it:
 
-- Before `/nexkit go`, comment the change on the issue, so the next plan holds it. With
-  autopilot, a collaborator's comment after the latest plan makes it plan again before
-  `/nexkit go`; without, comment `/nexkit plan`. This is also how to change an answer that
-  autopilot gave.
+- Before `/nexkit go`, or after a `/nexkit go` that stopped, comment the change on the
+  issue, so the next plan holds it. With autopilot, a collaborator's comment after the
+  latest plan, or after the stopped `/nexkit go`, makes it plan again; without, comment
+  `/nexkit plan`. This is also how to change an answer that autopilot gave.
 - Once `/nexkit go` has started, post the change on the pull request as
   `/nexkit fix <change>`.
 - State only the changes. A re-plan keeps what no newer comment changes, so choices
@@ -395,9 +398,9 @@ failure signature (see [Failure handling](#failure-handling)). The agent is told
 repeat a change that did not help. Besides `summary`, a fix result has `cause`: the cause
 of the failures the round addressed and the evidence that shows it, such as trace, log or
 output lines, or an empty string, and `cause_outside`: whether that cause lies outside the
-code, which only an automatic round after failing checks uses (see [Failing checks the
-base branch fixed](#failing-checks-the-base-branch-fixed)). The round's comment and its commit message show a
-cause when there is one, and so does the next review's *Previous round* section. NexKit builds the pull request description from the implement result, in this
+code, which only an automatic round after failing checks uses (see *Failing checks the
+base branch fixed* under [Stages](#stages)). The round's comment and its commit message
+show a cause when there is one, and so does the next review's *Previous round* section. NexKit builds the pull request description from the implement result, in this
 order: *Summary* (two or three sentences, also the commit message), *What changed* (in
 behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
 the reviewer*. A fix round's summary becomes its commit message.
@@ -426,7 +429,7 @@ a round by itself (see [Work without a command](#work-without-a-command)).
    into the working tree, without committing. A branch that merges cleanly is not
    merged, so fix rounds stay small, with one exception: an automatic round started
    after failing checks merges the base branch whenever it has commits the branch lacks
-   (see [Failing checks the base branch fixed](#failing-checks-the-base-branch-fixed)).
+   (see *Failing checks the base branch fixed* under [Stages](#stages)).
    Branch protection can require up-to-date branches if a repository wants every round
    to include the latest base.
 2. The prompt lists the conflicted files. The agent resolves the conflict markers
@@ -816,8 +819,8 @@ issue run in that group as well, and start a sweep.
   When a later attempt of a reported run passes, for example after a person ran it again,
   autopilot says which attempt passed in a comment on that issue. Each report also records
   the commands that failed in the run's latest failed attempt, and the tests its failed
-  jobs' error annotations name, which pull requests that fail the same way wait on (see [Failing checks the default branch
-  has](#failing-checks-the-default-branch-has)).
+  jobs' error annotations name, which pull requests that fail the same way wait on (see
+  *Failing checks the default branch has* under [Stages](#stages)).
 - **Flaky runs.** A run whose latest attempt passed after a failed one, and an older run
   that failed when a newer run had already started, which is never run again, are
   recorded under each of their failures, one issue per failure, so an issue stays one
@@ -1064,13 +1067,13 @@ state, leaves it as it is and saves the state in a new state comment.
 | The merge brings workflow changes and only the default Actions token can push | Checked before the agent runs. A merge that only brings a moved base branch is left out, and the round fixes the branch as it is. A merge needed for a conflict stops the round before its agent: merge the base branch yourself or name a push token that may update workflows in `publish.push_token_secret`. Neither costs an automatic round. |
 | GitHub refuses the automatic merge because the base branch was modified meanwhile, for example by another part of a split merging at the same time | Tries the merge again, three times in all, a little later each time. |
 | GitHub refuses the automatic merge because the head branch was modified, after a push to the branch since the round checked it | Starts `/nexkit review` on the new head, which checks, reviews and merges it as usual; nobody is mentioned. |
-| GitHub refuses the automatic merge because required status checks have not passed yet, such as a CI workflow slower than the NexKit round | For an issue in autopilot's scope, ends the round as `merge_waiting`: each sweep tries the merge again while the head is the one approved, and merges once the checks pass, with everything a merge leads to. When GitHub refuses it because a required check failed, the sweep starts an automatic fix round, like failing checks after any round: it counts toward `fix.max_auto_rounds`, its feedback names the failed check with the commands that failed in its job and the tests its error annotations name, and it merges the base branch first when it has moved. A check that fails as the default branch does while autopilot's `bug` issue about that is open waits instead (`ci_waiting`, see [Failing checks the default branch has](#failing-checks-the-default-branch-has)), and with no automatic round left a person decides. A new commit on the branch gets `/nexkit review`, as when the head moved, which checks, reviews and merges it as usual. Checks that neither pass nor fail within six hours wait for a person. Otherwise a person merges it. The `maintain` job has `contents: write` for this; it never checks out the repository. |
+| GitHub refuses the automatic merge because required status checks have not passed yet, such as a CI workflow slower than the NexKit round | For an issue in autopilot's scope, ends the round as `merge_waiting`: each sweep tries the merge again while the head is the one approved, and merges once the checks pass, with everything a merge leads to. When GitHub refuses it because a required check failed, the sweep starts an automatic fix round, like failing checks after any round: it counts toward `fix.max_auto_rounds`, its feedback names the failed check with the commands that failed in its job and the tests its error annotations name, and it merges the base branch first when it has moved. A check that fails as the default branch does while autopilot's `bug` issue about that is open waits instead (`ci_waiting`, see *Failing checks the default branch has* under [Stages](#stages)), and with no automatic round left a person decides. A new commit on the branch gets `/nexkit review`, as when the head moved, which checks, reviews and merges it as usual. Checks that neither pass nor fail within six hours wait for a person. Otherwise a person merges it. The `maintain` job has `contents: write` for this; it never checks out the repository. |
 | GitHub refuses the automatic merge because the branch is behind its base branch, under protection that requires it to be up to date | With `conflicts.auto_resolve`, updates the branch from the base branch on GitHub and starts `/nexkit review` on the new commit, which checks, reviews and merges it as usual, at most `conflicts.max_rounds` times per pull request. GitHub starts no CI for that update when it is made with the Actions token, so required checks from the repository's own workflows run only with `publish.push_token_secret`; without it, the merge waits for them and then for a person. |
 | GitHub refuses the automatic merge for another reason (required approvals, a merge method the repository does not allow) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `fix.max_auto_rounds` remain, otherwise asks for a person. After failing checks, that round first merges the base branch when it has moved, so a failure the base branch already fixed costs no agent change. |
-| Checks fail only in commands, and tests, that fail on the default branch, while autopilot's `bug` issue about that is open | Starts no fix round: the round ends as `ci_waiting` and uses no automatic round. Once the workflow passes on the default branch again, or the `bug` issue is closed, a sweep starts the automatic fix round, which merges the default branch first. See [Failing checks the default branch has](#failing-checks-the-default-branch-has). |
+| Checks fail only in commands, and tests, that fail on the default branch, while autopilot's `bug` issue about that is open | Starts no fix round: the round ends as `ci_waiting` and uses no automatic round. Once the workflow passes on the default branch again, or the `bug` issue is closed, a sweep starts the automatic fix round, which merges the default branch first. See *Failing checks the default branch has* under [Stages](#stages). |
 | A check fails the same way before and after a fix round | The next automatic fix round is a diagnosis round, shown as `fix (auto, diagnosis)`: the agent names the cause, with evidence, before it changes code, then fixes that cause. Without a cause it changes nothing and ends as `blocked` with a question for a person; a change without a cause is rejected and publishes nothing. |
 | The review itself fails | Sets `nexkit/review` to error and says why in the round's comment. A transient error, or a review job that left no result, runs `/nexkit review` once more; otherwise comment `/nexkit review` to retry, after fixing the agent's secrets if it was an authentication error. |
 | NexKit itself fails in the `agent` or `review` job | Reports `NexKit stopped on <exception>` like an agent error; the job log has the traceback. |
@@ -1105,7 +1108,7 @@ in two rounds in a row, NexKit asks for the cause first.
   no further round.
 - When the round merged a base branch that had moved, and the agent changed nothing
   itself, the merge is published alone, as in any round after failing checks (see
-  [Failing checks the base branch fixed](#failing-checks-the-base-branch-fixed)): the
+  *Failing checks the base branch fixed* under [Stages](#stages)): the
   base branch may have fixed the failure, and the next checks show whether it did.
 - Repeated review findings do not start a diagnosis round: the review already tracks them
   through its *Previous round* section, and only checks give a failure signature to

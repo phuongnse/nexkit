@@ -119,7 +119,7 @@ class SweepTests(unittest.TestCase):
         return [d["inputs"]["number"] for d in self.gh.dispatches[before:]]
 
     def test_a_sweep_starts_the_round_of_a_conflicting_pull_request_once(self):
-        # Axis #977: `main` moved while a fix round ran, which held the conflict round
+        # `main` moved while a fix round ran, which held the conflict round
         # back; the round then stopped on an error. Nothing started it until a person did.
         self.round(6, 1, status="running")
         self.assertEqual(self.swept(), [])
@@ -340,7 +340,7 @@ class ConflictReportTests(ReportCase):
         self.assertIn("conflict rounds are used up", self.gh.run_comments(6)[-1]["body"])
 
     def test_the_end_of_any_round_starts_the_conflict_round_held_back_while_it_ran(self):
-        # Axis #971 and #977: `main` moved while a fix round ran, and the round stopped on
+        # `main` moved while a fix round ran, and the round stopped on
         # an error without trying a merge. Its end sweeps, which starts the conflict round,
         # also without autopilot.
         self.gh.pulls[6]["mergeable"] = False

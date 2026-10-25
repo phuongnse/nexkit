@@ -221,10 +221,13 @@ its reason. NexKit handles the refusals that pass: a base branch that moved mean
 tried again, required checks that have not passed yet are waited for by autopilot's
 sweeps (`merge_waiting`), a branch that must be up to date is updated and reviewed
 again with `conflicts.auto_resolve`, and a branch that someone pushed to after the round
-checked it ("Head branch was modified") gets `/nexkit review` on its new head. What is left is a rule that needs a person, such as
-a required approval, or required checks that failed or never reported within six hours.
-Merge the pull request yourself, or change the rule (see
-[Automatic merge](configuration.md#automatic-merge)).
+checked it ("Head branch was modified") gets `/nexkit review` on its new head. While the
+merge waits, a required check that fails gets an automatic fix round within
+`fix.max_auto_rounds`, and a new commit on the branch gets `/nexkit review`. What is left
+is a rule that needs a person, such as a required approval, required checks that neither
+passed nor failed within six hours, or a required check that failed with no automatic fix
+round left. Merge the pull request yourself, comment `/nexkit fix` on it, or change the
+rule (see [Automatic merge](configuration.md#automatic-merge)).
 
 **"Could not start `ci.yml`" after an automatic merge.** The merge happened; only the
 workflow did not start. Check that `.github/workflows/ci.yml` exists on the base branch

@@ -278,6 +278,13 @@ class GitHub:
         path = f"{self._repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
         return self.request("GET", path, params={"per_page": 100}).get("jobs") or []
 
+    def check_runs(self, sha):
+        """The latest check run of each name on a commit, such as the jobs of the workflow
+        runs that tested it: the first 100."""
+        path = f"{self._repo}/commits/{sha}/check-runs"
+        params = {"filter": "latest", "per_page": 100}
+        return self.request("GET", path, params=params).get("check_runs") or []
+
     def check_run_annotations(self, check_run_id):
         """The annotations of a check run, such as a job of a workflow run: the first 100."""
         return self.paginate(f"{self._repo}/check-runs/{check_run_id}/annotations", limit=100)

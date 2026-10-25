@@ -549,19 +549,117 @@ class MergeRefusalTests(ReportCase):
             lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
         self.assertIn("Could not merge the pull request of #6: GitHub API 502: Bad", lines)
 
-    def test_a_merge_waiting_whose_checks_fail_waits_for_a_person(self):
-        from nexkit import autopilot
-
+    def waiting_merge(self):
+        """An approved round of #6 whose merge waits for the required check `e2e`."""
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
         self.candidate()
         self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is in progress.')]
-        self.run_report(cfg=self.cfg)
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_waiting")
+        self.gh.dispatches.clear()
+
+    def e2e_fails(self):
+        """`e2e`, a job of the repository's CI, fails on the approved head in `make e2e`."""
+        self.gh.commit_checks[HEAD] = [
+            {"id": 77, "name": "e2e", "conclusion": "failure", "html_url": "https://job/77"},
+            {"id": 78, "name": "lint", "conclusion": "success", "html_url": "https://job/78"},
+        ]
+        self.gh.logs[77] = b"##[group]Run make e2e\n##[error]Process completed with exit code 1.\n"
+        self.gh.annotations[77] = [
+            {"annotation_level": "failure", "title": "Cart > empties", "path": "e2e/cart.spec.ts"}
+        ]
         self.gh.merge_error = GitHubError(405, 'Required status check "e2e" is failing.')
+
+    def test_a_merge_waiting_whose_required_check_fails_gets_an_automatic_fix_round(self):
+        from nexkit import autopilot
+        from nexkit.context import _after_failed_checks, _feedback
+        from nexkit.state import read_state
+
+        self.waiting_merge()
+        self.e2e_fails()
+        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        self.assertIn("#6: auto_fix.", lines)
+        row = self.gh.run_comments(6)[-1]
+        self.assertEqual((row["run"]["outcome"], row["run"]["status"]), ("auto_fix", "success"))
+        self.assertIn(
+            "Required check `e2e` failed on `ccccccc` while the merge waited for it. "
+            "Starting automatic fix round 1 of 2.",
+            row["body"],
+        )
+        [fix] = rounds_started(self.gh)
+        self.assertEqual(
+            fix["inputs"], {"command": "fix", "number": "6", "note": "", "auto": "true"}
+        )
+        # The round counts toward `fix.max_auto_rounds`, and its feedback names the check.
+        state = read_state(self.gh.comments(6))[1]
+        self.assertEqual(state["auto_fixes"], 1)
+        required = {
+            "name": "e2e",
+            "url": "https://job/77",
+            "commands": ["make e2e"],
+            "tests": ["cart.spec.ts::empties"],
+        }
+        self.assertEqual(state["feedback"]["required"], [required])
+        decision = {"pr": 6, "head": HEAD, "auto": True}
+        text = _feedback(self.gh, decision, self.gh.comments(6))
+        self.assertIn("### Required check `e2e` failed while the merge waited for it", text)
+        self.assertIn("Commands that failed in it: `make e2e`.", text)
+        # Like any automatic round after failing checks, it merges a base that moved first.
+        self.assertTrue(_after_failed_checks(decision, self.gh.comments(6)))
+        self.assertFalse(self.gh.comments_matching(6, "@olivia"))
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+
+    def test_a_merge_waiting_whose_required_check_fails_without_rounds_left_waits(self):
+        from nexkit import autopilot, progress
+        from nexkit.state import read_state
+
+        self.waiting_merge()
+        comment_id, state = read_state(self.gh.comments(6))
+        state["auto_fixes"] = 2
+        progress.save_state(self.gh, 6, comment_id, state)
+        self.e2e_fails()
         autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
         row = self.gh.run_comments(6)[-1]["run"]
-        self.assertEqual(row["outcome"], "merge_refused")
+        self.assertEqual(row["outcome"], "needs_human")
+        self.assertIn("no automatic fix rounds remain", row["attention"])
+        self.assertFalse(rounds_started(self.gh))
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 2)
         self.assertTrue(self.gh.comments_matching(6, "@olivia a person is needed"))
+
+    def test_a_merge_waiting_whose_checks_never_pass_waits_for_a_person_after_hours(self):
+        from datetime import timedelta
+
+        from nexkit import autopilot
+
+        self.waiting_merge()
+        later = datetime.now(UTC) + timedelta(hours=7)
+        [step] = [s for s in autopilot.preview(self.gh, self.cfg)[1] if s["number"] == 5]
+        self.assertEqual(step["state"], "merge")
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
+        self.assertIn("have not passed for hours", step["reason"])
+
+    def test_a_new_commit_on_a_merge_waiting_pull_request_is_reviewed(self):
+        from nexkit import autopilot
+
+        self.waiting_merge()
+        self.gh.pulls[6]["head"]["sha"] = "e" * 40
+        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        self.assertIn(
+            "Started /nexkit review on #6: pull request #6 got the new commit `eeeeeee` while "
+            "its merge waited for required checks.",
+            lines,
+        )
+        [review] = rounds_started(self.gh)
+        self.assertEqual(
+            review["inputs"], {"command": "review", "number": "6", "note": "", "auto": "true"}
+        )
+        self.assertFalse(self.gh.merged)
+        # It starts once: the next sweep waits for it, and nobody is mentioned.
+        autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        self.assertEqual(len(rounds_started(self.gh)), 1)
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+        self.assertFalse(self.gh.comments_matching(6, "@olivia"))
 
     def test_a_branch_behind_its_base_is_updated_and_reviewed_again(self):
         self.candidate()

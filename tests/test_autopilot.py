@@ -2380,6 +2380,66 @@ class CIWaitTests(AutopilotCase):
         self.assertEqual(self.report_round(5, pull, tests=tests)["outcome"], "auto_fix")
         self.assertNotIn("ci_wait", self.state(pull))
 
+    def test_a_required_check_failing_as_main_does_while_a_merge_waits_waits_too(self):
+        from nexkit.context import _after_failed_checks
+        from nexkit.github import GitHubError
+
+        # Issue 5's and issue 7's approved pull requests wait for the required check
+        # `Unit tests`, a job of `ci.yml`, which then fails in `make test`: for #10 in the
+        # test that fails on `main`, for #11 in a test of its own.
+        heads = {10: self.HEAD, 11: "d" * 40}
+        failing = ((5, 10, "Orders > adds tax", "orders"), (7, 11, "Cart > empties", "cart"))
+        for issue, pull, title, file in failing:
+            self.gh.add_pull(pull, issue, head_sha=heads[pull])
+            run = {
+                "round": 1,
+                "trigger": "implement (autopilot)",
+                "status": "success",
+                "outcome": "merge_waiting",
+                "head": heads[pull],
+                "waiting_since": autopilot.iso(datetime.now(UTC)),
+            }
+            self.gh.comment(pull, render_run(run))
+            job = 900 + pull
+            self.gh.commit_checks[heads[pull]] = [
+                {"id": job, "name": "Unit tests", "conclusion": "failure", "html_url": "https://j"}
+            ]
+            self.gh.logs[job] = self.LOG.encode()
+            path = f"web/src/{file}.test.ts"
+            self.gh.annotations[job] = [
+                {"annotation_level": "failure", "title": title, "path": path}
+            ]
+        self.gh.merge_error = GitHubError(405, 'Required status check "Unit tests" is failing.')
+        lines = self.sweep(self.cfg)
+        self.assertIn("#10: ci_waiting.", lines)
+        self.assertIn("#11: auto_fix.", lines)
+        self.assertEqual(
+            self.fixes(), [{"command": "fix", "number": "11", "note": "", "auto": "true"}]
+        )
+        self.assertEqual(self.state(11)["auto_fixes"], 1)
+        # #10 waits for the bug issue, using no round, and nobody is needed.
+        state = self.state(10)
+        self.assertEqual((state["auto_fixes"], state["ci_wait"]["bug"]), (0, self.bug))
+        [round_] = self.gh.run_comments(10)
+        self.assertEqual(round_["run"]["outcome"], "ci_waiting")
+        self.assertIn(f"which #{self.bug} is about", round_["body"])
+        [step] = [s for s in autopilot.preview(self.gh, self.cfg)[1] if s["number"] == 5]
+        self.assertEqual((step["state"], step["person"]), ("waits", False))
+        self.sweep(self.cfg)
+        self.assertEqual(len(self.fixes()), 1)
+        # `ci.yml` passes on `main` again: #10 gets the counted round, which merges `main`.
+        self.ci_run("success", 52)
+        self.sweep(self.cfg)
+        self.assertEqual(
+            self.fixes()[1:], [{"command": "fix", "number": "10", "note": "", "auto": "true"}]
+        )
+        self.assertEqual(self.state(10)["auto_fixes"], 1)
+        inputs = self.fixes()[1]
+        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        self.assertTrue(_after_failed_checks(decision, self.gh.comments(10)))
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+        self.assertFalse(self.gh.comments_matching(10, "@olivia"))
+
     def test_without_test_names_on_either_side_the_command_decides(self):
         decision = {"issue": 5, "base": "main"}
 

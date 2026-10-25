@@ -789,7 +789,7 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
             return _step(issue, "waits", reason)
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") == "merge_waiting":
-        return _merge_step(gh, issue, pull, comment, latest, now)
+        return _merge_step(gh, issue, pull, comment, latest, start, now)
     if latest.get("outcome") == CI_WAITING:
         return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start)
     if latest.get("status") == FAILURE:
@@ -806,12 +806,21 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
     return _step(issue, "active", f"pull request #{pull} is open")
 
 
-def _merge_step(gh, issue, pull, comment, run, now):
+def _merge_step(gh, issue, pull, comment, run, start, now):
     """The step for a pull request whose merge waits for required checks: try the merge
-    again while its head is the one approved, for at most `LOST`."""
+    again while its head is the one approved, for at most `LOST`. A new commit on its
+    branch gets `/nexkit review`, as a merge refused because the branch moved does. A
+    required check that failed gets an automatic fix round when the sweep tries the merge
+    (see `report.merge_waiting`)."""
     details = gh.pull(pull)
-    if details["head"]["sha"] != run.get("head"):
-        return _step(issue, "waits", f"pull request #{pull} changed after its approval")
+    head = details["head"]["sha"]
+    if head != run.get("head"):
+        reason = (
+            f"pull request #{pull} got the new commit `{head[:7]}` while its merge waited for "
+            "required checks"
+        )
+        fields = {**start, "target": pull, "auto": "true"}
+        return _step(issue, "start", reason, command="review", **fields)
     since = parse_iso(run.get("waiting_since"))
     if since and now - since > LOST:
         reason = f"the required checks of pull request #{pull} have not passed for hours"
@@ -1902,6 +1911,48 @@ def ci_wait_message(wait):
         f"automatic fix round, which merges `{branch}` first. Waiting uses no automatic fix "
         "round."
     )
+
+
+def failed_checks(gh, head, names):
+    """The required checks that failed on the commit `head` while its merge waited for
+    them: [{name, url, commands, tests}]. `names` are the checks GitHub's refusal names;
+    without them, every check run of the commit that failed. The check run of a GitHub
+    Actions job is that job, so its log and error annotations give the commands of its
+    `run` steps that failed and the tests the annotations name, as for a red default
+    branch (see `_failed_jobs`). A check that is no check run, such as a commit status,
+    has neither, nor has one that cannot be read."""
+    try:
+        runs = [run for run in gh.check_runs(head) if run.get("conclusion") in FAILED]
+    except GitHubError:
+        runs = []
+    wanted = list(dict.fromkeys(names)) or list(
+        dict.fromkeys(run["name"] for run in runs if run.get("name"))
+    )
+    found = []
+    for name in wanted:
+        item = {"name": name, "url": "", "commands": [], "tests": []}
+        run = next((run for run in runs if run.get("name") == name), None)
+        if run and run.get("id"):
+            item["url"] = run.get("html_url") or ""
+            item["commands"] = failed_commands(_job_log(gh, run))
+            try:
+                notes = gh.check_run_annotations(run["id"])
+            except GitHubError:
+                notes = []
+            item["tests"] = list(dict.fromkeys(filter(None, map(_annotated_test, notes))))
+        found.append(item)
+    return found
+
+
+def as_checks(failed):
+    """The required checks of `failed_checks` as the checks `ci_wait` compares: one for
+    each failed command, and one without a command, which fails as nothing on the default
+    branch does, for a check whose commands are not known."""
+    return [
+        {"name": item["name"], "passed": False, "run": command, "failed_tests": item["tests"]}
+        for item in failed
+        for command in item["commands"] or [""]
+    ]
 
 
 def ci_wait_over(gh, wait):

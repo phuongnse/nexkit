@@ -120,6 +120,7 @@ class FakeGitHub:
         self.jobs = {}  # run id, or (run id, attempt) -> jobs
         self.attempts = {}  # (run id, attempt) -> conclusion; others: the run's own
         self.annotations = {}  # job id -> its annotations
+        self.commit_checks = {}  # commit sha -> its check runs
         self.logs = {}  # job id -> its log, as bytes
         self.run_artifact_list = {}  # run id -> its artifacts
         self.zips = {}  # artifact id -> its zip, as bytes
@@ -321,6 +322,8 @@ class FakeGitHub:
             for comment in comments:
                 if comment["id"] == comment_id:
                     comment["body"] = body
+                    # GitHub moves `updated_at` with each edit.
+                    comment["updated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
                     return comment
         raise KeyError(comment_id)
 
@@ -366,6 +369,9 @@ class FakeGitHub:
     def attempt_jobs(self, run_id, attempt):
         self.calls.append(("jobs", run_id, attempt))
         return list(self.jobs.get((run_id, attempt), self.jobs.get(run_id, [])))
+
+    def check_runs(self, sha):
+        return list(self.commit_checks.get(sha, []))
 
     def check_run_annotations(self, check_run_id):
         self.calls.append(("annotations", check_run_id))

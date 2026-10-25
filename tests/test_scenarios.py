@@ -495,6 +495,44 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
+    def test_a_required_check_that_fails_while_a_merge_waits_gets_a_fix_round(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.merge_error = [
+            GitHubError(405, 'Required status check "e2e" is expected.'),
+            GitHubError(405, 'Required status check "e2e" is failing.'),
+        ]
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual([outcome for *_, outcome in pipe.played[1:]], ["merge_waiting", "merged"])
+        rounds = [run for _, run in run_comments(pipe.gh.comments(6))]
+        self.assertEqual(rounds[0]["outcome"], "auto_fix")
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_a_new_commit_while_a_merge_waits_is_reviewed_and_merged(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual([outcome for *_, outcome in pipe.played], ["planned", "merge_waiting"])
+        # A person pushes to the branch, and the checks of the new commit pass.
+        pipe.head(6)
+        pipe.gh.merge_error = None
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+        self.assertEqual(pipe.played[-1][2], "merged")
+        self.assertEqual(pipe.gh.merged[0][1], pipe.gh.pulls[6]["head"]["sha"])
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
     def test_axis_1129_a_base_branch_move_waits_for_the_implement_round(self):
         pushed = []
 

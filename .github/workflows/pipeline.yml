@@ -412,7 +412,7 @@ jobs:
       issues: write # close parent issues; mark paused runs as resumed; autopilot's issues
       pull-requests: write # paused runs on pull requests; close a pull request a split supersedes
       actions: write # resume paused commands, start conflict rounds and autopilot's commands
-      checks: read # the annotations that name the failures of flaky runs
+      checks: read # failures of flaky runs; the failed required checks of a merge that waits
       statuses: write # the pending statuses of a round that ended without a report
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

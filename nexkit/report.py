@@ -674,6 +674,9 @@ CHECKS_PENDING = re.compile(
     r"required status checks? .*\b(?:is|are) (?:expected|pending|in progress|queued)", re.I
 )
 BEHIND = re.compile(r"out of date|not up to date|is behind", re.I)
+# Required checks that failed, while the merge waited for them, and the checks named.
+CHECKS_FAILING = re.compile(r"required status checks?\b.*\b(?:failing|failed)\b", re.I)
+CHECK_NAME = re.compile(r'"([^"]+)"')
 # How often a merge refused because the base branch was modified is tried, and the seconds
 # before the first try again; each later try waits that much longer.
 MERGE_TRIES = 3
@@ -723,7 +726,8 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     """(outcome, message) after GitHub refused the merge: a conflict round for a conflict,
     `merge_waiting` for required checks that have not passed yet, which autopilot's next
     sweeps merge, an update of a branch that is behind with a review of the new commit,
-    and otherwise `merge_refused` for a person."""
+    and otherwise `merge_refused` for a person. While the merge waits (`target["waiting"]`),
+    required checks that failed get an automatic fix round (see `_required_failed`)."""
     pr, base = target["pr"], target["base"]
     message += f" Automatic merge was not possible: {exc}"
     auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]
@@ -732,6 +736,8 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
         if started.startswith("Started"):
             return "conflict_fix", f"{message}\n\nIt conflicts with `{base}`. {started}"
         return "merge_refused", f"{message}\n\n{started}" if started else message
+    if target.get("waiting") and CHECKS_FAILING.search(str(exc)):
+        return _required_failed(gh, cfg, target, row, message, exc, workflow, default_branch)
     if CHECKS_PENDING.search(str(exc)):
         if not _swept(gh, cfg, target["issue"]):
             line = "Required checks have not passed yet. Merge it once they pass."
@@ -747,6 +753,51 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     if HEAD_MODIFIED.search(str(exc)):
         return _head_moved(gh, target, message, workflow, default_branch)
     return "merge_refused", message
+
+
+def _required_failed(gh, cfg, target, row, message, exc, workflow, default_branch):
+    """(outcome, message) after required checks failed while the merge waited for them:
+    an automatic fix round within `fix.max_auto_rounds`, as after failing checks of a
+    round, unless they fail as the default branch does while autopilot's bug issue about
+    that is open (`ci_waiting`, see `autopilot.ci_wait`). The state comment keeps the
+    failed checks for the fix round, which merges a base branch that has moved first."""
+    pr, head = target["pr"], target["head"]
+    failed = autopilot.failed_checks(gh, head, CHECK_NAME.findall(str(exc)))
+    comment_id, state = read_state(gh.comments(pr))
+    state = state or empty_state(target["issue"])
+    state["feedback"] = {**(state.get("feedback") or {"head": head}), "required": failed}
+    what = _failed_line(failed, head)
+    limit = cfg["fix"]["max_auto_rounds"]
+    if state["auto_fixes"] >= limit:
+        progress.save_state(gh, pr, comment_id, state)
+        line = (
+            "No automatic fix rounds remain. Comment `/nexkit fix <instructions>`, push a "
+            "commit yourself, or close the PR."
+        )
+        return "needs_human", f"{message}\n\n{what} {line}"
+    decision = {"base": target["base"], "issue": target["issue"]}
+    wait = _ci_wait(gh, cfg, decision, autopilot.as_checks(failed), default_branch)
+    if wait:
+        state["ci_wait"] = row["ci_wait"] = wait
+        progress.save_state(gh, pr, comment_id, state)
+        return autopilot.CI_WAITING, f"{message}\n\n{what} {autopilot.ci_wait_message(wait)}"
+    gh.dispatch(
+        workflow, default_branch, {"command": "fix", "number": str(pr), "note": "", "auto": "true"}
+    )
+    state["auto_fixes"] += 1
+    progress.save_state(gh, pr, comment_id, state)
+    line = f"Starting automatic fix round {state['auto_fixes']} of {limit}."
+    return "auto_fix", f"{message}\n\n{what} {line}"
+
+
+def _failed_line(failed, head):
+    """What the round's comment says of the required checks that failed on `head`."""
+    if not failed:
+        return f"A required check failed on `{head[:7]}` while the merge waited for it."
+    names = ", ".join(f"`{item['name']}`" for item in failed)
+    if len(failed) == 1:
+        return f"Required check {names} failed on `{head[:7]}` while the merge waited for it."
+    return f"Required checks {names} failed on `{head[:7]}` while the merge waited for them."
 
 
 def _head_moved(gh, target, message, workflow, default_branch):
@@ -834,12 +885,15 @@ def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
 
 def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
     """Try the merge again for a pull request whose required checks had not passed, from
-    an autopilot sweep. The round's comment shows what happened. Returns a line for the log."""
+    an autopilot sweep. A required check that failed meanwhile gets an automatic fix round
+    (see `_required_failed`). The round's comment shows what happened. Returns a line for
+    the log."""
     pr = step["pull"]
     for comment, run in run_comments(gh.comments(pr)):
         if comment["id"] != step["round_comment"]:
             continue
         target = {"pr": pr, "head": run["head"], "issue": step["number"], "base": step["base"]}
+        target["waiting"] = True
         outcome, text = merge_pull(gh, cfg, target, run, "", workflow, default_branch)
         if outcome == "merge_waiting":
             return f"#{pr} still waits for its required checks."

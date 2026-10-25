@@ -64,7 +64,7 @@ their defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see [How it works](how-it-works.md#failing-checks-the-base-branch-fixed). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
+| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings, or after a required check failed while an automatic merge waited for it (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see [How it works](how-it-works.md#failing-checks-the-base-branch-fixed). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
 | `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves, unless it leaves a criterion for a person to confirm. Branch protection still applies. See [Automatic merge](#automatic-merge). |
 | `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
@@ -452,7 +452,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 | An issue that autopilot opened for a failure of flaky runs on the default branch | Goes right after those bug issues. |
 | Anything else that needs a person: other questions, a failed run that nothing answered since, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, a second plan that is too large and suggests no parts, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
 | A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
-| Its pull request is approved, and GitHub refused the merge until required checks pass | Tries the merge again, and merges once the checks pass. |
+| Its pull request is approved, and GitHub refused the merge until required checks pass | Tries the merge again, and merges once the checks pass. A required check that fails gets an automatic fix round within `fix.max_auto_rounds`, unless it fails as the default branch does while its bug issue is open; a new commit gets `/nexkit review`. Checks that neither pass nor fail within six hours wait for a person. |
 | Its pull request waits for a bug issue about the default branch, whose failure its checks repeat | Nothing while that workflow fails on the default branch and the bug issue is open; then starts the automatic fix round the pull request waited for. It keeps its place within `max_parallel`. |
 | The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. With `null`, the same for the last open issue of each milestone, while the other milestones go on. |
 
@@ -529,7 +529,8 @@ every open issue in scope, in order, and starts the one command that moves it on
   When a later attempt of that run passes, for example because a person ran it again, a
   comment on the issue says which attempt passed. While that issue is open, a pull request
   into the default branch whose failing checks all fail as the workflow's latest failed
-  attempt did gets no automatic fix round: it waits, using none of
+  attempt did, or whose required checks do while its merge waits for them, gets no
+  automatic fix round: it waits, using none of
   `fix.max_auto_rounds`, and `nexkit status` shows it as `waiting` for that issue. Once
   the workflow passes on the default branch again, or the issue is closed, a sweep starts
   its automatic fix round, which merges the default branch first. A check fails the same

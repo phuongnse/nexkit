@@ -1798,6 +1798,25 @@ class CITests(AutopilotCase):
         maintain_({"action": "maintain", "task": "ci", "workflow": "ci.yml", "run": 50})
         self.assertEqual(len(self.sweeps()), 1)
 
+    def test_a_finished_run_is_acted_on_when_its_own_last_job_starts_a_sweep(self):
+        # The `nexkit-sweep` job that ends an after-merge workflow dispatches a sweep, which
+        # the Actions token may do, while its own run still runs; the sweep waits for it.
+        run = self.ci_run()
+        self.gh.runs[50] = {**run, "status": "in_progress"}
+        inputs = {"command": "autopilot", "number": "autopilot", "note": "after run 50"}
+        decision = route(self.gh, "workflow_dispatch", {}, inputs)
+        self.assertEqual(decision, {"action": "maintain", "task": "sweep", "after": 50})
+
+        def ended(_seconds):
+            self.gh.runs[50] = run
+
+        with mock.patch("nexkit.maintain.time.sleep", side_effect=ended):
+            lines = maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(
+            lines[:2], ["Run 50 ended.", "Running the failed jobs of `ci.yml` on `main` again."]
+        )
+        self.assertEqual(self.gh.reruns, [50])
+
     def test_a_finished_run_on_the_default_branch_is_acted_on_at_the_end_of_the_next_run(self):
         # GitHub sends no workflow_run event for a run that the Actions token started, such
         # as one NexKit starts after its merge. The end of the next NexKit run notices it,

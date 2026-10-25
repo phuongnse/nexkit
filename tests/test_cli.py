@@ -314,6 +314,92 @@ class InitDoctorTests(unittest.TestCase):
         failed = [m for ok, m in scaffold.doctor(self.root) if not ok and "workflow_run" in m]
         self.assertIn("does not let 'workflow_run' events through its 'if'", failed[0])
 
+    def test_doctor_checks_that_each_workflow_after_a_merge_starts_a_sweep_when_it_ends(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["merge"]["after_workflows"] = ["ci.yml", "e2e.yml"]
+        cfg["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(cfg))
+        workflows = self.root / ".github/workflows"
+        ci = (
+            "name: CI\non: [push, workflow_dispatch]\njobs:\n"
+            "  test:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make test\n"
+            "  lint:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make lint\n"
+        )
+        (workflows / "ci.yml").write_text(ci)
+        # One that calls another workflow may start the sweep there: doctor cannot tell.
+        e2e = "on: [workflow_dispatch]\njobs:\n  e2e:\n    uses: ./.github/workflows/x.yml\n"
+        (workflows / "e2e.yml").write_text(e2e)
+
+        def sweeps():
+            return [(ok, m) for ok, m in scaffold.doctor(self.root) if "sweep when" in m]
+
+        self.assertEqual(
+            sweeps(),
+            [
+                (
+                    False,
+                    "merge.after_workflows: ci.yml has no job that starts an autopilot sweep "
+                    "when it ends, so a failure in a run NexKit started after its merge waits "
+                    "for the end of the next NexKit run or the hourly schedule; see "
+                    "docs/configuration.md#autopilot or 'nexkit init --after-workflow ci.yml'",
+                ),
+                (
+                    True,
+                    "merge.after_workflows: could not tell whether e2e.yml starts an autopilot "
+                    "sweep when it ends, since it calls another workflow; see "
+                    "docs/configuration.md#autopilot or 'nexkit init --after-workflow e2e.yml'",
+                ),
+            ],
+        )
+        job = scaffold.sweep_job(self.root, "ci.yml")
+        self.assertIn("    needs: [test, lint]\n", job)
+        (workflows / "ci.yml").write_text(ci + job)
+        ok = (True, "merge.after_workflows: ci.yml starts an autopilot sweep when it ends")
+        self.assertIn(ok, sweeps())
+        # Needs as a list of lines count too.
+        listed = job.replace("needs: [test, lint]", "needs:\n      - test\n      - lint")
+        (workflows / "ci.yml").write_text(ci + listed)
+        self.assertIn(ok, sweeps())
+        # A job that does not wait for every other one starts the sweep too early.
+        (workflows / "ci.yml").write_text(ci + job.replace("[test, lint]", "[test]"))
+        [(found, message), _] = sweeps()
+        self.assertFalse(found)
+        self.assertIn("the job 'nexkit-sweep' of ci.yml does not need lint", message)
+        (workflows / "ci.yml").write_text(ci + job.replace("always() && ", ""))
+        self.assertIn("has no 'if: always()'", sweeps()[0][1])
+        # Without autopilot, nothing reads the sweep.
+        cfg["autopilot"] = {"enabled": False}
+        path.write_text(json.dumps(cfg))
+        self.assertEqual(sweeps(), [])
+
+    def test_init_offers_the_trigger_and_the_job_for_workflows_after_a_merge(self):
+        workflows = self.root / ".github/workflows"
+        workflows.mkdir(parents=True)
+        ci = "name: CI tests\non: [push, workflow_dispatch]\njobs:\n  test:\n    runs-on: x\n"
+        (workflows / "ci.yml").write_text(ci)
+        out = io.StringIO()
+        args = ["init", "--repo", str(self.root), "--check", "test=true"]
+        with contextlib.redirect_stdout(out):
+            cli.main([*args, "--after-workflow", "ci.yml"])
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(cfg["merge"]["after_workflows"], ["ci.yml"])
+        workflow = (workflows / "nexkit.yml").read_text()
+        self.assertIn('workflows: ["CI tests"]', scaffold.trigger(workflow, "workflow_run"))
+        job = scaffold.sweep_job(self.root, "ci.yml")
+        self.assertIn("add this job to .github/workflows/ci.yml, so a sweep", out.getvalue())
+        self.assertIn(job, out.getvalue())
+        (workflows / "ci.yml").write_text(ci + job)
+        cfg["autopilot"] = {"enabled": True}
+        (self.root / ".nexkit/config.json").write_text(json.dumps(cfg))
+        findings = scaffold.doctor(self.root)
+        for ok in (
+            "Finished runs of merge.after_workflows on the default branch start sweeps",
+            "merge.after_workflows: ci.yml starts an autopilot sweep when it ends",
+        ):
+            self.assertIn((True, ok), findings)
+
     def test_init_listens_to_pushes_to_the_default_branch(self):
         git(self.root, "init", "-q", "-b", "trunk")
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])

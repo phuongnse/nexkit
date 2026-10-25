@@ -115,9 +115,10 @@ files or repository settings, and wait for confirmation.
    If the user wants `"merge": {"auto": true}`, say that branch protection still applies,
    that a pull request whose review could not verify an acceptance criterion waits for a
    person, and that a merge by NexKit starts no `push` CI on the base branch. Offer to list those CI
-   workflows in `merge.after_workflows` (for example `["ci.yml"]`) so NexKit starts them
-   after each merge; each one needs a `workflow_dispatch` trigger, which is a change the
-   user makes to that workflow file.
+   workflows in `merge.after_workflows` (for example `["ci.yml"]`, or
+   `nexkit init --after-workflow ci.yml`) so NexKit starts them after each merge; each one
+   needs a `workflow_dispatch` trigger, which is a change the user makes to that workflow
+   file.
 
    Offer `"notify": ["<login>"]` so the user gets a GitHub notification when a run needs
    a person, for example a plan with questions or a pull request ready to merge.
@@ -147,8 +148,11 @@ files or repository settings, and wait for confirmation.
    failed CI run on the default branch once more and, if it fails again, opens a `bug`
    issue that it plans first; runs that passed only when run again are recorded on their
    own `bug` issue, planned next. Then also add the `workflow_run` trigger that names
-   those workflows by their `name:`, as `.github/workflows/nexkit.yml` shows in a comment
-   and the configuration docs explain, so a finished run starts a sweep within minutes.
+   those workflows by their `name:` (`nexkit init --after-workflow` writes it), and offer
+   to add the `nexkit-sweep` job that `nexkit init --after-workflow` prints to the end of
+   each of those workflows, with the user's agreement since it changes their CI: GitHub
+   sends no `workflow_run` event for the runs NexKit starts after its merges, and that
+   job starts the sweep instead, so a failure is noticed within minutes.
    A command that autopilot started and that never ran starts once more after
    `"lost_after_minutes"` (30 by default).
    With `autopilot` or `conflicts.auto_resolve`, recommend the push token above with

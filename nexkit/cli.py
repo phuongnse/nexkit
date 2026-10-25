@@ -65,9 +65,17 @@ def cmd_init(args):
         check_results=args.check_results,
         notify=args.notify,
         evidence=args.evidence_artifact,
+        after_workflows=args.after_workflow,
     )
     for path in written:
         print(f"wrote {path}")
+    for name in dict.fromkeys(args.after_workflow):
+        # NexKit never edits another workflow; it shows the job to add.
+        print(
+            f"With autopilot, add this job to .github/workflows/{name}, so a sweep looks at "
+            f"each of its runs on the default branch as soon as it ends:\n"
+        )
+        print(scaffold.sweep_job(Path(args.repo), name))
     print(
         "Next: review the files, set the secret each agent in .nexkit/config.json names "
         "(gh secret set CLAUDE_CODE_OAUTH_TOKEN), commit both files to the default branch, "
@@ -471,6 +479,14 @@ def build_parser():
         default=[],
         metavar="NAME",
         help="An artifact of CI runs that implement and fix rounds download; repeat for more",
+    )
+    p.add_argument(
+        "--after-workflow",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="A workflow file, such as ci.yml, to start after a merge (merge.after_workflows); "
+        "repeat for more",
     )
     p.add_argument(
         "--model",

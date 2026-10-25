@@ -17,8 +17,45 @@ KIT_REPOSITORY = "phuongnse/nexkit"
 WORKFLOW_PATH = ".github/workflows/nexkit.yml"
 
 
-def workflow_text(kit_repo, kit_ref, default_branch="main"):
+# What the template holds in place of the `workflow_run` trigger, and what replaces it when
+# `nexkit init` knows the names of the workflows in merge.after_workflows.
+WORKFLOW_RUN_COMMENT = (
+    "  # workflow_run:\n"
+    "  #   workflows: [CI]\n"
+    "  #   types: [completed]\n"
+    "  #   branches: [__DEFAULT_BRANCH__]\n"
+)
+WORKFLOW_RUN = (
+    "  workflow_run:\n"
+    "    workflows: [{names}]\n"
+    "    types: [completed]\n"
+    "    branches: [__DEFAULT_BRANCH__]\n"
+)
+# The job that each workflow of merge.after_workflows ends with: a dispatch of a sweep,
+# which the Actions token may send, unlike the `workflow_run` event of a run it started.
+SWEEP_JOB = "nexkit-sweep"
+SWEEP_JOB_TEXT = """\
+  nexkit-sweep:
+    # NexKit autopilot looks at this run as soon as it ends (docs/configuration.md).
+    needs: [{needs}]
+    if: always() && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - run: >-
+          gh workflow run {workflow} --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+          -f command=autopilot -f number=autopilot -f note="after run $GITHUB_RUN_ID"
+        env:
+          GH_TOKEN: ${{{{ github.token }}}}
+"""
+
+
+def workflow_text(kit_repo, kit_ref, default_branch="main", after_names=()):
     template = resources.files("nexkit").joinpath("templates/workflow.yml").read_text()
+    if after_names:
+        names = ", ".join(json.dumps(name) for name in after_names)
+        template = template.replace(WORKFLOW_RUN_COMMENT, WORKFLOW_RUN.format(names=names))
     for name, value in (
         ("__KIT_REPO__", kit_repo),
         ("__KIT_REF__", kit_ref),
@@ -99,6 +136,7 @@ def init(
     check_results=(),
     notify=(),
     evidence=(),
+    after_workflows=(),
 ):
     root = Path(root)
     config_path = root / configuration.CONFIG_PATH
@@ -123,12 +161,16 @@ def init(
         raw["notify"] = list(dict.fromkeys(login.lstrip("@") for login in notify))
     if evidence:
         raw["evidence"] = {"artifacts": list(dict.fromkeys(evidence))}
+    after_workflows = list(dict.fromkeys(after_workflows))
+    if after_workflows:
+        raw["merge"]["after_workflows"] = after_workflows
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")
     workflow_path.parent.mkdir(parents=True, exist_ok=True)
+    names = [workflow_name(root, name) or f".github/workflows/{name}" for name in after_workflows]
     workflow_path.write_text(
-        workflow_text(kit_repo, kit_ref or f"v{__version__}", default_branch_of(root))
+        workflow_text(kit_repo, kit_ref or f"v{__version__}", default_branch_of(root), names)
     )
     return [configuration.CONFIG_PATH, WORKFLOW_PATH]
 
@@ -183,6 +225,85 @@ def workflow_name(root, name):
     if not match:
         return f".github/workflows/{name}"
     return match.group(1).strip("'\"")
+
+
+def workflow_jobs(text):
+    """{job id: its lines} of a workflow's `jobs:` block, comments removed."""
+    text = _uncommented(text)
+    body = text.split("\njobs:", 1)[1] if "\njobs:" in text else ""
+    return dict(re.findall(r"^  ([\w-]+):[ \t]*\n((?:    .*\n|[ \t]*\n)*)", body + "\n", re.M))
+
+
+def _needs(job):
+    """The jobs that a job's `needs` names."""
+    match = re.search(r"^    needs:[ \t]*(.*)$", job, re.M)
+    if not match:
+        return []
+    value = match.group(1).strip()
+    if value:
+        return [n.strip(" '\"") for n in value.strip("[]").split(",") if n.strip(" '\"")]
+    found = []
+    for line in job[match.end() :].split("\n")[1:]:
+        item = re.match(r"      - [ '\"]*([\w-]+)", line)
+        if not item:
+            break
+        found.append(item.group(1))
+    return found
+
+
+def sweep_job(root, name):
+    """The job that the workflow `name` of merge.after_workflows adds, needing its other
+    jobs, so it ends the run."""
+    path = root / ".github/workflows" / name
+    text = path.read_text(errors="replace") if path.is_file() else ""
+    others = [job for job in workflow_jobs(text) if job != SWEEP_JOB] or ["<each other job>"]
+    workflow = Path(WORKFLOW_PATH).name
+    return SWEEP_JOB_TEXT.format(needs=", ".join(others), workflow=workflow)
+
+
+def _sweep_job(root, name):
+    """A finding: the workflow `name` of merge.after_workflows ends with a job that starts
+    an autopilot sweep. A finding that is no failure when doctor cannot tell."""
+    path = root / ".github/workflows" / name
+    if not path.is_file():
+        return []
+    jobs = workflow_jobs(path.read_text(errors="replace"))
+    workflow = re.escape(Path(WORKFLOW_PATH).name)
+    starts = [
+        job
+        for job, lines in jobs.items()
+        if re.search(workflow, lines) and re.search(r"command\W{1,4}autopilot", lines)
+    ]
+    hint = f"see docs/configuration.md#autopilot or 'nexkit init --after-workflow {name}'"
+    if not starts:
+        if any(re.search(r"^    uses:", lines, re.M) for lines in jobs.values()):
+            return [
+                (
+                    True,
+                    f"merge.after_workflows: could not tell whether {name} starts an "
+                    f"autopilot sweep when it ends, since it calls another workflow; {hint}",
+                )
+            ]
+        return [
+            (
+                False,
+                f"merge.after_workflows: {name} has no job that starts an autopilot sweep when "
+                "it ends, so a failure in a run NexKit started after its merge waits for the "
+                f"end of the next NexKit run or the hourly schedule; {hint}",
+            )
+        ]
+    job = jobs[starts[0]]
+    missing = [other for other in jobs if other not in (*starts, *_needs(job))]
+    if "always()" not in job or missing:
+        why = f"does not need {', '.join(missing)}" if missing else "has no 'if: always()'"
+        return [
+            (
+                False,
+                f"merge.after_workflows: the job '{starts[0]}' of {name} {why}, so it does not "
+                f"start the sweep when the run ends; {hint}",
+            )
+        ]
+    return [(True, f"merge.after_workflows: {name} starts an autopilot sweep when it ends")]
 
 
 def _ci_trigger(root, cfg, workflow):
@@ -369,6 +490,8 @@ def _triggers(root, cfg, workflow):
     if cfg["autopilot"]["enabled"]:
         findings.append(_autopilot_triggers(cfg, workflow))
         findings += _ci_trigger(root, cfg, workflow)
+        for name in cfg["merge"]["after_workflows"]:
+            findings += _sweep_job(root, name)
     if cfg["usage_limit"]["resume"]:
         if trigger(workflow, "schedule") is None:
             findings.append(

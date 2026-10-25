@@ -383,6 +383,10 @@ branch with `workflow_dispatch`:
 
 - Each workflow needs a `workflow_dispatch` trigger without required inputs, for example
   `on: {push: {branches: [main]}, pull_request: {}, workflow_dispatch: {}}`.
+  `nexkit init --after-workflow FILE`, repeated for each file, sets the list.
+- With autopilot, each workflow also ends with a job that starts a sweep, so a failure is
+  noticed within minutes; see *When a finished run is noticed* under
+  [Autopilot](#autopilot).
   `nexkit doctor` warns when a listed file is missing or has no such trigger.
 - The run uses the base branch's newest commit when it starts, normally the merge commit.
   Its event is `workflow_dispatch`, so steps limited to `push` events are skipped.
@@ -541,10 +545,11 @@ every open issue in scope, in order, and starts the one command that moves it on
   at the runs of the last day, including the first sweep after an upgrade, and at the
   runs a `bug` issue reports. Reading annotations needs `checks: read` in the workflow's
   permissions, as `nexkit init` writes them.
-- **When a finished run is noticed.** Within minutes, through a `workflow_run` trigger
-  that names each workflow of `merge.after_workflows` by its `name:` (or its path, without
-  one). `nexkit init` writes the trigger as a comment, since it does not know the names;
-  `nexkit doctor` says when one is missing:
+- **When a finished run is noticed.** Within minutes, in two ways that together cover
+  every run. First, a `workflow_run` trigger that names each workflow of
+  `merge.after_workflows` by its `name:` (or its path, without one). `nexkit init
+  --after-workflow FILE` writes it with those names; without that flag it writes the
+  trigger as a comment. `nexkit doctor` says when one is missing:
 
   ```yaml
   on:
@@ -556,9 +561,37 @@ every open issue in scope, in order, and starts the one command that moves it on
 
   The `nexkit` job's `if` must let `"workflow_run"` through, as `nexkit init` writes it.
   A run that passed at once starts no sweep, unless a `bug` issue about its workflow is
-  open. GitHub may send no such event for a run that the Actions token started, such as
-  one NexKit starts after its merge: the end of the next NexKit run notices it, also a run
-  that started the next automatic round itself, and else the hourly schedule.
+  open. GitHub sends no such event for a run that the Actions token started, such as one
+  NexKit starts after its merge, but the Actions token may start a workflow with
+  `workflow_dispatch`. So, second, each workflow of `merge.after_workflows` ends with a
+  job that starts a sweep. It needs every other job of the workflow, runs on the default
+  branch whatever they concluded, and names the run, so the sweep waits for the run to
+  end before it looks:
+
+  ```yaml
+  jobs:
+    # ... the workflow's own jobs, here test and lint ...
+    nexkit-sweep:
+      # NexKit autopilot looks at this run as soon as it ends (docs/configuration.md).
+      needs: [test, lint]
+      if: always() && github.ref_name == github.event.repository.default_branch
+      runs-on: ubuntu-24.04
+      permissions:
+        actions: write
+      steps:
+        - run: >-
+            gh workflow run nexkit.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+            -f command=autopilot -f number=autopilot -f note="after run $GITHUB_RUN_ID"
+          env:
+            GH_TOKEN: ${{ github.token }}
+  ```
+
+  `nexkit init --after-workflow FILE` prints this job with that workflow's jobs in
+  `needs`; NexKit never edits your workflows. `nexkit doctor` says when a workflow has no
+  such job, or one that does not need every other job or lacks `always()`, and says when
+  it cannot tell, for a workflow that calls another one. Without either, the end of the
+  next NexKit run notices a finished run, also a run that started the next automatic
+  round itself, and else the hourly schedule.
 - **Titles of CI issues.** An issue for a CI failure says what fails, where, and
   "fails at times on" the branch for a flaky failure, or "fails on" it when the branch is
   red, in plain words. Double quotes mark a test, job or step name; there are no

@@ -578,7 +578,8 @@ issue run in that group as well, and start a sweep.
   that opens or is reopened. For the milestone scope, an issue that comes into scope with
   a milestone, and a closed milestone, after which the next milestone becomes the scope.
   A finished run on the default branch of a workflow in `merge.after_workflows`, through
-  a `workflow_run` trigger. The hourly schedule, which
+  a `workflow_run` trigger, and through the job that ends such a workflow and dispatches
+  a sweep that waits for its run to end. The hourly schedule, which
   catches anything the others missed. Nothing waits in a loop: with nothing to start, a
   sweep ends.
 - **A command starts once.** The record on the issue holds the command, the issue or pull
@@ -699,8 +700,11 @@ issue run in that group as well, and start a sweep.
   back one day, as every sweep does; sweeps run at least hourly. A finished run starts a
   sweep within minutes through the `workflow_run` trigger, when the run is one a sweep
   acts on: it failed or was run again, or it passed while a `bug` issue about its
-  workflow is open. GitHub may send no `workflow_run` event for runs that the Actions
-  token started, such as those NexKit starts after its merge, so the end of the next
+  workflow is open. GitHub sends no `workflow_run` event for runs that the Actions token
+  started, such as those NexKit starts after its merge, but the Actions token may
+  dispatch a workflow: each workflow of `merge.after_workflows` ends with a job that
+  dispatches a sweep naming its run, whatever its other jobs concluded (see [When a
+  finished run is noticed](configuration.md#autopilot)). Without it, the end of the next
   NexKit run checks the newest finished run of each workflow the same way, also a run
   that started the next round itself; the hourly schedule catches the rest.
 - **What autopilot reads.** The plan comment ends with a hidden record of its questions and

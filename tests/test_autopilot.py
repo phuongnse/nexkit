@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import io
 import json
@@ -2036,6 +2037,21 @@ class CIWaitTests(AutopilotCase):
         }
         self.gh.jobs[50] = [job]
         self.gh.logs[501] = self.LOG.encode()
+        # Its test reporter names the failing test; the runner's own annotation names none.
+        self.gh.annotations[501] = [
+            {
+                "annotation_level": "failure",
+                "title": "Orders > adds tax",
+                "path": "web/src/orders.test.ts",
+                "start_line": 12,
+                "message": "expected 2 to be 3",
+            },
+            {
+                "annotation_level": "failure",
+                "path": ".github",
+                "message": "Process completed with exit code 2.",
+            },
+        ]
         self.sweep(self.cfg)
         [bug] = [i for i in self.gh.issues.values() if autopilot.ci_workflow(i)]
         self.gh.dispatches.clear()
@@ -2045,8 +2061,9 @@ class CIWaitTests(AutopilotCase):
         self.gh.add_pull(pull, issue, head_sha=self.HEAD)
         return pull
 
-    def report_round(self, issue, pull, failing=("make test",), action="implement"):
-        """`report` after a round of `pull` whose checks running `failing` failed."""
+    def report_round(self, issue, pull, failing=("make test",), action="implement", tests=None):
+        """`report` after a round of `pull` whose checks running `failing` failed, with
+        `tests` as the failing tests their JUnit results name, if any."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         artifacts = Path(tmp.name)
@@ -2064,6 +2081,7 @@ class CIWaitTests(AutopilotCase):
                 "exit_code": 1 if run in failing else 0,
                 "passed": run not in failing,
                 "output": "FAIL" if run in failing else "",
+                **({"failed_tests": list(tests)} if run in failing and tests is not None else {}),
             }
             for name, run in (("test", "make test"), ("lint", "make lint"))
         ]
@@ -2117,7 +2135,8 @@ class CIWaitTests(AutopilotCase):
         passed = "##[group]Run make lint\n##[error]Process completed with exit code 0.\n"
         self.assertEqual(autopilot.failed_commands(timed_out + passed), ["make e2e"])
         recorded = autopilot._recorded_failure(self.gh, self.gh.issues[self.bug])
-        self.assertEqual(recorded, {"run": 50, "commands": {"make test"}})
+        tests = {"make test": {"orders.test.ts::adds tax"}}
+        self.assertEqual(recorded, {"run": 50, "commands": {"make test"}, "tests": tests})
         body = self.gh.issues[self.bug]["body"]
         self.assertTrue(body.endswith("<!-- nexkit:ci-runs 50.1 50.2 -->"))
 
@@ -2131,7 +2150,7 @@ class CIWaitTests(AutopilotCase):
         self.assertEqual(state["auto_fixes"], 0)
         self.assertEqual(state["ci_wait"]["bug"], self.bug)
         [shown] = [c for c in self.gh.comments(pull) if "nexkit:state" in c["body"]]
-        self.assertIn(f"waits for #{self.bug}: its failing checks run commands", shown["body"])
+        self.assertIn(f"waits for #{self.bug}: its failing checks fail as `ci.yml`", shown["body"])
         [round_] = self.gh.run_comments(pull)
         self.assertIn(f"which #{self.bug} is about", round_["body"])
         # `nexkit status` and the sweep say what it waits for, and no person is needed.
@@ -2229,3 +2248,59 @@ class CIWaitTests(AutopilotCase):
         self.gh.issues[7]["milestone"] = {"number": 1}
         self.ci_run("success", 52)
         self.assertEqual(self.report_round(7, other)["outcome"], "auto_fix")
+
+    def test_a_pull_request_failing_the_same_test_in_the_same_command_waits(self):
+        # Its JUnit results name the test the annotation on `main` names.
+        pull = self.open_pull(5, 10)
+        tests = ["orders.test.ts::adds tax"]
+        self.assertEqual(self.report_round(5, pull, tests=tests)["outcome"], "ci_waiting")
+        self.assertEqual(self.state(pull)["auto_fixes"], 0)
+
+    def test_a_different_failing_test_in_the_same_command_gets_the_usual_round(self):
+        pull = self.open_pull(5, 10)
+        tests = ["cart.test.ts::empties the cart"]
+        self.assertEqual(self.report_round(5, pull, tests=tests)["outcome"], "auto_fix")
+        self.assertEqual(self.state(pull)["auto_fixes"], 1)
+        # The same title in another file is another test.
+        other = self.open_pull(7, 11)
+        tests = ["cart.test.ts::adds tax"]
+        self.assertEqual(self.report_round(7, other, tests=tests)["outcome"], "auto_fix")
+
+    def test_one_shared_and_one_extra_failing_test_gets_the_usual_round(self):
+        pull = self.open_pull(5, 10)
+        tests = ["orders.test.ts::adds tax", "orders.test.ts::rounds"]
+        self.assertEqual(self.report_round(5, pull, tests=tests)["outcome"], "auto_fix")
+        self.assertNotIn("ci_wait", self.state(pull))
+
+    def test_without_test_names_on_either_side_the_command_decides(self):
+        decision = {"issue": 5, "base": "main"}
+
+        def wait(tests):
+            check = {"name": "test", "run": "make test", "passed": False}
+            if tests is not None:
+                check["failed_tests"] = tests
+            return autopilot.ci_wait(self.gh, self.cfg, decision, [check], "main")
+
+        # The check has no JUnit results, or they name no failing test, as when the
+        # tests did not build.
+        self.assertIsNotNone(wait(None))
+        self.assertIsNotNone(wait([]))
+        self.assertIsNone(wait(["cart.test.ts::empties the cart"]))
+        # A report from before NexKit recorded tests, or a failed job without annotations
+        # that name tests, has none.
+        bug = self.gh.issues[self.bug]
+        record = {"run": 50, "jobs": [{"job": "Unit tests", "commands": ["make test"]}]}
+        data = base64.b64encode(json.dumps(record).encode()).decode()
+        bug["body"] = autopilot.CI_FAILED.sub(f"<!-- nexkit:ci-failed {data} -->", bug["body"])
+        self.assertEqual(autopilot._recorded_failure(self.gh, bug)["tests"], {"make test": set()})
+        self.assertIsNotNone(wait(["cart.test.ts::empties the cart"]))
+        # Another command never waits.
+        self.assertIsNone(
+            autopilot.ci_wait(
+                self.gh,
+                self.cfg,
+                decision,
+                [{"name": "lint", "run": "make lint", "passed": False}],
+                "main",
+            )
+        )

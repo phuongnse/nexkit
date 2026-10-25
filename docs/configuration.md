@@ -169,6 +169,10 @@ failure.
   tree. The fix prompt names the folder and, for each failing check, its folder and each
   file or folder it kept. When the artifact cannot be downloaded, for example because it
   expired after 14 days, the round runs without the files and its log says why.
+- When a kept file is a JUnit XML report (a `.xml` file whose root is `testsuites` or
+  `testsuite`), the check also records the test cases that failed or erred in it, which
+  autopilot compares with the default branch's failing tests (see [How it
+  works](how-it-works.md#failing-checks-the-default-branch-has)).
 - Checks without `results` behave as before.
 
 The artifact can be downloaded by anyone who can read the run, like the rest of NexKit's
@@ -522,14 +526,19 @@ every open issue in scope, in order, and starts the one command that moves it on
   newer commit adds a comment to that issue while it is open; a commit is reported once.
   When a later attempt of that run passes, for example because a person ran it again, a
   comment on the issue says which attempt passed. While that issue is open, a pull request
-  into the default branch whose failing checks all run commands that failed in the
-  workflow's latest failed attempt gets no automatic fix round: it waits, using none of
+  into the default branch whose failing checks all fail as the workflow's latest failed
+  attempt did gets no automatic fix round: it waits, using none of
   `fix.max_auto_rounds`, and `nexkit status` shows it as `waiting` for that issue. Once
   the workflow passes on the default branch again, or the issue is closed, a sweep starts
-  its automatic fix round, which merges the default branch first. A check matches a
-  failed step when the first line of its `run` is the step's command, so this works when
-  your CI runs the same commands as NexKit's checks, such as `scripts/test.sh` in both.
-  See [How it works](how-it-works.md#failing-checks-the-default-branch-has).
+  its automatic fix round, which merges the default branch first. A check fails the same
+  way when the first line of its `run` is the command of a failed step, so this works
+  when your CI runs the same commands as NexKit's checks, such as `scripts/test.sh` in
+  both, and, when both sides name failing tests, when every test failing in the check
+  failed there too. The check names them from the JUnit XML files in its `results`, the
+  workflow from its failed jobs' error annotations, so with a test reporter that writes
+  JUnit files and annotates failures, a pull request that breaks another test in the same
+  script gets its fix round at once. See [How
+  it works](how-it-works.md#failing-checks-the-default-branch-has).
 - **Flaky runs.** A run that passed only when run again, and an older run that failed when
   a newer run had already started, are recorded under each of their failures, on one
   `bug` issue per failure, which mentions `notify` and is planned right after the `bug`

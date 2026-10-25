@@ -423,8 +423,8 @@ def ci_wait_reason(wait):
     """Why a pull request's round waits for a bug issue about the default branch, from the
     round's `ci_wait` record."""
     return (
-        f"waits for #{wait.get('bug')}: its failing checks run commands that fail in "
-        f"`{wait.get('workflow')}` on `{wait.get('branch')}`"
+        f"waits for #{wait.get('bug')}: its failing checks fail as "
+        f"`{wait.get('workflow')}` does on `{wait.get('branch')}`"
     )
 
 

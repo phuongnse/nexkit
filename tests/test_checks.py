@@ -195,6 +195,91 @@ class ResultFilesTests(unittest.TestCase):
         self.assertIn("e2e: reports/b.txt (0.0 MB)", summary)
 
 
+class FailedTestsTests(unittest.TestCase):
+    """A failing check records the tests its JUnit result files name as failed, by names
+    that match a test reporter's error annotations of the same tests."""
+
+    JUNIT = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite name="web">
+    <testcase classname="src/orders.test.ts" name="Orders &gt; adds tax">
+      <failure message="expected 2">AssertionError</failure>
+    </testcase>
+    <testcase classname="src/orders.test.ts" name="Orders &gt; rounds"/>
+    <testcase classname="src/cart.test.ts" name="skipped"><skipped/></testcase>
+  </testsuite>
+  <testsuite name="Shop.Tests">
+    <testcase classname="Shop.Tests.OrderTests" name="Totals(count: 2)">
+      <error message="boom"/>
+    </testcase>
+    <testcase classname="Shop.Tests.OrderTests" name="Shop.Tests.OrderTests.Refunds">
+      <failure/>
+    </testcase>
+    <testcase classname="e2e" name="checkout pays" file="tests/checkout.spec.ts">
+      <failure/>
+    </testcase>
+  </testsuite>
+</testsuites>
+"""
+
+    def test_names_match_across_junit_and_annotations(self):
+        names = checks.junit_failures(self.JUNIT.encode())
+        self.assertEqual(
+            names,
+            [
+                "orders.test.ts::adds tax",
+                "ordertests.totals",
+                "ordertests.refunds",
+                "checkout.spec.ts::checkout pays",
+            ],
+        )
+        # What test reporters title their annotations, with the file they point at.
+        annotated = [
+            checks.test_name("Orders › adds   tax", "web/src/orders.test.ts"),
+            checks.test_name("Shop.Tests.OrderTests.Totals", "tests/OrderTests.cs"),
+            checks.test_name("OrderTests.Refunds(id: 7)", ""),
+            checks.test_name(
+                "[chromium] › checkout.spec.ts:4:1 › checkout pays", "e2e/checkout.spec.ts:4"
+            ),
+        ]
+        self.assertEqual(annotated, names)
+        # A title without a file matches the same title in any file, but not another title.
+        self.assertTrue(checks.same_test("::adds tax", "orders.test.ts::adds tax"))
+        self.assertFalse(checks.same_test("cart.test.ts::adds tax", "orders.test.ts::adds tax"))
+        self.assertFalse(checks.same_test("::adds tax", "::rounds"))
+        self.assertEqual(checks.test_name("", "a.ts"), "")
+        self.assertIsNone(checks.junit_failures(b"<html/>"))
+        self.assertIsNone(checks.junit_failures(b"not xml"))
+
+    def test_a_failing_check_records_its_failed_tests(self):
+        repo = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        out = repo / "out"
+        (repo / "reports").mkdir()
+        (repo / "reports/junit.xml").write_text(self.JUNIT)
+        (repo / "reports/notes.xml").write_text("<notes/>")
+        (repo / "other.log").write_text("x")
+        cfg = make_config(
+            checks=[
+                {"name": "unit", "run": "exit 1", "results": ["reports"]},
+                {"name": "e2e", "run": "exit 1", "results": ["other.log"]},
+            ]
+        )
+        summary = repo / "summary.md"
+        with (
+            mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            unit, e2e = checks.run_checks(cfg, repo, out)
+        self.assertEqual(unit["failed_tests"], checks.junit_failures(self.JUNIT.encode()))
+        # Without a JUnit file there is nothing to compare by but the command.
+        self.assertNotIn("failed_tests", e2e)
+        # So many failures record none.
+        with mock.patch.object(checks, "FAILED_TESTS_LIMIT", 3):
+            results = [{"name": "unit", "passed": False}]
+            checks.keep_results(cfg, results, repo, repo / "out2")
+        self.assertEqual(results[0]["failed_tests"], [])
+
+
 class FailureSignatureTests(unittest.TestCase):
     """The same failure has the same signature in two runs; another failure does not."""
 

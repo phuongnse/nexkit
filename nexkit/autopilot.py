@@ -23,6 +23,7 @@ import re
 import string
 from datetime import UTC, datetime, timedelta
 
+from .checks import same_test, test_name
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
@@ -102,9 +103,10 @@ CI_BUG = re.compile(r"\A<!-- nexkit:ci ([A-Za-z0-9_.-]+) -->")
 CI_SHA_PREFIX = "<!-- nexkit:ci-sha "
 CI_SHA = re.compile(r"<!-- nexkit:ci-sha ([0-9a-f]+) -->")
 # What a red branch's report records of the latest failed attempt of its run: the run, and
-# for each failed job the commands of its `run` steps that failed, from the job's log. A
-# pull request whose failing checks run only those commands waits for the bug issue
-# instead of a fix round.
+# for each failed job the commands of its `run` steps that failed, from the job's log, and
+# the tests its error annotations name (see `checks.test_name`). A pull request whose
+# failing checks run only those commands, and fail only those tests, waits for the bug
+# issue instead of a fix round. A report from before NexKit names no tests.
 CI_FAILED_PREFIX = "<!-- nexkit:ci-failed "
 CI_FAILED = re.compile(r"<!-- nexkit:ci-failed ([A-Za-z0-9+/=]+) -->")
 # How a job's log starts a step, with the first line of the step's command, and how it ends
@@ -1208,7 +1210,8 @@ def _runs_marker(run, attempts):
 def _failed_jobs(gh, run, attempt, failed_jobs=None):
     """Each failed job of an attempt, linked, with its failed steps, the failures its error
     annotations name and the end of its log, so the issue holds what an agent needs. With
-    `failed_jobs`, each failed job's name and failed commands are added to it."""
+    `failed_jobs`, each failed job's name, failed commands and the tests its error
+    annotations name are added to it."""
     lines = []
     for job in gh.attempt_jobs(run["id"], attempt):
         if job.get("conclusion") not in FAILED:
@@ -1223,7 +1226,14 @@ def _failed_jobs(gh, run, attempt, failed_jobs=None):
                 lines.append("  " + found["line"].replace(f"- {link}: ", "- ", 1))
         log = _job_log(gh, job)
         if failed_jobs is not None:
-            failed_jobs.append({"job": job.get("name"), "commands": failed_commands(log)})
+            tests = [name for name in map(_annotated_test, notes) if name]
+            failed_jobs.append(
+                {
+                    "job": job.get("name"),
+                    "commands": failed_commands(log),
+                    "tests": list(dict.fromkeys(tests)),
+                }
+            )
         tail = _log_tail(log)
         if tail:
             lines += ["", "  The end of its log:", "", "  ```text", *tail, "  ```", ""]
@@ -1405,6 +1415,18 @@ def _annotated(link, note):
         "about": f"`{name}` failed",
         "line": f"- {link}: {names}" + (f": `{message}`" if message else ""),
     }
+
+
+def _annotated_test(note):
+    """The test an error annotation of a failed job names, as `checks.test_name` names it
+    for comparing with a pull request's JUnit results, or "": its title, with its file."""
+    message = " ".join(str(note.get("message") or "").split())
+    if note.get("annotation_level") != "failure" or CI_GENERIC.match(message):
+        return ""
+    path = str(note.get("path") or "")
+    if path == ".github" or path.startswith(".github/workflows/"):
+        path = ""
+    return test_name(note.get("title"), path)
 
 
 def _job_failure(workflow, job, link):
@@ -1709,7 +1731,9 @@ CI_WAIT_RUNS = 20
 
 def _recorded_failure(gh, issue):
     """What the latest report on a red branch's bug issue records of its failed attempt:
-    the run and the failed commands of its failed jobs, or None when no report does."""
+    the run, the failed commands of its failed jobs, and for each command the tests that
+    failed in the jobs that ran it, or None when no report does. A job without recorded
+    tests, as in reports from before NexKit recorded them, adds none."""
     texts = [issue.get("body") or ""]
     texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if by_bot(c)]
     for text in reversed(texts):
@@ -1724,9 +1748,35 @@ def _recorded_failure(gh, issue):
         if not isinstance(run, int) or isinstance(run, bool):
             return None
         jobs = [job for job in record.get("jobs") or [] if isinstance(job, dict)]
-        commands = {c for job in jobs for c in job.get("commands") or [] if isinstance(c, str)}
-        return {"run": run, "commands": commands - {""}}
+        commands, tests = set(), {}
+        for job in jobs:
+            names = {t for t in _strings(job.get("tests")) if t}
+            for command in _strings(job.get("commands")):
+                if command:
+                    commands.add(command)
+                    tests.setdefault(command, set()).update(names)
+        return {"run": run, "commands": commands, "tests": tests}
     return None
+
+
+def _strings(value):
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def same_failure(check, recorded):
+    """Whether a pull request's failing check fails as the default branch's latest failed
+    attempt in `recorded` does: it runs a command that failed there, by its first line,
+    and when both sides name failing tests (its JUnit `failed_tests`, the failed jobs'
+    error annotations), every test failing in the check failed there too. Without test
+    names on either side, the command decides."""
+    command = command_line(check.get("run"))
+    if not command or command not in recorded["commands"]:
+        return False
+    ours = {name for name in _strings(check.get("failed_tests")) if name}
+    theirs = recorded["tests"].get(command) or set()
+    if not ours or not theirs:
+        return True
+    return all(any(same_test(name, other) for other in theirs) for name in ours)
 
 
 def passes_again(gh, workflow, branch, since):
@@ -1745,19 +1795,17 @@ def passes_again(gh, workflow, branch, since):
 def ci_wait(gh, cfg, decision, checks, branch):
     """What a pull request's round waits for instead of an automatic fix round, or None:
     an open bug issue for a workflow of `merge.after_workflows` that still fails on the
-    default branch `branch`, when every failing check runs a command that failed in the
-    latest failed attempt the issue records. A pull request's checks are NexKit's own,
+    default branch `branch`, when every failing check fails as the latest failed attempt
+    the issue records does (see `same_failure`). A pull request's checks are NexKit's own,
     not jobs and steps of that workflow, so a check and a step are the same when they run
-    the same command, by its first line. Only for a pull request into the default branch
-    whose issue autopilot takes, since sweeps end the wait, and never for the bug issue
-    or its parts."""
-    failing = {
-        command_line(check.get("run"))
-        for check in checks or []
-        if isinstance(check, dict) and not check.get("passed")
-    }
+    the same command, by its first line, and fail the same tests. Only for a pull request
+    into the default branch whose issue autopilot takes, since sweeps end the wait, and
+    never for the bug issue or its parts."""
+    failing = [
+        check for check in checks or [] if isinstance(check, dict) and not check.get("passed")
+    ]
     workflows = cfg["merge"]["after_workflows"]
-    if not failing or "" in failing or not workflows or not takes(cfg):
+    if not failing or not workflows or not takes(cfg):
         return None
     if decision.get("base") != branch:
         return None
@@ -1773,7 +1821,7 @@ def ci_wait(gh, cfg, decision, checks, branch):
         if not bug or bug["number"] in own:
             continue
         recorded = _recorded_failure(gh, bug)
-        if not recorded or not failing <= recorded["commands"]:
+        if not recorded or not all(same_failure(check, recorded) for check in failing):
             continue
         if passes_again(gh, workflow, branch, recorded["run"]):
             continue
@@ -1790,8 +1838,10 @@ def ci_wait_message(wait):
     """What the round that waits says."""
     bug, workflow, branch = wait["bug"], wait["workflow"], wait["branch"]
     return (
-        f"Every failing check runs a command that fails in `{workflow}` on `{branch}`, which "
-        f"#{bug} is about, so NexKit starts no fix round for it here. Once `{workflow}` "
+        f"Every failing check fails as `{workflow}` does on `{branch}`, which #{bug} is "
+        "about: it runs a command that failed there and, where both name failing tests, "
+        f"fails only tests that failed there. So NexKit starts no fix round for it here. Once "
+        f"`{workflow}` "
         f"passes on `{branch}` again, or #{bug} is closed, NexKit autopilot starts the "
         f"automatic fix round, which merges `{branch}` first. Waiting uses no automatic fix "
         "round."

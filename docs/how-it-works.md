@@ -388,15 +388,40 @@ issue is in autopilot's scope gets no automatic fix round when its failing check
 default branch's failure. It waits instead:
 
 - *The same failure* means that every failing check runs a command that failed in the
-  latest failed attempt the `bug` issue records. A pull request's checks are NexKit's own
-  configured checks, not that workflow's jobs and steps, which do not run on NexKit's
-  branches without a push token, so NexKit compares commands: the issue's report holds,
-  for each failed job, the command of each `run` step whose process failed or ran out of
-  time, as the job's log starts that step, and a check is the same when the first line of
-  its `run` is that command. A check whose command the workflow does not run, or runs
-  written differently, is a failure of the pull request's own and gets the usual round,
-  as does the `bug` issue's own pull request and those of its parts. Review findings do
-  not count: the round after the wait addresses them too.
+  latest failed attempt the `bug` issue records and, when both sides name failing tests,
+  fails only tests that failed there: at least one test failing in the check failed on
+  the default branch, and none failing in the check passed there. A pull request's
+  checks are NexKit's own configured checks, not that workflow's jobs and steps, which do
+  not run on NexKit's branches without a push token, so NexKit compares commands and
+  tests:
+  - The issue's report holds, for each failed job, the command of each `run` step whose
+    process failed or ran out of time, as the job's log starts that step, and the tests
+    that the job's error annotations name, as a test reporter titles them. A check is
+    the same when the first line of its `run` is one of those commands, and is compared
+    with the tests of the jobs that ran it.
+  - The check names its failing tests from the JUnit XML files in its `results` (see
+    [Result files of failing checks](configuration.md#result-files-of-failing-checks)):
+    the `verify` job, which runs the check, reads the test cases that failed or erred and
+    records their names with the check's result. The `report` job, which decides and
+    holds a write token, reads only that record and parses no file the repository's code
+    wrote.
+  - A name is compared without case or runs of whitespace. A test named as code, such as
+    `Shop.Tests.OrderTests.Totals(count: 2)` or a JUnit `classname` and `name`, is its
+    class and method, `ordertests.totals`. Any other is the last segment of its title,
+    after its describe blocks (`Orders > adds tax`), with the name of its file without
+    folders, line or column: the annotation's path, or the JUnit `file`, or a
+    `classname` that names a file. Two titles match when their files match, or when one
+    side does not say which file.
+  - When either side names no test, as for a build or lint step, a check without JUnit
+    results, results that name no failed case, more than 200 failing tests, or a report
+    from before NexKit recorded tests, the command alone decides. GitHub keeps at most
+    10 error annotations of a step, so a check that fails more tests than the default
+    branch's annotations name gets the usual round.
+
+  A check whose command the workflow does not run, or runs written differently, or that
+  fails a test the default branch passes, is a failure of the pull request's own and
+  gets the usual round, as does the `bug` issue's own pull request and those of its
+  parts. Review findings do not count: the round after the wait addresses them too.
 - The round ends as `ci_waiting`, uses none of `fix.max_auto_rounds`, and mentions
   nobody. Its comment, the state comment, `nexkit status` (state `waiting`) and the
   autopilot sweep name the `bug` issue. The issue keeps its place within
@@ -670,8 +695,8 @@ issue run in that group as well, and start a sweep.
   commit is reported once, and a newer failing commit adds a comment to the open issue.
   When a later attempt of a reported run passes, for example after a person ran it again,
   autopilot says which attempt passed in a comment on that issue. Each report also records
-  the commands that failed in the run's latest failed attempt, which pull requests that
-  fail the same way wait on (see [Failing checks the default branch
+  the commands that failed in the run's latest failed attempt, and the tests its failed
+  jobs' error annotations name, which pull requests that fail the same way wait on (see [Failing checks the default branch
   has](#failing-checks-the-default-branch-has)).
 - **Flaky runs.** A run whose latest attempt passed after a failed one, and an older run
   that failed when a newer run had already started, which is never run again, are
@@ -910,7 +935,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |
 | Checks fail or the review requests changes | Starts an automatic fix round while `fix.max_auto_rounds` remain, otherwise asks for a person. After failing checks, that round first merges the base branch when it has moved, so a failure the base branch already fixed costs no agent change. |
-| Checks fail only in commands that fail on the default branch, while autopilot's `bug` issue about that is open | Starts no fix round: the round ends as `ci_waiting` and uses no automatic round. Once the workflow passes on the default branch again, or the `bug` issue is closed, a sweep starts the automatic fix round, which merges the default branch first. See [Failing checks the default branch has](#failing-checks-the-default-branch-has). |
+| Checks fail only in commands, and tests, that fail on the default branch, while autopilot's `bug` issue about that is open | Starts no fix round: the round ends as `ci_waiting` and uses no automatic round. Once the workflow passes on the default branch again, or the `bug` issue is closed, a sweep starts the automatic fix round, which merges the default branch first. See [Failing checks the default branch has](#failing-checks-the-default-branch-has). |
 | A check fails the same way before and after a fix round | The next automatic fix round is a diagnosis round, shown as `fix (auto, diagnosis)`: the agent names the cause, with evidence, before it changes code, then fixes that cause. Without a cause it changes nothing and ends as `blocked` with a question for a person; a change without a cause is rejected and publishes nothing. |
 | The review itself fails | Sets `nexkit/review` to error and says why in the round's comment. A transient error, or a review job that left no result, runs `/nexkit review` once more; otherwise comment `/nexkit review` to retry, after fixing the agent's secrets if it was an authentication error. |
 | NexKit itself fails in the `agent` or `review` job | Reports `NexKit stopped on <exception>` like an agent error; the job log has the traceback. |

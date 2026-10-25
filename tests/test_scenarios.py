@@ -715,15 +715,32 @@ class ScenarioTests(unittest.TestCase):
         def script(pipe, inputs):
             if inputs["command"] == "plan":
                 return plan()
-            # Every implement round fails in `make test`, as `main` does; the fix rounds,
-            # with `main` merged, pass.
-            return done(checks=inputs["command"] == "fix")
+            # Every implement round fails in `make test`: in the test that fails on `main`,
+            # except issue 8's, which breaks a test of its own. The fix rounds pass.
+            found = done(checks=inputs["command"] == "fix")
+            if inputs["command"] != "fix":
+                own = int(inputs["number"]) == 8
+                test = "cart.test.ts::empties the cart" if own else "orders.test.ts::adds tax"
+                found["checks"][0]["failed_tests"] = [test]
+            return found
 
         cfg = config(merge={"after_workflows": ["ci.yml"]})
         pipe = Pipeline(self, cfg, script, workflow=ci)
-        for number in (5, 6, 7):
+        # NexKit's comments carry the time they are made: issue 8's fix round, which its
+        # first round started, is still queued when the bug issue's merge starts a sweep,
+        # and only a round queued for hours is lost.
+        comment = pipe.gh.comment
+
+        def stamped(number, body):
+            made = comment(number, body)
+            made["created_at"] = autopilot.iso(datetime.now(autopilot.UTC))
+            return made
+
+        pipe.gh.comment = stamped
+        for number in (5, 6, 7, 8):
             pipe.issue(number)
-        # `ci.yml` failed on `main` twice, in the step that runs `make test`.
+        # `ci.yml` failed on `main` twice, in the step that runs `make test`, where its test
+        # reporter names the failing test.
         pipe.gh.workflow_history["ci.yml"] = [
             {
                 "id": 50,
@@ -743,6 +760,14 @@ class ScenarioTests(unittest.TestCase):
             b"##[group]Run make test\n##[endgroup]\nFAIL\n"
             b"##[error]Process completed with exit code 1.\n"
         )
+        pipe.gh.annotations[501] = [
+            {
+                "annotation_level": "failure",
+                "title": "Orders > adds tax",
+                "path": "web/src/orders.test.ts",
+                "message": "expected 2 to be 3",
+            }
+        ]
         played = pipe.play()
         [bug] = [n for n, i in pipe.gh.issues.items() if autopilot.ci_workflow(i)]
         pulls = {issue_from_branch(p["head"]["ref"]): n for n, p in pipe.gh.pulls.items()}
@@ -758,8 +783,13 @@ class ScenarioTests(unittest.TestCase):
             triggers = [run["trigger"] for _, run in run_comments(pipe.gh.comments(pulls[number]))]
             self.assertEqual(triggers, ["implement (autopilot)", "fix (auto)"])
         self.assertLess(played.index(("fix", pulls[bug])), played.index(("fix", pulls[5])))
-        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7, bug)))
-        for number in (5, 6, 7, bug, *pulls.values()):
+        # Issue 8's failure is its own, in the same script: it gets its round at once,
+        # not after the wait the others get theirs after.
+        self.assertEqual(outcomes[("go", 8)], "auto_fix")
+        self.assertEqual(outcomes[("fix", pulls[8])], "merged")
+        self.assertLess(played.index(("fix", pulls[8])), played.index(("fix", pulls[5])))
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7, 8, bug)))
+        for number in (5, 6, 7, 8, bug, *pulls.values()):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
 

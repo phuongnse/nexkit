@@ -192,13 +192,17 @@ them on the base branch after it merges (see
 **A pull request waits for a bug issue and starts no fix round.** Its checks fail only in
 commands that also fail on the default branch, in a workflow of `merge.after_workflows`
 whose `bug` issue autopilot opened (outcome `ci_waiting`, state `waiting` in
-`nexkit status`). Fixing that issue fixes the pull request too, so NexKit waits instead
+`nexkit status`), and, where both name failing tests, only in tests that fail there too. Fixing that issue fixes the pull request too, so NexKit waits instead
 of fixing the same failure in every pull request. The wait ends by itself once the
 workflow passes on the default branch again, or the `bug` issue is closed: the next sweep
 starts one automatic fix round that merges the default branch. If the failure is the pull
-request's own after all, comment `/nexkit fix <instructions>` on it. A pull request whose
-checks are not compared this way, because your CI runs its commands differently from
-NexKit's checks, gets the usual fix rounds (see [How it
+request's own after all, comment `/nexkit fix <instructions>` on it. Tests are compared
+only when the check's `results` hold JUnit XML and the default branch's failed jobs have
+error annotations that name tests; otherwise the command alone decides, so a pull request
+that breaks another test in the same script also waits. To tell the two apart, name the
+check's JUnit output in its `results` and let your CI's test reporter annotate failures.
+A pull request whose checks are not compared this way, because your CI runs its commands
+differently from NexKit's checks, gets the usual fix rounds (see [How it
 works](how-it-works.md#failing-checks-the-default-branch-has)).
 
 **"The change modifies protected paths".** The agent edited `.github/` or `.nexkit/`, or a

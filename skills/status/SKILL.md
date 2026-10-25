@@ -9,6 +9,20 @@ Change nothing. The NexKit CLI ships with this plugin; run it as
 `python3 <base directory of this skill>/../../bin/nexkit` (Python 3.12 or newer). Below,
 `nexkit` means that command.
 
+The plugin can be newer or older than the release the repository runs, and states and
+advice match what runs only at that release. So when the `nexkit_ref` input in
+`.github/workflows/nexkit.yml` is not the plugin's version, run the CLI of the pinned
+release, and read NexKit's docs at that ref:
+
+```sh
+repo=$(grep -oE 'nexkit_repository: \S+' .github/workflows/nexkit.yml | cut -d' ' -f2)
+ref=$(grep -oE 'nexkit_ref: \S+' .github/workflows/nexkit.yml | cut -d' ' -f2)
+kit="${TMPDIR:-/tmp}/nexkit-$ref"
+[ -d "$kit" ] || git clone -q --depth 1 --branch "$ref" "https://github.com/$repo" "$kit"
+python3 "$kit/bin/nexkit" status --json
+gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: application/vnd.github.raw'
+```
+
 1. **Snapshot.** Run `nexkit status --json` in the repository. It reads GitHub with the
    `gh` login and returns:
    - `issues`: open issues NexKit worked on, each with a `state` (`planning`, `planned`
@@ -40,9 +54,18 @@ Change nothing. The NexKit CLI ships with this plugin; run it as
    (`gh run download <id> -n nexkit-agent`) has the whole conversation. An *Artifact not
    found* annotation on `report` means that stage ran but stopped before uploading.
 
-3. **Next actions.** Start with `needs_person`. For each item, say what a collaborator
-   can do: answer the plan's questions and comment `/nexkit plan`, or `/nexkit go` to
-   implement a plan; `/nexkit fix <instructions>` for another round or to answer a
-   blocked conflict; `/nexkit review` after pushing a manual change; or merge when the
-   pull request is ready. With autopilot on, do not post `/nexkit plan` or `/nexkit go` on an
-   issue whose autopilot state is `start` or `active`: autopilot starts it or already did.
+3. **Next actions.** Start with `needs_person`. For each item, find its stop in
+   Troubleshooting, [When NexKit waits for a
+   person](../../docs/troubleshooting.md#when-nexkit-waits-for-a-person), and suggest what
+   it says: for example answer the plan's questions and comment `/nexkit plan`, or
+   `/nexkit go` to implement a plan; `/nexkit fix <instructions>` for another round or to
+   answer a blocked conflict; `/nexkit review` after pushing a manual change. For a pull
+   request that is ready to merge, suggest the checks in [Reviewing a pull
+   request](../../docs/how-it-works.md#reviewing-a-pull-request); for a change to a plan,
+   [Changing a plan](../../docs/how-it-works.md#stages). To see a plan, read the newest
+   plan comment (`gh issue view <n> --comments`): it names the profile, the models of each
+   stage and why triage chose them. With autopilot on, do not post `/nexkit plan` or
+   `/nexkit go` on an issue whose autopilot state is `start` or `active`: autopilot starts
+   it or already did. To make autopilot look again at once, for example after a
+   *blocked by* relationship changed, start a sweep:
+   `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.

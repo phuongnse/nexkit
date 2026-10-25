@@ -109,7 +109,9 @@ their defaults.
 
 - `name`: short lowercase identifier, shown in reports. Two checks cannot share a name.
 - `run`: a Bash command run from the repository root with `pipefail`.
-- `timeout_minutes`: default 15, at most 360.
+- `timeout_minutes`: default 15, at most 360. Leave room to grow: once a check takes more
+  than half its limit, raise the limit or make the suite faster, before rounds start to
+  stop on it.
 - `slow`: default `false`. See [Slow checks](#slow-checks).
 - `results`: files or folders, relative to the repository root, where the check writes its
   results, such as traces, screenshots, test reports and logs. Default `[]`, at most 20.
@@ -479,7 +481,11 @@ every open issue in scope, in order, and starts the one command that moves it on
 - **Ready.** An issue is ready when no issue that blocks it (GitHub's *blocked by*
   relationships) is open. The order of sub-issues does not count, so sub-issues without
   such relationships start at the same time; text such as "Depends on #12" is not read. A
-  parent issue with sub-issues is never planned itself: its sub-issues are.
+  parent issue with sub-issues is never planned itself: its sub-issues are. Mark an issue
+  *blocked by* another only for a real prerequisite, such as something new that the other
+  issue adds: a mark that is not needed only slows the work, and touching the same files
+  is no reason, since NexKit resolves conflicts. The [`request`
+  skill](../skills/request/SKILL.md) has the rules.
 - **Trust.** Autopilot skips a person's approval of the plan, so the issue text drives an
   implement session, which can read the secrets of its job. It takes only issues opened by
   someone with write access to the repository; only they and other writers can edit them.
@@ -945,6 +951,23 @@ ones, without choosing by hand on every issue.
 - Write `when` in terms that an issue shows: the parts of the system it touches, how
   clear the request is. Triage reads only the issue and its discussion, not the code.
 
+**Writing profiles.**
+
+- Order the profiles by risk and novelty: the more a mistake would cost, or the less the
+  repository has done such work before, the stronger the profile.
+- Make the cheap profile's `when` text narrow, naming only work that repeats what the
+  repository already does. Anything it does not name then goes to the stronger profile,
+  so a new kind of work lands there without a change to the texts.
+- Make plan and review at least as strong as implement. The plan is the contract, and the
+  review is the last check before a merge.
+- A `when` text says what a mistake would cost, not where the code is. Name no files,
+  classes, doc sections or milestones: they go stale, and triage sees only the issue.
+- Look at the profiles again when a new kind of work starts and when new models come out.
+  Compare each profile's share of issues whose rounds stopped on an error, ran out of time
+  or failed their checks: a cheap profile that fails more often than a stronger one has a
+  `when` text that is too wide. Check whether newer models make a profile's models out of
+  date.
+
 [How it works](how-it-works.md#profiles) describes how triage chooses and how to change a
 plan's profile.
 
@@ -995,14 +1018,30 @@ short runs that end at once; remove the triggers you do not use if you prefer. I
 milestone events other than a closed issue join the concurrency group
 `nexkit-autopilot`, so they never replace a command that waits for its issue. To upgrade, change both the
 `uses:` ref and `nexkit_ref` to the new tag (or rerun `nexkit init --force --kit-ref
-vX.Y.Z` and restore your config); each release's notes list its upgrade steps. `nexkit
+vX.Y.Z` and restore your config); see [the upgrade steps](#upgrading-from-earlier-releases). `nexkit
 doctor` reports a problem when the two refs differ, and mentions a newer release without
 failing: staying on a release is your choice.
 
+NexKit's pull requests come from branches named `nexkit/issue-<number>`. The job's `if:`
+in the workflow file lets a *Request changes* review start a run only on a branch that
+starts with `nexkit/`.
+
 ## Upgrading from earlier releases
 
+The workflow file and `.nexkit/` are protected paths, so a person makes an upgrade, in one
+pull request:
+
+1. Read the notes and the changelog of every release after the pinned one, not only the
+   latest. Each release's notes list its own upgrade steps.
+2. Pin both the `uses:` ref and `nexkit_ref` in the workflow file to the new tag.
+3. Compare this reference's key tables and sections at the old and the new ref. Set every
+   new key, or new value of a key, that the repository has a value for, such as the
+   names of its own CI workflows or artifacts.
+4. Check that the workflow file grants every permission the release asks for.
+5. Run `nexkit doctor` at the new release, and fix every ✗ line.
+
 A configuration from an earlier release that no longer fits is rejected with what to
-change. Each release's notes list its own upgrade steps.
+change.
 
 ### Codex removed in 4.0
 

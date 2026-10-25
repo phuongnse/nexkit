@@ -91,6 +91,9 @@ class ConfigTests(unittest.TestCase):
             ({"autopilot": {"label": None}}, "autopilot.label is gone"),
             ({"autopilot": {"max_parallel": 0}}, "autopilot.max_parallel"),
             ({"autopilot": {"answer": "always"}}, "autopilot.answer must be one of"),
+            ({"autopilot": {"lost_after_minutes": 4}}, "lost_after_minutes must be .* 5 to 1440"),
+            ({"autopilot": {"lost_after_minutes": 1441}}, "autopilot.lost_after_minutes"),
+            ({"autopilot": {"lost_after_minutes": True}}, "autopilot.lost_after_minutes"),
             ({"autopilot": {"limit": 1}}, "Unknown keys in autopilot"),
         ]
         for raw, message in cases:
@@ -133,6 +136,7 @@ class ConfigTests(unittest.TestCase):
                 "scope": "milestone",
                 "max_parallel": None,
                 "answer": "never",
+                "lost_after_minutes": 30,
             },
         )
         # An explicit null replaces the default: every open issue.

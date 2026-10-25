@@ -12,7 +12,7 @@ from nexkit import autopilot
 from nexkit.maintain import maintain
 from nexkit.report import report
 from nexkit.route import route
-from nexkit.state import PLAN_MARKER, render_run
+from nexkit.state import BOT_LOGIN, PLAN_MARKER, render_run
 from tests.support import FakeGitHub, make_config
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -293,6 +293,51 @@ class SweepTests(AutopilotCase):
         record = autopilot.find_record(self.gh.comments(5))[1]
         self.assertEqual((record["command"], record.get("retried")), ("go", None))
 
+    def test_a_lost_command_starts_once_more_after_lost_after_minutes_and_not_before(self):
+        self.gh.dispatch_runs["nexkit.yml"] = "https://github.com/acme/app/actions/runs/77"
+        self.issue(5)
+        start = datetime.now(UTC)
+        self.sweep()
+        self.gh.runs[77] = {"status": "completed", "conclusion": "cancelled"}
+
+        def step(minutes, cfg=None):
+            later = start + timedelta(minutes=minutes)
+            return autopilot.assess(self.gh, cfg or self.cfg, self.gh.issues[5], {}, now=later)
+
+        self.assertEqual(step(29)["state"], "active")
+        self.assertEqual(step(91, pilot(lost_after_minutes=90))["state"], "start")
+        self.assertEqual(step(89, pilot(lost_after_minutes=90))["state"], "active")
+        # Its run waits in the queue, or runs and has not posted its comment yet.
+        for status in ("queued", "pending", "in_progress"):
+            self.gh.runs[77] = {"status": status}
+            self.assertEqual(step(300)["state"], "active", status)
+        self.gh.runs[77] = {"status": "completed", "conclusion": "cancelled"}
+        lost = step(31)
+        self.assertEqual((lost["state"], lost["command"]), ("start", "plan"))
+        self.assertIn("did not run, so autopilot starts it once more", lost["reason"])
+        autopilot.start(self.gh, lost, "nexkit.yml", "main", now=start + timedelta(minutes=31))
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 5)])
+        # Started once more, and only once: the second start that never runs waits.
+        self.assertEqual(step(60)["state"], "active")
+        again = step(62)
+        self.assertEqual((again["state"], again["person"]), ("waits", True))
+        self.assertIn("did not run, again", again["reason"])
+
+    def test_a_lost_command_whose_run_cannot_be_read_is_lost_by_time_alone(self):
+        self.issue(5)
+        start = datetime.now(UTC)
+        self.sweep()  # a dispatch that returns no run, as on older GitHub Enterprise Servers
+        later = start + timedelta(minutes=31)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=later)
+        self.assertEqual(step["state"], "start")
+        self.gh.dispatches.clear()
+        self.gh.dispatch_runs["nexkit.yml"] = "https://github.com/acme/app/actions/runs/78"
+        self.issue(6)
+        self.sweep()
+        # GitHub has no such run.
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[6], {}, now=later)
+        self.assertEqual(step["state"], "start")
+
     def test_a_note_of_a_command_that_never_ran_is_kept(self):
         cfg = pilot(answer="recommended")
         self.issue(5)
@@ -504,6 +549,53 @@ class TriggerTests(AutopilotCase):
             self.gh.dispatches.clear()
             self.maintain({"action": "maintain", "task": "autopilot", **event}, cfg)
             self.assertEqual(len(self.sweeps()), sweeps, event)
+
+    def test_a_run_whose_report_did_not_finish_is_handled_at_its_own_end(self):
+        # The `finish` job of a run whose report did not finish, such as after a lost
+        # runner, starts a sweep that waits for the run to end, so the hourly schedule
+        # need not find it.
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", status="running", autopilot=True)
+        self.gh.runs[self.runs] = {"status": "in_progress"}
+        lines = autopilot.after_unreported(self.gh, self.cfg, "nexkit.yml", "main", self.runs)
+        self.assertEqual(lines, ["Started an autopilot sweep."])
+        [inputs] = self.sweeps()
+        self.assertEqual(inputs["note"], f"after run {self.runs}")
+        decision = route(self.gh, "workflow_dispatch", {}, inputs)
+        self.assertEqual(decision, {"action": "maintain", "task": "sweep", "after": self.runs})
+        self.gh.dispatches.clear()
+
+        def ended(_seconds):
+            self.gh.runs[self.runs] = {"status": "completed", "conclusion": "failure"}
+
+        with mock.patch("nexkit.maintain.time.sleep", side_effect=ended) as sleep:
+            lines = self.maintain(decision)
+        sleep.assert_called_once()
+        self.assertEqual(lines[0], f"Run {self.runs} ended.")
+        self.assertEqual(self.started(), [("go", 5)])
+        [run] = [c["run"] for c in self.gh.run_comments(5) if c["run"]["command"] == "go"]
+        self.assertEqual((run["status"], run["attention"]), ("failure", autopilot.REPORTLESS))
+        # Without autopilot nothing starts; a run that does not end in time is left to a
+        # later sweep.
+        self.gh.dispatches.clear()
+        self.assertEqual(autopilot.after_unreported(self.gh, make_config(), "n", "main", 1), [])
+        self.gh.runs[9] = {"status": "in_progress"}
+        with mock.patch("nexkit.maintain.time.sleep") as sleep:
+            lines = self.maintain({"action": "maintain", "task": "sweep", "after": 9})
+        self.assertEqual(sleep.call_count, 29)
+        self.assertEqual(lines[0], "Run 9 has not ended yet; a later sweep handles it.")
+
+    def test_a_stuck_run_is_handled_at_the_end_of_the_next_run(self):
+        self.issue(4)
+        self.planned(4)
+        self.run_comment(4, "go", status="running", autopilot=True)
+        self.gh.runs[self.runs] = {"status": "completed", "conclusion": "cancelled"}
+        self.issue(5)
+        self.report_plan(self.cfg, {"questions": ["Which port?"], "too_large": False})
+        [inputs] = self.sweeps()
+        self.maintain(route(self.gh, "workflow_dispatch", {}, inputs))
+        self.assertEqual(self.started(), [("go", 4)])
 
     def test_the_schedule_starts_a_sweep(self):
         self.maintain({"action": "maintain", "task": "schedule"})
@@ -1668,6 +1760,77 @@ class CITests(AutopilotCase):
         self.assertEqual(self.flaky(), [old])
         [comment] = self.gh.comments_matching(old["number"], "nexkit:ci-runs")
         self.assertIn("runs/50) on `main`", comment["body"])
+
+    def sweeps(self):
+        return [d["inputs"] for d in self.gh.dispatches if d["inputs"]["command"] == "autopilot"]
+
+    def test_a_finished_run_on_the_default_branch_is_acted_on_by_its_own_trigger(self):
+        run = self.ci_run()
+        self.gh.runs[50] = run
+        decision = route(
+            self.gh,
+            "workflow_run",
+            {"action": "completed", "workflow_run": {"id": 50, "path": ".github/workflows/ci.yml"}},
+        )
+
+        def maintain_(decision):
+            return maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+
+        self.assertEqual(maintain_(decision), ["Started an autopilot sweep."])
+        [inputs] = self.sweeps()
+        self.gh.dispatches.clear()
+        maintain_(route(self.gh, "workflow_dispatch", {}, inputs))
+        self.assertEqual(self.gh.reruns, [50])  # what a sweep does for a first failure
+        # Runs a sweep has nothing to do for start none.
+        quiet = [
+            ({**run, "conclusion": "success"}, "ci.yml"),
+            ({**run, "head_branch": "feature"}, "ci.yml"),
+            ({**run, "event": "pull_request"}, "ci.yml"),
+            (run, "lint.yml"),
+        ]
+        for found, workflow in quiet:
+            self.gh.runs[50] = found
+            maintain_({"action": "maintain", "task": "ci", "workflow": workflow, "run": 50})
+            self.assertEqual(self.sweeps(), [], (found, workflow))
+        # A pass while a bug issue about the workflow is open ends the waits on it.
+        self.gh.runs[50] = {**run, "conclusion": "success"}
+        self.gh.add_issue(8, body="<!-- nexkit:ci ci.yml -->\nRed.", user=BOT_LOGIN)
+        maintain_({"action": "maintain", "task": "ci", "workflow": "ci.yml", "run": 50})
+        self.assertEqual(len(self.sweeps()), 1)
+
+    def test_a_finished_run_on_the_default_branch_is_acted_on_at_the_end_of_the_next_run(self):
+        # GitHub sends no workflow_run event for a run that the Actions token started, such
+        # as one NexKit starts after its merge. The end of the next NexKit run notices it,
+        # also when that run started the next round by itself.
+        decision = {"issue": 3, "action": "fix"}
+
+        def after(outcome):
+            self.gh.dispatches.clear()
+            autopilot.after_run(self.gh, self.cfg, decision, outcome, "nexkit.yml", "main")
+            return len(self.sweeps())
+
+        self.assertEqual((after("auto_fix"), after("ready")), (0, 1))
+        self.ci_run(conclusion="success", run_id=49)
+        self.assertEqual(after("auto_fix"), 0)
+        self.ci_run(conclusion="failure", run_id=50)
+        self.assertEqual((after("auto_fix"), after("conflict_fix"), after("paused")), (1, 1, 0))
+        after("auto_fix")
+        [inputs] = self.sweeps()
+        maintain(
+            self.gh,
+            route(self.gh, "workflow_dispatch", {}, inputs),
+            self.cfg,
+            workflow="nexkit.yml",
+            ref="main",
+        )
+        self.assertEqual(self.gh.reruns, [50])
+        # A run still in progress is not finished; the newest finished one counts.
+        self.ci_run(conclusion=None, run_id=51)["status"] = "in_progress"
+        self.assertEqual(after("auto_fix"), 1)
+        self.ci_run(conclusion="success", run_id=52)
+        self.assertEqual(after("auto_fix"), 0)
+        self.gh.add_issue(8, body="<!-- nexkit:ci ci.yml -->\nRed.", user=BOT_LOGIN)
+        self.assertEqual(after("auto_fix"), 1)
 
     def test_a_red_branch_with_two_failed_steps_names_both(self):
         self.ci_run(attempt=2)

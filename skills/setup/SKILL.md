@@ -146,7 +146,11 @@ files or repository settings, and wait for confirmation.
    are too large into sub-issues either way. With `merge.after_workflows`, it also runs a
    failed CI run on the default branch once more and, if it fails again, opens a `bug`
    issue that it plans first; runs that passed only when run again are recorded on their
-   own `bug` issue, planned next.
+   own `bug` issue, planned next. Then also add the `workflow_run` trigger that names
+   those workflows by their `name:`, as `.github/workflows/nexkit.yml` shows in a comment
+   and the configuration docs explain, so a finished run starts a sweep within minutes.
+   A command that autopilot started and that never ran starts once more after
+   `"lost_after_minutes"` (30 by default).
    With `autopilot` or `conflicts.auto_resolve`, recommend the push token above with
    Workflows write access too: without it, a round that merges a change to
    `.github/workflows/` from the base branch cannot push and waits for a person.

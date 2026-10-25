@@ -172,6 +172,67 @@ def _after_merge_workflow(root, name):
     return (True, f"merge.after_workflows: {name} can be started after a merge")
 
 
+def workflow_name(root, name):
+    """The name GitHub gives the workflow file `name`: its `name:`, else its path. None
+    when the file does not exist."""
+    path = root / ".github/workflows" / name
+    if not path.is_file():
+        return None
+    text = _uncommented(path.read_text(errors="replace"))
+    match = re.search(r"^name:[ \t]*(\S.*?)[ \t]*$", text, re.M)
+    if not match:
+        return f".github/workflows/{name}"
+    return match.group(1).strip("'\"")
+
+
+def _ci_trigger(root, cfg, workflow):
+    """A finding: with autopilot, a finished run of each workflow in merge.after_workflows
+    starts a sweep at once, through a `workflow_run` trigger that names it, which the
+    'nexkit' job lets through."""
+    names = [n for n in (workflow_name(root, f) for f in cfg["merge"]["after_workflows"]) if n]
+    if not names:
+        return []
+    found = trigger(workflow, "workflow_run")
+    missing = [
+        name
+        for name in names
+        if found is None or not re.search(rf"[\[\s,'\"]{re.escape(name)}[\]\s,'\"]", found)
+    ]
+    later = (
+        "so their failures on the default branch wait for the end of the next NexKit run or "
+        "the hourly schedule"
+    )
+    if missing:
+        listed = ", ".join(f"'{name}'" for name in missing)
+        return [
+            (
+                False,
+                f"autopilot is on, but the 'workflow_run' trigger in {WORKFLOW_PATH} does not "
+                f"name {listed} of merge.after_workflows, {later}; add it as "
+                "docs/configuration.md#autopilot shows",
+            )
+        ]
+    if "types" in found and not re.search(r"\bcompleted\b", found):
+        return [
+            (
+                False,
+                f"The 'workflow_run' trigger in {WORKFLOW_PATH} does not listen to "
+                f"'completed', {later}",
+            )
+        ]
+    text = _uncommented(workflow)
+    jobs = text.split("\njobs:", 1)[1] if "\njobs:" in text else ""
+    if '"workflow_run"' not in jobs:
+        return [
+            (
+                False,
+                f"The 'nexkit' job in {WORKFLOW_PATH} does not let 'workflow_run' events "
+                f"through its 'if', {later}; add \"workflow_run\" as 'nexkit init' writes it",
+            )
+        ]
+    return [(True, "Finished runs of merge.after_workflows on the default branch start sweeps")]
+
+
 def pipeline_ref(workflow):
     """(NexKit repository, ref) of the pipeline the workflow calls, or None."""
     match = re.search(
@@ -278,7 +339,7 @@ def trigger(workflow, event):
     return found.group(1) if found else None
 
 
-def _triggers(cfg, workflow):
+def _triggers(root, cfg, workflow):
     """Findings for the triggers that configuration keys need."""
     findings = []
     if cfg["close_parent_issues"]:
@@ -307,6 +368,7 @@ def _triggers(cfg, workflow):
             findings.append((True, "Pushes to the default branch start the conflict check"))
     if cfg["autopilot"]["enabled"]:
         findings.append(_autopilot_triggers(cfg, workflow))
+        findings += _ci_trigger(root, cfg, workflow)
     if cfg["usage_limit"]["resume"]:
         if trigger(workflow, "schedule") is None:
             findings.append(
@@ -496,7 +558,7 @@ def doctor(root):
         findings.append(_concurrency(text))
         findings.append(_permissions(text))
         if cfg:
-            findings += _triggers(cfg, text)
+            findings += _triggers(root, cfg, text)
             findings += _passed_secrets(cfg, text)
 
     repo = repository_of(root)

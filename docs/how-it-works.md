@@ -1,6 +1,6 @@
 # How NexKit works
 
-## One run, seven jobs
+## One run, eight jobs
 
 Every command starts one run of the reusable workflow
 [`pipeline.yml`](../.github/workflows/pipeline.yml). Jobs that do not apply are skipped.
@@ -15,7 +15,8 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
-| `maintain` | issue and milestone events, pushes to the default branch, the schedule, the `resume` and `autopilot` dispatches | contents (to merge); issues, comments, workflows, statuses; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches | contents (to merge); issues, comments, workflows, statuses; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
+| `finish` | a command whose `report` did not finish | workflows | none | When `report` failed, was cancelled or lost its runner, starts an [autopilot](#autopilot) sweep that waits for the run to end and then handles its run comment. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -567,28 +568,38 @@ A sweep is a `workflow_dispatch` with the command `autopilot`. Its `number` inpu
 sees everything a replaced one would have. Issue and milestone events other than a closed
 issue run in that group as well, and start a sweep.
 
-- **What starts a sweep.** The end of every NexKit run, except one that started the next
-  automatic round itself or waits for a usage limit. A closed issue, whether a person or
+- **What starts a sweep.** The end of every NexKit run, except one that waits for a usage
+  limit, and one that started the next automatic round itself while no finished run on
+  the default branch needs a sweep (see *CI on the default branch*). A run whose `report`
+  did not finish, because it failed, was cancelled or lost its runner, starts one from its
+  `finish` job. A closed issue, whether a person or
   NexKit closed it, which also lets the sweep say once that the scope is done, or with
   `null` that the issue's milestone is done, while the other milestones go on. An issue
   that opens or is reopened. For the milestone scope, an issue that comes into scope with
   a milestone, and a closed milestone, after which the next milestone becomes the scope.
-  The hourly schedule, which
+  A finished run on the default branch of a workflow in `merge.after_workflows`, through
+  a `workflow_run` trigger. The hourly schedule, which
   catches anything the others missed. Nothing waits in a loop: with nothing to start, a
   sweep ends.
 - **A command starts once.** The record on the issue holds the command, the issue or pull
   request it runs on, and the newest NexKit run comment on both when it started. A run
   that starts posts a new run comment, so the next sweep sees that the command ran.
   Until then, the issue counts as in progress and nothing else starts on it. A command
-  whose run has not started after six hours, for example because `route` refused it or
-  GitHub dropped it from the queue, starts once more with the same note, and the issue
-  waits for a person when that one does not start either.
+  that has posted no run comment after `autopilot.lost_after_minutes` (30 by default),
+  and whose workflow run, which the dispatch names, is neither queued nor running, did
+  not run, for example because `route` refused it or GitHub dropped it from the queue. It
+  starts once more with the same note, and the issue waits for a person when that one
+  does not run either. The first sweep after that time notices it: at the end of any
+  NexKit run, or on the hourly schedule. A dispatch that names no run, as on older GitHub
+  Enterprise Servers, counts as lost on time alone.
 - **Runs that never end.** A sweep reads the workflow run behind each run comment that
-  still says running. When that run has ended, its `report` never wrote the outcome: the
-  sweep marks the comment as ended without a report and sets the round's pending statuses
-  to errors (the `maintain` job has `statuses: write` for this). A command autopilot
-  started, or an automatic round, starts once more; a person's command, or a second run
-  that ended so, waits for a person. A run paused at the usage limit that NexKit does not
+  still says running. When that run has ended, its `report` never wrote the outcome. The
+  run's own `finish` job starts a sweep that waits for the run to end, so this is handled
+  within minutes; any later sweep handles it too. The sweep marks the comment as ended
+  without a report and sets the round's pending statuses to errors (the `maintain` job
+  has `statuses: write` for this). A command autopilot started, or an automatic round,
+  starts once more; a person's command, or a second run that ended so, waits for a
+  person. A run paused at the usage limit that NexKit does not
   resume (`usage_limit.resume: false`, no known reset, or paused more than eight days ago)
   waits for a person, and so does a continued run whose new run has not started after six
   hours. A round that started the next one by itself, such as an automatic fix round,
@@ -685,9 +696,13 @@ issue run in that group as well, and start a sweep.
   failure, and a sweep reads no attempt that a marker covers. An issue from NexKit 4.3.0,
   one per workflow with every failure on it, keeps the records it has and gets no new
   ones; the runs it covers are not recorded again. The first sweep after an upgrade looks
-  back one day, as every sweep does; sweeps run at least hourly. GitHub may send no
-  `workflow_run` event for runs that the Actions token started, so NexKit learns that a
-  run finished from the next sweep: after a run, an issue event or the hourly schedule.
+  back one day, as every sweep does; sweeps run at least hourly. A finished run starts a
+  sweep within minutes through the `workflow_run` trigger, when the run is one a sweep
+  acts on: it failed or was run again, or it passed while a `bug` issue about its
+  workflow is open. GitHub may send no `workflow_run` event for runs that the Actions
+  token started, such as those NexKit starts after its merge, so the end of the next
+  NexKit run checks the newest finished run of each workflow the same way, also a run
+  that started the next round itself; the hourly schedule catches the rest.
 - **What autopilot reads.** The plan comment ends with a hidden record of its questions and
   its split, after everything the agent wrote, and a run comment's marker holds the
   questions of a blocked round and whether the agent ran out of time.

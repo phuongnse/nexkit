@@ -39,6 +39,8 @@ TASKS = {
     "autopilot": ("autopilot.enabled",),
     # The run that looks at every issue in scope (nexkit/autopilot.py).
     "sweep": ("autopilot.enabled",),
+    # A run of another workflow finished, such as one of merge.after_workflows.
+    "ci": ("autopilot.enabled",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
@@ -49,6 +51,10 @@ HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "dup
 WAIT_INPUTS = {"command": "resume", "number": "resume", "note": "", "auto": "false"}
 # How often a waiting run looks again for runs that paused while it waits.
 POLL = timedelta(minutes=10)
+# How often, and how many times, a sweep after a run whose report did not finish looks
+# whether that run ended, before it sweeps anyway.
+END_POLL = 10
+END_TRIES = 30
 
 
 def enabled(task, cfg):
@@ -201,6 +207,20 @@ def check_paused(gh, workflow, ref, wait_minutes, now=None):
     return ["Started a run that resumes paused commands as they come due."]
 
 
+def wait_for_end(gh, run_id, tries=END_TRIES, delay=END_POLL):
+    """Wait until the workflow run `run_id` ended, for at most `tries` looks. The run that
+    asked for this sweep is still ending when it asks. Returns a line for the log."""
+    for attempt in range(tries):
+        try:
+            if gh.workflow_run(run_id).get("status") == "completed":
+                return f"Run {run_id} ended."
+        except GitHubError as exc:
+            return f"Could not read run {run_id}: {exc}"
+        if attempt < tries - 1:
+            time.sleep(delay)
+    return f"Run {run_id} has not ended yet; a later sweep handles it."
+
+
 def conflict_note(base):
     return (
         f"Merge `{base}` into this branch and resolve the conflicts. Keep the intent of both "
@@ -293,7 +313,10 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
             return ["The event does not change autopilot's scope."]
         return autopilot.request_safely(gh, cfg, workflow, ref)
     if task == "sweep":
-        return autopilot.sweep(gh, cfg, workflow, ref, decision.get("closed"))
+        waited = [wait_for_end(gh, decision["after"])] if decision.get("after") else []
+        return waited + autopilot.sweep(gh, cfg, workflow, ref, decision.get("closed"))
+    if task == "ci":
+        return autopilot.after_ci_run(gh, cfg, decision, workflow, ref)
     if task == "conflicts":
         return resolve_conflicts(
             gh, decision["base"], workflow, ref, cfg["conflicts"]["max_rounds"]

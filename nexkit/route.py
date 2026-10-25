@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 import re
 
 from . import config as configuration
@@ -88,6 +89,9 @@ RESUME = "resume"
 RETRY = "retry"
 # Also the `command` of the dispatch that starts an autopilot sweep.
 AUTOPILOT = "autopilot"
+# The note of a sweep that waits for a workflow run to end first, and how route reads it.
+AFTER_RUN = "after run {}"
+AFTER_RUN_PATTERN = re.compile(r"after run (\d+)")
 # Issue events after which an issue may have come into autopilot's scope.
 AUTOPILOT_EVENTS = ("opened", "reopened", "milestoned")
 
@@ -184,6 +188,15 @@ def route(gh, event_name, event, inputs=None):
             return _none("Only pushes to the default branch are handled")
         return {"action": "maintain", "task": "conflicts", "base": branch}
 
+    if event_name == "workflow_run":
+        # A run of another workflow finished. Maintain starts a sweep when it is a run of a
+        # workflow in merge.after_workflows on the default branch that a sweep acts on.
+        run = event.get("workflow_run") or {}
+        if event.get("action") != "completed" or not isinstance(run.get("id"), int):
+            return _none("Only finished workflow runs are handled")
+        workflow = posixpath.basename(str(run.get("path") or ""))
+        return {"action": "maintain", "task": "ci", "workflow": workflow, "run": run["id"]}
+
     if event_name == "workflow_dispatch":
         command = (inputs.get("command") or "").strip()
         number = str(inputs.get("number") or "").strip()
@@ -192,11 +205,14 @@ def route(gh, event_name, event, inputs=None):
             return {"action": "maintain", "task": "resume"}
         if command == AUTOPILOT:
             # A sweep over the issues in scope. Its note names the issue whose closing
-            # started it, if any.
+            # started it, or the run whose report did not finish, if any.
             decision = {"action": "maintain", "task": "sweep"}
             note = str(inputs.get("note") or "").strip()
+            after = AFTER_RUN_PATTERN.fullmatch(note)
             if note.isdigit():
                 decision["closed"] = int(note)
+            elif after:
+                decision["after"] = int(after.group(1))
             return decision
         if not number.isdigit():
             return _none("Dispatch input 'number' must be an issue or PR number")

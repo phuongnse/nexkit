@@ -46,6 +46,9 @@ DEFAULTS = {
         "scope": "milestone",
         "max_parallel": None,
         "answer": "never",
+        # A command autopilot started with no run and no run comment after this long
+        # starts once more.
+        "lost_after_minutes": 30,
     },
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -416,6 +419,7 @@ def _autopilot(settings):
         _positive_int(settings["max_parallel"], "autopilot.max_parallel", 100)
     if settings["answer"] not in AUTOPILOT_ANSWERS:
         _fail(f"autopilot.answer must be one of {', '.join(AUTOPILOT_ANSWERS)}")
+    _positive_int(settings["lost_after_minutes"], "autopilot.lost_after_minutes", 1440, minimum=5)
 
 
 def validate(raw, *, layered=False):

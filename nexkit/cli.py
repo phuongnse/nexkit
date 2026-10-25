@@ -411,6 +411,23 @@ def cmd_maintain(args):
     return 0
 
 
+def cmd_finish(args):
+    from .autopilot import after_unreported
+    from .report import workflow_file
+
+    gh = _gh()
+    lines = after_unreported(
+        gh,
+        _config(),
+        workflow_file(os.environ.get("GITHUB_WORKFLOW_REF", "")),
+        os.environ.get("NEXKIT_DEFAULT_BRANCH") or gh.default_branch(),
+        os.environ["GITHUB_RUN_ID"],
+    )
+    for line in lines:
+        print(line)
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="nexkit", description=nexkit.__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"nexkit {__version__}")
@@ -527,6 +544,9 @@ def build_parser():
     p = sub.add_parser("report", help="(pipeline) Report results and schedule the next round")
     p.add_argument("--artifacts", required=True)
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("finish", help="(pipeline) Start a sweep after a run that did not report")
+    p.set_defaults(func=cmd_finish)
     return parser
 
 

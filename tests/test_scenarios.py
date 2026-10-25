@@ -111,6 +111,19 @@ class Pipeline:
             sleep.start()
             test.addCleanup(sleep.stop)
         self.gh.add_milestone(1)
+        self.dispatch = self.gh.dispatch
+        self.gh.dispatch = self.dispatched
+
+    def dispatched(self, workflow, ref, inputs, run_details=False):
+        """A dispatch of NexKit's workflow queues a run of its own, which GitHub names."""
+        found = self.dispatch(workflow, ref, inputs, run_details)
+        if workflow != "nexkit.yml":
+            return found
+        run_id = next(self.runs)
+        self.gh.dispatches[-1]["run_id"] = run_id
+        self.gh.runs[run_id] = {"status": "queued"}
+        url = f"https://github.com/acme/app/actions/runs/{run_id}"
+        return {"workflow_run_id": run_id, "html_url": url} if run_details else None
 
     def issue(self, number, **kw):
         return self.gh.add_issue(number, title=f"Issue {number}", milestone=1, **kw)
@@ -143,33 +156,36 @@ class Pipeline:
                 if self.workflow:
                     self.workflow(self, dispatch["workflow"])
             elif inputs["command"] == "autopilot":
-                note = str(inputs.get("note") or "")
-                autopilot.sweep(
-                    self.gh, self.cfg, "nexkit.yml", "main", int(note) if note.isdigit() else None
-                )
+                decision = route(self.gh, "workflow_dispatch", {}, inputs)
+                maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+                self.gh.runs[dispatch["run_id"]] = {"status": "completed"}
                 self.check()
             else:
-                self.run(inputs)
+                self.run(dispatch)
 
-    def run(self, inputs):
+    def run(self, dispatch):
+        inputs, run_id = dispatch["inputs"], dispatch["run_id"]
         outcome = self.script(self, inputs)
         if outcome == "lost":
-            # GitHub dropped it: no run, no comment.
+            # GitHub dropped it from the queue: its run never started, and no comment.
+            self.gh.runs[run_id] = {"status": "completed", "conclusion": "cancelled"}
             self.played.append((inputs["command"], int(inputs["number"]), "lost"))
             return
-        run_id = next(self.runs)
         os.environ["GITHUB_RUN_ID"] = str(run_id)
+        self.gh.runs[run_id] = {"status": "in_progress"}
         decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
         if decision["action"] == "none":
+            self.gh.runs[run_id] = {"status": "completed"}
             self.played.append((inputs["command"], int(inputs["number"]), decision["reason"]))
             return
         progress.start(self.gh, decision)
         if outcome == "stall":
-            # The runner was lost: the run ended, and its report never ran.
+            # The runner was lost: report never ran, and the run's `finish` job starts a
+            # sweep that waits for the run to end.
+            autopilot.after_unreported(self.gh, self.cfg, "nexkit.yml", "main", run_id)
             self.gh.runs[run_id] = {"status": "completed", "conclusion": "failure"}
             self.played.append((inputs["command"], int(inputs["number"]), "stall"))
             return
-        self.gh.runs[run_id] = {"status": "in_progress"}
         artifacts = Path(self.tmp.name) / str(run_id)
         needs = self.stages(decision, outcome, artifacts)
         result = report(
@@ -398,6 +414,69 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_a_lost_command_starts_once_more_at_the_end_of_another_run(self):
+        # The plan of #5 never runs. Half an hour later #6 merges, and the sweep at the end
+        # of that run starts it once more: no hourly schedule is needed.
+        lost = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return "lost" if inputs["number"] == "5" and next(lost) < 1 else plan()
+            later = {"meanwhile": lambda pipe, _: pipe.later(timedelta(minutes=31))}
+            return {**done(), **(later if inputs["number"] == "6" else {})}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.issue(6)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        played = [(c, n, o) for c, n, o in pipe.played if o in ("lost", "planned", "merged")]
+        self.assertEqual(
+            played,
+            [
+                ("plan", 5, "lost"),
+                ("plan", 6, "planned"),
+                ("go", 6, "merged"),
+                ("plan", 5, "planned"),
+                ("go", 5, "merged"),
+            ],
+        )
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        pipe.check(quiet=True)
+
+    def test_a_command_that_waits_in_the_queue_is_not_started_twice(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                # Hours pass while its run waits in the queue, and the schedule sweeps.
+                pipe.later(timedelta(hours=2))
+                autopilot.sweep(pipe.gh, pipe.cfg, "nexkit.yml", "main")
+                return plan()
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+
+    def test_a_run_that_ends_without_a_report_moves_on_at_its_own_end(self):
+        stalls = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "go":
+                return "stall" if next(stalls) < 1 else done()
+            return plan()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()  # no time passes, and no hourly schedule
+        self.assertEqual(
+            [(c, n, o) for c, n, o in pipe.played],
+            [("plan", 5, "planned"), ("go", 5, "stall"), ("go", 5, "merged")],
+        )
+        [_, stalled, _] = [run for _, run in run_comments(pipe.gh.comments(5)) if "command" in run]
+        self.assertEqual((stalled["status"], stalled["outcome"]), ("failure", "lost"))
+        pipe.check(quiet=True)
 
     def test_a_merge_that_waits_for_required_checks_merges_when_they_pass(self):
         def script(pipe, inputs):

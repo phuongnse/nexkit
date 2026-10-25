@@ -131,7 +131,8 @@ access, `max_parallel`, or a question without a recommended option. Every issue 
 waits for a person is also listed under *Needs a person*, and does not count toward
 `max_parallel`. With the default `autopilot.scope`, an issue outside the earliest open
 milestone is not in scope; `null` takes every open issue. A command that
-autopilot started but that never ran starts once more after six hours; when that one does
+autopilot started but that never ran starts once more after `autopilot.lost_after_minutes`
+(30 by default), once its workflow run is no longer queued or running; when that one does
 not run either, the issue waits for you, and you can post the command yourself. To sweep
 again at once: `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 

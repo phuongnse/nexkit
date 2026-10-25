@@ -5,7 +5,8 @@ A sweep looks at every open issue in scope and starts the one command that moves
 the `maintain` job, one at a time in the `nexkit-autopilot` concurrency group, and start
 commands with `workflow_dispatch`, like automatic rounds. They hold no agent credential and
 never check out repository code. Events start them: the end of a run, an issue that opens,
-closes or comes into scope, a closed milestone; the hourly schedule catches the rest.
+closes or comes into scope, a closed milestone, a finished run of a workflow in
+`merge.after_workflows` on the default branch; the hourly schedule catches the rest.
 
 Everything a sweep knows comes from GitHub: the issues in scope, their dependencies and
 sub-issues, and NexKit's own markers. One record comment per issue says which command
@@ -25,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
-from .route import RUN_ID, issue_from_branch, parse_command
+from .route import AFTER_RUN, RUN_ID, issue_from_branch, parse_command
 from .state import (
     BOT_LOGIN,
     CONTINUED,
@@ -59,10 +60,9 @@ RECORD_PATTERN = re.compile(r"<!-- nexkit:autopilot ([A-Za-z0-9+/=]+) -->\s*\Z")
 DONE = "<!-- nexkit:autopilot-done -->"
 # A run in these states carries on by itself, or a run is on its way.
 ACTIVE = {RUNNING, PAUSED, CONTINUED}
-# A command autopilot started that has not posted its run comment after this long did not
-# run, for example because `route` refused it, or GitHub dropped it from the queue.
-# Autopilot starts it once more, then waits for a person. A run that continues a paused one
-# and has not started after this long did not start either.
+# A run that continues a paused one and has not started after this long did not start, nor
+# did the round that a round started next by itself. A command that autopilot started is
+# lost sooner: after `autopilot.lost_after_minutes`, when its own run is not on its way.
 LOST = timedelta(hours=6)
 # What the comment of a run that ended without a report says once a sweep finds it.
 REPORTLESS = "the run ended without a report"
@@ -157,18 +157,20 @@ def takes(cfg):
     return bool(cfg.get("autopilot", {}).get("enabled"))
 
 
-def request(gh, workflow, ref, closed=None):
+def request(gh, workflow, ref, closed=None, after=None):
     """Start a sweep. `closed` is the issue whose closing started it: when that empties
-    the scope, the sweep says so on it."""
-    gh.dispatch(workflow, ref, {**SWEEP, "note": str(closed or "")})
+    the scope, the sweep says so on it. `after` is a workflow run that the sweep waits for
+    to end first."""
+    note = str(closed) if closed else AFTER_RUN.format(after) if after else ""
+    gh.dispatch(workflow, ref, {**SWEEP, "note": note})
 
 
-def request_safely(gh, cfg, workflow, ref, closed=None):
+def request_safely(gh, cfg, workflow, ref, closed=None, after=None):
     """`request` for a run that must not fail because of it: errors become a line."""
     if not takes(cfg):
         return []
     try:
-        request(gh, workflow, ref, closed)
+        request(gh, workflow, ref, closed, after)
     except GitHubError as exc:
         return [f"Could not start an autopilot sweep: {exc}"]
     return ["Started an autopilot sweep."]
@@ -183,12 +185,42 @@ def concerns(cfg, decision):
 
 
 def after_run(gh, cfg, decision, outcome, workflow, ref):
-    """Start a sweep after a run, unless the run already started the next one itself or
-    waits for a usage limit. A merge closed the issue, which may empty the scope."""
-    if not takes(cfg) or outcome in CHAINED or outcome == "paused":
+    """Start a sweep after a run, unless it waits for a usage limit, or it already started
+    the next one itself and no finished run on the default branch `ref` needs a sweep. A
+    merge closed the issue, which may empty the scope."""
+    if not takes(cfg) or outcome == "paused":
+        return []
+    if outcome in CHAINED and not ci_due(gh, cfg, ref):
         return []
     closed = decision["issue"] if outcome in ("merged", "no_change") else None
     return request_safely(gh, cfg, workflow, ref, closed)
+
+
+def after_unreported(gh, cfg, workflow, ref, run_id):
+    """Start a sweep at the end of a run whose `report` did not finish, for example
+    because its runner was lost or the run was cancelled: the sweep waits for the run to
+    end, then handles its comment that still says running, as for any run that ended
+    without a report."""
+    return request_safely(gh, cfg, workflow, ref, after=run_id)
+
+
+def after_ci_run(gh, cfg, decision, workflow, ref):
+    """Start a sweep after a run of another workflow finished, when it is a run of a
+    workflow in `merge.after_workflows` on the default branch `ref` that a sweep acts on.
+    GitHub sends no such event for runs that the Actions token started; the end of the
+    next NexKit run notices those (`after_run`)."""
+    name = decision.get("workflow")
+    if name not in cfg["merge"]["after_workflows"]:
+        return [f"`{name}` is not in merge.after_workflows."]
+    try:
+        run = gh.workflow_run(int(decision["run"]))
+        if run.get("head_branch") != ref or not _on_default_branch(gh, run):
+            return [f"The run of `{name}` did not test `{ref}`."]
+        if not _acts_on(run, lambda: name in open_bugs(gh)):
+            return [f"`{name}` passed on `{ref}`; a sweep has nothing to do for it."]
+    except (GitHubError, KeyError, TypeError, ValueError) as exc:
+        return [f"Could not read the run of `{name}`: {exc}"]
+    return request_safely(gh, cfg, workflow, ref)
 
 
 # -- scope -------------------------------------------------------------------------
@@ -424,9 +456,26 @@ def _step(issue, state, reason="", **fields):
     }
 
 
-def _lost(record, now):
+def _lost(gh, cfg, record, now):
+    """Whether a command that autopilot started, which has posted no run comment since,
+    never ran: it started more than `autopilot.lost_after_minutes` ago, and its workflow
+    run, when the dispatch named one, is neither queued nor running."""
     at = parse_iso(record.get("at"))
-    return at is not None and now - at > LOST
+    wait = timedelta(minutes=cfg["autopilot"]["lost_after_minutes"])
+    return at is not None and now - at > wait and not _on_its_way(gh, record.get("url"))
+
+
+def _on_its_way(gh, url):
+    """Whether the workflow run at `url` is queued or running. A run that cannot be read
+    is not."""
+    match = RUN_ID.search(url or "")
+    if not match:
+        return False
+    try:
+        status = gh.workflow_run(int(match.group(1))).get("status")
+    except GitHubError:
+        return False
+    return status not in (None, "completed")
 
 
 def answers(cfg, items):
@@ -799,7 +848,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     now = now or datetime.now(UTC)
     if record.get("basis") == current:
         command = f"`/nexkit {record['command']}`"
-        if not _lost(record, now):
+        if not _lost(gh, cfg, record, now):
             return _step(issue, "active", f"waits for the {command} that autopilot started")
         reason = f"the {command} that autopilot started did not run"
         if record.get("retried"):
@@ -1555,6 +1604,56 @@ def _check_run(gh, cfg, where, workflow, branch, known, run, latest):
     return lines
 
 
+def open_bugs(gh):
+    """{workflow: the open bug issue about it} for the bug issues that autopilot opened for
+    a CI failure on the default branch: the newest open one of each, which reports go to."""
+    bugs = {}
+    for found in gh.issues_by(BOT_LOGIN):
+        if found.get("state") == "open" and ci_workflow(found):
+            bugs.setdefault(ci_workflow(found), found)
+    return bugs
+
+
+def _acts_on(run, bug_open):
+    """Whether a sweep acts on a finished run on the default branch: one that failed or
+    was run again, or one that passed while `bug_open()` says a bug issue about its
+    workflow is open, since pull requests may wait for that workflow to pass again."""
+    if run.get("conclusion") in FAILED or (run.get("run_attempt") or 1) > 1:
+        return True
+    return run.get("conclusion") == "success" and bug_open()
+
+
+# The runs of each workflow that `ci_due` looks at.
+CI_DUE_RUNS = 5
+
+
+def ci_due(gh, cfg, branch):
+    """Whether the newest finished run, on the default branch `branch`, of a workflow in
+    `merge.after_workflows` is one a sweep acts on. A run that cannot be read is left to a
+    sweep."""
+    bugs = None
+    for workflow in cfg["merge"]["after_workflows"]:
+        try:
+            runs = [
+                run
+                for run in gh.workflow_runs(workflow, branch, CI_DUE_RUNS)
+                if run.get("status") == "completed" and _on_default_branch(gh, run)
+            ]
+            if not runs:
+                continue
+
+            def bug_open(workflow=workflow):
+                nonlocal bugs
+                bugs = open_bugs(gh) if bugs is None else bugs
+                return workflow in bugs
+
+            if _acts_on(runs[0], bug_open):
+                return True
+        except GitHubError:
+            return True
+    return False
+
+
 def _on_default_branch(gh, run):
     """Whether a run tested this repository's default branch. GitHub matches the branch by
     the name of a run's head branch alone, which a pull request from a fork can share, and
@@ -1662,11 +1761,7 @@ def ci_wait(gh, cfg, decision, checks, branch):
         return None
     if decision.get("base") != branch:
         return None
-    bugs = {}
-    # Newest first, so the first open one found for a workflow is the one reports go to.
-    for found in gh.issues_by(BOT_LOGIN):
-        if found.get("state") == "open" and ci_workflow(found) in workflows:
-            bugs.setdefault(ci_workflow(found), found)
+    bugs = {name: bug for name, bug in open_bugs(gh).items() if name in workflows}
     if not bugs:
         return None
     issue = gh.issue(decision["issue"])

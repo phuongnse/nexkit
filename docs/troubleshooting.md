@@ -188,6 +188,18 @@ starts no `push` CI, whichever token published the pull request. List those work
 them on the base branch after it merges (see
 [Automatic merge](configuration.md#automatic-merge)).
 
+**A pull request waits for a bug issue and starts no fix round.** Its checks fail only in
+commands that also fail on the default branch, in a workflow of `merge.after_workflows`
+whose `bug` issue autopilot opened (outcome `ci_waiting`, state `waiting` in
+`nexkit status`). Fixing that issue fixes the pull request too, so NexKit waits instead
+of fixing the same failure in every pull request. The wait ends by itself once the
+workflow passes on the default branch again, or the `bug` issue is closed: the next sweep
+starts one automatic fix round that merges the default branch. If the failure is the pull
+request's own after all, comment `/nexkit fix <instructions>` on it. A pull request whose
+checks are not compared this way, because your CI runs its commands differently from
+NexKit's checks, gets the usual fix rounds (see [How it
+works](how-it-works.md#failing-checks-the-default-branch-has)).
+
 **"The change modifies protected paths".** The agent edited `.github/` or `.nexkit/`, or a
 path you added to `protected_paths`. Make those changes yourself, then use `/nexkit fix`.
 

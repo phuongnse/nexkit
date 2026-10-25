@@ -63,9 +63,11 @@ COMPLETED = {
     "head_moved",
     "recheck_failed",
     "no_change",
+    autopilot.CI_WAITING,
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
-# NexKit continues by itself (`auto_fix`, `conflict_fix`, a resumed pause) or is done.
+# NexKit continues by itself (`auto_fix`, `conflict_fix`, a resumed pause, a sweep after
+# `ci_waiting`) or is done.
 NEEDS_PERSON = {
     "agent_blocked": "the agent is blocked and needs a decision",
     "agent_error": "the run stopped on an error",
@@ -809,7 +811,7 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
 
 # Outcomes of an implement round that leave its pull request as it is, with no round on
 # its way: a conflict round skipped while it ran starts when it ends.
-IMPLEMENT_LEFT = {"ready", "needs_human", "review_failed", "retry_failed"}
+IMPLEMENT_LEFT = {"ready", "needs_human", "review_failed", "retry_failed", autopilot.CI_WAITING}
 
 
 def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
@@ -914,6 +916,18 @@ def _record(state, decision, row, agent, review, checks):
                 for f in review.get("findings", [])[:MAX_FINDINGS]
             ],
         }
+
+
+def _ci_wait(gh, cfg, decision, checks, default_branch):
+    """`autopilot.ci_wait` for a round that must not fail because of it: without what it
+    reads, the round gets the usual fix round."""
+    try:
+        return autopilot.ci_wait(gh, cfg, decision, checks, default_branch)
+    except GitHubError as exc:
+        print(
+            f"warning: could not compare the checks with the default branch: {exc}", file=sys.stderr
+        )
+        return None
 
 
 def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch):
@@ -1033,6 +1047,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     comments = gh.comments(pr)
     comment_id, state = read_state(comments)
     state = state or empty_state(decision["issue"])
+    # A round that waited for the default branch is over once another round reports.
+    state.pop("ci_wait", None)
     round_id, row = progress.find_round(comments, decision)
     if decision.get("head") and decision["head"] != head:
         _restore_statuses(gh, decision["head"], state.get("feedback"), url)
@@ -1113,6 +1129,15 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             "Checks or review still fail on the same commit. Comment `/nexkit fix "
             "<instructions>` or `/nexkit review`, push a commit yourself, or close the PR."
         )
+    elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"] and (
+        wait := _ci_wait(gh, cfg, decision, checks, default_branch)
+    ):
+        # The checks fail as the default branch does: the bug issue about it fixes that,
+        # and a fix round here would only fix it again, or change nothing.
+        outcome = autopilot.CI_WAITING
+        state["ci_wait"] = row["ci_wait"] = wait
+        state["feedback"].pop("repeated", None)
+        message = autopilot.ci_wait_message(wait)
     elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"]:
         state["auto_fixes"] += 1
         outcome = "auto_fix"

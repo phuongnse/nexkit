@@ -15,8 +15,11 @@ Change nothing. The NexKit CLI ships with this plugin; run it as
      with the plan's link and profile, `implementing`, `paused`, `failed`,
      `in_pull_request`, `implemented`) and the link to its last run comment.
    - `pull_requests`: open NexKit pull requests, each with a `state` (`running`, `ready`,
-     `blocked`, `failing`, `conflicting`, `merge_refused`, `paused`, `failed`), the round
-     and the link to its last round.
+     `blocked`, `failing`, `conflicting`, `merge_refused`, `merge_waiting`, `paused`,
+     `failed`, `waiting`), the round and the link to its last round. A `waiting` pull
+     request has `waits_for`, the autopilot `bug` issue about the default branch failing
+     the same way, and the `reason`; it gets its automatic fix round by itself once that
+     workflow passes on the default branch or the issue is closed.
    - `recent_merges`: pull requests NexKit merged, newest first by merge time, with the
      state of each `merge.after_workflows` run.
    - `needs_person`: only the items that need a person, with the reason.

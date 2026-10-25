@@ -90,11 +90,13 @@ def error(**fields):
 class Pipeline:
     """The in-memory GitHub, the dispatches still to run, and the scripted outcomes."""
 
-    def __init__(self, test, cfg, script):
+    def __init__(self, test, cfg, script, workflow=None):
         self.test = test
         self.gh = FakeGitHub()
         self.cfg = cfg
         self.script = script
+        # What a dispatch of another workflow, such as CI after a merge, leads to.
+        self.workflow = workflow
         self.handled = 0
         self.runs = itertools.count(100)
         self.heads = itertools.count(1)
@@ -134,9 +136,13 @@ class Pipeline:
     def drain(self):
         while self.handled < len(self.gh.dispatches):
             self.test.assertLess(self.handled, MAX_DISPATCHES, f"a loop: {self.played}")
-            inputs = self.gh.dispatches[self.handled]["inputs"]
+            dispatch = self.gh.dispatches[self.handled]
+            inputs = dispatch["inputs"]
             self.handled += 1
-            if inputs["command"] == "autopilot":
+            if dispatch["workflow"] != "nexkit.yml":
+                if self.workflow:
+                    self.workflow(self, dispatch["workflow"])
+            elif inputs["command"] == "autopilot":
                 note = str(inputs.get("note") or "")
                 autopilot.sweep(
                     self.gh, self.cfg, "nexkit.yml", "main", int(note) if note.isdigit() else None
@@ -289,7 +295,7 @@ class Pipeline:
         waiting = sum(
             1
             for d in self.gh.dispatches[self.handled :]
-            if d["inputs"]["command"] == "fix"
+            if d["inputs"].get("command") == "fix"
             and d["inputs"]["auto"] == "true"
             and d["inputs"]["number"] == str(pull)
         )
@@ -301,7 +307,7 @@ def config(**kw):
     autopilot_settings = {"enabled": True, "answer": "recommended", **kw.pop("autopilot", {})}
     return make_config(
         autopilot=autopilot_settings,
-        merge={"auto": True},
+        merge={"auto": True, **kw.pop("merge", {})},
         conflicts={"auto_resolve": True},
         notify=["olivia"],
         **kw,
@@ -609,6 +615,73 @@ class ScenarioTests(unittest.TestCase):
         [note] = pipe.gh.comments_matching(5, autopilot.DONE)
         self.assertIn("@olivia NexKit autopilot finished milestone M1", note["body"])
         self.assertFalse(any(pipe.gh.comments_matching(n, autopilot.DONE) for n in (7, 8)))
+
+    def test_pull_requests_wait_while_main_fails_the_same_way_and_go_on_once_it_is_fixed(self):
+        runs = itertools.count(60)
+
+        def ci(pipe, workflow):
+            # CI that NexKit starts after a merge passes: the merge fixed `main`.
+            run = {
+                "id": next(runs),
+                "head_branch": "main",
+                "head_repository": {"full_name": "acme/app"},
+                "event": "workflow_dispatch",
+                "status": "completed",
+                "conclusion": "success",
+                "run_attempt": 1,
+                "created_at": autopilot.iso(datetime.now(autopilot.UTC)),
+            }
+            pipe.gh.workflow_history[workflow].append(run)
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            # Every implement round fails in `make test`, as `main` does; the fix rounds,
+            # with `main` merged, pass.
+            return done(checks=inputs["command"] == "fix")
+
+        cfg = config(merge={"after_workflows": ["ci.yml"]})
+        pipe = Pipeline(self, cfg, script, workflow=ci)
+        for number in (5, 6, 7):
+            pipe.issue(number)
+        # `ci.yml` failed on `main` twice, in the step that runs `make test`.
+        pipe.gh.workflow_history["ci.yml"] = [
+            {
+                "id": 50,
+                "head_branch": "main",
+                "head_repository": {"full_name": "acme/app"},
+                "event": "push",
+                "head_sha": "e" * 40,
+                "status": "completed",
+                "conclusion": "failure",
+                "run_attempt": 2,
+                "html_url": "https://github.com/acme/app/actions/runs/50",
+                "created_at": autopilot.iso(datetime.now(autopilot.UTC)),
+            }
+        ]
+        pipe.gh.jobs[50] = [{"id": 501, "name": "Unit tests", "conclusion": "failure"}]
+        pipe.gh.logs[501] = (
+            b"##[group]Run make test\n##[endgroup]\nFAIL\n"
+            b"##[error]Process completed with exit code 1.\n"
+        )
+        played = pipe.play()
+        [bug] = [n for n, i in pipe.gh.issues.items() if autopilot.ci_workflow(i)]
+        pulls = {issue_from_branch(p["head"]["ref"]): n for n, p in pipe.gh.pulls.items()}
+        outcomes = {(c, n): o for c, n, o in pipe.played if c != "plan"}
+        # The bug issue is planned first, and its own pull request gets the usual round.
+        self.assertEqual(played[0], ("plan", bug))
+        self.assertEqual(outcomes[("go", bug)], "auto_fix")
+        for number in (5, 6, 7):
+            # Each waited, used no round while it did, then got one round that merged.
+            self.assertEqual(outcomes[("go", number)], "ci_waiting")
+            self.assertEqual(outcomes[("fix", pulls[number])], "merged")
+            self.assertEqual(read_state(pipe.gh.comments(pulls[number]))[1]["auto_fixes"], 1)
+            triggers = [run["trigger"] for _, run in run_comments(pipe.gh.comments(pulls[number]))]
+            self.assertEqual(triggers, ["implement (autopilot)", "fix (auto)"])
+        self.assertLess(played.index(("fix", pulls[bug])), played.index(("fix", pulls[5])))
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7, bug)))
+        for number in (5, 6, 7, bug, *pulls.values()):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
 
 if __name__ == "__main__":

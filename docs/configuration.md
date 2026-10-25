@@ -436,6 +436,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 | Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
 | A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
 | Its pull request is approved, and GitHub refused the merge until required checks pass | Tries the merge again, and merges once the checks pass. |
+| Its pull request waits for a bug issue about the default branch, whose failure its checks repeat | Nothing while that workflow fails on the default branch and the bug issue is open; then starts the automatic fix round the pull request waited for. It keeps its place within `max_parallel`. |
 | The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. With `null`, the same for the last open issue of each milestone, while the other milestones go on. |
 
 - **Scope.** `"milestone"` takes the open issues of the earliest open milestone: by due
@@ -447,10 +448,12 @@ every open issue in scope, in order, and starts the one command that moves it on
   never touched.
 - **Changing the scope.** Work under way is not stopped. A run that is running ends as
   usual, and an open pull request keeps its automatic fix and conflict rounds, which do not
-  depend on the scope. Two things then wait for a person: an approved pull request whose
+  depend on the scope. Three things then wait for a person: an approved pull request whose
   issue left the scope and whose merge waits for checks, because only sweeps retry that
-  merge and they look at the scope alone; and an issue in scope blocked by an open issue
-  that left it. Issues that left the scope and have not started stay open and wait until
+  merge and they look at the scope alone; a pull request whose issue left the scope while
+  it waits for a `bug` issue about the default branch (see *CI on the default branch*),
+  because only sweeps end that wait; and an issue in scope blocked by an open issue that
+  left it. Issues that left the scope and have not started stay open and wait until
   they are in scope again.
 - **Order.** Bug issues for CI failures go first and issues for flaky runs next. Then,
   with `null`, come the issues of each open milestone, in the milestone scope's order,
@@ -503,7 +506,15 @@ every open issue in scope, in order, and starts the one command that moves it on
   mentions `notify` in it, and plans it before every other issue. A later failure on a
   newer commit adds a comment to that issue while it is open; a commit is reported once.
   When a later attempt of that run passes, for example because a person ran it again, a
-  comment on the issue says which attempt passed.
+  comment on the issue says which attempt passed. While that issue is open, a pull request
+  into the default branch whose failing checks all run commands that failed in the
+  workflow's latest failed attempt gets no automatic fix round: it waits, using none of
+  `fix.max_auto_rounds`, and `nexkit status` shows it as `waiting` for that issue. Once
+  the workflow passes on the default branch again, or the issue is closed, a sweep starts
+  its automatic fix round, which merges the default branch first. A check matches a
+  failed step when the first line of its `run` is the step's command, so this works when
+  your CI runs the same commands as NexKit's checks, such as `scripts/test.sh` in both.
+  See [How it works](how-it-works.md#failing-checks-the-default-branch-has).
 - **Flaky runs.** A run that passed only when run again, and an older run that failed when
   a newer run had already started, are recorded under each of their failures, on one
   `bug` issue per failure, which mentions `notify` and is planned right after the `bug`

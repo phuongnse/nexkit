@@ -23,7 +23,7 @@ import string
 from datetime import UTC, datetime, timedelta
 
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
-from .progress import STATUS_CONTEXTS
+from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
 from .route import RUN_ID, issue_from_branch, parse_command
 from .state import (
@@ -36,10 +36,12 @@ from .state import (
     answers_marker,
     answers_text,
     by_bot,
+    ci_wait_reason,
     conflict_rounds_used,
     latest_plan,
     plan_data,
     questions,
+    read_state,
     round_questions,
     run_comments,
     with_run,
@@ -99,6 +101,18 @@ CI_BUG_PREFIX = "<!-- nexkit:ci "
 CI_BUG = re.compile(r"\A<!-- nexkit:ci ([A-Za-z0-9_.-]+) -->")
 CI_SHA_PREFIX = "<!-- nexkit:ci-sha "
 CI_SHA = re.compile(r"<!-- nexkit:ci-sha ([0-9a-f]+) -->")
+# What a red branch's report records of the latest failed attempt of its run: the run, and
+# for each failed job the commands of its `run` steps that failed, from the job's log. A
+# pull request whose failing checks run only those commands waits for the bug issue
+# instead of a fix round.
+CI_FAILED_PREFIX = "<!-- nexkit:ci-failed "
+CI_FAILED = re.compile(r"<!-- nexkit:ci-failed ([A-Za-z0-9+/=]+) -->")
+# How a job's log starts a step, with the first line of the step's command, and how it ends
+# a step whose command failed or ran out of time.
+LOG_STEP = re.compile(r"##\[group\]Run (.*)")
+LOG_FAILED = re.compile(
+    r"##\[error\](?:Process completed with exit code [1-9]|The action .* has timed out)"
+)
 # An issue that autopilot opened for one failure in the runs of a workflow on the default
 # branch that passed only when run again, or that failed and a newer run overtook. Its
 # marker names the workflow and a key for the failure. One from NexKit 4.3.0 names only the
@@ -134,6 +148,9 @@ FAILED = {"failure", "timed_out"}
 PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
 # Outcomes after which a run already started the next one by itself.
 CHAINED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved"}
+# The outcome of a round whose checks fail as the default branch does while a bug issue
+# for that failure is open: no fix round starts until the default branch passes again.
+CI_WAITING = "ci_waiting"
 
 
 def takes(cfg):
@@ -672,6 +689,8 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") == "merge_waiting":
         return _merge_step(gh, issue, pull, comment, latest, now)
+    if latest.get("outcome") == CI_WAITING:
+        return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start)
     if latest.get("status") == FAILURE:
         found = (pull_comments, comments)
         step = _stopped(gh, cfg, issue, latest, record, start, "fix", pull, found)
@@ -794,6 +813,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
             note=record.get("note") or "",
             basis=current,
             remember={"retried": True},
+            **({"auto": record["auto"]} if record.get("auto") else {}),
         )
     start = {"basis": current, "target": number, "note": "", "remember": {}}
     found = [(c, run) for c, run in run_comments(comments) if "command" in run]
@@ -900,10 +920,12 @@ def preview(gh, cfg):
     pulls = nexkit_pulls(gh)
     steps = [assess(gh, cfg, issue, pulls, where=where) for issue in where["issues"]]
     limit = cfg["autopilot"]["max_parallel"]
-    # An issue whose pull request autopilot carries on is in progress already. One that
-    # waits for a person leaves its place to the others.
+    # An issue whose pull request autopilot carries on is in progress already, also while
+    # the pull request waits for another issue. One that waits for a person leaves its
+    # place to the others.
     busy = sum(
-        step["state"] == "active" or (bool(step.get("pull")) and step["state"] != "waits")
+        step["state"] == "active"
+        or (bool(step.get("pull")) and (step["state"] != "waits" or not step["person"]))
         for step in steps
     )
     for step in steps:
@@ -960,9 +982,15 @@ def start(gh, step, workflow, ref, now=None):
     if step.get("answers"):
         post_answers(gh, target, step["answers"])
     settle(gh, step)
-    inputs = {"command": command, "number": str(target), "note": step["note"], "auto": AUTO}
+    auto = step.get("auto") or AUTO
+    inputs = {"command": command, "number": str(target), "note": step["note"], "auto": auto}
     started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
+    if step.get("count"):
+        _count_round(gh, target)
     record = {"command": command, "target": target}
+    if step.get("auto"):
+        # A command that never ran starts once more as the same kind of round.
+        record["auto"] = step["auto"]
     if step["note"]:
         # A command that never ran starts once more with the same note.
         record["note"] = step["note"]
@@ -1128,9 +1156,10 @@ def _runs_marker(run, attempts):
     return f"{CI_RUNS_PREFIX}{items} -->"
 
 
-def _failed_jobs(gh, run, attempt):
+def _failed_jobs(gh, run, attempt, failed_jobs=None):
     """Each failed job of an attempt, linked, with its failed steps, the failures its error
-    annotations name and the end of its log, so the issue holds what an agent needs."""
+    annotations name and the end of its log, so the issue holds what an agent needs. With
+    `failed_jobs`, each failed job's name and failed commands are added to it."""
     lines = []
     for job in gh.attempt_jobs(run["id"], attempt):
         if job.get("conclusion") not in FAILED:
@@ -1143,7 +1172,10 @@ def _failed_jobs(gh, run, attempt):
         for found in (_annotated(link, note) for note in notes):
             if found:
                 lines.append("  " + found["line"].replace(f"- {link}: ", "- ", 1))
-        tail = _log_tail(gh, job)
+        log = _job_log(gh, job)
+        if failed_jobs is not None:
+            failed_jobs.append({"job": job.get("name"), "commands": failed_commands(log)})
+        tail = _log_tail(log)
         if tail:
             lines += ["", "  The end of its log:", "", "  ```text", *tail, "  ```", ""]
     return lines or ["- The attempt failed before any job did; open it for the reason."]
@@ -1155,15 +1187,41 @@ LOG_CHARS = 4000
 TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")
 
 
-def _log_tail(gh, job):
-    """The last lines of a failed job's log, redacted and indented for the issue, or []."""
+def _job_log(gh, job):
+    """A failed job's log as text, or "" when GitHub has none."""
     if not job.get("id"):
-        return []
+        return ""
     try:
         raw = gh.job_log(job["id"])
     except GitHubError:
-        return []
-    text = raw.decode("utf-8", errors="replace")[-LOG_CHARS * 4 :]
+        return ""
+    return raw.decode("utf-8", errors="replace")
+
+
+def command_line(command):
+    """The first line of a command, on one line: what a job's log names a step by, and
+    what a check is compared by."""
+    lines = [line for line in str(command or "").splitlines() if line.strip()]
+    return " ".join(lines[0].split()) if lines else ""
+
+
+def failed_commands(log):
+    """The command of each `run` step whose process failed or ran out of time, from a
+    job's log, by the first line of the command, as the log starts the step with it."""
+    found, current = [], ""
+    for raw in log.lstrip("\ufeff").splitlines():
+        line = TIMESTAMP.sub("", raw).strip()
+        step = LOG_STEP.match(line)
+        if step:
+            current = command_line(step.group(1))
+        elif current and LOG_FAILED.match(line) and current not in found:
+            found.append(current)
+    return found
+
+
+def _log_tail(log):
+    """The last lines of a failed job's log, redacted and indented for the issue, or []."""
+    text = log[-LOG_CHARS * 4 :]
     lines = [TIMESTAMP.sub("", line).rstrip() for line in text.splitlines()]
     lines = [line[:300].replace("```", "'''") for line in lines if line.strip()][-LOG_LINES:]
     shown = Redactor()("\n".join(lines))[-LOG_CHARS:]
@@ -1181,25 +1239,36 @@ def _failed_attempts(gh, run, attempts):
     return failed
 
 
-def _failures(gh, run, failed):
-    """Each failed attempt, linked, with its failed jobs and steps."""
+def _failures(gh, run, failed, failed_jobs=None):
+    """Each failed attempt, linked, with its failed jobs and steps. With `failed_jobs`, the
+    failed jobs of the latest failed attempt and their failed commands are added to it."""
     lines = []
     for attempt in failed:
         url = f"{run.get('html_url')}/attempts/{attempt}"
-        lines += ["", f"Attempt [{attempt}]({url}):", *_failed_jobs(gh, run, attempt)]
+        found = failed_jobs if attempt == failed[-1] else None
+        lines += ["", f"Attempt [{attempt}]({url}):", *_failed_jobs(gh, run, attempt, found)]
     return lines
+
+
+def _failed_marker(run, failed_jobs):
+    record = {"run": run["id"], "jobs": failed_jobs}
+    data = base64.b64encode(json.dumps(record, sort_keys=True).encode()).decode()
+    return f"{CI_FAILED_PREFIX}{data} -->"
 
 
 def _failure_text(gh, workflow, run, branch):
     sha = run.get("head_sha") or ""
     attempts = range(1, (run.get("run_attempt") or 1) + 1)
+    failed_jobs = []
+    lines = _failures(gh, run, _failed_attempts(gh, run, attempts), failed_jobs)
     return "\n".join(
         [
             f"[`{workflow}` failed]({run.get('html_url')}) on `{branch}` at {sha}, also when "
             "run again. Failed jobs and steps of each failed attempt:",
-            *_failures(gh, run, _failed_attempts(gh, run, attempts)),
+            *lines,
             "",
             f"{CI_SHA_PREFIX}{sha} -->",
+            _failed_marker(run, failed_jobs),
             _runs_marker(run, attempts),
         ]
     )
@@ -1531,6 +1600,148 @@ def check_ci(gh, cfg, where, branch, now=None):
         except GitHubError as exc:
             lines.append(f"Could not check `{workflow}` on `{branch}`: {exc}")
     return lines
+
+
+# -- pull requests that wait for the default branch -----------------------------------
+
+# The runs of a workflow on the default branch that show whether it passes again.
+CI_WAIT_RUNS = 20
+
+
+def _recorded_failure(gh, issue):
+    """What the latest report on a red branch's bug issue records of its failed attempt:
+    the run and the failed commands of its failed jobs, or None when no report does."""
+    texts = [issue.get("body") or ""]
+    texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if by_bot(c)]
+    for text in reversed(texts):
+        match = CI_FAILED.search(text)
+        if not match:
+            continue
+        try:
+            record = json.loads(base64.b64decode(match.group(1)))
+        except ValueError:
+            return None
+        run = record.get("run") if isinstance(record, dict) else None
+        if not isinstance(run, int) or isinstance(run, bool):
+            return None
+        jobs = [job for job in record.get("jobs") or [] if isinstance(job, dict)]
+        commands = {c for job in jobs for c in job.get("commands") or [] if isinstance(c, str)}
+        return {"run": run, "commands": commands - {""}}
+    return None
+
+
+def passes_again(gh, workflow, branch, since):
+    """Whether `workflow` passes on the default branch `branch` again: its newest run
+    there that passed or failed passed, and is run `since` or a newer one. A run that is
+    still running does not count, so neither does an older run while `since` runs again."""
+    for run in gh.workflow_runs(workflow, branch, CI_WAIT_RUNS):
+        if run.get("status") != "completed" or not _on_default_branch(gh, run):
+            continue
+        if run.get("conclusion") not in (*FAILED, "success"):
+            continue
+        return run["id"] >= since and run.get("conclusion") == "success"
+    return False
+
+
+def ci_wait(gh, cfg, decision, checks, branch):
+    """What a pull request's round waits for instead of an automatic fix round, or None:
+    an open bug issue for a workflow of `merge.after_workflows` that still fails on the
+    default branch `branch`, when every failing check runs a command that failed in the
+    latest failed attempt the issue records. A pull request's checks are NexKit's own,
+    not jobs and steps of that workflow, so a check and a step are the same when they run
+    the same command, by its first line. Only for a pull request into the default branch
+    whose issue autopilot takes, since sweeps end the wait, and never for the bug issue
+    or its parts."""
+    failing = {
+        command_line(check.get("run"))
+        for check in checks or []
+        if isinstance(check, dict) and not check.get("passed")
+    }
+    workflows = cfg["merge"]["after_workflows"]
+    if not failing or "" in failing or not workflows or not takes(cfg):
+        return None
+    if decision.get("base") != branch:
+        return None
+    bugs = {}
+    # Newest first, so the first open one found for a workflow is the one reports go to.
+    for found in gh.issues_by(BOT_LOGIN):
+        if found.get("state") == "open" and ci_workflow(found) in workflows:
+            bugs.setdefault(ci_workflow(found), found)
+    if not bugs:
+        return None
+    issue = gh.issue(decision["issue"])
+    if not taken(gh, cfg, issue):
+        return None
+    own = {issue["number"], *(parent["number"] for parent in lineage(gh, issue))}
+    for workflow in workflows:
+        bug = bugs.get(workflow)
+        if not bug or bug["number"] in own:
+            continue
+        recorded = _recorded_failure(gh, bug)
+        if not recorded or not failing <= recorded["commands"]:
+            continue
+        if passes_again(gh, workflow, branch, recorded["run"]):
+            continue
+        return {
+            "bug": bug["number"],
+            "workflow": workflow,
+            "branch": branch,
+            "run": recorded["run"],
+        }
+    return None
+
+
+def ci_wait_message(wait):
+    """What the round that waits says."""
+    bug, workflow, branch = wait["bug"], wait["workflow"], wait["branch"]
+    return (
+        f"Every failing check runs a command that fails in `{workflow}` on `{branch}`, which "
+        f"#{bug} is about, so NexKit starts no fix round for it here. Once `{workflow}` "
+        f"passes on `{branch}` again, or #{bug} is closed, NexKit autopilot starts the "
+        f"automatic fix round, which merges `{branch}` first. Waiting uses no automatic fix "
+        "round."
+    )
+
+
+def ci_wait_over(gh, wait):
+    """Why a pull request's wait for a bug issue is over, or None while it lasts: the
+    issue is closed, or its workflow passes on the default branch again."""
+    bug, workflow, branch = wait.get("bug"), wait.get("workflow"), wait.get("branch")
+    if not (isinstance(bug, int) and workflow and branch):
+        return "the round that waits names no bug issue"
+    if gh.issue(bug).get("state") != "open":
+        return f"#{bug} is closed"
+    if passes_again(gh, workflow, branch, wait.get("run") or 0):
+        return f"`{workflow}` passes on `{branch}` again"
+    return None
+
+
+def _ci_step(gh, cfg, issue, pull, run, pull_comments, start):
+    """The step for a pull request whose round waits for a bug issue about the default
+    branch: it waits while the wait lasts, then gets the automatic fix round it waited
+    for, which merges the base branch and counts toward `fix.max_auto_rounds`."""
+    wait = run.get("ci_wait") or {}
+    over = ci_wait_over(gh, wait)
+    if over is None:
+        return _step(issue, "waits", f"pull request #{pull} {ci_wait_reason(wait)}", person=False)
+    _, state = read_state(pull_comments)
+    if (state or {}).get("auto_fixes", 0) >= cfg["fix"]["max_auto_rounds"]:
+        reason = f"{over}, but pull request #{pull} has no automatic fix rounds left"
+        return _step(issue, "waits", reason)
+    reason = f"{over}, so pull request #{pull} gets the automatic fix round it waited for"
+    fields = {**start, "target": pull, "auto": "true", "count": True}
+    return _step(issue, "start", reason, command="fix", **fields)
+
+
+def _count_round(gh, pull):
+    """Count the automatic fix round a pull request waited for, as `report` counts one it
+    starts, and end the wait in its state comment."""
+    comment_id, state = read_state(gh.comments(pull))
+    if not state:
+        return
+    state["auto_fixes"] = (state.get("auto_fixes") or 0) + 1
+    state.pop("ci_wait", None)
+    save_state(gh, pull, comment_id, state)
 
 
 def sweep(gh, cfg, workflow, ref, closed=None):

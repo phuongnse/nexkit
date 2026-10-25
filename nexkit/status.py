@@ -20,6 +20,7 @@ from .state import (
     PAUSED,
     RUNNING,
     SUCCESS,
+    ci_wait_reason,
     conflict_rounds_used,
     latest_plan,
     plan_profile,
@@ -103,6 +104,8 @@ def pull_state(run, conflicting):
         return "blocked" if outcome == "agent_blocked" else "failed"
     if outcome in ("ready", "merge_refused", "merge_waiting"):
         return outcome
+    if outcome == autopilot.CI_WAITING:
+        return "waiting"
     if outcome is None:
         # Rounds from releases before outcomes were recorded.
         passed = run.get("checks") == "passed" and run.get("verdict") == "approve"
@@ -137,6 +140,9 @@ def pull_item(pull, comments, cfg):
     )
     if state == "paused":
         item["resume_at"] = (run.get("resume") or {}).get("at")
+    if state == "waiting":
+        wait = meaningful.get("ci_wait") or {}
+        item.update(waits_for=wait.get("bug"), reason=ci_wait_reason(wait))
     attention = (meaningful if run.get("status") == SUCCESS else run).get("attention")
     used = conflict_rounds_used([r for _, r in rounds]) >= cfg["conflicts"]["max_rounds"]
     if state == "conflicting" and not cfg["conflicts"]["auto_resolve"]:
@@ -317,6 +323,8 @@ def render(data):
         detail = f" round {item['round']} ({item['trigger']})" if item.get("round") else ""
         if item["state"] == "paused" and item.get("resume_at"):
             detail += f", resumes after {item['resume_at']}"
+        if item["state"] == "waiting":
+            detail += f", waits for #{item['waits_for']}"
         lines.append(
             f"  #{item['number']:<5} {item['state']:<16} {_short(item['title'])}{detail}"
             f"  {item.get('link') or item['url']}"

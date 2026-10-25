@@ -325,11 +325,17 @@ def _triggers(cfg, workflow):
 def _autopilot_triggers(cfg, workflow):
     """A finding: autopilot needs the events that bring issues into scope, and its own
     concurrency group so those events never replace a command that waits."""
-    needed = ["opened", "reopened", "closed"]
-    needed += ["labeled"] if cfg["autopilot"]["scope"] == "label" else ["milestoned"]
+    # With `null` every open issue is in scope, so milestones change nothing.
+    by_milestone = cfg["autopilot"]["scope"] == "milestone"
+    needed = ["opened", "reopened", "closed", *(["milestoned"] if by_milestone else [])]
     issues = trigger(workflow, "issues")
-    missing = [t for t in needed if issues is None or ("types" in issues and t not in issues)]
-    if cfg["autopilot"]["scope"] == "milestone" and trigger(workflow, "milestone") is None:
+    # Whole words: `reopened` holds `opened`.
+    missing = [
+        t
+        for t in needed
+        if issues is None or ("types" in issues and not re.search(rf"\b{t}\b", issues))
+    ]
+    if by_milestone and trigger(workflow, "milestone") is None:
         missing.append("milestone: closed")
     if trigger(workflow, "schedule") is None:
         missing.append("schedule")

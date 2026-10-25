@@ -253,13 +253,21 @@ class InitDoctorTests(unittest.TestCase):
         workflow.write_text(re.sub(r"  milestone:\n.*\n", "", text))
         findings = scaffold.doctor(self.root)
         self.assertTrue(any("'milestone: closed'" in m for ok, m in findings if not ok))
-        # The label scope needs `labeled`, not the milestone events.
-        cfg["autopilot"] = {"enabled": True, "scope": "label", "label": "autopilot"}
+        # With null, milestones change nothing: only issues opening and closing count.
+        cfg["autopilot"] = {"enabled": True, "scope": None}
         path.write_text(json.dumps(cfg))
+        no_milestones = re.sub(r"  milestone:\n.*\n", "", text).replace(", milestoned]", "]")
+        workflow.write_text(no_milestones)
         self.assertIn(ok, scaffold.doctor(self.root))
-        workflow.write_text(text.replace("labeled, ", ""))
+        for needed in ("opened", "reopened", "closed"):
+            workflow.write_text(re.sub(rf"\b{needed}, |, {needed}\b", "", no_milestones, count=1))
+            findings = scaffold.doctor(self.root)
+            failed = [m for ok, m in findings if not ok and "autopilot" in m]
+            self.assertEqual(len(failed), 1, needed)
+            self.assertIn(f"does not listen to '{needed}'", failed[0])
+        workflow.write_text(re.sub(r"  schedule:\n.*\n", "", no_milestones))
         findings = scaffold.doctor(self.root)
-        self.assertTrue(any("does not listen to 'labeled'" in m for ok, m in findings if not ok))
+        self.assertTrue(any("does not listen to 'schedule'" in m for ok, m in findings if not ok))
         # A workflow from before autopilot: issue events join the issue's group.
         workflow.write_text(text.replace("&& 'autopilot' ", ""))
         findings = scaffold.doctor(self.root)
@@ -641,7 +649,7 @@ class PipelineCommandTests(unittest.TestCase):
     def test_route_hands_autopilot_events_to_maintain_only_when_enabled(self):
         events = [
             ("issues", {"action": "opened", "issue": {"number": 5}}),
-            ("issues", {"action": "labeled", "issue": {"number": 5}, "label": {"name": "x"}}),
+            ("issues", {"action": "milestoned", "issue": {"number": 5}}),
             ("milestone", {"action": "closed", "milestone": {"number": 1}}),
             ("workflow_dispatch", {"inputs": {"command": "autopilot", "number": "autopilot"}}),
         ]
@@ -656,7 +664,7 @@ class PipelineCommandTests(unittest.TestCase):
             decisions,
             [
                 {"action": "maintain", "task": "autopilot", "event": "opened"},
-                {"action": "maintain", "task": "autopilot", "event": "labeled", "label": "x"},
+                {"action": "maintain", "task": "autopilot", "event": "milestoned"},
                 {"action": "maintain", "task": "autopilot", "event": "milestone_closed"},
                 {"action": "maintain", "task": "sweep"},
             ],

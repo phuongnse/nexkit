@@ -35,7 +35,7 @@ TASKS = {
     "schedule": ("usage_limit.resume", "conflicts.auto_resolve", "autopilot.enabled"),
     "resume": ("usage_limit.resume",),
     "conflicts": ("conflicts.auto_resolve",),
-    # An issue opened, reopened, labeled or milestoned, or a milestone closed.
+    # An issue opened, reopened or milestoned, or a milestone closed.
     "autopilot": ("autopilot.enabled",),
     # The run that looks at every issue in scope (nexkit/autopilot.py).
     "sweep": ("autopilot.enabled",),

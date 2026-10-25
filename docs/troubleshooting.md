@@ -129,8 +129,8 @@ for each open issue in scope, what the next sweep does and why an issue waits, s
 another issue that blocks it (GitHub's *blocked by*; "Depends on" text does not count), an author without write
 access, `max_parallel`, or a question without a recommended option. Every issue that
 waits for a person is also listed under *Needs a person*, and does not count toward
-`max_parallel`. An issue outside the
-earliest open milestone (or without `autopilot.label`) is not in scope. A command that
+`max_parallel`. With the default `autopilot.scope`, an issue outside the earliest open
+milestone is not in scope; `null` takes every open issue. A command that
 autopilot started but that never ran starts once more after six hours; when that one does
 not run either, the issue waits for you, and you can post the command yourself. To sweep
 again at once: `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.

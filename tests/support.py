@@ -252,14 +252,12 @@ class FakeGitHub:
             {"number": number, "title": title or f"M{number}", "due_on": due_on}
         )
 
-    def scoped_issues(self, milestone=None, label=None):
+    def scoped_issues(self, milestone=None):
         found = []
         for issue in self.issues.values():
             if issue["state"] != "open":
                 continue
             if milestone is not None and (issue.get("milestone") or {}).get("number") != milestone:
-                continue
-            if label is not None and label not in {x["name"] for x in issue.get("labels") or []}:
                 continue
             found.append(issue)
         return sorted(found, key=lambda i: i["number"])

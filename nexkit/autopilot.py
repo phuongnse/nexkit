@@ -158,14 +158,10 @@ def request_safely(gh, cfg, workflow, ref, closed=None):
 
 
 def concerns(cfg, decision):
-    """Whether an issue or milestone event can change what is in scope: a label event only
-    for its label, a milestone event only for the milestone scope."""
-    settings = cfg["autopilot"]
-    event = decision.get("event")
-    if event == "labeled":
-        return settings["scope"] == "label" and decision.get("label") == settings["label"]
-    if event in ("milestoned", "milestone_closed"):
-        return settings["scope"] == "milestone"
+    """Whether an issue or milestone event can change what is in scope: a milestone event
+    only for the milestone scope. With `null` every open issue is in scope already."""
+    if decision.get("event") in ("milestoned", "milestone_closed"):
+        return cfg["autopilot"]["scope"] == "milestone"
     return True
 
 
@@ -181,47 +177,69 @@ def after_run(gh, cfg, decision, outcome, workflow, ref):
 # -- scope -------------------------------------------------------------------------
 
 
+def milestones(gh):
+    """The open milestones in the order autopilot takes them: by due date, then the
+    oldest."""
+    found = list(gh.milestones())
+    found.sort(key=lambda m: (m.get("due_on") is None, m.get("due_on") or "", m["number"]))
+    return found
+
+
 def current_milestone(gh):
-    """The earliest open milestone that has issues: by due date, then the oldest. Empty
+    """The earliest open milestone that has issues, in the order of `milestones`. Empty
     milestones are skipped; one whose issues are all closed stays current until a person
     closes it, so autopilot never moves on to the next milestone by itself."""
     found = [
-        m for m in gh.milestones() if (m.get("open_issues") or 0) + (m.get("closed_issues") or 0)
+        m for m in milestones(gh) if (m.get("open_issues") or 0) + (m.get("closed_issues") or 0)
     ]
-    found.sort(key=lambda m: (m.get("due_on") is None, m.get("due_on") or "", m["number"]))
     return found[0] if found else None
 
 
 def locate(gh, cfg):
-    """The scope's name for people and its milestone or label. Without an open milestone,
-    the milestone scope holds nothing."""
-    settings = cfg["autopilot"]
-    if settings["scope"] == "label":
-        label = settings["label"]
-        return {"name": f"label `{label}`", "label": label, "milestone": None}
+    """The scope's name for people and its milestone. `every` is the `null` scope, which
+    holds every open issue of this repository, with `milestones` for its order. Without an
+    open milestone, the milestone scope holds nothing."""
+    if cfg["autopilot"]["scope"] is None:
+        return {
+            "name": "every open issue",
+            "every": True,
+            "milestone": None,
+            "milestones": milestones(gh),
+            "repository": gh.repository,
+        }
     milestone = current_milestone(gh)
     if not milestone:
-        return {"name": "no open milestone", "label": None, "milestone": None}
+        return {"name": "no open milestone", "every": False, "milestone": None}
     return {
         "name": f"milestone {milestone['title']}",
-        "label": None,
+        "every": False,
         "milestone": milestone["number"],
     }
 
 
 def scope(gh, cfg):
-    """`locate` with the open issues in scope, oldest first, after the issues for CI."""
+    """`locate` with the open issues in scope. The issues for CI go first; with `null`,
+    then the issues of each open milestone in the order of `milestones`, then the others;
+    each group oldest first."""
     where = locate(gh, cfg)
-    if where["label"] is not None:
-        items = gh.scoped_issues(label=where["label"])
+    if where["every"]:
+        items = gh.scoped_issues()
     elif where["milestone"] is not None:
         items = gh.scoped_issues(milestone=where["milestone"])
     else:
         items = []
     issues = [i for i in items if "pull_request" not in i]
     # A bug issue for a CI failure on the default branch goes before everything else, and
-    # an issue for flaky runs right after.
-    issues.sort(key=lambda i: (_rank(i), i["number"]))
+    # an issue for flaky runs right after. An issue whose milestone is closed goes with
+    # those without one.
+    order = {m["number"]: index for index, m in enumerate(where.get("milestones") or [])}
+    issues.sort(
+        key=lambda i: (
+            _rank(i),
+            order.get((i.get("milestone") or {}).get("number"), len(order)),
+            i["number"],
+        )
+    )
     return {**where, "issues": issues}
 
 
@@ -231,9 +249,11 @@ def taken(gh, cfg, issue):
 
 
 def in_scope(where, issue):
-    """Whether an issue, open or closed, belongs to the scope."""
-    if where["label"] is not None:
-        return where["label"] in {label.get("name") for label in issue.get("labels") or []}
+    """Whether an issue, open or closed, belongs to the scope. With `null` every issue of
+    this repository does; a blocker can be in another repository."""
+    if where["every"]:
+        url = issue.get("repository_url")
+        return not url or url.lower().endswith(f"/repos/{where['repository']}".lower())
     milestone = issue.get("milestone") or {}
     return where["milestone"] is not None and milestone.get("number") == where["milestone"]
 
@@ -873,7 +893,7 @@ def nexkit_pulls(gh):
 
 def preview(gh, cfg):
     """(scope, one step per open issue in scope) for what a sweep would do now. Starts
-    stay within `autopilot.max_parallel`, oldest issue first."""
+    stay within `autopilot.max_parallel`, in the order of `scope`."""
     where = scope(gh, cfg)
     if not where["issues"]:
         return where, []
@@ -1010,23 +1030,36 @@ def split(gh, step, now=None):
 
 
 def done(gh, cfg, where, closed):
-    """Say once, on the issue whose closing emptied the scope, that the scope is done."""
+    """Say once, on the issue whose closing emptied the scope, that the scope is done. With
+    `null`, the scope never empties for good, so this says it of the issue's milestone
+    instead, while the other milestones go on."""
+    if not where["every"] and where["issues"]:
+        return []
     try:
         issue = gh.issue(closed)
     except GitHubError:
         return []
     if issue.get("state") != "closed" or not in_scope(where, issue):
         return []
+    if where["every"]:
+        milestone = issue.get("milestone") or {}
+        number = milestone.get("number")
+        if number is None or any(
+            (i.get("milestone") or {}).get("number") == number for i in where["issues"]
+        ):
+            return []
+        titles = {m["number"]: m.get("title") for m in where["milestones"]}
+        name = f"milestone {milestone.get('title') or titles.get(number) or number}"
+    else:
+        name = where["name"]
     if any(by_bot(c) and DONE in (c.get("body") or "") for c in gh.comments(closed)):
         return []
     people = "".join(f"@{login} " for login in cfg["notify"])
-    text = (
-        f"{DONE}\n{people}NexKit autopilot finished {where['name']}: every issue in it is closed."
-    )
+    text = f"{DONE}\n{people}NexKit autopilot finished {name}: every issue in it is closed."
     if where["milestone"] is not None:
         text += " Close the milestone to let autopilot start on the next one."
     gh.comment(closed, text)
-    return [f"Autopilot finished {where['name']}."]
+    return [f"Autopilot finished {name}."]
 
 
 # -- the default branch's CI ----------------------------------------------------------
@@ -1377,8 +1410,7 @@ def _record_flaky(gh, cfg, where, workflow, branch, known, failure, text):
         f"records follow as comments.{earlier}"
     )
     body = f"{CI_FLAKY_PREFIX}{workflow} {key} -->\n{people}{intro}\n\n{text}"
-    labels = ["bug", *([where["label"]] if where.get("label") else [])]
-    issue = known["open"][key] = gh.create_issue(title, body, where.get("milestone"), labels)
+    issue = known["open"][key] = gh.create_issue(title, body, where.get("milestone"), ["bug"])
     return f"{title}: opened #{issue['number']}."
 
 
@@ -1407,10 +1439,9 @@ def _report_failure(gh, cfg, where, workflow, branch, known, run):
     else:
         people = "".join(f"@{login} " for login in cfg["notify"])
         body = f"{CI_BUG_PREFIX}{workflow} -->\n{people}{text}"
-        labels = ["bug", *([where["label"]] if where.get("label") else [])]
         failures = _attempt_failures(gh, workflow, run, run.get("run_attempt") or 1)
         title = red_title(workflow, failures, branch)
-        issue = known["bug"] = gh.create_issue(title, body, where.get("milestone"), labels)
+        issue = known["bug"] = gh.create_issue(title, body, where.get("milestone"), ["bug"])
         line = f"{title}; opened #{issue['number']}."
     known["shas"].add(run.get("head_sha") or "")
     known["reporter"][run["id"]] = issue["number"]
@@ -1542,6 +1573,6 @@ def sweep(gh, cfg, workflow, ref, closed=None):
         except GitHubError as exc:
             line = f"Could not mention anyone on #{step['number']}: {exc}"
         lines += [line] if line else []
-    if closed and not where["issues"]:
+    if closed:
         lines += done(gh, cfg, where, closed)
     return lines or [f"Autopilot: nothing to start in {where['name']}."]

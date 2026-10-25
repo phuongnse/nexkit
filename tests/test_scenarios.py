@@ -26,7 +26,7 @@ from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.publish import publish_plan
 from nexkit.report import report
-from nexkit.route import route
+from nexkit.route import issue_from_branch, route
 from nexkit.state import BOT_LOGIN, UNCOUNTED, read_state, run_comments
 from nexkit.status import collect
 from tests.support import FakeGitHub, make_config
@@ -289,7 +289,9 @@ class Pipeline:
         waiting = sum(
             1
             for d in self.gh.dispatches[self.handled :]
-            if d["inputs"]["command"] == "fix" and d["inputs"]["auto"] == "true"
+            if d["inputs"]["command"] == "fix"
+            and d["inputs"]["auto"] == "true"
+            and d["inputs"]["number"] == str(pull)
         )
         self.test.assertLessEqual(state["auto_fixes"], self.cfg["fix"]["max_auto_rounds"])
         self.test.assertEqual(state["auto_fixes"], len(ran) + waiting, f"#{pull}: {self.played}")
@@ -582,6 +584,31 @@ class ScenarioTests(unittest.TestCase):
         pipe.play()
         self.assertEqual(pipe.gh.issues[5]["state"], "open")
         self.assertTrue(pipe.gh.comments_matching(5, "every sub-issue of this parent issue"))
+
+    def test_the_null_scope_runs_two_milestones_at_once_with_a_blocker_across_them(self):
+        # Issue 6 keeps failing its checks, so it waits for a person; the others go on.
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            pull = pipe.gh.pulls.get(int(inputs["number"]))
+            number = issue_from_branch(pull["head"]["ref"]) if pull else int(inputs["number"])
+            return done(checks=number != 6)
+
+        pipe = Pipeline(self, config(autopilot={"scope": None}), script)
+        pipe.gh.add_milestone(2)
+        pipe.issue(5)
+        pipe.gh.add_issue(6, title="Issue 6", milestone=2)
+        pipe.gh.add_issue(7, title="Issue 7", milestone=2)
+        pipe.gh.add_issue(8, title="Issue 8")
+        pipe.gh.blockers[7] = [5]  # milestone 2 waits for milestone 1
+        played = pipe.play()
+        self.assertEqual(played[:3], [("plan", 5), ("plan", 6), ("plan", 8)])
+        self.assertLess(played.index(("go", 5)), played.index(("plan", 7)))
+        states = {n: pipe.gh.issues[n]["state"] for n in (5, 6, 7, 8)}
+        self.assertEqual(states, {5: "closed", 6: "open", 7: "closed", 8: "closed"})
+        [note] = pipe.gh.comments_matching(5, autopilot.DONE)
+        self.assertIn("@olivia NexKit autopilot finished milestone M1", note["body"])
+        self.assertFalse(any(pipe.gh.comments_matching(n, autopilot.DONE) for n in (7, 8)))
 
 
 if __name__ == "__main__":

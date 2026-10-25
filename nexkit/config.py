@@ -44,7 +44,6 @@ DEFAULTS = {
     "autopilot": {
         "enabled": False,
         "scope": "milestone",
-        "label": None,
         "max_parallel": None,
         "answer": "never",
     },
@@ -96,9 +95,12 @@ CACHE_KEYS = {"name", "paths", "key_files"}
 # The restore action has one step per entry: .github/actions/restore-caches/action.yml.
 MAX_CACHES = 8
 TOOL_OUTPUT = ("none", "truncated")
-AUTOPILOT_SCOPES = ("milestone", "label")
+# `null` takes every open issue.
+AUTOPILOT_SCOPES = ("milestone", None)
+AUTOPILOT_SCOPE_CHOICES = (
+    'null for every open issue, or "milestone" for the open issues of the earliest open milestone'
+)
 AUTOPILOT_ANSWERS = ("never", "recommended")
-LABEL = re.compile(r"^[^,\n]{1,50}$")
 
 
 class ConfigError(ValueError):
@@ -406,13 +408,10 @@ def _profiles(cfg):
 
 def _autopilot(settings):
     _bool(settings["enabled"], "autopilot.enabled")
+    if settings["scope"] == "label":
+        _fail(f'autopilot.scope "label" is gone; use {AUTOPILOT_SCOPE_CHOICES}')
     if settings["scope"] not in AUTOPILOT_SCOPES:
-        _fail(f"autopilot.scope must be one of {', '.join(AUTOPILOT_SCOPES)}")
-    label = settings["label"]
-    if label is not None and (not isinstance(label, str) or not LABEL.match(label.strip())):
-        _fail("autopilot.label must be null or the name of a label")
-    if settings["scope"] == "label" and label is None:
-        _fail('autopilot.scope "label" needs autopilot.label: the label of the issues to take')
+        _fail(f"autopilot.scope must be {AUTOPILOT_SCOPE_CHOICES}")
     if settings["max_parallel"] is not None:
         _positive_int(settings["max_parallel"], "autopilot.max_parallel", 100)
     if settings["answer"] not in AUTOPILOT_ANSWERS:
@@ -449,6 +448,11 @@ def validate(raw, *, layered=False):
         elif key in GROUPS:
             if not isinstance(value, dict):
                 _fail(f"{key} must be an object")
+            if key == "autopilot" and "label" in value:
+                _fail(
+                    'autopilot.label is gone with the "label" scope; remove it and set '
+                    f"autopilot.scope to {AUTOPILOT_SCOPE_CHOICES}"
+                )
             extra = set(value) - set(DEFAULTS[key])
             if extra:
                 _fail(f"Unknown keys in {key}: {', '.join(sorted(extra))}")

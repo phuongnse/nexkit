@@ -317,7 +317,7 @@ the reviewer*. A fix round's summary becomes its commit message.
 The new pull request also gets the issue's labels and milestone. The Actions bot sets them,
 so no workflow starts for it, and a failure there only warns, since the pull request
 already exists. Later rounds leave them to people. Autopilot takes only issues, so its
-scope's label or milestone on the pull request changes nothing.
+scope's milestone on the pull request changes nothing.
 
 The pull request of an implement round starts at the base commit the agent started from,
 not at the base branch's tip when `publish` runs. So the patch always applies, even when
@@ -522,13 +522,15 @@ With `autopilot.enabled` (see [Autopilot](configuration.md#autopilot)), NexKit p
 commands on its own behalf; it starts them the way it starts automatic rounds, with a
 dispatch of the workflow. A *sweep* decides which:
 
-1. It finds the scope: the open issues of the earliest open milestone, or those with
-   `autopilot.label`, oldest first.
+1. It finds the scope: the open issues of the earliest open milestone, oldest first, or
+   with `autopilot.scope: null` every open issue, by milestone in the same order and then
+   the issues without one, each group oldest first. Issues for CI failures and flaky runs
+   go before all others.
 2. For each issue, it reads the markers of NexKit's run comments on the issue and its pull
    request, the latest plan, the issue's *blocked by* relationships and whether it
    has sub-issues. From these alone it decides: start `/nexkit plan`, start `/nexkit go`,
    leave it to a run or pull request that carries it on, or leave it to a person.
-3. It starts what it decided, oldest first, while fewer than `autopilot.max_parallel`
+3. It starts what it decided, in that order, while fewer than `autopilot.max_parallel`
    issues are in progress, and records each start on the issue.
 
 A sweep is a `workflow_dispatch` with the command `autopilot`. Its `number` input is
@@ -539,9 +541,11 @@ issue run in that group as well, and start a sweep.
 
 - **What starts a sweep.** The end of every NexKit run, except one that started the next
   automatic round itself or waits for a usage limit. A closed issue, whether a person or
-  NexKit closed it, which also lets the sweep say once that the scope is done. An issue
-  that opens, is reopened, or comes into scope with a label or milestone. A closed
-  milestone, after which the next milestone becomes the scope. The hourly schedule, which
+  NexKit closed it, which also lets the sweep say once that the scope is done, or with
+  `null` that the issue's milestone is done, while the other milestones go on. An issue
+  that opens or is reopened. For the milestone scope, an issue that comes into scope with
+  a milestone, and a closed milestone, after which the next milestone becomes the scope.
+  The hourly schedule, which
   catches anything the others missed. Nothing waits in a loop: with nothing to start, a
   sweep ends.
 - **A command starts once.** The record on the issue holds the command, the issue or pull
@@ -570,7 +574,7 @@ issue run in that group as well, and start a sweep.
   human decision to merge, GitHub refused the merge, or it conflicts with the base branch
   and its conflict rounds are used up (or `conflicts.auto_resolve` is off). An issue blocked
   by an open issue outside the scope waits for a person too; one blocked inside the scope
-  waits for that issue. A collaborator's comment after the latest plan leads to a new
+  waits for that issue. With `null`, a blocker in another milestone is inside the scope. A collaborator's comment after the latest plan leads to a new
   plan before `/nexkit go`.
 - **Answers and splits.** Each question in a plan or a blocked round has options and the
   number of the one the agent recommends, or 0 for none; a number cannot be copied loosely,
@@ -616,7 +620,8 @@ issue run in that group as well, and start a sweep.
   100. Runs of pull requests do not count, nor runs from a fork, whose head branch can
   have the same name. When the latest run failed in its first attempt, its failed jobs run
   once more; NexKit never runs them a third time, which would hide failures. When a later
-  attempt fails too, autopilot opens a `bug` issue in scope, starting with a marker that
+  attempt fails too, autopilot opens a `bug` issue in scope (without a milestone with
+  `null`), starting with a marker that
   names the workflow, and that issue goes before all others. Its report lists the failed
   jobs and steps of every failed attempt, the failures each job's error annotations name,
   and the last lines of its log, redacted. A round on the issue downloads the evidence of

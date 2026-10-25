@@ -85,9 +85,10 @@ class ConfigTests(unittest.TestCase):
             ({"merge": {"after_workflows": ["ci"]}}, "workflow file names"),
             ({"merge": {"after_workflows": ["ci.yml", "ci.yml"]}}, "twice"),
             ({"autopilot": {"enabled": "yes"}}, "autopilot.enabled must be true or false"),
-            ({"autopilot": {"scope": "repository"}}, "autopilot.scope must be one of"),
-            ({"autopilot": {"scope": "label"}}, "needs autopilot.label"),
-            ({"autopilot": {"label": ["a"]}}, "autopilot.label must be null"),
+            ({"autopilot": {"scope": "repository"}}, 'autopilot.scope must be null .* "milestone"'),
+            ({"autopilot": {"scope": "label"}}, '"label" is gone; use null .* "milestone"'),
+            ({"autopilot": {"label": "go"}}, 'autopilot.label is gone.* null .* "milestone"'),
+            ({"autopilot": {"label": None}}, "autopilot.label is gone"),
             ({"autopilot": {"max_parallel": 0}}, "autopilot.max_parallel"),
             ({"autopilot": {"answer": "always"}}, "autopilot.answer must be one of"),
             ({"autopilot": {"limit": 1}}, "Unknown keys in autopilot"),
@@ -130,14 +131,14 @@ class ConfigTests(unittest.TestCase):
             {
                 "enabled": False,
                 "scope": "milestone",
-                "label": None,
                 "max_parallel": None,
                 "answer": "never",
             },
         )
-        cfg = validate({"autopilot": {"enabled": True, "scope": "label", "label": "go"}})
+        # An explicit null replaces the default: every open issue.
+        cfg = validate({"autopilot": {"enabled": True, "scope": None}})
         self.assertEqual(
-            (cfg["autopilot"]["label"], cfg["autopilot"]["max_parallel"]), ("go", None)
+            (cfg["autopilot"]["scope"], cfg["autopilot"]["max_parallel"]), (None, None)
         )
 
     def test_cache_entries(self):

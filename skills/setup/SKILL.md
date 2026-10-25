@@ -132,8 +132,9 @@ files or repository settings, and wait for confirmation.
    If the user wants NexKit to work through the issues without posting commands, offer
    `"autopilot": {"enabled": true}`. It plans each ready issue of the earliest open
    milestone, starts `/nexkit go` on a plan with no questions that is not too large, and
-   moves on when an issue closes; `{"scope": "label", "label": "<label>"}` takes the
-   issues with a label instead. Say that it skips their approval of each plan, that it
+   moves on when an issue closes; `"scope": null` takes every open issue instead, in
+   every milestone and without one, so *blocked by* relationships alone order the work
+   across milestones. Say that it skips their approval of each plan, that it
    takes only issues opened by people with write access, and that it stops on questions,
    blocked or failed runs and mentions `notify`, so recommend setting `notify` with it
    (`nexkit init --notify <login>`, or `"notify": ["<login>"]`). `"max_parallel": <n>` limits how many

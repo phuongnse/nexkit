@@ -89,7 +89,7 @@ RETRY = "retry"
 # Also the `command` of the dispatch that starts an autopilot sweep.
 AUTOPILOT = "autopilot"
 # Issue events after which an issue may have come into autopilot's scope.
-AUTOPILOT_EVENTS = ("opened", "reopened", "labeled", "milestoned")
+AUTOPILOT_EVENTS = ("opened", "reopened", "milestoned")
 
 
 def auto_kinds(value):
@@ -166,10 +166,7 @@ def route(gh, event_name, event, inputs=None):
         if action in AUTOPILOT_EVENTS:
             # Anyone who may open an issue starts this, so it only starts a sweep, which
             # takes only issues from people with write access.
-            decision = {"action": "maintain", "task": "autopilot", "event": action}
-            if action == "labeled":
-                decision["label"] = (event.get("label") or {}).get("name")
-            return decision
+            return {"action": "maintain", "task": "autopilot", "event": action}
         return _none(f"Issue event '{action}' is not handled")
 
     if event_name == "milestone":

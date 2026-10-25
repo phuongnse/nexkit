@@ -8,7 +8,7 @@ on:
   pull_request_review:
     types: [submitted]
   issues:
-    types: [closed, opened, reopened, labeled, milestoned] # close_parent_issues, autopilot
+    types: [closed, opened, reopened, milestoned] # close_parent_issues, autopilot
   milestone:
     types: [closed] # autopilot: the next milestone comes into scope
   push:

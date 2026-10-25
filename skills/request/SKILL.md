@@ -33,9 +33,12 @@ succeeds. Help the user write issues that one session can finish and test.
 
 4. **Check autopilot.** Read `.nexkit/config.json`. When `autopilot.enabled` is true,
    NexKit takes the open issues of the earliest open milestone (`autopilot.scope`
-   `"milestone"`, the default) or those with `autopilot.label` (`"label"`). Give each issue
-   that milestone or label; ask the user which milestone when that is not clear
-   (`gh api repos/{owner}/{repo}/milestones --jq '.[].title'`). With or without
+   `"milestone"`, the default), or every open issue (`null`), by milestone in due-date
+   order, then those without one. Give each issue its milestone; ask the user which
+   milestone when that is not clear
+   (`gh api repos/{owner}/{repo}/milestones --jq '.[].title'`). With `null`, an issue
+   starts as soon as it is open and nothing open blocks it, so open only the issues that
+   may start, and give each the *blocked by* relationships it needs. With or without
    autopilot, the pull request NexKit opens for an issue gets that issue's labels and
    milestone, so give each issue the ones its change should carry.
 

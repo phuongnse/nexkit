@@ -31,7 +31,7 @@ A complete configuration with every key at its default, except `agents`, `setup`
   "conflicts": {"auto_resolve": false, "max_rounds": 3},
   "usage_limit": {"resume": true, "retry_minutes": 60, "wait_minutes": 330},
   "close_parent_issues": false,
-  "autopilot": {"enabled": false, "scope": "milestone", "label": null, "max_parallel": null, "answer": "never"},
+  "autopilot": {"enabled": false, "scope": "milestone", "max_parallel": null, "answer": "never"},
   "notify": [],
   "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
   "protected_paths": [".github/", ".nexkit/"],
@@ -74,8 +74,7 @@ their defaults.
 | `usage_limit.wait_minutes` | `330` | Start a run that waits for the reset when it is at most this many minutes away (0 to 330); 0 leaves the resume to the hourly schedule. |
 | `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See [Parent issues](#parent-issues). |
 | `autopilot.enabled` | `false` | Work through the open issues in scope without commands: plan each ready issue, start `/nexkit go` on a plan that needs nobody, and move on when an issue closes. See [Autopilot](#autopilot). |
-| `autopilot.scope` | `"milestone"` | Which issues autopilot takes: `"milestone"`, the open issues of the earliest open milestone, or `"label"`, the open issues with `autopilot.label`. |
-| `autopilot.label` | `null` | The label of the issues to take, required with the `"label"` scope. |
+| `autopilot.scope` | `"milestone"` | Which issues autopilot takes: `"milestone"`, the open issues of the earliest open milestone, or `null`, every open issue, whatever its milestone. |
 | `autopilot.max_parallel` | `null` | How many issues in scope may have a NexKit run or an open NexKit pull request at once (1 to 100); `null` for no limit. |
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`, each listed once. See [Mentions](#mentions). |
@@ -417,7 +416,7 @@ at once.
 ```
 
 With autopilot on, nobody needs to post `/nexkit plan` and `/nexkit go`. NexKit looks at
-every open issue in scope, oldest first, and starts the one command that moves it on:
+every open issue in scope, in order, and starts the one command that moves it on:
 
 | The issue | Autopilot |
 |---|---|
@@ -437,13 +436,19 @@ every open issue in scope, oldest first, and starts the one command that moves i
 | Anything else that needs a person: other questions, a failed run, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
 | A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
 | Its pull request is approved, and GitHub refused the merge until required checks pass | Tries the merge again, and merges once the checks pass. |
-| The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. |
+| The last issue in scope closed | Mentions `notify` once, on that issue, that the scope is done. With `null`, the same for the last open issue of each milestone, while the other milestones go on. |
 
 - **Scope.** `"milestone"` takes the open issues of the earliest open milestone: by due
   date, then the oldest, skipping milestones with no issues at all. When all its issues are
   closed, autopilot stops there until a person closes the milestone, so it never starts
-  the next milestone by itself. `"label"` takes the open issues with `autopilot.label`.
-  Issues outside the scope are never touched.
+  the next milestone by itself. `null` takes every open issue, in every milestone and
+  without one, so the *blocked by* relationships alone decide what starts, across
+  milestones; to hold an issue back, do not open it yet. Issues outside the scope are
+  never touched.
+- **Order.** Bug issues for CI failures go first and issues for flaky runs next. Then,
+  with `null`, come the issues of each open milestone, in the milestone scope's order,
+  then the issues without one; each group oldest first. With `max_parallel`, an earlier
+  milestone's issues start first.
 - **Ready.** An issue is ready when no issue that blocks it (GitHub's *blocked by*
   relationships) is open. The order of sub-issues does not count, so sub-issues without
   such relationships start at the same time; text such as "Depends on #12" is not read. A
@@ -487,7 +492,7 @@ every open issue in scope, oldest first, and starts the one command that moves i
   people's alike, and at every attempt of each run; runs of pull requests, even from a
   fork's branch of the same name, do not count. When the latest run fails, its failed
   jobs run once more, never more often. When it fails again, autopilot opens a `bug` issue
-  in scope, with the run link and the failed jobs and steps of every failed attempt,
+  in scope (in the current milestone, or without one with `null`), with the run link and the failed jobs and steps of every failed attempt,
   mentions `notify` in it, and plans it before every other issue. A later failure on a
   newer commit adds a comment to that issue while it is open; a commit is reported once.
   When a later attempt of that run passes, for example because a person ran it again, a
@@ -552,8 +557,9 @@ Autopilot pairs well with `merge.auto`, `conflicts.auto_resolve`, `close_parent_
 `notify`; without `merge.auto`, an issue moves on when a person merges its pull request.
 
 Sweeps, the runs that decide this, start after every NexKit run, when an issue opens,
-closes, is reopened or comes into scope, when a milestone closes, and on the hourly
-schedule, which catches anything the others missed. They run one at a time, run no agent
+closes or is reopened, when an issue gets a milestone or a milestone closes (only for the
+`"milestone"` scope), and on the hourly schedule, which catches anything the others
+missed. They run one at a time, run no agent
 and use no agent credential. The workflow must listen to those events, as `nexkit init`
 writes it; `nexkit doctor` warns when it does not. To start a sweep yourself, for example
 right after turning autopilot on:
@@ -881,8 +887,9 @@ token needs `secrets: inherit`.
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls
 `phuongnse/nexkit/.github/workflows/pipeline.yml` at a fixed release tag. It starts NexKit
 for `/nexkit` comments, *Request changes* reviews on NexKit pull requests, dispatches,
-closed issues (for `close_parent_issues` and `autopilot`), opened, reopened, labeled and
-milestoned issues and closed milestones (for `autopilot`), pushes to the default branch
+closed issues (for `close_parent_issues` and `autopilot`), opened, reopened and
+milestoned issues and closed milestones (for `autopilot`; the `null` scope needs no
+milestone events), pushes to the default branch
 (for `conflicts.auto_resolve`) and an hourly schedule (for `usage_limit.resume`,
 `conflicts.auto_resolve` and `autopilot`). With those settings off, these events start
 short runs that end at once; remove the triggers you do not use if you prefer. Issue and

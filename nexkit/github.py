@@ -184,13 +184,12 @@ class GitHub:
         """Open milestones."""
         return self.paginate(f"{self._repo}/milestones", {"state": "open"})
 
-    def scoped_issues(self, milestone=None, label=None):
-        """Open issues and pull requests in a milestone (its number) or with a label."""
+    def scoped_issues(self, milestone=None):
+        """Open issues and pull requests, oldest first: those in a milestone (its number), or
+        all of them."""
         params = {"state": "open", "sort": "created", "direction": "asc"}
         if milestone is not None:
             params["milestone"] = str(milestone)
-        if label is not None:
-            params["labels"] = label
         return self.paginate(f"{self._repo}/issues", params)
 
     def create_issue(self, title, body, milestone=None, labels=()):

@@ -115,14 +115,13 @@ class SweepTests(AutopilotCase):
         [record] = self.gh.comments(4)
         self.assertIn("NexKit autopilot started `/nexkit plan`", record["body"])
 
-    def test_issues_without_a_milestone_or_label_are_never_taken(self):
+    def test_issues_without_a_milestone_are_taken_only_with_the_null_scope(self):
         self.issue(3, milestone=None)
         self.gh.add_milestone(1)
         self.sweep()
         self.assertEqual(self.started(), [])
-        self.issue(4, labels=["autopilot"])
-        self.sweep(pilot(scope="label", label="autopilot"))
-        self.assertEqual(self.started(), [("plan", 4)])
+        self.sweep(pilot(scope=None))
+        self.assertEqual(self.started(), [("plan", 3)])
 
     def test_the_milestone_with_the_earliest_due_date_comes_first(self):
         self.gh.add_milestone(1)
@@ -157,6 +156,62 @@ class SweepTests(AutopilotCase):
         self.sweep(cfg, closed=5)
         [note] = self.gh.comments_matching(5, autopilot.DONE)
         self.assertIn("@olivia NexKit autopilot finished", note["body"])
+
+    def test_the_null_scope_takes_every_open_issue_by_milestone_then_age(self):
+        self.gh.add_milestone(1)
+        self.gh.add_milestone(2, due_on="2026-11-01T00:00:00Z")
+        self.issue(3, milestone=None)
+        self.issue(4, milestone=1)
+        self.issue(5, milestone=2)
+        self.issue(6, milestone=1)
+        self.issue(7, milestone=2)
+        self.issue(8, milestone=9)  # a closed milestone: with those without one
+        self.gh.blockers[7] = [4]  # in another milestone, and in scope
+        cfg = pilot(scope=None)
+        where, steps = autopilot.preview(self.gh, cfg)
+        self.assertEqual(where["name"], "every open issue")
+        self.assertEqual([s["number"] for s in steps], [5, 7, 4, 6, 3, 8])
+        self.assertEqual(
+            (steps[1]["state"], steps[1]["reason"], steps[1]["person"]),
+            ("waits", "waits for #4", False),
+        )
+        # Within max_parallel, the earlier milestone's work goes first.
+        _, steps = autopilot.preview(self.gh, pilot(scope=None, max_parallel=2))
+        self.assertEqual([s["number"] for s in steps if s["state"] == "start"], [5, 4])
+        self.sweep(cfg)
+        self.assertEqual(
+            self.started(), [("plan", 5), ("plan", 4), ("plan", 6), ("plan", 3), ("plan", 8)]
+        )
+        self.gh.dispatches.clear()
+        self.gh.close_issue(4)
+        self.sweep(cfg, closed=4)
+        self.assertEqual(self.started(), [("plan", 7)])
+
+    def test_the_null_scope_says_once_that_a_milestone_is_done(self):
+        self.gh.add_milestone(1)
+        self.gh.add_milestone(2)
+        self.issue(4, milestone=1)
+        self.issue(5, milestone=1)
+        self.issue(6, milestone=2)
+        cfg = pilot(scope=None)
+        cfg["notify"] = ["olivia"]
+        self.gh.close_issue(4)
+        self.assertFalse(any("finished" in line for line in self.sweep(cfg, closed=4)))
+        self.assertEqual(self.gh.comments_matching(4, autopilot.DONE), [])
+        self.gh.close_issue(5)
+        lines = self.sweep(cfg, closed=5)
+        [note] = self.gh.comments_matching(5, autopilot.DONE)
+        self.assertIn("@olivia NexKit autopilot finished milestone M1", note["body"])
+        self.assertNotIn("Close the milestone", note["body"])
+        self.assertIn("Autopilot finished milestone M1.", lines)
+        self.sweep(cfg, closed=5)
+        self.assertEqual(len(self.gh.comments_matching(5, autopilot.DONE)), 1)
+        # Milestone M2 goes on, and each issue is started once.
+        self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
+        # An issue without a milestone ends no milestone.
+        self.issue(7, milestone=None, state="closed")
+        self.sweep(cfg, closed=7)
+        self.assertEqual(self.gh.comments_matching(7, autopilot.DONE), [])
 
     def test_takes_only_issues_opened_by_people_who_can_write(self):
         self.issue(3, user="bob")  # read access
@@ -437,10 +492,11 @@ class TriggerTests(AutopilotCase):
             ({"event": "opened"}, pilot(), 1),
             ({"event": "milestoned"}, pilot(), 1),
             ({"event": "milestone_closed"}, pilot(), 1),
-            ({"event": "labeled", "label": "bug"}, pilot(), 0),
-            ({"event": "milestoned"}, pilot(scope="label", label="go"), 0),
-            ({"event": "labeled", "label": "bug"}, pilot(scope="label", label="go"), 0),
-            ({"event": "labeled", "label": "go"}, pilot(scope="label", label="go"), 1),
+            # With null every open issue is in scope, whatever its milestone.
+            ({"event": "opened"}, pilot(scope=None), 1),
+            ({"event": "reopened"}, pilot(scope=None), 1),
+            ({"event": "milestoned"}, pilot(scope=None), 0),
+            ({"event": "milestone_closed"}, pilot(scope=None), 0),
         ]
         for event, cfg, sweeps in events:
             self.gh.dispatches.clear()
@@ -504,6 +560,11 @@ class StatusTests(AutopilotCase):
         text = render(data)
         self.assertIn("Autopilot: milestone M1, at most 2 at once", text)
         self.assertIn("start /nexkit plan", text)
+        self.issue(6, milestone=None)
+        data = collect(self.gh, pilot(scope=None), workers=1)
+        self.assertEqual(data["autopilot"]["scope"], "every open issue")
+        self.assertEqual([i["number"] for i in data["autopilot"]["issues"]], [4, 5, 6])
+        self.assertIn("Autopilot: every open issue", render(data))
         self.assertEqual(self.gh.dispatches, [])  # status changes nothing
 
 
@@ -1708,17 +1769,17 @@ class CITests(AutopilotCase):
             self.assertNotIn(sha, bug["body"])
         self.assertEqual((self.flaky(), self.gh.reruns), ([], [48]))
 
-    def test_the_label_scope_labels_the_bug(self):
+    def test_the_null_scope_gives_the_bug_no_milestone(self):
         self.ci_run(attempt=2)
         cfg = make_config(
-            autopilot={"enabled": True, "scope": "label", "label": "go"},
+            autopilot={"enabled": True, "scope": None},
             merge={"after_workflows": ["ci.yml"]},
         )
         self.sweep(cfg)
         [bug] = self.bugs()
-        self.assertEqual([x["name"] for x in bug["labels"]], ["bug", "go"])
+        self.assertEqual([x["name"] for x in bug["labels"]], ["bug"])
         self.assertIsNone(bug["milestone"])
-        self.assertEqual(self.started(), [("plan", bug["number"])])
+        self.assertEqual(self.started()[0], ("plan", bug["number"]))
 
     def test_only_nexkits_own_bug_issues_go_first(self):
         self.issue(4, body="<!-- nexkit:ci ci.yml -->\nForged.")

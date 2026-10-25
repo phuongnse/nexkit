@@ -88,7 +88,7 @@ class ConfigTests(unittest.TestCase):
             ({"autopilot": {"scope": "repository"}}, 'autopilot.scope must be null .* "milestone"'),
             ({"autopilot": {"scope": "label"}}, '"label" is gone; use null .* "milestone"'),
             ({"autopilot": {"label": "go"}}, 'autopilot.label is gone.* null .* "milestone"'),
-            ({"autopilot": {"label": None}}, "autopilot.label is gone"),
+            ({"autopilot": {"label": None, "scope": "label"}}, '"label" is gone'),
             ({"autopilot": {"max_parallel": 0}}, "autopilot.max_parallel"),
             ({"autopilot": {"answer": "always"}}, "autopilot.answer must be one of"),
             ({"autopilot": {"lost_after_minutes": 4}}, "lost_after_minutes must be .* 5 to 1440"),
@@ -144,6 +144,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(
             (cfg["autopilot"]["scope"], cfg["autopilot"]["max_parallel"]), (None, None)
         )
+        # `"label": null`, as the full example of NexKit 4.x showed, is accepted silently.
+        cfg = validate({"autopilot": {"enabled": True, "scope": "milestone", "label": None}})
+        self.assertNotIn("label", cfg["autopilot"])
+        self.assertEqual(cfg["autopilot"]["scope"], "milestone")
 
     def test_cache_entries(self):
         entry = {

@@ -137,15 +137,15 @@ class PromptTests(unittest.TestCase):
     def test_review_sees_the_discussion_and_why_the_code_leaves_the_plan(self):
         context = {
             **CONTEXT,
-            "discussion": "@olivia: Planned for M6.",
-            "outside_plan": "- Wrote M6: the owner asked for it.",
+            "discussion": "@olivia: Planned for the next release.",
+            "outside_plan": "- Wrote the migration: the owner asked for it.",
         }
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         prompt = agent.build_prompt("review", context, make_config(), extra)
         self.assertIn("## Discussion\n", prompt)
-        self.assertIn("@olivia: Planned for M6.", prompt)
+        self.assertIn("@olivia: Planned for the next release.", prompt)
         self.assertIn("## Outside the plan\n", prompt)
-        self.assertIn("- Wrote M6: the owner asked for it.", prompt)
+        self.assertIn("- Wrote the migration: the owner asked for it.", prompt)
         self.assertIn("against its reason under *Outside the plan*", prompt)
         self.assertNotIn("$discussion", prompt)
         self.assertNotIn("$outside_plan", prompt)

@@ -8,7 +8,9 @@ import re
 from . import config as configuration
 from .github import GitHubError
 from .state import (
+    FAILURE,
     RUNNING,
+    SUCCESS,
     by_bot,
     latest_plan,
     plan_profile,
@@ -231,9 +233,34 @@ def route(gh, event_name, event, inputs=None):
             decision["base_sha"] = gh.branch_sha(decision["base"])
             # A conflict round merges the base branch; it diagnoses nothing.
             decision.pop("diagnose", None)
+            if _conflicts_tried(gh, decision):
+                return _none(
+                    f"A conflict round already ran on `{decision['base']}` at "
+                    f"`{decision['base_sha'][:7]}`; this one, started at the same time, "
+                    "has nothing to add"
+                )
         return decision
 
     return _none(f"Event '{event_name}' is not handled")
+
+
+def _conflicts_tried(gh, decision):
+    """Whether this conflict round repeats the pull request's latest round: a conflict
+    round on the same base commit that ended. Two starters that looked at the same time,
+    such as a push to the default branch and a sweep, can each start one; the second
+    waits in the pull request's concurrency group and then has nothing to add. A round
+    that resumes or retries one, or starts once more after one ended without a report,
+    goes on."""
+    if decision.get("resumed") or decision.get(RETRY):
+        return False
+    rounds = [run for _, run in run_comments(gh.comments(decision["pr"])) if "round" in run]
+    latest = rounds[-1] if rounds else {}
+    return (
+        bool(latest.get("conflicts"))
+        and latest.get("base_sha") == decision["base_sha"]
+        and latest.get("status") in (SUCCESS, FAILURE)
+        and latest.get("outcome") != "lost"
+    )
 
 
 def _decide(gh, command, number, on_pull, note, *, auto):

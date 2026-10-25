@@ -11,7 +11,7 @@ from unittest import mock
 
 import nexkit
 import nexkit.config
-from nexkit import cli, scaffold
+from nexkit import cli, maintain, scaffold
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
 from nexkit.state import empty_state, render_state
 from tests.support import CLAUDE, PROFILES, FakeClaude, FakeGitHub, GitRepos, git
@@ -769,6 +769,36 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(json.loads(out["decision"])["task"], "parents")
         self.assertEqual(out["maintain_timeout"], "15")
         self.assertFalse(self.gh.issue_comments[5])  # no run comment, no reaction
+
+    def test_a_refused_command_that_autopilot_started_starts_a_sweep_after_the_run(self):
+        # `route` refuses a `/nexkit go` that autopilot started: the issue's pull request
+        # is open. A sweep that waits for this run to end finds the command lost.
+        self.gh.add_pull(6, 5)
+        inputs = {"command": "go", "number": "5", "note": "", "auto": "autopilot"}
+        event = {"inputs": inputs, "sender": {"login": "github-actions[bot]"}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "81"}):
+            out = self.run_route("workflow_dispatch", event)
+        self.assertEqual(out["action"], "none")
+        self.assertTrue(self.gh.comments_matching(5, "Pull request #6 is already open"))
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(raw))
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "81"}):
+            out = self.run_route("workflow_dispatch", event)
+        decision = json.loads(out["decision"])
+        self.assertEqual(out["action"], "maintain")
+        self.assertEqual((decision["task"], decision["after"]), ("lost", 81))
+        cfg = json.loads(out["config"])
+        lines = maintain.maintain(self.gh, decision, cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(lines, ["Started an autopilot sweep."])
+        [sweep] = [d["inputs"] for d in self.gh.dispatches]
+        self.assertEqual(sweep["note"], "after run 81")
+        # A person's command that route refuses starts nothing.
+        self.gh.dispatches.clear()
+        event = {"inputs": {**inputs, "auto": "false"}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "82"}):
+            self.assertEqual(self.run_route("workflow_dispatch", event)["action"], "none")
 
     def test_route_hands_autopilot_events_to_maintain_only_when_enabled(self):
         events = [

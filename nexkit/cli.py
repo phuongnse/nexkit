@@ -119,6 +119,31 @@ def cmd_status(args):
     return 0
 
 
+def _refused_dispatch(args, decision, inputs):
+    """(decision, config) for a sweep after `route` refused a command that NexKit started
+    by itself, with autopilot on, or None. The sweep waits for this run to end, then finds
+    that the command never ran and starts it once more, instead of an hourly sweep finding
+    it later."""
+    from .maintain import enabled
+    from .route import auto_kinds
+
+    if decision["action"] != "none" or not inputs:
+        return None
+    if not auto_kinds(inputs.get("auto")) - {"false"}:
+        return None
+    if inputs.get("command") in ("autopilot", "resume"):
+        return None
+    run_id = os.environ.get("GITHUB_RUN_ID") or ""
+    try:
+        cfg = configuration.load(args.repo)
+    except configuration.ConfigError:
+        return None
+    if not run_id.isdigit() or not enabled("lost", cfg):
+        return None
+    found = {"action": "maintain", "task": "lost", "after": int(run_id)}
+    return {**found, "reason": decision["reason"]}, cfg
+
+
 def cmd_route(args):
     from . import progress
     from .github import GitHubError
@@ -144,6 +169,15 @@ def cmd_route(args):
         keys = " and ".join(TASKS[decision["task"]])
         decision = {"action": "none", "reason": f"Nothing to do: {keys} off"}
     print(json.dumps(decision, indent=2))
+    if decision["action"] == "none" and decision.get("reply_to"):
+        try:
+            gh.comment(decision["reply_to"], decision["reason"])
+        except GitHubError as exc:
+            print(f"Could not reply: {exc}", file=sys.stderr)
+    refused = _refused_dispatch(args, decision, event.get("inputs"))
+    if refused:
+        decision, cfg = refused
+        print(f"Starting an autopilot sweep after this run: {decision['reason']}")
     if decision["action"] == "maintain":
         # A run that waits for paused commands needs the wait and time to start them.
         waits = decision["task"] == "resume"
@@ -151,11 +185,6 @@ def cmd_route(args):
         _output(action="maintain", decision=decision, config=cfg, maintain_timeout=str(minutes))
         return 0
     if decision["action"] == "none":
-        if decision.get("reply_to"):
-            try:
-                gh.comment(decision["reply_to"], decision["reason"])
-            except GitHubError as exc:
-                print(f"Could not reply: {exc}", file=sys.stderr)
         _output(action="none", decision=decision, config={})
         return 0
     progress.start(gh, decision)

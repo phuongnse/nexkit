@@ -64,7 +64,7 @@ their defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings, or after a required check failed while an automatic merge waited for it (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see *Failing checks the base branch fixed* under [How it works](how-it-works.md#stages). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
+| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings, or after a required check failed and GitHub refused an automatic merge for it (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see *Failing checks the base branch fixed* under [How it works](how-it-works.md#stages). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
 | `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves, unless it leaves a criterion for a person to confirm. Branch protection still applies. See [Automatic merge](#automatic-merge). |
 | `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
@@ -76,7 +76,7 @@ their defaults.
 | `autopilot.enabled` | `false` | Work through the open issues in scope without commands: plan each ready issue, start `/nexkit go` on a plan that needs nobody, and move on when an issue closes. See [Autopilot](#autopilot). |
 | `autopilot.scope` | `"milestone"` | Which issues autopilot takes: `"milestone"`, the open issues of the earliest open milestone, or `null`, every open issue, whatever its milestone. |
 | `autopilot.max_parallel` | `null` | How many issues in scope may have a NexKit run or an open NexKit pull request at once (1 to 100); `null` for no limit. |
-| `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started once more when, after this many minutes (5 to 1440), it has posted no run comment and its workflow run is neither queued nor running. A second such command waits for a person. |
+| `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started once more when it has posted no run comment and its workflow run ended, at once, or when that run cannot be read, after this many minutes (5 to 1440). A second such command waits for a person. A sweep notices a lost command: the one that a run `route` refused starts when that run ends, and the end of the run that replaced a waiting one in its concurrency group usually starts one too. Nothing notices a dispatch that names no run, as on older GitHub Enterprise Servers, before the first sweep after this time, which in a quiet repository is the hourly schedule. |
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`, each listed once. See [Mentions](#mentions). |
 
@@ -535,7 +535,7 @@ every open issue in scope, in order, and starts the one command that moves it on
   When a later attempt of that run passes, for example because a person ran it again, a
   comment on the issue says which attempt passed. While that issue is open, a pull request
   into the default branch whose failing checks all fail as the workflow's latest failed
-  attempt did, or whose required checks do while its merge waits for them, gets no
+  attempt did, or whose required checks do when NexKit merges it, gets no
   automatic fix round: it waits, using none of
   `fix.max_auto_rounds`, and `nexkit status` shows it as `waiting` for that issue. Once
   the workflow passes on the default branch again, or the issue is closed, a sweep starts
@@ -621,8 +621,8 @@ every open issue in scope, in order, and starts the one command that moves it on
 
   | Failure | Title |
   |---|---|
-  | A test | Test "an author publishes from Studio and the site shows the new release" in purchase-request-release.spec.ts fails at times on main |
-  | A Vitest test | Test "pages through more than twenty entries" in RecordHistory.test.tsx fails at times on main |
+  | A test | Test "a customer pays for an order and the shop shows the receipt" in order-checkout.spec.ts fails at times on main |
+  | A Vitest test | Test "pages through more than twenty orders" in OrderHistory.test.tsx fails at times on main |
   | An annotation with only a file and line | Line 12 of src/orders.ts fails at times on main |
   | A job, or a step named like its job | Job "Integration tests" in ci.yml fails at times on main |
   | A step | Step "Unit tests" of job "Lint and unit tests" in ci.yml fails at times on main |
@@ -1016,7 +1016,9 @@ milestone events), pushes to the default branch
 `conflicts.auto_resolve` and `autopilot`). With those settings off, these events start
 short runs that end at once; remove the triggers you do not use if you prefer. Issue and
 milestone events other than a closed issue join the concurrency group
-`nexkit-autopilot`, so they never replace a command that waits for its issue. To upgrade, change both the
+`nexkit-autopilot`, so they never replace a command that waits for its issue. Each starts
+a sweep, even a milestone event with the `null` scope, since its run may have replaced a
+sweep that waited. To upgrade, change both the
 `uses:` ref and `nexkit_ref` to the new tag (or rerun `nexkit init --force --kit-ref
 vX.Y.Z` and restore your config); see [the upgrade steps](#upgrading-from-earlier-releases). `nexkit
 doctor` reports a problem when the two refs differ, and mentions a newer release without
@@ -1046,9 +1048,11 @@ change.
 ### Label scope removed in 5.0
 
 NexKit 4.x could limit autopilot to the open issues with one label (`"scope": "label"`
-with `autopilot.label`). NexKit 5.0 rejects both keys with what to set instead. Set
-`autopilot.scope` to `null`, which takes every open issue and lets the *blocked by*
-relationships order the work, or to `"milestone"`, and remove `autopilot.label`. Issues
+with `autopilot.label`). NexKit 5.0 rejects `"scope": "label"` and a label name in
+`autopilot.label` with what to set instead; `"label": null`, as the full example of 4.x
+showed, is still accepted and does nothing. Set `autopilot.scope` to `null`, which takes
+every open issue and lets the *blocked by* relationships order the work, or to
+`"milestone"`, and remove `autopilot.label`. Issues
 for CI failures no longer get a scope label.
 
 ### Codex removed in 4.0

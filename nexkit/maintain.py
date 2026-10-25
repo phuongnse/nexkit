@@ -42,6 +42,8 @@ TASKS = {
     "sweep": ("autopilot.enabled", "conflicts.auto_resolve"),
     # A run of another workflow finished, such as one of merge.after_workflows.
     "ci": ("autopilot.enabled",),
+    # `route` refused a command that NexKit started by itself.
+    "lost": ("autopilot.enabled",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
@@ -262,7 +264,13 @@ def _tried(rounds):
     return found
 
 
-def start_conflict_round(gh, number, base, workflow, ref, max_rounds, row=None, now=None):
+def _rounds(gh, number):
+    return [(c, run) for c, run in run_comments(gh.comments(number)) if "round" in run]
+
+
+def start_conflict_round(
+    gh, number, base, workflow, ref, max_rounds, row=None, now=None, settle=False
+):
     """Start an automatic fix round that merges `base` into the pull request, unless one
     started since the base branch last moved and since the pull request's last round
     ended, its limit is used up, or a round is on its way: its latest round, or the
@@ -272,11 +280,14 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds, row=None, 
 
     A start is recorded on the pull request's latest round (`conflicts_started`), so a
     sweep that looks before the new round posts its comment does not start it twice.
-    Returns a line saying what happened, or "" when nothing was started for a known reason
-    that needs no line."""
+    With `settle`, when autopilot does not, a latest round whose run ended without a
+    report is shown as ended first, so it holds nothing up. Returns a line saying what
+    happened, or "" when nothing was started for a known reason that needs no line."""
     now = now or datetime.now(UTC)
     own = (row or {}).get("url")
-    rounds = [(c, run) for c, run in run_comments(gh.comments(number)) if "round" in run]
+    rounds = _rounds(gh, number)
+    if settle and rounds and autopilot.settle_ended(gh, number, *rounds[-1]):
+        rounds = _rounds(gh, number)
     if own and not any(run.get("url") == own for _, run in rounds):
         # The implement round posts its round comment on the pull request as it reports.
         rounds.append(({}, row))
@@ -323,9 +334,10 @@ def start_conflict_round(gh, number, base, workflow, ref, max_rounds, row=None, 
     return f"Started an automatic round on #{number} to merge `{base}`."
 
 
-def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5):
+def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5, settle=False):
     """Start a conflict round for each open NexKit pull request into `base` that conflicts
-    with it. Returns lines for a log or comment."""
+    with it. With `settle`, a latest round whose run ended without a report holds nothing
+    up (see `start_conflict_round`). Returns lines for a log or comment."""
     lines = []
     for pull in gh.pulls_into(base):
         number = pull["number"]
@@ -337,7 +349,9 @@ def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5):
             if conflicting is None:
                 lines.append(f"GitHub has not worked out yet whether #{number} conflicts.")
             elif conflicting:
-                lines.append(start_conflict_round(gh, number, base, workflow, ref, max_rounds))
+                lines.append(
+                    start_conflict_round(gh, number, base, workflow, ref, max_rounds, settle=settle)
+                )
         except GitHubError as exc:
             lines.append(f"Could not check #{number} for conflicts with `{base}`: {exc}")
     return [line for line in lines if line]
@@ -350,8 +364,9 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
         lines = close_parents_safely(gh, decision["issue"]) if cfg["close_parent_issues"] else []
         return lines + autopilot.request_safely(gh, cfg, workflow, ref, decision["issue"])
     if task == "autopilot":
-        if not autopilot.concerns(cfg, decision):
-            return ["The event does not change autopilot's scope."]
+        # Even an event that changes nothing in scope, such as a milestoned issue with
+        # `null`, starts a sweep: its run joins the group `nexkit-autopilot`, where it may
+        # have replaced a sweep that waited.
         return autopilot.request_safely(gh, cfg, workflow, ref)
     if task == "sweep":
         lines = [wait_for_end(gh, decision["after"])] if decision.get("after") else []
@@ -361,13 +376,23 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
         if cfg["conflicts"]["auto_resolve"]:
             # After the commands it started, which merge the base branch themselves.
             max_rounds = cfg["conflicts"]["max_rounds"]
-            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, skip=busy)
+            # Without autopilot, nothing else ends a round whose report did not finish.
+            settle = not autopilot.takes(cfg)
+            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, skip=busy, settle=settle)
         return lines or ["Nothing to start."]
     if task == "ci":
         return autopilot.after_ci_run(gh, cfg, decision, workflow, ref)
+    if task == "lost":
+        # The sweep waits for this run to end, so it sees that the command never ran.
+        return autopilot.request_safely(gh, cfg, workflow, ref, after=decision["after"])
     if task == "conflicts":
         return resolve_conflicts(
-            gh, decision["base"], workflow, ref, cfg["conflicts"]["max_rounds"]
+            gh,
+            decision["base"],
+            workflow,
+            ref,
+            cfg["conflicts"]["max_rounds"],
+            settle=not autopilot.takes(cfg),
         )
     wait = cfg["usage_limit"]["wait_minutes"]
     if task == "resume":
@@ -381,7 +406,9 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
                 print(f"warning: could not resume paused runs: {exc}", file=sys.stderr)
         if cfg["conflicts"]["auto_resolve"]:
             # Also catches base branch moves whose push started no run.
-            lines += resolve_conflicts(gh, ref, workflow, ref, cfg["conflicts"]["max_rounds"])
+            settle = not autopilot.takes(cfg)
+            max_rounds = cfg["conflicts"]["max_rounds"]
+            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, settle=settle)
         # Also catches events that started no workflow, such as issues NexKit closed.
         return lines + autopilot.request_safely(gh, cfg, workflow, ref)
     raise ValueError(f"Unknown maintenance task: {task}")

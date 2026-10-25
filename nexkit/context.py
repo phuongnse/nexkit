@@ -62,7 +62,7 @@ def _saved_feedback(comments):
 
 def _after_failed_checks(decision, comments):
     """Whether this is an automatic round started after failing checks, NexKit's own or
-    required checks that failed while the merge waited for them. It merges the base
+    required checks that failed when NexKit merged. It merges the base
     branch whenever the base has moved, so a failure that the base branch already fixed
     goes away without an agent change."""
     if not decision.get("auto") or decision.get("conflicts"):
@@ -176,10 +176,10 @@ def diagnosis(decision, feedback):
 
 
 def _required_text(item):
-    """A required check that failed while the merge waited for it, after NexKit's own
+    """A required check that failed, so GitHub refused the merge, after NexKit's own
     checks and review passed: its job's failed commands and the tests it names."""
     name = item.get("name") or "a required check"
-    lines = [f"### Required check `{name}` failed while the merge waited for it", ""]
+    lines = [f"### Required check `{name}` failed, so GitHub refused the merge", ""]
     lines.append(
         "NexKit's own checks and review passed on this commit, but this check of the "
         "repository's CI, which branch protection requires, failed."

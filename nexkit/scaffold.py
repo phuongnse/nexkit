@@ -510,7 +510,8 @@ def _triggers(root, cfg, workflow):
 def _autopilot_triggers(cfg, workflow):
     """A finding: autopilot needs the events that bring issues into scope, and its own
     concurrency group so those events never replace a command that waits."""
-    # With `null` every open issue is in scope, so milestones change nothing.
+    # With `null` every open issue is in scope, so milestone events are not needed. Those
+    # that `nexkit init` writes still start a sweep, as every event in the group does.
     by_milestone = cfg["autopilot"]["scope"] == "milestone"
     needed = ["opened", "reopened", "closed", *(["milestoned"] if by_milestone else [])]
     issues = trigger(workflow, "issues")

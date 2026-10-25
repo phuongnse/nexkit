@@ -63,7 +63,8 @@ DONE = "<!-- nexkit:autopilot-done -->"
 ACTIVE = {RUNNING, PAUSED, CONTINUED}
 # A run that continues a paused one and has not started after this long did not start, nor
 # did the round that a round started next by itself. A command that autopilot started is
-# lost sooner: after `autopilot.lost_after_minutes`, when its own run is not on its way.
+# lost sooner: once its own run ended, or after `autopilot.lost_after_minutes` when that run
+# cannot be read.
 LOST = timedelta(hours=6)
 # What the comment of a run that ended without a report says once a sweep finds it.
 REPORTLESS = "the run ended without a report"
@@ -141,7 +142,7 @@ CI_NEW_ISSUES = 5
 # word boundary, only past this.
 CI_TITLE = 256
 # A test reporter's annotation title names a test by its path of describe blocks, such as
-# "RecordHistory > pages through more than twenty entries"; the last segment is the test.
+# "OrderHistory > pages through more than twenty orders"; the last segment is the test.
 CI_TEST_SEGMENT = re.compile(r" (?:›|>) ")
 # The most failures a red branch's title names one by one.
 CI_TITLE_FAILURES = 3
@@ -193,14 +194,6 @@ def request_safely(gh, cfg, workflow, ref, closed=None, after=None, gate=takes):
     except GitHubError as exc:
         return [f"Could not start an autopilot sweep: {exc}"]
     return ["Started an autopilot sweep."]
-
-
-def concerns(cfg, decision):
-    """Whether an issue or milestone event can change what is in scope: a milestone event
-    only for the milestone scope. With `null` every open issue is in scope already."""
-    if decision.get("event") in ("milestoned", "milestone_closed"):
-        return cfg["autopilot"]["scope"] == "milestone"
-    return True
 
 
 def after_run(gh, cfg, decision, outcome, workflow, ref):
@@ -479,24 +472,30 @@ def _step(issue, state, reason="", **fields):
 
 def _lost(gh, cfg, record, now):
     """Whether a command that autopilot started, which has posted no run comment since,
-    never ran: it started more than `autopilot.lost_after_minutes` ago, and its workflow
-    run, when the dispatch named one, is neither queued nor running."""
+    never ran: its workflow run, which the dispatch named, ended, as when `route` refused
+    it or a newer run in its concurrency group replaced it in the queue; or, when that run
+    cannot be read, it started more than `autopilot.lost_after_minutes` ago. A run that is
+    queued or running is on its way."""
     at = parse_iso(record.get("at"))
+    if at is None:
+        return False
+    status = _run_status(gh, record.get("url"))
+    if status == "completed":
+        return True
     wait = timedelta(minutes=cfg["autopilot"]["lost_after_minutes"])
-    return at is not None and now - at > wait and not _on_its_way(gh, record.get("url"))
+    return status is None and now - at > wait
 
 
-def _on_its_way(gh, url):
-    """Whether the workflow run at `url` is queued or running. A run that cannot be read
-    is not."""
+def _run_status(gh, url):
+    """The status of the workflow run at `url`, such as `queued` or `completed`, or None
+    when there is no such run or it cannot be read."""
     match = RUN_ID.search(url or "")
     if not match:
-        return False
+        return None
     try:
-        status = gh.workflow_run(int(match.group(1))).get("status")
+        return gh.workflow_run(int(match.group(1))).get("status")
     except GitHubError:
-        return False
-    return status not in (None, "completed")
+        return None
 
 
 def answers(cfg, items):
@@ -695,9 +694,27 @@ def _ended(gh, run):
 def _automatic(run):
     """Whether NexKit started a run by itself: a command autopilot started, or an automatic
     round. A person's command may carry a note that a new start would not have."""
+    return bool(run.get("autopilot")) or bool(_kinds(run) & {"auto", "autopilot"})
+
+
+def _kinds(run):
+    """The labels of a run's trigger, such as {"auto", "conflicts"} for `fix (auto,
+    conflicts)`."""
     labels = re.search(r"\((.*)\)", str(run.get("trigger") or ""))
-    kinds = {kind.strip() for kind in labels.group(1).split(",")} if labels else set()
-    return bool(run.get("autopilot")) or bool(kinds & {"auto", "autopilot"})
+    return {kind.strip() for kind in labels.group(1).split(",")} if labels else set()
+
+
+def _auto_input(run):
+    """The `auto` input that starts a run's kind of automatic round again, from its
+    trigger, or "" for a command that autopilot started."""
+    kinds = _kinds(run)
+    if "conflicts" in kinds:
+        found = ["conflicts"]
+    elif "auto" in kinds:
+        found = ["true"]
+    else:
+        return ""
+    return ",".join(found + ([AUTO] if AUTO in kinds else []))
 
 
 def _not_resumed(comment, run, now):
@@ -735,8 +752,23 @@ def _stalled(gh, issue, comment, run, record, start, target, now):
     if not _automatic(run) or again:
         return _step(issue, "waits", REPORTLESS, stale=stale)
     fields = {**start, "target": target, "remember": {"retried": True}}
+    auto = _auto_input(run)
+    if auto:
+        # The same kind of round: one after failing checks merges the base branch first.
+        fields["auto"] = auto
     reason = f"{REPORTLESS}, so autopilot starts `/nexkit {command}` once more"
     return _step(issue, "start", reason, command=command, stale=stale, **fields)
+
+
+def settle_ended(gh, number, comment, run):
+    """Show a run comment on `number` that still says running as ended without a report,
+    when its workflow run has ended. Returns whether it did. Sweeps do this for the issues
+    autopilot takes (see `_stalled`); conflict rounds without autopilot do it here, so a
+    round that ended without a report does not hold them back."""
+    if run.get("status") != RUNNING or not _ended(gh, run):
+        return False
+    settle(gh, {"stale": {"number": number, "comment": comment["id"]}})
+    return True
 
 
 def settle(gh, step):
@@ -1100,9 +1132,15 @@ def start(gh, step, workflow, ref, now=None):
     settle(gh, step)
     auto = step.get("auto") or AUTO
     inputs = {"command": command, "number": str(target), "note": step["note"], "auto": auto}
-    started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
-    if step.get("count"):
-        _count_round(gh, target)
+    # Counted before the dispatch, so a failure between the two never starts a round that
+    # the next sweep starts and counts again; a dispatch that fails takes the count back.
+    undo = _count_round(gh, target) if step.get("count") else None
+    try:
+        started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
+    except GitHubError:
+        if undo:
+            undo()
+        raise
     record = {"command": command, "target": target}
     if step.get("auto"):
         # A command that never ran starts once more as the same kind of round.
@@ -1831,16 +1869,19 @@ def _strings(value):
 def same_failure(check, recorded):
     """Whether a pull request's failing check fails as the default branch's latest failed
     attempt in `recorded` does: it runs a command that failed there, by its first line,
-    and when both sides name failing tests (its JUnit `failed_tests`, the failed jobs'
-    error annotations), every test failing in the check failed there too. Without test
-    names on either side, the command decides."""
+    and the failing tests match. When both sides name failing tests (its JUnit
+    `failed_tests`, the failed jobs' error annotations), every test failing in the check
+    failed there too. When only one side names tests, the failures differ. When neither
+    does, as for a build or lint step, the command decides."""
     command = command_line(check.get("run"))
     if not command or command not in recorded["commands"]:
         return False
     ours = {name for name in _strings(check.get("failed_tests")) if name}
     theirs = recorded["tests"].get(command) or set()
-    if not ours or not theirs:
+    if not ours and not theirs:
         return True
+    if not ours or not theirs:
+        return False
     return all(any(same_test(name, other) for other in theirs) for name in ours)
 
 
@@ -1904,8 +1945,9 @@ def ci_wait_message(wait):
     bug, workflow, branch = wait["bug"], wait["workflow"], wait["branch"]
     return (
         f"Every failing check fails as `{workflow}` does on `{branch}`, which #{bug} is "
-        "about: it runs a command that failed there and, where both name failing tests, "
-        f"fails only tests that failed there. So NexKit starts no fix round for it here. Once "
+        "about: it runs a command that failed there and fails only tests that failed there, "
+        "or neither side names a failing test. So NexKit starts no fix round for it here. "
+        "Once "
         f"`{workflow}` "
         f"passes on `{branch}` again, or #{bug} is closed, NexKit autopilot starts the "
         f"automatic fix round, which merges `{branch}` first. Waiting uses no automatic fix "
@@ -1987,13 +2029,16 @@ def _ci_step(gh, cfg, issue, pull, run, pull_comments, start):
 
 def _count_round(gh, pull):
     """Count the automatic fix round a pull request waited for, as `report` counts one it
-    starts, and end the wait in its state comment."""
+    starts, and end the wait in its state comment. Returns what takes that back, or None
+    when there is no state comment."""
     comment_id, state = read_state(gh.comments(pull))
     if not state:
-        return
+        return None
+    before = json.loads(json.dumps(state))
     state["auto_fixes"] = (state.get("auto_fixes") or 0) + 1
     state.pop("ci_wait", None)
     save_state(gh, pull, comment_id, state)
+    return lambda: save_state(gh, pull, comment_id, before)
 
 
 def sweep(gh, cfg, workflow, ref, closed=None, busy=None):

@@ -453,10 +453,13 @@ def validate(raw, *, layered=False):
             if not isinstance(value, dict):
                 _fail(f"{key} must be an object")
             if key == "autopilot" and "label" in value:
-                _fail(
-                    'autopilot.label is gone with the "label" scope; remove it and set '
-                    f"autopilot.scope to {AUTOPILOT_SCOPE_CHOICES}"
-                )
+                if value["label"] is not None:
+                    _fail(
+                        'autopilot.label is gone with the "label" scope; remove it and set '
+                        f"autopilot.scope to {AUTOPILOT_SCOPE_CHOICES}"
+                    )
+                # `"label": null`, as the full example of NexKit 4.x showed, set nothing.
+                value = {k: v for k, v in value.items() if k != "label"}
             extra = set(value) - set(DEFAULTS[key])
             if extra:
                 _fail(f"Unknown keys in {key}: {', '.join(sorted(extra))}")

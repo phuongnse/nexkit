@@ -1,6 +1,7 @@
 """Automatic rounds that merge the base branch into NexKit pull requests."""
 
 import contextlib
+import copy
 import io
 import json
 import os
@@ -140,6 +141,25 @@ class SweepTests(unittest.TestCase):
         self.gh.branches["main"] = "e" * 40
         self.assertEqual(self.swept(), ["6"])
 
+    def test_a_round_that_ended_without_a_report_holds_nothing_up_without_autopilot(self):
+        # The fix round's runner was lost: its `finish` job starts a sweep, which with
+        # autopilot off only starts conflict rounds. It ends the round's comment itself.
+        url = "https://github.com/acme/app/actions/runs/40"
+        self.round(6, 1, status="running", url=url, head="b" * 40)
+        self.gh.runs[40] = {"status": "in_progress"}
+        self.assertEqual(self.swept(), [])
+        self.gh.runs[40] = {"status": "completed", "conclusion": "failure"}
+        self.assertEqual(self.swept(), ["6"])
+        run = self.gh.run_comments(6)[-1]["run"]
+        self.assertEqual((run["status"], run["outcome"]), ("failure", "lost"))
+        self.assertEqual(run["conflicts_started"], BASE_SHA)
+        self.assertEqual({s["state"] for s in self.gh.statuses}, {"error"})
+        # With autopilot, its sweep handles such a round first, and may start it once more.
+        self.round(6, 2, status="running", url=url)
+        with mock.patch("nexkit.autopilot.sweep", return_value=[]):
+            self.assertEqual(self.swept(autopilot={"enabled": True}), [])
+        self.assertEqual(self.gh.run_comments(6)[-1]["run"]["status"], "running")
+
     def test_a_round_that_started_the_next_one_holds_the_sweep_back(self):
         # An automatic fix round is on its way and merges the base branch itself; a
         # dispatch now would replace it in the queue.
@@ -234,6 +254,54 @@ class RouteTests(unittest.TestCase):
         decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
         self.assertEqual(decision["base_sha"], "e" * 40)
         self.assertTrue(decision["conflicts"])
+
+
+class ConcurrentStartTests(unittest.TestCase):
+    """A push to the default branch and a sweep look at a conflicting pull request at the
+    same moment, before either records its start: both start a conflict round."""
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5)
+        self.gh.pulls[6]["mergeable"] = False
+        row = {"round": 1, "trigger": "fix", "url": "https://x/6/1", "status": "success"}
+        self.gh.comment(6, render_run(row))
+
+    def test_the_second_conflict_round_started_at_the_same_time_runs_nothing(self):
+        read, seen = self.gh.comments, {}
+
+        def stale(number):
+            # Each starter reads the comments before the other one writes its start.
+            return copy.deepcopy(seen.setdefault(number, copy.deepcopy(read(number))))
+
+        with mock.patch.object(self.gh, "comments", side_effect=stale):
+            for _ in range(2):
+                resolve_conflicts(self.gh, "main", "nexkit.yml", "main", 3, delay=0)
+        started = [d["inputs"] for d in rounds_started(self.gh)]
+        self.assertEqual(len(started), 2)
+        # The first runs and ends on this base commit.
+        sender = {"sender": {"login": BOT_LOGIN}}
+        first = route(self.gh, "workflow_dispatch", sender, started[0])
+        self.assertEqual(first["action"], "fix")
+        row = {"round": 2, "url": "https://x/6/2", "status": "failure", "outcome": "agent_blocked"}
+        row.update(trigger="fix (auto, conflicts)", conflicts=True, base_sha=first["base_sha"])
+        self.gh.comment(6, render_run(row))
+        # The second, which waited behind it in the pull request's group, runs nothing.
+        second = route(self.gh, "workflow_dispatch", sender, started[1])
+        self.assertEqual((second["action"], second["reply_to"]), ("none", None))
+        self.assertIn("A conflict round already ran on `main`", second["reason"])
+        # A round that resumes or retries it, or starts once more after it ended without a
+        # report, goes on.
+        for auto in ("conflicts,resume", "conflicts,retry"):
+            again = route(self.gh, "workflow_dispatch", sender, {**started[1], "auto": auto})
+            self.assertEqual(again["action"], "fix", auto)
+        self.gh.issue_comments[6][-1]["body"] = render_run({**row, "outcome": "lost"})
+        self.assertEqual(route(self.gh, "workflow_dispatch", sender, started[1])["action"], "fix")
+        # After the base branch moves, a new round goes on too.
+        self.gh.issue_comments[6][-1]["body"] = render_run(row)
+        self.gh.branches["main"] = "e" * 40
+        self.assertEqual(route(self.gh, "workflow_dispatch", sender, started[1])["action"], "fix")
 
 
 class UpToDateTests(unittest.TestCase):
@@ -602,12 +670,48 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual(state["feedback"]["required"], [required])
         decision = {"pr": 6, "head": HEAD, "auto": True}
         text = _feedback(self.gh, decision, self.gh.comments(6))
-        self.assertIn("### Required check `e2e` failed while the merge waited for it", text)
+        self.assertIn("### Required check `e2e` failed, so GitHub refused the merge", text)
         self.assertIn("Commands that failed in it: `make e2e`.", text)
         # Like any automatic round after failing checks, it merges a base that moved first.
         self.assertTrue(_after_failed_checks(decision, self.gh.comments(6)))
         self.assertFalse(self.gh.comments_matching(6, "@olivia"))
         self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+
+    def test_a_required_check_that_failed_before_the_first_merge_gets_a_fix_round(self):
+        # CI failed before NexKit's review ended: the round's own merge is refused.
+        from nexkit import progress
+        from nexkit.context import _after_failed_checks
+        from nexkit.state import read_state
+
+        self.candidate()
+        self.e2e_fails()
+        self.gh.merge_error = [self.gh.merge_error]
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual((outcome["outcome"], outcome["attention"]), ("auto_fix", None))
+        self.assertIn(
+            "Required check `e2e` failed on `ccccccc`, so GitHub refused the merge. "
+            "Starting automatic fix round 1 of 2.",
+            outcome["summary"],
+        )
+        # One fix round, counted once, with the failed check in its feedback.
+        [fix] = rounds_started(self.gh)
+        self.assertEqual(
+            fix["inputs"], {"command": "fix", "number": "6", "note": "", "auto": "true"}
+        )
+        state = read_state(self.gh.comments(6))[1]
+        self.assertEqual(state["auto_fixes"], 1)
+        self.assertEqual([item["name"] for item in state["feedback"]["required"]], ["e2e"])
+        decision = {"pr": 6, "head": HEAD, "auto": True}
+        self.assertTrue(_after_failed_checks(decision, self.gh.comments(6)))
+        self.assertFalse(self.gh.comments_matching(6, "@olivia"))
+        # With no automatic round left, a person decides.
+        self.gh.dispatches.clear()
+        comment_id, state = read_state(self.gh.comments(6))
+        state["auto_fixes"] = 2
+        progress.save_state(self.gh, 6, comment_id, state)
+        self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is failing.')]
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "needs_human")
+        self.assertFalse(rounds_started(self.gh))
 
     def test_a_merge_waiting_whose_required_check_fails_without_rounds_left_waits(self):
         from nexkit import autopilot, progress

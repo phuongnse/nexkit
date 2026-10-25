@@ -26,7 +26,7 @@ from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.publish import publish_plan
 from nexkit.report import report
-from nexkit.route import issue_from_branch, route
+from nexkit.route import auto_kinds, issue_from_branch, route
 from nexkit.state import BOT_LOGIN, UNCOUNTED, read_state, run_comments
 from nexkit.status import collect
 from tests.support import FakeGitHub, make_config
@@ -174,7 +174,14 @@ class Pipeline:
         os.environ["GITHUB_RUN_ID"] = str(run_id)
         self.gh.runs[run_id] = {"status": "in_progress"}
         decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        if outcome == "refused":
+            decision = {"action": "none", "reason": "refused"}
         if decision["action"] == "none":
+            # `route` refused it. For a command NexKit started by itself, the run starts a
+            # sweep that waits for it to end (`cli._refused_dispatch`).
+            if auto_kinds(inputs.get("auto")) - {"false"}:
+                lost = {"action": "maintain", "task": "lost", "after": run_id}
+                maintain(self.gh, lost, self.cfg, workflow="nexkit.yml", ref="main")
             self.gh.runs[run_id] = {"status": "completed"}
             self.played.append((inputs["command"], int(inputs["number"]), decision["reason"]))
             return
@@ -423,8 +430,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_a_lost_command_starts_once_more_at_the_end_of_another_run(self):
-        # The plan of #5 never runs. Half an hour later #6 merges, and the sweep at the end
-        # of that run starts it once more: no hourly schedule is needed.
+        # The plan of #5 never runs. The sweep at the end of the next run, the plan of #6,
+        # sees that its run ended and starts it once more: no hourly schedule is needed.
         lost = itertools.count()
 
         def script(pipe, inputs):
@@ -444,12 +451,32 @@ class ScenarioTests(unittest.TestCase):
             [
                 ("plan", 5, "lost"),
                 ("plan", 6, "planned"),
-                ("go", 6, "merged"),
                 ("plan", 5, "planned"),
+                ("go", 6, "merged"),
                 ("go", 5, "merged"),
             ],
         )
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        pipe.check(quiet=True)
+
+    def test_a_refused_command_starts_once_more_at_the_end_of_its_own_run(self):
+        # `route` refuses the plan that autopilot started on #5, and no other run ends
+        # after it: its own run starts the sweep that starts it once more, at once.
+        refused = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return "refused" if next(refused) < 1 else plan()
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        played = [(c, n, o) for c, n, o in pipe.played if o in ("refused", "planned", "merged")]
+        self.assertEqual(
+            played, [("plan", 5, "refused"), ("plan", 5, "planned"), ("go", 5, "merged")]
+        )
         pipe.check(quiet=True)
 
     def test_a_command_that_waits_in_the_queue_is_not_started_twice(self):

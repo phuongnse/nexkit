@@ -846,7 +846,7 @@ class ReportTests(ReportCase):
                 "status": "done",
                 "summary": "Kept both.",
                 "start_base": "b" * 40,
-                "conflicts": ["Program.cs", "Axis.Server.csproj"],
+                "conflicts": ["Program.cs", "Shop.Server.csproj"],
             },
         )
         d = decision("fix", pr=6, target=6, head="a" * 40)
@@ -854,11 +854,11 @@ class ReportTests(ReportCase):
         [row] = self.gh.run_comments(6)
         self.assertIn(
             "Merged `main` (`bbbbbbb`) into the branch and resolved conflicts in "
-            "`Program.cs`, `Axis.Server.csproj`.",
+            "`Program.cs`, `Shop.Server.csproj`.",
             row["body"],
         )
         _, state = read_state(self.gh.comments(6))
-        self.assertEqual(state["fixes"][-1]["conflicts"], ["Program.cs", "Axis.Server.csproj"])
+        self.assertEqual(state["fixes"][-1]["conflicts"], ["Program.cs", "Shop.Server.csproj"])
 
     def test_round_comment_says_a_moved_base_was_merged(self):
         self.candidate()
@@ -968,7 +968,7 @@ class ReportTests(ReportCase):
 
     def test_a_plan_at_the_usage_limit_pauses_with_its_resume_record(self):
         self.write("nexkit-agent", "result.json", LIMIT)
-        d = decision("plan", note="Use M6", comment_id=3)
+        d = decision("plan", note="Keep the old endpoint", comment_id=3)
         outcome = self.run_report(d=d, published=False)
         self.assertEqual(outcome["outcome"], "paused")
         [run] = self.gh.run_comments(5)
@@ -978,7 +978,7 @@ class ReportTests(ReportCase):
             {
                 "command": "plan",
                 "number": 5,
-                "note": "Use M6",
+                "note": "Keep the old endpoint",
                 "auto": "resume",
                 "at": "2026-10-11T04:40:00Z",
             },

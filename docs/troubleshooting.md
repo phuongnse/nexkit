@@ -143,9 +143,9 @@ access, `max_parallel`, or a question without a recommended option. Every issue 
 waits for a person is also listed under *Needs a person*, and does not count toward
 `max_parallel`. With the default `autopilot.scope`, an issue outside the earliest open
 milestone is not in scope; `null` takes every open issue. A command that
-autopilot started but that never ran starts once more after `autopilot.lost_after_minutes`
-(30 by default), once its workflow run is no longer queued or running; when that one does
-not run either, the issue waits for you (see [A command or round did not
+autopilot started but that never ran starts once more as soon as its workflow run ended,
+or after `autopilot.lost_after_minutes` (30 by default) when that run cannot be read; when
+that one does not run either, the issue waits for you (see [A command or round did not
 start](#a-command-or-round-did-not-start)). To sweep again at once:
 `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 
@@ -205,15 +205,18 @@ them on the base branch after it merges (see
 **A pull request waits for a bug issue and starts no fix round.** Its checks fail only in
 commands that also fail on the default branch, in a workflow of `merge.after_workflows`
 whose `bug` issue autopilot opened (outcome `ci_waiting`, state `waiting` in
-`nexkit status`), and, where both name failing tests, only in tests that fail there too. Fixing that issue fixes the pull request too, so NexKit waits instead
-of fixing the same failure in every pull request. The wait ends by itself once the
+`nexkit status`), and only in tests that fail there too, or, where neither side names
+failing tests, in none. Fixing that issue fixes the pull request too, so NexKit waits
+instead of fixing the same failure in every pull request. The wait ends by itself once the
 workflow passes on the default branch again, or the `bug` issue is closed: the next sweep
 starts one automatic fix round that merges the default branch. If the failure is the pull
-request's own after all, comment `/nexkit fix <instructions>` on it. Tests are compared
-only when the check's `results` hold JUnit XML and the default branch's failed jobs have
-error annotations that name tests; otherwise the command alone decides, so a pull request
-that breaks another test in the same script also waits. To tell the two apart, name the
-check's JUnit output in its `results` and let your CI's test reporter annotate failures.
+request's own after all, comment `/nexkit fix <instructions>` on it. A check names its
+failing tests when its `results` hold JUnit XML, and the default branch does when its
+failed jobs have error annotations that name tests. When only one side names tests, the
+failures differ and the pull request gets the usual round. When neither does, the command
+alone decides, so a pull request that breaks another test in the same script also waits.
+To tell the two apart, name the check's JUnit output in its `results` and let your CI's
+test reporter annotate failures.
 A pull request whose checks are not compared this way, because your CI runs its commands
 differently from NexKit's checks, gets the usual fix rounds (see *Failing checks the
 default branch has* under [How it works](how-it-works.md#stages)).
@@ -226,9 +229,10 @@ its reason. NexKit handles the refusals that pass: a base branch that moved mean
 tried again, required checks that have not passed yet are waited for by autopilot's
 sweeps (`merge_waiting`), a branch that must be up to date is updated and reviewed
 again with `conflicts.auto_resolve`, and a branch that someone pushed to after the round
-checked it ("Head branch was modified") gets `/nexkit review` on its new head. While the
-merge waits, a required check that fails gets an automatic fix round within
-`fix.max_auto_rounds`, and a new commit on the branch gets `/nexkit review`. What is left
+checked it ("Head branch was modified") gets `/nexkit review` on its new head. A required
+check that failed, at the first try or while the merge waits, gets an automatic fix round
+within `fix.max_auto_rounds`, and while the merge waits, a new commit on the branch gets
+`/nexkit review`. What is left
 is a rule that needs a person, such as a required approval, required checks that neither
 passed nor failed within six hours, or a required check that failed with no automatic fix
 round left. Merge the pull request yourself, comment `/nexkit fix` on it, or change the
@@ -478,8 +482,8 @@ without a report again, find the cause in the Actions run before you try again.
 
 ### A command or round did not start
 
-Autopilot starts a command that never ran once more after `autopilot.lost_after_minutes`,
-and waits for a person when that one does not run either (see ["Autopilot does not start
+Autopilot starts a command that never ran once more once its workflow run ended, or after
+`autopilot.lost_after_minutes` when that run cannot be read, and waits for a person when that one does not run either (see ["Autopilot does not start
 an issue"](#agents)). A continued run whose new run has not started after six hours, and
 an automatic round that a round started but that has not run after six hours, wait too
 (see [Runs that never end](how-it-works.md#autopilot)). Read the dispatched run in the

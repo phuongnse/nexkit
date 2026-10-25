@@ -41,7 +41,7 @@ VOLATILE = (
 )
 SIGNATURE_LIMIT = 200
 # A test reporter names a test by its path of describe blocks, such as
-# "RecordHistory > pages through more than twenty entries"; the last segment is the test.
+# "OrderHistory > pages through more than twenty orders"; the last segment is the test.
 TEST_SEGMENT = re.compile(r"\s+(?:›|>)\s+")
 # The arguments of a test named as code, such as `Totals(count: 2)`, and the line and
 # column after a file, such as `orders.test.ts:12:3`.
@@ -50,7 +50,7 @@ TEST_LINE = re.compile(r"(?::\d+){1,2}\Z")
 # A JUnit `classname` that names the test's file rather than its class.
 TEST_FILE = re.compile(r"[/\\]|\.(?:[cm]?[jt]sx?|py|rb|go|java|kt|cs|fs|vb|php|rs|swift|exs?)\Z")
 # The most failing tests a check records from its JUnit files. A check with more records
-# none, and is compared by its command alone.
+# none, and is compared as a check that names no test (see `autopilot.same_failure`).
 FAILED_TESTS_LIMIT = 200
 
 

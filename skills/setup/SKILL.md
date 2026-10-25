@@ -154,8 +154,9 @@ files or repository settings, and wait for confirmation.
    each of those workflows, with the user's agreement since it changes their CI: GitHub
    sends no `workflow_run` event for the runs NexKit starts after its merges, and that
    job starts the sweep instead, so a failure is noticed within minutes.
-   A command that autopilot started and that never ran starts once more after
-   `"lost_after_minutes"` (30 by default).
+   A command that autopilot started and that never ran starts once more as soon as its
+   workflow run ended, or after `"lost_after_minutes"` (30 by default) when that run
+   cannot be read.
    With `autopilot` or `conflicts.auto_resolve`, recommend the push token above with
    Workflows write access too: without it, a round that merges a change to
    `.github/workflows/` from the base branch cannot push and waits for a person.

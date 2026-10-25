@@ -478,9 +478,10 @@ issue is in autopilot's scope gets no automatic fix round when its failing check
 default branch's failure. It waits instead:
 
 - *The same failure* means that every failing check runs a command that failed in the
-  latest failed attempt the `bug` issue records and, when both sides name failing tests,
-  fails only tests that failed there: at least one test failing in the check failed on
-  the default branch, and none failing in the check passed there. A pull request's
+  latest failed attempt the `bug` issue records and fails the same way: when both sides
+  name failing tests, it fails only tests that failed there, so at least one test failing
+  in the check failed on the default branch, and none failing in the check passed there;
+  when only one side names failing tests, the failures differ. A pull request's
   checks are NexKit's own configured checks, not that workflow's jobs and steps, which do
   not run on NexKit's branches without a push token, so NexKit compares commands and
   tests:
@@ -502,9 +503,11 @@ default branch's failure. It waits instead:
     folders, line or column: the annotation's path, or the JUnit `file`, or a
     `classname` that names a file. Two titles match when their files match, or when one
     side does not say which file.
-  - When either side names no test, as for a build or lint step, a check without JUnit
-    results, results that name no failed case, more than 200 failing tests, or a report
-    from before NexKit recorded tests, the command alone decides. GitHub keeps at most
+  - A side names no test for a build or lint step, a check without JUnit results,
+    results that name no failed case, more than 200 failing tests, or a report from
+    before NexKit recorded tests. When neither side names a test, the command alone
+    decides. When only one side does, the check fails otherwise than the default branch
+    and gets the usual round. GitHub keeps at most
     10 error annotations of a step, so a check that fails more tests than the default
     branch's annotations name gets the usual round.
 
@@ -512,8 +515,8 @@ default branch's failure. It waits instead:
   fails a test the default branch passes, is a failure of the pull request's own and
   gets the usual round, as does the `bug` issue's own pull request and those of its
   parts. Review findings do not count: the round after the wait addresses them too.
-- A required check that fails while the merge waits for it (`merge_waiting`) is compared
-  the same way. It is a job of the repository's CI, not a NexKit check, so its commands
+- A required check that failed when NexKit merged, at the round's first try or while the
+  merge waits for it (`merge_waiting`), is compared the same way. It is a job of the repository's CI, not a NexKit check, so its commands
   are those of its `run` steps that failed, from the job's log, and its tests those its
   error annotations name, as for the default branch. A required check that is no job of
   a workflow run, such as a commit status, names no command and gets the usual round.
@@ -580,7 +583,7 @@ file:line references and assertions for each criterion and previous finding
 
 The reviewer judges the code against the same requests the implementing agent followed.
 Its prompt has the plan, the issue and the discussion from collaborators on the issue and
-the pull request, including the notes on `/nexkit` commands, such as `/nexkit go Use M6`.
+the pull request, including the notes on `/nexkit` commands, such as `/nexkit go Keep the old endpoint`.
 It also gets the *Outside the plan* section of the pull request description: what the
 implementing agent did that the plan did not ask for, and why. A deviation whose reason
 holds, such as a change a collaborator asked for while approving the plan, is not a
@@ -666,7 +669,11 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
   and each round of the pull request that ended since, so a blocked round is not
   repeated until the base branch moves again or another round ran. The start is
   recorded on the pull request's latest round, so a sweep that looks before the new
-  round posts its comment does not start it twice. A pull request whose latest round is
+  round posts its comment does not start it twice. When two starters look at the same
+  moment, such as a push to the default branch and a sweep, both may start one; the
+  second waits behind the first in the pull request's concurrency group, and when the
+  first ended on the same base commit, `route` lets the second run nothing. A pull
+  request whose latest round is
   paused at the usage limit is left alone, and so is one with a round running or on its
   way, such as an automatic fix round that a round started: that round merges the base
   branch itself when it conflicts, and a new run would replace a command waiting behind
@@ -707,18 +714,25 @@ work. The
 A sweep is a `workflow_dispatch` with the command `autopilot`. Its `number` input is
 `autopilot` too, so callers' concurrency groups give every sweep the group
 `nexkit-autopilot`: sweeps run one at a time, and GitHub keeps one waiting sweep, which
-sees everything a replaced one would have. Issue and milestone events other than a closed
-issue run in that group as well, and start a sweep.
+sees everything a replaced one would have, except its note: a replaced sweep after a
+closed issue does not say the scope is done, and one after a run whose report did not
+finish does not wait for that run to end, so a later sweep handles the run once it ended.
+Issue and milestone events other than a closed issue run in that group as well, and each
+starts a sweep, even one that changes nothing in scope, such as a milestone event with
+the `null` scope, since it may have replaced a sweep that waited.
 
 - **What starts a sweep.** The end of every NexKit run, except one that waits for a usage
   limit, and one that started the next automatic round itself while no finished run on
   the default branch needs a sweep (see *CI on the default branch*). A run whose `report`
   did not finish, because it failed, was cancelled or lost its runner, starts one from its
-  `finish` job. A closed issue, whether a person or
+  `finish` job, and a run whose `route` refused a command that NexKit started by itself
+  starts one from its `maintain` job, both waiting for the run to end. A closed issue,
+  whether a person or
   NexKit closed it, which also lets the sweep say once that the scope is done, or with
   `null` that the issue's milestone is done, while the other milestones go on. An issue
-  that opens or is reopened. For the milestone scope, an issue that comes into scope with
-  a milestone, and a closed milestone, after which the next milestone becomes the scope.
+  that opens or is reopened. An issue that gets a milestone, and a closed milestone: for
+  the milestone scope, the issue comes into scope, or the next milestone becomes the
+  scope.
   A finished run on the default branch of a workflow in `merge.after_workflows`, through
   a `workflow_run` trigger, and through the job that ends such a workflow and dispatches
   a sweep that waits for its run to end. The hourly schedule, which
@@ -728,22 +742,29 @@ issue run in that group as well, and start a sweep.
   request it runs on, and the newest NexKit run comment on both when it started. A run
   that starts posts a new run comment, so the next sweep sees that the command ran.
   Until then, the issue counts as in progress and nothing else starts on it. A command
-  that has posted no run comment after `autopilot.lost_after_minutes` (30 by default),
-  and whose workflow run, which the dispatch names, is neither queued nor running, did
-  not run, for example because `route` refused it or GitHub dropped it from the queue. It
-  starts once more with the same note, and the issue waits for a person when that one
-  does not run either. The first sweep after that time notices it: at the end of any
-  NexKit run, or on the hourly schedule. A dispatch that names no run, as on older GitHub
-  Enterprise Servers, counts as lost on time alone.
+  that has posted no run comment and whose workflow run, which the dispatch names, ended
+  did not run, for example because `route` refused it or a newer run in its concurrency
+  group replaced it in the queue. It starts once more with the same note, and the issue
+  waits for a person when that one does not run either. A sweep notices it at once: a
+  run whose `route` refuses a command that NexKit started by itself starts a sweep that
+  waits for the run to end, and the run that replaced it starts one at its end, unless it
+  waits for a usage limit or started the next round itself (see *What starts a sweep*). A
+  dispatch that names no run, as on older GitHub Enterprise Servers,
+  or whose run cannot be read, counts as lost after `autopilot.lost_after_minutes` (30
+  by default), and only the first sweep after that time notices it: at the end of any
+  NexKit run, or on the hourly schedule.
 - **Runs that never end.** A sweep reads the workflow run behind each run comment that
   still says running. When that run has ended, its `report` never wrote the outcome. The
   run's own `finish` job starts a sweep that waits for the run to end, so this is handled
   within minutes; any later sweep handles it too. The sweep marks the comment as ended
   without a report and sets the round's pending statuses to errors (the `maintain` job
   has `statuses: write` for this). A command autopilot started, or an automatic round,
-  starts once more; a person's command, or a second run that ended so, waits for a
-  person. A run paused at the usage limit that NexKit does not
-  resume (`usage_limit.resume: false`, no known reset, or paused more than eight days ago)
+  starts once more, as the same kind of round, so one after failing checks merges a base
+  branch that moved first; a person's command, or a second run that ended so, waits for a
+  person. With autopilot off and `conflicts.auto_resolve` on, a sweep, the schedule or a
+  push to the default branch ends such a comment too when it is the latest round of a
+  pull request that conflicts, and then starts its conflict round. A run paused at the
+  usage limit that NexKit does not resume (`usage_limit.resume: false`, no known reset, or paused more than eight days ago)
   waits for a person, and so does a continued run whose new run has not started after six
   hours. A round that started the next one by itself, such as an automatic fix round,
   whose next one has not run after six hours waits for a person too.
@@ -832,7 +853,7 @@ issue run in that group as well, and start a sweep.
   annotation that names a failure is named by the job and its first failed step, and an
   attempt that failed before any job did by the workflow. Each failure's issue is `bug`,
   in scope, titled by the failure in plain words, for example 'Test "pages through more
-  than twenty entries" in RecordHistory.test.tsx fails at times on main' (see [the title
+  than twenty orders" in OrderHistory.test.tsx fails at times on main' (see [the title
   forms](configuration.md#autopilot)), starts with its own marker that names the workflow and a key for
   the failure, and is planned right after the `bug` issues for a failing default branch.
   Each record names the commit, the run, and the job, file and line, and message where
@@ -1068,6 +1089,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | GitHub refuses the automatic merge because the base branch was modified meanwhile, for example by another part of a split merging at the same time | Tries the merge again, three times in all, a little later each time. |
 | GitHub refuses the automatic merge because the head branch was modified, after a push to the branch since the round checked it | Starts `/nexkit review` on the new head, which checks, reviews and merges it as usual; nobody is mentioned. |
 | GitHub refuses the automatic merge because required status checks have not passed yet, such as a CI workflow slower than the NexKit round | For an issue in autopilot's scope, ends the round as `merge_waiting`: each sweep tries the merge again while the head is the one approved, and merges once the checks pass, with everything a merge leads to. When GitHub refuses it because a required check failed, the sweep starts an automatic fix round, like failing checks after any round: it counts toward `fix.max_auto_rounds`, its feedback names the failed check with the commands that failed in its job and the tests its error annotations name, and it merges the base branch first when it has moved. A check that fails as the default branch does while autopilot's `bug` issue about that is open waits instead (`ci_waiting`, see *Failing checks the default branch has* under [Stages](#stages)), and with no automatic round left a person decides. A new commit on the branch gets `/nexkit review`, as when the head moved, which checks, reviews and merges it as usual. Checks that neither pass nor fail within six hours wait for a person. Otherwise a person merges it. The `maintain` job has `contents: write` for this; it never checks out the repository. |
+| GitHub refuses the automatic merge because a required check failed, such as a CI workflow that failed before the NexKit round ended | Starts an automatic fix round at once, as when a required check fails while the merge waits for it: it counts toward `fix.max_auto_rounds`, its feedback names the failed check, and it merges the base branch first when it has moved. A check that fails as the default branch does while autopilot's `bug` issue about that is open waits instead (`ci_waiting`), and with no automatic round left a person decides. |
 | GitHub refuses the automatic merge because the branch is behind its base branch, under protection that requires it to be up to date | With `conflicts.auto_resolve`, updates the branch from the base branch on GitHub and starts `/nexkit review` on the new commit, which checks, reviews and merges it as usual, at most `conflicts.max_rounds` times per pull request. GitHub starts no CI for that update when it is made with the Actions token, so required checks from the repository's own workflows run only with `publish.push_token_secret`; without it, the merge waits for them and then for a person. |
 | GitHub refuses the automatic merge for another reason (required approvals, a merge method the repository does not allow) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |

@@ -17,7 +17,10 @@ Three parts are played around NexKit:
   with the `request` skill, reads each plan as it is posted and comments the changes it
   needs (see *Changing a plan* under [Stages](#stages)), reviews pull requests (below),
   watches the work with the `status` skill, and steps in where autopilot stops. It asks
-  the person who decides wherever the choice is theirs.
+  the person who decides wherever the choice is theirs. A session on a schedule can play
+  this part at autopilot's stops while nobody watches, with the
+  [`drive` skill](../skills/drive/SKILL.md) and within limits the repository sets; it
+  does not review plans or pull requests.
 - **NexKit's agents** plan, implement, fix and review inside the pipeline (see [One run,
   seven jobs](#one-run-seven-jobs)). They read the repository's agent instructions, such
   as CLAUDE.md or AGENTS.md, and never hold a token that can write to the repository.

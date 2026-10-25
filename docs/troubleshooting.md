@@ -447,3 +447,23 @@ relationship when the issue does not really need it.
 NexKit leaves the parent open, since nothing it asked for was delivered (see [Parent
 issues](configuration.md#parent-issues)). Decide whether the parent is done: close it, or
 open new parts for what is left.
+
+### A CI issue holds records of several failures
+
+An issue for a run whose failures would open more than five issues, or one from an older
+release that holds every failure of a workflow, can hold records of several failures
+while its plan and pull request cover only some (see [Flaky
+runs](configuration.md#autopilot)). Before it closes, account for every record as one of:
+
+- fixed by a named commit, whose change matches the failure's message or log line;
+- tracked by an issue of its own. When no issue covers it, open one in the CI issue's
+  milestone, if it has one, from the record's run, job, attempt and failure annotation
+  (`gh api repos/{owner}/{repo}/check-runs/<job id>/annotations` names the failing test,
+  its file and line). Guess no cause: ask for the cause, with evidence, first. Link the
+  run and the job in the issue, so NexKit hands their evidence to its rounds;
+- an outside failure, such as a lost runner or an unreachable package source, named as
+  such.
+
+When a record matches none of these and its evidence is gone, say so in the new issue
+instead of guessing. Do this through new issues, not comments on the CI issue while a
+NexKit run for it is queued or running.

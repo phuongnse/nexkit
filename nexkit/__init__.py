@@ -8,7 +8,7 @@ PYTHON = (3, 12)
 # proposes the newest stable version of each runtime every week, and CI tests it before it
 # is merged.
 RUNNER = "ubuntu-24.04"
-CLAUDE_CODE = "2.1.285"
+CLAUDE_CODE = "2.1.308"
 
 
 def python_supported(version_info):

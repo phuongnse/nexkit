@@ -208,7 +208,7 @@ def after_run(gh, cfg, decision, outcome, workflow, ref):
         return []
     if outcome in CHAINED and not (takes(cfg) and ci_due(gh, cfg, ref)):
         return []
-    closed = decision["issue"] if outcome in ("merged", "no_change") else None
+    closed = decision["issue"] if outcome in ("merged", "no_change", "issue_closed") else None
     return request_safely(gh, cfg, workflow, ref, closed, gate=sweeps)
 
 

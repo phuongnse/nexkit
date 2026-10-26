@@ -65,6 +65,8 @@ COMPLETED = {
     "head_moved",
     "recheck_failed",
     "no_change",
+    "issue_closed",
+    "merge_skipped",
     autopilot.CI_WAITING,
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
@@ -78,6 +80,10 @@ NEEDS_PERSON = {
     "review_failed": "the AI review did not complete",
     "needs_human": "checks or review still need attention and no automatic fix rounds remain",
     "merge_refused": "GitHub refused the automatic merge",
+    "merge_skipped": (
+        "the issue closed before NexKit merged its pull request; merge or close the pull "
+        "request yourself"
+    ),
     "retry_failed": "the run stopped on a transient error twice",
     "close_failed": "no change is needed, but NexKit could not close the issue; close it yourself",
     "recheck_failed": (
@@ -423,6 +429,17 @@ def _no_change(gh, cfg, decision, agent):
     }
 
 
+def _issue_closed(decision, agent):
+    """A plan or implement round whose issue closed while it ran: it published nothing,
+    and nobody needs to act."""
+    issue = decision["issue"]
+    return {
+        "outcome": "issue_closed",
+        "summary": f"#{issue} closed while this round ran, so NexKit published nothing.",
+        "agents": agents_ran(agent),
+    }
+
+
 def _stage_failure(decision, agent, publish):
     """(outcome, message) when the agent or publish stage stopped, otherwise None."""
     action = decision["action"]
@@ -712,8 +729,19 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     """Merge a pull request that checks and review approved: `target` names its `pr`,
     `head`, `issue` and `base`. Returns (outcome, message), `message` being the round's
     text so far. A merge refused because the base branch was modified meanwhile is tried
-    again a few times; other refusals that pass are handed on (see `_refused`)."""
+    again a few times; other refusals that pass are handed on (see `_refused`). A pull
+    request whose issue closed since the round started is left for a person."""
     pr, head = target["pr"], target["head"]
+    try:
+        state = gh.issue(target["issue"]).get("state")
+    except GitHubError as exc:
+        return "merge_refused", f"{message} NexKit could not read #{target['issue']}: {exc}"
+    if state != "open":
+        line = (
+            f"#{target['issue']} is closed, so NexKit did not merge this pull request. Merge "
+            "it or close it yourself."
+        )
+        return "merge_skipped", f"{message}\n\n{line}" if message else line
     for attempt in range(MERGE_TRIES):
         try:
             merge = gh.merge(pr, head) or {}
@@ -1078,6 +1106,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             )
             _stop_round(gh, decision, agent, "up_to_date", message)
             return {"outcome": "up_to_date", "summary": message}
+        if publish.get("issue_closed"):
+            return _issue_closed(decision, agent)
         failure = _stage_failure(decision, agent, publish)
         if failure:
             outcome, message = failure

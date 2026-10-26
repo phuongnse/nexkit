@@ -358,6 +358,28 @@ class PublishTests(unittest.TestCase):
                 self.out,
             )
 
+    def test_an_issue_that_closed_while_the_round_ran_gets_no_pull_request(self):
+        before = git(self.repos.origin, "branch", "--list", "nexkit/issue-5")
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        outcome = publish(
+            self.gh,
+            decision("implement"),
+            self.result(start),
+            CONTEXT,
+            self.cfg,
+            self.repos.clone("publisher"),
+            self.out,
+        )
+        self.assertEqual(outcome, {"published": False, "issue_closed": True})
+        self.assertFalse(self.gh.pulls)
+        self.assertEqual(git(self.repos.origin, "branch", "--list", "nexkit/issue-5"), before)
+        # Nor a plan.
+        result = {"status": "done", "output": PLAN}
+        outcome = publish(self.gh, decision("plan"), result, CONTEXT, self.cfg, ".", self.out)
+        self.assertEqual(outcome, {"published": False, "issue_closed": True})
+        self.assertIsNone(latest_plan(self.gh.comments(5)))
+
     def test_unfinished_results_are_not_published(self):
         outcome = publish(
             self.gh, decision("implement"), {"status": "blocked"}, CONTEXT, self.cfg, ".", self.out

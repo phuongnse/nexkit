@@ -48,6 +48,11 @@ class RuleTests(unittest.TestCase):
     def test_merge_refused(self):
         self.assertIn("refused", needs_person("merge_refused", self.cfg))
 
+    def test_a_pull_request_whose_issue_closed_waits_for_a_person(self):
+        self.assertIn("merge or close", needs_person("merge_skipped", self.cfg))
+        # A round that published nothing because its issue closed needs nobody.
+        self.assertIsNone(needs_person("issue_closed", self.cfg))
+
     def test_merged_and_automatic_rounds(self):
         for outcome in ("merged", "auto_fix", "conflict_fix", "up_to_date"):
             self.assertIsNone(needs_person(outcome, self.cfg), outcome)

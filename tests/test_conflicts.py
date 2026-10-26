@@ -464,6 +464,8 @@ class ConflictReportTests(ReportCase):
         self.candidate()
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertFalse(rounds_started(self.gh))  # off by default
+        # The merge closed the issue; NexKit merges only a pull request of an open issue.
+        self.gh.issues[5]["state"] = "open"
         cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
         self.run_report(cfg=cfg)
         self.assertEqual([d["inputs"]["number"] for d in rounds_started(self.gh)], ["7"])

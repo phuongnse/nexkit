@@ -471,6 +471,14 @@ either. It waits for a person only:
 For any other rule, such as a required approval, merge the pull request yourself or
 change the rule.
 
+### An approved pull request whose issue closed (`merge_skipped`)
+
+A person closed the issue after its implement round opened the pull request, so NexKit
+did not merge it. When the issue closed because the work is not wanted, or was done
+elsewhere, close the pull request. When it closed by mistake, reopen the issue and merge
+the pull request yourself, or comment `/nexkit review` so that NexKit checks, reviews and
+merges it.
+
 ### An approved pull request has criteria the review could not verify
 
 Check each listed criterion as [Reviewing a pull

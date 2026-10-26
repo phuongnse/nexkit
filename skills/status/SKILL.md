@@ -29,8 +29,8 @@ gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: appli
      with the plan's link and profile, `implementing`, `paused`, `failed`,
      `in_pull_request`, `implemented`) and the link to its last run comment.
    - `pull_requests`: open NexKit pull requests, each with a `state` (`running`, `ready`,
-     `blocked`, `failing`, `conflicting`, `merge_refused`, `merge_waiting`, `paused`,
-     `failed`, `waiting`), the round and the link to its last round. A `waiting` pull
+     `blocked`, `failing`, `conflicting`, `merge_refused`, `merge_skipped`, `merge_waiting`,
+     `paused`, `failed`, `waiting`), the round and the link to its last round. A `waiting` pull
      request has `waits_for`, the autopilot `bug` issue it waits for, and the `reason`
      (see *Failing checks the default branch has* under
      [Stages](../../docs/how-it-works.md#stages)). Like a `merge_waiting` one, it needs

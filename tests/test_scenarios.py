@@ -24,7 +24,7 @@ from unittest import mock
 from nexkit import autopilot, progress
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
-from nexkit.publish import publish_plan
+from nexkit.publish import issue_closed, publish_plan
 from nexkit.report import report
 from nexkit.route import auto_kinds, issue_from_branch, route
 from nexkit.state import BOT_LOGIN, UNCOUNTED, read_state, run_comments
@@ -227,12 +227,17 @@ class Pipeline:
         if outcome.get("meanwhile") and decision["action"] != "implement":
             # What happens elsewhere while the round runs on its pull request.
             outcome["meanwhile"](self, decision["pr"])
+        if outcome.get("running"):
+            # What happens elsewhere while the round's agent works, before it publishes.
+            outcome["running"](self, decision)
         agent = outcome.get("agent")
         if agent is not None and decision["action"] != "review":
             write("nexkit-agent", {"stage": decision["action"], **agent})
         needs = {}
         published = {"published": False}
-        if decision["action"] == "plan" and agent and agent["status"] == "done":
+        if agent and agent["status"] == "done" and issue_closed(self.gh, decision):
+            published = {"published": False, "issue_closed": True}
+        elif decision["action"] == "plan" and agent and agent["status"] == "done":
             context = {"title": "x"}
             published = publish_plan(self.gh, decision, agent, context, self.cfg)
         elif decision["action"] == "implement" and agent and agent.get("no_change"):
@@ -359,6 +364,41 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertTrue(pipe.gh.comments_matching(5, "NexKit autopilot finished milestone M1"))
+
+    def test_an_issue_closed_while_its_round_runs_gets_no_pull_request(self):
+        def close(pipe, decision):
+            pipe.gh.issues[decision["issue"]].update(state="closed", state_reason="not_planned")
+
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else {**done(), "running": close}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "issue_closed")
+        self.assertFalse(pipe.gh.pulls)
+        self.assertFalse(pipe.gh.merged)
+        self.assertEqual(pipe.gh.issues[5]["state_reason"], "not_planned")
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
+    def test_an_issue_closed_while_its_pull_request_is_reviewed_is_not_merged(self):
+        def close(pipe, pull):
+            pipe.gh.issues[5].update(state="closed", state_reason="not_planned")
+
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else {**done(), "meanwhile": close}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "merge_skipped")
+        self.assertFalse(pipe.gh.merged)
+        self.assertEqual(len(pipe.gh.comments_matching(6, "@olivia")), 1)
+        data = collect(pipe.gh, pipe.cfg, workers=1)
+        self.assertEqual([pull["state"] for pull in data["pull_requests"]], ["merge_skipped"])
+        [item] = data["needs_person"]
+        self.assertEqual(item["number"], 6)
+        self.assertIn("merge or close the pull request yourself", item["reason"])
 
     def test_a_round_that_blocks_after_autopilots_answer_waits(self):
         # Every go blocks, recommending that a person download the artifacts.

@@ -278,6 +278,7 @@ class FakeGitHub:
             number, title, body, user=BOT_LOGIN, milestone=milestone, labels=labels
         )
         issue["id"] = 90000 + number
+        self._touch(number)
         return issue
 
     def update_issue(self, number, milestone=None, labels=()):
@@ -303,6 +304,7 @@ class FakeGitHub:
             raise self.close_errors[number]
         closed_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.issues[number].update(state="closed", state_reason=reason, closed_at=closed_at)
+        self._touch(number)
         return self.issues[number]
 
     def recent_comments(self, since, limit=2000):
@@ -323,6 +325,7 @@ class FakeGitHub:
             "html_url": f"https://github.com/{self.repository}/issues/{number}#c",
         }
         self.issue_comments[number].append(comment)
+        self._touch(number)
         return comment
 
     def update_comment(self, comment_id, body):
@@ -399,9 +402,23 @@ class FakeGitHub:
     def rerun_failed_jobs(self, run_id):
         self.reruns.append(run_id)
 
-    def issues_by(self, creator, limit=100):
-        found = [i for i in self.issues.values() if (i.get("user") or {}).get("login") == creator]
-        return sorted(found, key=lambda i: -i["number"])[:limit]
+    def issues_by(self, creator, limit=100, state="all", since=None):
+        # As GitHub does, the newest `limit` items, pull requests among them, then without
+        # them. An issue without `updated_at`, as tests add them, counts as updated now.
+        found = [
+            i
+            for i in self.issues.values()
+            if (i.get("user") or {}).get("login") == creator
+            and state in ("all", i["state"])
+            and (not since or i.get("updated_at", since) >= since)
+        ]
+        found = sorted(found, key=lambda i: -i["number"])[:limit]
+        return [i for i in found if "pull_request" not in i]
+
+    def _touch(self, number):
+        """GitHub moves an issue's `updated_at` with each comment, edit and close."""
+        if number in self.issues:
+            self.issues[number]["updated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def pulls_into(self, base):
         return [p for p in self.pulls.values() if p["state"] == "open" and p["base"]["ref"] == base]
@@ -413,6 +430,8 @@ class FakeGitHub:
         number = max([*self.issues, *self.pulls, 0]) + 1
         pull = self.add_pull(number, int(head.rsplit("-", 1)[1]), branch=head)
         pull.update(title=title, body=body, base={"ref": base})
+        # GitHub lists a pull request among its author's issues.
+        self.issues[number]["user"] = {"login": BOT_LOGIN}
         return pull
 
     def reviews(self, number):

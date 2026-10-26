@@ -37,7 +37,7 @@ MAX_DISPATCHES = 60
 TOKENS = {"input": 10, "cached": 0, "output": 10}
 
 
-def plan(questions=(), too_large=False, split=()):
+def plan(questions=(), too_large=False, split=(), **fields):
     output = {
         "summary": "Fix it.",
         "changes": ["It is fixed."],
@@ -49,8 +49,13 @@ def plan(questions=(), too_large=False, split=()):
         "too_large": too_large,
         "split": list(split),
         "revision": {"started_over": False, "changes": []},
+        "protected_paths": [],
+        "no_change": "",
     }
-    return {"agent": {"status": "done", "output": output, "tokens": TOKENS}}
+    agent = {"status": "done", "output": output, "tokens": TOKENS}
+    for key, value in fields.items():
+        (output if key in output else agent)[key] = value
+    return {"agent": agent}
 
 
 def done(checks=True, verdict="approve"):
@@ -716,6 +721,61 @@ class ScenarioTests(unittest.TestCase):
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
         self.assertFalse(pipe.gh.comments_matching(5, "answers for the owner"))
 
+    def test_a_plan_whose_change_is_in_protected_paths_waits_for_a_person(self):
+        def script(pipe, inputs):
+            return plan(protected_paths=[".github/workflows/ci.yml"])
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5)])
+        [plan_comment] = pipe.gh.comments_matching(5, "### Needs a hand-made change")
+        self.assertIn("#the-plans-change-is-in-protected-paths", plan_comment["body"])
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn(
+            "its change needs protected paths (`.github/workflows/ci.yml`)", mention["body"]
+        )
+
+    def test_a_blocked_round_whose_change_is_in_protected_paths_gets_no_answer(self):
+        # The round recommends that a person make the workflow change by hand.
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            found = blocked()
+            found["agent"]["output"]["protected_paths"] = [".github/workflows/ci.yml"]
+            return found
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertFalse(pipe.gh.comments_matching(5, "answers for the owner"))
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("its change needs protected paths", mention["body"])
+
+    def test_a_plan_that_finds_an_outside_failure_passed_since_closes_the_issue(self):
+        finding = "The .NET download host answered 409 in every job of run 50."
+        passed = {
+            "id": 61,
+            "url": "https://github.com/acme/app/actions/runs/61",
+            "sha": "c" * 40,
+            "workflow": "ci.yml",
+            "branch": "main",
+        }
+
+        def script(pipe, inputs):
+            return plan(no_change=finding, passed_since=[passed])
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        [closing] = pipe.gh.comments_matching(5, "NexKit autopilot closes this issue")
+        self.assertIn("with the finding of [its plan]", closing["body"])
+        self.assertIn(finding, closing["body"])
+        run = "[run 61 of `ci.yml`](https://github.com/acme/app/actions/runs/61)"
+        line = f"Passed on `main` since: {run} at ccccccc."
+        self.assertIn(line, closing["body"])
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
     def test_a_round_that_finds_no_change_needed_closes_the_issue(self):
         finding = "The page already shows the release: test_release passes on main."
 
@@ -884,6 +944,54 @@ class ScenarioTests(unittest.TestCase):
         [note] = pipe.gh.comments_matching(5, autopilot.DONE)
         self.assertIn("@olivia NexKit autopilot finished milestone M1", note["body"])
         self.assertFalse(any(pipe.gh.comments_matching(n, autopilot.DONE) for n in (7, 8)))
+
+    def test_a_flaky_run_is_recorded_once_however_many_issues_come_after_it(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(merge={"after_workflows": ["ci.yml"]}), script)
+        pipe.issue(5)
+        # A run of `ci.yml` on `main` that passed when run again.
+        pipe.gh.workflow_history["ci.yml"] = [
+            {
+                "id": 50,
+                "head_branch": "main",
+                "head_repository": {"full_name": "acme/app"},
+                "event": "push",
+                "head_sha": "e" * 40,
+                "status": "completed",
+                "conclusion": "success",
+                "run_attempt": 2,
+                "html_url": "https://github.com/acme/app/actions/runs/50",
+                "created_at": autopilot.iso(datetime.now(autopilot.UTC)),
+            }
+        ]
+        pipe.gh.attempts[(50, 1)] = "failure"
+        pipe.gh.jobs[50] = [
+            {
+                "id": 501,
+                "name": "build",
+                "conclusion": "failure",
+                "steps": [{"name": "Restore", "conclusion": "failure"}],
+            }
+        ]
+        pipe.gh.jobs[(50, 2)] = [{"id": 502, "name": "build", "conclusion": "success"}]
+        pipe.play()
+        [flaky] = [i for i in pipe.gh.issues.values() if autopilot.flaky_workflow(i)]
+        self.assertEqual(flaky["state"], "closed")
+        # Then NexKit opens more than a hundred other issues and pull requests.
+        for number in range(110):
+            other = pipe.gh.create_issue(f"Part {number}", "A part.")
+            pipe.gh.close_issue(other["number"])
+            other["updated_at"] = autopilot.iso(datetime.now(autopilot.UTC) - timedelta(days=2))
+        for _ in range(10):
+            pull = pipe.gh.create_pull("x", "nexkit/issue-1", "main", "")
+            pipe.gh.close_pull(pull["number"])
+        before = len(pipe.gh.issues)
+        records = len(pipe.gh.comments(flaky["number"]))
+        autopilot.sweep(pipe.gh, pipe.cfg, "nexkit.yml", "main")
+        self.assertEqual(len(pipe.gh.issues), before)
+        self.assertEqual(len(pipe.gh.comments(flaky["number"])), records)
 
     def test_pull_requests_wait_while_main_fails_the_same_way_and_go_on_once_it_is_fixed(self):
         runs = itertools.count(60)

@@ -102,7 +102,7 @@ class EvidenceTests(EvidenceCase):
         self.assertIn(f"to\n`{self.folder}`, outside the working tree", prompt)
         self.assertIn("  - `run-202/attempt-1/e2e-chromium.log`", prompt)
         self.assertIn("  - `run-101/artifacts/test-results-e2e/`: an artifact, 2 files", prompt)
-        self.assertIn("never ask a person to\ndownload them", prompt)
+        self.assertIn("never ask a\nperson to download them", prompt)
 
     def test_runs_of_other_repositories_links_that_are_not_runs_and_expired_artifacts(self):
         expired = {"id": 9, "name": "test-results-e2e", "size_in_bytes": 1, "expired": True}
@@ -214,12 +214,83 @@ class EvidenceTests(EvidenceCase):
         self.assertNotIn("\n::error::", out.getvalue())
         self.assertIsNotNone(context["ci_evidence"])
 
-    def test_issues_that_name_no_run_and_plans_collect_nothing(self):
+    def test_issues_that_name_no_run_collect_nothing(self):
         self.issue("Create stays disabled.")
         self.assertIsNone(self.gather()["ci_evidence"])
-        self.issue("https://github.com/acme/app/actions/runs/101")
-        self.assertNotIn("ci_evidence", self.gather("plan"))
+        self.assertIsNone(self.gather("plan")["ci_evidence"])
+        self.assertNotIn("ci_evidence", self.gather("review"))
         self.assertFalse(self.folder.exists())
+
+    def test_a_plan_gets_the_same_evidence_as_an_implement_round(self):
+        self.issue("Recorded.")
+        self.gh.comment(5, "Recorded.\n\n<!-- nexkit:ci-runs 101.1 -->")
+        found = self.gather("plan")["ci_evidence"]
+        self.assertEqual([run["id"] for run in found["runs"]], [101])
+        log = self.folder / "run-101" / "attempt-1" / "e2e-chromium.log"
+        self.assertIn("Error: Create stays disabled", log.read_text())
+        context = {**self.gather("plan"), "ci_evidence": found}
+        prompt = build_prompt(
+            "plan", context, make_config(), {"ci_evidence": ci_evidence_text(found)}
+        )
+        self.assertIn("## Evidence from the CI runs this issue names", prompt)
+        self.assertIn("  - `run-101/attempt-1/e2e-chromium.log`", prompt)
+        self.assertLess(prompt.index("e2e-chromium.log"), prompt.index("## What to return"))
+        # Without evidence the plan prompt has no such section and no placeholder.
+        prompt = build_prompt("plan", context, make_config(), {"ci_evidence": ""})
+        self.assertNotIn("$ci_evidence", prompt)
+        self.assertNotIn("## Evidence from the CI runs", prompt)
+
+    def test_a_failed_download_still_lets_the_plan_run_and_says_what_is_missing(self):
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        self.gh.logs.pop(1010)
+        self.gh.run_artifact_list[101] = []
+        found = self.gather("plan")["ci_evidence"]
+        section = ci_evidence_text(found)
+        self.assertIn("e2e-chromium.log`: missing, its log: GitHub API 410", section)
+        self.assertIn("Missing: no artifact named `test-results-e2e`.", section)
+
+    def test_each_run_says_whether_a_newer_run_of_its_workflow_passed_on_the_default_branch(self):
+        self.add_run(101, path=".github/workflows/ci.yml")
+        self.add_run(202, path=".github/workflows/ci.yml")
+        base = {"head_branch": "main", "status": "completed", "event": "push"}
+        mine = {"head_repository": {"full_name": "acme/app"}}
+        self.gh.workflow_history["ci.yml"] = [
+            {"id": 101, **base, **mine, "conclusion": "failure"},
+            {
+                "id": 150,
+                **base,
+                **mine,
+                "conclusion": "success",
+                "head_sha": "c" * 40,
+                "html_url": "https://github.com/acme/app/actions/runs/150",
+            },
+            # A pull request's run and a fork's run on a branch named main never count.
+            {"id": 250, **base, **mine, "conclusion": "success", "event": "pull_request"},
+            {
+                "id": 260,
+                **base,
+                "conclusion": "success",
+                "head_repository": {"full_name": "mallory/app"},
+            },
+            {"id": 270, **base, **mine, "conclusion": "failure"},
+        ]
+        self.issue(
+            "https://github.com/acme/app/actions/runs/101 and "
+            "https://github.com/acme/app/actions/runs/202"
+        )
+        found = self.gather("plan")["ci_evidence"]
+        since = {run["id"]: run.get("passed_since") for run in found["runs"]}
+        self.assertEqual(since[101]["id"], 150)
+        self.assertIsNone(since[202])
+        section = ci_evidence_text(found)
+        self.assertIn(
+            "  - Since: run 150 of `ci.yml` passed on `main` since at ccccccc, "
+            "https://github.com/acme/app/actions/runs/150.",
+            section,
+        )
+        self.assertIn("  - Since: no newer run of `ci.yml` has passed on `main` since.", section)
+        summary = (self.folder.parent / "s").read_text()
+        self.assertIn("Run 101: run 150 of `ci.yml` passed on `main` since", summary)
 
     def test_the_setting_is_a_list_of_artifact_names(self):
         from nexkit.config import ConfigError

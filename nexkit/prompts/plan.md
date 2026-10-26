@@ -27,9 +27,28 @@ $previous
 $note
 </untrusted>
 
-## Project checks NexKit runs on every candidate
+$ci_evidence## Project checks NexKit runs on every candidate
 
 $checks
+
+## Protected paths
+
+NexKit's agents may not change these paths: $protected. NexKit rejects a change to them,
+so a person makes such a change by hand. Plan a change outside them when one solves the
+issue as well. When the change must modify a protected path, list it in
+`protected_paths`.
+
+## When no change is needed
+
+Return a finding in `no_change`, instead of planning a change, only when the evidence
+shows that the issue needs none:
+
+- A commit on the default branch already fixed it, and the code shows that.
+- A CI failure came from outside the repository, such as a download host, a package
+  registry or a service that failed, or a runner that was lost, and nothing in the
+  repository caused it or could prevent it. The evidence of the CI runs above must name
+  that outside cause, and *Since* must show a newer run of the same workflow that passed
+  on the default branch.
 
 $writing
 ## What to return
@@ -80,3 +99,11 @@ $writing
   never by this issue's title.
 - `revision`: for a re-plan, as *How to use the latest plan* says. For a first plan,
   `started_over` is false and `changes` is empty.
+- `protected_paths`: the protected paths that the change must modify, each as a path in
+  the repository, such as `.github/workflows/ci.yml`. Empty when the change needs none.
+  When it is not empty, a person decides whether to make that change by hand.
+- `no_change`: only when no change is needed, as *When no change is needed* says: the
+  finding, followed by the evidence that shows it: the commit, or the log lines that name
+  the outside cause and the run that passed since, with its link. Otherwise an empty
+  string. With a finding, keep the other fields short: `summary` says that no change is
+  needed, and `acceptance_criteria` may be empty.

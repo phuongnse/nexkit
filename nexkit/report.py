@@ -27,10 +27,12 @@ from .state import (
     FAILURE,
     PAUSED,
     SUCCESS,
+    TROUBLESHOOTING,
     UNCOUNTED,
     clip,
     empty_state,
     options_of,
+    passed_lines,
     questions,
     read_state,
     recommended_option,
@@ -87,13 +89,13 @@ NEEDS_PERSON = {
         "pull request yourself"
     ),
 }
+NO_CHANGE_PLAN = "the plan finds that no change is needed; a person closes the issue"
 UNVERIFIED = "the review could not verify every acceptance criterion; confirm them before merging"
 # Bounds for what the state comment keeps for the next review.
 MAX_FINDINGS = 30
 MAX_FIXES = 5
 # How a failed review's reason fits in a commit status; GitHub allows 140 characters.
 STATUS_LIMIT = 140
-TROUBLESHOOTING = "https://github.com/phuongnse/nexkit/blob/main/docs/troubleshooting.md"
 # An agent's error that another try cannot fix: the credential, endpoint or deployment.
 ACCESS_ERROR = re.compile(
     r"\b(?:401|403)\b|unauthori[sz]ed|forbidden|invalid (?:api|subscription) key"
@@ -359,14 +361,18 @@ def blocked_questions(agent):
 
 
 def _autopilot_fields(agent):
-    """What autopilot reads from a run that stopped: the questions of a blocked round and
-    whether the agent ran out of time."""
+    """What autopilot reads from a run that stopped: the questions of a blocked round,
+    whether the agent ran out of time, and the protected paths its change needs, which
+    only a person changes."""
     fields = {}
     if agent and agent.get("timed_out"):
         fields["timed_out"] = True
     found = round_questions(agent)
     if found:
         fields["questions"] = found
+    protected = protected_paths(agent)
+    if protected and agent.get("status") == "blocked":
+        fields["protected_paths"] = protected
     finding = no_change_finding(agent)
     if finding and agent.get("stage") == "implement":
         # The round recommends closing the issue with this finding.
@@ -374,9 +380,21 @@ def _autopilot_fields(agent):
     return fields
 
 
+def protected_paths(agent):
+    """The protected paths a plan or round says its change needs, as the agent job kept
+    them: only paths that are protected."""
+    found = ((agent or {}).get("output") or {}).get("protected_paths") or []
+    return [clip(path, 300) for path in found if isinstance(path, str)][:20]
+
+
 def no_change_finding(agent):
-    """What an implement agent found when it says no change is needed, or ""."""
-    return clip(str(((agent or {}).get("output") or {}).get("no_change") or "").strip(), 3000)
+    """What an agent found when it says no change is needed, with the runs that passed on
+    the default branch since the CI runs the issue names, or ""."""
+    finding = str(((agent or {}).get("output") or {}).get("no_change") or "").strip()
+    if not finding:
+        return ""
+    passed = passed_lines((agent or {}).get("passed_since"))
+    return clip("\n\n".join([finding, *(["\n".join(passed)] if passed else [])]), 3500)
 
 
 def _no_change(gh, cfg, decision, agent):
@@ -441,6 +459,10 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
         plan = plan or {}
         if plan.get("too_large"):
             return "the plan says the issue is too large for one session"
+        if str(plan.get("no_change") or "").strip():
+            return NO_CHANGE_PLAN
+        if plan.get("protected_paths"):
+            return autopilot.protected_reason(plan["protected_paths"])
         return "the plan has questions" if plan.get("questions") else None
     if outcome == "merge_waiting":
         # Only a round whose issue autopilot's sweeps look at waits like this.
@@ -1009,6 +1031,7 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         "questions",
         "transient_error",
         "no_change",
+        "protected_paths",
     )
     for key in kept:
         if result.get(key):
@@ -1071,6 +1094,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             reason = needs_person(outcome, cfg)
             if agent and agent.get("unchanged"):
                 reason = _with_finding(reason, agent)
+            protected = protected_paths(agent)
+            if outcome == "agent_blocked" and protected:
+                reason = autopilot.protected_reason(protected)
             if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent):
                 reason = None
                 message += "\n\nNexKit autopilot carries on from here."

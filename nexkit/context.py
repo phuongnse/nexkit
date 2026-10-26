@@ -322,9 +322,9 @@ def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg
     """Context for an agent stage. `stage` defaults to the decision's action; the review
     stage also gets the previous review round, with `fix_result` from this run's fix. A
     fix round also gets the failing checks' result files, which the agent job downloaded
-    into the folder `results`. With `ci` and `cfg`, an implement or fix round also gets
-    the evidence of the CI runs the issue names, downloaded into the folder `ci`, other
-    than runs of NexKit's own workflow, the file `workflow`."""
+    into the folder `results`. With `ci` and `cfg`, a plan, implement or fix round also
+    gets the evidence of the CI runs the issue names, downloaded into the folder `ci`,
+    other than runs of NexKit's own workflow, the file `workflow`."""
     issue = gh.issue(decision["issue"])
     comments = gh.comments(decision["issue"])
     plan = latest_plan(comments)
@@ -340,7 +340,7 @@ def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg
         "outside_plan": "None.",
     }
     stage = stage or decision["action"]
-    if stage in ("implement", "fix") and ci and cfg:
+    if stage in ("plan", "implement", "fix") and ci and cfg:
         context["ci_evidence"] = ci_evidence(gh, cfg, issue, comments, ci, workflow)
     if stage == "plan":
         # Triage reads the notes on earlier commands too: a later note can change the

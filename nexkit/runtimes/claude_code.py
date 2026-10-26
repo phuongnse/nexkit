@@ -335,6 +335,9 @@ class ClaudeCode(Runtime):
             cmd += ["--effort", spec.effort]
         if spec.budget_usd:
             cmd += ["--max-budget-usd", str(spec.budget_usd)]
+        for folder in spec.dirs:
+            # Read-only tools reach only the working directory and the ones added to it.
+            cmd += ["--add-dir", str(folder)]
         if spec.access == "none":
             cmd += ["--tools", ""]
         elif spec.access == "read":

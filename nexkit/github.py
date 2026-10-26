@@ -307,10 +307,15 @@ class GitHub:
     def rerun_failed_jobs(self, run_id):
         return self.request("POST", f"{self._repo}/actions/runs/{run_id}/rerun-failed-jobs")
 
-    def issues_by(self, creator, limit=100):
-        """Open and closed issues that `creator` opened, newest first."""
-        params = {"creator": creator, "state": "all", "sort": "created", "direction": "desc"}
-        return self.paginate(f"{self._repo}/issues", params, limit)
+    def issues_by(self, creator, limit=100, state="all", since=None):
+        """Issues that `creator` opened, newest first, without pull requests: in `state`,
+        and with `since`, an ISO 8601 time, only those updated since then. GitHub lists
+        pull requests among issues, so `limit` counts them too."""
+        params = {"creator": creator, "state": state, "sort": "created", "direction": "desc"}
+        if since:
+            params["since"] = since
+        found = self.paginate(f"{self._repo}/issues", params, limit)
+        return [item for item in found if "pull_request" not in item]
 
     def pulls_into(self, base):
         """Open pull requests whose base branch is `base`."""

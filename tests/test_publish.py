@@ -12,7 +12,7 @@ from nexkit.context import gather
 from nexkit.github import GitHubError
 from nexkit.gitutil import BOT_NAME, merge_tree
 from nexkit.publish import PublishError, WorkflowMergeError, publish, pull_body, render_plan
-from nexkit.state import latest_plan, plan_profile, plan_text
+from nexkit.state import latest_plan, plan_data, plan_profile, plan_text
 from tests.support import (
     CALC,
     MUL,
@@ -461,6 +461,39 @@ class PublishTests(unittest.TestCase):
         # The notes appear only inside <details>.
         self.assertEqual(body.count("calc.py"), 1)
 
+    def test_a_plan_in_protected_paths_says_a_person_makes_the_change(self):
+        body = render_plan({**PLAN, "protected_paths": [".github/workflows/ci.yml"]})
+        self.assertIn("### Needs a hand-made change\n\nThe change modifies protected paths", body)
+        self.assertIn("docs/troubleshooting.md#the-plans-change-is-in-protected-paths", body)
+        self.assertIn("A person makes the change in protected paths by hand", body)
+        self.assertEqual(
+            plan_data(self.posted(body))["protected_paths"], [".github/workflows/ci.yml"]
+        )
+
+    def test_a_plan_that_finds_no_change_is_needed_shows_the_run_that_passed_since(self):
+        passed = [
+            {
+                "id": 61,
+                "url": "https://x/61",
+                "sha": "c" * 40,
+                "workflow": "ci.yml",
+                "branch": "main",
+            }
+        ]
+        body = render_plan({**PLAN, "no_change": "The host answered 409."}, passed=passed)
+        self.assertIn(
+            "### No change needed\n\nThe host answered 409.\n\n"
+            "Passed on `main` since: [run 61 of `ci.yml`](https://x/61) at ccccccc.",
+            body,
+        )
+        self.assertIn("This plan finds that no change is needed.", body)
+        data = plan_data(self.posted(body))
+        self.assertIn("Passed on `main` since", data["no_change"])
+        self.assertNotIn("protected_paths", plan_data(self.posted(render_plan(PLAN))))
+
+    def posted(self, body):
+        return self.gh.comment(5, body)
+
     def test_replan_says_what_changed_since_the_last_plan(self):
         changed = ["The name limit is 2,000 characters again.", "`label` is accepted."]
         revised = {**PLAN, "revision": {"started_over": False, "changes": changed}}
@@ -598,6 +631,7 @@ class MergePublishTests(unittest.TestCase):
         result = {
             **done,
             "checks_run": [],
+            "protected_paths": [],
             "cause": "",
             "cause_outside": False,
             "open_conflicts": [],

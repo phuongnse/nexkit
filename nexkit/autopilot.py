@@ -155,6 +155,9 @@ CI_RUNS = re.compile(r"<!-- nexkit:ci-runs ([0-9. ]+) -->\s*\Z")
 # hourly, so the day covers missed sweeps; the records say what is new.
 CI_RUNS_LIMIT = 100
 CI_LOOK_BACK = timedelta(days=1)
+# The most issues autopilot opened that a sweep reads at once: the open ones, and those
+# updated within `CI_LOOK_BACK`.
+ISSUES_LIMIT = 1000
 FAILED = {"failure", "timed_out"}
 # Events whose runs test a pull request rather than the branch they name.
 PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
@@ -227,7 +230,7 @@ def after_ci_run(gh, cfg, decision, workflow, ref):
         return [f"`{name}` is not in merge.after_workflows."]
     try:
         run = gh.workflow_run(int(decision["run"]))
-        if run.get("head_branch") != ref or not _on_default_branch(gh, run):
+        if run.get("head_branch") != ref or not on_default_branch(gh, run):
             return [f"The run of `{name}` did not test `{ref}`."]
         if not _acts_on(run, lambda: name in open_bugs(gh)):
             return [f"`{name}` passed on `{ref}`; a sweep has nothing to do for it."]
@@ -525,6 +528,14 @@ REPEATED = (
 )
 
 
+def protected_reason(paths):
+    """Why an issue waits when its change needs protected paths, which only a person
+    changes."""
+    listed = ", ".join(f"`{path}`" for path in paths[:5])
+    more = f" and {len(paths) - 5} more" if len(paths) > 5 else ""
+    return f"its change needs protected paths ({listed}{more}); a person makes it by hand"
+
+
 def _by_person(comment):
     return comment.get("author_association") in TRUSTED_ASSOCIATIONS and not by_bot(comment)
 
@@ -574,6 +585,9 @@ def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
     questions, ask once for a split after the agent ran out of time, or wait. `comments`
     holds the comments of the target, then those of the issue or its pull request."""
     found = answers(cfg, run.get("questions")) if run.get("outcome") == "agent_blocked" else None
+    if run.get("outcome") == "agent_blocked" and run.get("protected_paths"):
+        # Only a person changes protected paths, whatever the round recommends.
+        return _step(issue, "waits", protected_reason(run["protected_paths"]))
     if found and asked_again(*comments):
         return _step(issue, "waits", REPEATED)
     if found and len(found) == 1 and command == "go" and run.get("no_change"):
@@ -660,6 +674,13 @@ def _planned(gh, cfg, issue, plan, last, record, start, comments):
         return _step(issue, "start", "the plan needs nobody", command="go", **start)
     if data.get("too_large"):
         return _split(gh, issue, plan, data, record, start)
+    if data.get("no_change"):
+        # Another round would find the same.
+        reason = "its plan finds that no change is needed"
+        fields = {"finding": data["no_change"], "plan_url": plan.get("html_url") or ""}
+        return _step(issue, "close", reason, **fields)
+    if data.get("protected_paths"):
+        return _step(issue, "waits", protected_reason(data["protected_paths"]))
     if data.get("questions"):
         found = answers(cfg, data["questions"])
         if not found:
@@ -1012,8 +1033,13 @@ def carries_on(gh, cfg, decision, outcome, agent):
     agent = agent or {}
     output = agent.get("output") or {}
     splits = outcome == "planned" and bool(output.get("too_large"))
-    if splits:
+    closes = outcome == "planned" and bool(str(output.get("no_change") or "").strip())
+    if splits or closes:
+        # Autopilot splits the issue, or closes it with the plan's finding.
         handled = True
+    elif output.get("protected_paths"):
+        # Only a person changes protected paths.
+        handled = False
     elif outcome == "planned":
         handled = answers(cfg, output.get("questions")) is not None
     elif outcome == "agent_blocked":
@@ -1031,6 +1057,8 @@ def carries_on(gh, cfg, decision, outcome, agent):
         if outcome == "agent_error":
             record = find_record(gh.comments(issue["number"]))[1]
             return not record.get("split_asked") and not split_refused(gh, issue)
+        if closes:
+            return True
         if not splits:
             # Questions again right after autopilot's answers: a person decides.
             pr = decision.get("pr")
@@ -1162,13 +1190,15 @@ def close(gh, cfg, step, workflow, ref):
     """Close an issue as completed with the finding of its last round, which found no
     change is needed and recommended closing it. Returns lines for the log."""
     number = step["number"]
-    url = step.get("run_url")
-    round_ = f"[the last round]({url})" if url else "the last round"
-    gh.comment(
-        number,
-        f"NexKit autopilot closes this issue with the answer {round_} recommended: no change "
-        f"is needed.\n\n{step['finding']}",
-    )
+    if "plan_url" in step:
+        url = step["plan_url"]
+        plan = f"[its plan]({url})" if url else "its plan"
+        intro = f"NexKit autopilot closes this issue with the finding of {plan}"
+    else:
+        url = step.get("run_url")
+        round_ = f"[the last round]({url})" if url else "the last round"
+        intro = f"NexKit autopilot closes this issue with the answer {round_} recommended"
+    gh.comment(number, f"{intro}: no change is needed.\n\n{step['finding']}")
     gh.close_issue(number, "completed")
     lines = [f"Closed #{number}: {step['reason']}."]
     if cfg["close_parent_issues"]:
@@ -1275,18 +1305,33 @@ def _rank(issue):
     return 1 if flaky_workflow(issue) is not None else 2
 
 
-def _ci_records(gh, workflow):
+def ci_issues(gh, since):
+    """The issues autopilot opened that can hold a record a sweep needs, newest first:
+    every open one, and every one updated since `since`. A record of a run created since
+    then was written after the run started, so its issue was updated since then too,
+    however many issues and pull requests NexKit opened after it."""
+    found = {i["number"]: i for i in gh.issues_by(BOT_LOGIN, ISSUES_LIMIT, "open")}
+    for issue in gh.issues_by(BOT_LOGIN, ISSUES_LIMIT, since=iso(since)):
+        found.setdefault(issue["number"], issue)
+    return sorted(found.values(), key=lambda issue: -issue["number"])
+
+
+def _ci_records(gh, workflow, issues):
     """What the issues that autopilot opened for `workflow`, open or closed, hold: the
     open bug issue, the open and the latest closed issue of each flaky failure, the commits
     bug issues report, the attempts recorded for each run, and for each run a bug issue
-    reports, that issue's number."""
+    reports, that issue's number. `issues` comes from `ci_issues`."""
     found = {"bug": None, "open": {}, "closed": {}, "shas": set(), "seen": {}, "reporter": {}}
+    # A failed step's issue, whichever workflow opened it (see `_issue_of`).
+    found.update(any_open={}, any_closed={})
     # Newest first, so the first issue found for a failure is its latest.
-    for issue in gh.issues_by(BOT_LOGIN):
+    for issue in issues:
+        state = "open" if issue.get("state") == "open" else "closed"
+        if flaky_failure(issue):
+            found["any_" + state].setdefault(flaky_failure(issue), issue)
         bug = ci_workflow(issue) == workflow
         if not bug and flaky_workflow(issue) != workflow:
             continue
-        state = "open" if issue.get("state") == "open" else "closed"
         if bug and state == "open" and found["bug"] is None:
             found["bug"] = issue
         elif not bug and flaky_failure(issue):
@@ -1534,9 +1579,11 @@ def _annotated_test(note):
     return test_name(note.get("title"), path)
 
 
-def _job_failure(workflow, job, link):
+def _job_failure(workflow, job, link, error=""):
     """The failure of a failed job without an annotation that names one: its job and its
-    first failed step."""
+    first failed step. A failed step is keyed by the step and `error`, the message of the
+    job's first error annotation, not by the job: the same step failing the same way in
+    several jobs or workflows, such as a download that a host refused, is one failure."""
     name = _plain(job.get("name"))
     failed = [s.get("name") for s in job.get("steps") or [] if s.get("conclusion") in FAILED]
     failed = [step for step in failed if _plain(step)]
@@ -1559,25 +1606,62 @@ def _job_failure(workflow, job, link):
     else:
         what = f"Step {_quoted(failed[0])} of job {_quoted(job.get('name'))} in {workflow}"
         subject = {"kind": "step", "name": failed[0], "subject": what}
+    about = f"step `{steps[0]}` failed" + (f" with `{error}`" if error else "")
     return {
-        "key": _key("step", name, steps[0]),
+        "key": _key("step", steps[0], error),
+        # The key of NexKit 5.0 and earlier, by job and step, which older issues hold.
+        "legacy": _key("step", name, steps[0]),
+        "shared": True,
+        "step": failed[0],
+        "jobs": [job.get("name")],
         **subject,
-        "about": f"step `{steps[0]}` of job `{name}` failed",
+        "about": about,
         "line": f"- {link}: {', '.join(f'`{step}`' for step in steps)}",
     }
 
 
+def _first_error(notes):
+    """The message of a failed job's first error annotation, on one line, or "". The
+    runner's own "Process completed with exit code" says nothing about the failure."""
+    for note in notes:
+        message = _plain(note.get("message"))
+        if note.get("annotation_level") == "failure" and not CI_GENERIC.match(message):
+            return message
+    return ""
+
+
+def _merged(found, item, workflow):
+    """Add `item` to `found`, {key: failure}: a failed step already there from another job
+    gets the job's lines, and names the step and how many jobs it failed in."""
+    failure = found.get(item["key"])
+    if failure is None:
+        found[item["key"]] = {**item, "jobs": list(item.get("jobs") or [])}
+        return found[item["key"]]
+    for job in item.get("jobs") or []:
+        if job not in failure["jobs"]:
+            failure["jobs"].append(job)
+    if failure.get("shared") and len(failure["jobs"]) > 1:
+        count = len(failure["jobs"])
+        what = f"Step {_quoted(failure['step'])} in {count} jobs of {workflow}"
+        failure.update(kind="step", name=failure["step"], subject=what)
+    return failure
+
+
 def _attempt_failures(gh, workflow, run, attempt):
-    """The failures of one failed attempt, in the order of its jobs."""
-    found = []
+    """The failures of one failed attempt, in the order of its jobs. A step that failed the
+    same way in several jobs is one failure, with a line for each job."""
+    found = {}
     for job in gh.attempt_jobs(run["id"], attempt):
         if job.get("conclusion") not in FAILED:
             continue
         link = f"[{job.get('name')}]({job['html_url']})" if job.get("html_url") else job.get("name")
         notes = gh.check_run_annotations(job["id"]) if job.get("id") else []
         named = [failure for failure in (_annotated(link, note) for note in notes) if failure]
-        found += named or [_job_failure(workflow, job, link)]
-    return found or [
+        for item in named or [_job_failure(workflow, job, link, _first_error(notes))]:
+            failure = _merged(found, {**item, "lines": []}, workflow)
+            if item["line"] not in failure["lines"]:
+                failure["lines"].append(item["line"])
+    return list(found.values()) or [
         {
             "key": _key("start"),
             "kind": "start",
@@ -1585,6 +1669,7 @@ def _attempt_failures(gh, workflow, run, attempt):
             "subject": workflow,
             "about": "the run failed before any job did",
             "line": "- The attempt failed before any job did; open it for the reason.",
+            "lines": ["- The attempt failed before any job did; open it for the reason."],
         }
     ]
 
@@ -1595,10 +1680,9 @@ def _flaky_failures(gh, workflow, run, unseen):
     found = {}
     for attempt in _failed_attempts(gh, run, unseen):
         for item in _attempt_failures(gh, workflow, run, attempt):
-            failure = found.setdefault(item["key"], {**item, "attempts": {}})
+            failure = _merged(found, {**item, "attempts": {}}, workflow)
             lines = failure["attempts"].setdefault(attempt, [])
-            if item["line"] not in lines:
-                lines.append(item["line"])
+            lines += [line for line in item["lines"] if line not in lines]
     return list(found.values())
 
 
@@ -1637,20 +1721,34 @@ def _flaky_text(workflow, run, branch, failure, unseen):
     return "\n".join([*lines, "", _runs_marker(run, unseen)])
 
 
+def _issue_of(known, failure, state):
+    """The `state` ("open" or "closed") issue of a failure: by its key among the issues of
+    its workflow; for a failed step, also among those of every other workflow, and by the
+    key that NexKit 5.0 and earlier gave it, by job and step."""
+    key = failure["key"]
+    issue = known[state].get(key)
+    if issue is None and failure.get("shared"):
+        issue = known["any_" + state].get(key) or known[state].get(failure.get("legacy"))
+    return issue
+
+
 def _record_flaky(gh, cfg, where, workflow, branch, known, failure, text):
     """Add a record to the open issue of its failure, or open one that links the latest
     closed one."""
     key, title = failure["key"], ci_title(failure, branch)
-    issue = known["open"].get(key)
+    issue = _issue_of(known, failure, "open")
     if issue:
+        known["open"][key] = issue
         gh.comment(issue["number"], text)
         return f"{title}: recorded on #{issue['number']}."
     people = "".join(f"@{login} " for login in cfg["notify"])
-    closed = known["closed"].get(key)
+    closed = _issue_of(known, failure, "closed")
     earlier = f" #{closed['number']}, now closed, was about the same failure." if closed else ""
+    where_ = f"on `{branch}`" if failure.get("shared") else f"of `{workflow}` on `{branch}`"
+    anywhere = ", in any job and workflow" if failure.get("shared") else ""
     intro = (
-        f"Runs of `{workflow}` on `{branch}` in which {failure['about']}: runs that passed "
-        "only when run again, or that failed and a newer run overtook. Each record names the "
+        f"Runs {where_} in which {failure['about']}{anywhere}: runs that passed only when "
+        "run again, or that failed and a newer run overtook. Each record names the "
         "commit, the run, and where this failure showed in each failed attempt; later "
         f"records follow as comments.{earlier}"
     )
@@ -1664,9 +1762,9 @@ def _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen):
     overtook, on the issue of each failure in its attempts among `unseen`. Returns lines for
     the log, none when none of those attempts failed."""
     failures = _flaky_failures(gh, workflow, run, unseen)
-    new = [failure for failure in failures if failure["key"] not in known["open"]]
+    new = [failure for failure in failures if not _issue_of(known, failure, "open")]
     if len(new) > CI_NEW_ISSUES:
-        failures = [f for f in failures if f["key"] in known["open"]]
+        failures = [f for f in failures if _issue_of(known, f, "open")]
         failures.append(_run_failure(workflow, run, new))
     lines = []
     for failure in failures:
@@ -1735,7 +1833,7 @@ def open_bugs(gh):
     """{workflow: the open bug issue about it} for the bug issues that autopilot opened for
     a CI failure on the default branch: the newest open one of each, which reports go to."""
     bugs = {}
-    for found in gh.issues_by(BOT_LOGIN):
+    for found in gh.issues_by(BOT_LOGIN, ISSUES_LIMIT, "open"):
         if found.get("state") == "open" and ci_workflow(found):
             bugs.setdefault(ci_workflow(found), found)
     return bugs
@@ -1764,7 +1862,7 @@ def ci_due(gh, cfg, branch):
             runs = [
                 run
                 for run in gh.workflow_runs(workflow, branch, CI_DUE_RUNS)
-                if run.get("status") == "completed" and _on_default_branch(gh, run)
+                if run.get("status") == "completed" and on_default_branch(gh, run)
             ]
             if not runs:
                 continue
@@ -1781,7 +1879,7 @@ def ci_due(gh, cfg, branch):
     return False
 
 
-def _on_default_branch(gh, run):
+def on_default_branch(gh, run):
     """Whether a run tested this repository's default branch. GitHub matches the branch by
     the name of a run's head branch alone, which a pull request from a fork can share, and
     such a run's job and step names come from the fork."""
@@ -1804,7 +1902,7 @@ def check_ci(gh, cfg, where, branch, now=None):
             runs = [
                 run
                 for run in gh.workflow_runs(workflow, branch, CI_RUNS_LIMIT)
-                if _on_default_branch(gh, run)
+                if on_default_branch(gh, run)
             ]
             # Only a run that failed, or that was run again, can lead to anything, so a
             # sweep after runs that passed at once reads no issue.
@@ -1814,7 +1912,7 @@ def check_ci(gh, cfg, where, branch, now=None):
                 if run.get("status") == "completed"
                 and (run.get("conclusion") in FAILED or (run.get("run_attempt") or 1) > 1)
             ]
-            known = _ci_records(gh, workflow) if candidates else None
+            known = _ci_records(gh, workflow, ci_issues(gh, since)) if candidates else None
             # Oldest first, so records follow the order of the runs.
             for run in reversed(candidates):
                 latest = run is runs[0]
@@ -1892,7 +1990,7 @@ def passes_again(gh, workflow, branch, since):
     there that passed or failed passed, and is run `since` or a newer one. A run that is
     still running does not count, so neither does an older run while `since` runs again."""
     for run in gh.workflow_runs(workflow, branch, CI_WAIT_RUNS):
-        if run.get("status") != "completed" or not _on_default_branch(gh, run):
+        if run.get("status") != "completed" or not on_default_branch(gh, run):
             continue
         if run.get("conclusion") not in (*FAILED, "success"):
             continue

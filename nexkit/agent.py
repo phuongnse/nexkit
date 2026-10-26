@@ -17,6 +17,7 @@ from string import Template
 
 from . import config as configuration
 from .checks import BASE_SHA, RESULTS_LIMIT, environment, known_base
+from .evidence import since_text
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .publish import WORKFLOWS, workflow_message
 from .redact import Redactor
@@ -54,8 +55,11 @@ _CHANGE_RESULT = {
         # The decisions a blocked round needs from a person.
         "questions": _QUESTIONS,
         "checks_run": _STRING_LIST,
+        # The protected paths the change needs, which the agent left alone: a person makes
+        # that change, so autopilot answers none of the round's questions.
+        "protected_paths": _STRING_LIST,
     },
-    "required": ["status", "summary", "blocker", "questions", "checks_run"],
+    "required": ["status", "summary", "blocker", "questions", "checks_run", "protected_paths"],
 }
 # The pull request description is built from these, in this order, after `summary`.
 _PULL_FIELDS = {
@@ -102,6 +106,11 @@ SCHEMAS = {
                 "properties": {"started_over": {"type": "boolean"}, "changes": _STRING_LIST},
                 "required": ["started_over", "changes"],
             },
+            # The protected paths the change must modify: a person makes that change.
+            "protected_paths": _STRING_LIST,
+            # The finding and its evidence when no change is needed, or "". Autopilot
+            # closes the issue with it.
+            "no_change": {"type": "string"},
         },
         "required": [
             "summary",
@@ -114,6 +123,8 @@ SCHEMAS = {
             "too_large",
             "split",
             "revision",
+            "protected_paths",
+            "no_change",
         ],
     },
     "implement": {
@@ -411,8 +422,8 @@ def evidence_text(found):
 
 
 def ci_evidence_text(found):
-    """The implement and fix prompts' section about the CI runs the issue names, or ""
-    without any. `found` comes from `evidence.collect`."""
+    """The plan, implement and fix prompts' section about the CI runs the issue names, or
+    "" without any. `found` comes from `evidence.collect`."""
     if not found or not (found["runs"] or found.get("skipped")):
         return ""
     lines = []
@@ -426,6 +437,8 @@ def ci_evidence_text(found):
             else:
                 lines.append(f"  - `{item['path']}`")
         lines += [f"  - Missing: {reason}." for reason in run["missing"]]
+        if run.get("workflow"):
+            lines.append(f"  - Since: {since_text(run)}.")
     if found.get("left_out"):
         limit = RESULTS_LIMIT // 1_000_000
         lines.append(
@@ -454,6 +467,26 @@ def _cause(result):
 def no_change(result):
     """The finding of an implement result that says no change is needed, or ""."""
     return str((result.get("output") or {}).get("no_change") or "").strip()
+
+
+def needed_protected(result, cfg):
+    """The protected paths that a result says its change needs: only those that are
+    protected, each once. The agent's list alone decides nothing."""
+    found = (result.get("output") or {}).get("protected_paths")
+    paths = [str(p).strip().lstrip("/") for p in found if isinstance(p, str)] if found else []
+    return list(dict.fromkeys(p for p in paths if p and configuration.is_protected(p, cfg)))[:20]
+
+
+def passed_runs(found):
+    """The newer runs that passed on the default branch since the named CI runs, from
+    `evidence.collect`, each once: what a `no_change` finding about an outside failure
+    rests on."""
+    runs = {}
+    for run in (found or {}).get("runs") or []:
+        passed = run.get("passed_since")
+        if passed:
+            runs.setdefault(passed["id"], passed)
+    return list(runs.values())
 
 
 def outside_cause(result):
@@ -541,8 +574,9 @@ def stage_schema(stage, cfg):
     return schema
 
 
-def stage_spec(stage, cfg, home):
-    """What the runtime needs to run `stage`, with `home` for the CLI's own files."""
+def stage_spec(stage, cfg, home, dirs=()):
+    """What the runtime needs to run `stage`, with `home` for the CLI's own files and
+    `dirs`, folders outside the checkout that the agent reads, such as CI runs' evidence."""
     settings = configuration.stage(cfg, stage)
     return Spec(
         stage=stage,
@@ -551,6 +585,7 @@ def stage_spec(stage, cfg, home):
         budget_usd=settings["max_budget_usd"],
         schema=stage_schema(stage, cfg),
         home=Path(home),
+        dirs=tuple(Path(d) for d in dirs),
     )
 
 
@@ -603,10 +638,22 @@ def run_process(prompt, argv, *, env, cwd, timeout_seconds, log):
 
 
 def run_agent(
-    stage, prompt, cfg, *, cwd, redact, out, title, commits=None, program=None, restore=None
+    stage,
+    prompt,
+    cfg,
+    *,
+    cwd,
+    redact,
+    out,
+    title,
+    commits=None,
+    program=None,
+    restore=None,
+    dirs=(),
 ):
     """Run the agent of `stage` on `prompt`. Return the interpreted result and the tool
-    calls for the summary. `program` replaces the runtime's executable, for tests.
+    calls for the summary. `program` replaces the runtime's executable, for tests. `dirs`
+    are folders outside `cwd` that the agent reads.
 
     When the agent stops at a usage limit, the stage runs again from the start on each of
     its fallbacks in turn, after `restore` returned the checkout to where the agent started.
@@ -647,6 +694,7 @@ def run_agent(
             title=title,
             commits=commits,
             program=program,
+            dirs=dirs,
         )
         attempts.append(_attempt_record(cfg, name, settings, attempt))
         if attempt.get("skipped"):
@@ -706,7 +754,7 @@ def _totals(result, attempts):
 
 
 def _run_one(
-    stage, prompt, cfg, name, *, fallback, seconds, cwd, redact, out, title, commits, program
+    stage, prompt, cfg, name, *, fallback, seconds, cwd, redact, out, title, commits, program, dirs
 ):
     """Run the agent `name` once. A fallback without its secret is skipped: the result has
     `skipped` and says why."""
@@ -749,7 +797,7 @@ def _run_one(
     # Without any agent credential: the CLI gets only its own, through `launch.env`.
     env = environment(commits)
     with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
-        spec = stage_spec(stage, cfg, home)
+        spec = stage_spec(stage, cfg, home, dirs)
         launch = runtime.launch(agent, spec, secrets, program)
         for path, text in launch.files.items():
             Path(path).write_text(text, encoding="utf-8")
@@ -952,7 +1000,9 @@ def run_stage(
     conflicts = []
     if stage in ("implement", "fix"):
         start, base_commit = baseline(repo)
-        extra["ci_evidence"] = ci_evidence_text(context.get("ci_evidence"))
+    found = context.get("ci_evidence") if stage in ("plan", "implement", "fix") else None
+    if stage in ("plan", "implement", "fix"):
+        extra["ci_evidence"] = ci_evidence_text(found)
     if stage == "fix":
         moved = bool(context.get("merge_moved_base"))
         if not cfg["publish"]["push_token_secret"]:
@@ -1022,6 +1072,7 @@ def run_stage(
         commits=commits,
         program=program,
         restore=restore if base_commit else None,
+        dirs=[found["folder"]] if found and Path(found["folder"]).is_dir() else [],
     )
     if stage in ("implement", "fix") and result["status"] == "done":
         left = leftover_markers(repo, conflicts)
@@ -1073,6 +1124,11 @@ def run_stage(
                 result["recheck"] = True
             else:
                 result.update(status="error", error=unchanged(result), unchanged=True)
+    if stage in ("plan", "implement", "fix") and result.get("output"):
+        # Only paths that are protected count, so a person is asked only for those.
+        result["output"]["protected_paths"] = needed_protected(result, cfg)
+        if stage in ("plan", "implement") and str(result["output"].get("no_change") or "").strip():
+            result["passed_since"] = passed_runs(found)
     if triage:
         result.update(profile=triage["profile"], triage=triage)
     if held:

@@ -1,5 +1,39 @@
 # Changelog
 
+## 5.1.0
+
+Fewer runs for nothing after a failure outside the repository, such as a download host
+that refused requests for an hour. Plans read the CI runs' logs, a change that only a
+person can make stops for that person, a failure that has passed since closes its issue,
+and one failure opens one issue. See
+[Evidence from CI runs](docs/configuration.md#evidence-from-ci-runs) and
+[Autopilot](docs/configuration.md#autopilot).
+
+- A plan for an issue that names CI runs gets the same evidence as the implement round:
+  the end of the failed jobs' logs and their annotations (#154). The read-only plan agent
+  may read the evidence folder, so a plan starts from the cause the logs show.
+- The plan prompt lists the protected paths. A plan whose change needs them names them
+  in the plan's new `protected_paths`; only paths that really are protected count (#155).
+  The plan comment says a person makes that change by hand, and autopilot waits for a
+  person instead of starting `/nexkit go`.
+- An implement or fix round whose change needs protected paths stops as `blocked` with
+  them in `protected_paths`, and autopilot answers none of its questions, whatever it
+  recommends (#156).
+- The evidence of each CI run says whether a newer run of its workflow passed on the
+  default branch since (#157). A plan or implement round may then find that a failure
+  from outside the repository has passed and needs no change (`no_change`, now in plans
+  too). Autopilot closes the issue with the finding, and the comments link the run that
+  passed.
+- A failed step without an annotation that names the failure is keyed by the step and
+  its first error annotation, not by its job (#158). The same failure in several jobs,
+  or in several workflows of `merge.after_workflows`, opens one issue whose records list
+  each job and workflow, titled like 'Step "Run actions/setup-dotnet@v5" in 3 jobs of
+  ci.yml fails at times on main'. An issue opened for one job's step keeps getting that
+  job's records.
+- Sweeps read every open issue NexKit opened and every one updated in the last day,
+  instead of its 100 newest issues and pull requests, so a run that an issue recorded is
+  never recorded again on a new issue (#159).
+
 ## 5.0.0
 
 Autopilot can take every open issue, across milestones, with *blocked by* relationships

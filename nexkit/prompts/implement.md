@@ -43,12 +43,22 @@ $round_checks
 - Never skip, delete or weaken tests or checks to make them pass.
 - If you cannot finish (missing information, a contradictory requirement, a broken
   environment), stop and return `status: blocked` with the reason in `blocker`.
-- When the evidence shows that no change is needed, such as a failure that a commit on
-  the base branch already fixed, change nothing and write the finding in `no_change`. When
-  the issue, the plan or the discussion says to stop without a change in that case,
+- When the evidence shows that no change is needed, change nothing and write the finding
+  in `no_change`. Two findings count:
+  - A commit on the base branch already fixed the failure.
+  - A CI failure came from outside the repository, such as a download host, a package
+    registry or a service that failed, or a runner that was lost, and nothing in the
+    repository caused it or could prevent it. The evidence of the CI runs above must name
+    that outside cause, and *Since* must show a newer run of the same workflow that
+    passed on the default branch.
+
+  When the issue, the plan or the discussion says to stop without a change in that case,
   return `status: done`, and NexKit closes the issue with the finding. Otherwise return
   `status: blocked` with a single question, whose recommended option is to close the
   issue with that finding.
+- When the change must modify a protected path, do not change it. Return
+  `status: blocked` and list the paths in `protected_paths`: a person makes that change
+  by hand.
 
 $writing
 ## What to return
@@ -75,5 +85,8 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
   granting access or running something by hand, set `recommended` to 0.
 - `checks_run`: the commands you ran and whether each passed.
 - `no_change`: only when you changed nothing because no change is needed: the finding,
-  followed by the evidence that shows it, such as the commit, log or test output lines.
-  Otherwise an empty string.
+  followed by the evidence that shows it, such as the commit, log or test output lines,
+  and for an outside failure the run that passed since, with its link. Otherwise an empty
+  string.
+- `protected_paths`: the protected paths that the change must modify and that you left
+  unchanged, each as a path in the repository. Otherwise an empty list.

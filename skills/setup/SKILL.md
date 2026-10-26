@@ -84,8 +84,8 @@ files or repository settings, and wait for confirmation.
    `--check-timeout <name>=<minutes>`, `--check-slow <name>`, and
    `--check-results <name>=<path>` once for each path. When the repository's CI workflows
    upload artifacts that explain a failure, such as end-to-end test results, add
-   `--evidence-artifact <name>` for each, so implement and fix rounds on an issue that
-   names a failed run get them.
+   `--evidence-artifact <name>` for each, so plan, implement and fix rounds on an issue
+   that names a failed run get them.
    Show the generated `.nexkit/config.json` and `.github/workflows/nexkit.yml`. The config
    declares the `claude` agent with `"oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"`; if
    the user has an Anthropic API key instead, change it to

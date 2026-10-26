@@ -202,15 +202,26 @@ the agent runs.
 - **What.** For each run and each attempt that failed: the end of each failed job's log
   and its error and warning annotations. Then the run's artifacts that `artifacts` lists
   by name, as the repository's CI workflows upload them; NexKit's own artifacts are not
-  among them. Without `artifacts`, only logs and annotations.
-- **Where.** The implement and fix rounds' `agent` job downloads them, with `actions: read`
-  and `checks: read`, to a folder outside the working tree, one folder per run. Text files
-  are redacted like the result files of failing checks; binary files are kept as they are.
-  A round keeps at most 50 MB; what would go past it is left out. Plans get nothing.
-- **The prompt** names the folder and, for each run, each file and artifact it holds, and
-  asks the agent to read them before it runs anything slow. When a download fails, for
-  example because an artifact expired, the round still runs: the prompt, the log of
-  *Collect issue context* and the run summary say what is missing and why.
+  among them. Without `artifacts`, only logs and annotations. For each run, also whether
+  a newer run of the same workflow passed on the default branch since, and which: among
+  the workflow's 20 latest runs there, without runs of pull requests and forks.
+- **Where.** The plan, implement and fix rounds' `agent` job downloads them, with
+  `actions: read` and `checks: read`, to a folder outside the working tree, one folder per
+  run. Text files are redacted like the result files of failing checks; binary files are
+  kept as they are. A round keeps at most 50 MB; what would go past it is left out. The
+  plan agent, which may only read, may read that folder too.
+- **The prompt** names the folder and, for each run, each file and artifact it holds and
+  the newer run that passed since, and asks the agent to read them before anything else,
+  so a plan for a CI issue starts from the cause the logs show rather than a guess. When
+  a download fails, for example because an artifact expired, the round still runs: the
+  prompt, the log of *Collect issue context* and the run summary say what is missing and
+  why.
+- **An outside failure that has passed.** When the evidence names a cause outside the
+  repository, such as a download host or package registry that refused requests, or a
+  lost runner, and a newer run of the workflow passed on the default branch since, a plan
+  or implement round may find that no change is needed (`no_change`). The plan or the
+  round's comment shows the finding and links the run that passed; see
+  [Autopilot](#autopilot) for how the issue closes.
 
 `nexkit init --evidence-artifact NAME`, repeated for each name, sets `artifacts`.
 
@@ -439,12 +450,15 @@ every open issue in scope, in order, and starts the one command that moves it on
 |---|---|
 | Ready, with no plan yet | Starts `/nexkit plan`. |
 | Its latest plan has no questions and is not too large | Starts `/nexkit go`. |
+| Its latest plan's change needs protected paths (`protected_paths` in the plan) | Nothing: the plan comment says a person makes that change by hand, and `notify` is mentioned. `/nexkit go` would only stop when NexKit rejects the change. |
+| Its latest plan finds that no change is needed (`no_change` in the plan), such as an outside failure that has passed since | Closes the issue as completed, with a comment that holds the plan's finding and the run that passed since. |
 | Collaborators commented after the latest plan | Starts `/nexkit plan` again, so the plan holds their changes before `/nexkit go`. |
 | Its plan is too large and suggests a split | Creates each part as a sub-issue, in order, with the issue's milestone and labels, marks each part *blocked by* the earlier parts it needs, closes the issue's open NexKit pull request as superseded, and plans the parts that need no other part. |
 | Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
 | The plan or round after autopilot's answers asks again, and no person commented since | Nothing: a person decides, and `notify` mentions them. A comment by a person lets autopilot answer again. |
 | A blocked `/nexkit go` found that no change is needed and recommends closing the issue | Closes the issue as completed with the round's finding, with `answer: "recommended"`; no other round runs. |
+| Its last `/nexkit go` or fix round was blocked because its change needs protected paths | Nothing, whatever it recommends: a person makes that change, and `notify` is mentioned. |
 | Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
 | Its plan is too large and suggests no parts | Starts `/nexkit plan` once more, with a note that asks for parts that each fit one session. A second such plan waits for a person. |
 | Its last `/nexkit go` stopped as blocked or failed, not for running out of time, and something changed since that round started: a collaborator commented, other than with a command, or an issue that blocks it closed, such as one a person marked as its blocker after the round asked to wait for it | Starts `/nexkit plan`, so the plan holds what changed, then goes on as after any plan. While nothing changed since the round started, the issue waits for a person. A blocker that closed before the round started changes nothing. |
@@ -521,6 +535,9 @@ every open issue in scope, in order, and starts the one command that moves it on
   or its pull request since, it waits for a person, whatever the new questions are. The
   prompts never recommend an option that needs a person to act outside NexKit, such as
   downloading files or granting access, so such a question waits for a person at once.
+  The code does not rest on that alone: a plan or blocked round whose change needs
+  protected paths names them (`protected_paths`), only paths that really are protected
+  count, and autopilot then answers nothing and starts no `/nexkit go`.
   When a blocked `/nexkit go` found that no change is needed (its `no_change` finding)
   and its one question recommends closing the issue, autopilot starts no other round: it closes the issue
   as completed with a comment that holds the finding.
@@ -553,15 +570,21 @@ every open issue in scope, in order, and starts the one command that moves it on
   `bug` issue per failure, which mentions `notify` and is planned right after the `bug`
   issues above. An older run is never run again. The error annotations of the failed jobs
   name the failures, such as each failing test, by title or else by file and line; the
-  runner's own "Process completed with exit code" names nothing, and a job without such
-  an annotation is named by the job and its first failed step. Each record names the
-  commit, the run, and where the failure showed in each failed attempt. While a failure's
-  issue is open, its later records are comments on it; once closed, a new issue opens
-  that links it. A run whose failures would open more than five issues records those on
-  one issue for the run. Each run and attempt is recorded once per failure; an issue from
-  NexKit 4.3.0, with every failure of a workflow on it, gets no new records. Sweeps look
-  at the runs of the last day, including the first sweep after an upgrade, and at the
-  runs a `bug` issue reports. Reading annotations needs `checks: read` in the workflow's
+  runner's own "Process completed with exit code" names nothing. A job without such an
+  annotation is named by its first failed step and the message of its first error
+  annotation, such as a download host's refusal, not by the job: the same step failing
+  the same way in several jobs, or in several workflows of `after_workflows`, is one
+  failure with one issue, whose records list each job and workflow. An issue opened by
+  NexKit 5.0 or earlier for one job's step keeps getting that job's records. Each record
+  names the commit, the run, and where the failure showed in each failed attempt. While a
+  failure's issue is open, its later records are comments on it; once closed, a new issue
+  opens that links it. A run whose failures would open more than five issues records
+  those on one issue for the run. Each run and attempt is recorded once per failure; an
+  issue from NexKit 4.3.0, with every failure of a workflow on it, gets no new records.
+  Sweeps look at the runs of the last day, including the first sweep after an upgrade,
+  and at the runs a `bug` issue reports. To know what is recorded, a sweep reads every
+  open issue NexKit opened and every one updated in the last day, however many other
+  issues and pull requests NexKit opened since. Reading annotations needs `checks: read` in the workflow's
   permissions, as `nexkit init` writes them.
 - **When a finished run is noticed.** Within minutes, in two ways that together cover
   every run. First, a `workflow_run` trigger that names each workflow of
@@ -626,6 +649,7 @@ every open issue in scope, in order, and starts the one command that moves it on
   | An annotation with only a file and line | Line 12 of src/orders.ts fails at times on main |
   | A job, or a step named like its job | Job "Integration tests" in ci.yml fails at times on main |
   | A step | Step "Unit tests" of job "Lint and unit tests" in ci.yml fails at times on main |
+  | A step that failed the same way in several jobs | Step "Run actions/setup-dotnet@v5" in 3 jobs of ci.yml fails at times on main |
   | A run that failed before any job | ci.yml does not start at times on main |
   | A run with more than five new failures | Run 123 of ci.yml failed in 7 ways at once on main |
   | A red branch | Steps "Lint" and "Unit tests" in ci.yml fail on main |

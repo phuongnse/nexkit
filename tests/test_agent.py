@@ -46,6 +46,7 @@ DONE = {
     "outside_plan": [],
     "reviewer_notes": [],
     "no_change": "",
+    "protected_paths": [],
 }
 FIX_DONE = {**DONE, "cause": "", "cause_outside": False, "open_conflicts": []}
 PLAN = {
@@ -59,6 +60,8 @@ PLAN = {
     "too_large": False,
     "split": [],
     "revision": {"started_over": True, "changes": []},
+    "protected_paths": [],
+    "no_change": "",
 }
 VERDICT = {
     "verdict": "approve",
@@ -266,6 +269,14 @@ class PromptTests(unittest.TestCase):
         schema = json.loads(fix[fix.index("--json-schema") + 1])
         self.assertIn("status", schema["required"])
 
+    def test_a_read_only_stage_reads_the_folders_it_is_given(self):
+        cfg = make_config()
+        spec = agent.stage_spec("plan", cfg, "/tmp/home", ["/tmp/nexkit-evidence"])
+        cmd = RUNTIMES["claude-code"].launch(cfg["agents"]["claude"], spec, {}).argv
+        self.assertEqual(cmd[cmd.index("--add-dir") + 1], "/tmp/nexkit-evidence")
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "Read,Grep,Glob")
+        self.assertNotIn("--add-dir", self.argv("plan", cfg))
+
     def test_triage_command_has_no_tools_and_names_the_profiles(self):
         cfg = profile_config(stages={"triage": {"model": "fable", "max_budget_usd": 1}})
         cmd = self.argv("triage", cfg)
@@ -456,6 +467,54 @@ class RunStageTests(StageCase):
         result = self.run_stage("implement")
         self.assertEqual(result["status"], "error")
         self.assertIn("found that no change is needed but changed `calc.py`", result["error"])
+
+    def test_a_plan_reads_the_evidence_of_the_ci_runs_outside_the_checkout(self):
+        folder = Path(self.tmp.name) / "nexkit-evidence"
+        (folder / "run-50" / "attempt-1").mkdir(parents=True)
+        (folder / "run-50" / "attempt-1" / "build.log").write_text("HTTP 409\n")
+        found = {
+            "folder": str(folder),
+            "runs": [
+                {
+                    "id": 50,
+                    "url": "https://github.com/acme/app/actions/runs/50",
+                    "files": [{"path": "run-50/attempt-1/build.log"}],
+                    "missing": [],
+                    "workflow": "ci.yml",
+                    "branch": "main",
+                    "passed_since": {
+                        "id": 61,
+                        "url": "https://github.com/acme/app/actions/runs/61",
+                        "sha": "c" * 40,
+                        "workflow": "ci.yml",
+                        "branch": "main",
+                    },
+                }
+            ],
+            "skipped": [],
+            "left_out": [],
+        }
+        finding = "The download host answered 409; run 61 passed since."
+        self.claude.configure(result={**PLAN, "no_change": finding})
+        result = self.run_stage("plan", context={**CONTEXT, "ci_evidence": found})
+        call = self.claude.call()
+        self.assertEqual(call["args"][call["args"].index("--add-dir") + 1], str(folder))
+        self.assertIn("  - `run-50/attempt-1/build.log`", call["prompt"])
+        self.assertIn(
+            "  - Since: run 61 of `ci.yml` passed on `main` since at ccccccc", call["prompt"]
+        )
+        self.assertIn("NexKit's agents may not change these paths: `.github/`", call["prompt"])
+        self.assertEqual(result["passed_since"][0]["id"], 61)
+
+    def test_only_protected_paths_count_as_needing_a_person(self):
+        listed = [".github/workflows/ci.yml", "src/app.py", "/.nexkit/config.json", "src/app.py"]
+        self.claude.configure(
+            result={**DONE, "status": "blocked", "blocker": "CI", "protected_paths": listed}
+        )
+        result = self.run_stage("implement")
+        self.assertEqual(
+            result["output"]["protected_paths"], [".github/workflows/ci.yml", ".nexkit/config.json"]
+        )
 
     def test_blocked_agent_publishes_nothing(self):
         self.claude.configure(

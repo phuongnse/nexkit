@@ -34,8 +34,9 @@ succeeds. Help the user write issues that one session can finish and test.
      list, and fails on a case that is not covered. So a case that a later issue adds
      cannot be left out unnoticed.
      When the work may turn out to be unneeded, such as a failure that may be fixed
-     already, say when to stop with no change ("If a commit already fixed it, close the
-     issue with that evidence"): NexKit then closes the issue with its finding.
+     already, or a CI failure that came from outside the repository and has passed since,
+     say when to stop with no change ("If a commit already fixed it, close the issue with
+     that evidence"): NexKit then closes the issue with its finding.
      Only code behaviour; never process steps such as approvals or PR text.
    - **Out of scope**, when helpful.
 

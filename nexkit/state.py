@@ -68,6 +68,9 @@ def conflict_rounds_used(rounds):
 RUN_LABELS = {RUNNING: "running", PAUSED: "paused", CONTINUED: "continued"}
 # Bounds for what a plan's record and a run's marker keep.
 MAX_PARTS = 10
+# Where the docs say what a person does at each stop.
+TROUBLESHOOTING = "https://github.com/phuongnse/nexkit/blob/main/docs/troubleshooting.md"
+PROTECTED_ENTRY = f"{TROUBLESHOOTING}#the-plans-change-is-in-protected-paths"
 MAX_QUESTIONS = 10
 
 
@@ -100,13 +103,35 @@ def plan_text(comment):
     return PLAN_DATA.sub("", PROFILE_TEXT_PATTERN.sub("", body)).strip()
 
 
-def plan_data_record(output):
+def passed_lines(passed):
+    """Lines that link the newer runs that passed on the default branch since the CI runs
+    an issue names, from the agent result's `passed_since`."""
+    lines = []
+    for run in passed or []:
+        name = f"run {run['id']} of `{run['workflow']}`"
+        link = f"[{name}]({run['url']})" if run.get("url") else name
+        commit = f" at {run['sha'][:7]}" if run.get("sha") else ""
+        lines.append(f"Passed on `{run['branch']}` since: {link}{commit}.")
+    return lines
+
+
+def plan_data_record(output, passed=()):
     """The hidden record at the end of a plan comment: its questions, whether it is too
-    large and its split."""
+    large and its split, the protected paths its change needs, and its finding when no
+    change is needed."""
     data = {
         "questions": questions(output.get("questions")),
         "too_large": bool(output.get("too_large")),
     }
+    protected = [clip(p, 300) for p in output.get("protected_paths") or []][:20]
+    if protected:
+        data["protected_paths"] = protected
+    finding = str(output.get("no_change") or "").strip()
+    if finding:
+        lines = passed_lines(passed)
+        data["no_change"] = clip(
+            "\n\n".join([finding, *(["\n".join(lines)] if lines else [])]), 3500
+        )
     if data["too_large"]:
         data["split"] = [
             {

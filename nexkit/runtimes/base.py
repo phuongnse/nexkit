@@ -52,6 +52,9 @@ class Spec:
     schema: dict
     # An empty directory for the CLI's own configuration and state, removed afterwards.
     home: Path
+    # Folders outside the working directory that the agent reads, such as the evidence of
+    # CI runs. A stage with read access reads them too.
+    dirs: tuple = ()
 
     @property
     def access(self):

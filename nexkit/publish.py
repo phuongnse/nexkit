@@ -16,7 +16,9 @@ from .gitutil import BOT_EMAIL, BOT_NAME, GitError, git, is_ancestor, merge_tree
 from .runlog import stage_agent
 from .state import (
     PLAN_MARKER,
+    PROTECTED_ENTRY,
     depends_on,
+    passed_lines,
     plan_data_record,
     profile_record,
     profile_text,
@@ -120,15 +122,34 @@ def question_lines(items):
     return lines
 
 
-def render_plan(output, profile=None, replan=False):
+def _protected(paths):
+    """The plan comment's lines about a change in protected paths."""
+    listed = ", ".join(f"`{path}`" for path in paths)
+    return [
+        f"The change modifies protected paths, which NexKit's agents may not change: {listed}. "
+        "A person makes that change by hand, as [the troubleshooting entry]"
+        f"({PROTECTED_ENTRY}) says."
+    ]
+
+
+def render_plan(output, profile=None, replan=False, passed=()):
     """The plan comment: the part a person approves, then the agent's notes collapsed.
     `profile` comes from `render_profile`, when profiles are configured. A re-plan says how
-    it differs from the latest plan."""
+    it differs from the latest plan. `passed` holds the runs that passed since the CI runs
+    the issue names, shown with a finding that no change is needed."""
+    finding = str(output.get("no_change") or "").strip()
+    protected = output.get("protected_paths") or []
     record, text = profile or (None, None)
     parts = [PLAN_MARKER, *([record] if record else []), "## Plan", "", output["summary"].strip()]
     parts += ["", *([text, ""] if text else [])]
     if replan:
         parts += _section("Since the last plan", _revision(output))
+    if finding:
+        parts += _section(
+            "No change needed", [finding, *(["", *passed_lines(passed)] if passed else [])]
+        )
+    if protected:
+        parts += _section("Needs a hand-made change", _protected(protected))
     parts += _section("What changes", _bullets(output.get("changes")))
     decisions = [
         f"- **{item['decision'].strip()}** {item['reason'].strip()}"
@@ -161,7 +182,19 @@ def render_plan(output, profile=None, replan=False):
             "",
         ]
     parts.append("---")
-    if output.get("too_large"):
+    if finding:
+        parts.append(
+            "This plan finds that no change is needed. With autopilot, NexKit closes the issue "
+            "with this finding. Otherwise close it yourself, or reply with what still needs "
+            "changing and comment `/nexkit plan`."
+        )
+    elif protected:
+        parts.append(
+            "A person makes the change in protected paths by hand, in a pull request that "
+            "closes this issue. Comment `/nexkit go` only for what the plan changes outside "
+            "them, or reply with changes and comment `/nexkit plan` to revise it."
+        )
+    elif output.get("too_large"):
         parts.append(
             "This looks too large for one session. Consider opening the smaller issues above. "
             "Comment `/nexkit go` only if you want to try it as one change."
@@ -176,13 +209,14 @@ def render_plan(output, profile=None, replan=False):
             "Comment `/nexkit go` to implement this plan, or reply with changes and comment "
             "`/nexkit plan` to revise it."
         )
-    parts += ["", plan_data_record(output)]
+    parts += ["", plan_data_record(output, passed)]
     return "\n".join(parts)
 
 
 def publish_plan(gh, decision, result, context, cfg):
     profile = render_profile(result, cfg) if cfg["profiles"] else None
-    body = render_plan(result["output"], profile, replan="since_plan" in context)
+    passed = result.get("passed_since")
+    body = render_plan(result["output"], profile, replan="since_plan" in context, passed=passed)
     comment = gh.comment(decision["issue"], body)
     return {"published": True, "comment": comment.get("html_url")}
 

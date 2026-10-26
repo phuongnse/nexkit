@@ -314,6 +314,8 @@ One or two sentences: what changes and why.
 ### Decisions to check    choices the issue did not settle, each with a short reason
 ### Risks and limits      what could go wrong or is left out
 ### Acceptance criteria   one check each, at most about 30 words
+### No change needed      only when the evidence shows the issue needs none; the finding, and the run that passed since
+### Needs a hand-made change  only when the change needs protected paths, which a person changes
 ### Questions             only when answers would change the work; options, one marked (recommended)
 ### Suggested split       only when the work is too large for one session; each part says which earlier parts it needs
 
@@ -324,6 +326,18 @@ Files, signatures, commands: the detail the implementing agent needs.
 
 Empty sections are left out. The implementing agent, and the reviewer, receive the whole
 comment, including the implementation notes, but not the profile lines.
+
+A plan for an issue that names CI runs gets the same [evidence of those
+runs](configuration.md#evidence-from-ci-runs) as the implement round: the end of the
+failed jobs' logs, their annotations, and whether a newer run of the workflow passed on
+the default branch since. So the plan starts from the cause the logs show. The plan
+prompt lists the protected paths: a plan whose change must modify them lists them in
+`protected_paths`, and only paths that really are protected count. The comment then says
+that a person makes that change by hand, and autopilot starts no `/nexkit go` (see
+[Troubleshooting](troubleshooting.md#the-plans-change-is-in-protected-paths)). A plan
+that finds no change is needed, such as for a failure from outside the repository that
+has passed since, writes the finding in `no_change`; with autopilot, the issue closes
+with it.
 
 Each acceptance criterion is something the review can verify from what it sees: a test in
 the change, or the result of a project check on the candidate commit. Steps that only the
@@ -373,8 +387,13 @@ failed, since NexKit runs every check after the round. The agent must return `do
 `blocked`. A blocked or failed session publishes nothing.
 
 An implement agent that finds no change is needed, such as for a failure that a commit on
-the base branch already fixed, changes nothing and writes the finding, with its evidence,
-in `no_change`. When the issue, the plan or the discussion says to stop without a change
+the base branch already fixed, or a CI failure from outside the repository, such as a
+download host that refused requests, after which a newer run of the workflow passed on
+the default branch, changes nothing and writes the finding, with its evidence and the run
+that passed, in `no_change`. The run's comment adds a link to each run that passed since.
+An implement or fix agent whose change must modify a protected path leaves it unchanged
+and stops as `blocked` with the paths in `protected_paths`; autopilot answers none of its
+questions, and a person decides. When the issue, the plan or the discussion says to stop without a change
 in that case, it returns `done`: NexKit opens no pull request, closes the issue as
 completed, and the run's comment shows the finding (outcome `no_change`). Otherwise it
 returns `blocked` with a question whose recommended option is to close the issue, which
@@ -852,13 +871,18 @@ the `null` scope, since it may have replaced a sweep that waited.
 - **Flaky runs.** A run whose latest attempt passed after a failed one, and an older run
   that failed when a newer run had already started, which is never run again, are
   recorded under each of their failures, one issue per failure, so an issue stays one
-  behaviour. The error annotations of a failed job name its failures (read with
+  behaviour, and one failure has one issue, also when it shows in several jobs or
+  workflows. The error annotations of a failed job name its failures (read with
   `checks: read`): test reporters write one per failing test, titled with its name and
   pointing at its file and line. An annotation names a failure by its title, else by its
   file and line; one without either, or that points at the workflow, such as the runner's
   "Process completed with exit code 1.", names nothing. A failed job without an
-  annotation that names a failure is named by the job and its first failed step, and an
-  attempt that failed before any job did by the workflow. Each failure's issue is `bug`,
+  annotation that names a failure is named by its first failed step and the message of
+  its first error annotation, so one step that fails the same way in several jobs, or in
+  several workflows, such as a setup step whose download host refused requests, is one
+  failure; an issue that NexKit 5.0 or earlier opened for one job's step keeps getting
+  that job's records. An attempt that failed before any job did is named by the
+  workflow. Each failure's issue is `bug`,
   in scope, titled by the failure in plain words, for example 'Test "pages through more
   than twenty orders" in OrderHistory.test.tsx fails at times on main' (see [the title
   forms](configuration.md#autopilot)), starts with its own marker that names the workflow and a key for
@@ -873,7 +897,10 @@ the `null` scope, since it may have replaced a sweep that waited.
   failure, and a sweep reads no attempt that a marker covers. An issue from NexKit 4.3.0,
   one per workflow with every failure on it, keeps the records it has and gets no new
   ones; the runs it covers are not recorded again. The first sweep after an upgrade looks
-  back one day, as every sweep does; sweeps run at least hourly. A finished run starts a
+  back one day, as every sweep does; sweeps run at least hourly. To know which runs are
+  recorded, a sweep reads every open issue NexKit opened and every one updated within
+  that day, not a fixed number of the newest: a record is written after its run started,
+  so its issue was updated since. A finished run starts a
   sweep within minutes through the `workflow_run` trigger, when the run is one a sweep
   acts on: it failed or was run again, or it passed while a `bug` issue about its
   workflow is open. GitHub sends no `workflow_run` event for runs that the Actions token
@@ -1064,7 +1091,7 @@ Names a person meets in run comments and in that output:
 | `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. |
 | `merge_waiting` | The automatic merge waits for required checks; see [Failure handling](#failure-handling). |
 | `recheck_failed` | The checks failed again after a fix round named a cause outside the code; see *Failing checks the base branch fixed* under [Stages](#stages). |
-| `no_change` | An implement round found that no change is needed. The issue closes with its finding, at once or through autopilot's answer (see [Stages](#stages)). |
+| `no_change` | An implement round found that no change is needed. The issue closes with its finding, at once or through autopilot's answer (see [Stages](#stages)). A plan's finding closes it through autopilot. |
 | `attention` | The reason a person is needed, when one is. |
 | `conflicts`, `base_sha` | The round was a conflict round, started for that commit of the base branch. |
 

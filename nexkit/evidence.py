@@ -1,11 +1,13 @@
-"""Evidence from the CI runs an issue names, for the implement and fix agents.
+"""Evidence from the CI runs an issue names, for the plan, implement and fix agents.
 
 The agent session holds no GitHub token, so it cannot download what a CI run left. The
 step that collects the issue's context can: before the agent runs, it downloads the
 failed jobs' logs and error annotations of each run the issue names, and the artifacts
 that `evidence.artifacts` lists, into a folder outside the working tree. Text files are
 redacted, like the result files of failing checks, and a round keeps at most
-`RESULTS_LIMIT` of it.
+`RESULTS_LIMIT` of it. For each run it also says whether a newer run of the same workflow
+passed on the default branch since, so a round can tell a failure that came from outside
+the repository and has passed from one that still needs a change.
 
 A run counts when NexKit's own records name it, in the markers of the bug and flaky-run
 issues that autopilot opens, or when the issue or a collaborator's comment links it. Links
@@ -23,7 +25,7 @@ import stat
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from .autopilot import CI_RUNS, FAILED
+from .autopilot import CI_RUNS, FAILED, on_default_branch
 from .checks import RESULTS_LIMIT, _is_text, size_text
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .state import by_bot
@@ -40,6 +42,8 @@ MAX_RUNS = 5
 LOG_TAIL = 2_000_000
 # How a job's name becomes a file name.
 UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+# The runs of a named run's workflow on the default branch that show whether it passed since.
+SINCE_RUNS = 20
 
 
 def named_runs(gh, issue, comments):
@@ -218,16 +222,59 @@ def _jobs(gh, run_id, attempt, folder, budget, redact, files):
             files.append({"path": _shown(notes_path, folder)})
 
 
+def _workflow_name(run):
+    """The file of a run's workflow, such as `ci.yml`, or "" when the run does not say."""
+    return (run.get("path") or "").split("@", 1)[0].rsplit("/", 1)[-1]
+
+
+def passed_since(gh, run, branch):
+    """The newest run of `run`'s workflow on the default branch `branch` that is newer than
+    `run` and passed, as {id, url, sha, workflow, branch}, or None when none of its latest
+    `SINCE_RUNS` did. Runs of pull requests and forks do not count."""
+    name = _workflow_name(run)
+    if not name or not branch:
+        return None
+    for later in gh.workflow_runs(name, branch, SINCE_RUNS):
+        if (
+            later.get("id", 0) > run["id"]
+            and later.get("status") == "completed"
+            and later.get("conclusion") == "success"
+            and on_default_branch(gh, later)
+        ):
+            return {
+                "id": later["id"],
+                "url": later.get("html_url") or "",
+                "sha": later.get("head_sha") or "",
+                "workflow": name,
+                "branch": branch,
+            }
+    return None
+
+
+def _since(gh, run, branch, item):
+    """Record in `item` whether a newer run of the run's workflow passed on `branch`."""
+    name = _workflow_name(run)
+    if not name or not branch:
+        return
+    item["workflow"], item["branch"] = name, branch
+    try:
+        item["passed_since"] = passed_since(gh, run, branch)
+    except GitHubError as exc:
+        item["missing"].append(f"whether a newer run of `{name}` passed on `{branch}`: {exc}")
+
+
 def collect(gh, cfg, runs, folder, redact, workflow="", budget=None):
     """Download the evidence of the latest `MAX_RUNS` of `runs`, from `named_runs`, into
     `folder`, leaving out runs of NexKit's own workflow, the file `workflow`. Returns a
-    record for the prompt: the folder, for each run its files and what is missing, and
-    the runs skipped."""
+    record for the prompt: the folder, for each run its files, what is missing and the
+    newer run of its workflow that passed on the default branch since, if any, and the
+    runs skipped."""
     root = Path(folder)
     budget = budget or Budget()
     names = cfg["evidence"]["artifacts"]
     chosen, skipped = _latest(gh, runs, workflow)
     found = []
+    branch = None
     for run_id, attempts, run in chosen:
         item = {"id": run_id, "url": "", "files": [], "missing": []}
         found.append(item)
@@ -240,6 +287,12 @@ def collect(gh, cfg, runs, folder, redact, workflow="", budget=None):
             item["missing"].append(f"it ran on a fork, {head}, which NexKit leaves alone")
             continue
         folder = root / f"run-{run_id}"
+        try:
+            branch = gh.default_branch() if branch is None else branch
+        except GitHubError as exc:
+            branch = ""
+            print(f"Could not read the default branch: {exc}", flush=True)
+        _since(gh, run, branch, item)
         try:
             failed = _failed_attempts(gh, run, attempts)
             for attempt in failed:
@@ -297,7 +350,19 @@ def summary_lines(found):
         lines += [
             f"Run {run['id']}: missing {f['missing']}" for f in run["files"] if "missing" in f
         ]
+        if run.get("workflow"):
+            lines.append(f"Run {run['id']}: {since_text(run)}.")
     if found["left_out"]:
         limit = size_text(RESULTS_LIMIT)
         lines.append(f"Left out, past the {limit} a round keeps: " + "; ".join(found["left_out"]))
     return lines
+
+
+def since_text(run):
+    """Whether a newer run of a named run's workflow passed on the default branch, in words."""
+    name, branch, passed = run["workflow"], run["branch"], run.get("passed_since")
+    if not passed:
+        return f"no newer run of `{name}` has passed on `{branch}` since"
+    commit = f" at {passed['sha'][:7]}" if passed.get("sha") else ""
+    link = f", {passed['url']}" if passed.get("url") else ""
+    return f"run {passed['id']} of `{name}` passed on `{branch}` since{commit}{link}"

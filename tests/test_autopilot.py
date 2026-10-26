@@ -1642,7 +1642,7 @@ class CITests(AutopilotCase):
         self.assertEqual(issue["milestone"], {"number": 1})
         body = issue["body"]
         self.assertRegex(body, r"\A<!-- nexkit:ci-flaky ci\.yml [0-9a-f]{16} -->\n@olivia ")
-        self.assertIn("in which step `Run tests` of job `test` failed:", body)
+        self.assertIn("in which step `Run tests` failed, in any job and workflow:", body)
         self.assertIn(
             f"[A run of `ci.yml`](https://github.com/acme/app/actions/runs/50) on `main` at "
             f"{self.SHA} passed in attempt 2 after failing.",
@@ -1809,8 +1809,13 @@ class CITests(AutopilotCase):
         title = 'Step "Run tests" of job "test" in ci.yml fails at times on main'
         self.assertEqual(issue["title"], title)
         self.assertIn("- [test](https://job): `Run tests`, `Upload results`\n", issue["body"])
-        for text in ("Process completed", "Bad input", "Deprecated"):
+        for text in ("Process completed", "Deprecated"):
             self.assertNotIn(text, issue["body"])
+        # The first error annotation that says something tells this failure of the step
+        # from another, though it names no test.
+        self.assertIn(
+            "in which step `Run tests` failed with `Bad input`, in any job", issue["body"]
+        )
         # A failed job without a failed step is named by the job alone.
         later = self.ci_run(sha="a" * 40, run_id=52)
         self.gh.jobs[52][0]["steps"] = []
@@ -1819,6 +1824,105 @@ class CITests(AutopilotCase):
         newest = max(self.flaky(), key=lambda i: i["number"])
         self.assertEqual(newest["title"], 'Job "test" in ci.yml fails at times on main')
         self.assertIn("in which job `test` failed:", newest["body"])
+
+    def outage(self, run_id, workflow, jobs, sha=SHA):
+        """A run of `workflow` that passed when run again, after `setup-dotnet` failed in
+        each of `jobs` because the download host refused it."""
+        run = self.ci_run(sha=sha, run_id=run_id)
+        self.gh.workflow_history["ci.yml"].remove(run)
+        self.gh.workflow_history.setdefault(workflow, []).append(run)
+        step = "Run actions/setup-dotnet@v5"
+        self.gh.jobs[run_id] = []
+        for index, name in enumerate(jobs):
+            job = run_id * 10 + index + 1
+            self.gh.jobs[run_id].append(
+                {
+                    "id": job,
+                    "name": name,
+                    "conclusion": "failure",
+                    "html_url": f"https://job/{job}",
+                    "steps": [{"name": step, "conclusion": "failure"}],
+                }
+            )
+            refused = "Failed to install dotnet: the host answered 409 Conflict."
+            self.gh.annotations[job] = [{**GENERIC_ANNOTATION, "message": refused}]
+        self.passed_again(run)
+        return run
+
+    def test_one_step_that_failed_the_same_way_in_several_jobs_and_workflows_is_one_issue(self):
+        cfg = make_config(
+            autopilot={"enabled": True},
+            merge={"after_workflows": ["ci.yml", "codeql.yml"]},
+            notify=["olivia"],
+        )
+        self.outage(50, "ci.yml", ["build", "test", "e2e"])
+        self.outage(60, "codeql.yml", ["analyze"])
+        self.sweep(cfg)
+        [issue] = self.flaky()
+        step = 'Step "Run actions/setup-dotnet@v5"'
+        self.assertEqual(issue["title"], f"{step} in 3 jobs of ci.yml fails at times on main")
+        self.assertIn(
+            "in which step `Run actions/setup-dotnet@v5` failed with `Failed to install "
+            "dotnet: the host answered 409 Conflict.`, in any job and workflow:",
+            issue["body"],
+        )
+        for job in (501, 502, 503):
+            self.assertIn(
+                f"- [{('build', 'test', 'e2e')[job - 501]}](https://job/{job})", issue["body"]
+            )
+        # The run of the other workflow, at the same commit, is recorded on it.
+        [record] = self.gh.comments_matching(issue["number"], "runs/60")
+        self.assertIn("[A run of `codeql.yml`]", record["body"])
+        self.assertIn("- [analyze](https://job/601)", record["body"])
+        # A later run that fails the same way gets a comment, not a new issue.
+        self.outage(70, "ci.yml", ["test"], sha="b" * 40)
+        self.sweep(cfg)
+        self.assertEqual(len(self.flaky()), 1)
+        self.assertEqual(len(self.gh.comments_matching(issue["number"], "runs/70")), 1)
+        # Another error in the same step is another failure.
+        self.outage(80, "ci.yml", ["test"], sha="c" * 40)
+        self.gh.annotations[801] = [{**GENERIC_ANNOTATION, "message": "No space left on device"}]
+        self.sweep(cfg)
+        self.assertEqual(len(self.flaky()), 2)
+
+    def test_an_issue_keyed_by_job_and_step_before_keeps_getting_its_records(self):
+        old = autopilot._key("step", "test", "Run tests")
+        body = f"{autopilot.CI_FLAKY_PREFIX}ci.yml {old} -->\nRuns of `ci.yml`."
+        issue = self.gh.create_issue('Step "Run tests" of job "test" in ci.yml', body)
+        self.passed_again(self.ci_run())
+        self.sweep()
+        self.assertEqual(self.flaky(), [issue])
+        self.assertEqual(len(self.gh.comments_matching(issue["number"], "runs/50")), 1)
+
+    def test_a_record_counts_however_many_issues_and_pull_requests_came_after_it(self):
+        # A bug issue reported the commit and closed hours ago; the run of that commit
+        # is the latest and failed again.
+        run = self.ci_run(attempt=2)
+        sha = f"{autopilot.CI_SHA_PREFIX}{self.SHA} -->"
+        bug = self.gh.create_issue(
+            "ci.yml fails on main", f"{autopilot.CI_BUG_PREFIX}ci.yml -->\n{sha}"
+        )
+        self.gh.close_issue(bug["number"])
+        bug["updated_at"] = autopilot.iso(datetime.now(UTC) - timedelta(hours=3))
+        # A recorded flaky run, whose issue was closed since.
+        flaky = self.ci_run(run_id=40, sha="b" * 40)
+        self.passed_again(flaky)
+        key = autopilot._key("step", "Run tests", "")
+        text = f"{autopilot.CI_FLAKY_PREFIX}ci.yml {key} -->\n<!-- nexkit:ci-runs 40.1 40.2 -->"
+        recorded = self.gh.create_issue('Step "Run tests" fails at times', text)
+        self.gh.close_issue(recorded["number"])
+        # Then NexKit opens more than a hundred other issues and pull requests.
+        for number in range(120):
+            other = self.gh.create_issue(f"Part {number}", "A part.")
+            self.gh.close_issue(other["number"])
+            other["updated_at"] = autopilot.iso(datetime.now(UTC) - timedelta(days=3))
+        self.gh.add_pull(500, 3)
+        self.gh.issues[500]["user"] = {"login": BOT_LOGIN}
+        before = len(self.gh.issues)
+        self.sweep()
+        self.assertEqual(len(self.gh.issues), before)
+        self.assertEqual(self.gh.comments_matching(recorded["number"], "runs/40"), [])
+        self.assertEqual(run["run_attempt"], 2)
 
     def test_titles_name_what_fails_and_where_in_plain_words(self):
         spec = "e2e/order-checkout.spec.ts"

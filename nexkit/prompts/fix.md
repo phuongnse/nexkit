@@ -52,6 +52,9 @@ $round_checks
 - Leave no temporary files, logs or build output in the working tree.
 - Never skip, delete or weaken tests or checks to make them pass.
 - If you cannot make progress, stop and return `status: blocked` with the reason.
+- When the change must modify a protected path, do not change it. Return
+  `status: blocked` and list the paths in `protected_paths`: a person makes that change
+  by hand.
 - When a check failed for a cause outside the repository's code, such as a package
   registry, a service or the network that failed while it ran, and no change to the code
   would prevent it, change nothing. Return `status: done` with the cause and its evidence
@@ -80,6 +83,8 @@ $writing
   option needs a person to act outside the repository, such as downloading files,
   granting access or running something by hand, set `recommended` to 0.
 - `checks_run`: the commands you ran and whether each passed.
+- `protected_paths`: the protected paths that the change must modify and that you left
+  unchanged, each as a path in the repository. Otherwise an empty list.
 - `open_conflicts`: only when you stop because conflicts with the base branch need a
   person's decision; otherwise an empty list. One entry for each open conflict:
   - `file`: the file.

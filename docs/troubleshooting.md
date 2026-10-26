@@ -345,8 +345,10 @@ time](how-it-works.md#one-run-at-a-time)).
 
 ### An issue closed as `no_change` that still needs a change
 
-The run's comment holds the finding and its evidence. Check them, for example that the
-failing test no longer fails on the default branch after the commit the finding names.
+The run's or plan's comment holds the finding and its evidence. Check them, for example
+that the failing test no longer fails on the default branch after the commit the finding
+names, or, for a failure from outside the repository, that the logs name the outside
+cause and that the run the comment links as *Passed since* ran the same jobs.
 When the evidence contradicts the finding, reopen the issue and comment
 `/nexkit plan <what still needs changing, with the evidence>`.
 
@@ -410,9 +412,14 @@ post `/nexkit fix <what to change>`.
 ### The plan's change is in protected paths
 
 NexKit rejects a change to a protected path (see ["The change modifies protected
-paths"](#pull-requests-and-merges)). A person makes it by hand, exactly as the plan says,
-in a pull request that closes the issue. NexKit's checks do not run on a pull request it
-did not open, so run the repository's checks before merging it.
+paths"](#pull-requests-and-merges)). A plan whose change needs one says so under *Needs a
+hand-made change*, and autopilot starts no `/nexkit go` for it; a `/nexkit go` or fix
+round that finds it needs one stops as `blocked` with the paths, and autopilot answers
+none of its questions. A person makes the change by hand, exactly as the plan says, in a
+pull request that closes the issue. NexKit's checks do not run on a pull request it did
+not open, so run the repository's checks before merging it. When the plan also changes
+code outside the protected paths, make the protected part first, then comment
+`/nexkit plan` so the plan covers only the rest.
 
 ### The plan comment says triage failed
 
@@ -498,7 +505,7 @@ runs](configuration.md#evidence-from-ci-runs)), so never answer a question by
 downloading or attaching a run's files. Read the round's *Collect issue context* log:
 
 - When the run was not named, post the command again with the CI run's link in its note,
-  such as `/nexkit fix <run link>`. Link the CI workflow's run, not a NexKit run: NexKit's
+  such as `/nexkit fix <run link>` or `/nexkit plan <run link>`. Link the CI workflow's run, not a NexKit run: NexKit's
   own runs never count.
 - When the download failed for a transient reason, post the command again.
 - When the artifacts expired, the evidence is gone: reproduce the failure, or decide

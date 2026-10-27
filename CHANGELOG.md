@@ -1,5 +1,25 @@
 # Changelog
 
+## 5.2.0
+
+NexKit leaves alone an issue that a person closed while its round ran, cleans up the
+branches of the pull requests it merges, and no longer closes an issue on an empty
+finding. See [Automatic merge](docs/configuration.md#automatic-merge) and
+[Stages](docs/how-it-works.md#stages).
+
+- A plan or `/nexkit go` whose issue a person closed while it ran publishes nothing: no
+  branch, no pull request, no plan (#162). The run ends as `issue_closed` and needs
+  nobody. When the issue is reopened, it waits for a person. NexKit never merges a pull
+  request whose issue is closed: the round ends as `merge_issue_closed`, the pull request
+  stays open for a person, and `notify` is mentioned.
+- When the repository's *Automatically delete head branches* setting is on, NexKit
+  deletes the `nexkit/issue-<number>` branch of each pull request it merges, as GitHub
+  does after a person's merge (#163). A branch that an open pull request targets stays,
+  and a delete that fails leaves the merge as it is.
+- A `no_change` with no text once quotes and whitespace are removed, such as `""`, is no
+  finding (#164). Such a plan shows no *No change needed* section and goes on to its
+  change, where autopilot closed the issue before.
+
 ## 5.1.0
 
 Fewer runs for nothing after a failure outside the repository, such as a download host

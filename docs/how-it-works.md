@@ -594,6 +594,17 @@ one that an open pull request targets, since deleting it would close that pull r
 When the delete fails, the round's comment says why and that the branch stays; the merge
 and the issue's close stay. With the setting off, every branch stays.
 
+**An issue closed while its round runs.** `route` checks that the issue is open when a
+command starts, and NexKit checks again before it acts on it. When a person closed the
+issue while a plan or `/nexkit go` ran, `publish` pushes no branch, opens no pull request
+and posts no plan, and the run's comment says that the issue closed while the round ran
+and that nothing was published (outcome `issue_closed`). Nobody is mentioned, and
+autopilot starts no further round for the issue. When it is reopened, it waits for a
+person, since nothing changed since `/nexkit go` started. A pull request whose issue is
+closed is never merged automatically: the round's comment says so, the pull request stays
+open for a person to merge or close (outcome `merge_issue_closed`), and `notify` mentions
+its people.
+
 The pull request review starts with what a person must act on:
 
 ```markdown
@@ -1101,6 +1112,8 @@ Names a person meets in run comments and in that output:
 | `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. |
 | `merge_waiting` | The automatic merge waits for required checks; see [Failure handling](#failure-handling). |
 | `recheck_failed` | The checks failed again after a fix round named a cause outside the code; see *Failing checks the base branch fixed* under [Stages](#stages). |
+| `issue_closed` | The issue closed while its plan or `/nexkit go` ran, so NexKit published nothing. |
+| `merge_issue_closed` | Checks and review approved the pull request, but its issue is closed, so NexKit did not merge it; a person merges or closes it. |
 | `no_change` | An implement round found that no change is needed. The issue closes with its finding, at once or through autopilot's answer (see [Stages](#stages)). A plan's finding closes it through autopilot. |
 | `attention` | The reason a person is needed, when one is. |
 | `conflicts`, `base_sha` | The round was a conflict round, started for that commit of the base branch. |
@@ -1114,6 +1127,8 @@ state, leaves it as it is and saves the state in a new state comment.
 |---|---|
 | Comment author lacks write access, unknown command, closed issue, PR not opened by NexKit | Replies with the reason; no agent runs. |
 | `/nexkit go` while a NexKit PR for the issue is open | Replies: use `/nexkit fix` there or close it. |
+| The issue closes while its plan or `/nexkit go` runs | Publishes nothing: no branch, pull request or plan (`issue_closed`). No later automatic round starts for it. |
+| The issue closes before its approved pull request is merged | Does not merge it, and leaves it open for a person (`merge_issue_closed`). |
 | Setup command fails before the agent | Reports the failing command and output on the issue or PR, and runs the command once more, in case a registry or mirror was down; a second failure waits for a person. |
 | The agent times out, hits its budget, errors, or returns no result or one that does not fit the stage's schema | Reports it; publishes nothing; no automatic retry. |
 | The agent stops on a transient error: an overloaded or failing API, a rate limit that is not a usage limit, a lost connection, or a CLI that exited before the model answered; or the agent job fails as a whole, for example on a lost runner | Reports it, publishes nothing, and runs the same command once more with the same note, shown as `(retry)`; the comment shows ⏭️ until the new run starts. The retry counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. A second such stop waits for a person, and its comment shows both errors. A job a person cancelled is never run again. |

@@ -376,9 +376,10 @@ round's comment lists the criteria for a person to confirm before merging by han
 
 After the merge, NexKit closes the issue the pull request implements as completed and
 comments a link to the pull request and the merge commit on it. GitHub does this itself
-when a person merges, but not after a merge with the Actions token. An issue that is
-already closed stays as it is. If closing fails, the round's comment says so and links the
-issue; the merge stays.
+when a person merges, but not after a merge with the Actions token. A pull request whose
+issue a person closed meanwhile is not merged: the round's comment says so, and the pull
+request waits for a person to merge or close it. If closing fails, the round's comment
+says so and links the issue; the merge stays.
 
 NexKit follows the repository's *Automatically delete head branches* setting
 (`delete_branch_on_merge`, under **Settings → General → Pull Requests**) the same way:

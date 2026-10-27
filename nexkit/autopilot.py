@@ -1007,6 +1007,10 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     if last is None or plan is None:
         return _step(issue, "start", "no plan yet", command="plan", **start)
     if last["command"] == "go":
+        if last.get("outcome") == "issue_closed":
+            # Reopened after it closed while the round ran: nothing changed for the plan.
+            reason = "it closed while `/nexkit go` ran and was reopened; a person decides"
+            return _step(issue, "waits", reason)
         if last.get("status") == SUCCESS:
             return _step(issue, "waits", "its pull request was closed; a person decides")
         step = _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,))

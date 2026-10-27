@@ -414,6 +414,10 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
     workflow files."""
     if result.get("status") != "done":
         return {"published": False}
+    if decision["action"] in ("plan", "implement") and issue_closed(gh, decision["issue"]):
+        # A person closed the issue while the round ran: nothing is pushed or posted, and
+        # the issue stays as they left it.
+        return {"published": False, "issue_closed": True}
     if decision["action"] == "plan":
         return publish_plan(gh, decision, result, context, cfg)
     if result.get("no_change"):
@@ -441,6 +445,11 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
         pr = pull["number"]
         copy_issue_fields(gh, decision["issue"], pr)
     return {"published": True, "pr": pr, "head": head}
+
+
+def issue_closed(gh, issue):
+    """Whether the issue is no longer open. `route` checked it when the round started."""
+    return gh.issue(issue).get("state") != "open"
 
 
 def copy_issue_fields(gh, issue, pr):

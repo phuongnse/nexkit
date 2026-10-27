@@ -154,6 +154,33 @@ class ReportTests(ReportCase):
             default_branch="main",
         )
 
+    def test_a_round_whose_issue_closed_meanwhile_says_nothing_was_published(self):
+        self.gh.close_issue(5, "not_planned")
+        self.write("nexkit-agent", "result.json", {"status": "done", "output": {}})
+        needs = {
+            "publish": {
+                "outputs": {"result": json.dumps({"published": False, "issue_closed": True})}
+            }
+        }
+        cfg = make_config(notify=["olivia"])
+        outcome = report(
+            self.gh,
+            decision(),
+            cfg,
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertEqual((outcome["outcome"], outcome.get("attention")), ("issue_closed", None))
+        [row] = self.gh.run_comments(5)
+        self.assertEqual(row["run"]["status"], "success")
+        self.assertIn(
+            "#5 closed while the implement round ran, so NexKit published nothing.", row["body"]
+        )
+        self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+
     def test_a_round_that_finds_no_change_needed_closes_the_issue_with_the_finding(self):
         self.gh.add_issue(3)
         self.gh.parents[5] = 3
@@ -391,14 +418,26 @@ class ReportTests(ReportCase):
         row = self.gh.run_comments(6)[-1]
         self.assertIn("Closed #5 as completed.\nClosed #1 as completed", row["body"])
 
-    def test_an_issue_that_is_already_closed_stays_as_it_is(self):
+    def test_a_pull_request_whose_issue_closed_is_not_merged(self):
         self.candidate()
         self.gh.issues[5].update(state="closed", state_reason="not_planned")
-        self.run_report(cfg=make_config(merge={"auto": True}))
+        merge = {"auto": True, "after_workflows": ["ci.yml"]}
+        outcome = self.run_report(cfg=make_config(merge=merge, notify=["olivia"]))
+        self.assertEqual(outcome["outcome"], "merge_issue_closed")
+        self.assertEqual(
+            outcome["attention"],
+            "the issue closed before NexKit merged its pull request; merge or close it yourself",
+        )
+        self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
         self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
+        self.assertEqual(self.gh.pulls[6]["state"], "open")
         self.assertFalse(self.gh.comments_matching(5, "NexKit merged"))
         [row] = self.gh.run_comments(6)
-        self.assertNotIn("Closed #5", row["body"])
+        self.assertIn(
+            "NexKit did not merge it: #5 is closed. Merge the pull request or close it yourself.",
+            row["body"],
+        )
+        self.assertTrue(self.gh.comments_matching(6, "@olivia"))
 
     def test_failing_to_close_the_issue_keeps_the_merge(self):
         self.candidate()

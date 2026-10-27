@@ -66,6 +66,8 @@ COMPLETED = {
     "head_moved",
     "recheck_failed",
     "no_change",
+    "issue_closed",
+    "merge_issue_closed",
     autopilot.CI_WAITING,
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
@@ -79,6 +81,9 @@ NEEDS_PERSON = {
     "review_failed": "the AI review did not complete",
     "needs_human": "checks or review still need attention and no automatic fix rounds remain",
     "merge_refused": "GitHub refused the automatic merge",
+    "merge_issue_closed": (
+        "the issue closed before NexKit merged its pull request; merge or close it yourself"
+    ),
     "retry_failed": "the run stopped on a transient error twice",
     "close_failed": "no change is needed, but NexKit could not close the issue; close it yourself",
     "recheck_failed": (
@@ -431,6 +436,11 @@ def _stage_failure(decision, agent, publish):
         return "agent_failed", f"NexKit could not run the {action} agent."
     if agent["status"] == "needs_merge":
         return "needs_merge", f"NexKit did not run the {action} agent: {agent['error']}"
+    if publish.get("issue_closed"):
+        return "issue_closed", (
+            f"#{decision['issue']} closed while the {action} round ran, so NexKit published "
+            "nothing."
+        )
     if agent["status"] != "done":
         message = f"NexKit stopped during {action}: {agent['error']}"
         extra = [blocked_questions(agent), open_conflicts(agent, decision["base"])]
@@ -715,6 +725,18 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     text so far. A merge refused because the base branch was modified meanwhile is tried
     again a few times; other refusals that pass are handed on (see `_refused`)."""
     pr, head = target["pr"], target["head"]
+    try:
+        closed = gh.issue(target["issue"]).get("state") != "open"
+    except GitHubError as exc:
+        message += f" NexKit did not merge it: it could not read #{target['issue']}: {exc}"
+        return "merge_refused", message.strip()
+    if closed:
+        # A person closed the issue while the pull request waited: they decide its fate.
+        message += (
+            f" NexKit did not merge it: #{target['issue']} is closed. Merge the pull request "
+            "or close it yourself."
+        )
+        return "merge_issue_closed", message.strip()
     for attempt in range(MERGE_TRIES):
         try:
             merge = gh.merge(pr, head) or {}

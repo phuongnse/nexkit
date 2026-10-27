@@ -380,6 +380,13 @@ when a person merges, but not after a merge with the Actions token. An issue tha
 already closed stays as it is. If closing fails, the round's comment says so and links the
 issue; the merge stays.
 
+NexKit follows the repository's *Automatically delete head branches* setting
+(`delete_branch_on_merge`, under **Settings → General → Pull Requests**) the same way:
+when it is on, NexKit deletes the merged pull request's `nexkit/issue-<number>` branch,
+which GitHub deletes only after a person's merge. A branch that another open pull request
+targets stays, and a delete that fails leaves the merge as it is and is named in the
+round's comment. With the setting off, NexKit deletes no branch.
+
 Branch protection and rulesets still apply, and the Actions token cannot bypass them. When
 a rule is not met, GitHub refuses the merge, the round's comment says why, and the pull
 request waits for a person. Before merging, NexKit sets the `nexkit/checks` and

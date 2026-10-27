@@ -410,6 +410,56 @@ class ReportTests(ReportCase):
         self.assertIn("Could not close #5: GitHub API 403", row["body"])
         self.assertEqual(row["run"]["status"], "success")
 
+    def test_auto_merge_deletes_its_branch_when_the_repository_deletes_merged_branches(self):
+        self.candidate()
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.deleted, [])  # the setting is off
+        self.gh.delete_on_merge = True
+        self.gh.issues[5]["state"] = "open"
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+        row = self.gh.run_comments(6)[-1]
+        self.assertIn("Closed #5 as completed.\nDeleted branch `nexkit/issue-5`.", row["body"])
+
+    def test_auto_merge_deletes_only_its_own_branch(self):
+        self.gh.delete_on_merge = True
+        own = dict(self.gh.pulls[6]["head"])
+        for head in ({"ref": "feature/add"}, {"repo": {"full_name": "fork/app"}}):
+            self.candidate()
+            self.gh.pulls[6]["head"] = {**own, **head}
+            self.gh.issues[5]["state"] = "open"
+            self.assertEqual(
+                self.run_report(cfg=make_config(merge={"auto": True}))["outcome"], "merged"
+            )
+            self.assertNotIn("branch", self.gh.run_comments(6)[-1]["body"].split("merged")[-1])
+        self.assertEqual(self.gh.deleted, [])
+        # A pull request that targets the branch would close with it.
+        self.gh.pulls[6]["head"] = own
+        self.candidate()
+        self.gh.add_pull(7, 8)
+        self.gh.pulls[7]["base"] = {"ref": "nexkit/issue-5"}
+        self.gh.issues[5]["state"] = "open"
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.deleted, [])
+        row = self.gh.run_comments(6)[-1]
+        self.assertIn("Kept branch `nexkit/issue-5`, the base branch of #7.", row["body"])
+
+    def test_failing_to_delete_the_branch_keeps_the_merge_and_the_close(self):
+        self.gh.delete_on_merge = True
+        self.gh.delete_error = GitHubError(403, "Resource not accessible by integration")
+        self.candidate()
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(outcome["outcome"], "merged")
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+        self.assertEqual(self.gh.issues[5]["state_reason"], "completed")
+        [row] = self.gh.run_comments(6)
+        self.assertIn(
+            "Could not delete branch `nexkit/issue-5`: GitHub API 403: Resource not accessible "
+            "by integration. It stays; delete it yourself.",
+            row["body"],
+        )
+        self.assertEqual(row["run"]["status"], "success")
+
     def test_issue_stays_open_without_an_automatic_merge(self):
         self.candidate()
         self.run_report()

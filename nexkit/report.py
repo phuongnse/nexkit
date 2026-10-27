@@ -20,7 +20,7 @@ from .maintain import (
     start_conflict_round,
     start_waiting,
 )
-from .route import auto_input
+from .route import BRANCH_PREFIX, auto_input
 from .runlog import add_tokens, one_line
 from .schema import filled
 from .state import (
@@ -731,6 +731,7 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     if closed and cfg["close_parent_issues"]:
         # Closing with the Actions token starts no workflow for `issues: closed`.
         lines += close_parents_safely(gh, target["issue"])
+    lines += delete_merged_branch(gh, pr, target["base"])
     runs = []
     started = after_merge(gh, cfg["merge"]["after_workflows"], target["base"], runs)
     if runs:
@@ -961,6 +962,31 @@ def close_merged_issue(gh, issue, pr, sha):
     except GitHubError as exc:
         return False, [f"Could not close #{issue}: {exc}. Close it yourself."]
     return True, [f"Closed #{issue} as completed."]
+
+
+def delete_merged_branch(gh, pr, base):
+    """Delete the head branch of a pull request NexKit merged, when the repository deletes
+    head branches on merge: GitHub does that after a person's merge, but not after a merge
+    with the Actions token. Only a NexKit branch of this repository goes, never the base
+    branch, nor one that open pull requests target, which its deletion would close.
+    Returns lines for the round's comment. A failure leaves the merge as it is."""
+    branch = ""
+    try:
+        if not gh.deletes_merged_branches():
+            return []
+        head = gh.pull(pr).get("head") or {}
+        branch = head.get("ref") or ""
+        own = (head.get("repo") or {}).get("full_name") == gh.repository
+        if not own or not branch.startswith(BRANCH_PREFIX) or branch == base:
+            return []
+        targeting = ", ".join(f"#{pull['number']}" for pull in gh.pulls_into(branch))
+        if targeting:
+            return [f"Kept branch `{branch}`, the base branch of {targeting}."]
+        gh.delete_branch(branch)
+    except GitHubError as exc:
+        name = f"branch `{branch}`" if branch else "the branch"
+        return [f"Could not delete {name}: {exc}. It stays; delete it yourself."]
+    return [f"Deleted branch `{branch}`."]
 
 
 def _record(state, decision, row, agent, review, checks):

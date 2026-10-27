@@ -76,7 +76,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
-| `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
+| `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
 | `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches | contents (to merge); issues, comments, workflows, statuses; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
 | `finish` | a command whose `report` did not finish | workflows | none | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](#work-without-a-command)). Runs no agent, and never checks out or executes repository code. |
 
@@ -584,6 +584,15 @@ run. NexKit decides from the criteria as well as the verdict:
 - An approved round with an `unverifiable` criterion never merges by itself, even with
   `merge.auto` on. `nexkit/review` succeeds, so a person can merge by hand; the round's
   comment lists the criteria to confirm, and `notify` mentions its people.
+
+**After an automatic merge.** NexKit closes the issue the pull request implements, as
+GitHub does after a person's merge but not after one with the Actions token. For the same
+reason, when the repository's *Automatically delete head branches* setting
+(`delete_branch_on_merge`) is on, NexKit deletes the pull request's head branch. It deletes
+only a `nexkit/issue-<number>` branch of this repository, never the base branch, and keeps
+one that an open pull request targets, since deleting it would close that pull request.
+When the delete fails, the round's comment says why and that the branch stays; the merge
+and the issue's close stay. With the setting off, every branch stays.
 
 The pull request review starts with what a person must act on:
 

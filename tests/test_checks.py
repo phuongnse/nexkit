@@ -61,6 +61,118 @@ class ChecksTests(unittest.TestCase):
         self.assertIn("stopped the command", output)
 
 
+class ParallelChecksTests(unittest.TestCase):
+    """With `parallel_checks`, each group, and each check without one, runs in its own
+    `verify` job, and `combine` joins their results as one job would have left them."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.cfg = make_config(
+            parallel_checks=True,
+            setup=["echo ready > setup.txt"],
+            checks=[
+                {"name": "build", "run": "echo built", "group": "fast"},
+                {
+                    "name": "e2e",
+                    "run": "echo e2e failed; mkdir -p out-e2e; echo log > out-e2e/log.txt; false",
+                    "results": ["out-e2e"],
+                },
+                {"name": "lint", "run": "echo linted", "group": "fast"},
+                {"name": "unit", "run": "echo unit failed; false"},
+            ],
+        )
+
+    def run_job(self, group):
+        repo, out = self.root / f"repo-{group}", self.root / "parts" / checks.artifact_name(group)
+        repo.mkdir(parents=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            return checks.run_checks(self.cfg, repo, out, group=group)
+
+    def test_each_group_and_each_other_check_has_a_job(self):
+        jobs = checks.check_jobs(self.cfg)
+        self.assertEqual(
+            {group: [c["name"] for c in items] for group, items in jobs.items()},
+            {"fast": ["build", "lint"], "e2e": ["e2e"], "unit": ["unit"]},
+        )
+        self.assertEqual([e["group"] for e in checks.check_matrix(self.cfg)["include"]], list(jobs))
+
+    def test_without_the_setting_every_check_runs_in_one_job(self):
+        cfg = make_config(checks=[{"name": "a", "run": "true"}, {"name": "b", "run": "true"}])
+        self.assertEqual(checks.check_jobs(cfg), {})
+        self.assertEqual(checks.check_matrix(cfg), {"include": [{"group": "", "timeout": 70}]})
+        self.assertEqual(checks.artifact_name(""), "nexkit-checks")
+        # One job for all the checks is the same as no parallel jobs.
+        one = make_config(
+            parallel_checks=True,
+            checks=[
+                {"name": "a", "run": "true", "group": "g"},
+                {"name": "b", "run": "true", "group": "g"},
+            ],
+        )
+        self.assertEqual(checks.check_jobs(one), {})
+
+    def test_a_job_runs_setup_and_only_its_own_checks(self):
+        results = self.run_job("fast")
+        self.assertEqual([r["name"] for r in results], ["build", "lint"])
+        self.assertTrue(all(r["passed"] for r in results))
+        with self.assertRaisesRegex(ValueError, "No check job"):
+            checks.run_checks(self.cfg, self.root, group="nope")
+
+    def test_combined_results_follow_the_order_of_checks_and_keep_result_files(self):
+        for group in ("unit", "e2e", "fast"):  # in any order they finish
+            self.run_job(group)
+        out = self.root / "out"
+        combined = checks.combine(self.cfg, self.root / "parts", out)
+        self.assertEqual([r["name"] for r in combined], ["build", "e2e", "lint", "unit"])
+        self.assertEqual([r["passed"] for r in combined], [True, False, True, False])
+        self.assertEqual(json.loads((out / "checks.json").read_text()), combined)
+        self.assertEqual(combined[1]["results"], ["out-e2e"])
+        self.assertEqual((out / "results/e2e/out-e2e/log.txt").read_text(), "log\n")
+
+    def test_a_failed_setup_comes_first_once_and_its_jobs_checks_are_left_out(self):
+        # Setup fails only in the job of `fast`, such as on a registry that was down.
+        self.cfg["setup"] = ['case "$PWD" in */repo-fast) exit 3;; esac']
+        for group in ("e2e", "fast", "unit"):
+            self.run_job(group)
+        combined = checks.combine(self.cfg, self.root / "parts", self.root / "out")
+        self.assertEqual([r["name"] for r in combined], ["setup", "e2e", "unit"])
+        self.assertEqual(combined[0]["exit_code"], 3)
+
+    def test_a_job_that_left_no_result_fails_its_checks(self):
+        self.run_job("fast")
+        self.run_job("unit")
+        combined = checks.combine(self.cfg, self.root / "parts", self.root / "out")
+        self.assertEqual([r["name"] for r in combined], ["build", "e2e", "lint", "unit"])
+        self.assertFalse(combined[1]["passed"])
+        self.assertIn("The check job `e2e` ended without a result.", combined[1]["output"])
+
+    def test_the_one_artifact_that_was_downloaded_by_itself_belongs_to_its_job(self):
+        # A pattern that matches one artifact extracts it without its folder.
+        self.run_job("e2e")
+        part = self.root / "parts" / checks.artifact_name("e2e")
+        for item in part.iterdir():
+            item.rename(self.root / "parts" / item.name)
+        part.rmdir()
+        combined = checks.combine(self.cfg, self.root / "parts", self.root / "out")
+        self.assertEqual([r["name"] for r in combined], ["build", "e2e", "lint", "unit"])
+        self.assertIn("e2e failed", combined[1]["output"])
+        self.assertIn("ended without a result", combined[0]["output"])
+        self.assertTrue((self.root / "out/results/e2e/out-e2e/log.txt").is_file())
+
+    def test_each_job_keeps_its_share_of_the_result_files_limit(self):
+        with (
+            mock.patch.object(checks, "RESULTS_LIMIT", 9),
+            mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(self.root / "summary.md")}),
+        ):
+            results = self.run_job("e2e")
+        # Three jobs share 9 bytes: the 4-byte log fits in 3 bytes no more.
+        self.assertEqual(results[0]["results_left_out"], 1)
+        summary = (self.root / "summary.md").read_text()
+        self.assertIn("each of the round's 3 check jobs keeps at most", summary)
+
+
 TOKEN = "ghp_" + "a" * 36
 
 

@@ -312,12 +312,19 @@ class ReportTests(ReportCase):
     def test_a_review_that_never_ran_is_retried_only_after_a_failed_verify_job(self):
         self.candidate(review=False)
         fix = decision("fix", pr=6, target=6, head=HEAD)
-        for verify, expected in (("success", "review_failed"), ("failure", "retry")):
+        # With parallel checks, the combine job that joins them counts as theirs.
+        cases = (
+            ("success", "skipped", "review_failed"),
+            ("success", "failure", "retry"),
+            ("failure", "skipped", "retry"),
+        )
+        for verify, combine, expected in cases:
             os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
             published = {"published": True, "pr": 6, "head": HEAD}
             needs = {
                 "publish": {"outputs": {"result": json.dumps(published)}},
                 "verify": {"result": verify},
+                "combine": {"result": combine},
                 "review": {"result": "skipped"},
             }
             outcome = report(

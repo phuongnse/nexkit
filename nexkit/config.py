@@ -26,6 +26,8 @@ DEFAULTS = {
     "effort": None,
     "setup": [],
     "checks": [],
+    # Run the checks in parallel jobs: each `group`, and each check without one.
+    "parallel_checks": False,
     "cache": [],
     "stages": {
         "plan": {"timeout_minutes": 15, "max_budget_usd": None},
@@ -91,7 +93,7 @@ STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes", "max_budget_usd"}
 AGENT_KEYS = {"runtime", "provider", "fallback"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
-CHECK_KEYS = {"name", "run", "timeout_minutes", "slow", "results"}
+CHECK_KEYS = {"name", "run", "timeout_minutes", "slow", "results", "group"}
 # The most result paths one check may name.
 MAX_RESULTS = 20
 CACHE_KEYS = {"name", "paths", "key_files"}
@@ -505,6 +507,12 @@ def validate(raw, *, layered=False):
         check.setdefault("slow", False)
         _bool(check["slow"], f"{where}.slow")
         _results(check.setdefault("results", []), f"{where}.results")
+        if "group" in check:
+            if not isinstance(check["group"], str) or not NAME.match(check["group"]):
+                _fail(f"{where}.group must be a short lowercase identifier")
+            if cfg["parallel_checks"] is not True:
+                _fail(f"{where}.group needs parallel_checks: true")
+    _bool(cfg["parallel_checks"], "parallel_checks")
     _caches(cfg["cache"])
 
     _profiles(cfg)

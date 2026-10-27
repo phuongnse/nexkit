@@ -104,10 +104,10 @@ def _pair(flag, shape, value):
     return name, rest.strip()
 
 
-def build_checks(checks, *, timeouts=(), slow=(), results=()):
+def build_checks(checks, *, timeouts=(), slow=(), results=(), groups=()):
     """`checks` from the `--check` values, with the per-check flags applied: `timeouts`
-    (NAME=MINUTES), `slow` (NAME) and `results` (NAME=PATH, one path each). The
-    configuration's own validation checks the values."""
+    (NAME=MINUTES), `slow` (NAME), `results` (NAME=PATH, one path each) and `groups`
+    (NAME=GROUP). The configuration's own validation checks the values."""
     built = [parse_check(c) for c in checks]
     for value in timeouts:
         name, minutes = _pair("--check-timeout", "NAME=MINUTES", value)
@@ -119,6 +119,9 @@ def build_checks(checks, *, timeouts=(), slow=(), results=()):
     for value in results:
         name, path = _pair("--check-results", "NAME=PATH", value)
         _check_named(built, "--check-results", name).setdefault("results", []).append(path)
+    for value in groups:
+        name, group = _pair("--check-group", "NAME=GROUP", value)
+        _check_named(built, "--check-group", name)["group"] = group
     return built
 
 
@@ -134,6 +137,8 @@ def init(
     check_timeouts=(),
     check_slow=(),
     check_results=(),
+    check_groups=(),
+    parallel_checks=False,
     notify=(),
     evidence=(),
     after_workflows=(),
@@ -152,11 +157,17 @@ def init(
         "model": model,
         "setup": setup,
         "checks": build_checks(
-            checks, timeouts=check_timeouts, slow=check_slow, results=check_results
+            checks,
+            timeouts=check_timeouts,
+            slow=check_slow,
+            results=check_results,
+            groups=check_groups,
         ),
         "fix": dict(configuration.DEFAULTS["fix"]),
         "merge": {"auto": False},
     }
+    if parallel_checks:
+        raw["parallel_checks"] = True
     if notify:
         raw["notify"] = list(dict.fromkeys(login.lstrip("@") for login in notify))
     if evidence:

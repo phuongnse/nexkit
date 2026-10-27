@@ -22,7 +22,7 @@ Three parts are played around NexKit:
   [`drive` skill](../skills/drive/SKILL.md) and within limits the repository sets; it
   does not review plans or pull requests.
 - **NexKit's agents** plan, implement, fix and review inside the pipeline (see [One run,
-  eight jobs](#one-run-eight-jobs)). They read the repository's agent instructions, such
+  nine jobs](#one-run-nine-jobs)). They read the repository's agent instructions, such
   as CLAUDE.md or AGENTS.md, and never hold a token that can write to the repository.
 
 NexKit carries the work on by itself wherever these docs say it does: automatic fix and
@@ -62,7 +62,7 @@ NexKit merged one with `merge.auto`, opening an issue for anything wrong. Check 
   verify it. When nothing can show it, note what the diff and the check results do show,
   and the person who decides confirms it.
 
-## One run, eight jobs
+## One run, nine jobs
 
 Every command starts one run of the reusable workflow
 [`pipeline.yml`](../.github/workflows/pipeline.yml). Jobs that do not apply are skipped.
@@ -74,7 +74,8 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `route` | every event | read; comments, reactions, statuses; workflow runs (`actions: read`) | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
 | `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
-| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. |
+| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. |
+| `combine` | go, fix, review, with `parallel_checks` | read only | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read. Never checks out or executes repository code. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
 | `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches | contents (to merge); issues, comments, workflows, statuses; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
@@ -85,7 +86,7 @@ into a commit in a different job. As a result:
 
 - The session that runs the agent never holds a token that can write to the repository.
 - Jobs that hold write tokens never run code from the repository or from the agent.
-- Checks run in a job with no secrets at all.
+- Checks run in a job with no secrets at all, and so does each of the parallel check jobs.
 - Jobs that run the agent's code restore caches but never save one, so nothing they
   produce reaches later runs.
 
@@ -247,7 +248,7 @@ implement and review, only when every run in it has a count; otherwise the cell 
 | Artifact | Contains |
 |---|---|
 | `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
-| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round. The next fix round's `agent` job downloads this artifact. |
+| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](configuration.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, and `combine` joins them into this one. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
 artifacts of the stages that ran:

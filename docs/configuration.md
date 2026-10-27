@@ -22,6 +22,7 @@ A complete configuration with every key at its default, except `agents`, `setup`
   "effort": null,
   "setup": ["npm ci"],
   "checks": [{"name": "test", "run": "npm test"}],
+  "parallel_checks": false,
   "cache": [],
   "stages": {},
   "profiles": {},
@@ -55,6 +56,7 @@ their defaults.
 | `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
 | `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable, and the files where each writes its results. See [Checks](#checks). |
+| `parallel_checks` | `false` | Run the checks in parallel jobs, each check, or each `group` of checks, in a job of its own, so a round takes about as long as its slowest job. See [Parallel checks](#parallel-checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
 | `stages` | see [Stages](#stages) | Per-stage agent, model, effort, timeout and budget. |
 | `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See [Profiles](#profiles). |
@@ -116,6 +118,9 @@ their defaults.
 - `results`: files or folders, relative to the repository root, where the check writes its
   results, such as traces, screenshots, test reports and logs. Default `[]`, at most 20.
   See [Result files of failing checks](#result-files-of-failing-checks).
+- `group`: with `parallel_checks`, the job the check runs in, a short lowercase
+  identifier; checks with the same `group` share a job. Without it, the check has a job of
+  its own. See [Parallel checks](#parallel-checks).
 
 `nexkit init` writes each check from `--check NAME=COMMAND`, and its other fields from
 flags that name the check: `--check-timeout NAME=MINUTES`, `--check-slow NAME` and
@@ -126,7 +131,8 @@ nexkit init --check "e2e=scripts/e2e.sh" --check-timeout e2e=40 --check-slow e2e
 ```
 
 Checks run in a separate job that has **no secrets and a read-only token**, on the exact
-commit NexKit published. A setup failure counts as a failed check. With no checks
+commit NexKit published, or with [`parallel_checks`](#parallel-checks) in several such jobs
+at once. A setup failure counts as a failed check. With no checks
 configured, NexKit can still run, but nothing verifies the change except the AI review.
 
 ### Slow checks
@@ -146,6 +152,47 @@ check `"slow": true`:
 With no check marked slow, the agent runs every check, as before. The plan prompt lists
 every check either way.
 
+### Parallel checks
+
+By default the `verify` job runs `setup`, then every check one after another, so a round
+takes as long as all of its checks together. With `"parallel_checks": true`, the checks run
+in several jobs at once, and a round takes about as long as its slowest job plus `setup`:
+
+```json
+"parallel_checks": true,
+"checks": [
+  {"name": "build", "run": "npm run build", "group": "fast"},
+  {"name": "lint", "run": "npm run lint", "group": "fast"},
+  {"name": "test", "run": "npm test", "group": "fast"},
+  {"name": "integration", "run": "scripts/integration.sh", "timeout_minutes": 40},
+  {"name": "e2e", "run": "scripts/e2e.sh", "timeout_minutes": 40, "slow": true}
+]
+```
+
+- Checks with the same `group` run in one job, in the order of `checks`. Each check without
+  a `group` runs in a job of its own, named after the check. The example has three jobs:
+  `fast` (build, lint and test), `integration` and `e2e`. A group may take a check's name,
+  and then that check joins it.
+- Each job is a `verify` job, shown as `verify (<job>)`: it has no secrets and a read-only
+  token, restores the [caches](#caches), runs `setup` and then its own checks, on the same
+  published commit. Its time-out is `limits.setup_timeout_minutes` plus its own checks'
+  `timeout_minutes`, plus 10 minutes.
+- A `combine` job then joins the jobs' results, so the round's result is the same as with
+  one job: one `nexkit/checks` status, one `checks.json` with every check in the order of
+  `checks`, the failing checks' result files under `results/<check>/`, and the same fix
+  prompt. It runs no repository code.
+- A `setup` that fails in one job counts as a failed check, as with one job, and that
+  job's checks do not run. A job that ended without a result, for example because its
+  runner was lost, fails each of its checks, and the review does not run.
+- Each job keeps its share of the round's 50 MB of [result
+  files](#result-files-of-failing-checks): 25 MB each with two jobs.
+- With `parallel_checks` off, or when every check would run in the same job, the single
+  `verify` job runs as before. `group` is refused without `parallel_checks`.
+
+Each job sets up the repository again, so parallel jobs use more runner minutes than one,
+and are worth it when a few slow checks dominate the round. `nexkit init` writes the
+setting from `--parallel-checks`, and each `group` from `--check-group NAME=GROUP`.
+
 ### Result files of failing checks
 
 NexKit keeps only the end of a check's output: the last 12,000 characters in the round's
@@ -163,8 +210,9 @@ failure.
   and images, are kept as they are: the `verify` job holds no secrets that could end up in
   them. Links are not followed, and a path that leads out of the repository is skipped.
 - A round keeps at most 50 MB of result files, in the order of `checks`, then of each
-  check's `results`, then of the file paths. Files that would go past the limit are left
-  out, and the `verify` job's run summary lists them, with the paths that were not found.
+  check's `results`, then of the file paths; with [parallel checks](#parallel-checks), each
+  job keeps its share. Files that would go past the limit are left out, and the `verify`
+  job's run summary lists them, with the paths that were not found.
   Playwright traces of one failed test are often 15 to 20 MB, so keep `results` to the
   folders that explain a failure.
 - The next fix round's `agent` job downloads that artifact to a folder outside the working

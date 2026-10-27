@@ -59,6 +59,12 @@ class ConfigTests(unittest.TestCase):
             ({"checks": [{"name": "a", "run": "x"}, {"name": "a", "run": "y"}]}, "Duplicate"),
             ({"checks": [{"name": "a", "run": " "}]}, "shell command"),
             ({"checks": [{"name": "a", "run": "x", "slow": "yes"}]}, "slow must be true or false"),
+            ({"parallel_checks": "yes"}, "parallel_checks must be true or false"),
+            ({"checks": [{"name": "a", "run": "x", "group": "g"}]}, "group needs parallel_checks"),
+            (
+                {"parallel_checks": True, "checks": [{"name": "a", "run": "x", "group": "Slow"}]},
+                "group must be a short lowercase identifier",
+            ),
             ({"stages": {"deploy": {}}}, "Unknown stage"),
             ({"stages": {"plan": {"timeout_minutes": 0}}}, "timeout_minutes"),
             ({"effort": "extreme"}, "effort"),

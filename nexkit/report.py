@@ -523,8 +523,10 @@ def _transient(decision, agent, publish, needs, stage="agent"):
     if result == "skipped":
         # The review runs only after the checks: when their job failed as a whole, that
         # job is what another try may pass.
-        verify = (needs.get("verify") or {}).get("result")
-        return "the verify job ended without a result" if verify == "failure" else None
+        for job in ("verify", "combine"):
+            if (needs.get(job) or {}).get("result") == "failure":
+                return f"the {job} job ended without a result"
+        return None
     if agent is None:
         return f"the {stage} job ended without a result"
     if agent.get("status") == "error" and agent.get("transient"):

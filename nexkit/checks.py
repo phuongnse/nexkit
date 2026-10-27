@@ -6,6 +6,7 @@ import json
 import os
 import posixpath
 import re
+import shutil
 import signal
 import subprocess
 import time
@@ -271,11 +272,12 @@ def _result_files(root, path):
     return sorted(found, key=lambda file: file.relative_to(root).as_posix())
 
 
-def keep_results(cfg, results, cwd, out_dir, redact=None):
+def keep_results(cfg, results, cwd, out_dir, redact=None, jobs=1):
     """Copy the files that each failing check names in `results` into
     `out_dir/results/<check>/<path>`, for the next fix round. Text files are redacted;
     binary files are copied as they are. Missing paths are skipped. In check order, then
-    path order, files that would take the round past RESULTS_LIMIT are left out.
+    path order, files that would take the round past RESULTS_LIMIT are left out; when
+    the round's checks run in several `jobs`, past this job's share of it.
 
     Each failing check's result gets `results`, the paths of which files were kept, and
     `results_left_out`, the number of its files left out. When kept files are JUnit XML
@@ -284,6 +286,7 @@ def keep_results(cfg, results, cwd, out_dir, redact=None):
     none past FAILED_TESTS_LIMIT. Returns the lines for the run summary, or [] when no
     failing check names result files."""
     redact = redact or Redactor()
+    limit = RESULTS_LIMIT // jobs
     root = Path(cwd)
     named = {check["name"]: check.get("results") or [] for check in cfg["checks"]}
     used = kept = 0
@@ -306,7 +309,7 @@ def keep_results(cfg, results, cwd, out_dir, redact=None):
                 shown = f"{result['name']}: {one_line(relative)}"
                 try:
                     size = file.stat().st_size
-                    if used + size > RESULTS_LIMIT:
+                    if used + size > limit:
                         left_out.append(f"{shown} ({size_text(size)})")
                         result["results_left_out"] += 1
                         continue
@@ -339,10 +342,12 @@ def keep_results(cfg, results, cwd, out_dir, redact=None):
         f"Kept {kept} {'file' if kept == 1 else 'files'} ({size_text(used)}) of the failing "
         "checks for the next fix round.",
     ]
-    limit = size_text(RESULTS_LIMIT)
+    most = f"a round keeps at most {size_text(limit)}"
+    if jobs > 1:
+        most = f"each of the round's {jobs} check jobs keeps at most {size_text(limit)}"
     for title, items in (
         ("**Not found**", missing),
-        (f"**Left out** ({len(left_out)}): a round keeps at most {limit}", left_out),
+        (f"**Left out** ({len(left_out)}): {most}", left_out),
     ):
         if items:
             text = "\n".join(items)
@@ -350,9 +355,50 @@ def keep_results(cfg, results, cwd, out_dir, redact=None):
     return lines
 
 
-def run_checks(cfg, cwd, out_dir=None, commits=None):
-    """Run setup, then every check. A setup failure is reported as a failed check. With
-    `out_dir`, the failing checks' result files are kept there too (see `keep_results`)."""
+def check_jobs(cfg):
+    """{job: [check, ...]} for checks that run in parallel jobs, in the order of `checks`:
+    with `parallel_checks`, the checks of one `group` share a job, and each other check
+    has a job of its own, named after it. {} when the checks run in one job: with
+    `parallel_checks` off, or when every check would run in the same job."""
+    if not cfg.get("parallel_checks"):
+        return {}
+    jobs = {}
+    for check in cfg["checks"]:
+        jobs.setdefault(check.get("group") or check["name"], []).append(check)
+    return jobs if len(jobs) > 1 else {}
+
+
+def check_matrix(cfg):
+    """The `verify` job's matrix: one entry per job of `check_jobs`, each with the job's
+    name and time-out, or one entry with no name that runs every check, as one job."""
+    setup = cfg["limits"]["setup_timeout_minutes"]
+
+    def entry(group, checks):
+        return {"group": group, "timeout": sum(c["timeout_minutes"] for c in checks) + setup + 10}
+
+    jobs = check_jobs(cfg)
+    if not jobs:
+        return {"include": [entry("", cfg["checks"])]}
+    return {"include": [entry(group, checks) for group, checks in jobs.items()]}
+
+
+def _only(cfg, group):
+    """`cfg` with only the checks of the job `group` of `check_jobs`; all of them for ""."""
+    if not group:
+        return cfg
+    jobs = check_jobs(cfg)
+    if group not in jobs:
+        raise ValueError(f"No check job is named '{group}'")
+    return {**cfg, "checks": jobs[group]}
+
+
+def run_checks(cfg, cwd, out_dir=None, commits=None, group=""):
+    """Run setup, then every check, or with `group` the checks of that job of
+    `check_jobs`. A setup failure is reported as a failed check. With `out_dir`, the
+    failing checks' result files are kept there too (see `keep_results`); each of
+    several jobs keeps its share of RESULTS_LIMIT, so the round stays within it."""
+    jobs = len(check_jobs(cfg)) if group else 1
+    cfg = _only(cfg, group)
     failed_setup = setup(cfg, cwd, commits=commits)
     results = [failed_setup] if failed_setup else []
     env = environment(commits)
@@ -375,8 +421,69 @@ def run_checks(cfg, cwd, out_dir=None, commits=None):
     if out_dir:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
         redact = Redactor()
-        lines = keep_results(cfg, results, cwd, out_dir, redact)
+        lines = keep_results(cfg, results, cwd, out_dir, redact, jobs)
         if lines:
             write_summary("\n".join(lines) + "\n", redact)
         (Path(out_dir) / "checks.json").write_text(json.dumps(results, indent=2))
     return results
+
+
+def artifact_name(group):
+    """The artifact of the `verify` job that runs the checks of `group`: `nexkit-checks`
+    for the one job that runs them all, which the other jobs read."""
+    return f"nexkit-checks-{group}" if group else "nexkit-checks"
+
+
+def _read_results(path):
+    try:
+        results = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    return results if isinstance(results, list) else None
+
+
+def combine(cfg, parts, out_dir):
+    """Join the results of the parallel `verify` jobs, each downloaded to
+    `parts/<artifact_name>/`, into `out_dir` as one job would have left them: one
+    `checks.json` in the order of `checks`, and each job's `results/<check>/` files. A
+    setup that failed comes first, once, and the checks of its job are left out, as after
+    a setup failure in one job. A job that left no result fails each of its checks.
+    Returns the results.
+
+    When only one job left an artifact, the download puts it in `parts` itself; it
+    belongs to the job whose checks it names."""
+    parts, out = Path(parts), Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    found, setups = {}, []
+    flat = _read_results(parts / "checks.json")
+    for group, checks in check_jobs(cfg).items():
+        folder = parts / artifact_name(group)
+        results = _read_results(folder / "checks.json")
+        names = {"setup", *(check["name"] for check in checks)}
+        if results is None and flat is not None and {r.get("name") for r in flat} <= names:
+            folder, results, flat = parts, flat, None
+        if results is None:
+            print(f"The check job `{group}` left no result.", flush=True)
+            results = [
+                {
+                    "name": check["name"],
+                    "run": check["run"],
+                    "exit_code": None,
+                    "passed": False,
+                    "seconds": None,
+                    "output": f"The check job `{group}` ended without a result.",
+                }
+                for check in checks
+            ]
+        for result in results:
+            if result.get("name") == "setup":
+                setups.append(result)
+            elif result.get("name") in names:
+                found[result["name"]] = result
+        if (folder / RESULTS_DIR).is_dir():
+            shutil.copytree(
+                folder / RESULTS_DIR, out / RESULTS_DIR, symlinks=True, dirs_exist_ok=True
+            )
+    combined = setups[:1] + [found[c["name"]] for c in cfg["checks"] if c["name"] in found]
+    (out / "checks.json").write_text(json.dumps(combined, indent=2))
+    return combined

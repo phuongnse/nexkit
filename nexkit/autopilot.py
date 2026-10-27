@@ -845,7 +845,7 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
             return _step(issue, "waits", reason)
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") == "merge_waiting":
-        return _merge_step(gh, issue, pull, comment, latest, start, now)
+        return _merge_step(gh, cfg, issue, pull, comment, latest, start, now)
     if latest.get("outcome") == CI_WAITING:
         return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start)
     if latest.get("status") == FAILURE:
@@ -862,12 +862,13 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
     return _step(issue, "active", f"pull request #{pull} is open")
 
 
-def _merge_step(gh, issue, pull, comment, run, start, now):
+def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
     """The step for a pull request whose merge waits for required checks: try the merge
     again while its head is the one approved, for at most `LOST`. A new commit on its
     branch gets `/nexkit review`, as a merge refused because the branch moved does. A
     required check that failed gets an automatic fix round when the sweep tries the merge
-    (see `report.merge_waiting`)."""
+    (see `report.merge_waiting`), and a branch behind its base, however long it waited,
+    an update from it when `conflicts.auto_resolve` is on."""
     details = gh.pull(pull)
     head = details["head"]["sha"]
     if head != run.get("head"):
@@ -878,7 +879,8 @@ def _merge_step(gh, issue, pull, comment, run, start, now):
         fields = {**start, "target": pull, "auto": "true"}
         return _step(issue, "start", reason, command="review", **fields)
     since = parse_iso(run.get("waiting_since"))
-    if since and now - since > LOST:
+    behind = cfg["conflicts"]["auto_resolve"] and details.get("mergeable_state") == "behind"
+    if since and now - since > LOST and not behind:
         reason = f"the required checks of pull request #{pull} have not passed for hours"
         return _step(issue, "waits", reason)
     base = (details.get("base") or {}).get("ref") or ""

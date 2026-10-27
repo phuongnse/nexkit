@@ -805,7 +805,8 @@ requests conflict.
   starts a conflict round right away, within the same limits.
 - When it is refused because branch protection wants the branch up to date, NexKit
   merges the base branch into it on GitHub and runs its checks again, within the same
-  limits. The AI review runs again only when the pull request's own change differs from
+  limits. A refusal that says required checks are "expected" on a pull request GitHub
+  reports as behind counts the same, also while the merge waits for them. The AI review runs again only when the pull request's own change differs from
   the one it approved (see [Automatic merge](#automatic-merge)).
 - A conflict that needs a choice ends the round as `blocked` with its questions; a person
   answers with `/nexkit fix <decisions>`.

@@ -468,6 +468,7 @@ class FakeGitHub:
     def update_branch(self, number, sha):
         self.updated.append((number, sha))
         self.pulls[number]["head"]["sha"] = "e" * 40
+        self.pulls[number].pop("mergeable_state", None)
 
     def set_status(self, sha, context, state, description, target_url=None):
         self.statuses.append(

@@ -252,6 +252,8 @@ class RouteTests(unittest.TestCase):
         decision = route(self.gh, "workflow_dispatch", event, inputs)
         self.assertEqual(decision["carry_from"], "a" * 40)
         self.assertTrue(decision["auto"])
+        # The one more try after a transient error may carry it over too.
+        self.assertEqual(auto_input(decision, retry=True), "true,retry,carry")
         # Only that review: not one the branch update did not start, nor a fix round.
         inputs["auto"] = "true"
         self.assertNotIn("carry_from", route(self.gh, "workflow_dispatch", event, inputs))

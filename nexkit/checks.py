@@ -439,7 +439,9 @@ def _read_results(path):
         results = json.loads(Path(path).read_text())
     except (OSError, ValueError):
         return None
-    return results if isinstance(results, list) else None
+    if not isinstance(results, list):
+        return None
+    return [result for result in results if isinstance(result, dict)]
 
 
 def combine(cfg, parts, out_dir):

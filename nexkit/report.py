@@ -904,6 +904,11 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
         return "merge_refused", f"{message}\n\n{note}"
     try:
         gh.update_branch(pr, head)
+        if target.get("state") is not None:
+            # The reporting round's approval, before the review it starts reads it: an
+            # implement round's report runs beside that review, in the issue's queue.
+            progress.save_state(gh, pr, target.get("state_comment"), target["state"])
+            target["state_comment"] = read_state(gh.comments(pr))[0]
         for _ in range(UPDATE_TRIES):
             if gh.pull(pr)["head"]["sha"] != head:
                 break
@@ -1137,7 +1142,8 @@ def carried_over(state, reviewed):
 def _carry_line(decision, base, carry):
     """What the round's comment says about carrying the approval over, or ""."""
     sha = decision.get("carry_from") or ""
-    if not sha:
+    if not sha or "carried" not in carry:
+        # No comparison: the review job did not run, or stopped before it compared.
         return ""
     if carry.get("carried"):
         return (
@@ -1145,7 +1151,7 @@ def _carry_line(decision, base, carry):
             f"`{base}` into it without a conflict, and the pull request's own change is the "
             "one the review approved."
         )
-    why = carry.get("why") or "the review job did not compare the changes"
+    why = carry.get("why") or "the changes differ"
     return f"The AI review ran again rather than carry over the approval of `{sha[:7]}`: {why}."
 
 
@@ -1225,8 +1231,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     comments = gh.comments(pr)
     comment_id, state = read_state(comments)
     state = state or empty_state(decision["issue"])
+    # Only the review this round's decision named carries over.
     carried = (
-        bool(reviewed) and reviewed.get("status") == "carried" and bool(reviewed.get("carried"))
+        bool(reviewed)
+        and reviewed.get("status") == "carried"
+        and bool(decision.get("carry_from"))
+        and reviewed.get("carried") == decision["carry_from"]
     )
     if carried:
         review = carried_over(state, reviewed)
@@ -1298,10 +1308,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         elif cfg["merge"]["auto"]:
             target = {"pr": pr, "head": head, "issue": decision["issue"], "base": decision["base"]}
             # A required check that failed gets its fix round through this round's state.
-            target["state"] = state
+            target.update(state=state, state_comment=comment_id)
             outcome, message = merge_pull(
                 gh, cfg, target, row, message, workflow_file(workflow_ref), default_branch
             )
+            comment_id = target["state_comment"]
     elif verdict is None:
         outcome = "review_failed"
         message = review_failure(reviewed)[1]

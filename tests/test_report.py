@@ -338,6 +338,22 @@ class ReportTests(ReportCase):
             )
             self.assertEqual(outcome["outcome"], expected)
 
+    def test_only_the_review_the_decision_names_carries_over(self):
+        self.candidate(review={"stage": "review", "status": "carried", "carried": "a" * 40})
+        review = decision("review", pr=6, target=6, head=HEAD)
+        # Without `carry_from`, a carried result is no review at all.
+        outcome = self.run_report(d=review, published=False)
+        self.assertEqual(outcome["outcome"], "review_failed")
+        self.assertNotIn("carried over", outcome["summary"])
+        # With it, the round is ready on the earlier approval, without a new PR review.
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        self.write("nexkit-review", "carry.json", {"from": "a" * 40, "carried": True, "why": ""})
+        outcome = self.run_report(d={**review, "carry_from": "a" * 40}, published=False)
+        self.assertEqual(outcome["outcome"], "ready")
+        self.assertIn("The AI review of `aaaaaaa` carried over", outcome["summary"])
+        self.assertFalse(self.gh.created_reviews)
+        self.assertIn(("nexkit/review", "success"), self.statuses())
+
     def test_a_review_that_failed_on_a_transient_error_runs_once_more(self):
         self.candidate(review={"status": "error", "error": "API Error: 503", "transient": True})
         outcome = self.run_report(d=decision("fix", pr=6, target=6, head=HEAD, autopilot=True))

@@ -610,8 +610,9 @@ commit as after any round: when they pass, NexKit merges it with the earlier app
 when they fail, an automatic fix round starts as after any failing checks, counted in
 `fix.max_auto_rounds`, and its own review runs as usual. Otherwise the review runs as
 before, and the round's comment says why. A merge that has a conflict is a conflict round
-instead (see *Conflicts with the base branch* above), which the review always follows. A
-`/nexkit review` that a person comments never carries an approval over.
+instead (see *Conflicts with the base branch* above), which the review always follows. The one
+more try after a transient error compares the same way. A `/nexkit review` that a person
+comments never carries an approval over.
 
 **After an automatic merge.** NexKit closes the issue the pull request implements, as
 GitHub does after a person's merge but not after one with the Actions token. For the same

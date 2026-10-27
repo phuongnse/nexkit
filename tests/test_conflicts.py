@@ -15,7 +15,7 @@ from nexkit import agent, cli
 from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
 from nexkit.route import route
-from nexkit.state import BOT_LOGIN, render_run
+from nexkit.state import BOT_LOGIN, approved_head, render_run
 from nexkit.usage import iso
 from tests.support import FakeGitHub, GitRepos, git, make_config
 from tests.test_report import HEAD, ReportCase, decision
@@ -779,6 +779,24 @@ class MergeRefusalTests(ReportCase):
         self.gh.pulls[6]["head"]["sha"] = HEAD
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
         self.assertEqual(len(self.gh.updated), 1)
+
+    def test_the_review_after_an_update_finds_the_approval_it_carries_over(self):
+        # An implement round's report runs beside the review it starts, which reads the
+        # approval from the state comment: it is saved before the review is started.
+        self.candidate()
+        self.gh.merge_error = GitHubError(405, "Head branch is out of date. Review and try again.")
+        seen, dispatch = [], self.gh.dispatch
+
+        def dispatched(workflow, ref, inputs, run_details=False):
+            if inputs.get("command") == "review":
+                seen.append((inputs["auto"], approved_head(self.gh.comments(6))))
+            return dispatch(workflow, ref, inputs, run_details)
+
+        self.gh.dispatch = dispatched
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "branch_updated")
+        self.assertEqual(seen, [("true,carry", HEAD)])
+        # One state comment, edited in place afterwards.
+        self.assertEqual(len(self.gh.comments_matching(6, "nexkit:state")), 1)
 
     def test_a_refusal_that_needs_a_person_names_githubs_reason(self):
         self.candidate()

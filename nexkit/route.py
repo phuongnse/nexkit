@@ -112,6 +112,7 @@ def auto_input(decision, resume=False, retry=False):
     kinds += [AUTOPILOT] if decision.get(AUTOPILOT) else []
     kinds += [RESUME] if resume else []
     kinds += [RETRY] if retry or decision.get(RETRY) else []
+    kinds += [CARRY] if decision.get("carry_from") else []
     return ",".join(kinds) or "false"
 
 

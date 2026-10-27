@@ -148,6 +148,15 @@ class ParallelChecksTests(unittest.TestCase):
         self.assertFalse(combined[1]["passed"])
         self.assertIn("The check job `e2e` ended without a result.", combined[1]["output"])
 
+    def test_entries_that_are_not_results_are_left_out(self):
+        for group in ("fast", "unit"):
+            self.run_job(group)
+        part = self.root / "parts" / checks.artifact_name("e2e")
+        part.mkdir(parents=True)
+        (part / "checks.json").write_text('["e2e", {"name": "e2e", "passed": true}]')
+        combined = checks.combine(self.cfg, self.root / "parts", self.root / "out")
+        self.assertEqual([r["name"] for r in combined], ["build", "e2e", "lint", "unit"])
+
     def test_the_one_artifact_that_was_downloaded_by_itself_belongs_to_its_job(self):
         # A pattern that matches one artifact extracts it without its folder.
         self.run_job("e2e")

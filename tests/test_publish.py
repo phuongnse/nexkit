@@ -491,6 +491,14 @@ class PublishTests(unittest.TestCase):
         self.assertIn("Passed on `main` since", data["no_change"])
         self.assertNotIn("protected_paths", plan_data(self.posted(render_plan(PLAN))))
 
+    def test_a_plan_whose_no_change_is_only_quotes_finds_nothing(self):
+        for empty in ('""', "''", '" "', "  "):
+            body = render_plan({**PLAN, "no_change": empty})
+            self.assertNotIn("No change needed", body)
+            self.assertNotIn("no_change", plan_data(self.posted(body)))
+        body = render_plan({**PLAN, "no_change": '"The host answered 409."'})
+        self.assertIn('### No change needed\n\n"The host answered 409."', body)
+
     def posted(self, body):
         return self.gh.comment(5, body)
 

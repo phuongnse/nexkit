@@ -468,6 +468,16 @@ class RunStageTests(StageCase):
         self.assertEqual(result["status"], "error")
         self.assertIn("found that no change is needed but changed `calc.py`", result["error"])
 
+    def test_a_no_change_of_only_quotes_is_no_finding(self):
+        self.claude.configure(result={**DONE, "no_change": '""'})
+        result = self.run_stage("implement")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("without changing", result["error"])
+        self.assertNotIn("no_change", result)
+        self.claude.configure(result={**DONE, "no_change": "' '"}, write={"calc.py": "x\n"})
+        result = self.run_stage("implement")
+        self.assertEqual((result["status"], result.get("no_change")), ("done", None))
+
     def test_a_plan_reads_the_evidence_of_the_ci_runs_outside_the_checkout(self):
         folder = Path(self.tmp.name) / "nexkit-evidence"
         (folder / "run-50" / "attempt-1").mkdir(parents=True)

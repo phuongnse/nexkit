@@ -22,6 +22,7 @@ from .maintain import (
 )
 from .route import auto_input
 from .runlog import add_tokens, one_line
+from .schema import filled
 from .state import (
     CONTINUED,
     FAILURE,
@@ -390,7 +391,7 @@ def protected_paths(agent):
 def no_change_finding(agent):
     """What an agent found when it says no change is needed, with the runs that passed on
     the default branch since the CI runs the issue names, or ""."""
-    finding = str(((agent or {}).get("output") or {}).get("no_change") or "").strip()
+    finding = filled(((agent or {}).get("output") or {}).get("no_change"))
     if not finding:
         return ""
     passed = passed_lines((agent or {}).get("passed_since"))
@@ -459,7 +460,7 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
         plan = plan or {}
         if plan.get("too_large"):
             return "the plan says the issue is too large for one session"
-        if str(plan.get("no_change") or "").strip():
+        if filled(plan.get("no_change")):
             return NO_CHANGE_PLAN
         if plan.get("protected_paths"):
             return autopilot.protected_reason(plan["protected_paths"])

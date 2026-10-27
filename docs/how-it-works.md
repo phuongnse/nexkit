@@ -337,7 +337,8 @@ that a person makes that change by hand, and autopilot starts no `/nexkit go` (s
 [Troubleshooting](troubleshooting.md#the-plans-change-is-in-protected-paths)). A plan
 that finds no change is needed, such as for a failure from outside the repository that
 has passed since, writes the finding in `no_change`; with autopilot, the issue closes
-with it.
+with it. A `no_change` with no text once quotes and whitespace are removed, such as `""`,
+is no finding, in a plan or a round: the plan or round goes on as with an empty string.
 
 Each acceptance criterion is something the review can verify from what it sees: a test in
 the change, or the result of a project check on the candidate commit. Steps that only the

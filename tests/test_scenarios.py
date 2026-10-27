@@ -776,6 +776,19 @@ class ScenarioTests(unittest.TestCase):
         self.assertIn(line, closing["body"])
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
 
+    def test_a_plan_whose_no_change_is_only_quotes_goes_on_to_its_change(self):
+        # An agent wrote the empty string as `""`: the plan's change is still made.
+        def script(pipe, inputs):
+            return plan(no_change='""') if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "merged")
+        self.assertEqual(pipe.gh.issues[5]["state_reason"], "completed")
+        self.assertFalse(pipe.gh.comments_matching(5, "No change needed"))
+        self.assertFalse(pipe.gh.comments_matching(5, "no change is needed"))
+
     def test_a_round_that_finds_no_change_needed_closes_the_issue(self):
         finding = "The page already shows the release: test_release passes on main."
 

@@ -14,6 +14,7 @@ from . import config as configuration
 from .github import GitHubError
 from .gitutil import BOT_EMAIL, BOT_NAME, GitError, git, is_ancestor, merge_tree, names
 from .runlog import stage_agent
+from .schema import filled
 from .state import (
     PLAN_MARKER,
     PROTECTED_ENTRY,
@@ -137,7 +138,7 @@ def render_plan(output, profile=None, replan=False, passed=()):
     `profile` comes from `render_profile`, when profiles are configured. A re-plan says how
     it differs from the latest plan. `passed` holds the runs that passed since the CI runs
     the issue names, shown with a finding that no change is needed."""
-    finding = str(output.get("no_change") or "").strip()
+    finding = filled(output.get("no_change"))
     protected = output.get("protected_paths") or []
     record, text = profile or (None, None)
     parts = [PLAN_MARKER, *([record] if record else []), "## Plan", "", output["summary"].strip()]

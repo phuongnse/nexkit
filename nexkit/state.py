@@ -445,6 +445,16 @@ def read_state(comments):
     return _find(comments, STATE_PATTERN)
 
 
+def approved_head(comments):
+    """The commit that the pull request's last completed review approved, or None."""
+    _, state = read_state(comments)
+    last = (state or {}).get("last_review") or {}
+    head = last.get("head")
+    if last.get("verdict") == "approve" and isinstance(head, str) and len(head) == 40:
+        return head
+    return None
+
+
 def ci_wait_reason(wait):
     """Why a pull request's round waits for a bug issue about the default branch, from the
     round's `ci_wait` record."""

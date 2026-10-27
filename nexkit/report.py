@@ -273,6 +273,8 @@ def _set_statuses(gh, head, checks, review, url, review_error=""):
     if verdict:
         if verdict != "approve":
             text = "AI review requested changes"
+        elif review.get("carried"):
+            text = f"AI review of {review['carried'][:7]} carried over; the change is the same"
         elif unverified(review):
             text = "AI review approved; a person confirms the criteria it could not verify"
         else:
@@ -523,8 +525,10 @@ def _transient(decision, agent, publish, needs, stage="agent"):
     if result == "skipped":
         # The review runs only after the checks: when their job failed as a whole, that
         # job is what another try may pass.
-        verify = (needs.get("verify") or {}).get("result")
-        return "the verify job ended without a result" if verify == "failure" else None
+        for job in ("verify", "combine"):
+            if (needs.get(job) or {}).get("result") == "failure":
+                return f"the {job} job ended without a result"
+        return None
     if agent is None:
         return f"the {stage} job ended without a result"
     if agent.get("status") == "error" and agent.get("transient"):
@@ -900,21 +904,28 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
         return "merge_refused", f"{message}\n\n{note}"
     try:
         gh.update_branch(pr, head)
+        if target.get("state") is not None:
+            # The reporting round's approval, before the review it starts reads it: an
+            # implement round's report runs beside that review, in the issue's queue.
+            progress.save_state(gh, pr, target.get("state_comment"), target["state"])
+            target["state_comment"] = read_state(gh.comments(pr))[0]
         for _ in range(UPDATE_TRIES):
             if gh.pull(pr)["head"]["sha"] != head:
                 break
             time.sleep(UPDATE_WAIT)
+        # The review carries this round's approval over when the change is the same.
         gh.dispatch(
             workflow,
             default_branch,
-            {"command": "review", "number": str(pr), "note": "", "auto": "true"},
+            {"command": "review", "number": str(pr), "note": "", "auto": "true,carry"},
         )
     except GitHubError as error:
         return "merge_refused", f"{message}\n\nNexKit could not update the branch: {error}"
     row["updated_branch"] = True
     line = (
         f"It is behind `{base}`, which branch protection does not allow: NexKit merged `{base}` "
-        "into it and started `/nexkit review` on the new commit."
+        "into it and started `/nexkit review` on the new commit, which checks it and keeps "
+        "this approval when the pull request's own change is the same."
     )
     return "branch_updated", f"{message}\n\n{line}"
 
@@ -1113,6 +1124,37 @@ def wait_for_reset(gh, cfg, at, workflow_ref, default_branch):
         print(f"warning: could not start waiting for the reset: {exc}", file=sys.stderr)
 
 
+def carried_over(state, reviewed):
+    """The review a round carried over from the approved commit its head merged the base
+    branch into, with that review's findings, as the state comment kept them."""
+    sha = reviewed["carried"]
+    last = state.get("last_review") or {}
+    findings = (last.get("findings") or []) if last.get("head") == sha else []
+    return {
+        "verdict": "approve",
+        "summary": f"The review of `{sha[:7]}` carried over.",
+        "criteria": [],
+        "findings": findings,
+        "carried": sha,
+    }
+
+
+def _carry_line(decision, base, carry):
+    """What the round's comment says about carrying the approval over, or ""."""
+    sha = decision.get("carry_from") or ""
+    if not sha or "carried" not in carry:
+        # No comparison: the review job did not run, or stopped before it compared.
+        return ""
+    if carry.get("carried"):
+        return (
+            f"The AI review of `{sha[:7]}` carried over, so no review agent ran: NexKit merged "
+            f"`{base}` into it without a conflict, and the pull request's own change is the "
+            "one the review approved."
+        )
+    why = carry.get("why") or "the changes differ"
+    return f"The AI review ran again rather than carry over the approval of `{sha[:7]}`: {why}."
+
+
 def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     action = decision["action"]
     agent = _load(artifacts / "nexkit-agent" / "result.json")
@@ -1189,6 +1231,16 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     comments = gh.comments(pr)
     comment_id, state = read_state(comments)
     state = state or empty_state(decision["issue"])
+    # Only the review this round's decision named carries over.
+    carried = (
+        bool(reviewed)
+        and reviewed.get("status") == "carried"
+        and bool(decision.get("carry_from"))
+        and reviewed.get("carried") == decision["carry_from"]
+    )
+    if carried:
+        review = carried_over(state, reviewed)
+    carry = _load(artifacts / "nexkit-review" / "carry.json") or {}
     # A round that waited for the default branch is over once another round reports.
     state.pop("ci_wait", None)
     round_id, row = progress.find_round(comments, decision)
@@ -1203,7 +1255,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     else:
         failed = "" if review else review_failure(reviewed)[0]
         checks_ok, verdict = _set_statuses(gh, head, checks, review, url, failed)
-    if review:
+    if given:
         gh.create_review(pr, head, review_body({"output": given}, checks))
 
     row.update(
@@ -1213,6 +1265,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         tokens=_tokens(agent if action != "review" else None, reviewed),
     )
     _show_agents(row, agent if action != "review" else None, reviewed)
+    if carried:
+        row["carried"] = reviewed["carried"]
     _record(state, decision, row, agent or {}, review, checks)
     # The checks this round's fix was asked to fix, before they are replaced.
     before = failing_signatures((state.get("feedback") or {}).get("checks"))
@@ -1238,9 +1292,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             row["resume"] = resume
     elif checks_ok and verdict == "approve":
         outcome = "ready"
+        approved = f"the AI review approved `{head[:7]}`"
+        if carried:
+            approved = f"the AI review's approval carried over to `{head[:7]}`"
         message = (
-            f"✅ Checks passed and the AI review approved `{head[:7]}`. "
-            "This pull request is ready for a human decision."
+            f"✅ Checks passed and {approved}. This pull request is ready for a human decision."
         )
         if confirm:
             held = " NexKit does not merge it by itself." if cfg["merge"]["auto"] else ""
@@ -1252,10 +1308,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         elif cfg["merge"]["auto"]:
             target = {"pr": pr, "head": head, "issue": decision["issue"], "base": decision["base"]}
             # A required check that failed gets its fix round through this round's state.
-            target["state"] = state
+            target.update(state=state, state_comment=comment_id)
             outcome, message = merge_pull(
                 gh, cfg, target, row, message, workflow_file(workflow_ref), default_branch
             )
+            comment_id = target["state_comment"]
     elif verdict is None:
         outcome = "review_failed"
         message = review_failure(reviewed)[1]
@@ -1317,6 +1374,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"
         done = f" and resolved conflicts in {files}." if files else ", which was behind it."
         message = f"{merged}{done}\n\n{message}"
+    carry_line = _carry_line(decision, decision["base"], carry)
+    if carry_line:
+        message = f"{carry_line}\n\n{message}"
     if action == "implement" and outcome in IMPLEMENT_LEFT and cfg["conflicts"]["auto_resolve"]:
         message += _conflicts_after(
             gh, cfg, decision, pr, row, workflow_file(workflow_ref), default_branch

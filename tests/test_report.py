@@ -312,12 +312,19 @@ class ReportTests(ReportCase):
     def test_a_review_that_never_ran_is_retried_only_after_a_failed_verify_job(self):
         self.candidate(review=False)
         fix = decision("fix", pr=6, target=6, head=HEAD)
-        for verify, expected in (("success", "review_failed"), ("failure", "retry")):
+        # With parallel checks, the combine job that joins them counts as theirs.
+        cases = (
+            ("success", "skipped", "review_failed"),
+            ("success", "failure", "retry"),
+            ("failure", "skipped", "retry"),
+        )
+        for verify, combine, expected in cases:
             os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
             published = {"published": True, "pr": 6, "head": HEAD}
             needs = {
                 "publish": {"outputs": {"result": json.dumps(published)}},
                 "verify": {"result": verify},
+                "combine": {"result": combine},
                 "review": {"result": "skipped"},
             }
             outcome = report(
@@ -330,6 +337,22 @@ class ReportTests(ReportCase):
                 default_branch="main",
             )
             self.assertEqual(outcome["outcome"], expected)
+
+    def test_only_the_review_the_decision_names_carries_over(self):
+        self.candidate(review={"stage": "review", "status": "carried", "carried": "a" * 40})
+        review = decision("review", pr=6, target=6, head=HEAD)
+        # Without `carry_from`, a carried result is no review at all.
+        outcome = self.run_report(d=review, published=False)
+        self.assertEqual(outcome["outcome"], "review_failed")
+        self.assertNotIn("carried over", outcome["summary"])
+        # With it, the round is ready on the earlier approval, without a new PR review.
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        self.write("nexkit-review", "carry.json", {"from": "a" * 40, "carried": True, "why": ""})
+        outcome = self.run_report(d={**review, "carry_from": "a" * 40}, published=False)
+        self.assertEqual(outcome["outcome"], "ready")
+        self.assertIn("The AI review of `aaaaaaa` carried over", outcome["summary"])
+        self.assertFalse(self.gh.created_reviews)
+        self.assertIn(("nexkit/review", "success"), self.statuses())
 
     def test_a_review_that_failed_on_a_transient_error_runs_once_more(self):
         self.candidate(review={"status": "error", "error": "API Error: 503", "transient": True})

@@ -7,8 +7,12 @@
 #          that the last round's failing checks kept
 # publish  post the plan, or commit the patch and open the PR; never runs repo code
 # verify   run setup and checks on the exact candidate; no secrets at all; restores
-#          caches but never saves one
-# review   independent read-only agent review of that candidate
+#          caches but never saves one; with parallel_checks, one job per check job
+# combine  with parallel_checks, join the check jobs' results into one nexkit-checks;
+#          no secrets, no repository checkout
+# review   independent read-only agent review of that candidate; after NexKit brought an
+#          approved pull request up to date with a clean merge, the approval carries over
+#          when the change is the same, and no agent runs
 # report   statuses, PR review, run and state comments, next automatic round; with
 #          merge.auto, the merge and the base branch's merge.after_workflows
 # maintain work that follows other events: closing a parent issue, resuming commands
@@ -68,7 +72,8 @@ jobs:
       agent_ref: ${{ steps.route.outputs.agent_ref }}
       agent_timeout: ${{ steps.route.outputs.agent_timeout }}
       review_timeout: ${{ steps.route.outputs.review_timeout }}
-      checks_timeout: ${{ steps.route.outputs.checks_timeout }}
+      check_matrix: ${{ steps.route.outputs.check_matrix }}
+      parallel_checks: ${{ steps.route.outputs.parallel_checks }}
       agent_secrets: ${{ steps.route.outputs.agent_secrets }}
       review_secrets: ${{ steps.route.outputs.review_secrets }}
       maintain_timeout: ${{ steps.route.outputs.maintain_timeout }}
@@ -233,8 +238,13 @@ jobs:
       (needs.route.outputs.action == 'review' ||
        (contains(fromJSON('["implement","fix"]'), needs.route.outputs.action) &&
         needs.publish.outputs.head != ''))
+    # One job that runs every check, or with parallel_checks one per check job (route).
+    name: ${{ matrix.group && format('verify ({0})', matrix.group) || 'verify' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.route.outputs.check_matrix || '{"include":[{"group":"","timeout":10}]}') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ fromJSON(needs.route.outputs.checks_timeout) }}
+    timeout-minutes: ${{ matrix.timeout }}
     permissions:
       contents: read
     steps:
@@ -266,9 +276,48 @@ jobs:
           config: ${{ needs.route.outputs.config }}
           repo: repo
       - name: Run setup and checks
-        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit checks --repo repo --out out
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit checks --repo repo --out out --group "$GROUP"
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+          GROUP: ${{ matrix.group }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          # nexkit-checks, or for one of several check jobs nexkit-checks-<group>, which
+          # combine joins into nexkit-checks.
+          name: ${{ matrix.group && format('nexkit-checks-{0}', matrix.group) || 'nexkit-checks' }}
+          path: out/
+          retention-days: 14
+
+  combine:
+    needs: [route, verify]
+    if: >-
+      always() && needs.verify.result != 'skipped' && needs.route.outputs.parallel_checks == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # NexKit's own code; nothing of the repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false
+      # Each check job's artifact in a folder of its own name.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: nexkit-checks-*
+          path: parts
+      - name: Combine check results
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit combine-checks --parts parts --out out
+        env:
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -278,8 +327,10 @@ jobs:
           retention-days: 14
 
   review:
-    needs: [route, publish, verify]
-    if: always() && needs.verify.result == 'success'
+    needs: [route, publish, verify, combine]
+    if: >-
+      always() && needs.verify.result == 'success' &&
+      contains(fromJSON('["success","skipped"]'), needs.combine.result)
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ fromJSON(needs.route.outputs.review_timeout) }}
     permissions:
@@ -304,12 +355,22 @@ jobs:
           path: repo
           fetch-depth: 0
           persist-credentials: false
+      # After NexKit merged the base branch into an approved pull request that branch
+      # protection wants up to date: no review agent when the change is the approved one.
+      - name: Carry over the approved review
+        id: carry
+        if: fromJSON(needs.route.outputs.decision).carry_from
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit carry --repo repo --out out
+        env:
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.carry.outputs.carried != 'true'
         with:
           name: nexkit-checks
           path: checks
       # The pinned version of each runtime the configuration uses (nexkit/__init__.py).
       - name: Install agents
+        if: steps.carry.outputs.carried != 'true'
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit install-agents
         env:
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
@@ -319,6 +380,7 @@ jobs:
           name: nexkit-agent
           path: agent
       - name: Collect issue context
+        if: steps.carry.outputs.carried != 'true'
         run: >-
           ${{ steps.python.outputs.python-path }} kit/bin/nexkit context --out out --pr "$PR"
           --stage review --fix-result agent/result.json
@@ -327,6 +389,7 @@ jobs:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           PR: ${{ needs.publish.outputs.pr }}
       - name: Run agent review
+        if: steps.carry.outputs.carried != 'true'
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit agent --stage review --repo repo --out out --checks checks/checks.json
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
@@ -351,7 +414,7 @@ jobs:
           retention-days: 14
 
   report:
-    needs: [route, agent, publish, verify, review]
+    needs: [route, agent, publish, verify, combine, review]
     if: >-
       always() && needs.route.result == 'success' &&
       !contains(fromJSON('["none","maintain"]'), needs.route.outputs.action)

@@ -41,6 +41,11 @@ files or repository settings, and wait for confirmation.
      repository root (for example `["test-results", "playwright-report"]`). When the check
      fails, NexKit keeps them, at most 50 MB per round, and the next fix round reads them
      first (see the configuration reference, Result files of failing checks).
+   - `parallel_checks` when two or more checks take many minutes each, such as integration
+     and end-to-end suites: each check, or each `group` of checks, then runs in a job of its
+     own at once, so a round takes about as long as its slowest job. Group the quick checks
+     (build, lint, unit tests) into one job, since every job runs `setup` again (see the
+     configuration reference, Parallel checks).
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the
@@ -81,8 +86,9 @@ files or repository settings, and wait for confirmation.
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`
    For each check that needs more than a name and a command, add the flags that name it:
-   `--check-timeout <name>=<minutes>`, `--check-slow <name>`, and
-   `--check-results <name>=<path>` once for each path. When the repository's CI workflows
+   `--check-timeout <name>=<minutes>`, `--check-slow <name>`,
+   `--check-results <name>=<path>` once for each path, and with `--parallel-checks`,
+   `--check-group <name>=<group>`. When the repository's CI workflows
    upload artifacts that explain a failure, such as end-to-end test results, add
    `--evidence-artifact <name>` for each, so plan, implement and fix rounds on an issue
    that names a failed run get them.

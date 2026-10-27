@@ -63,6 +63,8 @@ def cmd_init(args):
         check_timeouts=args.check_timeout,
         check_slow=args.check_slow,
         check_results=args.check_results,
+        check_groups=args.check_group,
+        parallel_checks=args.parallel_checks,
         notify=args.notify,
         evidence=args.evidence_artifact,
         after_workflows=args.after_workflow,
@@ -146,6 +148,7 @@ def _refused_dispatch(args, decision, inputs):
 
 def cmd_route(args):
     from . import progress
+    from .checks import check_jobs, check_matrix
     from .github import GitHubError
     from .maintain import TASKS, enabled
     from .route import route, with_profile
@@ -204,7 +207,6 @@ def cmd_route(args):
         stages = ["plan", *([configuration.TRIAGE] if cfg["profiles"] else [])]
     else:
         variants, stages = [cfg], [decision["action"]]
-    checks_minutes = sum(c["timeout_minutes"] for c in cfg["checks"])
     setup_minutes = cfg["limits"]["setup_timeout_minutes"]
     _output(
         action=decision["action"],
@@ -217,7 +219,9 @@ def cmd_route(args):
         # Setup runs before the agent and before the checks; the rest is for the job's steps.
         agent_timeout=str(agent_minutes + setup_minutes),
         review_timeout=str(configuration.stage_minutes(cfg, "review") + 30),
-        checks_timeout=str(checks_minutes + setup_minutes + 10),
+        # One verify job, or one for each job of parallel checks, each with its time-out.
+        check_matrix=check_matrix(cfg),
+        parallel_checks="true" if check_jobs(cfg) else "false",
         agent_secrets=configuration.secret_names(variants, stages),
         review_secrets=configuration.secret_names([cfg], ["review"]),
     )
@@ -356,11 +360,47 @@ def _agent(args, decision, stage, out):
     return 0
 
 
+def cmd_carry(args):
+    """In the review job, before any agent: whether the review that approved the commit
+    the round's head merged the base branch into holds for the head (`carried`)."""
+    from .agent import carried_review
+
+    decision = _decision()
+    approved = decision.get("carry_from") or ""
+    carried, why = carried_review(args.repo, decision["base"], approved)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "carry.json").write_text(json.dumps({"from": approved, "carried": carried, "why": why}))
+    if carried:
+        # What report reads as this round's review: no agent ran, so no tokens.
+        result = {
+            "stage": "review",
+            "status": "carried",
+            "carried": approved,
+            "tokens": {"input": 0, "cached": 0, "output": 0},
+        }
+        (out / "result.json").write_text(json.dumps(result, indent=2))
+        print(f"The review of {approved[:7]} carries over: the change is the one it approved.")
+    else:
+        print(f"The review runs again: {why}.")
+    _output(carried="true" if carried else "false")
+    return 0
+
+
 def cmd_checks(args):
     from .checks import find_commits, run_checks
 
     commits = find_commits(args.repo, _decision())
-    results = run_checks(_config(), args.repo, args.out, commits)
+    results = run_checks(_config(), args.repo, args.out, commits, group=args.group)
+    passed = all(r["passed"] for r in results)
+    print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
+    return 0
+
+
+def cmd_combine_checks(args):
+    from .checks import combine
+
+    results = combine(_config(), args.parts, args.out)
     passed = all(r["passed"] for r in results)
     print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
     return 0
@@ -494,6 +534,18 @@ def build_parser():
         metavar="NAME=PATH",
         help="A file or folder where the check NAME writes results; repeat for more",
     )
+    p.add_argument(
+        "--parallel-checks",
+        action="store_true",
+        help="Run each check, or each --check-group, in a job of its own, at once",
+    )
+    p.add_argument(
+        "--check-group",
+        action="append",
+        default=[],
+        metavar="NAME=GROUP",
+        help="With --parallel-checks, run the check NAME in the job GROUP with the others in it",
+    )
     p.add_argument("--setup", action="append", default=[], metavar="COMMAND")
     p.add_argument(
         "--notify",
@@ -568,10 +620,23 @@ def build_parser():
     p.add_argument("--checks", help="checks.json for the review stage")
     p.set_defaults(func=cmd_agent)
 
+    p = sub.add_parser(
+        "carry", help="(pipeline) Whether an approved review holds after a base branch update"
+    )
+    p.add_argument("--repo", required=True)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_carry)
+
     p = sub.add_parser("checks", help="(pipeline) Run setup and checks on a candidate")
     p.add_argument("--repo", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--group", default="", help="Only the checks of this parallel check job")
     p.set_defaults(func=cmd_checks)
+
+    p = sub.add_parser("combine-checks", help="(pipeline) Join the results of parallel check jobs")
+    p.add_argument("--parts", required=True, help="Each check job's artifact, in a folder")
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_combine_checks)
 
     p = sub.add_parser("cache", help="(pipeline) Name the caches to restore, or log the result")
     p.add_argument("--repo", default="repo", help="Checkout, relative to the workspace")

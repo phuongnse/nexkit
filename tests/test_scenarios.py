@@ -106,6 +106,7 @@ class Pipeline:
         self.runs = itertools.count(100)
         self.heads = itertools.count(1)
         self.played = []  # (command, number, outcome) for each run
+        self.reviews = 0  # review agents that ran
         self.tmp = tempfile.TemporaryDirectory()
         test.addCleanup(self.tmp.cleanup)
         env = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"})
@@ -263,7 +264,22 @@ class Pipeline:
         reviewing = decision["action"] == "review" or published.get("head")
         if reviewing and "checks" in outcome:
             write("nexkit-checks", outcome["checks"])
+        if decision.get("carry_from"):
+            # The review job compares the change with the approved one before any agent.
+            carried = not outcome.get("changed")
+            record = {"from": decision["carry_from"], "carried": carried, "why": ""}
+            if not carried:
+                record["why"] = "the change against `main` differs from the one the review approved"
+            (artifacts / "nexkit-review").mkdir(parents=True, exist_ok=True)
+            (artifacts / "nexkit-review" / "carry.json").write_text(json.dumps(record))
+            if carried:
+                write(
+                    "nexkit-review",
+                    {"stage": "review", "status": "carried", "carried": record["from"]},
+                )
+                return needs
         if reviewing and "review" in outcome:
+            self.reviews += 1
             write("nexkit-review", outcome["review"])
         return needs
 
@@ -674,6 +690,97 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
         self.assertEqual([outcome for *_, outcome in pipe.played[1:]], ["head_moved", "merged"])
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def behind(self, pipe, pull):
+        """Branch protection wants the branch up to date with `main`, which moved while the
+        round reviewed: GitHub refuses the merge, and NexKit merges `main` into it."""
+        pipe.gh.merge_error = [
+            GitHubError(405, "Head branch is out of date. Review and try again.")
+        ]
+
+    def test_a_clean_update_from_the_base_keeps_the_approval_and_merges_after_its_checks(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": self.behind}
+            # The review that the update started: its change is the approved one.
+            return {"checks": done()["checks"]}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "merged"])
+        # One review agent ran, for the implement round; the new head merged without one.
+        self.assertEqual(pipe.reviews, 1)
+        self.assertEqual(pipe.gh.merged[0][1], "e" * 40)
+        self.assertEqual(len(pipe.gh.created_reviews), 1)
+        last = list(run_comments(pipe.gh.comments(6)))[-1]
+        self.assertEqual(last[1]["carried"], pipe.gh.updated[0][1])
+        self.assertIn("carried over, so no review agent ran", last[0]["body"])
+        review_status = [s for s in pipe.gh.statuses if s["sha"] == "e" * 40]
+        self.assertIn("carried over", review_status[-1]["description"])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_an_update_that_changes_the_change_or_conflicts_is_reviewed_again(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": self.behind}
+            # The merge commit changed the pull request's own change.
+            return {**done(), "changed": True}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "merged"])
+        self.assertEqual(pipe.reviews, 2)
+        last = list(run_comments(pipe.gh.comments(6)))[-1][0]["body"]
+        self.assertIn("The AI review ran again rather than carry over the approval", last)
+
+        def conflicting(pipe, pull):
+            # `main` moved and now conflicts: a conflict round merges it, then reviews.
+            pipe.gh.pulls[pull]["mergeable"] = False
+            pipe.gh.merge_error = [GitHubError(405, "Head branch is out of date.")]
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": conflicting}
+            pipe.gh.pulls[int(inputs["number"])]["mergeable"] = True
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["conflict_fix", "merged"])
+        self.assertEqual(pipe.reviews, 2)
+        self.assertFalse(pipe.gh.updated)
+
+    def test_failing_checks_after_a_clean_update_start_a_counted_fix_round(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": self.behind}
+            if inputs["command"] == "review":
+                # The approval carries over, but `main`'s change breaks the checks.
+                return {"checks": done(checks=False)["checks"]}
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6), ("fix", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "auto_fix", "merged"])
+        # The implement round's review and the fix round's; none for the update.
+        self.assertEqual(pipe.reviews, 2)
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 

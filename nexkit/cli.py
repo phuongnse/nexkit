@@ -360,6 +360,33 @@ def _agent(args, decision, stage, out):
     return 0
 
 
+def cmd_carry(args):
+    """In the review job, before any agent: whether the review that approved the commit
+    the round's head merged the base branch into holds for the head (`carried`)."""
+    from .agent import carried_review
+
+    decision = _decision()
+    approved = decision.get("carry_from") or ""
+    carried, why = carried_review(args.repo, decision["base"], approved)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "carry.json").write_text(json.dumps({"from": approved, "carried": carried, "why": why}))
+    if carried:
+        # What report reads as this round's review: no agent ran, so no tokens.
+        result = {
+            "stage": "review",
+            "status": "carried",
+            "carried": approved,
+            "tokens": {"input": 0, "cached": 0, "output": 0},
+        }
+        (out / "result.json").write_text(json.dumps(result, indent=2))
+        print(f"The review of {approved[:7]} carries over: the change is the one it approved.")
+    else:
+        print(f"The review runs again: {why}.")
+    _output(carried="true" if carried else "false")
+    return 0
+
+
 def cmd_checks(args):
     from .checks import find_commits, run_checks
 
@@ -592,6 +619,13 @@ def build_parser():
     p.add_argument("--stage", choices=["plan", "implement", "fix", "review"])
     p.add_argument("--checks", help="checks.json for the review stage")
     p.set_defaults(func=cmd_agent)
+
+    p = sub.add_parser(
+        "carry", help="(pipeline) Whether an approved review holds after a base branch update"
+    )
+    p.add_argument("--repo", required=True)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_carry)
 
     p = sub.add_parser("checks", help="(pipeline) Run setup and checks on a candidate")
     p.add_argument("--repo", required=True)

@@ -240,6 +240,30 @@ class RouteTests(unittest.TestCase):
         # A retry that pauses at the usage limit resumes as the retry it was.
         self.assertEqual(auto_input(decision, resume=True), "true,resume,retry")
 
+    def test_the_review_after_a_branch_update_may_carry_the_approval_over(self):
+        self.gh.add_pull(9, 5, head_sha="e" * 40)
+        event = {"sender": {"login": BOT_LOGIN}}
+        inputs = {"command": "review", "number": "9", "note": "", "auto": "true,carry"}
+        # Without an approving review there is nothing to carry over.
+        self.assertNotIn("carry_from", route(self.gh, "workflow_dispatch", event, inputs))
+        state = empty_state(5)
+        state["last_review"] = {"round": 1, "head": "a" * 40, "verdict": "approve", "findings": []}
+        self.gh.comment(9, render_state(state))
+        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        self.assertEqual(decision["carry_from"], "a" * 40)
+        self.assertTrue(decision["auto"])
+        # Only that review: not one the branch update did not start, nor a fix round.
+        inputs["auto"] = "true"
+        self.assertNotIn("carry_from", route(self.gh, "workflow_dispatch", event, inputs))
+        inputs.update(auto="true,carry", command="fix")
+        self.assertNotIn("carry_from", route(self.gh, "workflow_dispatch", event, inputs))
+        # Not a review that requested changes, nor one of the head itself.
+        for verdict, head in (("request_changes", "a" * 40), ("approve", "e" * 40)):
+            state["last_review"].update(verdict=verdict, head=head)
+            self.gh.comment(9, render_state(state))
+            inputs["command"] = "review"
+            self.assertNotIn("carry_from", route(self.gh, "workflow_dispatch", event, inputs))
+
     def test_schedule_is_maintenance(self):
         self.assertEqual(route(self.gh, "schedule", {}), {"action": "maintain", "task": "schedule"})
 

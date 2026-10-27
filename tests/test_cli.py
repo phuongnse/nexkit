@@ -1010,6 +1010,35 @@ class PipelineCommandTests(unittest.TestCase):
         result = json.loads((out / "result.json").read_text())
         self.assertIn(f"base={git(repo, 'rev-parse', 'HEAD')}", result["error"])
 
+    def test_carry_says_whether_the_approved_review_holds_for_the_new_head(self):
+        repos = GitRepos()
+        self.addCleanup(repos.cleanup)
+        approved = repos.push_commit("dev", "nexkit/issue-5", {"calc.py": "x\n"}, "Fix").strip()
+        repos.push_commit("base", "main", {"other.py": "y\n"}, "Move main")
+        repo = repos.clone("review")
+        git(repo, "checkout", "-q", "nexkit/issue-5")
+        git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "origin/main")
+        out = self.root / "out"
+        for approval, carried in ((approved, "true"), ("f" * 40, "false")):
+            self.output.unlink(missing_ok=True)
+            env = {
+                "NEXKIT_DECISION": json.dumps({"base": "main", "carry_from": approval}),
+                "GITHUB_OUTPUT": str(self.output),
+            }
+            shutil.rmtree(out, ignore_errors=True)
+            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.main(["carry", "--repo", str(repo), "--out", str(out)]), 0)
+            self.assertEqual(self.outputs()["carried"], carried)
+            record = json.loads((out / "carry.json").read_text())
+            self.assertEqual((record["from"], record["carried"]), (approval, carried == "true"))
+            if carried == "true":
+                result = json.loads((out / "result.json").read_text())
+                self.assertEqual((result["status"], result["carried"]), ("carried", approved))
+            else:
+                # The review agent writes this round's result.
+                self.assertFalse((out / "result.json").exists())
+                self.assertIn("is not a merge of `main`", record["why"])
+
     def test_checks_get_the_merge_base_only_when_it_is_known(self):
         repos = GitRepos()
         self.addCleanup(repos.cleanup)
@@ -1448,6 +1477,24 @@ class WorkflowSafetyTests(unittest.TestCase):
             self.assertIn(permission, route)
         self.assertNotIn("contents: write", route)
         self.assertIn("sparse-checkout: .nexkit", route)
+
+    def test_review_carries_an_approval_over_before_any_agent_or_credential_use(self):
+        review = self.jobs["review"]
+        steps = review.split("\n      - ")
+        [carry] = [step for step in steps if "name: Carry over the approved review" in step]
+        self.assertIn("if: fromJSON(needs.route.outputs.decision).carry_from\n", carry)
+        self.assertIn("kit/bin/nexkit carry --repo repo --out out", carry)
+        self.assertNotIn("SECRET", carry)
+        self.assertNotIn("GITHUB_TOKEN", carry)
+        # Everything for the agent is skipped once the approval carried over.
+        skipped = "if: steps.carry.outputs.carried != 'true'\n"
+        for name in ("Install agents", "Collect issue context", "Run agent review"):
+            [step] = [step for step in steps if f"name: {name}" in step]
+            self.assertIn(skipped, step, name)
+            self.assertLess(review.index("id: carry"), review.index(f"name: {name}"))
+        # Its result still reaches report.
+        upload = review.split("actions/upload-artifact@", 1)[1]
+        self.assertIn("if: always()", upload)
 
     def test_review_reads_the_fix_result(self):
         review = self.jobs["review"]

@@ -10,7 +10,9 @@
 #          caches but never saves one; with parallel_checks, one job per check job
 # combine  with parallel_checks, join the check jobs' results into one nexkit-checks;
 #          no secrets, no repository checkout
-# review   independent read-only agent review of that candidate
+# review   independent read-only agent review of that candidate; after NexKit brought an
+#          approved pull request up to date with a clean merge, the approval carries over
+#          when the change is the same, and no agent runs
 # report   statuses, PR review, run and state comments, next automatic round; with
 #          merge.auto, the merge and the base branch's merge.after_workflows
 # maintain work that follows other events: closing a parent issue, resuming commands
@@ -353,12 +355,22 @@ jobs:
           path: repo
           fetch-depth: 0
           persist-credentials: false
+      # After NexKit merged the base branch into an approved pull request that branch
+      # protection wants up to date: no review agent when the change is the approved one.
+      - name: Carry over the approved review
+        id: carry
+        if: fromJSON(needs.route.outputs.decision).carry_from
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit carry --repo repo --out out
+        env:
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.carry.outputs.carried != 'true'
         with:
           name: nexkit-checks
           path: checks
       # The pinned version of each runtime the configuration uses (nexkit/__init__.py).
       - name: Install agents
+        if: steps.carry.outputs.carried != 'true'
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit install-agents
         env:
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
@@ -368,6 +380,7 @@ jobs:
           name: nexkit-agent
           path: agent
       - name: Collect issue context
+        if: steps.carry.outputs.carried != 'true'
         run: >-
           ${{ steps.python.outputs.python-path }} kit/bin/nexkit context --out out --pr "$PR"
           --stage review --fix-result agent/result.json
@@ -376,6 +389,7 @@ jobs:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           PR: ${{ needs.publish.outputs.pr }}
       - name: Run agent review
+        if: steps.carry.outputs.carried != 'true'
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit agent --stage review --repo repo --out out --checks checks/checks.json
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}

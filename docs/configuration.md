@@ -448,6 +448,14 @@ merge:
   [Troubleshooting](troubleshooting.md));
 - a required merge queue, or squash merging turned off for the repository.
 
+GitHub's *Require branches to be up to date before merging* keeps two pull requests that
+pass alone from breaking the base branch together. With `conflicts.auto_resolve`, NexKit
+then brings a pull request that is behind up to date with its base branch and runs its
+checks again. When that merge had no conflict and the pull request's own change is the one
+the review approved, the approval carries over and no review agent runs, so the rule costs
+a run of the checks, not a second AI review (see *A pull request brought up to date* under
+[How it works](how-it-works.md#stages)).
+
 `merge.after_workflows` lists workflow files in `.github/workflows/`. GitHub starts no
 workflow for a push made with the Actions token, so the merge by NexKit does not run your
 `push` CI on the base branch. Two pull requests that pass on their own can still break the
@@ -795,6 +803,10 @@ requests conflict.
   the next sweep.
 - When an automatic merge is refused because of a conflict, the round that tried it
   starts a conflict round right away, within the same limits.
+- When it is refused because branch protection wants the branch up to date, NexKit
+  merges the base branch into it on GitHub and runs its checks again, within the same
+  limits. The AI review runs again only when the pull request's own change differs from
+  the one it approved (see [Automatic merge](#automatic-merge)).
 - A conflict that needs a choice ends the round as `blocked` with its questions; a person
   answers with `/nexkit fix <decisions>`.
 - Each pull request gets at most `max_rounds` of these rounds (default 3), apart from

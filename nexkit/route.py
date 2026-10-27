@@ -11,6 +11,7 @@ from .state import (
     FAILURE,
     RUNNING,
     SUCCESS,
+    approved_head,
     by_bot,
     latest_plan,
     plan_profile,
@@ -85,10 +86,12 @@ def issue_from_branch(branch):
 # The `auto` dispatch input: `true` for an automatic fix round after failures, `conflicts`
 # for an automatic round that merges the base branch, `resume` for a command that NexKit
 # runs again after the agent's usage limit reset, `autopilot` for a command that autopilot
-# started, `retry` for the one more try after a transient error. Several are joined with
-# commas.
+# started, `retry` for the one more try after a transient error, `carry` for the review
+# after NexKit brought an approved pull request up to date with its base branch, which
+# carries the approval over when the change is the same. Several are joined with commas.
 RESUME = "resume"
 RETRY = "retry"
+CARRY = "carry"
 # Also the `command` of the dispatch that starts an autopilot sweep.
 AUTOPILOT = "autopilot"
 # The note of a sweep that waits for a workflow run to end first, and how route reads it.
@@ -228,6 +231,11 @@ def route(gh, event_name, event, inputs=None):
             decision.update(
                 {kind: True for kind in ("conflicts", "resumed", AUTOPILOT, RETRY) if kind in kinds}
             )
+        if decision["action"] == "review" and CARRY in kinds:
+            approved = approved_head(gh.comments(decision["pr"]))
+            if approved and approved != decision["head"]:
+                # The review job carries this approval over when the change is the same.
+                decision["carry_from"] = approved
         if decision.get("conflicts"):
             # Which base commit this round resolves, so the same conflict is tried once.
             decision["base_sha"] = gh.branch_sha(decision["base"])

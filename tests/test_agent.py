@@ -1048,3 +1048,60 @@ class AgentLogTests(StageCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CarriedReviewTests(unittest.TestCase):
+    """After NexKit merged the base branch into an approved pull request, the approval
+    holds only for a clean merge of a base commit that leaves the change as it was."""
+
+    def setUp(self):
+        self.repos = GitRepos()
+        self.addCleanup(self.repos.cleanup)
+        files = {"calc.py": CALC + SUB, "logo.bin": "\0png"}
+        self.approved = self.repos.push_commit("dev", "nexkit/issue-5", files, "Add sub").strip()
+
+    def update(self, base_files, edit=None):
+        """Move `main`, then merge it into the branch as GitHub's update does, with `edit`
+        made in the merge commit when given. Returns the checkout at the new head."""
+        self.repos.push_commit("base", "main", base_files, "Move main")
+        repo = self.repos.clone(f"verify-{len(list(self.repos.root.iterdir()))}")
+        git(repo, "checkout", "-q", "nexkit/issue-5")
+        git(
+            repo,
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "merge",
+            "-q",
+            "--no-commit",
+            "origin/main",
+        )
+        for path, content in (edit or {}).items():
+            (repo / path).write_text(content)
+        git(repo, "add", "-A")
+        GitRepos.commit(repo, "Merge main")
+        return repo
+
+    def test_a_clean_merge_that_leaves_the_change_as_it_was_carries_it_over(self):
+        repo = self.update({"other.py": "x = 1\n"})
+        self.assertEqual(agent.carried_review(repo, "main", self.approved), (True, ""))
+
+    def test_a_merge_that_changes_the_change_runs_the_review_again(self):
+        repo = self.update({"other.py": "x = 1\n"}, edit={"calc.py": CALC + SUB + "# more\n"})
+        carried, why = agent.carried_review(repo, "main", self.approved)
+        self.assertFalse(carried)
+        self.assertIn("differs from the one the review approved", why)
+        # Binary content counts too.
+        repo = self.update({"other.py": "x = 2\n"}, edit={"logo.bin": "\0gif"})
+        self.assertFalse(agent.carried_review(repo, "main", self.approved)[0])
+
+    def test_only_a_merge_of_the_base_branch_into_the_approved_commit_counts(self):
+        repo = self.update({"other.py": "x = 1\n"})
+        (repo / "calc.py").write_text(CALC + SUB + "# pushed\n")
+        git(repo, "add", "-A")
+        GitRepos.commit(repo, "A person's commit")
+        carried, why = agent.carried_review(repo, "main", self.approved)
+        self.assertFalse(carried)
+        self.assertIn("not a merge of `main` into", why)
+        self.assertFalse(agent.carried_review(repo, "main", "f" * 40)[0])

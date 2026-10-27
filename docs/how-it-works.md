@@ -76,7 +76,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. |
 | `combine` | go, fix, review, with `parallel_checks` | read only | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read. Never checks out or executes repository code. |
-| `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. |
+| `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](#stages), and then runs no agent. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
 | `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches | contents (to merge); issues, comments, workflows, statuses; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
 | `finish` | a command whose `report` did not finish | workflows | none | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](#work-without-a-command)). Runs no agent, and never checks out or executes repository code. |
@@ -585,6 +585,33 @@ run. NexKit decides from the criteria as well as the verdict:
 - An approved round with an `unverifiable` criterion never merges by itself, even with
   `merge.auto` on. `nexkit/review` succeeds, so a person can merge by hand; the round's
   comment lists the criteria to confirm, and `notify` mentions its people.
+
+**A pull request brought up to date.** With GitHub's *Require branches to be up to date
+before merging*, a pull request that checks and review approved cannot merge once its base
+branch has moved. With `conflicts.auto_resolve`, NexKit then merges the base branch into it
+on GitHub and starts `/nexkit review` on the new commit. A merge that has no conflict
+leaves the pull request's own change as it was, so a second AI review would spend agent
+time and find nothing new. Before the review agent starts, the `review` job compares, with
+git and without running any repository code:
+
+- The new commit must be a merge of a commit of the base branch into the approved commit,
+  as GitHub's update makes it. A commit pushed on top, such as a person's, or a merge of
+  anything else, runs the review.
+- The pull request's change against the base commit it merged must be the change the
+  review approved against the base commit that one started from, whatever the line
+  numbers. Git's patch id of both diffs decides, with binary content and whitespace
+  counted, so a merge commit that changed anything of the pull request's own, or a base
+  change next to its lines, runs the review.
+
+When both hold, the review carries over: no agent runs, `nexkit/review` succeeds with
+"AI review of `abc1234` carried over", the earlier findings stay the last review's, and
+the round's comment says that the review was carried over. The checks run on the new
+commit as after any round: when they pass, NexKit merges it with the earlier approval;
+when they fail, an automatic fix round starts as after any failing checks, counted in
+`fix.max_auto_rounds`, and its own review runs as usual. Otherwise the review runs as
+before, and the round's comment says why. A merge that has a conflict is a conflict round
+instead (see *Conflicts with the base branch* above), which the review always follows. A
+`/nexkit review` that a person comments never carries an approval over.
 
 **After an automatic merge.** NexKit closes the issue the pull request implements, as
 GitHub does after a person's merge but not after one with the Actions token. For the same
@@ -1110,6 +1137,8 @@ Names a person meets in run comments and in that output:
 |---|---|
 | `too_large` | The plan says the work does not fit one agent session, and suggests a split when it can. |
 | `needs_merge` | A fix round must merge the base branch for a conflict, and NexKit cannot push that merge because it brings changes to `.github/workflows/` without a push token that may push them. The round stopped before its agent. |
+| `branch_updated` | GitHub refused the automatic merge because the branch was behind its base branch; NexKit merged the base branch into it and started `/nexkit review` on the new commit. |
+| `carried` | The round carried over the approval of that commit, after a branch update that left the pull request's change as it was. |
 | `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. |
 | `merge_waiting` | The automatic merge waits for required checks; see [Failure handling](#failure-handling). |
 | `recheck_failed` | The checks failed again after a fix round named a cause outside the code; see *Failing checks the base branch fixed* under [Stages](#stages). |
@@ -1150,7 +1179,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | GitHub refuses the automatic merge because the head branch was modified, after a push to the branch since the round checked it | Starts `/nexkit review` on the new head, which checks, reviews and merges it as usual; nobody is mentioned. |
 | GitHub refuses the automatic merge because required status checks have not passed yet, such as a CI workflow slower than the NexKit round | For an issue in autopilot's scope, ends the round as `merge_waiting`: each sweep tries the merge again while the head is the one approved, and merges once the checks pass, with everything a merge leads to. When GitHub refuses it because a required check failed, the sweep starts an automatic fix round, like failing checks after any round: it counts toward `fix.max_auto_rounds`, its feedback names the failed check with the commands that failed in its job and the tests its error annotations name, and it merges the base branch first when it has moved. A check that fails as the default branch does while autopilot's `bug` issue about that is open waits instead (`ci_waiting`, see *Failing checks the default branch has* under [Stages](#stages)), and with no automatic round left a person decides. A new commit on the branch gets `/nexkit review`, as when the head moved, which checks, reviews and merges it as usual. Checks that neither pass nor fail within six hours wait for a person. Otherwise a person merges it. The `maintain` job has `contents: write` for this; it never checks out the repository. |
 | GitHub refuses the automatic merge because a required check failed, such as a CI workflow that failed before the NexKit round ended | Starts an automatic fix round at once, as when a required check fails while the merge waits for it: it counts toward `fix.max_auto_rounds`, its feedback names the failed check, and it merges the base branch first when it has moved. A check that fails as the default branch does while autopilot's `bug` issue about that is open waits instead (`ci_waiting`), and with no automatic round left a person decides. |
-| GitHub refuses the automatic merge because the branch is behind its base branch, under protection that requires it to be up to date | With `conflicts.auto_resolve`, updates the branch from the base branch on GitHub and starts `/nexkit review` on the new commit, which checks, reviews and merges it as usual, at most `conflicts.max_rounds` times per pull request. GitHub starts no CI for that update when it is made with the Actions token, so required checks from the repository's own workflows run only with `publish.push_token_secret`; without it, the merge waits for them and then for a person. |
+| GitHub refuses the automatic merge because the branch is behind its base branch, under protection that requires it to be up to date | With `conflicts.auto_resolve`, updates the branch from the base branch on GitHub and starts `/nexkit review` on the new commit, which checks it and merges it as usual, at most `conflicts.max_rounds` times per pull request. When the pull request's own change is the one the review approved, the approval carries over and no review agent runs; otherwise it is reviewed again (see *A pull request brought up to date* under [Stages](#stages)). GitHub starts no CI for that update when it is made with the Actions token, so required checks from the repository's own workflows run only with `publish.push_token_secret`; without it, the merge waits for them and then for a person. |
 | GitHub refuses the automatic merge for another reason (required approvals, a merge method the repository does not allow) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |

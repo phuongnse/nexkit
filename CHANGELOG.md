@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.3.0
+
+Rounds can take as long as their slowest check rather than the sum of all, and branch
+protection that wants pull requests up to date no longer costs a second AI review for each
+merge. See [Parallel checks](docs/configuration.md#parallel-checks) and
+[Stages](docs/how-it-works.md#stages).
+
+- With `"parallel_checks": true`, each check, or each `group` of checks, runs in a
+  `verify` job of its own, at once, with the same rules: no secrets, a read-only token and
+  the published commit (#167). A new `combine` job, which runs no repository code, joins
+  their results into the one `nexkit-checks` artifact, in the order of `checks`, so
+  statuses, the review and the next fix round see the same result as with one job. Each
+  job keeps its share of the 50 MB of result files. With the setting off, the single
+  `verify` job runs as before. `nexkit init` takes `--parallel-checks` and
+  `--check-group NAME=GROUP`.
+- When NexKit brings an approved pull request up to date with its base branch, because
+  branch protection wants it, and the merge has no conflict, the review job compares the
+  change with git before any agent (#168). When the pull request's own change is the one
+  the review approved, the approval carries over: no review agent runs, the checks run on
+  the new commit, and NexKit merges when they pass, or starts a counted automatic fix
+  round when they fail. Otherwise the review runs as before, and the round's comment says
+  why.
+
 ## 5.2.0
 
 NexKit leaves alone an issue that a person closed while its round ran, cleans up the

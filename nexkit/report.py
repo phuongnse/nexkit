@@ -20,8 +20,9 @@ from .maintain import (
     start_conflict_round,
     start_waiting,
 )
-from .route import auto_input
+from .route import BRANCH_PREFIX, auto_input
 from .runlog import add_tokens, one_line
+from .schema import filled
 from .state import (
     CONTINUED,
     FAILURE,
@@ -65,6 +66,8 @@ COMPLETED = {
     "head_moved",
     "recheck_failed",
     "no_change",
+    "issue_closed",
+    "merge_issue_closed",
     autopilot.CI_WAITING,
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
@@ -78,6 +81,9 @@ NEEDS_PERSON = {
     "review_failed": "the AI review did not complete",
     "needs_human": "checks or review still need attention and no automatic fix rounds remain",
     "merge_refused": "GitHub refused the automatic merge",
+    "merge_issue_closed": (
+        "the issue closed before NexKit merged its pull request; merge or close it yourself"
+    ),
     "retry_failed": "the run stopped on a transient error twice",
     "close_failed": "no change is needed, but NexKit could not close the issue; close it yourself",
     "recheck_failed": (
@@ -390,7 +396,7 @@ def protected_paths(agent):
 def no_change_finding(agent):
     """What an agent found when it says no change is needed, with the runs that passed on
     the default branch since the CI runs the issue names, or ""."""
-    finding = str(((agent or {}).get("output") or {}).get("no_change") or "").strip()
+    finding = filled(((agent or {}).get("output") or {}).get("no_change"))
     if not finding:
         return ""
     passed = passed_lines((agent or {}).get("passed_since"))
@@ -430,6 +436,11 @@ def _stage_failure(decision, agent, publish):
         return "agent_failed", f"NexKit could not run the {action} agent."
     if agent["status"] == "needs_merge":
         return "needs_merge", f"NexKit did not run the {action} agent: {agent['error']}"
+    if publish.get("issue_closed"):
+        return "issue_closed", (
+            f"#{decision['issue']} closed while the {action} round ran, so NexKit published "
+            "nothing."
+        )
     if agent["status"] != "done":
         message = f"NexKit stopped during {action}: {agent['error']}"
         extra = [blocked_questions(agent), open_conflicts(agent, decision["base"])]
@@ -459,7 +470,7 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
         plan = plan or {}
         if plan.get("too_large"):
             return "the plan says the issue is too large for one session"
-        if str(plan.get("no_change") or "").strip():
+        if filled(plan.get("no_change")):
             return NO_CHANGE_PLAN
         if plan.get("protected_paths"):
             return autopilot.protected_reason(plan["protected_paths"])
@@ -714,6 +725,18 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     text so far. A merge refused because the base branch was modified meanwhile is tried
     again a few times; other refusals that pass are handed on (see `_refused`)."""
     pr, head = target["pr"], target["head"]
+    try:
+        closed = gh.issue(target["issue"]).get("state") != "open"
+    except GitHubError as exc:
+        message += f" NexKit did not merge it: it could not read #{target['issue']}: {exc}"
+        return "merge_refused", message.strip()
+    if closed:
+        # A person closed the issue while the pull request waited: they decide its fate.
+        message += (
+            f" NexKit did not merge it: #{target['issue']} is closed. Merge the pull request "
+            "or close it yourself."
+        )
+        return "merge_issue_closed", message.strip()
     for attempt in range(MERGE_TRIES):
         try:
             merge = gh.merge(pr, head) or {}
@@ -730,6 +753,7 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     if closed and cfg["close_parent_issues"]:
         # Closing with the Actions token starts no workflow for `issues: closed`.
         lines += close_parents_safely(gh, target["issue"])
+    lines += delete_merged_branch(gh, pr, target["base"])
     runs = []
     started = after_merge(gh, cfg["merge"]["after_workflows"], target["base"], runs)
     if runs:
@@ -960,6 +984,31 @@ def close_merged_issue(gh, issue, pr, sha):
     except GitHubError as exc:
         return False, [f"Could not close #{issue}: {exc}. Close it yourself."]
     return True, [f"Closed #{issue} as completed."]
+
+
+def delete_merged_branch(gh, pr, base):
+    """Delete the head branch of a pull request NexKit merged, when the repository deletes
+    head branches on merge: GitHub does that after a person's merge, but not after a merge
+    with the Actions token. Only a NexKit branch of this repository goes, never the base
+    branch, nor one that open pull requests target, which its deletion would close.
+    Returns lines for the round's comment. A failure leaves the merge as it is."""
+    branch = ""
+    try:
+        if not gh.deletes_merged_branches():
+            return []
+        head = gh.pull(pr).get("head") or {}
+        branch = head.get("ref") or ""
+        own = (head.get("repo") or {}).get("full_name") == gh.repository
+        if not own or not branch.startswith(BRANCH_PREFIX) or branch == base:
+            return []
+        targeting = ", ".join(f"#{pull['number']}" for pull in gh.pulls_into(branch))
+        if targeting:
+            return [f"Kept branch `{branch}`, the base branch of {targeting}."]
+        gh.delete_branch(branch)
+    except GitHubError as exc:
+        name = f"branch `{branch}`" if branch else "the branch"
+        return [f"Could not delete {name}: {exc}. It stays; delete it yourself."]
+    return [f"Deleted branch `{branch}`."]
 
 
 def _record(state, decision, row, agent, review, checks):

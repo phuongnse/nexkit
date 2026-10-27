@@ -24,7 +24,7 @@ from .redact import Redactor
 from .runlog import RunLog, add_tokens, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import AgentConfigError, Spec
-from .schema import problems
+from .schema import filled, problems
 from .usage import schedule
 
 MAX_DIFF = 80_000
@@ -466,7 +466,7 @@ def _cause(result):
 
 def no_change(result):
     """The finding of an implement result that says no change is needed, or ""."""
-    return str((result.get("output") or {}).get("no_change") or "").strip()
+    return filled((result.get("output") or {}).get("no_change"))
 
 
 def needed_protected(result, cfg):
@@ -1127,7 +1127,7 @@ def run_stage(
     if stage in ("plan", "implement", "fix") and result.get("output"):
         # Only paths that are protected count, so a person is asked only for those.
         result["output"]["protected_paths"] = needed_protected(result, cfg)
-        if stage in ("plan", "implement") and str(result["output"].get("no_change") or "").strip():
+        if stage in ("plan", "implement") and no_change(result):
             result["passed_since"] = passed_runs(found)
     if triage:
         result.update(profile=triage["profile"], triage=triage)

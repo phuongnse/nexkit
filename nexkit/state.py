@@ -13,6 +13,7 @@ import json
 import re
 
 from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
+from .schema import filled
 
 BOT_LOGIN = "github-actions[bot]"
 PLAN_MARKER = "<!-- nexkit:plan -->"
@@ -126,7 +127,7 @@ def plan_data_record(output, passed=()):
     protected = [clip(p, 300) for p in output.get("protected_paths") or []][:20]
     if protected:
         data["protected_paths"] = protected
-    finding = str(output.get("no_change") or "").strip()
+    finding = filled(output.get("no_change"))
     if finding:
         lines = passed_lines(passed)
         data["no_change"] = clip(

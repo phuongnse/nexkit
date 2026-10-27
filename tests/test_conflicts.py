@@ -464,6 +464,7 @@ class ConflictReportTests(ReportCase):
         self.candidate()
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertFalse(rounds_started(self.gh))  # off by default
+        self.gh.issues[5]["state"] = "open"  # the first merge closed it
         cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
         self.run_report(cfg=cfg)
         self.assertEqual([d["inputs"]["number"] for d in rounds_started(self.gh)], ["7"])

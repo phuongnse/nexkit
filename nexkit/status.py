@@ -104,6 +104,9 @@ def pull_state(run, conflicting):
         return "blocked" if outcome == "agent_blocked" else "failed"
     if outcome in ("ready", "merge_refused", "merge_waiting"):
         return outcome
+    if outcome == "merge_issue_closed":
+        # Checks and review passed; its issue closed, so a person decides the merge.
+        return "ready"
     if outcome == autopilot.CI_WAITING:
         return "waiting"
     if outcome is None:

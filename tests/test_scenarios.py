@@ -24,7 +24,7 @@ from unittest import mock
 from nexkit import autopilot, progress
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
-from nexkit.publish import publish_plan
+from nexkit.publish import issue_closed, publish_plan
 from nexkit.report import report
 from nexkit.route import auto_kinds, issue_from_branch, route
 from nexkit.state import BOT_LOGIN, UNCOUNTED, read_state, run_comments
@@ -224,6 +224,9 @@ class Pipeline:
                 else artifacts / name / "checks.json"
             ).write_text(json.dumps(data))
 
+        if outcome.get("working"):
+            # What happens elsewhere while the agent works, before anything is published.
+            outcome["working"](self)
         if outcome.get("meanwhile") and decision["action"] != "implement":
             # What happens elsewhere while the round runs on its pull request.
             outcome["meanwhile"](self, decision["pr"])
@@ -232,7 +235,14 @@ class Pipeline:
             write("nexkit-agent", {"stage": decision["action"], **agent})
         needs = {}
         published = {"published": False}
-        if decision["action"] == "plan" and agent and agent["status"] == "done":
+        issue_round = decision["action"] in ("plan", "implement")
+        if issue_round and agent and agent["status"] == "done":
+            closed = issue_closed(self.gh, decision["issue"])
+        else:
+            closed = False
+        if closed:
+            published = {"published": False, "issue_closed": True}
+        elif decision["action"] == "plan" and agent and agent["status"] == "done":
             context = {"title": "x"}
             published = publish_plan(self.gh, decision, agent, context, self.cfg)
         elif decision["action"] == "implement" and agent and agent.get("no_change"):
@@ -775,6 +785,41 @@ class ScenarioTests(unittest.TestCase):
         line = f"Passed on `main` since: {run} at ccccccc."
         self.assertIn(line, closing["body"])
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
+    def test_an_issue_closed_while_its_round_runs_gets_no_pull_request(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            # A person closes the issue while the agent works.
+            return {**done(), "working": lambda pipe: pipe.gh.close_issue(5, "not_planned")}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "issue_closed")
+        self.assertEqual(pipe.gh.pulls, {})
+        self.assertEqual(pipe.gh.issues[5]["state_reason"], "not_planned")
+        [run] = pipe.gh.run_comments(5)[-1:]
+        self.assertIn("#5 closed while the implement round ran", run["body"])
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+        # Reopened, it waits for a person: nothing changed since `/nexkit go` started.
+        pipe.gh.issues[5]["state"] = "open"
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("it closed while `/nexkit go` ran and was reopened", mention["body"])
+
+    def test_a_plan_whose_no_change_is_only_quotes_goes_on_to_its_change(self):
+        # An agent wrote the empty string as `""`: the plan's change is still made.
+        def script(pipe, inputs):
+            return plan(no_change='""') if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "merged")
+        self.assertEqual(pipe.gh.issues[5]["state_reason"], "completed")
+        self.assertFalse(pipe.gh.comments_matching(5, "No change needed"))
+        self.assertFalse(pipe.gh.comments_matching(5, "no change is needed"))
 
     def test_a_round_that_finds_no_change_needed_closes_the_issue(self):
         finding = "The page already shows the release: test_release passes on main."

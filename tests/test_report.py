@@ -154,6 +154,33 @@ class ReportTests(ReportCase):
             default_branch="main",
         )
 
+    def test_a_round_whose_issue_closed_meanwhile_says_nothing_was_published(self):
+        self.gh.close_issue(5, "not_planned")
+        self.write("nexkit-agent", "result.json", {"status": "done", "output": {}})
+        needs = {
+            "publish": {
+                "outputs": {"result": json.dumps({"published": False, "issue_closed": True})}
+            }
+        }
+        cfg = make_config(notify=["olivia"])
+        outcome = report(
+            self.gh,
+            decision(),
+            cfg,
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertEqual((outcome["outcome"], outcome.get("attention")), ("issue_closed", None))
+        [row] = self.gh.run_comments(5)
+        self.assertEqual(row["run"]["status"], "success")
+        self.assertIn(
+            "#5 closed while the implement round ran, so NexKit published nothing.", row["body"]
+        )
+        self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+
     def test_a_round_that_finds_no_change_needed_closes_the_issue_with_the_finding(self):
         self.gh.add_issue(3)
         self.gh.parents[5] = 3
@@ -391,14 +418,26 @@ class ReportTests(ReportCase):
         row = self.gh.run_comments(6)[-1]
         self.assertIn("Closed #5 as completed.\nClosed #1 as completed", row["body"])
 
-    def test_an_issue_that_is_already_closed_stays_as_it_is(self):
+    def test_a_pull_request_whose_issue_closed_is_not_merged(self):
         self.candidate()
         self.gh.issues[5].update(state="closed", state_reason="not_planned")
-        self.run_report(cfg=make_config(merge={"auto": True}))
+        merge = {"auto": True, "after_workflows": ["ci.yml"]}
+        outcome = self.run_report(cfg=make_config(merge=merge, notify=["olivia"]))
+        self.assertEqual(outcome["outcome"], "merge_issue_closed")
+        self.assertEqual(
+            outcome["attention"],
+            "the issue closed before NexKit merged its pull request; merge or close it yourself",
+        )
+        self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
         self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
+        self.assertEqual(self.gh.pulls[6]["state"], "open")
         self.assertFalse(self.gh.comments_matching(5, "NexKit merged"))
         [row] = self.gh.run_comments(6)
-        self.assertNotIn("Closed #5", row["body"])
+        self.assertIn(
+            "NexKit did not merge it: #5 is closed. Merge the pull request or close it yourself.",
+            row["body"],
+        )
+        self.assertTrue(self.gh.comments_matching(6, "@olivia"))
 
     def test_failing_to_close_the_issue_keeps_the_merge(self):
         self.candidate()
@@ -408,6 +447,56 @@ class ReportTests(ReportCase):
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
         [row] = self.gh.run_comments(6)
         self.assertIn("Could not close #5: GitHub API 403", row["body"])
+        self.assertEqual(row["run"]["status"], "success")
+
+    def test_auto_merge_deletes_its_branch_when_the_repository_deletes_merged_branches(self):
+        self.candidate()
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.deleted, [])  # the setting is off
+        self.gh.delete_on_merge = True
+        self.gh.issues[5]["state"] = "open"
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+        row = self.gh.run_comments(6)[-1]
+        self.assertIn("Closed #5 as completed.\nDeleted branch `nexkit/issue-5`.", row["body"])
+
+    def test_auto_merge_deletes_only_its_own_branch(self):
+        self.gh.delete_on_merge = True
+        own = dict(self.gh.pulls[6]["head"])
+        for head in ({"ref": "feature/add"}, {"repo": {"full_name": "fork/app"}}):
+            self.candidate()
+            self.gh.pulls[6]["head"] = {**own, **head}
+            self.gh.issues[5]["state"] = "open"
+            self.assertEqual(
+                self.run_report(cfg=make_config(merge={"auto": True}))["outcome"], "merged"
+            )
+            self.assertNotIn("branch", self.gh.run_comments(6)[-1]["body"].split("merged")[-1])
+        self.assertEqual(self.gh.deleted, [])
+        # A pull request that targets the branch would close with it.
+        self.gh.pulls[6]["head"] = own
+        self.candidate()
+        self.gh.add_pull(7, 8)
+        self.gh.pulls[7]["base"] = {"ref": "nexkit/issue-5"}
+        self.gh.issues[5]["state"] = "open"
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.deleted, [])
+        row = self.gh.run_comments(6)[-1]
+        self.assertIn("Kept branch `nexkit/issue-5`, the base branch of #7.", row["body"])
+
+    def test_failing_to_delete_the_branch_keeps_the_merge_and_the_close(self):
+        self.gh.delete_on_merge = True
+        self.gh.delete_error = GitHubError(403, "Resource not accessible by integration")
+        self.candidate()
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(outcome["outcome"], "merged")
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+        self.assertEqual(self.gh.issues[5]["state_reason"], "completed")
+        [row] = self.gh.run_comments(6)
+        self.assertIn(
+            "Could not delete branch `nexkit/issue-5`: GitHub API 403: Resource not accessible "
+            "by integration. It stays; delete it yourself.",
+            row["body"],
+        )
         self.assertEqual(row["run"]["status"], "success")
 
     def test_issue_stays_open_without_an_automatic_merge(self):

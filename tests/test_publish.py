@@ -114,6 +114,24 @@ class PublishTests(unittest.TestCase):
         self.assertTrue(pull["body"].startswith("Closes #5"))
         self.assertEqual(pull["head"]["ref"], "nexkit/issue-5")
 
+    def test_an_issue_closed_while_the_round_ran_gets_nothing_published(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        self.gh.close_issue(5, "not_planned")
+        for action, result in (("implement", self.result(start)), ("plan", {"output": PLAN})):
+            outcome = publish(
+                self.gh,
+                decision(action),
+                {"status": "done", **result},
+                CONTEXT,
+                self.cfg,
+                self.repos.clone(f"publisher-{action}"),
+                self.out,
+            )
+            self.assertEqual(outcome, {"published": False, "issue_closed": True})
+        self.assertNotIn("nexkit/issue-5", git(self.repos.origin, "branch", "--list"))
+        self.assertEqual((self.gh.pulls, self.gh.comments(5)), ({}, []))
+        self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
+
     def test_a_fix_round_that_checks_again_pushes_nothing_and_keeps_the_head(self):
         before = git(self.repos.origin, "rev-parse", "main")
         fix = decision("fix", pr=6, target=6, head="a" * 40)
@@ -490,6 +508,14 @@ class PublishTests(unittest.TestCase):
         data = plan_data(self.posted(body))
         self.assertIn("Passed on `main` since", data["no_change"])
         self.assertNotIn("protected_paths", plan_data(self.posted(render_plan(PLAN))))
+
+    def test_a_plan_whose_no_change_is_only_quotes_finds_nothing(self):
+        for empty in ('""', "''", '" "', "  "):
+            body = render_plan({**PLAN, "no_change": empty})
+            self.assertNotIn("No change needed", body)
+            self.assertNotIn("no_change", plan_data(self.posted(body)))
+        body = render_plan({**PLAN, "no_change": '"The host answered 409."'})
+        self.assertIn('### No change needed\n\n"The host answered 409."', body)
 
     def posted(self, body):
         return self.gh.comment(5, body)

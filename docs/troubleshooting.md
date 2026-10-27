@@ -228,7 +228,8 @@ path you added to `protected_paths`. Make those changes yourself, then use `/nex
 its reason. NexKit handles the refusals that pass: a base branch that moved meanwhile is
 tried again, required checks that have not passed yet are waited for by autopilot's
 sweeps (`merge_waiting`), a branch that must be up to date is updated and checked
-again with `conflicts.auto_resolve`, and reviewed again only when its own change differs, and a branch that someone pushed to after the round
+again with `conflicts.auto_resolve`, also when GitHub only says that its required checks
+are "expected" while it reports the pull request as behind its base branch, and reviewed again only when its own change differs, and a branch that someone pushed to after the round
 checked it ("Head branch was modified") gets `/nexkit review` on its new head. A required
 check that failed, at the first try or while the merge waits, gets an automatic fix round
 within `fix.max_auto_rounds`, and while the merge waits, a new commit on the branch gets

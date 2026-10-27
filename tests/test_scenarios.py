@@ -591,6 +591,39 @@ class ScenarioTests(unittest.TestCase):
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
+    def test_a_merge_waiting_on_a_branch_behind_its_base_is_updated_and_merged(self):
+        expected = "Repository rule violations found\n\n2 of 2 required status checks are expected."
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return done()
+            # The review that the update started: its change is the approved one.
+            return {"checks": done()["checks"]}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.merge_error = GitHubError(405, expected)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual([outcome for *_, outcome in pipe.played], ["planned", "merge_waiting"])
+        # `main` moves, and branch protection wants the branch up to date: the checks that
+        # passed on its head stay "expected". Hours later, the next sweep updates it.
+        pipe.gh.pulls[6]["mergeable_state"] = "behind"
+        pipe.gh.merge_error = [GitHubError(405, expected)]
+        pipe.later(timedelta(hours=7))
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+        self.assertEqual(pipe.played[-1][2], "merged")
+        self.assertEqual(len(pipe.gh.updated), 1)
+        self.assertEqual(pipe.gh.merged[0][1], "e" * 40)
+        self.assertEqual(pipe.reviews, 1)
+        rounds = [run["outcome"] for _, run in run_comments(pipe.gh.comments(6))]
+        self.assertIn("branch_updated", rounds)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
     def test_a_base_branch_move_waits_for_the_implement_round(self):
         pushed = []
 

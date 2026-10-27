@@ -780,6 +780,63 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
         self.assertEqual(len(self.gh.updated), 1)
 
+    def test_required_checks_expected_on_a_branch_behind_its_base_update_it(self):
+        # Branch protection wants the branch up to date: GitHub reports the checks that
+        # passed on its head as "expected", and the pull request as behind.
+        self.candidate()
+        self.gh.pulls[6]["mergeable_state"] = "behind"
+        expected = "Repository rule violations found\n\n2 of 2 required status checks are expected."
+        self.gh.merge_error = [GitHubError(405, expected)]
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "branch_updated")
+        self.assertIn("NexKit merged `main` into it", outcome["summary"])
+        self.assertEqual(self.gh.updated, [(6, HEAD)])
+        [review] = rounds_started(self.gh)
+        self.assertEqual(
+            review["inputs"], {"command": "review", "number": "6", "note": "", "auto": "true,carry"}
+        )
+        self.assertTrue(self.gh.run_comments(6)[-1]["run"]["updated_branch"])
+
+    def test_required_checks_expected_on_a_branch_not_behind_wait(self):
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.candidate()
+        expected = "Repository rule violations found\n\n2 of 2 required status checks are expected."
+        for state in (None, "blocked"):
+            if state:
+                self.gh.pulls[6]["mergeable_state"] = state
+            self.gh.merge_error = [GitHubError(405, expected)]
+            self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_waiting")
+            self.assertFalse(self.gh.updated)
+        # Without `conflicts.auto_resolve`, a branch that is behind waits too.
+        self.gh.pulls[6]["mergeable_state"] = "behind"
+        self.gh.merge_error = [GitHubError(405, expected)]
+        cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+        self.assertEqual(self.run_report(cfg=cfg)["outcome"], "merge_waiting")
+        self.assertFalse(self.gh.updated)
+
+    def test_a_merge_waiting_on_a_branch_behind_its_base_is_updated_by_the_sweep(self):
+        from datetime import timedelta
+
+        from nexkit import autopilot
+
+        # Hours in `merge_waiting`, behind `main`, as before NexKit counted it as behind.
+        self.waiting_merge()
+        self.gh.pulls[6]["mergeable_state"] = "behind"
+        later = datetime.now(UTC) + timedelta(hours=7)
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
+        self.assertEqual(step["state"], "merge")
+        expected = "2 of 2 required status checks are expected."
+        self.gh.merge_error = [GitHubError(405, expected)]
+        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        self.assertIn("#6: branch_updated.", lines)
+        self.assertEqual(self.gh.updated, [(6, HEAD)])
+        [review] = rounds_started(self.gh)
+        self.assertEqual(review["inputs"]["auto"], "true,carry")
+        row = self.gh.run_comments(6)[-1]["run"]
+        self.assertEqual((row["outcome"], row.get("attention")), ("branch_updated", None))
+        self.assertFalse(self.gh.comments_matching(6, "@olivia"))
+
     def test_the_review_after_an_update_finds_the_approval_it_carries_over(self):
         # An implement round's report runs beside the review it starts, which reads the
         # approval from the state comment: it is saved before the review is started.

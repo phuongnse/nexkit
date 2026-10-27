@@ -777,7 +777,8 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     `merge_waiting` for required checks that have not passed yet, which autopilot's next
     sweeps merge, an automatic fix round for required checks that failed, at the first try
     or while the merge waits (see `_required_failed`), an update of a branch that is
-    behind with a review of the new commit, and otherwise `merge_refused` for a person."""
+    behind with a review of the new commit, also when GitHub only says its required checks
+    are expected, and otherwise `merge_refused` for a person."""
     pr, base = target["pr"], target["base"]
     message += f" Automatic merge was not possible: {exc}"
     auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]
@@ -789,6 +790,10 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     if CHECKS_FAILING.search(str(exc)):
         return _required_failed(gh, cfg, target, row, message, exc, workflow, default_branch)
     if CHECKS_PENDING.search(str(exc)):
+        if auto_resolve and _behind(gh, pr):
+            # Checks that passed on a head behind its base count as "expected" when branch
+            # protection wants it up to date: they never pass without an update.
+            return _update_branch(gh, target, row, message, limit, workflow, default_branch)
         if not _swept(gh, cfg, target["issue"]):
             line = "Required checks have not passed yet. Merge it once they pass."
             return "merge_refused", f"{message}\n\n{line}"
@@ -882,6 +887,12 @@ def _head_moved(gh, target, message, workflow, default_branch):
         "`/nexkit review` on the new commit."
     )
     return "head_moved", f"{message}\n\n{line}"
+
+
+def _behind(gh, pr):
+    """Whether GitHub says the pull request is behind its base branch, which it reports
+    only when branch protection wants the branch up to date before a merge."""
+    return gh.pull(pr).get("mergeable_state") == "behind"
 
 
 def _swept(gh, cfg, number):

@@ -455,9 +455,10 @@ worked, `publish` merges its tip after the round's commit when it merges cleanly
 round checks a head that can merge (see *A base branch that moved while the agent worked*
 under [How it works](how-it-works.md#stages)). NexKit reads the rule from the branch rules
 API, or from classic branch protection when its token may read it. When the base branch
-moves later, while the round checks, GitHub refuses the merge. With
-`conflicts.auto_resolve`, NexKit then brings the pull request up to date with its base
-branch and runs its checks again. When that merge had no conflict and the pull request's
+moves later, while the round checks, its checks cannot lead to a merge any more. With
+`conflicts.auto_resolve`, NexKit then stops that round, brings the pull request up to date
+with its base branch and runs its checks again; a move after the checks, which GitHub
+refuses at the merge, is handled the same way. When that merge had no conflict and the pull request's
 own change is the one the review approved, the approval carries over and no review agent
 runs, so the rule costs a run of the checks, not a second AI review (see *A pull request
 brought up to date* under [How it works](how-it-works.md#stages)).
@@ -809,6 +810,11 @@ requests conflict.
   the next sweep.
 - When an automatic merge is refused because of a conflict, the round that tried it
   starts a conflict round right away, within the same limits.
+- When the base branch moves while a round runs its checks, and its head now conflicts
+  with it, or lacks its tip while branch protection wants branches up to date, NexKit
+  stops that round's run and starts the conflict round, or the update of the branch,
+  right away, within the same limits. A round in any other job goes on. The stopped round
+  counts against neither limit.
 - When the base branch moved while a round's agent worked and now conflicts with the
   round's commit, the round pushes its commit but skips its checks and AI review, which
   could not lead to a merge, and starts a conflict round right away, within the same

@@ -19,7 +19,9 @@
 #          merge.auto, the merge and the base branch's merge.after_workflows
 # maintain work that follows other events: closing a parent issue, resuming commands
 #          paused at the usage limit (waiting for their reset in a run of its own),
-#          starting rounds for conflicts with the base branch, autopilot sweeps, which
+#          starting rounds for conflicts with the base branch, stopping a round in its
+#          checks that a move of the base branch left without a purpose (with
+#          force-cancel, so its report and finish do not run), autopilot sweeps, which
 #          also end the comments and statuses of runs that ended without a report and
 #          merge pull requests whose required checks passed since, the sweep after
 #          a command NexKit started that route refused, and, instead of a command, the

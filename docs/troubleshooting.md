@@ -370,6 +370,14 @@ conflict needs, such as which side's numbering to keep. A round that ended as
 `conflicting` is the same case: its commit conflicted with the base branch, so its checks
 and review did not run, and no conflict round was left to start.
 
+### A round ended as `stop_failed`
+
+The base branch moved while the round ran its checks, so that they could not lead to a
+merge, and NexKit stopped the round, but the round that should follow did not start: the
+comment says why, such as an update of the branch that GitHub refused. Comment `/nexkit
+fix` when the pull request conflicts with its base branch, otherwise `/nexkit review`
+after merging the base branch into it.
+
 ### A round needs a manual merge (`needs_merge`)
 
 The merge the round needs, for a conflict in a protected path or for a conflict whose

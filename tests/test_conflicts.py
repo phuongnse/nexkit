@@ -203,6 +203,189 @@ class SweepTests(unittest.TestCase):
             self.assertEqual(len(self.gh.dispatches), 2)
 
 
+NEW_BASE = "e" * 40
+CHECKED = "d" * 40
+
+
+class SupersededTests(unittest.TestCase):
+    """A round still in its checks when the base branch moves under it."""
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5, head_sha=CHECKED)
+        self.gh.comment(6, render_state({"version": 2, "issue": 5, "auto_fixes": 1}))
+        first = {"round": 1, "trigger": "implement", "status": "success", "outcome": "auto_fix"}
+        self.gh.comment(6, render_run({**first, "url": "https://x/runs/1", "head": "a" * 40}))
+        self.fix = {
+            "round": 2,
+            "trigger": "fix (auto)",
+            "status": "running",
+            "url": "https://github.com/acme/app/actions/runs/50",
+            "head": "a" * 40,
+        }
+        self.gh.comment(6, render_run(self.fix))
+        self.in_job(50, "verify")
+        # `main` moved since the round published `CHECKED`.
+        self.gh.branches["main"] = NEW_BASE
+
+    def in_job(self, run_id, stage):
+        """Run `run_id` is in `stage`: the jobs before it ended, and it runs."""
+        order = ["route", "agent", "publish", "verify", "combine", "review", "report"]
+        jobs = [{"name": f"nexkit / {job}", "status": "completed"} for job in order]
+        jobs = jobs[: order.index(stage)]
+        if stage == "verify":
+            # Of two check jobs, one ended.
+            jobs.append({"name": "nexkit / verify (unit)", "status": "completed"})
+            jobs.append({"name": "nexkit / verify (e2e)", "status": "in_progress"})
+        else:
+            jobs.append({"name": f"nexkit / {stage}", "status": "in_progress"})
+        self.gh.jobs[run_id] = jobs
+        self.gh.runs[run_id] = {"status": "in_progress", "run_attempt": 1}
+
+    def behind(self):
+        """The rules want pull requests up to date, and the head lacks `main`'s tip."""
+        self.gh.strict = True
+        self.gh.compares[(NEW_BASE, CHECKED)] = {"behind_by": 1}
+
+    def sweep(self, max_rounds=3):
+        with mock.patch("nexkit.maintain.time.sleep"):
+            return resolve_conflicts(self.gh, "main", "nexkit.yml", "main", max_rounds, delay=0)
+
+    def latest(self, number=6):
+        return self.gh.run_comments(number)[-1]
+
+    def test_a_round_checking_a_head_now_behind_stops_and_the_branch_is_updated(self):
+        self.behind()
+        [line] = self.sweep()
+        self.assertIn("NexKit stopped this round's checks: `main` moved to `eeeeeee`", line)
+        self.assertEqual(self.gh.cancelled, [50])
+        self.assertEqual(self.gh.updated, [(6, CHECKED)])
+        [review] = rounds_started(self.gh)
+        self.assertEqual(
+            (review["inputs"]["command"], review["inputs"]["auto"]), ("review", "true,carry")
+        )
+        row = self.latest()
+        run = row["run"]
+        self.assertEqual((run["status"], run["outcome"]), ("success", "superseded"))
+        self.assertEqual(
+            (run["head"], run["checks"], run["verdict"]), (CHECKED, "not run", "not run")
+        )
+        self.assertTrue(run["updated_branch"])
+        self.assertIn("want pull requests up to date, and `ddddddd` lacks it", row["body"])
+        self.assertIn("started `/nexkit review` on the new commit", row["body"])
+        # Not a round a person cancelled, nor one of the automatic fix rounds.
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
+        stopped = {(s["sha"], s["state"]) for s in self.gh.statuses}
+        self.assertEqual(stopped, {(CHECKED, "error"), ("a" * 40, "error")})
+        # Once: the next look finds no round in its checks.
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual(len(rounds_started(self.gh)), 1)
+
+    def test_a_round_checking_a_head_that_now_conflicts_starts_the_conflict_round(self):
+        self.gh.pulls[6]["mergeable"] = False
+        [line] = self.sweep()
+        self.assertIn("`ddddddd` conflicts with it", line)
+        self.assertEqual(self.gh.cancelled, [50])
+        [started] = rounds_started(self.gh)
+        self.assertEqual(
+            (started["inputs"]["auto"], started["inputs"]["number"]), ("conflicts", "6")
+        )
+        run = self.latest()["run"]
+        self.assertEqual((run["outcome"], run["conflicts_started"]), ("superseded", NEW_BASE))
+        self.assertIn("Started an automatic round on #6 to merge `main`.", self.latest()["body"])
+        # Without up-to-date rules too: a head that conflicts never merges.
+        self.assertFalse(self.gh.strict)
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual(len(rounds_started(self.gh)), 1)
+
+    def test_a_round_in_any_other_job_goes_on(self):
+        self.behind()
+        self.gh.pulls[6]["mergeable"] = False
+        for stage in ("agent", "publish", "review", "report"):
+            self.in_job(50, stage)
+            self.assertEqual(self.sweep(), [], stage)
+        self.gh.runs[50] = {"status": "queued"}
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual((self.gh.cancelled, rounds_started(self.gh)), ([], []))
+        self.assertEqual(self.latest()["run"]["status"], "running")
+
+    def test_checks_that_can_still_lead_to_a_merge_go_on(self):
+        # The head holds `main`'s tip.
+        self.gh.strict = True
+        self.gh.compares[(NEW_BASE, CHECKED)] = {"behind_by": 0}
+        self.assertEqual(self.sweep(), [])
+        # Or the rules do not want pull requests up to date.
+        self.behind()
+        self.gh.strict = False
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual((self.gh.cancelled, rounds_started(self.gh)), ([], []))
+
+    def test_a_round_whose_next_round_has_no_room_left_goes_on(self):
+        self.behind()
+        for n in (1, 2):
+            self.gh.comment(
+                6,
+                render_run(
+                    {
+                        "round": 10 + n,
+                        "trigger": "review",
+                        "updated_branch": True,
+                        "status": "success",
+                        "url": f"https://x/runs/{n}",
+                    }
+                ),
+            )
+        self.gh.comment(6, render_run(self.fix))
+        self.assertEqual(self.sweep(max_rounds=2), [])
+        self.assertEqual(self.gh.cancelled, [])
+
+    def test_the_implement_round_that_opened_the_pull_request_stops_too(self):
+        gh = self.gh = FakeGitHub()
+        gh.add_issue(5)
+        gh.add_pull(6, 5, head_sha=CHECKED)
+        gh.branches["main"] = NEW_BASE
+        go = {
+            "command": "go",
+            "status": "running",
+            "url": "https://github.com/acme/app/actions/runs/60",
+        }
+        gh.comment(5, render_run(go))
+        self.in_job(60, "combine")
+        self.behind()
+        [line] = self.sweep()
+        self.assertEqual(gh.cancelled, [60])
+        self.assertEqual(gh.updated, [(6, CHECKED)])
+        # The pull request shows the implement round as its first round.
+        [row] = gh.run_comments(6)
+        self.assertEqual(
+            (row["run"]["round"], row["run"]["trigger"], row["run"]["outcome"]),
+            (1, "implement", "superseded"),
+        )
+        issue_run = self.latest(5)
+        self.assertEqual(
+            (issue_run["run"]["status"], issue_run["run"]["outcome"]), ("success", "superseded")
+        )
+        self.assertIn("Pull request #6: NexKit stopped this round's checks", issue_run["body"])
+
+    def test_a_next_round_that_cannot_start_waits_for_a_person(self):
+        self.behind()
+        with mock.patch.object(self.gh, "update_branch", side_effect=GitHubError(422, "no")):
+            [line] = self.sweep()
+        self.assertIn("NexKit could not update the branch", line)
+        run = self.latest()["run"]
+        self.assertEqual((run["status"], run["outcome"]), ("failure", "stop_failed"))
+        self.assertIn("could not start the next round", run["attention"])
+
+    def test_a_push_to_the_base_branch_stops_the_round(self):
+        self.behind()
+        cfg = make_config(conflicts={"auto_resolve": True})
+        event = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}}
+        with mock.patch("nexkit.maintain.time.sleep"):
+            maintain(self.gh, route(self.gh, "push", event), cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(self.gh.cancelled, [50])
+
+
 class RouteTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()

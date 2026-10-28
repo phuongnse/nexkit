@@ -163,7 +163,7 @@ FAILED = {"failure", "timed_out"}
 # Events whose runs test a pull request rather than the branch they name.
 PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
 # Outcomes after which a run already started the next one by itself.
-CHAINED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved"}
+CHAINED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved", "superseded"}
 # The outcome of a round whose checks fail as the default branch does while a bug issue
 # for that failure is open: no fix round starts until the default branch passes again.
 CI_WAITING = "ci_waiting"

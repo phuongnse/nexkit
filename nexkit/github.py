@@ -308,6 +308,11 @@ class GitHub:
         """The annotations of a check run, such as a job of a workflow run: the first 100."""
         return self.paginate(f"{self._repo}/check-runs/{check_run_id}/annotations", limit=100)
 
+    def cancel_run(self, run_id):
+        """Stop a workflow run at once, with the jobs that would run after a cancellation,
+        such as those with `always()`."""
+        return self.request("POST", f"{self._repo}/actions/runs/{run_id}/force-cancel")
+
     def rerun_failed_jobs(self, run_id):
         return self.request("POST", f"{self._repo}/actions/runs/{run_id}/rerun-failed-jobs")
 

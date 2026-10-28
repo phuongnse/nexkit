@@ -138,6 +138,8 @@ class FakeGitHub:
         self.path_history = {}  # path -> shas of the commits that changed it, newest first
         self.dispatch_runs = {}
         self.strict = False  # whether the base branch's rules want pull requests up to date
+        self.cancelled = []  # each workflow run cancelled
+        self.cancel_error = None
         self._next = 1000
 
     def _id(self):
@@ -407,6 +409,12 @@ class FakeGitHub:
 
     def artifact_zip(self, artifact_id, limit=64_000_000):
         return self.zips[artifact_id][: limit + 1]
+
+    def cancel_run(self, run_id):
+        if self.cancel_error:
+            raise self.cancel_error
+        self.cancelled.append(run_id)
+        self.runs[run_id] = {"status": "completed", "conclusion": "cancelled"}
 
     def rerun_failed_jobs(self, run_id):
         self.reruns.append(run_id)

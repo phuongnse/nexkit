@@ -137,6 +137,7 @@ class FakeGitHub:
         self.commit_files = {}  # commit sha -> the files it changed
         self.path_history = {}  # path -> shas of the commits that changed it, newest first
         self.dispatch_runs = {}
+        self.strict = False  # whether the base branch's rules want pull requests up to date
         self._next = 1000
 
     def _id(self):
@@ -433,6 +434,11 @@ class FakeGitHub:
 
     def branch_sha(self, branch):
         return self.branches.get(branch, "f" * 40)
+
+    def wants_up_to_date(self, branch):
+        if isinstance(self.strict, Exception):
+            raise self.strict
+        return self.strict
 
     def deletes_merged_branches(self):
         return self.delete_on_merge

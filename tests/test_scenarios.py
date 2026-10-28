@@ -119,6 +119,18 @@ class Pipeline:
         self.gh.add_milestone(1)
         self.dispatch = self.gh.dispatch
         self.gh.dispatch = self.dispatched
+        self.merge = self.gh.merge
+        self.gh.merge = self.merged
+        # `publish` merges a base branch that moved while the agent worked, when the rules
+        # want pull requests up to date (`publish.catch_up`); off, it publishes as before.
+        self.catch_up = True
+
+    def merged(self, number, sha, method="squash"):
+        """GitHub refuses to merge a branch behind its base when the rules want it up to
+        date."""
+        if self.gh.strict and self.gh.pulls[number].get("mergeable_state") == "behind":
+            raise GitHubError(405, "Head branch is out of date. Review and try again.")
+        return self.merge(number, sha, method)
 
     def dispatched(self, workflow, ref, inputs, run_details=False):
         """A dispatch of NexKit's workflow queues a run of its own, which GitHub names."""
@@ -232,6 +244,7 @@ class Pipeline:
                 else artifacts / name / "checks.json"
             ).write_text(json.dumps(data))
 
+        start = self.gh.branch_sha("main")
         if outcome.get("working"):
             # What happens elsewhere while the agent works, before anything is published.
             outcome["working"](self)
@@ -267,8 +280,18 @@ class Pipeline:
         elif decision["action"] == "fix" and agent and agent["status"] == "done":
             published = {"published": True, "pr": decision["pr"], "head": self.head(decision["pr"])}
         published.update(outcome.get("publish") or {})
+        tip = self.gh.branch_sha("main")
+        if published.get("head") and tip != start and not published.get("conflicts"):
+            # The base branch moved while the agent worked, without a conflict.
+            if self.gh.strict and self.catch_up:
+                published["updated"] = tip
+            elif self.gh.strict:
+                self.gh.pulls[published["pr"]]["mergeable_state"] = "behind"
         needs["publish"] = {"outputs": {"result": json.dumps(published)}}
-        reviewing = decision["action"] == "review" or published.get("head")
+        # A head that conflicts with the base branch's tip gets no checks or review.
+        reviewing = decision["action"] == "review" or (
+            published.get("head") and not published.get("conflicts")
+        )
         if reviewing and "checks" in outcome:
             write("nexkit-checks", outcome["checks"])
         if decision.get("carry_from"):
@@ -821,6 +844,65 @@ class ScenarioTests(unittest.TestCase):
         # The implement round's review and the fix round's; none for the update.
         self.assertEqual(pipe.reviews, 2)
         self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_a_base_branch_that_moves_during_the_implement_round_is_merged_before_checks(self):
+        def moved(pipe):
+            # Another pull request merges into `main` while the agent works.
+            pipe.gh.branches["main"] = "e" * 40
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            return {**done(), "working": moved}
+
+        def play(catch_up):
+            pipe = Pipeline(self, config(), script)
+            pipe.gh.strict = True
+            pipe.catch_up = catch_up
+            pipe.issue(5)
+            return pipe, pipe.play()
+
+        pipe, played = play(True)
+        # `publish` merged the new tip after the round's commit, so the round's checks count
+        # and it merges at once: no update of the branch and no second round.
+        self.assertEqual(played, [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "merged")
+        self.assertEqual(pipe.gh.updated, [])
+        rounds = [run for _, run in run_comments(pipe.gh.comments(6)) if "round" in run]
+        self.assertEqual([run["outcome"] for run in rounds], ["merged"])
+        self.assertTrue(pipe.gh.comments_matching(6, "Merged `main` (`eeeeeee`) after this round"))
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+        # Before: the round checked a head behind `main`, whose merge GitHub refused, and a
+        # second round ran every check again.
+        pipe, played = play(False)
+        self.assertEqual(played, [("plan", 5), ("go", 5), ("review", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "merged"])
+
+    def test_a_head_that_conflicts_with_a_moved_base_goes_straight_to_its_conflict_round(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                # `main` moved while the agent worked, and its tip conflicts with the
+                # round's commit, which `publish` finds with git.
+                moved = {"working": lambda pipe: pipe.gh.branches.update(main="e" * 40)}
+                return {**done(), **moved, "publish": {"conflicts": ["app.py"]}}
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.gh.strict = True
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["conflict_fix", "merged"])
+        # The implement round ran neither checks nor review; the conflict round ran both.
+        self.assertEqual(pipe.reviews, 1)
+        first, second = [run for _, run in run_comments(pipe.gh.comments(6)) if "round" in run]
+        self.assertEqual((first["checks"], first["verdict"]), ("not run", "not run"))
+        self.assertTrue(second["conflicts"])
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 0)
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 

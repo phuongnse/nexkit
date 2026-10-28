@@ -1310,6 +1310,31 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn('--evidence "$RUNNER_TEMP/nexkit-evidence"', context)
         self.assertLess(agent.index("Download check results"), agent.index("Run agent"))
 
+    def test_a_head_that_conflicts_with_its_base_gets_no_checks_or_review(self):
+        self.assertIn("conflicts: ${{ steps.publish.outputs.conflicts }}", self.jobs["publish"])
+        self.assertIn("needs.publish.outputs.conflicts != 'true'", self.jobs["verify"])
+        # The review runs only after verify succeeded, so it is skipped with it.
+        self.assertIn("needs.verify.result == 'success'", self.jobs["review"])
+        with mock.patch("nexkit.cli._output") as output, mock.patch("builtins.print"):
+            self.publish_outcome({"published": True, "pr": 6, "head": "c" * 40, "conflicts": ["a"]})
+        self.assertEqual(output.call_args.kwargs["conflicts"], "true")
+        with mock.patch("nexkit.cli._output") as output, mock.patch("builtins.print"):
+            self.publish_outcome({"published": True, "pr": 6, "head": "c" * 40})
+        self.assertEqual(output.call_args.kwargs["conflicts"], "")
+
+    def publish_outcome(self, outcome):
+        """Run `nexkit publish` with `publish` returning `outcome`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("result.json", "context.json"):
+                Path(tmp, name).write_text("{}")
+            env = {"NEXKIT_DECISION": "{}", "GITHUB_REPOSITORY": "acme/app"}
+            with (
+                mock.patch.dict(os.environ, env),
+                mock.patch("nexkit.cli._config", return_value={}),
+                mock.patch("nexkit.publish.publish", return_value=outcome),
+            ):
+                cli.main(["publish", "--repo", tmp, "--artifacts", tmp])
+
     def test_verify_holds_no_secrets(self):
         for name in ("verify", "combine"):
             self.assertNotIn("secrets", self.jobs[name], name)

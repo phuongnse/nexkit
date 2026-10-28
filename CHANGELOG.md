@@ -1,5 +1,33 @@
 # Changelog
 
+## 5.5.0
+
+When the base branch moves while a round runs, which happens often with several issues
+at once under GitHub's *Require branches to be up to date before merging*, NexKit no
+longer spends a whole round of checks that could never lead to a merge. See *A base
+branch that moved while the agent worked* under [Stages](docs/how-it-works.md#stages) and
+*Stopping a round in its checks* under
+[Work without a command](docs/how-it-works.md#work-without-a-command).
+
+- When the base branch moved while an implement or fix round's agent worked, and its
+  rules want pull requests up to date, `publish` merges the base branch's tip after the
+  round's commit when it merges cleanly, so the checks run on a head that can merge
+  (#177). NexKit reads the rule from the branch rules API, or from classic branch
+  protection when its token may read it; a rule it cannot read counts as off. When the
+  tip brings workflow changes and NexKit pushes with the Actions token, the merge is left
+  out, as before.
+- With `conflicts.auto_resolve`, a round whose commit conflicts with the base branch's
+  tip still pushes it, but runs neither its checks nor its AI review, and starts the
+  conflict round at once, within `conflicts.max_rounds` (#177). With those used up, it
+  ends as `conflicting` and waits for a person.
+- When the base branch moves while a round runs only its checks (`verify`, `combine`),
+  and its head now conflicts with it, or lacks its tip under up-to-date rules, NexKit
+  stops that run and starts the conflict round, or an update of the branch with
+  `/nexkit review`, at once (#178). A round in any other job, or still queued, goes on.
+  The stopped round ends as `superseded`, runs no `report` or `finish`, and counts
+  against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`; when the next round
+  cannot start, it ends as `stop_failed` for a person.
+
 ## 5.4.0
 
 A pull request whose change another pull request already landed on its base branch no

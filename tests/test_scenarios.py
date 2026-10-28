@@ -725,6 +725,31 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertEqual(collect(pipe.gh, pipe.cfg, workers=1)["recent_closed"], [])
 
+    def test_a_fix_round_whose_change_is_already_on_its_base_branch_closes(self):
+        # The checks fail, and the base branch gets the same change before the automatic fix
+        # round starts: its `agent` job finds that before setup and the agent.
+        found = {
+            "status": "already_on_base",
+            "error": "`main` already holds the change of this pull request.",
+            "merge_base": "c" * 40,
+            "on_base": "b" * 40,
+        }
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            return done(checks=False) if inputs["command"] == "go" else {"agent": found}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(pipe.played[-1][2], "already_on_base")
+        self.assertEqual(pipe.gh.pulls[6]["state"], "closed")
+        self.assertEqual(pipe.gh.issues[5]["state_reason"], "completed")
+        self.assertTrue(pipe.gh.comments_matching(5, f"brought by {'b' * 40}"))
+        # The round ran no agent, so it gives its automatic round back.
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 0)
+
     def test_a_fix_round_with_a_cause_outside_the_code_checks_again_once(self):
         cause = "The registry returned 500 Internal Server Error during `docker compose up`."
         outside = {"cause": cause, "cause_outside": True}

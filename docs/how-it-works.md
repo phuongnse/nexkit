@@ -501,12 +501,18 @@ against its base branch, as its *Files changed* tab shows. When it does not:
   The outcome is `already_on_base`; nobody is mentioned.
 - The pull request's round comment and a comment on the issue say that the base branch
   already holds the change. They name the commit that brought it when NexKit can tell
-  one: the only commit of the base branch, merged into the pull request since it
-  started, that changed a file the pull request's own commits changed.
+  one: outside a fix round, the only commit of the base branch, merged into the pull
+  request since it started, that changed a file the pull request's own commits changed.
 - A command on such a pull request, by a person or by NexKit, such as the `/nexkit
   review` after a branch update, goes to the `maintain` job, which closes it and shows
   the outcome on the pull request's latest round. A merge try closes it in the round
   that tries it, or in the autopilot sweep that tries a waiting merge again.
+- A fix round checks once more in its `agent` job, before setup and the agent, since the
+  base branch may have moved after the round started: when git's merge of the branch
+  with the base branch's tip gives the base branch's own files, the round runs nothing,
+  and `report` closes the pull request and its issue. The round gives back its
+  automatic round, and git names the commit: the oldest one of the base branch that
+  already holds everything the branch changes.
 - `nexkit status` lists it under the pull requests NexKit closed without merging, not as
   waiting for a merge or a person.
 

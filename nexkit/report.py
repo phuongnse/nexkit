@@ -427,6 +427,17 @@ def _no_change(gh, cfg, decision, agent):
     }
 
 
+def _already_on_base(gh, cfg, decision, agent):
+    """A fix round that found, before its agent, that the base branch already holds the
+    pull request's change: close it and its issue (see `maintain.close_on_base`)."""
+    target = {**decision, "merge_base": agent.get("merge_base") or decision["base"]}
+    outcome, text, commit = close_on_base(gh, cfg, target, agent.get("on_base"))
+    reason = needs_person(outcome, cfg)
+    fields = {"on_base": commit} if commit else {}
+    _stop_round(gh, decision, agent, outcome, text, reason, **fields)
+    return {"outcome": outcome, "summary": text, "attention": reason}
+
+
 def _stage_failure(decision, agent, publish):
     """(outcome, message) when the agent or publish stage stopped, otherwise None."""
     action = decision["action"]
@@ -1090,6 +1101,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             )
             _stop_round(gh, decision, agent, "up_to_date", message)
             return {"outcome": "up_to_date", "summary": message}
+        if agent and agent.get("status") == "already_on_base":
+            return _already_on_base(gh, cfg, decision, agent)
         failure = _stage_failure(decision, agent, publish)
         if failure:
             outcome, message = failure

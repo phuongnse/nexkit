@@ -297,7 +297,7 @@ def cmd_agent(args):
 
 
 def _agent(args, decision, stage, out):
-    from .agent import conflicts_with_base, run_stage, run_triage, up_to_date
+    from .agent import conflicts_with_base, on_base, run_stage, run_triage, up_to_date
     from .checks import find_commits, setup
     from .redact import Redactor
     from .runlog import summary, write_summary
@@ -306,9 +306,14 @@ def _agent(args, decision, stage, out):
     base = decision["base"]
     context = json.loads((out / "context.json").read_text())
     commits = None
-    if stage == "fix" and decision.get("conflicts") and not conflicts_with_base(args.repo, base):
-        # Another round or a person resolved it since this round was started.
-        result = up_to_date(base)
+    # The base branch already holds the change, such as one another pull request landed
+    # since the round was started, so its merge would leave nothing to fix or review.
+    result = on_base(args.repo, base) if stage == "fix" else None
+    if result is None and stage == "fix" and decision.get("conflicts"):
+        if not conflicts_with_base(args.repo, base):
+            # Another round or a person resolved it since this round was started.
+            result = up_to_date(base)
+    if result:
         (out / "result.json").write_text(json.dumps(result, indent=2))
         print(json.dumps(result, indent=2))
         return 0

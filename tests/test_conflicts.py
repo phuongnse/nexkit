@@ -15,9 +15,9 @@ from nexkit import agent, cli
 from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
 from nexkit.route import route
-from nexkit.state import BOT_LOGIN, render_run
+from nexkit.state import BOT_LOGIN, read_state, render_run, render_state
 from nexkit.usage import iso
-from tests.support import FakeGitHub, GitRepos, git, make_config
+from tests.support import CALC, SUB, FakeGitHub, GitRepos, git, make_config
 from tests.test_report import HEAD, ReportCase, decision
 from tests.test_route import comment_event
 
@@ -304,6 +304,11 @@ class ConcurrentStartTests(unittest.TestCase):
         self.assertEqual(route(self.gh, "workflow_dispatch", sender, started[1])["action"], "fix")
 
 
+MUL_TOP = "def mul(a, b):\n    return a * b\n\n\n"
+DIV = "\n\ndef div(a, b):\n    return a / b\n"
+DIV_TOP = "def div(a, b):\n    return a / b\n\n\n"
+
+
 class UpToDateTests(unittest.TestCase):
     def setUp(self):
         self.repos = GitRepos()
@@ -324,17 +329,78 @@ class UpToDateTests(unittest.TestCase):
         git(self.repo, "reset", "-q", "--hard", "origin/main")
         self.assertFalse(agent.conflicts_with_base(self.repo, "main"))
 
-    def test_a_conflict_round_without_a_conflict_runs_nothing(self):
+    def checkout(self, branch="nexkit/issue-5"):
+        git(self.repo, "fetch", "-q", "origin")
+        git(self.repo, "checkout", "-q", "-B", branch, f"origin/{branch}")
+
+    def run_agent(self, **fields):
         (self.out / "context.json").write_text("{}")
-        d = decision("fix", pr=6, target=6, head=HEAD, auto=True, conflicts=True)
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True, **fields)
         env = {"NEXKIT_DECISION": json.dumps(d), "NEXKIT_CONFIG": json.dumps(make_config())}
         with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
             cli.main(["agent", "--repo", str(self.repo), "--out", str(self.out)])
-        result = json.loads((self.out / "result.json").read_text())
-        self.assertEqual(result["status"], "up_to_date")
+        return json.loads((self.out / "result.json").read_text())
+
+    def test_a_conflict_round_without_a_conflict_runs_nothing(self):
+        self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
+        self.checkout()
+        self.assertEqual(self.run_agent(conflicts=True)["status"], "up_to_date")
+
+    def test_a_change_the_base_branch_already_holds_runs_nothing(self):
+        self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
+        self.repos.push_commit("dev", "main", {"README.md": "Calc\n"}, "Readme")
+        # Another pull request makes the same change while it adds `mul` to the same file.
+        brought = self.repos.push_commit("dev", "main", {"calc.py": MUL_TOP + CALC + SUB}, "Both")
+        base = self.repos.push_commit(
+            "dev", "main", {"calc.py": DIV_TOP + MUL_TOP + CALC + SUB}, "Add div"
+        )
+        self.checkout()
+        result = self.run_agent()
+        self.assertEqual(
+            {key: result[key] for key in ("status", "merge_base", "on_base")},
+            {"status": "already_on_base", "merge_base": base, "on_base": brought},
+        )
+        self.assertEqual(git(self.repo, "status", "--porcelain"), "")  # nothing merged
+
+    def test_a_change_of_its_own_goes_on(self):
+        self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB + DIV}, "Sub, div")
+        both = self.repos.push_commit("dev", "main", {"calc.py": MUL_TOP + CALC + SUB}, "Both")
+        self.checkout()
+        self.assertIsNone(agent.on_base(self.repo, "main"))
+        # Once its own commits drop what `main` lacks, `main` holds all of it.
+        self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Drop div")
+        self.checkout()
+        self.assertEqual(agent.on_base(self.repo, "main")["on_base"], both)
 
 
 class ConflictReportTests(ReportCase):
+    def test_a_round_whose_change_is_already_on_base_closes_and_gives_its_round_back(self):
+        state = {"version": 2, "issue": 5, "auto_fixes": 1, "feedback": None}
+        self.gh.comment(6, render_state(state))
+        found = {
+            "stage": "fix",
+            "status": "already_on_base",
+            "summary": "",
+            "error": "`main` already holds the change of this pull request.",
+            "merge_base": "c" * 40,
+            "on_base": "b" * 40,
+        }
+        self.write("nexkit-agent", "result.json", found)
+        outcome = self.run_report(d=decision("fix", pr=6, target=6, head=HEAD, auto=True))
+        self.assertEqual(outcome["outcome"], "already_on_base")
+        self.assertEqual(self.gh.pulls[6]["state"], "closed")
+        self.assertEqual(self.gh.issues[5]["state_reason"], "completed")
+        self.assertFalse(self.gh.merged)
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(
+            (row["run"]["status"], row["run"]["outcome"], row["run"]["on_base"]),
+            ("success", "already_on_base", "b" * 40),
+        )
+        self.assertIn(
+            f"already holds the change of this pull request, brought by {'b' * 40}", row["body"]
+        )
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
+
     def test_an_up_to_date_round_succeeds_without_changes(self):
         self.write("nexkit-agent", "result.json", agent.up_to_date("main"))
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True, conflicts=True)

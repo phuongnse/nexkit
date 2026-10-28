@@ -24,7 +24,6 @@ from .state import (
     PAUSED,
     RUNNING,
     SUCCESS,
-    UNCOUNTED,
     by_bot,
     conflict_rounds_used,
     run_comments,
@@ -156,13 +155,14 @@ def holding_commit(gh, pr, merge_base):
     return found.pop() if len(found) == 1 else None
 
 
-def close_on_base(gh, cfg, target):
+def close_on_base(gh, cfg, target, commit=None):
     """Close a pull request whose base branch already holds its change without merging it,
     and its issue as completed, as a merge would. `target` names its `pr`, `issue`, `base`
-    and `merge_base` (see `route.on_base`). Returns (outcome, text for the pull request's
-    round, the commit that brought the change or None)."""
+    and `merge_base` (see `route.on_base`); `commit` is the commit that brought the change
+    when the caller found it. Returns (outcome, text for the pull request's round, the
+    commit that brought the change or None)."""
     pr, issue, base = target["pr"], target["issue"], target["base"]
-    commit = holding_commit(gh, pr, target["merge_base"])
+    commit = commit or holding_commit(gh, pr, target["merge_base"])
     by = f", brought by {commit}" if commit else ""
     held = f"`{base}` already holds the change of this pull request{by}"
     try:
@@ -405,7 +405,7 @@ def start_conflict_round(
         # that pushed now would make its merge fail. Its report, or a later check, starts
         # this round with the branch as that round left it.
         return ""
-    if latest.get("conflicts") and latest.get("outcome") in UNCOUNTED:
+    if latest.get("conflicts") and latest.get("outcome") == "needs_merge":
         # The last round stopped because NexKit may not push the merge: a person merges
         # it, and their next round lets conflict rounds start again.
         return f"#{number} conflicts with `{base}`, which a person merges."

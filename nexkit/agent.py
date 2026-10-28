@@ -32,6 +32,9 @@ NO_EARLIER_FIXES = "None. This is the first fix round of this pull request."
 # A conflict marker at the start of a line: `<<<<<<< ours`, `>>>>>>> theirs`, `||||||| base`.
 CONFLICT_MARKER = re.compile(rb"^(<{7}|>{7}|\|{7})( |$)", re.M)
 BOT = ("-c", "user.name=nexkit", "-c", "user.email=nexkit@localhost")
+# How many commits of the base branch, oldest first, NexKit tries to find the one that
+# brought the change of a pull request that changes nothing once merged with it.
+HOLDING_TRIES = 50
 
 _STRING_LIST = {"type": "array", "items": {"type": "string"}}
 # A question for a person, with the answers the agent sees and the number of the one it
@@ -355,6 +358,43 @@ def up_to_date(base):
         "summary": "",
         "error": f"The pull request no longer conflicts with `{base}`.",
     }
+
+
+def on_base(repo, base):
+    """The result of a fix round whose branch, merged with `origin/<base>`, would change no
+    file against it, because the base branch already holds its change: nothing to do, so
+    neither setup nor the agent runs. None when the branch has a change of its own."""
+    commit = git(repo, "rev-parse", "--verify", f"origin/{base}^{{commit}}").strip()
+    tree, conflicts = merge_tree(repo, "HEAD", commit)
+    if conflicts or tree != git(repo, "rev-parse", f"{commit}^{{tree}}").strip():
+        return None
+    return {
+        "stage": "fix",
+        "status": "already_on_base",
+        "summary": "",
+        "error": f"`{base}` already holds the change of this pull request.",
+        "merge_base": commit,
+        "on_base": holding_commit(repo, commit),
+    }
+
+
+def holding_commit(repo, commit):
+    """The oldest commit of the base branch, up to `commit` and not yet on the branch, that
+    already holds every change of the branch, or None when none does: the commit that
+    brought the same change."""
+    try:
+        start = git(repo, "merge-base", "HEAD", commit).strip()
+        files = names(git(repo, "diff", "--name-only", "--no-renames", "-z", start, "HEAD"))
+        if not files:
+            return None
+        listed = git(repo, "rev-list", "--reverse", commit, "^HEAD", "--", *files).split()
+        for candidate in listed[:HOLDING_TRIES]:
+            tree, conflicts = merge_tree(repo, "HEAD", candidate)
+            if not conflicts and tree == git(repo, "rev-parse", f"{candidate}^{{tree}}").strip():
+                return candidate
+    except GitError:
+        return None
+    return None
 
 
 def merge_base_branch(repo, base, moved=False):

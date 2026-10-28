@@ -24,7 +24,7 @@ from .redact import Redactor
 from .runlog import RunLog, add_tokens, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import AgentConfigError, Spec
-from .schema import problems
+from .schema import filled, problems
 from .usage import schedule
 
 MAX_DIFF = 80_000
@@ -343,6 +343,49 @@ def merge_review(repo, context, base):
     )
 
 
+def _patch_id(repo, old, new):
+    """The id of the change from `old` to `new`, the same for the same change whatever its
+    line numbers, or "" for no change. Binary content counts; no diff driver of the
+    repository runs."""
+    diff = git(
+        repo,
+        "diff",
+        "--binary",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        old,
+        new,
+        binary=True,
+    )
+    if not diff:
+        return ""
+    found = git(repo, "patch-id", "--verbatim", input=diff, binary=True).decode().split()
+    return found[0] if found else ""
+
+
+def carried_review(repo, base, approved):
+    """(True, "") when the review of the commit `approved` holds for HEAD: HEAD merges a
+    commit of `origin/<base>` into it, and the pull request's change against that commit
+    is the one the review approved, against the base commit it started from. Otherwise
+    (False, why the review runs again)."""
+    try:
+        parents = git(repo, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:]
+        if len(parents) != 2 or parents[0] != approved:
+            return False, f"the new commit is not a merge of `{base}` into `{approved[:7]}`"
+        merged = parents[1]
+        if not is_ancestor(repo, merged, f"origin/{base}"):
+            return False, f"the commit it merged is not on `{base}`"
+        fork = git(repo, "merge-base", approved, merged).strip()
+        before = _patch_id(repo, fork, approved)
+        after = _patch_id(repo, merged, "HEAD")
+    except GitError as exc:
+        return False, f"git could not compare the changes: {exc}"
+    if not before or before != after:
+        return False, f"the change against `{base}` differs from the one the review approved"
+    return True, ""
+
+
 def conflicts_with_base(repo, base):
     """Whether HEAD conflicts with `origin/<base>`, decided by git without changing anything."""
     commit = git(repo, "rev-parse", "--verify", f"origin/{base}^{{commit}}").strip()
@@ -506,7 +549,7 @@ def _cause(result):
 
 def no_change(result):
     """The finding of an implement result that says no change is needed, or ""."""
-    return str((result.get("output") or {}).get("no_change") or "").strip()
+    return filled((result.get("output") or {}).get("no_change"))
 
 
 def needed_protected(result, cfg):
@@ -1167,7 +1210,7 @@ def run_stage(
     if stage in ("plan", "implement", "fix") and result.get("output"):
         # Only paths that are protected count, so a person is asked only for those.
         result["output"]["protected_paths"] = needed_protected(result, cfg)
-        if stage in ("plan", "implement") and str(result["output"].get("no_change") or "").strip():
+        if stage in ("plan", "implement") and no_change(result):
             result["passed_since"] = passed_runs(found)
     if triage:
         result.update(profile=triage["profile"], triage=triage)

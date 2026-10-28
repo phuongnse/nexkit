@@ -13,6 +13,7 @@ import json
 import re
 
 from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
+from .schema import filled
 
 BOT_LOGIN = "github-actions[bot]"
 PLAN_MARKER = "<!-- nexkit:plan -->"
@@ -126,7 +127,7 @@ def plan_data_record(output, passed=()):
     protected = [clip(p, 300) for p in output.get("protected_paths") or []][:20]
     if protected:
         data["protected_paths"] = protected
-    finding = str(output.get("no_change") or "").strip()
+    finding = filled(output.get("no_change"))
     if finding:
         lines = passed_lines(passed)
         data["no_change"] = clip(
@@ -442,6 +443,16 @@ def read_state(comments):
     Pull requests from v1.1.0 have a state comment with a rounds table. It is read like
     any other, but `progress.save_state` leaves it unchanged and posts a new one."""
     return _find(comments, STATE_PATTERN)
+
+
+def approved_head(comments):
+    """The commit that the pull request's last completed review approved, or None."""
+    _, state = read_state(comments)
+    last = (state or {}).get("last_review") or {}
+    head = last.get("head")
+    if last.get("verdict") == "approve" and isinstance(head, str) and len(head) == 40:
+        return head
+    return None
 
 
 def ci_wait_reason(wait):

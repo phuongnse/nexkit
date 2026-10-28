@@ -127,6 +127,9 @@ class FakeGitHub:
         self.calls = []  # ("attempt" or "jobs", run id, attempt) for each attempt read
         self.reruns = []
         self.branches = {}
+        self.delete_on_merge = False  # the repository's `delete_branch_on_merge`
+        self.deleted = []  # each branch deleted
+        self.delete_error = None
         self.runs = {}
         self.on_base = set()  # heads of pull requests that change no file against their base
         self.compares = {}  # (base, head) -> GitHub's comparison, for any other
@@ -431,6 +434,14 @@ class FakeGitHub:
     def branch_sha(self, branch):
         return self.branches.get(branch, "f" * 40)
 
+    def deletes_merged_branches(self):
+        return self.delete_on_merge
+
+    def delete_branch(self, branch):
+        if self.delete_error:
+            raise self.delete_error
+        self.deleted.append(branch)
+
     def create_pull(self, title, head, base, body):
         number = max([*self.issues, *self.pulls, 0]) + 1
         pull = self.add_pull(number, int(head.rsplit("-", 1)[1]), branch=head)
@@ -477,6 +488,7 @@ class FakeGitHub:
     def update_branch(self, number, sha):
         self.updated.append((number, sha))
         self.pulls[number]["head"]["sha"] = "e" * 40
+        self.pulls[number].pop("mergeable_state", None)
 
     def set_status(self, sha, context, state, description, target_url=None):
         self.statuses.append(

@@ -1,5 +1,60 @@
 # Changelog
 
+## 5.3.1
+
+- A pull request behind its base branch whose merge GitHub refuses because required checks
+  are "expected", such as "2 of 2 required status checks are expected.", is brought up to
+  date rather than left waiting (#171). Under branch protection that wants branches up to
+  date, GitHub reports checks that passed on a head behind its base as expected, so they
+  never pass. When GitHub reports the pull request as `behind`, NexKit now updates it from
+  the base branch with `conflicts.auto_resolve`, as for a branch that is out of date, and
+  the approval carries over when the change is the same. Pull requests already waiting
+  this way move on at the next autopilot sweep, however long they waited, with no
+  command. See [Failure handling](docs/how-it-works.md#failure-handling).
+
+## 5.3.0
+
+Rounds can take as long as their slowest check rather than the sum of all, and branch
+protection that wants pull requests up to date no longer costs a second AI review for each
+merge. See [Parallel checks](docs/configuration.md#parallel-checks) and
+[Stages](docs/how-it-works.md#stages).
+
+- With `"parallel_checks": true`, each check, or each `group` of checks, runs in a
+  `verify` job of its own, at once, with the same rules: no secrets, a read-only token and
+  the published commit (#167). A new `combine` job, which runs no repository code, joins
+  their results into the one `nexkit-checks` artifact, in the order of `checks`, so
+  statuses, the review and the next fix round see the same result as with one job. Each
+  job keeps its share of the 50 MB of result files. With the setting off, the single
+  `verify` job runs as before. `nexkit init` takes `--parallel-checks` and
+  `--check-group NAME=GROUP`.
+- When NexKit brings an approved pull request up to date with its base branch, because
+  branch protection wants it, and the merge has no conflict, the review job compares the
+  change with git before any agent (#168). When the pull request's own change is the one
+  the review approved, the approval carries over: no review agent runs, the checks run on
+  the new commit, and NexKit merges when they pass, or starts a counted automatic fix
+  round when they fail. Otherwise the review runs as before, and the round's comment says
+  why.
+
+## 5.2.0
+
+NexKit leaves alone an issue that a person closed while its round ran, cleans up the
+branches of the pull requests it merges, and no longer closes an issue on an empty
+finding. See [Automatic merge](docs/configuration.md#automatic-merge) and
+[Stages](docs/how-it-works.md#stages).
+
+- A plan or `/nexkit go` whose issue a person closed while it ran publishes nothing: no
+  branch, no pull request, no plan (#162). The run ends as `issue_closed` and needs
+  nobody. When the issue is reopened, it waits for a person. NexKit never merges a pull
+  request whose issue is closed: the round ends as `merge_issue_closed`, the pull request
+  stays open for a person, and `notify` is mentioned.
+- When the repository's *Automatically delete head branches* setting is on, NexKit
+  deletes the `nexkit/issue-<number>` branch of each pull request it merges, as GitHub
+  does after a person's merge (#163). A branch that an open pull request targets stays,
+  and a delete that fails leaves the merge as it is.
+- A `no_change` with no text once quotes and whitespace are removed, such as `""`, is no
+  finding (#164). Such a plan shows no *No change needed* section and goes on to its
+  change, where autopilot closed the issue before.
+
 ## 5.1.0
 
 Fewer runs for nothing after a failure outside the repository, such as a download host

@@ -139,6 +139,18 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(data["pull_requests"][0]["state"], "conflicting")
         self.assertEqual(data["needs_person"], [])
 
+    def test_a_pull_request_whose_issue_closed_waits_for_a_person_to_merge_it(self):
+        self.gh.add_pull(8, 9)
+        reason = (
+            "the issue closed before NexKit merged its pull request; merge or close it yourself"
+        )
+        self.round(8, 1, outcome="merge_issue_closed", attention=reason)
+        data = collect(self.gh, make_config(merge={"auto": True}), workers=1)
+        self.assertEqual(data["pull_requests"][0]["state"], "ready")
+        self.assertEqual(
+            data["needs_person"], [{"number": 8, "kind": "pull_request", "reason": reason}]
+        )
+
     def test_lists_pull_requests_closed_because_the_base_branch_holds_their_change(self):
         for number, issue, outcome in ((30, 27, "already_on_base"), (32, 7, "needs_human")):
             self.gh.add_pull(number, issue, state="closed")

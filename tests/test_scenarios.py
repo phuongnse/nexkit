@@ -24,7 +24,7 @@ from unittest import mock
 from nexkit import autopilot, progress
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
-from nexkit.publish import publish_plan
+from nexkit.publish import issue_closed, publish_plan
 from nexkit.report import report
 from nexkit.route import auto_kinds, issue_from_branch, route
 from nexkit.state import BOT_LOGIN, UNCOUNTED, read_state, run_comments
@@ -106,6 +106,7 @@ class Pipeline:
         self.runs = itertools.count(100)
         self.heads = itertools.count(1)
         self.played = []  # (command, number, outcome) for each run
+        self.reviews = 0  # review agents that ran
         self.tmp = tempfile.TemporaryDirectory()
         test.addCleanup(self.tmp.cleanup)
         env = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"})
@@ -231,6 +232,9 @@ class Pipeline:
                 else artifacts / name / "checks.json"
             ).write_text(json.dumps(data))
 
+        if outcome.get("working"):
+            # What happens elsewhere while the agent works, before anything is published.
+            outcome["working"](self)
         if outcome.get("meanwhile") and decision["action"] != "implement":
             # What happens elsewhere while the round runs on its pull request.
             outcome["meanwhile"](self, decision["pr"])
@@ -239,7 +243,14 @@ class Pipeline:
             write("nexkit-agent", {"stage": decision["action"], **agent})
         needs = {}
         published = {"published": False}
-        if decision["action"] == "plan" and agent and agent["status"] == "done":
+        issue_round = decision["action"] in ("plan", "implement")
+        if issue_round and agent and agent["status"] == "done":
+            closed = issue_closed(self.gh, decision["issue"])
+        else:
+            closed = False
+        if closed:
+            published = {"published": False, "issue_closed": True}
+        elif decision["action"] == "plan" and agent and agent["status"] == "done":
             context = {"title": "x"}
             published = publish_plan(self.gh, decision, agent, context, self.cfg)
         elif decision["action"] == "implement" and agent and agent.get("no_change"):
@@ -260,7 +271,22 @@ class Pipeline:
         reviewing = decision["action"] == "review" or published.get("head")
         if reviewing and "checks" in outcome:
             write("nexkit-checks", outcome["checks"])
+        if decision.get("carry_from"):
+            # The review job compares the change with the approved one before any agent.
+            carried = not outcome.get("changed")
+            record = {"from": decision["carry_from"], "carried": carried, "why": ""}
+            if not carried:
+                record["why"] = "the change against `main` differs from the one the review approved"
+            (artifacts / "nexkit-review").mkdir(parents=True, exist_ok=True)
+            (artifacts / "nexkit-review" / "carry.json").write_text(json.dumps(record))
+            if carried:
+                write(
+                    "nexkit-review",
+                    {"stage": "review", "status": "carried", "carried": record["from"]},
+                )
+                return needs
         if reviewing and "review" in outcome:
+            self.reviews += 1
             write("nexkit-review", outcome["review"])
         return needs
 
@@ -572,6 +598,39 @@ class ScenarioTests(unittest.TestCase):
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
+    def test_a_merge_waiting_on_a_branch_behind_its_base_is_updated_and_merged(self):
+        expected = "Repository rule violations found\n\n2 of 2 required status checks are expected."
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return done()
+            # The review that the update started: its change is the approved one.
+            return {"checks": done()["checks"]}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.merge_error = GitHubError(405, expected)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual([outcome for *_, outcome in pipe.played], ["planned", "merge_waiting"])
+        # `main` moves, and branch protection wants the branch up to date: the checks that
+        # passed on its head stay "expected". Hours later, the next sweep updates it.
+        pipe.gh.pulls[6]["mergeable_state"] = "behind"
+        pipe.gh.merge_error = [GitHubError(405, expected)]
+        pipe.later(timedelta(hours=7))
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+        self.assertEqual(pipe.played[-1][2], "merged")
+        self.assertEqual(len(pipe.gh.updated), 1)
+        self.assertEqual(pipe.gh.merged[0][1], "e" * 40)
+        self.assertEqual(pipe.reviews, 1)
+        rounds = [run["outcome"] for _, run in run_comments(pipe.gh.comments(6))]
+        self.assertIn("branch_updated", rounds)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
     def test_a_base_branch_move_waits_for_the_implement_round(self):
         pushed = []
 
@@ -671,6 +730,97 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
         self.assertEqual([outcome for *_, outcome in pipe.played[1:]], ["head_moved", "merged"])
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def behind(self, pipe, pull):
+        """Branch protection wants the branch up to date with `main`, which moved while the
+        round reviewed: GitHub refuses the merge, and NexKit merges `main` into it."""
+        pipe.gh.merge_error = [
+            GitHubError(405, "Head branch is out of date. Review and try again.")
+        ]
+
+    def test_a_clean_update_from_the_base_keeps_the_approval_and_merges_after_its_checks(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": self.behind}
+            # The review that the update started: its change is the approved one.
+            return {"checks": done()["checks"]}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "merged"])
+        # One review agent ran, for the implement round; the new head merged without one.
+        self.assertEqual(pipe.reviews, 1)
+        self.assertEqual(pipe.gh.merged[0][1], "e" * 40)
+        self.assertEqual(len(pipe.gh.created_reviews), 1)
+        last = list(run_comments(pipe.gh.comments(6)))[-1]
+        self.assertEqual(last[1]["carried"], pipe.gh.updated[0][1])
+        self.assertIn("carried over, so no review agent ran", last[0]["body"])
+        review_status = [s for s in pipe.gh.statuses if s["sha"] == "e" * 40]
+        self.assertIn("carried over", review_status[-1]["description"])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_an_update_that_changes_the_change_or_conflicts_is_reviewed_again(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": self.behind}
+            # The merge commit changed the pull request's own change.
+            return {**done(), "changed": True}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "merged"])
+        self.assertEqual(pipe.reviews, 2)
+        last = list(run_comments(pipe.gh.comments(6)))[-1][0]["body"]
+        self.assertIn("The AI review ran again rather than carry over the approval", last)
+
+        def conflicting(pipe, pull):
+            # `main` moved and now conflicts: a conflict round merges it, then reviews.
+            pipe.gh.pulls[pull]["mergeable"] = False
+            pipe.gh.merge_error = [GitHubError(405, "Head branch is out of date.")]
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": conflicting}
+            pipe.gh.pulls[int(inputs["number"])]["mergeable"] = True
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["conflict_fix", "merged"])
+        self.assertEqual(pipe.reviews, 2)
+        self.assertFalse(pipe.gh.updated)
+
+    def test_failing_checks_after_a_clean_update_start_a_counted_fix_round(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "meanwhile": self.behind}
+            if inputs["command"] == "review":
+                # The approval carries over, but `main`'s change breaks the checks.
+                return {"checks": done(checks=False)["checks"]}
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6), ("fix", 6)])
+        self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "auto_fix", "merged"])
+        # The implement round's review and the fix round's; none for the update.
+        self.assertEqual(pipe.reviews, 2)
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
@@ -858,6 +1008,41 @@ class ScenarioTests(unittest.TestCase):
         line = f"Passed on `main` since: {run} at ccccccc."
         self.assertIn(line, closing["body"])
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
+    def test_an_issue_closed_while_its_round_runs_gets_no_pull_request(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            # A person closes the issue while the agent works.
+            return {**done(), "working": lambda pipe: pipe.gh.close_issue(5, "not_planned")}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "issue_closed")
+        self.assertEqual(pipe.gh.pulls, {})
+        self.assertEqual(pipe.gh.issues[5]["state_reason"], "not_planned")
+        [run] = pipe.gh.run_comments(5)[-1:]
+        self.assertIn("#5 closed while the implement round ran", run["body"])
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+        # Reopened, it waits for a person: nothing changed since `/nexkit go` started.
+        pipe.gh.issues[5]["state"] = "open"
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("it closed while `/nexkit go` ran and was reopened", mention["body"])
+
+    def test_a_plan_whose_no_change_is_only_quotes_goes_on_to_its_change(self):
+        # An agent wrote the empty string as `""`: the plan's change is still made.
+        def script(pipe, inputs):
+            return plan(no_change='""') if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "merged")
+        self.assertEqual(pipe.gh.issues[5]["state_reason"], "completed")
+        self.assertFalse(pipe.gh.comments_matching(5, "No change needed"))
+        self.assertFalse(pipe.gh.comments_matching(5, "no change is needed"))
 
     def test_a_round_that_finds_no_change_needed_closes_the_issue(self):
         finding = "The page already shows the release: test_release passes on main."

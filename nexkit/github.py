@@ -130,6 +130,10 @@ class GitHub:
     def default_branch(self):
         return self.request("GET", self._repo)["default_branch"]
 
+    def deletes_merged_branches(self):
+        """Whether the repository deletes a pull request's head branch once it merges."""
+        return bool(self.request("GET", self._repo).get("delete_branch_on_merge"))
+
     def role(self, user):
         """Repository role of a user: admin, maintain, write, triage, read or none."""
         if user not in self._roles:
@@ -323,6 +327,9 @@ class GitHub:
 
     def branch_sha(self, branch):
         return self.request("GET", f"{self._repo}/git/ref/heads/{quote(branch)}")["object"]["sha"]
+
+    def delete_branch(self, branch):
+        return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")
 
     def close_pull(self, number):
         return self.request("PATCH", f"{self._repo}/pulls/{number}", {"state": "closed"})

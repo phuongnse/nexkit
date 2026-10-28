@@ -96,8 +96,34 @@ class InitDoctorTests(unittest.TestCase):
             ],
         )
 
+    def test_init_runs_checks_in_parallel_jobs_and_groups(self):
+        code = cli.main(
+            [
+                "init",
+                "--repo",
+                str(self.root),
+                "--check",
+                "build=make",
+                "--check",
+                "lint=make lint",
+                "--check",
+                "e2e=scripts/e2e.sh",
+                "--parallel-checks",
+                "--check-group",
+                "build=fast",
+                "--check-group",
+                "lint=fast",
+            ]
+        )
+        self.assertEqual(code, 0)
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertTrue(cfg["parallel_checks"])
+        self.assertEqual([c.get("group") for c in cfg["checks"]], ["fast", "fast", None])
+
     def test_init_rejects_a_check_field_without_its_check_or_value(self):
         for flags in (
+            ["--check-group", "test=fast"],  # without --parallel-checks
+            ["--check-group", "e2e=fast", "--parallel-checks"],
             ["--check-slow", "e2e"],
             ["--check-timeout", "test"],
             ["--check-timeout", "test=soon"],
@@ -672,14 +698,54 @@ class PipelineCommandTests(unittest.TestCase):
             "comment": {"id": 3, "body": "/nexkit go", "user": {"login": "alice"}},
         }
         out = self.run_route("issue_comment", event)
-        self.assertEqual(out["checks_timeout"], str(15 + 30 + 10))
+        self.assertEqual(json.loads(out["check_matrix"])["include"][0]["timeout"], 15 + 30 + 10)
         # The setup timeout counts toward the jobs that run setup.
         path = self.root / "repo/.nexkit/config.json"
         raw = json.loads(path.read_text())
         raw["limits"] = {"setup_timeout_minutes": 10}
         path.write_text(json.dumps(raw))
         out = self.run_route("issue_comment", event)
-        self.assertEqual((out["agent_timeout"], out["checks_timeout"]), ("55", str(15 + 10 + 10)))
+        timeout = json.loads(out["check_matrix"])["include"][0]["timeout"]
+        self.assertEqual((out["agent_timeout"], timeout), ("55", 15 + 10 + 10))
+
+    def test_route_runs_the_checks_in_one_verify_job_without_parallel_checks(self):
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 3, "body": "/nexkit go", "user": {"login": "alice"}},
+        }
+        out = self.run_route("issue_comment", event)
+        self.assertEqual(
+            json.loads(out["check_matrix"]), {"include": [{"group": "", "timeout": 55}]}
+        )
+        self.assertEqual(out["parallel_checks"], "false")
+
+    def test_route_gives_each_group_and_each_other_check_a_verify_job(self):
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["parallel_checks"] = True
+        raw["checks"] = [
+            {"name": "build", "run": "make build", "timeout_minutes": 5, "group": "fast"},
+            {"name": "e2e", "run": "make e2e", "timeout_minutes": 40},
+            {"name": "lint", "run": "make lint", "timeout_minutes": 5, "group": "fast"},
+        ]
+        path.write_text(json.dumps(raw))
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 3, "body": "/nexkit go", "user": {"login": "alice"}},
+        }
+        out = self.run_route("issue_comment", event)
+        matrix = json.loads(out["check_matrix"])["include"]
+        # Each job allows for setup and its own checks, not for the others'.
+        self.assertEqual(
+            matrix,
+            [
+                {"group": "fast", "timeout": 5 + 5 + 30 + 10},
+                {"group": "e2e", "timeout": 40 + 30 + 10},
+            ],
+        )
+        self.assertEqual(out["parallel_checks"], "true")
 
     def test_route_allows_for_triage_and_the_longest_plan(self):
         path = self.root / "repo/.nexkit/config.json"
@@ -944,6 +1010,35 @@ class PipelineCommandTests(unittest.TestCase):
         result = json.loads((out / "result.json").read_text())
         self.assertIn(f"base={git(repo, 'rev-parse', 'HEAD')}", result["error"])
 
+    def test_carry_says_whether_the_approved_review_holds_for_the_new_head(self):
+        repos = GitRepos()
+        self.addCleanup(repos.cleanup)
+        approved = repos.push_commit("dev", "nexkit/issue-5", {"calc.py": "x\n"}, "Fix").strip()
+        repos.push_commit("base", "main", {"other.py": "y\n"}, "Move main")
+        repo = repos.clone("review")
+        git(repo, "checkout", "-q", "nexkit/issue-5")
+        git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "origin/main")
+        out = self.root / "out"
+        for approval, carried in ((approved, "true"), ("f" * 40, "false")):
+            self.output.unlink(missing_ok=True)
+            env = {
+                "NEXKIT_DECISION": json.dumps({"base": "main", "carry_from": approval}),
+                "GITHUB_OUTPUT": str(self.output),
+            }
+            shutil.rmtree(out, ignore_errors=True)
+            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.main(["carry", "--repo", str(repo), "--out", str(out)]), 0)
+            self.assertEqual(self.outputs()["carried"], carried)
+            record = json.loads((out / "carry.json").read_text())
+            self.assertEqual((record["from"], record["carried"]), (approval, carried == "true"))
+            if carried == "true":
+                result = json.loads((out / "result.json").read_text())
+                self.assertEqual((result["status"], result["carried"]), ("carried", approved))
+            else:
+                # The review agent writes this round's result.
+                self.assertFalse((out / "result.json").exists())
+                self.assertIn("is not a merge of `main`", record["why"])
+
     def test_checks_get_the_merge_base_only_when_it_is_known(self):
         repos = GitRepos()
         self.addCleanup(repos.cleanup)
@@ -1168,11 +1263,21 @@ class WorkflowSafetyTests(unittest.TestCase):
     def test_jobs(self):
         self.assertEqual(
             list(self.jobs),
-            ["route", "agent", "publish", "verify", "review", "report", "maintain", "finish"],
+            [
+                "route",
+                "agent",
+                "publish",
+                "verify",
+                "combine",
+                "review",
+                "report",
+                "maintain",
+                "finish",
+            ],
         )
 
     def test_jobs_that_run_agents_or_repository_code_cannot_write(self):
-        for name in ("agent", "verify", "review"):
+        for name in ("agent", "verify", "combine", "review"):
             self.assertNotIn(": write", self.jobs[name], name)
             self.assertNotIn("persist-credentials: true", self.jobs[name], name)
             self.assertNotIn("NEXKIT_PUSH_TOKEN", self.jobs[name], name)
@@ -1187,6 +1292,7 @@ class WorkflowSafetyTests(unittest.TestCase):
         # the evidence of the CI runs an issue names, `checks: read` their annotations.
         self.assertEqual(self.permissions("agent"), {"actions": "read", "checks": "read", **read})
         self.assertEqual(self.permissions("verify"), {"contents": "read"})
+        self.assertEqual(self.permissions("combine"), {"contents": "read"})
         self.assertEqual(self.permissions("review"), read)
 
     def test_a_fix_round_downloads_the_result_files_outside_the_checkout(self):
@@ -1205,8 +1311,53 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertLess(agent.index("Download check results"), agent.index("Run agent"))
 
     def test_verify_holds_no_secrets(self):
-        self.assertNotIn("secrets.", self.jobs["verify"])
-        self.assertNotIn("github.token", self.jobs["verify"])
+        for name in ("verify", "combine"):
+            self.assertNotIn("secrets", self.jobs[name], name)
+            self.assertNotIn("github.token", self.jobs[name], name)
+
+    def test_parallel_checks_run_in_jobs_of_one_verify_matrix_on_the_published_commit(self):
+        verify = self.jobs["verify"]
+        # Every job of the matrix checks out the commit publish pushed, or the round's head.
+        self.assertIn("matrix: ${{ fromJSON(needs.route.outputs.check_matrix ||", verify)
+        self.assertIn("fail-fast: false", verify)
+        self.assertIn("timeout-minutes: ${{ matrix.timeout }}", verify)
+        self.assertIn("ref: ${{ needs.publish.outputs.head || needs.route.outputs.head }}", verify)
+        self.assertIn('kit/bin/nexkit checks --repo repo --out out --group "$GROUP"', verify)
+        self.assertIn("GROUP: ${{ matrix.group }}", verify)
+        # Without parallel checks, the one job is `verify`, and its artifact `nexkit-checks`.
+        self.assertIn(
+            "name: ${{ matrix.group && format('verify ({0})', matrix.group) || 'verify' }}", verify
+        )
+        upload = verify.split("actions/upload-artifact@", 1)[1]
+        self.assertIn(
+            "matrix.group && format('nexkit-checks-{0}', matrix.group) || 'nexkit-checks'", upload
+        )
+
+    def test_combine_joins_the_check_jobs_only_with_parallel_checks(self):
+        combine = self.jobs["combine"]
+        self.assertIn("needs: [route, verify]", combine)
+        self.assertIn("needs.route.outputs.parallel_checks == 'true'", combine)
+        self.assertIn("always() && needs.verify.result != 'skipped'", combine)
+        self.assertIn("pattern: nexkit-checks-*\n          path: parts\n", combine)
+        self.assertIn("kit/bin/nexkit combine-checks --parts parts --out out", combine)
+        self.assertIn("name: nexkit-checks\n", combine.split("actions/upload-artifact@", 1)[1])
+        # Nothing of the repository: NexKit's own code only.
+        self.assertEqual(combine.count("actions/checkout@"), 1)
+        self.assertIn("path: kit", combine)
+        runs = re.findall(r"^\s+run: (.*)$", combine, re.M)
+        for run in runs:
+            self.assertTrue(
+                run.startswith("${{ steps.python.outputs.python-path }} kit/bin/nexkit ")
+            )
+        # The review and report wait for it; the review only when it did not fail.
+        self.assertIn("needs: [route, publish, verify, combine]", self.jobs["review"])
+        self.assertIn(
+            'contains(fromJSON(\'["success","skipped"]\'), needs.combine.result)',
+            self.jobs["review"],
+        )
+        self.assertIn(
+            "needs: [route, agent, publish, verify, combine, review]", self.jobs["report"]
+        )
 
     def test_jobs_with_write_tokens_never_receive_model_credentials(self):
         push = "secrets[fromJSON(needs.route.outputs.config).publish.push_token_secret]"
@@ -1327,6 +1478,24 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertNotIn("contents: write", route)
         self.assertIn("sparse-checkout: .nexkit", route)
 
+    def test_review_carries_an_approval_over_before_any_agent_or_credential_use(self):
+        review = self.jobs["review"]
+        steps = review.split("\n      - ")
+        [carry] = [step for step in steps if "name: Carry over the approved review" in step]
+        self.assertIn("if: fromJSON(needs.route.outputs.decision).carry_from\n", carry)
+        self.assertIn("kit/bin/nexkit carry --repo repo --out out", carry)
+        self.assertNotIn("SECRET", carry)
+        self.assertNotIn("GITHUB_TOKEN", carry)
+        # Everything for the agent is skipped once the approval carried over.
+        skipped = "if: steps.carry.outputs.carried != 'true'\n"
+        for name in ("Install agents", "Collect issue context", "Run agent review"):
+            [step] = [step for step in steps if f"name: {name}" in step]
+            self.assertIn(skipped, step, name)
+            self.assertLess(review.index("id: carry"), review.index(f"name: {name}"))
+        # Its result still reaches report.
+        upload = review.split("actions/upload-artifact@", 1)[1]
+        self.assertIn("if: always()", upload)
+
     def test_review_reads_the_fix_result(self):
         review = self.jobs["review"]
         self.assertIn("name: nexkit-agent\n          path: agent\n", review)
@@ -1356,7 +1525,7 @@ class WorkflowSafetyTests(unittest.TestCase):
         for name, job in producers.items():
             upload = self.jobs[job].split("actions/upload-artifact@", 1)[1]
             self.assertIn("\n        if: always()\n", upload.split("\n      - ", 1)[0], job)
-            self.assertIn(f"name: {name}\n", upload, job)
+            self.assertIn(f"'{name}' }}}}\n" if job == "verify" else f"name: {name}\n", upload, job)
 
     def test_fix_rounds_check_out_the_history_they_merge(self):
         checkout = self.jobs["agent"].split("ref: ${{ needs.route.outputs.agent_ref }}", 1)[1]

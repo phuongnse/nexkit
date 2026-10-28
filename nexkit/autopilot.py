@@ -28,6 +28,7 @@ from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
 from .route import AFTER_RUN, RUN_ID, issue_from_branch, parse_command
+from .schema import filled
 from .state import (
     BOT_LOGIN,
     CONTINUED,
@@ -590,7 +591,7 @@ def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
         return _step(issue, "waits", protected_reason(run["protected_paths"]))
     if found and asked_again(*comments):
         return _step(issue, "waits", REPEATED)
-    if found and len(found) == 1 and command == "go" and run.get("no_change"):
+    if found and len(found) == 1 and command == "go" and filled(run.get("no_change")):
         # The recommended answer only closes the issue: another round would find the same.
         reason = "the last round found no change is needed and recommends closing the issue"
         return _step(issue, "close", reason, finding=run["no_change"], run_url=run.get("url"))
@@ -674,8 +675,9 @@ def _planned(gh, cfg, issue, plan, last, record, start, comments):
         return _step(issue, "start", "the plan needs nobody", command="go", **start)
     if data.get("too_large"):
         return _split(gh, issue, plan, data, record, start)
-    if data.get("no_change"):
-        # Another round would find the same.
+    if filled(data.get("no_change")):
+        # Another round would find the same. A plan posted before NexKit ignored a finding
+        # of only quotes, such as `""`, may record one: such a plan goes on.
         reason = "its plan finds that no change is needed"
         fields = {"finding": data["no_change"], "plan_url": plan.get("html_url") or ""}
         return _step(issue, "close", reason, **fields)
@@ -843,7 +845,7 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
             return _step(issue, "waits", reason)
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") == "merge_waiting":
-        return _merge_step(gh, issue, pull, comment, latest, start, now)
+        return _merge_step(gh, cfg, issue, pull, comment, latest, start, now)
     if latest.get("outcome") == CI_WAITING:
         return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start)
     if latest.get("status") == FAILURE:
@@ -860,12 +862,13 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
     return _step(issue, "active", f"pull request #{pull} is open")
 
 
-def _merge_step(gh, issue, pull, comment, run, start, now):
+def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
     """The step for a pull request whose merge waits for required checks: try the merge
     again while its head is the one approved, for at most `LOST`. A new commit on its
     branch gets `/nexkit review`, as a merge refused because the branch moved does. A
     required check that failed gets an automatic fix round when the sweep tries the merge
-    (see `report.merge_waiting`)."""
+    (see `report.merge_waiting`), and a branch behind its base, however long it waited,
+    an update from it when `conflicts.auto_resolve` is on."""
     details = gh.pull(pull)
     head = details["head"]["sha"]
     if head != run.get("head"):
@@ -876,7 +879,8 @@ def _merge_step(gh, issue, pull, comment, run, start, now):
         fields = {**start, "target": pull, "auto": "true"}
         return _step(issue, "start", reason, command="review", **fields)
     since = parse_iso(run.get("waiting_since"))
-    if since and now - since > LOST:
+    behind = cfg["conflicts"]["auto_resolve"] and details.get("mergeable_state") == "behind"
+    if since and now - since > LOST and not behind:
         reason = f"the required checks of pull request #{pull} have not passed for hours"
         return _step(issue, "waits", reason)
     base = (details.get("base") or {}).get("ref") or ""
@@ -1005,6 +1009,10 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     if last is None or plan is None:
         return _step(issue, "start", "no plan yet", command="plan", **start)
     if last["command"] == "go":
+        if last.get("outcome") == "issue_closed":
+            # Reopened after it closed while the round ran: nothing changed for the plan.
+            reason = "it closed while `/nexkit go` ran and was reopened; a person decides"
+            return _step(issue, "waits", reason)
         if last.get("status") == SUCCESS:
             return _step(issue, "waits", "its pull request was closed; a person decides")
         step = _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,))
@@ -1033,7 +1041,7 @@ def carries_on(gh, cfg, decision, outcome, agent):
     agent = agent or {}
     output = agent.get("output") or {}
     splits = outcome == "planned" and bool(output.get("too_large"))
-    closes = outcome == "planned" and bool(str(output.get("no_change") or "").strip())
+    closes = outcome == "planned" and bool(filled(output.get("no_change")))
     if splits or closes:
         # Autopilot splits the issue, or closes it with the plan's finding.
         handled = True

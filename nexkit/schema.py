@@ -8,6 +8,11 @@ a schema does not name are left as they are.
 
 from __future__ import annotations
 
+import string
+
+# What an agent may wrap an empty string in by mistake, such as `""`.
+QUOTES = "\"'`\u201c\u201d\u2018\u2019"
+
 TYPES = {
     "object": dict,
     "array": list,
@@ -41,6 +46,13 @@ def problems(value, schema, where="result"):
         for index, item in enumerate(value):
             found += problems(item, schema["items"], f"{where}[{index}]")
     return found
+
+
+def filled(value):
+    """A free-text field of a result, stripped, or "" when it holds no text once quotes and
+    whitespace are removed: an agent sometimes writes an empty string as `""`."""
+    found = str(value or "").strip()
+    return found if found.strip(QUOTES + string.whitespace) else ""
 
 
 def strict(schema):

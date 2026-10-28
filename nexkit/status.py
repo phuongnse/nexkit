@@ -32,7 +32,7 @@ WORKERS = 8
 # The outcome of a pull request closed because its base branch already held its change.
 ON_BASE = "already_on_base"
 # The round started the next one by itself, which is queued or running.
-QUEUED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved"}
+QUEUED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved", "superseded"}
 
 
 def _runs(comments):

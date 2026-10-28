@@ -13,11 +13,11 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 
-from . import autopilot
+from . import autopilot, progress
 from .autopilot import in_repository
 from .config import setting
 from .github import GitHubError
-from .route import implementing, issue_from_branch
+from .route import RUN_ID, implementing, issue_from_branch
 from .state import (
     CONTINUED,
     FAILURE,
@@ -26,6 +26,9 @@ from .state import (
     SUCCESS,
     by_bot,
     conflict_rounds_used,
+    next_round,
+    read_state,
+    render_run,
     run_comments,
     with_run,
 )
@@ -67,6 +70,20 @@ END_TRIES = 30
 # find the commit of the base branch that brought the same change.
 OWN_COMMITS = 10
 OWN_FILES = 10
+# The jobs of a round that a move of the base branch can leave without a purpose: its
+# checks. A round in any other job goes on: its agent time, patch and review are worth more.
+CHECK_JOBS = {"verify", "combine"}
+# How long, and how often, an update of a branch waits for GitHub to move its head.
+UPDATE_WAIT = 5
+UPDATE_TRIES = 6
+# The outcome of a round NexKit stopped in its checks because the base branch moved, and
+# of one whose next round then did not start.
+SUPERSEDED = "superseded"
+STOP_FAILED = "stop_failed"
+STOP_FAILED_REASON = (
+    "NexKit stopped the round's checks after the base branch moved, but could not start the "
+    "next round; comment `/nexkit fix` or `/nexkit review` on the pull request"
+)
 ON_BASE_FAILED = (
     "the base branch already holds this change, but NexKit could not close the pull "
     "request or its issue; close them yourself"
@@ -424,11 +441,200 @@ def start_conflict_round(
     return f"Started an automatic round on #{number} to merge `{base}`."
 
 
+def _updates_used(comments):
+    return len([run for _, run in run_comments(comments) if run.get("updated_branch")])
+
+
+def update_branch(gh, target, row, limit, workflow, ref, before_review=None):
+    """Bring the branch of pull request `target["pr"]`, at `target["head"]`, up to date
+    with its base branch on GitHub, and start `/nexkit review` on the new commit, which
+    carries an earlier approval over when the pull request's own change is the same. At
+    most `limit` updates per pull request (`conflicts.max_rounds`): `row`, the round that
+    asks, records this one. `before_review` runs once the branch is updated. Returns None,
+    or why nothing started."""
+    pr, head, base = target["pr"], target["head"], target["base"]
+    if _updates_used(gh.comments(pr)) >= limit:
+        return f"Its {limit} automatic updates of the branch from `{base}` are used up."
+    try:
+        gh.update_branch(pr, head)
+        if before_review:
+            before_review()
+        for _ in range(UPDATE_TRIES):
+            if gh.pull(pr)["head"]["sha"] != head:
+                break
+            time.sleep(UPDATE_WAIT)
+        # The review carries an earlier approval over when the change is the same.
+        gh.dispatch(
+            workflow,
+            ref,
+            {"command": "review", "number": str(pr), "note": "", "auto": "true,carry"},
+        )
+    except GitHubError as error:
+        return f"NexKit could not update the branch: {error}"
+    row["updated_branch"] = True
+    return None
+
+
+def _job(name):
+    """`verify` for `nexkit / verify (unit)`: a job of the pipeline, as the workflow that
+    calls it names it, without its check group."""
+    return re.sub(r" \(.*\)$", "", (name or "").rsplit(" / ", 1)[-1]).strip()
+
+
+def checking(gh, url):
+    """The id of the workflow run at `url` while it runs only its checks (`CHECK_JOBS`),
+    or None: in any other job, queued, ended, or unreadable."""
+    match = RUN_ID.search(url or "")
+    if not match:
+        return None
+    run_id = int(match.group(1))
+    try:
+        run = gh.workflow_run(run_id)
+        if run.get("status") != "in_progress":
+            return None
+        jobs = gh.attempt_jobs(run_id, run.get("run_attempt") or 1)
+    except GitHubError:
+        return None
+    active = {_job(job.get("name")) for job in jobs if job.get("status") != "completed"}
+    return run_id if active and active <= CHECK_JOBS else None
+
+
+def _running_round(gh, number, issue):
+    """(the issue or pull request whose comment shows it, comment, run) for the round of
+    pull request `number` that runs: its latest round, or the implement round that opened
+    it. None without one."""
+    rounds = _rounds(gh, number)
+    if rounds:
+        comment, run = rounds[-1]
+        return (number, comment, run) if run.get("status") == RUNNING else None
+    if issue is None:
+        return None
+    runs = [(c, run) for c, run in run_comments(gh.comments(issue)) if run.get("command") == "go"]
+    if runs and runs[-1][1].get("status") == RUNNING:
+        return issue, *runs[-1]
+    return None
+
+
+def _behind(gh, tip, head):
+    """Whether `head` lacks the base branch's tip. False when GitHub cannot say."""
+    try:
+        return (gh.compare(tip, head).get("behind_by") or 0) > 0
+    except (GitHubError, AttributeError):
+        return False
+
+
+def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_rounds):
+    """Stop the round of `pull` that runs only its checks when the base branch moved under
+    it so that they cannot lead to a merge, and start the round that can, at once:
+
+    - its head conflicts with `base` (`conflicting`): the conflict round;
+    - the rules of `base` want pull requests up to date (`strict()`), and the head lacks
+      its tip: an update of the branch and `/nexkit review`, which carries an approval
+      over when the change is the same.
+
+    The stopped round's outcome is `superseded`: it counts against neither
+    `fix.max_auto_rounds` nor `conflicts.max_rounds`, and its run is cancelled with the
+    jobs that would follow a cancellation, so no `report` or `finish` runs for it. The
+    round it starts counts as usual; when none can start, nothing is stopped. Returns a
+    line, or "" when the round goes on."""
+    number, head = pull["number"], pull["head"]["sha"]
+    found = _running_round(gh, number, issue_from_branch(pull["head"]["ref"]))
+    run_id = found and checking(gh, found[2].get("url"))
+    if not run_id:
+        return ""
+    where, comment, run = found
+    tip = gh.branch_sha(base)
+    if conflicting:
+        why = f"`{head[:7]}` conflicts with it"
+    elif strict() and _behind(gh, tip, head):
+        why = f"the rules of `{base}` want pull requests up to date, and `{head[:7]}` lacks it"
+    else:
+        return ""
+    comments = gh.comments(number)
+    rounds = [r for _, r in run_comments(comments) if "round" in r]
+    if (
+        conflicting
+        and conflict_rounds_used([r for r in rounds if r.get("conflicts")]) >= max_rounds
+    ):
+        return ""
+    if not conflicting and _updates_used(comments) >= max_rounds:
+        return ""
+    try:
+        gh.cancel_run(run_id)
+    except GitHubError as exc:
+        return f"Could not stop the checks of #{number}: {exc}"
+    issue_run, checked = None, {head, run.get("head") or head}
+    if where != number:
+        # The implement round that opened the pull request: its round shows here too.
+        issue_run = run
+        run = {"round": next_round(comments), "url": run.get("url"), "trigger": "implement"}
+    run.update(head=head, checks="not run", verdict="not run", tokens=None)
+    run.pop("attention", None)
+    stopped = (
+        f"NexKit stopped this round's checks: `{base}` moved to `{tip[:7]}`, and {why}, so "
+        "they could not lead to a merge."
+    )
+    if conflicting:
+        started = start_conflict_round(gh, number, base, workflow, ref, max_rounds, row=run)
+        failed = "" if started.startswith("Started") else started or "No round started."
+    else:
+        target = {"pr": number, "head": head, "base": base}
+        failed = update_branch(gh, target, run, max_rounds, workflow, ref) or ""
+        started = failed or (
+            f"NexKit merged `{base}` into it and started `/nexkit review` on the new commit, "
+            "which checks it and keeps an earlier approval when the pull request's own change "
+            "is the same."
+        )
+    if failed:
+        # Stopped, and nothing carries the pull request on: a person starts the next round.
+        run.update(status=FAILURE, outcome=STOP_FAILED, attention=STOP_FAILED_REASON)
+        started = failed
+    else:
+        run.update(status=SUCCESS, outcome=SUPERSEDED)
+    _give_back(gh, number, comments, run)
+    text = f"{stopped} {started}"
+    for sha in checked:
+        for context in progress.STATUS_CONTEXTS:
+            gh.set_status(sha, context, "error", f"Stopped: {base} moved", run.get("url"))
+    progress.save_round(gh, number, None if issue_run else comment["id"], run, text)
+    if issue_run:
+        issue_run.update({key: run[key] for key in ("status", "outcome")})
+        if failed:
+            issue_run["attention"] = STOP_FAILED_REASON
+        gh.update_comment(comment["id"], render_run(issue_run, f"Pull request #{number}: {text}"))
+    return f"#{number}: {text}"
+
+
+def _give_back(gh, number, comments, run):
+    """An automatic fix round that NexKit stopped gives its `fix.max_auto_rounds` back."""
+    labels = run.get("trigger", "").removeprefix("fix (").removesuffix(")").split(", ")
+    automatic = run.get("trigger", "").startswith("fix (") and "auto" in labels
+    if not automatic or run.get("conflicts") or run.get("retry") or run.get("resumed"):
+        return
+    state_id, state = read_state(comments)
+    if state and state.get("auto_fixes"):
+        state["auto_fixes"] -= 1
+        progress.save_state(gh, number, state_id, state)
+
+
 def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5, settle=False):
     """Start a conflict round for each open NexKit pull request into `base` that conflicts
-    with it. With `settle`, a latest round whose run ended without a report holds nothing
-    up (see `start_conflict_round`). Returns lines for a log or comment."""
-    lines = []
+    with it. A round that runs only its checks on a head that can no longer merge stops
+    first (see `stop_superseded`). With `settle`, a latest round whose run ended without a
+    report holds nothing up (see `start_conflict_round`). Returns lines for a log or
+    comment."""
+    lines, rules = [], []
+
+    def strict():
+        # The rule of `base`, read once, and only for a round in its checks.
+        if not rules:
+            try:
+                rules.append(gh.wants_up_to_date(base))
+            except GitHubError as exc:
+                print(f"warning: could not read the rules of `{base}`: {exc}", file=sys.stderr)
+                rules.append(False)
+        return rules[0]
+
     for pull in gh.pulls_into(base):
         number = pull["number"]
         nexkit = issue_from_branch(pull["head"]["ref"]) is not None
@@ -436,7 +642,12 @@ def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5, set
             continue
         try:
             conflicting = is_conflicting(gh, number, delay=delay)
-            if conflicting is None:
+            stopped = stop_superseded(
+                gh, pull, base, conflicting, strict, workflow, ref, max_rounds
+            )
+            if stopped:
+                lines.append(stopped)
+            elif conflicting is None:
                 lines.append(f"GitHub has not worked out yet whether #{number} conflicts.")
             elif conflicting:
                 lines.append(

@@ -19,9 +19,10 @@
 #          paused at the usage limit (waiting for their reset in a run of its own),
 #          starting rounds for conflicts with the base branch, autopilot sweeps, which
 #          also end the comments and statuses of runs that ended without a report and
-#          merge pull requests whose required checks passed since, and the sweep after
-#          a command NexKit started that route refused; no agent and no repository
-#          checkout
+#          merge pull requests whose required checks passed since, the sweep after
+#          a command NexKit started that route refused, and, instead of a command, the
+#          closing of a pull request whose base branch already holds its change; no
+#          agent and no repository checkout
 # finish   when report did not finish, such as after a lost runner or a cancelled run:
 #          start a sweep that waits for this run to end, handles its run comment and
 #          starts the conflict round held back while it ran; no agent and no repository

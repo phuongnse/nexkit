@@ -1,6 +1,8 @@
 import unittest
+from unittest import mock
 
 from nexkit import config
+from nexkit.github import GitHubError
 from nexkit.route import auto_input, parse_command, route, with_profile
 from nexkit.state import (
     BOT_LOGIN,
@@ -217,6 +219,33 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(bad["action"], "none")
         wait = route(self.gh, "workflow_dispatch", event, {"command": "resume", "number": "resume"})
         self.assertEqual(wait, {"action": "maintain", "task": "resume"})
+
+    def test_a_pull_request_that_changes_nothing_goes_to_maintain(self):
+        self.gh.add_pull(9, 5, head_sha="c" * 40)
+        self.gh.on_base.add("c" * 40)
+        event = {"sender": {"login": BOT_LOGIN}}
+        inputs = {"command": "review", "number": "9", "auto": "true"}
+        self.assertEqual(
+            route(self.gh, "workflow_dispatch", event, inputs),
+            {
+                "action": "maintain",
+                "task": "on_base",
+                "issue": 5,
+                "pr": 9,
+                "base": "main",
+                "head": "c" * 40,
+                "merge_base": "c" * 40,
+                "actor": BOT_LOGIN,
+            },
+        )
+        fix = route(self.gh, "issue_comment", comment_event(9, "/nexkit fix", on_pull=True))
+        self.assertEqual((fix["action"], fix["task"]), ("maintain", "on_base"))
+        # A change of its own, however small, or a comparison GitHub cannot make, is
+        # handled as usual.
+        self.gh.on_base.clear()
+        self.assertEqual(route(self.gh, "workflow_dispatch", event, inputs)["action"], "review")
+        self.gh.compare = mock.Mock(side_effect=GitHubError(500, "Server Error"))
+        self.assertEqual(route(self.gh, "workflow_dispatch", event, inputs)["action"], "review")
 
     def test_dispatch_marks_resumed_and_conflict_rounds(self):
         self.gh.add_pull(9, 5)

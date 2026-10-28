@@ -191,6 +191,13 @@ class Pipeline:
             self.gh.runs[run_id] = {"status": "completed"}
             self.played.append((inputs["command"], int(inputs["number"]), decision["reason"]))
             return
+        if decision["action"] == "maintain":
+            # `route` handed the command to the `maintain` job, such as for a pull request
+            # whose base branch already holds its change; no agent runs.
+            maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+            self.gh.runs[run_id] = {"status": "completed"}
+            self.played.append((inputs["command"], int(inputs["number"]), decision["task"]))
+            return
         progress.start(self.gh, decision)
         if outcome == "stall":
             # The runner was lost: report never ran, and the run's `finish` job starts a
@@ -816,6 +823,82 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_a_pull_request_whose_change_is_already_on_its_base_branch_closes(self):
+        def play(on_base, refusals):
+            def landed(pipe, pull):
+                # Another pull request lands the same change on `main` while this round
+                # reviews; the merge of `main` that NexKit makes then leaves no change.
+                pipe.gh.on_base.update(on_base)
+
+            def script(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                if inputs["command"] == "go":
+                    return {**done(), "meanwhile": landed}
+                return done()
+
+            pipe = Pipeline(self, config(), script)
+            pipe.issue(5)
+            # `main` moves before each merge, and branch protection wants it up to date.
+            pipe.gh.merge_error = [GitHubError(405, "Head branch is out of date")] * refusals
+            self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+            return pipe
+
+        pipe = play({"e" * 40}, 5)
+        # NexKit merged `main` into it, after which it changes nothing: no review runs, and
+        # it closes without merging, with its issue.
+        outcomes = [outcome for *_, outcome in pipe.played[1:]]
+        self.assertEqual(outcomes, ["branch_updated", "on_base"])
+        self.assertEqual(len(pipe.gh.updated), 1)
+        self.assertEqual(pipe.gh.merged, [])
+        self.assertEqual(pipe.gh.pulls[6]["state"], "closed")
+        self.assertEqual(pipe.gh.issues[5]["state_reason"], "completed")
+        # The round that brought it up to date shows how it ended.
+        [latest] = [run for _, run in run_comments(pipe.gh.comments(6)) if "round" in run]
+        self.assertEqual((latest["status"], latest["outcome"]), ("success", "already_on_base"))
+        self.assertTrue(pipe.gh.comments_matching(5, "`main` already holds its change"))
+        data = collect(pipe.gh, pipe.cfg, workers=1)
+        self.assertEqual(
+            [(item["number"], item["outcome"]) for item in data["recent_closed"]],
+            [(6, "already_on_base")],
+        )
+        self.assertEqual(data["needs_person"], [])
+        for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+        # A pull request whose own change differs from `main`, however small, is reviewed
+        # and merged as usual.
+        pipe = play(set(), 1)
+        outcomes = [outcome for *_, outcome in pipe.played[1:]]
+        self.assertEqual(outcomes, ["branch_updated", "merged"])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(collect(pipe.gh, pipe.cfg, workers=1)["recent_closed"], [])
+
+    def test_a_fix_round_whose_change_is_already_on_its_base_branch_closes(self):
+        # The checks fail, and the base branch gets the same change before the automatic fix
+        # round starts: its `agent` job finds that before setup and the agent.
+        found = {
+            "status": "already_on_base",
+            "error": "`main` already holds the change of this pull request.",
+            "merge_base": "c" * 40,
+            "on_base": "b" * 40,
+        }
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            return done(checks=False) if inputs["command"] == "go" else {"agent": found}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(pipe.played[-1][2], "already_on_base")
+        self.assertEqual(pipe.gh.pulls[6]["state"], "closed")
+        self.assertEqual(pipe.gh.issues[5]["state_reason"], "completed")
+        self.assertTrue(pipe.gh.comments_matching(5, f"brought by {'b' * 40}"))
+        # The round ran no agent, so it gives its automatic round back.
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 0)
 
     def test_a_fix_round_with_a_cause_outside_the_code_checks_again_once(self):
         cause = "The registry returned 500 Internal Server Error during `docker compose up`."

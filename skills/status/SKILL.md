@@ -37,6 +37,9 @@ gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: appli
      nobody unless it is also in `needs_person`.
    - `recent_merges`: pull requests NexKit merged, newest first by merge time, with the
      state of each `merge.after_workflows` run.
+   - `recent_closed`: pull requests NexKit closed without merging, newest first, with the
+     `outcome` (`already_on_base`: the base branch already held their change, so their
+     issue closed as completed) and the `commit` that brought the change, when known.
    - `needs_person`: only the items that need a person, with the reason.
    - `autopilot`, only with `autopilot.enabled`: the scope, `max_parallel`, and for each
      open issue in scope what the next sweep does with it, a `state` (`start` with its

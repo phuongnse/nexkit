@@ -417,6 +417,22 @@ class ReportTests(ReportCase):
         )
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
 
+    def test_a_pull_request_whose_change_is_already_on_its_base_branch_closes(self):
+        self.candidate()
+        self.gh.on_base.add(HEAD)
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(outcome["outcome"], "already_on_base")
+        self.assertEqual(self.gh.merged, [])
+        self.assertEqual(self.gh.pulls[6]["state"], "closed")
+        self.assertEqual(self.gh.issues[5]["state_reason"], "completed")
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(
+            (row["run"]["status"], row["run"]["outcome"]), ("success", "already_on_base")
+        )
+        self.assertIn("`main` already holds the change of this pull request, so", row["body"])
+        self.assertIn("NexKit closed it without merging.", row["body"])
+        self.assertIn("Closed #5 as completed.", row["body"])
+
     def test_auto_merge_closes_the_issue(self):
         self.candidate()
         self.run_report(cfg=make_config(merge={"auto": True}))

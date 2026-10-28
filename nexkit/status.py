@@ -29,6 +29,8 @@ from .state import (
 
 MERGES = 5
 WORKERS = 8
+# The outcome of a pull request closed because its base branch already held its change.
+ON_BASE = "already_on_base"
 # The round started the next one by itself, which is queued or running.
 QUEUED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved"}
 
@@ -196,6 +198,24 @@ def merge_item(gh, pull, comments):
     }
 
 
+def closed_item(pull, comments):
+    """A pull request NexKit closed without merging because its base branch already held
+    its change, or None for one closed otherwise."""
+    rounds = [run for _, run in _runs(comments) if "round" in run]
+    closing = next((run for run in reversed(rounds) if run.get("outcome") == ON_BASE), None)
+    if closing is None:
+        return None
+    return {
+        "number": pull["number"],
+        "issue": issue_from_branch(pull["head"]["ref"]),
+        "title": pull.get("title", ""),
+        "url": pull.get("html_url", ""),
+        "closed_at": pull.get("closed_at"),
+        "outcome": ON_BASE,
+        "commit": closing.get("on_base"),
+    }
+
+
 def _nexkit_pull(gh, pull):
     head = pull.get("head") or {}
     repo = (head.get("repo") or {}).get("full_name")
@@ -209,12 +229,15 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         listed = list(gh.open_issues())
         pulls = [p for p in gh.list_pulls("open") if _nexkit_pull(gh, p)]
-        closed = [
-            p
-            for p in gh.list_pulls("closed", limit=100)
-            if p.get("merged_at") and _nexkit_pull(gh, p)
-        ]
-        closed.sort(key=lambda p: p["merged_at"], reverse=True)
+        ended = [p for p in gh.list_pulls("closed", limit=100) if _nexkit_pull(gh, p)]
+        closed = sorted(
+            (p for p in ended if p.get("merged_at")), key=lambda p: p["merged_at"], reverse=True
+        )
+        unmerged = sorted(
+            (p for p in ended if not p.get("merged_at")),
+            key=lambda p: p.get("closed_at") or "",
+            reverse=True,
+        )[: merges * 2]
         pull_numbers = {p["number"] for p in pulls}
         issues = [
             i
@@ -236,6 +259,8 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
         merge_items = [
             merge_item(gh, p, c) for p, c in zip(merge_details, merge_comments, strict=True)
         ]
+        closed_comments = pool.map(lambda p: gh.comments(p["number"]), unmerged)
+        closed_items = [closed_item(p, c) for p, c in zip(unmerged, closed_comments, strict=True)]
     issue_items = sorted((i for i in issue_items if i), key=lambda i: i["number"])
     pull_items.sort(key=lambda p: p["number"])
     needs = [
@@ -249,6 +274,7 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
         "issues": issue_items,
         "pull_requests": pull_items,
         "recent_merges": [m for m in merge_items if m][:merges],
+        "recent_closed": [c for c in closed_items if c][:merges],
         "needs_person": needs,
     }
     if cfg.get("autopilot", {}).get("enabled"):
@@ -343,6 +369,14 @@ def render(data):
         )
     if not data["recent_merges"]:
         lines.append("  none")
+    if data.get("recent_closed"):
+        lines += ["", "Recently closed by NexKit without merging"]
+        for item in data["recent_closed"]:
+            commit = f", brought by {item['commit'][:7]}" if item.get("commit") else ""
+            lines.append(
+                f"  #{item['number']:<5} {item['outcome']:<16} {_short(item['title'])}"
+                f"  (the base branch already holds its change{commit})  {item['url']}"
+            )
     if "autopilot" in data:
         pilot = data["autopilot"]
         limit = pilot["max_parallel"]

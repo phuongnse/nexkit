@@ -151,6 +151,33 @@ class StatusTests(unittest.TestCase):
             data["needs_person"], [{"number": 8, "kind": "pull_request", "reason": reason}]
         )
 
+    def test_lists_pull_requests_closed_because_the_base_branch_holds_their_change(self):
+        for number, issue, outcome in ((30, 27, "already_on_base"), (32, 7, "needs_human")):
+            self.gh.add_pull(number, issue, state="closed")
+            self.gh.pulls[number].update(closed_at="2026-10-01T00:00:00Z", title=f"PR {number}")
+            self.round(number, 1, outcome=outcome, on_base="b" * 40)
+        data = collect(self.gh, make_config(), workers=1)
+        self.assertEqual(
+            data["recent_closed"],
+            [
+                {
+                    "number": 30,
+                    "issue": 27,
+                    "title": "PR 30",
+                    "url": "",
+                    "closed_at": "2026-10-01T00:00:00Z",
+                    "outcome": "already_on_base",
+                    "commit": "b" * 40,
+                }
+            ],
+        )
+        self.assertEqual(data["recent_merges"], [])
+        self.assertIn(
+            "#30    already_on_base  PR 30  (the base branch already holds its change, brought "
+            "by bbbbbbb)",
+            render(data),
+        )
+
     def test_nothing_to_show(self):
         text = render(collect(self.gh, {}, workers=1))
         self.assertIn("Issues\n  none", text)

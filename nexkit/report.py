@@ -14,13 +14,15 @@ from . import autopilot, progress
 from .checks import failing_signatures
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
+    ON_BASE_FAILED,
+    close_on_base,
     close_parents_safely,
     is_conflicting,
     resolve_conflicts,
     start_conflict_round,
     start_waiting,
 )
-from .route import BRANCH_PREFIX, auto_input
+from .route import BRANCH_PREFIX, auto_input, on_base
 from .runlog import add_tokens, one_line
 from .schema import filled
 from .state import (
@@ -66,6 +68,7 @@ COMPLETED = {
     "head_moved",
     "recheck_failed",
     "no_change",
+    "already_on_base",
     "issue_closed",
     "merge_issue_closed",
     autopilot.CI_WAITING,
@@ -94,6 +97,7 @@ NEEDS_PERSON = {
         "the base branch changed workflow files that NexKit may not push; merge it into the "
         "pull request yourself"
     ),
+    "on_base_failed": ON_BASE_FAILED,
 }
 NO_CHANGE_PLAN = "the plan finds that no change is needed; a person closes the issue"
 UNVERIFIED = "the review could not verify every acceptance criterion; confirm them before merging"
@@ -431,6 +435,17 @@ def _no_change(gh, cfg, decision, agent):
     }
 
 
+def _already_on_base(gh, cfg, decision, agent):
+    """A fix round that found, before its agent, that the base branch already holds the
+    pull request's change: close it and its issue (see `maintain.close_on_base`)."""
+    target = {**decision, "merge_base": agent.get("merge_base") or decision["base"]}
+    outcome, text, commit = close_on_base(gh, cfg, target, agent.get("on_base"))
+    reason = needs_person(outcome, cfg)
+    fields = {"on_base": commit} if commit else {}
+    _stop_round(gh, decision, agent, outcome, text, reason, **fields)
+    return {"outcome": outcome, "summary": text, "attention": reason}
+
+
 def _stage_failure(decision, agent, publish):
     """(outcome, message) when the agent or publish stage stopped, otherwise None."""
     action = decision["action"]
@@ -727,7 +742,9 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     """Merge a pull request that checks and review approved: `target` names its `pr`,
     `head`, `issue` and `base`. Returns (outcome, message), `message` being the round's
     text so far. A merge refused because the base branch was modified meanwhile is tried
-    again a few times; other refusals that pass are handed on (see `_refused`)."""
+    again a few times; other refusals that pass are handed on (see `_refused`). A pull
+    request whose base branch already holds its change is closed instead, with its issue
+    (see `maintain.close_on_base`)."""
     pr, head = target["pr"], target["head"]
     try:
         closed = gh.issue(target["issue"]).get("state") != "open"
@@ -741,6 +758,12 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
             "or close it yourself."
         )
         return "merge_issue_closed", message.strip()
+    merge_base = on_base(gh, target["base"], head)
+    if merge_base:
+        outcome, text, commit = close_on_base(gh, cfg, {**target, "merge_base": merge_base})
+        if commit:
+            row["on_base"] = commit
+        return outcome, f"✅ Checks and AI review passed on `{head[:7]}`.\n\n{text}"
     for attempt in range(MERGE_TRIES):
         try:
             merge = gh.merge(pr, head) or {}
@@ -1180,6 +1203,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             )
             _stop_round(gh, decision, agent, "up_to_date", message)
             return {"outcome": "up_to_date", "summary": message}
+        if agent and agent.get("status") == "already_on_base":
+            return _already_on_base(gh, cfg, decision, agent)
         failure = _stage_failure(decision, agent, publish)
         if failure:
             outcome, message = failure

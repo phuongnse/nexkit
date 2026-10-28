@@ -228,7 +228,7 @@ def route(gh, event_name, event, inputs=None):
         auto = bool(kinds & {"true", "conflicts"})
         decision = _decide(gh, command, int(number), on_pull, inputs.get("note") or "", auto=auto)
         decision["actor"] = event.get("sender", {}).get("login")
-        if decision["action"] != "none":
+        if decision["action"] not in ("none", "maintain"):
             decision.update(
                 {kind: True for kind in ("conflicts", "resumed", AUTOPILOT, RETRY) if kind in kinds}
             )
@@ -272,6 +272,20 @@ def _conflicts_tried(gh, decision):
     )
 
 
+def on_base(gh, base, head):
+    """The merge base of a pull request at `head` that changes no file against `base` any
+    more, such as after a merge of `base` that brought the same change; otherwise None,
+    also when GitHub cannot say."""
+    try:
+        found = gh.compare(base, head)
+    except GitHubError:
+        return None
+    files = found.get("files") if isinstance(found, dict) else None
+    if not isinstance(files, list) or files:
+        return None
+    return (found.get("merge_base_commit") or {}).get("sha") or head
+
+
 def _decide(gh, command, number, on_pull, note, *, auto):
     if on_pull:
         if command not in PR_COMMANDS:
@@ -282,6 +296,19 @@ def _decide(gh, command, number, on_pull, note, *, auto):
             return _none("This pull request was not opened by NexKit", number)
         if pull["state"] != "open":
             return _none("The pull request is closed", number)
+        merged = on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
+        if merged:
+            # Its base branch already holds its change: no round, review or merge would
+            # change anything, so the `maintain` job closes it and its issue.
+            return {
+                "action": "maintain",
+                "task": "on_base",
+                "issue": issue,
+                "pr": number,
+                "base": pull["base"]["ref"],
+                "head": pull["head"]["sha"],
+                "merge_base": merged,
+            }
         decision = {
             "action": PR_COMMANDS[command],
             "issue": issue,

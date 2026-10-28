@@ -353,6 +353,14 @@ cause and that the run the comment links as *Passed since* ran the same jobs.
 When the evidence contradicts the finding, reopen the issue and comment
 `/nexkit plan <what still needs changing, with the evidence>`.
 
+### A pull request closed as `already_on_base` whose change is not on the base branch
+
+NexKit closes a pull request this way only when GitHub shows it changes no file against
+its base branch, so whatever it changed, its base branch has now. The round's comment
+names the commit that brought the change when NexKit can tell one. When the issue still
+needs a change, for example because that commit fixed only part of a CI failure, reopen
+the issue and comment `/nexkit plan <what still needs changing, with the evidence>`.
+
 ### Conflict rounds used up
 
 The pull request had `conflicts.max_rounds` automatic conflict rounds, and no more start

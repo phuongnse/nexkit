@@ -47,7 +47,7 @@ CONTINUED = "continued"
 RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️", CONTINUED: "⏭️"}
 # Outcomes of rounds that published nothing for a reason outside the agent's work. They
 # count against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`.
-UNCOUNTED = {"needs_merge"}
+UNCOUNTED = {"needs_merge", "already_on_base", "on_base_failed"}
 
 
 def conflict_rounds_used(rounds):

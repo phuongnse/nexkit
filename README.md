@@ -129,7 +129,7 @@ what](docs/how-it-works.md#who-does-what).
 |---|---|
 | `nexkit init` | Writes `.nexkit/config.json` and `.github/workflows/nexkit.yml`. |
 | `nexkit doctor` | Checks the repository's setup: config, workflow triggers and NexKit ref, each agent's secrets and that the workflow passes them, permissions. Mentions a newer NexKit release. |
-| `nexkit status [--json]` | Lists the open NexKit issues and pull requests with what each waits for and a link to its last run, recent merges by NexKit, the items that need a person and why, and with autopilot what its next sweep does with each issue in scope. It reads NexKit's hidden markers and changes nothing. |
+| `nexkit status [--json]` | Lists the open NexKit issues and pull requests with what each waits for and a link to its last run, recent merges by NexKit and pull requests it closed without merging, the items that need a person and why, and with autopilot what its next sweep does with each issue in scope. It reads NexKit's hidden markers and changes nothing. |
 
 The commands use the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`.
 

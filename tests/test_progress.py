@@ -479,6 +479,39 @@ class DispatchTests(unittest.TestCase):
         )
 
 
+class UpToDateRuleTests(unittest.TestCase):
+    def answers(self, rules, protection):
+        """A client whose branch rules API returns `rules` and whose classic protection
+        returns `protection`, or raises it when it is an error."""
+        gh = GitHub(repository="acme/app", token="t")
+
+        def request(method, path, body=None, params=None):
+            if "/rules/branches/" in path:
+                return rules if params.get("page") == 1 else []
+            if isinstance(protection, Exception):
+                raise protection
+            return protection
+
+        patch = mock.patch.object(gh, "request", side_effect=request)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return gh
+
+    def test_a_ruleset_or_classic_protection_can_want_branches_up_to_date(self):
+        strict = {"type": "required_status_checks"}
+        strict["parameters"] = {"strict_required_status_checks_policy": True}
+        loose = {"type": "required_status_checks", "parameters": {}}
+        self.assertTrue(self.answers([strict], GitHubError(404, "")).wants_up_to_date("main"))
+        self.assertTrue(self.answers([loose], {"strict": True}).wants_up_to_date("main"))
+        self.assertFalse(self.answers([loose], {"strict": False}).wants_up_to_date("main"))
+        # The Actions token may not read classic protection: the rule counts as off.
+        for status in (403, 404):
+            gh = self.answers([], GitHubError(status, "Resource not accessible"))
+            self.assertFalse(gh.wants_up_to_date("main"))
+        with self.assertRaises(GitHubError):
+            self.answers([], GitHubError(500, "down")).wants_up_to_date("main")
+
+
 class LatestClosedIssueTests(unittest.TestCase):
     def test_the_issue_that_closed_last_not_a_pull_request_or_the_latest_updated(self):
         gh = GitHub(repository="acme/app", token="t")

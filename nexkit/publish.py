@@ -313,13 +313,17 @@ def _implement_start(repo, decision, result):
     return commit
 
 
-def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_workflows=False):
-    """Create the commit on the NexKit branch. Return the new head SHA.
+def apply_change(
+    repo, decision, result, title, patch_path, cfg, *, can_push_workflows=False, up_to_date=False
+):
+    """Create the commit on the NexKit branch and push it. Return (the new head SHA, what
+    the base branch's tip meant for it, see `catch_up`).
 
     An implement round commits on the base commit the agent started from, which may be
-    behind the base branch by now; a fix round brings it up to date. When the fix round
-    merged the base branch, the commit is a merge commit whose parents are the branch head
-    and the merged base commit."""
+    behind the base branch by now. When the fix round merged the base branch, the commit is
+    a merge commit whose parents are the branch head and the merged base commit. With
+    `up_to_date`, the base branch's rules want pull requests up to date, and a merge of its
+    tip follows the round's commit when it merges cleanly."""
     branch = decision["branch"]
     refs = [decision["base"]] + ([branch] if decision["action"] == "fix" else [])
     git(repo, "fetch", "--quiet", "origin", *refs)
@@ -387,6 +391,7 @@ def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_wor
         git(repo, "reset", "-q", "--soft", commit)
     else:
         git(repo, *bot, "commit", "-q", "--no-verify", "-F", "-", input=message)
+    found = catch_up(repo, decision, cfg, up_to_date, can_push_workflows)
     push = ["push", "--quiet", "origin", f"HEAD:refs/heads/{branch}"]
     if decision["action"] == "implement":
         # No open PR uses this branch (checked when routing); replace any stale attempt.
@@ -404,7 +409,44 @@ def apply_change(repo, decision, result, title, patch_path, cfg, *, can_push_wor
                 "that may update workflows in `publish.push_token_secret`."
             ) from None
         raise
-    return git(repo, "rev-parse", "HEAD").strip()
+    return git(repo, "rev-parse", "HEAD").strip(), found
+
+
+def catch_up(repo, decision, cfg, up_to_date, can_push_workflows):
+    """Compare the round's commit at HEAD with the base branch's tip as `publish` fetched
+    it. Returns {} when HEAD contains the tip, or when it is behind and nothing needs it.
+
+    - `conflicts`: the files where the tip conflicts with HEAD, with
+      `conflicts.auto_resolve`. Such a head cannot merge, so its checks and review do not
+      run, and the conflict round starts at once.
+    - `updated`: the tip, which a merge commit on top of HEAD now brings in, when the rules
+      want pull requests up to date (`up_to_date`), so the checks run on a head that can
+      merge.
+    - `held`: the workflow files that keep that merge out, because the token NexKit pushes
+      with may not change them. HEAD stays behind, as without the rule."""
+    base = decision["base"]
+    tip = git(repo, "rev-parse", f"origin/{base}").strip()
+    if is_ancestor(repo, tip, "HEAD"):
+        return {}
+    tree, conflicts = merge_tree(repo, "HEAD", tip)
+    if conflicts:
+        return {"conflicts": conflicts} if cfg["conflicts"]["auto_resolve"] else {}
+    if not up_to_date:
+        return {}
+    if not can_push_workflows:
+        held = _changed(repo, "HEAD", tree, "--", WORKFLOWS)
+        if held:
+            return {"held": held}
+    message = (
+        f"Merge {base} into {decision['branch']}\n\nThe rules of `{base}` want pull requests "
+        "up to date, so the checks run on a head that contains it.\n"
+    )
+    bot = ("-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}")
+    commit = git(
+        repo, *bot, "commit-tree", tree, "-p", "HEAD", "-p", tip, "-F", "-", input=message
+    ).strip()
+    git(repo, "reset", "-q", "--soft", commit)
+    return {"updated": tip}
 
 
 def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, push_token=False):
@@ -431,8 +473,15 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
     empty_ok = decision["action"] == "fix" and result.get("start_base")
     if not patch.is_file() or not (patch.stat().st_size or empty_ok):
         raise PublishError("The agent result has no patch to publish.")
-    head = apply_change(
-        repo, decision, result, context["title"], patch, cfg, can_push_workflows=push_token
+    head, found = apply_change(
+        repo,
+        decision,
+        result,
+        context["title"],
+        patch,
+        cfg,
+        can_push_workflows=push_token,
+        up_to_date=wants_up_to_date(gh, decision["base"]),
     )
     pr = decision["pr"]
     if decision["action"] == "implement":
@@ -444,7 +493,18 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
         )
         pr = pull["number"]
         copy_issue_fields(gh, decision["issue"], pr)
-    return {"published": True, "pr": pr, "head": head}
+    return {"published": True, "pr": pr, "head": head, **found}
+
+
+def wants_up_to_date(gh, base):
+    """Whether the rules of `base` want pull requests up to date with it (see
+    `GitHub.wants_up_to_date`). A rule NexKit cannot read counts as off: the round then
+    publishes what it published before."""
+    try:
+        return gh.wants_up_to_date(base)
+    except GitHubError as exc:
+        print(f"warning: could not read the rules of `{base}`: {exc}", file=sys.stderr)
+        return False
 
 
 def issue_closed(gh, issue):

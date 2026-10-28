@@ -71,6 +71,7 @@ COMPLETED = {
     "already_on_base",
     "issue_closed",
     "merge_issue_closed",
+    "conflicting",
     autopilot.CI_WAITING,
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
@@ -98,6 +99,10 @@ NEEDS_PERSON = {
         "pull request yourself"
     ),
     "on_base_failed": ON_BASE_FAILED,
+    "conflicting": (
+        "the pull request conflicts with its base branch, and NexKit started no round to "
+        "resolve it; comment `/nexkit fix` on it"
+    ),
 }
 NO_CHANGE_PLAN = "the plan finds that no change is needed; a person closes the issue"
 UNVERIFIED = "the review could not verify every acceptance criterion; confirm them before merging"
@@ -964,6 +969,34 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
     return "branch_updated", f"{message}\n\n{line}"
 
 
+def _skipped_conflicting(gh, cfg, decision, pr, head, files, row, workflow_ref, default_branch):
+    """(outcome, message) for a round whose commit conflicts with the base branch's tip as
+    `publish` saw it: such a head cannot merge, so its checks and review did not run, and
+    the conflict round starts at once, within `conflicts.max_rounds`."""
+    base = decision["base"]
+    listed = ", ".join(f"`{name}`" for name in files)
+    message = (
+        f"`{head[:7]}` conflicts with `{base}` in {listed}, so NexKit skipped its checks and "
+        f"AI review: the pull request cannot merge until the conflict is resolved."
+    )
+    try:
+        started = start_conflict_round(
+            gh,
+            pr,
+            base,
+            workflow_file(workflow_ref),
+            default_branch,
+            cfg["conflicts"]["max_rounds"],
+            row=row,
+        )
+    except GitHubError as exc:
+        started = f"NexKit could not start a round to merge `{base}`: {exc}"
+    if started.startswith("Started"):
+        return "conflict_fix", f"{message} {started}"
+    started = started or f"No round to merge `{base}` started."
+    return "conflicting", f"{message} {started} Comment `/nexkit fix` to resolve it."
+
+
 # Outcomes of an implement round that leave its pull request as it is, with no round on
 # its way: a conflict round skipped while it ran starts when it ends.
 IMPLEMENT_LEFT = {"ready", "needs_human", "review_failed", "retry_failed", autopilot.CI_WAITING}
@@ -1256,6 +1289,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     pr = publish.get("pr") or decision["pr"]
     head = publish.get("head") or decision["head"]
     recheck = action == "fix" and bool(publish.get("recheck"))
+    # The round's commit conflicts with the base branch's tip: no checks or review ran.
+    conflicting = action in ("implement", "fix") and bool(publish.get("conflicts"))
     checks = _load(artifacts / "nexkit-checks" / "checks.json")
     reviewed = _load(artifacts / "nexkit-review" / "result.json")
     given = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
@@ -1288,6 +1323,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         message, resume = pause(reviewed, cfg, "review", pr, resumed=bool(decision.get("resumed")))
         _pause_statuses(gh, head, resume, url)
         checks_ok, verdict = checks is not None and all(c["passed"] for c in checks), None
+    elif conflicting:
+        skipped = f"Not run: {head[:7]} conflicts with {decision['base']}"
+        for context in progress.STATUS_CONTEXTS:
+            gh.set_status(head, context, "error", skipped, url)
+        checks_ok, verdict = False, None
     else:
         failed = "" if review else review_failure(reviewed)[0]
         checks_ok, verdict = _set_statuses(gh, head, checks, review, url, failed)
@@ -1321,7 +1361,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         # The run whose `nexkit-checks` artifact holds the failing checks' result files.
         state["feedback"]["run_id"] = int(run_id)
 
-    if review_paused:
+    if conflicting:
+        outcome, message = _skipped_conflicting(
+            gh, cfg, decision, pr, head, publish["conflicts"], row, workflow_ref, default_branch
+        )
+    elif review_paused:
         outcome = "paused"
         row["verdict"] = "paused"
         if resume:
@@ -1410,6 +1454,19 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"
         done = f" and resolved conflicts in {files}." if files else ", which was behind it."
         message = f"{merged}{done}\n\n{message}"
+    if publish.get("updated"):
+        message = (
+            f"Merged `{decision['base']}` (`{publish['updated'][:7]}`) after this round's "
+            "commit: its rules want pull requests up to date, so the checks ran on a head that "
+            f"contains it.\n\n{message}"
+        )
+    if publish.get("held"):
+        files = ", ".join(f"`{name}`" for name in publish["held"])
+        message = (
+            f"Did not merge `{decision['base']}` after this round's commit, which its rules "
+            f"want: it changed {files}, and the token NexKit pushes with may not change "
+            f"workflow files. The pull request stays behind it.\n\n{message}"
+        )
     carry_line = _carry_line(decision, decision["base"], carry)
     if carry_line:
         message = f"{carry_line}\n\n{message}"

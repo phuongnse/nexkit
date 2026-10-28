@@ -366,7 +366,9 @@ the issue and comment `/nexkit plan <what still needs changing, with the evidenc
 The pull request had `conflicts.max_rounds` automatic conflict rounds, and no more start
 by themselves. Read the last one: when it was blocked on a choice, answer it with
 `/nexkit fix <decisions>`. Otherwise comment `/nexkit fix` yourself, with any rule the
-conflict needs, such as which side's numbering to keep.
+conflict needs, such as which side's numbering to keep. A round that ended as
+`conflicting` is the same case: its commit conflicted with the base branch, so its checks
+and review did not run, and no conflict round was left to start.
 
 ### A round needs a manual merge (`needs_merge`)
 

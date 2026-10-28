@@ -328,6 +328,26 @@ class GitHub:
     def branch_sha(self, branch):
         return self.request("GET", f"{self._repo}/git/ref/heads/{quote(branch)}")["object"]["sha"]
 
+    def wants_up_to_date(self, branch):
+        """Whether pull requests into `branch` must contain its tip before they merge: a
+        ruleset's required status checks with `strict_required_status_checks_policy`, or
+        classic branch protection's `required_status_checks.strict`. Classic protection
+        that the token may not read counts as not wanting it."""
+        for rule in self.paginate(f"{self._repo}/rules/branches/{quote(branch)}"):
+            parameters = rule.get("parameters") or {}
+            if rule.get("type") == "required_status_checks" and parameters.get(
+                "strict_required_status_checks_policy"
+            ):
+                return True
+        path = f"{self._repo}/branches/{quote(branch)}/protection/required_status_checks"
+        try:
+            found = self.request("GET", path)
+        except GitHubError as exc:
+            if exc.status in (403, 404):
+                return False
+            raise
+        return bool((found or {}).get("strict"))
+
     def delete_branch(self, branch):
         return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")
 

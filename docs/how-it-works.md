@@ -73,8 +73,8 @@ Some other events start a run too; they run only `route` and `maintain` (see
 |---|---|---|---|---|
 | `route` | every event | read; comments, reactions, statuses; workflow runs (`actions: read`) | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
 | `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
-| `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. Never executes repository code. |
-| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. |
+| `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. When the base branch moved while the agent worked, it merges the base branch's tip after the round's commit if the base branch's rules want pull requests up to date, and finds with git whether that tip conflicts with the commit (see [Stages](#stages)). Never executes repository code. |
+| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. Skipped, with the review, for a published commit that conflicts with the base branch. |
 | `combine` | go, fix, review, with `parallel_checks` | read only | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read. Never checks out or executes repository code. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](#stages), and then runs no agent. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
@@ -136,6 +136,7 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 | Ready, with an acceptance criterion the review could not verify | yes, also with `merge.auto` on |
 | GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](#failure-handling) |
 | Merged, or an automatic fix or conflict round started | no |
+| The round's commit conflicts with the base branch, and no conflict round is left to start (`conflicting`) | yes |
 | Paused at the usage limit, resuming by itself | no |
 | Paused, and NexKit will not resume it (`usage_limit.resume: false`, or a second pause with an unknown reset time) | yes |
 | The base branch changed workflow files that a round must merge, without a push token that may push them | yes |
@@ -440,6 +441,36 @@ any conflict (see below). The one exception: when the base branch changed files 
 may not change workflow files, the pull request starts at the base branch's tip instead,
 or the round says that the change does not apply there and to run `/nexkit go` again.
 
+**A base branch that moved while the agent worked.** Before it pushes the round's commit,
+of an implement or a fix round, `publish` compares it with the base branch's tip as it
+fetched it, with git and without running any repository code:
+
+- **Up-to-date rules.** When the base branch's rules want pull requests up to date
+  (GitHub's *Require branches to be up to date before merging*), checks count only on a
+  head that contains the base branch's tip. When that tip merges cleanly, `publish` adds a
+  merge of it after the round's commit and pushes that merge, so `verify` checks a head
+  that can merge. The round's comment names the commit it merged. NexKit reads the rule
+  from GitHub's branch rules API and from classic branch protection's
+  `required_status_checks.strict`, which the Actions token may not be allowed to read;
+  then, as when GitHub cannot answer, the rule counts as off. The limit on workflow files
+  stays: when the tip brings changes to `.github/workflows/` and NexKit pushes with the
+  Actions token, the merge is left out, the round's comment says so, and the round goes on
+  as without the rule.
+- **A conflict.** A head that conflicts with the base branch's tip cannot merge, under any
+  rules. With `conflicts.auto_resolve`, `publish` still pushes the round's commit, but the
+  round runs neither `verify` nor `review`: `nexkit/checks` and `nexkit/review` show an
+  error that says why, the round's comment says that its checks were skipped because the
+  head conflicts, and `report` starts the conflict round, `fix (auto, conflicts)`, at once,
+  within `conflicts.max_rounds`, as after a merge refused because of a conflict. That round
+  resolves the conflict in its `agent` job as any fix round does. With its conflict rounds
+  used up, no round starts: the round ends as `conflicting`, says so, and a person decides.
+  Without `conflicts.auto_resolve`, the round checks and reviews the head as before.
+- Otherwise, such as when the rules do not want pull requests up to date, or the base
+  branch has not moved, the round publishes its commit alone, as before.
+
+The review agent judges the pull request's own change against the base branch, so the
+extra merge commit changes nothing in what it reviews.
+
 **Conflicts with the base branch.** `/nexkit fix` also brings a pull request that no longer
 merges cleanly back in line with its base branch. There is no separate command. By
 default a person comments `/nexkit fix`; with `conflicts.auto_resolve`, NexKit starts such
@@ -452,7 +483,9 @@ a round by itself (see [Work without a command](#work-without-a-command)).
    after failing checks merges the base branch whenever it has commits the branch lacks
    (see *Failing checks the base branch fixed* under [Stages](#stages)).
    Branch protection can require up-to-date branches if a repository wants every round
-   to include the latest base.
+   to include the latest base: `publish` then merges the base branch's tip after the
+   round's commit when it merges cleanly (see *A base branch that moved while the agent
+   worked* above).
 2. The prompt lists the conflicted files. The agent resolves the conflict markers
    together with the round's other feedback; when conflicts are the only problem, the
    round only resolves them. It keeps the intent of both sides when a conflict has one
@@ -472,6 +505,10 @@ a round by itself (see [Work without a command](#work-without-a-command)).
    request keeps the base branch's history clean.
 5. The checks and the review run on the merge commit, as after any fix round. The round's
    comment says that the base branch was merged and which files had conflicts.
+
+A round whose own commit conflicts with the base branch's tip when `publish` pushes it
+skips its checks and review, and with `conflicts.auto_resolve` starts the conflict round at
+once (see *A base branch that moved while the agent worked* above).
 
 **Failing checks the base branch fixed.** A check can fail for a reason that the base
 branch fixed after the pull request branched off, such as a flaky test. An automatic fix
@@ -1169,6 +1206,7 @@ Names a person meets in run comments and in that output:
 |---|---|
 | `too_large` | The plan says the work does not fit one agent session, and suggests a split when it can. |
 | `needs_merge` | A fix round must merge the base branch for a conflict, and NexKit cannot push that merge because it brings changes to `.github/workflows/` without a push token that may push them. The round stopped before its agent. |
+| `conflicting` | The round's commit conflicts with the base branch, so its checks and review did not run, and NexKit started no conflict round, because `conflicts.max_rounds` are used up or a person must merge the base branch. |
 | `branch_updated` | GitHub refused the automatic merge because the branch was behind its base branch; NexKit merged the base branch into it and started `/nexkit review` on the new commit. |
 | `carried` | The round carried over the approval of that commit, after a branch update that left the pull request's change as it was. |
 | `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. |
@@ -1201,7 +1239,8 @@ state, leaves it as it is and saves the state in a new state comment.
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |
-| The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. |
+| The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. When the base branch's rules want pull requests up to date and its tip merges cleanly, `publish` merges it after the round's commit, so the checks run on a head that can merge; a fix round does the same. |
+| The base branch moved while an implement or fix round was running, and its tip conflicts with the round's commit | With `conflicts.auto_resolve`, pushes the commit, skips its checks and review, and starts the conflict round at once, within `conflicts.max_rounds`; with those used up, a person decides (`conflicting`). |
 | The base branch changed workflow files while an implement round was running, and only the default Actions token can push | Opens the pull request on the base branch's tip if the change applies there; otherwise refuses to publish and says to run `/nexkit go` again. |
 | The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
 | The PR branch moved while a fix round was running | Refuses to publish. An automatic round runs once more on the new head; after a person's round, run `/nexkit fix` again, since the push was probably theirs. |

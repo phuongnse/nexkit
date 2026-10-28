@@ -449,12 +449,18 @@ merge:
 - a required merge queue, or squash merging turned off for the repository.
 
 GitHub's *Require branches to be up to date before merging* keeps two pull requests that
-pass alone from breaking the base branch together. With `conflicts.auto_resolve`, NexKit
-then brings a pull request that is behind up to date with its base branch and runs its
-checks again. When that merge had no conflict and the pull request's own change is the one
-the review approved, the approval carries over and no review agent runs, so the rule costs
-a run of the checks, not a second AI review (see *A pull request brought up to date* under
-[How it works](how-it-works.md#stages)).
+pass alone from breaking the base branch together. Under it, checks count only on a head
+that contains the base branch's tip. So when the base branch moved while a round's agent
+worked, `publish` merges its tip after the round's commit when it merges cleanly, and the
+round checks a head that can merge (see *A base branch that moved while the agent worked*
+under [How it works](how-it-works.md#stages)). NexKit reads the rule from the branch rules
+API, or from classic branch protection when its token may read it. When the base branch
+moves later, while the round checks, GitHub refuses the merge. With
+`conflicts.auto_resolve`, NexKit then brings the pull request up to date with its base
+branch and runs its checks again. When that merge had no conflict and the pull request's
+own change is the one the review approved, the approval carries over and no review agent
+runs, so the rule costs a run of the checks, not a second AI review (see *A pull request
+brought up to date* under [How it works](how-it-works.md#stages)).
 
 `merge.after_workflows` lists workflow files in `.github/workflows/`. GitHub starts no
 workflow for a push made with the Actions token, so the merge by NexKit does not run your
@@ -803,6 +809,10 @@ requests conflict.
   the next sweep.
 - When an automatic merge is refused because of a conflict, the round that tried it
   starts a conflict round right away, within the same limits.
+- When the base branch moved while a round's agent worked and now conflicts with the
+  round's commit, the round pushes its commit but skips its checks and AI review, which
+  could not lead to a merge, and starts a conflict round right away, within the same
+  limits.
 - When it is refused because branch protection wants the branch up to date, NexKit
   merges the base branch into it on GitHub and runs its checks again, within the same
   limits. A refusal that says required checks are "expected" on a pull request GitHub

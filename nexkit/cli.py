@@ -455,7 +455,14 @@ def cmd_publish(args):
         if isinstance(exc, BranchMovedError):
             outcome["moved"] = True
     print(json.dumps(outcome, indent=2))
-    _output(result=outcome, head=outcome.get("head") or "", pr=str(outcome.get("pr") or ""))
+    # A head that conflicts with the base branch's tip cannot merge: no checks or review.
+    conflicts = "true" if outcome.get("conflicts") else ""
+    _output(
+        result=outcome,
+        head=outcome.get("head") or "",
+        pr=str(outcome.get("pr") or ""),
+        conflicts=conflicts,
+    )
     return 0
 
 

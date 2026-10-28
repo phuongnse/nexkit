@@ -171,6 +171,116 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(git(self.repos.origin, "rev-parse", "main"), later)
         self.assertIn(outcome["pr"], self.gh.pulls)
 
+    def parents(self, sha):
+        return git(self.repos.origin, "log", "-1", "--format=%P", sha).split()
+
+    def test_implement_merges_a_moved_base_when_its_rules_want_branches_up_to_date(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        later = self.repos.push_commit("dev", "main", {"later.py": "x = 1\n"}, "Later")
+        self.gh.strict = True
+        outcome = self.publish_implement(start)
+        head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
+        self.assertEqual((outcome["head"], outcome["updated"]), (head, later))
+        # The round's commit on the commit the agent started from, then the merge of the tip.
+        commit, merged = self.parents(head)
+        self.assertEqual((self.parents(commit), merged), ([start], later))
+        self.assertEqual(git(self.repos.origin, "log", "-1", "--format=%s", commit), "Fix add (#5)")
+        self.assertEqual(
+            git(self.repos.origin, "log", "-1", "--format=%s", head),
+            "Merge main into nexkit/issue-5",
+        )
+        self.assertEqual(git(self.repos.origin, "show", f"{head}:later.py"), "x = 1")
+        self.assertNotIn("conflicts", outcome)
+
+    def test_implement_keeps_its_start_when_the_rules_do_not_want_branches_up_to_date(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        self.repos.push_commit("dev", "main", {"later.py": "x = 1\n"}, "Later")
+        self.cfg = make_config(conflicts={"auto_resolve": True})
+        outcome = self.publish_implement(start)
+        head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
+        self.assertEqual(self.parents(head), [start])
+        self.assertEqual(set(outcome), {"published", "pr", "head"})
+        # Nor when the base branch has not moved, whatever the rules.
+        self.gh.strict = True
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return b + a\n"})
+        outcome = self.publish_implement(start, name="publisher-2")
+        self.assertEqual(self.parents(outcome["head"]), [start])
+        self.assertEqual(set(outcome), {"published", "pr", "head"})
+
+    def test_a_rule_that_cannot_be_read_counts_as_off(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        self.repos.push_commit("dev", "main", {"later.py": "x = 1\n"}, "Later")
+        self.gh.strict = GitHubError(500, "down")
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            outcome = self.publish_implement(start)
+        self.assertEqual(self.parents(outcome["head"]), [start])
+        self.assertIn("could not read the rules of `main`", stderr.getvalue())
+
+    def test_a_round_whose_commit_conflicts_with_the_base_tip_says_so(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        # The base branch changes the same line while the agent works.
+        self.repos.push_commit(
+            "dev", "main", {"calc.py": "def add(a, b):\n    return b - a\n"}, "S"
+        )
+        self.cfg = make_config(conflicts={"auto_resolve": True})
+        self.gh.strict = True
+        outcome = self.publish_implement(start)
+        # The round's commit is pushed as it is, and no merge is made.
+        head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
+        self.assertEqual((outcome["head"], outcome["conflicts"]), (head, ["calc.py"]))
+        self.assertEqual(self.parents(head), [start])
+        self.assertNotIn("updated", outcome)
+        # Without conflicts.auto_resolve, no conflict round follows: the round goes on.
+        self.cfg = make_config()
+        outcome = self.publish_implement(start, name="publisher-2")
+        self.assertNotIn("conflicts", outcome)
+
+    def fix_on_a_moved_base(self, base_files, **options):
+        """Publish a fix round whose base branch moved with `base_files` while its agent
+        worked. Returns (outcome, the head the round started from)."""
+        first = self.make_patch({"calc.py": "v1\n"})
+        self.publish_implement(first, name="p1")
+        start = self.make_patch({"calc.py": "v2\n"}, ref="nexkit/issue-5")
+        self.repos.push_commit("dev", "main", base_files, "Later")
+        outcome = publish(
+            self.gh,
+            decision("fix", pr=6, target=6),
+            self.result(start),
+            CONTEXT,
+            self.cfg,
+            self.repos.clone("p2"),
+            self.out,
+            **options,
+        )
+        return outcome, start
+
+    def test_a_fix_round_merges_a_moved_base_when_its_rules_want_branches_up_to_date(self):
+        self.gh.strict = True
+        outcome, start = self.fix_on_a_moved_base({"later.py": "x = 1\n"})
+        later = git(self.repos.origin, "rev-parse", "main")
+        head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
+        self.assertEqual((outcome["head"], outcome["updated"]), (head, later))
+        commit, merged = self.parents(head)
+        self.assertEqual((self.parents(commit), merged), ([start], later))
+        self.assertEqual(
+            git(self.repos.origin, "log", "-1", "--format=%s", commit), "Address feedback on #6"
+        )
+        self.assertEqual(git(self.repos.origin, "show", f"{head}:calc.py"), "v2")
+
+    def test_a_fix_round_without_the_rule_publishes_its_commit_alone(self):
+        outcome, start = self.fix_on_a_moved_base({"later.py": "x = 1\n"})
+        self.assertEqual(self.parents(outcome["head"]), [start])
+        self.assertEqual(set(outcome), {"published", "pr", "head"})
+
+    def test_workflow_changes_keep_the_merge_out_without_a_push_token(self):
+        self.gh.strict = True
+        files = {".github/workflows/ci.yml": "on: push\n"}
+        outcome, start = self.fix_on_a_moved_base(files)
+        self.assertEqual(self.parents(outcome["head"]), [start])
+        self.assertEqual(outcome["held"], [".github/workflows/ci.yml"])
+        self.assertNotIn("updated", outcome)
+
     def publish_implement(self, start, name="publisher", **options):
         return publish(
             self.gh,

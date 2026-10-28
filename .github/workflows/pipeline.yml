@@ -5,7 +5,9 @@
 # agent    run the stage's agent (plan / implement / fix); no GitHub write token; restores
 #          caches before setup but never saves one; a fix round downloads the result files
 #          that the last round's failing checks kept
-# publish  post the plan, or commit the patch and open the PR; never runs repo code
+# publish  post the plan, or commit the patch and open the PR; when the base branch's
+#          rules want pull requests up to date, merge its tip after the round's commit;
+#          never runs repo code
 # verify   run setup and checks on the exact candidate; no secrets at all; restores
 #          caches but never saves one; with parallel_checks, one job per check job
 # combine  with parallel_checks, join the check jobs' results into one nexkit-checks;
@@ -201,6 +203,7 @@ jobs:
       result: ${{ steps.publish.outputs.result }}
       head: ${{ steps.publish.outputs.head }}
       pr: ${{ steps.publish.outputs.pr }}
+      conflicts: ${{ steps.publish.outputs.conflicts }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -234,11 +237,13 @@ jobs:
 
   verify:
     needs: [route, publish]
+    # Not for a head that conflicts with the base branch's tip: it cannot merge, and report
+    # starts the conflict round at once.
     if: >-
       always() && needs.route.result == 'success' &&
       (needs.route.outputs.action == 'review' ||
        (contains(fromJSON('["implement","fix"]'), needs.route.outputs.action) &&
-        needs.publish.outputs.head != ''))
+        needs.publish.outputs.head != '' && needs.publish.outputs.conflicts != 'true'))
     # One job that runs every check, or with parallel_checks one per check job (route).
     name: ${{ matrix.group && format('verify ({0})', matrix.group) || 'verify' }}
     strategy:

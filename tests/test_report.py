@@ -14,7 +14,7 @@ from nexkit.maintain import WAIT_INPUTS
 from nexkit.progress import trigger
 from nexkit.report import criterion_status, report, review_body, workflow_file
 from nexkit.route import route
-from nexkit.state import read_state, render_state
+from nexkit.state import read_state, render_run, render_state
 from tests.support import FakeGitHub, make_config
 
 HEAD = "c" * 40
@@ -754,6 +754,101 @@ class ReportTests(ReportCase):
         self.run_report(d=decision("fix", pr=6, target=6, head=HEAD, auto=True))
         [row] = self.gh.run_comments(6)
         self.assertIn("Did not merge `main`, which changed `.github/workflows/ci.yml`", row["body"])
+
+    def report_published(self, published, d=None, cfg=None):
+        """Report a round whose `publish` returned `published`, with no checks or review."""
+        self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
+        needs = {"publish": {"outputs": {"result": json.dumps(published)}}}
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        return report(
+            self.gh,
+            d or decision(),
+            cfg or make_config(conflicts={"auto_resolve": True}),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+
+    def test_a_head_that_conflicts_skips_its_checks_and_starts_the_conflict_round(self):
+        conflicting = {"published": True, "pr": 6, "head": HEAD, "conflicts": ["calc.py"]}
+        outcome = self.report_published(conflicting)
+        self.assertEqual(outcome["outcome"], "conflict_fix")
+        self.assertIsNone(outcome["attention"])
+        [started] = self.gh.dispatches
+        self.assertEqual(started["inputs"]["auto"], "conflicts")
+        self.assertEqual(started["inputs"]["number"], "6")
+        [row] = self.gh.run_comments(6)
+        run = row["run"]
+        self.assertEqual((run["checks"], run["verdict"]), ("not run", "not run"))
+        self.assertEqual(run["conflicts_started"], "f" * 40)
+        self.assertIn(
+            "`ccccccc` conflicts with `main` in `calc.py`, so NexKit skipped its checks and AI "
+            "review",
+            row["body"],
+        )
+        self.assertIn("Started an automatic round on #6 to merge `main`.", row["body"])
+        self.assertEqual(self.statuses(), {("nexkit/checks", "error"), ("nexkit/review", "error")})
+        self.assertIn("conflicts with main", self.gh.statuses[0]["description"])
+        self.assertEqual(self.gh.created_reviews, [])
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["feedback"], {"head": HEAD, "checks": None, "review": None})
+
+    def test_a_head_that_conflicts_after_the_conflict_rounds_are_used_up_waits(self):
+        earlier = {
+            "round": 1,
+            "trigger": "fix (auto, conflicts)",
+            "conflicts": True,
+            "base_sha": "b" * 40,
+            "status": "success",
+            "outcome": "ready",
+            "url": "https://github.com/acme/app/actions/runs/90",
+            "head": "a" * 40,
+        }
+        self.gh.comment(6, render_run(earlier, "Merged."))
+        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 1}, notify=["olivia"])
+        conflicting = {"published": True, "pr": 6, "head": HEAD, "conflicts": ["calc.py"]}
+        fix = decision("fix", pr=6, target=6, head="a" * 40, auto=True)
+        outcome = self.report_published(conflicting, d=fix, cfg=cfg)
+        self.assertEqual(outcome["outcome"], "conflicting")
+        self.assertIn("NexKit started no round to resolve it", outcome["attention"])
+        self.assertFalse([d for d in self.gh.dispatches if d["inputs"]["command"] == "fix"])
+        latest = self.gh.run_comments(6)[-1]
+        self.assertIn("its 1 automatic conflict rounds are used up", latest["body"])
+        self.assertEqual(latest["run"]["status"], "success")
+        self.assertTrue(self.gh.comments_matching(6, "@olivia a person is needed"))
+
+    def test_a_round_brought_up_to_date_by_publish_says_so(self):
+        self.candidate()
+        updated = {"published": True, "pr": 6, "head": HEAD, "updated": "b" * 40}
+        needs = {"publish": {"outputs": {"result": json.dumps(updated)}}}
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        cfg = make_config()
+        report(
+            self.gh,
+            decision(),
+            cfg,
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        [row] = self.gh.run_comments(6)
+        self.assertIn(
+            "Merged `main` (`bbbbbbb`) after this round's commit: its rules want pull requests "
+            "up to date",
+            row["body"],
+        )
+        self.assertEqual(row["run"]["checks"], "passed")
+        held = {"published": True, "pr": 6, "head": HEAD, "held": [".github/workflows/ci.yml"]}
+        needs = {"publish": {"outputs": {"result": json.dumps(held)}}}
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        fix = decision("fix", pr=6, target=6, head=HEAD)
+        report(
+            self.gh, fix, cfg, needs, self.artifacts, workflow_ref=WORKFLOW, default_branch="main"
+        )
+        latest = self.gh.run_comments(6)[-1]["body"]
+        self.assertIn("it changed `.github/workflows/ci.yml`", latest)
 
     def test_state_names_the_run_that_holds_the_checks_result_files(self):
         self.candidate(checks_pass=False, review=review_result("request_changes"))

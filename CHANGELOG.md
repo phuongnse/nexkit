@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.4.0
+
+A pull request whose change another pull request already landed on its base branch no
+longer spends rounds until a person steps in: NexKit closes it, and its issue as
+completed, as a merge would. See *A pull request brought up to date that changes nothing*
+under [Stages](docs/how-it-works.md#stages).
+
+- Before each round, review or merge try on a pull request, NexKit asks GitHub whether it
+  still changes a file against its base branch (#174). When it does not, for example
+  after NexKit merged the base branch into it, no round runs: NexKit closes the pull
+  request without merging and its issue as completed, with outcome `already_on_base`.
+  The round's comment and a comment on the issue name the base commit that brought the
+  change, when NexKit can tell one. A command on such a pull request, by a person or by
+  NexKit, goes to the `maintain` job, which closes it; a merge try closes it at once. A
+  pull request whose own change differs, however small, goes on as before.
+- A fix round checks the same in its `agent` job, with git, before setup and the agent,
+  since the base branch may have moved after the round started. Such a round runs
+  nothing, gives back its automatic round, and names the oldest base commit that already
+  holds the change.
+- `nexkit status` lists these pull requests under `recent_closed` (text: *Recently closed
+  by NexKit without merging*), not as waiting for a merge or a person.
+
 ## 5.3.1
 
 - A pull request behind its base branch whose merge GitHub refuses because required checks

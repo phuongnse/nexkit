@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.3.1
+
+- A pull request behind its base branch whose merge GitHub refuses because required checks
+  are "expected", such as "2 of 2 required status checks are expected.", is brought up to
+  date rather than left waiting (#171). Under branch protection that wants branches up to
+  date, GitHub reports checks that passed on a head behind its base as expected, so they
+  never pass. When GitHub reports the pull request as `behind`, NexKit now updates it from
+  the base branch with `conflicts.auto_resolve`, as for a branch that is out of date, and
+  the approval carries over when the change is the same. Pull requests already waiting
+  this way move on at the next autopilot sweep, however long they waited, with no
+  command. See [Failure handling](docs/how-it-works.md#failure-handling).
+
 ## 5.3.0
 
 Rounds can take as long as their slowest check rather than the sum of all, and branch

@@ -128,6 +128,11 @@ class FakeGitHub:
         self.reruns = []
         self.branches = {}
         self.runs = {}
+        self.on_base = set()  # heads of pull requests that change no file against their base
+        self.compares = {}  # (base, head) -> GitHub's comparison, for any other
+        self.own_commits = {}  # pull request number -> its commits, oldest first
+        self.commit_files = {}  # commit sha -> the files it changed
+        self.path_history = {}  # path -> shas of the commits that changed it, newest first
         self.dispatch_runs = {}
         self._next = 1000
 
@@ -453,6 +458,21 @@ class FakeGitHub:
             raise self.merge_error
         self.merged.append((number, sha, method))
         return {"merged": True, "sha": "d" * 40}
+
+    def compare(self, base, head):
+        if (base, head) in self.compares:
+            return self.compares[(base, head)]
+        files = [] if head in self.on_base else [{"filename": "app.py"}]
+        return {"files": files, "commits": [], "merge_base_commit": {"sha": "c" * 40}}
+
+    def pull_commits(self, number):
+        return list(self.own_commits.get(number, []))
+
+    def commit(self, sha):
+        return {"sha": sha, "files": [{"filename": f} for f in self.commit_files.get(sha, [])]}
+
+    def path_commits(self, sha, path):
+        return [{"sha": found} for found in self.path_history.get(path, [])]
 
     def update_branch(self, number, sha):
         self.updated.append((number, sha))

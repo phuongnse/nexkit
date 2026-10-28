@@ -135,6 +135,10 @@ bounds:
 - **[A `no_change` closing](../../docs/troubleshooting.md#an-issue-closed-as-no_change-that-still-needs-a-change):**
   check each issue closed as `no_change` since the last pass against its evidence. When
   the evidence contradicts the finding, reopen the issue, comment, and notify.
+- **[An `already_on_base` closing](../../docs/troubleshooting.md#a-pull-request-closed-as-already_on_base-whose-change-is-not-on-the-base-branch):**
+  for each CI issue closed so since the last pass, account for every record as for a CI
+  issue with records of several failures, below. When one is left, reopen the issue,
+  comment, and notify.
 - **[A blocker outside the scope](../../docs/troubleshooting.md#an-issue-is-blocked-by-an-issue-outside-the-scope),
   or [a parent whose parts all closed without one completed](../../docs/troubleshooting.md#a-parents-parts-all-closed-and-none-was-completed):**
   these are the person's call. Notify, with the blocker, or the parts and how each closed.
@@ -186,7 +190,7 @@ Notify only for:
 - a question still asked after two answers;
 - a transient failure that has not passed after NexKit's retry, or a service still down
   after `recheck_failed`;
-- an issue reopened after a wrong `no_change`;
+- an issue reopened after a wrong `no_change` or `already_on_base`;
 - a `merge_waiting` pull request whose checks neither passed nor failed within six hours,
   for a reason the driver cannot act on;
 - a plan too large again that the driver may not split;

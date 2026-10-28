@@ -327,6 +327,25 @@ class GitHub:
     def close_pull(self, number):
         return self.request("PATCH", f"{self._repo}/pulls/{number}", {"state": "closed"})
 
+    def compare(self, base, head):
+        """GitHub's comparison of `head` with `base` from their merge base, as a pull
+        request's *Files changed* shows it: its `files`, `commits` (the first 250) and
+        `merge_base_commit`."""
+        return self.request("GET", f"{self._repo}/compare/{quote(base)}...{quote(head)}")
+
+    def pull_commits(self, number):
+        """The commits of a pull request, oldest first: the first 250."""
+        return self.paginate(f"{self._repo}/pulls/{number}/commits", limit=250)
+
+    def commit(self, sha):
+        """A commit with the files it changed: the first 300."""
+        return self.request("GET", f"{self._repo}/commits/{sha}")
+
+    def path_commits(self, sha, path):
+        """The latest 100 commits reachable from `sha` that changed `path`, newest first."""
+        params = {"sha": sha, "path": path, "per_page": 100}
+        return self.request("GET", f"{self._repo}/commits", params=params)
+
     def create_pull(self, title, head, base, body):
         return self.request(
             "POST",

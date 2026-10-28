@@ -1,4 +1,5 @@
-"""Work that follows from events other than commands. No agent runs here.
+"""Work that follows from events other than commands, and the closing of a pull request
+whose base branch already holds its change, instead of its command. No agent runs here.
 
 `route` turns those events into the `maintain` action, and the `maintain` job runs it. The
 job holds write tokens for issues, pull request comments and workflow dispatches, but never
@@ -19,8 +20,10 @@ from .github import GitHubError
 from .route import implementing, issue_from_branch
 from .state import (
     CONTINUED,
+    FAILURE,
     PAUSED,
     RUNNING,
+    SUCCESS,
     UNCOUNTED,
     by_bot,
     conflict_rounds_used,
@@ -29,7 +32,8 @@ from .state import (
 )
 from .usage import PAUSE_WINDOW, iso, parse_iso
 
-# Each task runs only when one of its configuration keys is on.
+# Each task runs only when one of its configuration keys is on; one without keys always
+# runs.
 TASKS = {
     "parents": ("close_parent_issues", "autopilot.enabled"),
     "schedule": ("usage_limit.resume", "conflicts.auto_resolve", "autopilot.enabled"),
@@ -44,6 +48,8 @@ TASKS = {
     "ci": ("autopilot.enabled",),
     # `route` refused a command that NexKit started by itself.
     "lost": ("autopilot.enabled",),
+    # A round on a pull request whose base branch already holds its change.
+    "on_base": (),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
@@ -58,10 +64,18 @@ POLL = timedelta(minutes=10)
 # whether that run ended, before it sweeps anyway.
 END_POLL = 10
 END_TRIES = 30
+# How many of a pull request's own commits, and of the files they changed, NexKit reads to
+# find the commit of the base branch that brought the same change.
+OWN_COMMITS = 10
+OWN_FILES = 10
+ON_BASE_FAILED = (
+    "the base branch already holds this change, but NexKit could not close the pull "
+    "request or its issue; close them yourself"
+)
 
 
 def enabled(task, cfg):
-    return any(setting(cfg, path) for path in TASKS[task])
+    return not TASKS[task] or any(setting(cfg, path) for path in TASKS[task])
 
 
 def _closed_as(issue):
@@ -118,6 +132,82 @@ def close_parents_safely(gh, number):
         return close_parents(gh, number)
     except GitHubError as exc:
         return [f"Could not check the parent issue of #{number}: {exc}"]
+
+
+def holding_commit(gh, pr, merge_base):
+    """The commit of the base branch that brought the change of pull request `pr`, which
+    changes nothing since it merged `merge_base`, or None when NexKit cannot tell one: the
+    only commit, among those of the base branch merged into it since it started, that
+    changed a file that its own commits changed."""
+    try:
+        own = [c for c in gh.pull_commits(pr) if len(c.get("parents") or []) == 1]
+        if not own:
+            return None
+        start = own[0]["parents"][0]["sha"]
+        merged = {c["sha"] for c in gh.compare(start, merge_base).get("commits") or []}
+        files = []
+        for commit in own[:OWN_COMMITS]:
+            files += [f["filename"] for f in gh.commit(commit["sha"]).get("files") or []]
+        found = set()
+        for name in list(dict.fromkeys(files))[:OWN_FILES]:
+            found |= {c["sha"] for c in gh.path_commits(merge_base, name)} & merged
+    except (GitHubError, AttributeError, IndexError, KeyError, TypeError):
+        return None
+    return found.pop() if len(found) == 1 else None
+
+
+def close_on_base(gh, cfg, target):
+    """Close a pull request whose base branch already holds its change without merging it,
+    and its issue as completed, as a merge would. `target` names its `pr`, `issue`, `base`
+    and `merge_base` (see `route.on_base`). Returns (outcome, text for the pull request's
+    round, the commit that brought the change or None)."""
+    pr, issue, base = target["pr"], target["issue"], target["base"]
+    commit = holding_commit(gh, pr, target["merge_base"])
+    by = f", brought by {commit}" if commit else ""
+    held = f"`{base}` already holds the change of this pull request{by}"
+    try:
+        gh.close_pull(pr)
+    except GitHubError as exc:
+        return "on_base_failed", f"{held}, but NexKit could not close it: {exc}", commit
+    lines = [f"{held}, so it changes no file against `{base}`. NexKit closed it without merging."]
+    try:
+        if gh.issue(issue).get("state") == "open":
+            closed = f"NexKit closed #{pr} without merging: `{base}` already holds its change"
+            gh.comment(issue, f"{closed}{by}.")
+            gh.close_issue(issue, "completed")
+            lines.append(f"Closed #{issue} as completed.")
+            if cfg["close_parent_issues"]:
+                # Closing with the Actions token starts no workflow for `issues: closed`.
+                lines += close_parents_safely(gh, issue)
+    except GitHubError as exc:
+        lines.append(f"Could not close #{issue}: {exc}. Close it yourself.")
+        return "on_base_failed", "\n\n".join(lines), commit
+    return "already_on_base", "\n\n".join(lines), commit
+
+
+def on_base_round(gh, cfg, decision, workflow, ref):
+    """Close a pull request whose base branch already holds its change, and its issue,
+    instead of the round that `route` was asked to start (see `close_on_base`). Its latest
+    round shows the outcome. Returns lines for the log."""
+    pr = decision["pr"]
+    outcome, text, commit = close_on_base(gh, cfg, decision)
+    rounds = _rounds(gh, pr)
+    if not rounds:
+        gh.comment(pr, text)
+    else:
+        comment, run = rounds[-1]
+        run.update(outcome=outcome, status=SUCCESS if outcome == "already_on_base" else FAILURE)
+        run.pop("attention", None)
+        if outcome != "already_on_base":
+            run["attention"] = ON_BASE_FAILED
+        if commit:
+            run["on_base"] = commit
+        gh.update_comment(comment["id"], with_run(comment["body"], run, text))
+    lines = [f"#{pr}: {outcome}."]
+    if outcome == "already_on_base":
+        # Issues it blocked may start now, and the scope may be done.
+        lines += autopilot.request_safely(gh, cfg, workflow, ref, decision["issue"])
+    return lines
 
 
 def _number(comment):
@@ -382,6 +472,8 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
         return lines or ["Nothing to start."]
     if task == "ci":
         return autopilot.after_ci_run(gh, cfg, decision, workflow, ref)
+    if task == "on_base":
+        return on_base_round(gh, cfg, decision, workflow, ref)
     if task == "lost":
         # The sweep waits for this run to end, so it sees that the command never ran.
         return autopilot.request_safely(gh, cfg, workflow, ref, after=decision["after"])

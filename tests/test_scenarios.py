@@ -17,7 +17,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -32,6 +32,15 @@ from nexkit.status import collect
 from tests.support import FakeGitHub, make_config
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
+# The jobs of a run in each stage, as GitHub lists them while it runs there.
+STAGES = ["route", "agent", "publish", "verify", "review", "report"]
+
+
+def jobs_in(stage):
+    jobs = [{"name": f"nexkit / {job}", "status": "completed"} for job in STAGES]
+    return [*jobs[: STAGES.index(stage)], {"name": f"nexkit / {stage}", "status": "in_progress"}]
+
+
 # More dispatches than this in one scenario is a loop.
 MAX_DISPATCHES = 60
 TOKENS = {"input": 10, "cached": 0, "output": 10}
@@ -121,9 +130,18 @@ class Pipeline:
         self.gh.dispatch = self.dispatched
         self.merge = self.gh.merge
         self.gh.merge = self.merged
+        self.post = self.gh.comment
+        self.gh.comment = self.posted
         # `publish` merges a base branch that moved while the agent worked, when the rules
         # want pull requests up to date (`publish.catch_up`); off, it publishes as before.
         self.catch_up = True
+
+    def posted(self, number, body):
+        """A comment, posted now: how recent a round's comment is tells whether the round
+        it started is still on its way."""
+        comment = self.post(number, body)
+        comment["created_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return comment
 
     def merged(self, number, sha, method="squash"):
         """GitHub refuses to merge a branch behind its base when the rules want it up to
@@ -220,6 +238,10 @@ class Pipeline:
             return
         artifacts = Path(self.tmp.name) / str(run_id)
         needs = self.stages(decision, outcome, artifacts)
+        if run_id in self.gh.cancelled:
+            # NexKit stopped the run in its checks: no `report` or `finish` job runs.
+            self.played.append((inputs["command"], decision["target"], "superseded"))
+            return
         result = report(
             self.gh,
             decision,
@@ -245,6 +267,8 @@ class Pipeline:
             ).write_text(json.dumps(data))
 
         start = self.gh.branch_sha("main")
+        run_id = int(os.environ["GITHUB_RUN_ID"])
+        self.gh.jobs[run_id] = jobs_in("agent")
         if outcome.get("working"):
             # What happens elsewhere while the agent works, before anything is published.
             outcome["working"](self)
@@ -292,6 +316,13 @@ class Pipeline:
         reviewing = decision["action"] == "review" or (
             published.get("head") and not published.get("conflicts")
         )
+        if reviewing and outcome.get("checking"):
+            # What happens elsewhere while the round runs its checks.
+            self.gh.jobs[run_id] = jobs_in("verify")
+            outcome["checking"](self, published.get("pr") or decision["pr"])
+            if run_id in self.gh.cancelled:
+                return needs
+        self.gh.jobs[run_id] = jobs_in("review")
         if reviewing and "checks" in outcome:
             write("nexkit-checks", outcome["checks"])
         if decision.get("carry_from"):
@@ -904,6 +935,73 @@ class ScenarioTests(unittest.TestCase):
         self.assertTrue(second["conflicts"])
         self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 0)
         for number in (5, 6):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_rounds_in_their_checks_stop_when_the_base_branch_moves_and_one_round_follows(self):
+        moves = itertools.count(1)
+        seen = set()
+
+        def merged_elsewhere(conflicting):
+            def checking(pipe, pull):
+                # Another pull request merges into `main` while this round runs its checks,
+                # once per pull request; the push starts NexKit's check.
+                if pull in seen:
+                    return
+                seen.add(pull)
+                tip = f"{0xE0 + next(moves):040x}"
+                pipe.gh.branches["main"] = tip
+                head = pipe.gh.pulls[pull]["head"]["sha"]
+                pipe.gh.compares[(tip, head)] = {"behind_by": 1}
+                pipe.gh.pulls[pull]["mergeable_state"] = "behind"
+                if conflicting:
+                    pipe.gh.pulls[pull]["mergeable"] = False
+                event = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}}
+                decision = route(pipe.gh, "push", event)
+                maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
+
+            return checking
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            number = int(inputs["number"])
+            if inputs["command"] == "go" and number == 5:
+                # Its checks fail, and its automatic fix round is the one stopped.
+                return done(checks=False)
+            if inputs["command"] == "go":
+                # #7's head conflicts once `main` moves.
+                return {**done(), "checking": merged_elsewhere(conflicting=number == 7)}
+            if inputs["auto"] == "conflicts":
+                pipe.gh.pulls[number]["mergeable"] = True
+                pipe.gh.pulls[number].pop("mergeable_state", None)
+            return {**done(), "checking": merged_elsewhere(conflicting=False)}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.gh.strict = True
+        for number in (5, 6, 7):
+            pipe.issue(number)
+        pipe.play()
+        stopped = [(c, n) for c, n, o in pipe.played if o == "superseded"]
+        self.assertEqual(sorted(stopped), [("fix", 8), ("go", 6), ("go", 7)], pipe.played)
+        # No round was started twice, which `route` would have refused.
+        self.assertFalse([run for run in pipe.played if "nothing to add" in run[2]], pipe.played)
+        for pull in [p["number"] for p in pipe.gh.pulls.values()]:
+            rounds = [run for _, run in run_comments(pipe.gh.comments(pull)) if "round" in run]
+            stopped = [i for i, run in enumerate(rounds) if run["outcome"] == "superseded"]
+            self.assertEqual(len(stopped), 1, f"#{pull}: {rounds}")
+            # Exactly one round follows each: an update with a review, or a conflict round.
+            follow = rounds[stopped[0] + 1 :]
+            self.assertTrue(follow, f"#{pull}")
+            self.assertIn(follow[0]["trigger"].split(" ")[0], ("review", "fix"))
+            # It shows as stopped by NexKit, not as a run a person cancelled.
+            self.assertEqual(rounds[stopped[0]]["status"], "success")
+        self.assertEqual({number for number, *_ in pipe.gh.merged}, set(pipe.gh.pulls))
+        self.assertEqual(sorted(pipe.gh.cancelled), sorted(set(pipe.gh.cancelled)))
+        # The automatic fix round that NexKit stopped gave its round back.
+        auto_fixes = [read_state(pipe.gh.comments(pull))[1]["auto_fixes"] for pull in pipe.gh.pulls]
+        self.assertEqual(auto_fixes, [0, 0, 0])
+        for number in (5, 6, 7):
+            self.assertEqual(pipe.gh.issues[number]["state"], "closed")
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
     def test_a_pull_request_whose_change_is_already_on_its_base_branch_closes(self):

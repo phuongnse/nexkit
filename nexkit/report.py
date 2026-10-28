@@ -21,6 +21,7 @@ from .maintain import (
     resolve_conflicts,
     start_conflict_round,
     start_waiting,
+    update_branch,
 )
 from .route import BRANCH_PREFIX, auto_input, on_base
 from .runlog import add_tokens, one_line
@@ -738,9 +739,6 @@ CHECK_NAME = re.compile(r'"([^"]+)"')
 # before the first try again; each later try waits that much longer.
 MERGE_TRIES = 3
 MERGE_DELAY = 10
-# How long, and how often, a merge after updating the branch waits for GitHub to move it.
-UPDATE_WAIT = 5
-UPDATE_TRIES = 6
 
 
 def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
@@ -936,31 +934,18 @@ def _swept(gh, cfg, number):
 def _update_branch(gh, target, row, message, limit, workflow, default_branch):
     """Bring a branch that branch protection wants up to date with its base branch, and
     check and review the new commit, within `conflicts.max_rounds` per pull request."""
-    pr, head, base = target["pr"], target["head"], target["base"]
-    updated = [run for _, run in run_comments(gh.comments(pr)) if run.get("updated_branch")]
-    if len(updated) >= limit:
-        note = f"Its {limit} automatic updates of the branch from `{base}` are used up."
-        return "merge_refused", f"{message}\n\n{note}"
-    try:
-        gh.update_branch(pr, head)
+    pr, base = target["pr"], target["base"]
+
+    def save():
         if target.get("state") is not None:
             # The reporting round's approval, before the review it starts reads it: an
             # implement round's report runs beside that review, in the issue's queue.
             progress.save_state(gh, pr, target.get("state_comment"), target["state"])
             target["state_comment"] = read_state(gh.comments(pr))[0]
-        for _ in range(UPDATE_TRIES):
-            if gh.pull(pr)["head"]["sha"] != head:
-                break
-            time.sleep(UPDATE_WAIT)
-        # The review carries this round's approval over when the change is the same.
-        gh.dispatch(
-            workflow,
-            default_branch,
-            {"command": "review", "number": str(pr), "note": "", "auto": "true,carry"},
-        )
-    except GitHubError as error:
-        return "merge_refused", f"{message}\n\nNexKit could not update the branch: {error}"
-    row["updated_branch"] = True
+
+    why = update_branch(gh, target, row, limit, workflow, default_branch, before_review=save)
+    if why:
+        return "merge_refused", f"{message}\n\n{why}"
     line = (
         f"It is behind `{base}`, which branch protection does not allow: NexKit merged `{base}` "
         "into it and started `/nexkit review` on the new commit, which checks it and keeps "

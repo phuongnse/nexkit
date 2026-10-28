@@ -78,8 +78,8 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `combine` | go, fix, review, with `parallel_checks` | read only | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read. Never checks out or executes repository code. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](#stages), and then runs no agent. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
-| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches | contents (to merge); issues, comments, workflows, statuses; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
-| `finish` | a command whose `report` did not finish | workflows | none | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](#work-without-a-command)). Runs no agent, and never checks out or executes repository code. |
+| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches | contents (to merge); issues, comments, workflows, statuses; check annotations | none | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
+| `finish` | a command whose `report` did not finish | workflows | none | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](#work-without-a-command)). Not for a round NexKit stopped in its checks after the base branch moved: that round's `report` and `finish` do not run, and the next round has started already. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
 into a commit in a different job. As a result:
@@ -172,7 +172,9 @@ it. That run waits in the issue's queue, so NexKit orders the two itself:
 - A conflict round does not start while any other round of the pull request runs either.
   When the base branch moved meanwhile, the sweep at the end of that round starts it,
   however the round ended (see *Resolving conflicts* under [Work without a
-  command](#work-without-a-command)).
+  command](#work-without-a-command)). The one exception is a round in its checks, whose
+  checks can no longer lead to a merge: NexKit stops it and starts the next round at once
+  (see *Stopping a round in its checks* there).
 - A run whose workflow run ended without a report holds nothing up.
 
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
@@ -822,6 +824,37 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
 - When the round starts and the branch no longer conflicts, for example because another
   round already merged the base branch, it ends at once without running an agent.
 
+**Stopping a round in its checks.** Each of these checks (the `push` trigger, the check
+after NexKit's own merge, a sweep) also looks at the round of each open NexKit pull
+request that is running, or at the implement round that opened it. When that round's run
+is in its checks, so that only `verify` or `combine` jobs still run, and the base branch
+moved so that those checks can no longer lead to a merge, NexKit stops it and starts the
+round that can, at once:
+
+- **Conflicts.** The head under check conflicts with the base branch: NexKit cancels the
+  run and starts the conflict round, without waiting for the run to end.
+- **Behind.** The base branch's rules want pull requests up to date, and the head under
+  check no longer contains the base branch's tip: NexKit cancels the run, brings the
+  branch up to date and starts `/nexkit review`, as for a merge refused because the
+  branch is behind, with the approval carried over when the change is the same.
+- A round in `agent`, `publish`, `review` or `report` is never stopped: its agent time,
+  its patch and its review are worth more than the checks, and it goes on as before. Nor
+  is a run still queued, which has checked nothing yet, or one whose head still contains
+  the base branch's tip or whose base branch does not want pull requests up to date.
+
+NexKit cancels the run with the jobs that would follow a cancellation, so neither its
+`report` nor its `finish` job runs, and it shows the round itself: outcome `superseded`,
+checks and review `not run`, and a comment that says why it stopped and what started
+instead; `nexkit/checks` and `nexkit/review` show an error on its commits. It is not a
+run a person cancelled. It counts against neither `fix.max_auto_rounds`, which an
+automatic fix round gives back, nor `conflicts.max_rounds`, and nothing retries it. The
+round it starts counts against `conflicts.max_rounds` as usual; when none is left, NexKit
+leaves the round to end by itself. When the next round cannot start after all, such as
+when GitHub refuses the update, the stopped round ends as `stop_failed`, and a person
+starts the next round. Its results are lost, which is fine: under these rules its checks
+could not lead to a merge, and a failure of the pull request's own code shows again on the
+new head.
+
 ### Autopilot
 
 With `autopilot.enabled` (see [Autopilot](configuration.md#autopilot)), NexKit posts no
@@ -1210,6 +1243,8 @@ Names a person meets in run comments and in that output:
 | `branch_updated` | GitHub refused the automatic merge because the branch was behind its base branch; NexKit merged the base branch into it and started `/nexkit review` on the new commit. |
 | `carried` | The round carried over the approval of that commit, after a branch update that left the pull request's change as it was. |
 | `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. |
+| `superseded` | NexKit stopped the round in its checks because the base branch moved so that they could not lead to a merge, and started the conflict round, or an update of the branch and `/nexkit review`. See *Stopping a round in its checks* under [Work without a command](#work-without-a-command). |
+| `stop_failed` | NexKit stopped the round in its checks for the same reason, but the next round could not start; a person starts it. |
 | `merge_waiting` | The automatic merge waits for required checks; see [Failure handling](#failure-handling). |
 | `recheck_failed` | The checks failed again after a fix round named a cause outside the code; see *Failing checks the base branch fixed* under [Stages](#stages). |
 | `already_on_base` | The base branch already holds the pull request's change, so it changes no file against it. NexKit closed the pull request without merging and its issue as completed; the round's marker names the commit that brought the change when NexKit can tell one. See *A pull request brought up to date that changes nothing* under [Stages](#stages). |
@@ -1253,6 +1288,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | GitHub refuses the automatic merge because a required check failed, such as a CI workflow that failed before the NexKit round ended | Starts an automatic fix round at once, as when a required check fails while the merge waits for it: it counts toward `fix.max_auto_rounds`, its feedback names the failed check, and it merges the base branch first when it has moved. A check that fails as the default branch does while autopilot's `bug` issue about that is open waits instead (`ci_waiting`), and with no automatic round left a person decides. |
 | GitHub refuses the automatic merge because the branch is behind its base branch, under protection that requires it to be up to date | GitHub may say so as required checks that are "expected" (such as "2 of 2 required status checks are expected."): it counts checks only on a head that contains the base branch's tip, so checks that passed on the head never pass. When a refusal for required checks that have not passed comes with GitHub reporting the pull request as `behind`, NexKit counts it as behind, also at a sweep's try of a merge that waits (`merge_waiting`), however long it waited. With `conflicts.auto_resolve`, updates the branch from the base branch on GitHub and starts `/nexkit review` on the new commit, which checks it and merges it as usual, at most `conflicts.max_rounds` times per pull request. When the pull request's own change is the one the review approved, the approval carries over and no review agent runs; otherwise it is reviewed again (see *A pull request brought up to date* under [Stages](#stages)). When the update leaves the pull request without a change of its own, the review does not run, and NexKit closes it as `already_on_base`. GitHub starts no CI for that update when it is made with the Actions token, so required checks from the repository's own workflows run only with `publish.push_token_secret`; without it, the merge waits for them and then for a person. |
 | A pull request changes no file against its base branch any more, because another pull request landed the same change there | Before each round, review or merge try, closes the pull request without merging and its issue as completed (`already_on_base`), naming the commit that brought the change when it can tell one. No round runs. See *A pull request brought up to date that changes nothing* under [Stages](#stages). |
+| The base branch moves while a round runs its checks, and its head now conflicts with it, or lacks its tip while the base branch's rules want pull requests up to date | Stops the round's run and starts the conflict round, or an update of the branch and `/nexkit review`, at once (`superseded`). Never a round in another job. See *Stopping a round in its checks* under [Work without a command](#work-without-a-command). |
 | GitHub refuses the automatic merge for another reason (required approvals, a merge method the repository does not allow) | Says why in the round's comment; the pull request waits for a person, and `notify` mentions them. |
 | A workflow of `merge.after_workflows` cannot be started | Says why in the round's comment; the merge stays. |
 | The issue cannot be closed after an automatic merge | Says why in the round's comment and links the issue; the merge stays. |

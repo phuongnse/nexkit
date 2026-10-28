@@ -45,9 +45,10 @@ RUNNING, SUCCESS, FAILURE, PAUSED = "running", "success", "failure", "paused"
 # or continued on the pull request.
 CONTINUED = "continued"
 RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️", CONTINUED: "⏭️"}
-# Outcomes of rounds that published nothing for a reason outside the agent's work. They
-# count against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`.
-UNCOUNTED = {"needs_merge", "already_on_base", "on_base_failed"}
+# Outcomes of rounds that published nothing for a reason outside the agent's work, or that
+# NexKit stopped in their checks because the base branch moved. They count against neither
+# `fix.max_auto_rounds` nor `conflicts.max_rounds`.
+UNCOUNTED = {"needs_merge", "already_on_base", "on_base_failed", "superseded", "stop_failed"}
 
 
 def conflict_rounds_used(rounds):

@@ -133,8 +133,10 @@ their defaults.
   runner. See [Checks that a change cannot affect](#checks-that-a-change-cannot-affect).
 
 `nexkit init` writes each check from `--check NAME=COMMAND`, and its other fields from
-flags that name the check: `--check-timeout NAME=MINUTES`, `--check-slow NAME` and
-`--check-results NAME=PATH`, repeated for each path. The example's `e2e` check comes from:
+flags that name the check: `--check-timeout NAME=MINUTES`, `--check-slow NAME`,
+`--check-results NAME=PATH`, repeated for each path, and `--check-unaffected NAME=GLOB`,
+repeated for each pattern in order (quote it, so the shell leaves `*` and `!` alone). The
+example's `e2e` check comes from:
 
 ```sh
 nexkit init --check "e2e=scripts/e2e.sh" --check-timeout e2e=40 --check-slow e2e   --check-results e2e=test-results --check-results e2e=artifacts/logs
@@ -374,6 +376,12 @@ gets no runner at all when none of the others changed:
   "run": "scripts/integration.sh",
   "unaffected_by": ["docs/**", "**/*.md", ".github/**", "web/**", "!web/package.json"]
 }
+```
+
+`nexkit init` writes it from `--check-unaffected`, once for each pattern:
+
+```sh
+nexkit init --check "integration=scripts/integration.sh" --check-unaffected "integration=docs/**" --check-unaffected "integration=web/**" --check-unaffected "integration=!web/package.json"
 ```
 
 - Paths are relative to the repository root. `*` matches any characters but `/`, `?` one

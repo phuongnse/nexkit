@@ -64,6 +64,7 @@ def cmd_init(args):
         check_slow=args.check_slow,
         check_results=args.check_results,
         check_groups=args.check_group,
+        check_unaffected=args.check_unaffected,
         parallel_checks=args.parallel_checks,
         notify=args.notify,
         evidence=args.evidence_artifact,
@@ -591,6 +592,13 @@ def build_parser():
         default=[],
         metavar="NAME=GROUP",
         help="With --parallel-checks, run the check NAME in the job GROUP with the others in it",
+    )
+    p.add_argument(
+        "--check-unaffected",
+        action="append",
+        default=[],
+        metavar="NAME=GLOB",
+        help="A path glob the check NAME never reads (unaffected_by); repeat for more, in order",
     )
     p.add_argument("--setup", action="append", default=[], metavar="COMMAND")
     p.add_argument(

@@ -96,10 +96,11 @@ files or repository settings, and wait for confirmation.
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`
    For each check that needs more than a name and a command, add the flags that name it:
    `--check-timeout <name>=<minutes>`, `--check-slow <name>`,
-   `--check-results <name>=<path>` once for each path, and with `--parallel-checks`,
-   `--check-group <name>=<group>`. When the repository's CI workflows
-   upload artifacts that explain a failure, such as end-to-end test results, add
-   `--evidence-artifact <name>` for each, so plan, implement and fix rounds on an issue
+   `--check-results <name>=<path>` once for each path,
+   `--check-unaffected "<name>=<glob>"` once for each pattern of `unaffected_by`, in order
+   and quoted, and with `--parallel-checks`, `--check-group <name>=<group>`. When the
+   repository's CI workflows upload artifacts that explain a failure, such as end-to-end
+   test results, add `--evidence-artifact <name>` for each, so plan, implement and fix rounds on an issue
    that names a failed run get them.
    Show the generated `.nexkit/config.json` and `.github/workflows/nexkit.yml`. The config
    declares the `claude` agent with `"oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"`; if

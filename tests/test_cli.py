@@ -78,6 +78,12 @@ class InitDoctorTests(unittest.TestCase):
                 "e2e=test-results",
                 "--check-results",
                 "e2e=artifacts/logs",
+                "--check-unaffected",
+                "e2e=docs/**",
+                "--check-unaffected",
+                "e2e=web/**",
+                "--check-unaffected",
+                "e2e=!web/package.json",
             ]
         )
         self.assertEqual(code, 0)
@@ -92,6 +98,7 @@ class InitDoctorTests(unittest.TestCase):
                     "timeout_minutes": 40,
                     "slow": True,
                     "results": ["test-results", "artifacts/logs"],
+                    "unaffected_by": ["docs/**", "web/**", "!web/package.json"],
                 },
             ],
         )
@@ -129,6 +136,10 @@ class InitDoctorTests(unittest.TestCase):
             ["--check-timeout", "test=soon"],
             ["--check-timeout", "test=0"],
             ["--check-results", "test=../outside"],
+            ["--check-unaffected", "e2e=docs/**"],
+            ["--check-unaffected", "test"],
+            ["--check-unaffected", "test=docs/"],
+            ["--check-unaffected", "test=!docs/**"],
         ):
             with self.subTest(flags=flags):
                 code = cli.main(["init", "--repo", str(self.root), "--check", "test=x", *flags])

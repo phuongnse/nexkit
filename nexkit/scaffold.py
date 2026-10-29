@@ -105,10 +105,11 @@ def _pair(flag, shape, value):
     return name, rest.strip()
 
 
-def build_checks(checks, *, timeouts=(), slow=(), results=(), groups=()):
+def build_checks(checks, *, timeouts=(), slow=(), results=(), groups=(), unaffected=()):
     """`checks` from the `--check` values, with the per-check flags applied: `timeouts`
-    (NAME=MINUTES), `slow` (NAME), `results` (NAME=PATH, one path each) and `groups`
-    (NAME=GROUP). The configuration's own validation checks the values."""
+    (NAME=MINUTES), `slow` (NAME), `results` (NAME=PATH, one path each), `groups`
+    (NAME=GROUP) and `unaffected` (NAME=GLOB, one pattern each, in order). The
+    configuration's own validation checks the values."""
     built = [parse_check(c) for c in checks]
     for value in timeouts:
         name, minutes = _pair("--check-timeout", "NAME=MINUTES", value)
@@ -123,6 +124,10 @@ def build_checks(checks, *, timeouts=(), slow=(), results=(), groups=()):
     for value in groups:
         name, group = _pair("--check-group", "NAME=GROUP", value)
         _check_named(built, "--check-group", name)["group"] = group
+    for value in unaffected:
+        name, pattern = _pair("--check-unaffected", "NAME=GLOB", value)
+        check = _check_named(built, "--check-unaffected", name)
+        check.setdefault("unaffected_by", []).append(pattern)
     return built
 
 
@@ -139,6 +144,7 @@ def init(
     check_slow=(),
     check_results=(),
     check_groups=(),
+    check_unaffected=(),
     parallel_checks=False,
     notify=(),
     evidence=(),
@@ -164,6 +170,7 @@ def init(
             slow=check_slow,
             results=check_results,
             groups=check_groups,
+            unaffected=check_unaffected,
         ),
         "fix": dict(configuration.DEFAULTS["fix"]),
         "merge": {"auto": False},

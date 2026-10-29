@@ -182,9 +182,21 @@ def recommended_option(item):
     return chosen if chosen in options else ""
 
 
+def closes_issue(item):
+    """Whether a question's recommended option is the one that closes the issue with the
+    round's `no_change` finding. Agents name that option by its number in `closes`, from 1,
+    with 0 for none; records keep True."""
+    chosen, closes = item.get("recommended"), item.get("closes")
+    if closes is True:
+        return isinstance(chosen, str) and bool(recommended_option(item))
+    number = isinstance(closes, int) and not isinstance(closes, bool)
+    return number and closes > 0 and closes == chosen and bool(recommended_option(item))
+
+
 def questions(items):
     """Questions as {question, options, recommended}, with the recommended option's text
-    or "". Plans from before 4.1 hold plain strings, without options."""
+    or "", and `closes` when that option closes the issue. Plans from before 4.1 hold plain
+    strings, without options."""
     found = []
     for item in items or []:
         if isinstance(item, str):
@@ -198,6 +210,7 @@ def questions(items):
                 "question": clip(item["question"], 1500),
                 "options": options,
                 "recommended": clip(recommended, 500) if recommended else "",
+                **({"closes": True} if closes_issue(item) else {}),
             }
         )
     return found[:MAX_QUESTIONS]

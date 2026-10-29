@@ -189,6 +189,21 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("changes", fix["required"])
         self.assertIn("status", fix["required"])
 
+    def test_an_implement_question_names_the_option_that_closes_the_issue(self):
+        item = agent.SCHEMAS["implement"]["properties"]["questions"]["items"]
+        self.assertEqual(item["required"], ["question", "options", "recommended", "closes"])
+        for stage in ("plan", "fix"):
+            item = agent.SCHEMAS[stage]["properties"]["questions"]["items"]
+            self.assertNotIn("closes", item["properties"], stage)
+        template = " ".join(agent._template("implement").split())
+        self.assertIn("and set its `closes` to that option's number", template)
+        self.assertIn("Set `closes` to the number of the option that closes the issue", template)
+        self.assertIn(
+            "when you are blocked for any other reason, such as work that is not merged yet, "
+            "leave it empty, and never use it to say why there is no finding",
+            template,
+        )
+
     def test_review_schema_keeps_evidence_apart_from_the_criterion(self):
         item = agent.SCHEMAS["review"]["properties"]["criteria"]["items"]
         self.assertEqual(item["required"], ["criterion", "status", "test", "evidence"])

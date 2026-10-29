@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot
+from nexkit import autopilot, state
 from nexkit.maintain import maintain
 from nexkit.report import report
 from nexkit.route import route
@@ -709,6 +709,13 @@ class StatusTests(AutopilotCase):
 QUESTION = {"question": "Which port?", "options": ["8080", "9090"], "recommended": 1}
 # As NexKit records and shows it: by its text.
 RECORDED = {**QUESTION, "recommended": "8080"}
+# A blocked round's one question whose recommended option closes the issue.
+CLOSING = {
+    "question": "8b9cb87 already fixed it. Close the issue?",
+    "options": ["Close it as fixed by 8b9cb87", "Keep it open"],
+    "recommended": 1,
+    "closes": 1,
+}
 
 
 def plan_output(**kw):
@@ -823,7 +830,7 @@ class AnswerTests(AnswerAndSplitCase):
         finding = "8b9cb87 fixed it; the last 20 runs passed."
         self.issue(4)
         self.posted_plan(4)
-        self.blocked(4, no_change=finding)
+        self.blocked(4, questions=[CLOSING], no_change=finding)
         self.sweep()
         self.assertEqual(self.started(), [])
         self.assertEqual(self.gh.issues[4]["state"], "closed")
@@ -835,7 +842,7 @@ class AnswerTests(AnswerAndSplitCase):
         # Without `autopilot.answer: "recommended"` a person decides, as for any question.
         self.issue(5)
         self.posted_plan(5)
-        self.blocked(5, no_change=finding)
+        self.blocked(5, questions=[CLOSING], no_change=finding)
         _, steps = autopilot.preview(self.gh, pilot())
         self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "waits")])
         # With a second question, closing may not be all the agent recommends: it is
@@ -845,20 +852,54 @@ class AnswerTests(AnswerAndSplitCase):
             "go",
             status="failure",
             outcome="agent_blocked",
-            questions=[QUESTION, {**QUESTION, "question": "Q2?"}],
+            questions=[CLOSING, {**QUESTION, "question": "Q2?"}],
             no_change=finding,
         )
         _, steps = autopilot.preview(self.gh, self.cfg)
         self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "start")])
 
-    def blocked(self, number, **fields):
+    def test_a_finding_whose_recommended_answer_is_not_to_close_does_not_close(self):
+        # The agent wrote in `no_change` that there is no finding, and recommends waiting.
+        text = "Not a no-change finding: the issue waits for #1848, which is not merged."
+        wait = "Wait until #1848 is merged, then run this plan again"
+        question = {"question": "#1848 is not merged.", "options": [wait, "Close it"]}
+        # No option closes it; another one than the recommended one does; a record from
+        # before rounds named the closing option.
+        found = [
+            {**question, "recommended": 1, "closes": 0},
+            {**question, "recommended": 1, "closes": 2},
+            {**question, "recommended": wait},
+        ]
+        for number, item in enumerate(found, 4):
+            self.issue(number)
+            self.posted_plan(number)
+            self.blocked(number, questions=[item], no_change=text)
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(
+            [(s["number"], s["state"]) for s in steps], [(4, "start"), (5, "start"), (6, "start")]
+        )
+        self.assertTrue(
+            all(s["answers"] == [{"question": question["question"], "answer": wait}] for s in steps)
+        )
+
+    def test_only_the_recommended_option_named_by_closes_closes_the_issue(self):
+        for closes, recommended, expected in ((1, 1, True), (2, 1, False), (0, 0, False)):
+            item = {**CLOSING, "closes": closes, "recommended": recommended}
+            self.assertEqual(state.closes_issue(item), expected, (closes, recommended))
+            self.assertEqual("closes" in state.questions([item])[0], expected)
+        # A boolean, as an agent might send, is no number; a record keeps True.
+        self.assertFalse(state.closes_issue({**CLOSING, "closes": True}))
+        [recorded] = state.questions([CLOSING])
+        self.assertEqual(state.questions([recorded]), [recorded])
+
+    def blocked(self, number, questions=(QUESTION,), **fields):
         return self.run_comment(
             number,
             "go",
             status="failure",
             outcome="agent_blocked",
             attention="the agent is blocked and needs a decision",
-            questions=[QUESTION],
+            questions=list(questions),
             **fields,
         )
 

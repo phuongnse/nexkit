@@ -667,7 +667,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 | Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
 | The plan or round after autopilot's answers asks again, and no person commented since | Nothing: a person decides, and `notify` mentions them. A comment by a person lets autopilot answer again. |
-| A blocked `/nexkit go` found that no change is needed and recommends closing the issue | Closes the issue as completed with the round's finding, with `answer: "recommended"`; no other round runs. |
+| A blocked `/nexkit go` found that no change is needed, and its one question recommends the option its `closes` names | Closes the issue as completed with the round's finding, with `answer: "recommended"`; no other round runs. |
 | Its last `/nexkit go` or fix round was blocked because its change needs protected paths | Nothing, whatever it recommends: a person makes that change, and `notify` is mentioned. |
 | Its plan's parts are titled like the issue | Creates no parts, and starts `/nexkit plan` once more with a note that names those titles. |
 | Its plan is too large and suggests no parts | Starts `/nexkit plan` once more, with a note that asks for parts that each fit one session. A second such plan waits for a person. |
@@ -749,8 +749,10 @@ every open issue in scope, in order, and starts the one command that moves it on
   protected paths names them (`protected_paths`), only paths that really are protected
   count, and autopilot then answers nothing and starts no `/nexkit go`.
   When a blocked `/nexkit go` found that no change is needed (its `no_change` finding)
-  and its one question recommends closing the issue, autopilot starts no other round: it closes the issue
-  as completed with a comment that holds the finding.
+  and its one question recommends the option that closes the issue (the question's
+  `closes`), autopilot starts no other round: it closes the issue
+  as completed with a comment that holds the finding. A round whose recommended answer
+  is to wait or do more is answered as any blocked round, whatever its `no_change` says.
 - **CI on the default branch.** With workflows in `merge.after_workflows` or
   `autopilot.watch_workflows`, each sweep also looks at the runs of each of them on the
   default branch, after NexKit's merges and people's alike, on a schedule or a dispatch,

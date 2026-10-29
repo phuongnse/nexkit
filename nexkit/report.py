@@ -400,7 +400,7 @@ def _autopilot_fields(agent):
     if protected and agent.get("status") == "blocked":
         fields["protected_paths"] = protected
     finding = no_change_finding(agent)
-    if finding and agent.get("stage") == "implement":
+    if finding and agent.get("stage") == "implement" and any(q.get("closes") for q in found):
         # The round recommends closing the issue with this finding.
         fields["no_change"] = finding
     return fields

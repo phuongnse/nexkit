@@ -1273,6 +1273,7 @@ class ScenarioTests(unittest.TestCase):
                 "question": "The failure is already fixed. Close the issue?",
                 "options": ["Close it as fixed by 8b9cb87", "Keep it open"],
                 "recommended": 1,
+                "closes": 1,
             }
             output = {"status": "blocked", "blocker": "Already fixed.", "questions": [question]}
             output["no_change"] = finding
@@ -1286,6 +1287,34 @@ class ScenarioTests(unittest.TestCase):
         self.assertIn(finding, closing["body"])
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
         self.assertFalse(pipe.gh.comments_matching(5, "answers for the owner"))
+
+    def test_a_blocked_round_that_recommends_waiting_does_not_close_the_issue(self):
+        # The agent says in `no_change` that it found none, and recommends waiting.
+        text = "Not a no-change finding: the issue is blocked on #1848, which is not merged."
+        wait = "Wait until #1848 is merged, then run this plan again"
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            question = {
+                "question": "The part this needs, #1848, is not on `main`.",
+                "options": [wait, "Close the issue"],
+                "recommended": 1,
+                "closes": 0,
+            }
+            output = {"status": "blocked", "blocker": "#1848 is not merged.", "no_change": text}
+            output["questions"] = [question]
+            return {"agent": {"status": "blocked", "error": "Blocked.", "output": output}}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        # Answered as any blocked round, once in a row; then a person decides.
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        self.assertFalse(pipe.gh.comments_matching(5, "NexKit autopilot closes this issue"))
+        [answered] = pipe.gh.comments_matching(5, "answers for the owner")
+        self.assertIn(wait, answered["body"])
+        self.assertTrue(pipe.gh.comments_matching(5, "a person is needed"))
 
     def test_a_plan_whose_change_is_in_protected_paths_waits_for_a_person(self):
         def script(pipe, inputs):

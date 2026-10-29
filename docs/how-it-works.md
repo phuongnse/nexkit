@@ -401,9 +401,10 @@ and stops as `blocked` with the paths in `protected_paths`; autopilot answers no
 questions, and a person decides. When the issue, the plan or the discussion says to stop without a change
 in that case, it returns `done`: NexKit opens no pull request, closes the issue as
 completed, and the run's comment shows the finding (outcome `no_change`). Otherwise it
-returns `blocked` with a question whose recommended option is to close the issue, which
-[autopilot](#autopilot) answers by closing it. A `no_change` result that changed files is
-an error and publishes nothing.
+returns `blocked` with a question whose recommended option is to close the issue, and
+names that option in the question's `closes`, which [autopilot](#autopilot) answers by
+closing it. A round blocked for any other reason leaves `no_change` empty. A `no_change`
+result that changed files is an error and publishes nothing.
 
 When the failing checks of the last round kept
 [result files](configuration.md#result-files-of-failing-checks), `route` puts the id of the
@@ -981,8 +982,10 @@ the `null` scope, since it may have replaced a sweep that waited.
   or round that its answers started asks again, with no comment by a person on the issue
   or its pull request since the answers, it waits for a person, so new wording of the
   same question cannot start another run. When a blocked `/nexkit go` found that no change
-  is needed and asks one question, its recommended answer only closes the issue, so autopilot closes it as
-  completed with the round's finding and starts no other round. A recommended option is
+  is needed and asks one question, whose `closes` names its recommended option, that
+  answer only closes the issue, so autopilot closes it as completed with the round's
+  finding and starts no other round. Text in `no_change` alone never closes an issue: a
+  round that recommends waiting or more work is answered as any other. A recommended option is
   one NexKit can carry
   out itself, a change to the plan or the code; the prompts never recommend one that
   needs a person to act outside NexKit, such as downloading files or granting access. A plan that is too large becomes sub-issues, in

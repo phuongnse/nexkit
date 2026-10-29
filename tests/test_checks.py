@@ -642,7 +642,7 @@ class CheckVerifiedCommitTests(CommitCase):
         self.assertIn(f"NEXKIT_CHECK_VERIFIED_SHA={self.fork} for `unit`", log)
         self.assertIn(
             "NEXKIT_CHECK_VERIFIED_SHA is not set for `e2e`: no earlier round of this pull "
-            "request passed it with this command, so it should run in full.",
+            "request passed it with this command and setup, so it should run in full.",
             log,
         )
         self.assertIn(

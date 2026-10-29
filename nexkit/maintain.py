@@ -625,7 +625,13 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
     if where != number:
         # The implement round that opened the pull request: its round shows here too.
         issue_run = run
-        run = {"round": next_round(comments), "url": run.get("url"), "trigger": "implement"}
+        run = {
+            "round": next_round(comments),
+            "url": run.get("url"),
+            "trigger": "implement",
+            # Its checks' setup, so the checks that passed count for the next rounds.
+            **({"setup": run["setup"]} if run.get("setup") else {}),
+        }
     run.update(head=head, checks="not run", verdict="not run", tokens=None)
     run.pop("attention", None)
     stopped = (

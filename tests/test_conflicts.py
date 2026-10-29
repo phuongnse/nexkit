@@ -15,7 +15,7 @@ from unittest import mock
 from nexkit import agent, cli
 from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
-from nexkit.route import route
+from nexkit.route import route, skip_unaffected
 from nexkit.state import (
     BOT_LOGIN,
     approved_head,
@@ -23,6 +23,7 @@ from nexkit.state import (
     read_state,
     render_run,
     render_state,
+    setup_fingerprint,
 )
 from nexkit.usage import iso
 from tests.support import CALC, SUB, FakeGitHub, GitRepos, git, make_config
@@ -219,6 +220,7 @@ class SupersededTests(unittest.TestCase):
     """A round still in its checks when the base branch moves under it."""
 
     def setUp(self):
+        self.cfg = make_config(setup=["npm ci"])
         self.gh = FakeGitHub()
         self.gh.add_issue(5)
         self.gh.add_pull(6, 5, head_sha=CHECKED)
@@ -231,6 +233,7 @@ class SupersededTests(unittest.TestCase):
             "status": "running",
             "url": "https://github.com/acme/app/actions/runs/50",
             "head": "a" * 40,
+            "setup": setup_fingerprint(self.cfg["setup"]),
         }
         self.gh.comment(6, render_run(self.fix))
         self.in_job(50, "verify")
@@ -262,6 +265,13 @@ class SupersededTests(unittest.TestCase):
 
     def latest(self, number=6):
         return self.gh.run_comments(number)[-1]
+
+    def next_round(self):
+        """The decision of the automatic review that the stop started, as `nexkit route`
+        gives it once it read the configuration."""
+        inputs = {"command": "review", "number": "6", "auto": "true"}
+        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": "x"}}, inputs)
+        return skip_unaffected(self.gh, decision, self.cfg)
 
     def test_a_round_checking_a_head_now_behind_stops_and_the_branch_is_updated(self):
         self.behind()
@@ -321,14 +331,14 @@ class SupersededTests(unittest.TestCase):
             (run["outcome"], run["head"], run["checks"]), ("superseded", CHECKED, "not run")
         )
         self.assertEqual(run["passed"], {"unit": check_fingerprint("make unit")})
-        # The next round of the pull request gets it.
+        self.assertEqual(run["setup"], self.fix["setup"])
+        # The next round of the pull request gets it, when it runs the same setup.
         self.gh.pulls[6]["head"]["sha"] = "f" * 40
-        event = {"sender": {"login": "x"}}
-        inputs = {"command": "review", "number": "6", "auto": "true"}
-        decision = route(self.gh, "workflow_dispatch", event, inputs)
         self.assertEqual(
-            decision["check_heads"], {"unit": {check_fingerprint("make unit"): CHECKED}}
+            self.next_round()["check_heads"], {"unit": {check_fingerprint("make unit"): CHECKED}}
         )
+        self.cfg = make_config(setup=["pnpm i"])
+        self.assertNotIn("check_heads", self.next_round())
 
     def test_a_stopped_round_without_finished_check_jobs_records_none(self):
         self.gh.run_artifact_list[50] = [{"id": 9, "name": "nexkit-checks-unit"}]
@@ -337,15 +347,7 @@ class SupersededTests(unittest.TestCase):
         [line] = self.sweep()
         self.assertNotIn("Before it stopped", line)
         self.assertNotIn("passed", self.latest()["run"])
-        self.assertNotIn(
-            "check_heads",
-            route(
-                self.gh,
-                "workflow_dispatch",
-                {"sender": {"login": "x"}},
-                {"command": "review", "number": "6", "auto": "true"},
-            ),
-        )
+        self.assertNotIn("check_heads", self.next_round())
 
     def test_a_round_checking_a_head_that_now_conflicts_starts_the_conflict_round(self):
         self.gh.pulls[6]["mergeable"] = False

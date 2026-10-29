@@ -119,16 +119,17 @@ def find_commits(repo, decision):
 
 
 def check_commit(repo, check, heads):
-    """The last commit of the pull request on which `check` passed with its command, for
-    NEXKIT_CHECK_VERIFIED_SHA, when the checkout has it, else None. `heads` is the
-    decision's `check_heads`, which `route` read from NexKit's own round comments."""
+    """The last commit of the pull request on which `check` passed with its command and
+    the run's setup, for NEXKIT_CHECK_VERIFIED_SHA, when the checkout has it, else None.
+    `heads` is the decision's `check_heads`, which `route` read from NexKit's own round
+    comments of rounds that ran this setup."""
     found = (heads or {}).get(check["name"])
     sha = found.get(check_fingerprint(check["run"])) if isinstance(found, dict) else None
     name = check["name"]
     if not (isinstance(sha, str) and COMMIT.fullmatch(sha)):
         print(
             f"{CHECK_VERIFIED_SHA} is not set for `{name}`: no earlier round of this pull "
-            "request passed it with this command, so it should run in full.",
+            "request passed it with this command and setup, so it should run in full.",
             flush=True,
         )
         return None

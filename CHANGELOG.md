@@ -1,5 +1,29 @@
 # Changelog
 
+## 5.7.1
+
+- A check gets `NEXKIT_CHECK_VERIFIED_SHA` only from rounds that ran the same `setup`
+  commands, as `unaffected_by` already compared (#190). Before, a check could skip work
+  against a commit where it passed under another setup. Rounds from before 5.7.0, which
+  recorded no setup, give no commit, so each check runs in full once after the upgrade.
+  An implement round that NexKit stopped in its checks now keeps its setup, so the checks
+  that passed there still count, for `unaffected_by` too.
+- The example in [Skipping work that a change cannot
+  affect](docs/configuration.md#skipping-work-that-a-change-cannot-affect), and the setup
+  skill, no longer fall back to `NEXKIT_VERIFIED_SHA` when `NEXKIT_CHECK_VERIFIED_SHA` is
+  unset (#190). It is unset when the check's `run` or `setup` changed or the check is
+  new, and then the last round whose checks all passed never ran it that way: a check
+  that followed the example could skip work that never passed.
+
+### Upgrade
+
+- **Check your check scripts** for a fallback to `NEXKIT_VERIFIED_SHA`, such as one
+  copied from the earlier example, and fall back to `NEXKIT_BASE_SHA` only:
+
+  ```sh
+  since="${NEXKIT_CHECK_VERIFIED_SHA:-${NEXKIT_BASE_SHA:-}}"
+  ```
+
 ## 5.7.0
 
 A check that a change cannot affect no longer waits for a runner. When `main` moves and

@@ -1,5 +1,34 @@
 # Changelog
 
+## 5.9.0
+
+NexKit decides from structured data where it read free text: whether a blocked round
+closes its issue, the kind of a round, and why GitHub refused a merge.
+
+- A blocked implement round closes its issue only when its recommended option does
+  (#196). Each question of an implement round has `closes`: the number of the option that
+  closes the issue with the `no_change` finding, or 0. Autopilot closes the issue only
+  when that option is the recommended one; before, any text in `no_change` closed it, even
+  when the agent recommended waiting. Any other blocked round is answered or waits like
+  other blocked rounds, whatever `no_change` says. A round from before this release has no
+  `closes`, so it never closes its issue. See
+  [An issue closed as `no_change` that still needs a change](docs/troubleshooting.md#an-issue-closed-as-no_change-that-still-needs-a-change).
+- A round's run marker holds its `action` and `kinds`, which autopilot and the conflict
+  rounds read instead of the display text `trigger` (#197). Markers from before this
+  release are still read from `trigger`.
+- A refused merge is classified from GitHub's data instead of the wording of its error
+  (#198): a base branch that moved during the merge from its tip before and after, a head
+  that moved from a 409 or the pull request's head, a branch behind its base from
+  `mergeable_state`, and required checks that failed or have not passed from the base
+  branch's rulesets and classic protection, the head's check runs and commit statuses,
+  and the checks GitHub marks as required on the pull request. A fix round gets the names
+  of the failed checks from this data. The wording counts only for required checks that
+  have not reported, when the token cannot read classic protection. See *Why a merge was
+  refused* in [Failure handling](docs/how-it-works.md#failure-handling).
+- The implement prompt describes each array of the result as a list of strings. The agent
+  sometimes wrote `changes` as Markdown bullets, and when it did so every try, the round
+  ended with `error_max_structured_output_retries`.
+
 ## 5.8.0
 
 CI on the default branch can follow the work that lands without running after every

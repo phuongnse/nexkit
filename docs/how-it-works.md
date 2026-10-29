@@ -531,7 +531,7 @@ checks passed, merge the base branch only on a conflict, so they never bring in 
 changes that nobody asked for.
 
 **Failing checks the default branch has.** While autopilot's `bug` issue for a workflow
-of `merge.after_workflows` is open (see [Autopilot](#autopilot)), every pull request
+of `merge.after_workflows` or `autopilot.watch_workflows` is open (see [Autopilot](#autopilot)), every pull request
 branched from the default branch holds that failure, and a fix round on each would fix it
 again in its own way, or change nothing. So a pull request into the default branch whose
 issue is in autopilot's scope gets no automatic fix round when its failing checks are the
@@ -902,9 +902,10 @@ the `null` scope, since it may have replaced a sweep that waited.
   that opens or is reopened. An issue that gets a milestone, and a closed milestone: for
   the milestone scope, the issue comes into scope, or the next milestone becomes the
   scope.
-  A finished run on the default branch of a workflow in `merge.after_workflows`, through
-  a `workflow_run` trigger, and through the job that ends such a workflow and dispatches
-  a sweep that waits for its run to end. The hourly schedule, which
+  A finished run on the default branch of a workflow in `merge.after_workflows` or
+  `autopilot.watch_workflows`, through a `workflow_run` trigger, and for the first,
+  through the job that ends such a workflow and dispatches a sweep that waits for its run
+  to end. The hourly schedule, which
   catches anything the others missed. Nothing waits in a loop: with nothing to start, a
   sweep ends.
 - **Done notices.** Every sweep looks at each open milestone in scope: the current one
@@ -1001,7 +1002,8 @@ the `null` scope, since it may have replaced a sweep that waited.
   that is too large or a time-out, and waits for a person. The limit is fixed, not a
   setting. `nexkit status` shows each of these reasons.
 - **CI on the default branch.** Each sweep looks at the completed runs, on the default
-  branch, of each workflow in `merge.after_workflows`, and at every attempt of each: the
+  branch, of each workflow in `merge.after_workflows` and `autopilot.watch_workflows`,
+  whatever started them, and at every attempt of each: the
   latest run, the runs of the last day and the runs a bug issue reports, among the newest
   100. Runs of pull requests do not count, nor runs from a fork, whose head branch can
   have the same name. When the latest run failed in its first attempt, its failed jobs run
@@ -1057,7 +1059,8 @@ the `null` scope, since it may have replaced a sweep that waited.
   workflow is open. GitHub sends no `workflow_run` event for runs that the Actions token
   started, such as those NexKit starts after its merge, but the Actions token may
   dispatch a workflow: each workflow of `merge.after_workflows` ends with a job that
-  dispatches a sweep naming its run, whatever its other jobs concluded (see [When a
+  dispatches a sweep naming its run (one of `autopilot.watch_workflows`, which NexKit
+  never starts, needs none), whatever its other jobs concluded (see [When a
   finished run is noticed](configuration.md#autopilot)). Without it, the end of the next
   NexKit run checks the newest finished run of each workflow the same way, also a run
   that started the next round itself; the hourly schedule catches the rest.

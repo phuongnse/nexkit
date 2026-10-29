@@ -15,8 +15,9 @@ on:
     branches: [__DEFAULT_BRANCH__] # conflicts.auto_resolve: the default branch moved
   schedule:
     - cron: "23 * * * *" # usage_limit.resume, conflicts.auto_resolve, autopilot
-  # autopilot with merge.after_workflows: a finished run of those workflows on the default
-  # branch starts a sweep at once. Name each workflow as its `name:` does.
+  # autopilot with merge.after_workflows or autopilot.watch_workflows: a finished run of
+  # those workflows on the default branch starts a sweep at once. Name each workflow as its
+  # `name:` does.
   # workflow_run:
   #   workflows: [CI]
   #   types: [completed]

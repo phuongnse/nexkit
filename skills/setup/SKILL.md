@@ -160,6 +160,14 @@ files or repository settings, and wait for confirmation.
    each of those workflows, with the user's agreement since it changes their CI: GitHub
    sends no `workflow_run` event for the runs NexKit starts after its merges, and that
    job starts the sweep instead, so a failure is noticed within minutes.
+   If running CI on the default branch after every merge costs too much runner time, for
+   example when the rules want pull requests up to date so a merge only repeats checks
+   that just passed, offer `"autopilot": {"watch_workflows": ["ci.yml"]}` instead of
+   `merge.after_workflows` for that workflow (`nexkit init --watch-workflow ci.yml`):
+   autopilot watches its runs on the default branch the same way, but NexKit does not
+   start it, so a `schedule` such as a nightly run, or a person's push, does. Add its
+   `name:` to the `workflow_run` trigger too; it needs no `nexkit-sweep` job. Say that a
+   failure on the default branch is then found at its next scheduled run.
    A command that autopilot started and that never ran starts once more as soon as its
    workflow run ended, or after `"lost_after_minutes"` (30 by default) when that run
    cannot be read.

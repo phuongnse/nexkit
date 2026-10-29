@@ -5,8 +5,9 @@ A sweep looks at every open issue in scope and starts the one command that moves
 the `maintain` job, one at a time in the `nexkit-autopilot` concurrency group, and start
 commands with `workflow_dispatch`, like automatic rounds. They hold no agent credential and
 never check out repository code. Events start them: the end of a run, an issue that opens,
-closes or comes into scope, a closed milestone, a finished run of a workflow in
-`merge.after_workflows` on the default branch; the hourly schedule catches the rest.
+closes or comes into scope, a closed milestone, a finished run on the default branch of a
+workflow in `merge.after_workflows` or `autopilot.watch_workflows`; the hourly schedule
+catches the rest.
 
 Everything a sweep knows comes from GitHub: the issues in scope, their dependencies and
 sub-issues, and NexKit's own markers. One record comment per issue says which command
@@ -24,6 +25,7 @@ import string
 from datetime import UTC, datetime, timedelta
 
 from .checks import same_test, test_name
+from .config import watched_workflows
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
@@ -223,12 +225,12 @@ def after_unreported(gh, cfg, workflow, ref, run_id):
 
 def after_ci_run(gh, cfg, decision, workflow, ref):
     """Start a sweep after a run of another workflow finished, when it is a run of a
-    workflow in `merge.after_workflows` on the default branch `ref` that a sweep acts on.
-    GitHub sends no such event for runs that the Actions token started; the end of the
-    next NexKit run notices those (`after_run`)."""
+    workflow that sweeps watch (`watched_workflows`) on the default branch `ref` that a
+    sweep acts on. GitHub sends no such event for runs that the Actions token started; the
+    end of the next NexKit run notices those (`after_run`)."""
     name = decision.get("workflow")
-    if name not in cfg["merge"]["after_workflows"]:
-        return [f"`{name}` is not in merge.after_workflows."]
+    if name not in watched_workflows(cfg):
+        return [f"`{name}` is in neither merge.after_workflows nor autopilot.watch_workflows."]
     try:
         run = gh.workflow_run(int(decision["run"]))
         if run.get("head_branch") != ref or not on_default_branch(gh, run):
@@ -1861,11 +1863,10 @@ CI_DUE_RUNS = 5
 
 
 def ci_due(gh, cfg, branch):
-    """Whether the newest finished run, on the default branch `branch`, of a workflow in
-    `merge.after_workflows` is one a sweep acts on. A run that cannot be read is left to a
-    sweep."""
+    """Whether the newest finished run, on the default branch `branch`, of a workflow that
+    sweeps watch is one a sweep acts on. A run that cannot be read is left to a sweep."""
     bugs = None
-    for workflow in cfg["merge"]["after_workflows"]:
+    for workflow in watched_workflows(cfg):
         try:
             runs = [
                 run
@@ -1896,16 +1897,17 @@ def on_default_branch(gh, run):
 
 
 def check_ci(gh, cfg, where, branch, now=None):
-    """For each workflow of `merge.after_workflows`, its completed runs on the default
-    branch that a sweep has not looked at. When the latest run fails, its failed jobs run
-    once more, and a second failure opens a bug issue in scope, or comments on the one
-    still open; a later attempt that passes says so there. A run that passed only when run
-    again, or that failed and a newer run overtook, is recorded on an issue for each of its
-    failures, as its failed jobs' error annotations name them. Markers in those issues
-    record each run and attempt once. Returns lines for the job log."""
+    """For each workflow that sweeps watch (`watched_workflows`), whatever started its
+    runs, its completed runs on the default branch that a sweep has not looked at. When
+    the latest run fails, its failed jobs run once more, and a second failure opens a bug
+    issue in scope, or comments on the one still open; a later attempt that passes says
+    so there. A run that passed only when run again, or that failed and a newer run
+    overtook, is recorded on an issue for each of its failures, as its failed jobs' error
+    annotations name them. Markers in those issues record each run and attempt once.
+    Returns lines for the job log."""
     since = (now or datetime.now(UTC)) - CI_LOOK_BACK
     lines = []
-    for workflow in cfg["merge"]["after_workflows"]:
+    for workflow in watched_workflows(cfg):
         try:
             runs = [
                 run
@@ -2008,9 +2010,9 @@ def passes_again(gh, workflow, branch, since):
 
 def ci_wait(gh, cfg, decision, checks, branch):
     """What a pull request's round waits for instead of an automatic fix round, or None:
-    an open bug issue for a workflow of `merge.after_workflows` that still fails on the
-    default branch `branch`, when every failing check fails as the latest failed attempt
-    the issue records does (see `same_failure`). A pull request's checks are NexKit's own,
+    an open bug issue for a workflow that sweeps watch, which still fails on the default
+    branch `branch`, when every failing check fails as the latest failed attempt the issue
+    records does (see `same_failure`). A pull request's checks are NexKit's own,
     not jobs and steps of that workflow, so a check and a step are the same when they run
     the same command, by its first line, and fail the same tests. Only for a pull request
     into the default branch whose issue autopilot takes, since sweeps end the wait, and
@@ -2018,7 +2020,7 @@ def ci_wait(gh, cfg, decision, checks, branch):
     failing = [
         check for check in checks or [] if isinstance(check, dict) and not check.get("passed")
     ]
-    workflows = cfg["merge"]["after_workflows"]
+    workflows = watched_workflows(cfg)
     if not failing or not workflows or not takes(cfg):
         return None
     if decision.get("base") != branch:

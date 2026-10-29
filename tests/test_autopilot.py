@@ -2053,6 +2053,44 @@ class CITests(AutopilotCase):
         maintain_({"action": "maintain", "task": "ci", "workflow": "ci.yml", "run": 50})
         self.assertEqual(len(self.sweeps()), 1)
 
+    def test_a_scheduled_run_of_a_watched_workflow_is_acted_on_by_its_own_trigger(self):
+        # A workflow that autopilot watches but NexKit does not start: its runs come from a
+        # schedule, so GitHub sends their workflow_run event.
+        cfg = make_config(autopilot={"enabled": True, "watch_workflows": ["ci.yml"]})
+        run = self.ci_run()
+        run["event"] = "schedule"
+        self.gh.runs[50] = run
+        event = {
+            "action": "completed",
+            "workflow_run": {"id": 50, "path": ".github/workflows/ci.yml"},
+        }
+        lines = maintain(
+            self.gh, route(self.gh, "workflow_run", event), cfg, workflow="nexkit.yml", ref="main"
+        )
+        self.assertEqual(lines, ["Started an autopilot sweep."])
+        [inputs] = self.sweeps()
+        maintain(
+            self.gh,
+            route(self.gh, "workflow_dispatch", {}, inputs),
+            cfg,
+            workflow="nexkit.yml",
+            ref="main",
+        )
+        self.assertEqual(self.gh.reruns, [50])
+        # A workflow that no setting lists starts none.
+        self.gh.dispatches.clear()
+        lines = maintain(
+            self.gh,
+            {"action": "maintain", "task": "ci", "workflow": "lint.yml", "run": 50},
+            cfg,
+            workflow="nexkit.yml",
+            ref="main",
+        )
+        self.assertEqual(
+            lines, ["`lint.yml` is in neither merge.after_workflows nor autopilot.watch_workflows."]
+        )
+        self.assertEqual(self.sweeps(), [])
+
     def test_a_finished_run_is_acted_on_when_its_own_last_job_starts_a_sweep(self):
         # The `nexkit-sweep` job that ends an after-merge workflow dispatches a sweep, which
         # the Actions token may do, while its own run still runs; the sweep waits for it.

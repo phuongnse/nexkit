@@ -68,6 +68,7 @@ def cmd_init(args):
         notify=args.notify,
         evidence=args.evidence_artifact,
         after_workflows=args.after_workflow,
+        watch_workflows=args.watch_workflow,
     )
     for path in written:
         print(f"wrote {path}")
@@ -580,6 +581,14 @@ def build_parser():
         metavar="FILE",
         help="A workflow file, such as ci.yml, to start after a merge (merge.after_workflows); "
         "repeat for more",
+    )
+    p.add_argument(
+        "--watch-workflow",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="A workflow file, such as nightly.yml, whose runs on the default branch autopilot "
+        "watches but NexKit does not start (autopilot.watch_workflows); repeat for more",
     )
     p.add_argument(
         "--model",

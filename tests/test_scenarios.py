@@ -1538,6 +1538,74 @@ class ScenarioTests(unittest.TestCase):
         for number in (5, 6, 7, 8, bug, *pulls.values()):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
+    def test_a_watched_workflow_is_never_started_but_its_failures_on_main_are_handled(self):
+        # `ci.yml` runs on `main` on a schedule only: NexKit watches it, never starts it.
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            # Issue 5's implement round fails in the test that fails on `main`; the fix
+            # rounds pass.
+            found = done(checks=inputs["command"] == "fix" or int(inputs["number"]) != 5)
+            if not found["checks"][0]["passed"]:
+                found["checks"][0]["failed_tests"] = ["orders.test.ts::adds tax"]
+            return found
+
+        cfg = config(autopilot={"watch_workflows": ["ci.yml"]})
+        self.assertEqual(cfg["merge"]["after_workflows"], [])
+        pipe = Pipeline(self, cfg, script)
+        pipe.issue(5)
+        # The scheduled run failed in the step that runs `make test`.
+        run = {
+            "id": 50,
+            "head_branch": "main",
+            "head_repository": {"full_name": "acme/app"},
+            "event": "schedule",
+            "head_sha": "e" * 40,
+            "status": "completed",
+            "conclusion": "failure",
+            "run_attempt": 1,
+            "html_url": "https://github.com/acme/app/actions/runs/50",
+            "created_at": autopilot.iso(datetime.now(autopilot.UTC)),
+        }
+        pipe.gh.workflow_history["ci.yml"] = [run]
+        pipe.gh.jobs[50] = [{"id": 501, "name": "Unit tests", "conclusion": "failure"}]
+        pipe.gh.logs[501] = (
+            b"##[group]Run make test\n##[endgroup]\nFAIL\n"
+            b"##[error]Process completed with exit code 1.\n"
+        )
+        pipe.gh.annotations[501] = [
+            {
+                "annotation_level": "failure",
+                "title": "Orders > adds tax",
+                "path": "web/src/orders.test.ts",
+                "message": "expected 2 to be 3",
+            }
+        ]
+        rerun = pipe.gh.rerun_failed_jobs
+
+        def failed_again(run_id):
+            # The one more try of its failed jobs fails the same way.
+            rerun(run_id)
+            run["run_attempt"] += 1
+
+        pipe.gh.rerun_failed_jobs = failed_again
+        played = pipe.play()
+        # One more try of the failed jobs, then a bug issue, planned before the round of
+        # issue 5 runs.
+        self.assertEqual(pipe.gh.reruns, [50])
+        [bug] = [n for n, i in pipe.gh.issues.items() if autopilot.ci_workflow(i)]
+        self.assertLess(played.index(("plan", bug)), played.index(("go", 5)))
+        pulls = {issue_from_branch(p["head"]["ref"]): n for n, p in pipe.gh.pulls.items()}
+        outcomes = {(c, n): o for c, n, o in pipe.played if c != "plan"}
+        # Issue 5's pull request waited for the bug issue, then got its round after it.
+        self.assertEqual(outcomes[("go", 5)], "ci_waiting")
+        self.assertEqual(outcomes[("fix", pulls[5])], "merged")
+        self.assertLess(played.index(("go", bug)), played.index(("fix", pulls[5])))
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, bug)))
+        # Two merges, and NexKit started no workflow after either.
+        self.assertEqual(len(pipe.gh.merged), 2)
+        self.assertEqual({d["workflow"] for d in pipe.gh.dispatches}, {"nexkit.yml"})
+
 
 if __name__ == "__main__":
     unittest.main()

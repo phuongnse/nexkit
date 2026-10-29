@@ -196,7 +196,8 @@ def route(gh, event_name, event, inputs=None):
 
     if event_name == "workflow_run":
         # A run of another workflow finished. Maintain starts a sweep when it is a run of a
-        # workflow in merge.after_workflows on the default branch that a sweep acts on.
+        # workflow in merge.after_workflows or autopilot.watch_workflows on the default
+        # branch that a sweep acts on.
         run = event.get("workflow_run") or {}
         if event.get("action") != "completed" or not isinstance(run.get("id"), int):
             return _none("Only finished workflow runs are handled")

@@ -46,7 +46,8 @@ TASKS = {
     # The run that looks at every issue in scope (nexkit/autopilot.py) and at every pull
     # request that conflicts with its base branch.
     "sweep": ("autopilot.enabled", "conflicts.auto_resolve"),
-    # A run of another workflow finished, such as one of merge.after_workflows.
+    # A run of another workflow finished, such as one of merge.after_workflows or
+    # autopilot.watch_workflows.
     "ci": ("autopilot.enabled",),
     # `route` refused a command that NexKit started by itself.
     "lost": ("autopilot.enabled",),

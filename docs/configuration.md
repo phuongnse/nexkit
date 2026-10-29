@@ -32,7 +32,13 @@ A complete configuration with every key at its default, except `agents`, `setup`
   "conflicts": {"auto_resolve": false, "max_rounds": 3},
   "usage_limit": {"resume": true, "retry_minutes": 60, "wait_minutes": 330},
   "close_parent_issues": false,
-  "autopilot": {"enabled": false, "scope": "milestone", "max_parallel": null, "answer": "never"},
+  "autopilot": {
+    "enabled": false,
+    "scope": "milestone",
+    "max_parallel": null,
+    "answer": "never",
+    "watch_workflows": []
+  },
   "notify": [],
   "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
   "protected_paths": [".github/", ".nexkit/"],
@@ -80,6 +86,7 @@ their defaults.
 | `autopilot.max_parallel` | `null` | How many issues in scope may have a NexKit run or an open NexKit pull request at once (1 to 100); `null` for no limit. |
 | `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started once more when it has posted no run comment and its workflow run ended, at once, or when that run cannot be read, after this many minutes (5 to 1440). A second such command waits for a person. A sweep notices a lost command: the one that a run `route` refused starts when that run ends, and the end of the run that replaced a waiting one in its concurrency group usually starts one too. Nothing notices a dispatch that names no run, as on older GitHub Enterprise Servers, before the first sweep after this time, which in a quiet repository is the hourly schedule. |
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
+| `autopilot.watch_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, whose runs on the default branch autopilot watches as it watches `merge.after_workflows`, whatever started them, but which NexKit does not start after its merges. File names only, each listed once, none also in `merge.after_workflows`. See *Watching CI that NexKit does not start* under [Autopilot](#autopilot). |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`, each listed once. See [Mentions](#mentions). |
 
 **Limits and safety**
@@ -612,9 +619,10 @@ every open issue in scope, in order, and starts the one command that moves it on
   When a blocked `/nexkit go` found that no change is needed (its `no_change` finding)
   and its one question recommends closing the issue, autopilot starts no other round: it closes the issue
   as completed with a comment that holds the finding.
-- **CI on the default branch.** With workflows in `merge.after_workflows`, each sweep also
-  looks at the runs of each of them on the default branch, after NexKit's merges and
-  people's alike, and at every attempt of each run; runs of pull requests, even from a
+- **CI on the default branch.** With workflows in `merge.after_workflows` or
+  `autopilot.watch_workflows`, each sweep also looks at the runs of each of them on the
+  default branch, after NexKit's merges and people's alike, on a schedule or a dispatch,
+  and at every attempt of each run; runs of pull requests, even from a
   fork's branch of the same name, do not count. When the latest run fails, its failed
   jobs run once more, never more often. When it fails again, autopilot opens a `bug` issue
   in scope (in the current milestone, or without one with `null`), with the run link and the failed jobs and steps of every failed attempt,
@@ -644,7 +652,7 @@ every open issue in scope, in order, and starts the one command that moves it on
   runner's own "Process completed with exit code" names nothing. A job without such an
   annotation is named by its first failed step and the message of its first error
   annotation, such as a download host's refusal, not by the job: the same step failing
-  the same way in several jobs, or in several workflows of `after_workflows`, is one
+  the same way in several jobs, or in several workflows that autopilot watches, is one
   failure with one issue, whose records list each job and workflow. An issue opened by
   NexKit 5.0 or earlier for one job's step keeps getting that job's records. Each record
   names the commit, the run, and where the failure showed in each failed attempt. While a
@@ -659,9 +667,10 @@ every open issue in scope, in order, and starts the one command that moves it on
   permissions, as `nexkit init` writes them.
 - **When a finished run is noticed.** Within minutes, in two ways that together cover
   every run. First, a `workflow_run` trigger that names each workflow of
-  `merge.after_workflows` by its `name:` (or its path, without one). `nexkit init
-  --after-workflow FILE` writes it with those names; without that flag it writes the
-  trigger as a comment. `nexkit doctor` says when one is missing:
+  `merge.after_workflows` and `autopilot.watch_workflows` by its `name:` (or its path,
+  without one). `nexkit init --after-workflow FILE` and `--watch-workflow FILE` write it
+  with those names; without those flags it writes the trigger as a comment. `nexkit
+  doctor` says when one is missing:
 
   ```yaml
   on:
@@ -703,7 +712,39 @@ every open issue in scope, in order, and starts the one command that moves it on
   such job, or one that does not need every other job or lacks `always()`, and says when
   it cannot tell, for a workflow that calls another one. Without either, the end of the
   next NexKit run notices a finished run, also a run that started the next automatic
-  round itself, and else the hourly schedule.
+  round itself, and else the hourly schedule. A workflow of `autopilot.watch_workflows`
+  needs no such job: NexKit never starts it, so GitHub sends the `workflow_run` event for
+  each of its runs.
+- **Watching CI that NexKit does not start.** `merge.after_workflows` both starts a
+  workflow after each merge and has autopilot watch it. `autopilot.watch_workflows` only
+  watches: the runs come from the workflow's own triggers, such as a `schedule`, a
+  person's `push` or `workflow_dispatch`. A merge by NexKit starts no `push` workflow,
+  since it pushes with the Actions token. Choose it when a run after every merge mostly
+  repeats work: when the rules want pull requests up to date and NexKit squash-merges, the
+  merged tree is the one the pull request's checks just passed, so a run on the default
+  branch after each merge adds little more than catching flaky tests and checks that
+  skipped work they should have done. A run every few hours, or nightly, gives that at a
+  fraction of the runner time:
+
+  ```yaml
+  # .github/workflows/ci.yml
+  on:
+    pull_request:
+    schedule:
+      - cron: "17 */4 * * *"
+    workflow_dispatch:
+  ```
+
+  ```json
+  "autopilot": {"enabled": true, "watch_workflows": ["ci.yml"]}
+  ```
+
+  The cost is time: a failure on the default branch is found at the next run, not
+  minutes after the merge that caused it. Until then no `bug` issue is open, so pull
+  requests that fail the same way get automatic fix rounds, and once one is open they wait
+  until it closes or the next run passes. `nexkit doctor` warns when a listed file is
+  missing or has no `schedule`, `push` or `workflow_dispatch` trigger. A workflow is in
+  one of the two lists, not both.
 - **Titles of CI issues.** An issue for a CI failure says what fails, where, and
   "fails at times on" the branch for a flaky failure, or "fails on" it when the branch is
   red, in plain words. Double quotes mark a test, job or step name; there are no
@@ -750,8 +791,8 @@ Autopilot pairs well with `merge.auto`, `conflicts.auto_resolve`, `close_parent_
 
 Sweeps, the runs that decide this, start after every NexKit run, when an issue opens,
 closes or is reopened, when an issue gets a milestone or a milestone closes (only for the
-`"milestone"` scope), when a run of a workflow in `merge.after_workflows` finishes on the
-default branch, and on the hourly schedule, which catches anything the others
+`"milestone"` scope), when a run of a workflow in `merge.after_workflows` or
+`autopilot.watch_workflows` finishes on the default branch, and on the hourly schedule, which catches anything the others
 missed. They run one at a time, run no agent
 and use no agent credential. The workflow must listen to those events, as `nexkit init`
 writes it, and to `workflow_run` as *When a finished run is noticed* shows; `nexkit

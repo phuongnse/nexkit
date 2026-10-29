@@ -90,6 +90,16 @@ class ConfigTests(unittest.TestCase):
             ({"merge": {"after_workflows": [".github/workflows/ci.yml"]}}, "workflow file names"),
             ({"merge": {"after_workflows": ["ci"]}}, "workflow file names"),
             ({"merge": {"after_workflows": ["ci.yml", "ci.yml"]}}, "twice"),
+            ({"autopilot": {"watch_workflows": "ci.yml"}}, "watch_workflows must be a list"),
+            ({"autopilot": {"watch_workflows": ["ci"]}}, "workflow file names"),
+            ({"autopilot": {"watch_workflows": ["ci.yml", "ci.yml"]}}, "twice"),
+            (
+                {
+                    "merge": {"after_workflows": ["ci.yml"]},
+                    "autopilot": {"watch_workflows": ["nightly.yml", "ci.yml"]},
+                },
+                "watch_workflows lists ci.yml, which merge.after_workflows lists too",
+            ),
             ({"autopilot": {"enabled": "yes"}}, "autopilot.enabled must be true or false"),
             ({"autopilot": {"scope": "repository"}}, 'autopilot.scope must be null .* "milestone"'),
             ({"autopilot": {"scope": "label"}}, '"label" is gone; use null .* "milestone"'),
@@ -143,6 +153,7 @@ class ConfigTests(unittest.TestCase):
                 "max_parallel": None,
                 "answer": "never",
                 "lost_after_minutes": 30,
+                "watch_workflows": [],
             },
         )
         # An explicit null replaces the default: every open issue.
@@ -190,6 +201,19 @@ class ConfigTests(unittest.TestCase):
         for raw, message in cases:
             with self.subTest(raw=raw), self.assertRaisesRegex(config.ConfigError, message):
                 validate(raw)
+
+    def test_sweeps_watch_the_workflows_started_after_a_merge_and_the_watched_ones(self):
+        cfg = validate({"merge": {"after_workflows": ["ci.yml"]}})
+        self.assertEqual(config.watched_workflows(cfg), ["ci.yml"])
+        cfg = validate(
+            {
+                "merge": {"after_workflows": ["ci.yml"]},
+                "autopilot": {"watch_workflows": ["nightly.yml", "codeql.yml"]},
+            }
+        )
+        self.assertEqual(config.watched_workflows(cfg), ["ci.yml", "nightly.yml", "codeql.yml"])
+        # Only merge.after_workflows is started after a merge.
+        self.assertEqual(cfg["merge"]["after_workflows"], ["ci.yml"])
 
     def test_groups_merge_over_their_defaults(self):
         cfg = validate({"merge": {"after_workflows": ["ci.yml", "e2e.yaml"]}})

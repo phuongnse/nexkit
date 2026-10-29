@@ -1318,6 +1318,16 @@ state, leaves it as it is and saves the state in a new state comment.
 | The review itself fails | Sets `nexkit/review` to error and says why in the round's comment. A transient error, or a review job that left no result, runs `/nexkit review` once more; otherwise comment `/nexkit review` to retry, after fixing the agent's secrets if it was an authentication error. |
 | NexKit itself fails in the `agent` or `review` job | Reports `NexKit stopped on <exception>` like an agent error; the job log has the traceback. |
 
+**Why a merge was refused.** GitHub documents neither the wording of its refusals nor
+how it quotes check names, so NexKit tells the refusals above apart from GitHub's data
+first: a response of 409 or a pull request whose head is not the approved commit (the
+head moved), a pull request that GitHub reports as `behind`, and the checks that the base
+branch's rulesets and branch protection require, against the check runs and commit
+statuses of the head (failed, or not reported or still running). A failed required check
+is named from that data. The text of the refusal decides only when the data does not,
+such as when the token may not read the branch protection that names the checks; a merge
+is also tried again when the base branch moved during the try.
+
 **Diagnosis rounds.** A fix round that tries one change after another without the cause
 spends its time and the automatic rounds on guesses. So when a check fails the same way
 in two rounds in a row, NexKit asks for the cause first.

@@ -304,6 +304,11 @@ class GitHub:
         params = {"filter": "latest", "per_page": 100}
         return self.request("GET", path, params=params).get("check_runs") or []
 
+    def commit_statuses(self, sha):
+        """The latest commit status of each context on a commit: the first 100."""
+        path = f"{self._repo}/commits/{sha}/status"
+        return self.request("GET", path, params={"per_page": 100}).get("statuses") or []
+
     def check_run_annotations(self, check_run_id):
         """The annotations of a check run, such as a job of a workflow run: the first 100."""
         return self.paginate(f"{self._repo}/check-runs/{check_run_id}/annotations", limit=100)
@@ -352,6 +357,29 @@ class GitHub:
                 return False
             raise
         return bool((found or {}).get("strict"))
+
+    def required_checks(self, branch):
+        """The names of the checks that pull requests into `branch` must pass: those of its
+        rulesets' required status checks and of classic branch protection. Classic
+        protection that the token may not read adds none, so the names may be only some."""
+        names = set()
+        for rule in self.paginate(f"{self._repo}/rules/branches/{quote(branch)}"):
+            if rule.get("type") == "required_status_checks":
+                found = (rule.get("parameters") or {}).get("required_status_checks") or []
+                names |= {item.get("context") for item in found if isinstance(item, dict)}
+        path = f"{self._repo}/branches/{quote(branch)}/protection/required_status_checks"
+        try:
+            found = self.request("GET", path) or {}
+        except GitHubError as exc:
+            if exc.status in (403, 404):
+                found = {}
+            else:
+                raise
+        names |= set(found.get("contexts") or [])
+        names |= {
+            item.get("context") for item in found.get("checks") or [] if isinstance(item, dict)
+        }
+        return {name for name in names if isinstance(name, str) and name}
 
     def delete_branch(self, branch):
         return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")

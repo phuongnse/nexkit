@@ -127,6 +127,7 @@ class FakeGitHub:
         self.calls = []  # ("attempt" or "jobs", run id, attempt) for each attempt read
         self.reruns = []
         self.branches = {}
+        self.required = set()  # names of the checks that pull requests must pass
         self.delete_on_merge = False  # the repository's `delete_branch_on_merge`
         self.deleted = []  # each branch deleted
         self.delete_error = None
@@ -399,6 +400,11 @@ class FakeGitHub:
     def check_runs(self, sha):
         return list(self.commit_checks.get(sha, []))
 
+    def commit_statuses(self, sha):
+        """As GitHub does, the latest status of each context."""
+        latest = {s["context"]: s for s in self.statuses if s["sha"] == sha}
+        return list(latest.values())
+
     def check_run_annotations(self, check_run_id):
         self.calls.append(("annotations", check_run_id))
         return list(self.annotations.get(check_run_id, []))
@@ -446,6 +452,9 @@ class FakeGitHub:
 
     def branch_sha(self, branch):
         return self.branches.get(branch, "f" * 40)
+
+    def required_checks(self, branch):
+        return set(self.required)
 
     def wants_up_to_date(self, branch):
         if isinstance(self.strict, Exception):

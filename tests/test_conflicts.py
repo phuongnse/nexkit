@@ -805,6 +805,10 @@ if __name__ == "__main__":
     unittest.main()
 
 
+# A refusal in words NexKit does not read, so only GitHub's data can say why.
+UNKNOWN_REFUSAL = GitHubError(405, "Merge refused.")
+
+
 class MergeRefusalTests(ReportCase):
     """Refusals of the automatic merge that pass by themselves or by NexKit's own rounds."""
 
@@ -1170,6 +1174,72 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual(seen, [("true,carry", HEAD)])
         # One state comment, edited in place afterwards.
         self.assertEqual(len(self.gh.comments_matching(6, "nexkit:state")), 1)
+
+    def test_a_required_check_that_failed_is_found_from_githubs_data(self):
+        # Words NexKit does not know: the base branch's rules and the head's checks decide.
+        self.candidate()
+        self.e2e_fails()
+        self.gh.required = {"e2e", "lint"}
+        self.gh.merge_error = [UNKNOWN_REFUSAL]
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "auto_fix")
+        self.assertIn("Required check `e2e` failed on `ccccccc`", outcome["summary"])
+        state = read_state(self.gh.comments(6))[1]
+        self.assertEqual([item["name"] for item in state["feedback"]["required"]], ["e2e"])
+        self.assertEqual(state["feedback"]["required"][0]["commands"], ["make e2e"])
+
+    def test_required_checks_that_have_not_reported_are_found_from_githubs_data(self):
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.candidate()
+        # A check run still in progress, a commit status still pending, a check not seen yet.
+        for required, checks, statuses in (
+            ({"e2e"}, [{"name": "e2e", "status": "in_progress", "conclusion": None}], []),
+            ({"ci/build"}, [], [("ci/build", "pending")]),
+            ({"deploy-preview"}, [], []),
+        ):
+            with self.subTest(required=required):
+                self.gh.required = required
+                self.gh.commit_checks[HEAD] = checks
+                for context, state in statuses:
+                    self.gh.set_status(HEAD, context, state, "")
+                self.gh.merge_error = [UNKNOWN_REFUSAL]
+                self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_waiting")
+        # A failed commit status is a failed check, as a check run is.
+        self.gh.required = {"ci/build"}
+        self.gh.set_status(HEAD, "ci/build", "failure", "")
+        self.gh.merge_error = [UNKNOWN_REFUSAL]
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "auto_fix")
+
+    def test_a_branch_behind_or_a_moved_head_is_found_from_githubs_data(self):
+        self.candidate()
+        self.gh.pulls[6]["mergeable_state"] = "behind"
+        self.gh.merge_error = [UNKNOWN_REFUSAL]
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "branch_updated")
+        # GitHub answers 409 when the head is not the commit it was asked to merge, and the
+        # pull request names its new head.
+        for error in (GitHubError(409, "Conflict"), UNKNOWN_REFUSAL):
+            with self.subTest(error=error):
+                self.gh.pulls[6]["head"]["sha"] = "9" * 40
+                self.gh.pulls[6].pop("mergeable_state", None)
+                self.gh.merge_error = [error]
+                self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "head_moved")
+
+    def test_a_refusal_while_the_base_branch_moved_is_tried_again(self):
+        self.candidate()
+        merge, tips = self.gh.merge, iter(["1" * 40, "2" * 40])
+
+        def refuse_once(number, sha, method="squash"):
+            if self.gh.merged or self.gh.branches.get("main") == "2" * 40:
+                return merge(number, sha, method)
+            self.gh.branches["main"] = next(tips)
+            raise UNKNOWN_REFUSAL
+
+        self.gh.branches["main"] = "0" * 40
+        with mock.patch.object(self.gh, "merge", side_effect=refuse_once):
+            outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "merged")
+        self.assertIn("at try 3", outcome["summary"])
 
     def test_a_refusal_that_needs_a_person_names_githubs_reason(self):
         self.candidate()

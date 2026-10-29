@@ -554,6 +554,27 @@ class UpToDateRuleTests(unittest.TestCase):
         with self.assertRaises(GitHubError):
             self.answers([], GitHubError(500, "down")).wants_up_to_date("main")
 
+    def test_required_checks_come_from_rulesets_and_classic_protection(self):
+        rule = {"type": "required_status_checks"}
+        rule["parameters"] = {"required_status_checks": [{"context": "e2e"}, {"context": ""}]}
+        other = {"type": "pull_request", "parameters": {}}
+        classic = {"contexts": ["ci/build"], "checks": [{"context": "lint", "app_id": 15368}]}
+        gh = self.answers([rule, other], classic)
+        self.assertEqual(gh.required_checks("main"), {"e2e", "ci/build", "lint"})
+        # Classic protection the token may not read, or none, adds no names.
+        for status in (403, 404):
+            gh = self.answers([rule], GitHubError(status, "Resource not accessible"))
+            self.assertEqual(gh.required_checks("main"), {"e2e"})
+        with self.assertRaises(GitHubError):
+            self.answers([], GitHubError(500, "down")).required_checks("main")
+
+    def test_commit_statuses_are_the_latest_of_each_context(self):
+        gh = GitHub(repository="acme/app", token="t")
+        found = {"state": "pending", "statuses": [{"context": "ci/build", "state": "pending"}]}
+        with mock.patch.object(gh, "request", return_value=found) as request:
+            self.assertEqual(gh.commit_statuses("abc"), found["statuses"])
+        self.assertEqual(request.call_args.args[:2], ("GET", "/repos/acme/app/commits/abc/status"))
+
 
 class LatestClosedIssueTests(unittest.TestCase):
     def test_the_issue_that_closed_last_not_a_pull_request_or_the_latest_updated(self):

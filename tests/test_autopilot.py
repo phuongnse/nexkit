@@ -2685,6 +2685,7 @@ class CIWaitTests(AutopilotCase):
             self.gh.annotations[job] = [
                 {"annotation_level": "failure", "title": title, "path": path}
             ]
+        self.gh.required = {"Unit tests"}
         self.gh.merge_error = GitHubError(405, 'Required status check "Unit tests" is failing.')
         lines = self.sweep(self.cfg)
         self.assertIn("#10: ci_waiting.", lines)

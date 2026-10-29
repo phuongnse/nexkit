@@ -615,6 +615,8 @@ class ScenarioTests(unittest.TestCase):
 
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
+        # The rules require `e2e`, which has not reported yet; it passes before the sweep.
+        pipe.gh.required = {"e2e"}
         pipe.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is expected.')]
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
@@ -629,6 +631,18 @@ class ScenarioTests(unittest.TestCase):
             GitHubError(405, 'Required status check "e2e" is expected.'),
             GitHubError(405, 'Required status check "e2e" is failing.'),
         ]
+        # The rules require `e2e`, which has not reported at the first try of the merge and
+        # has failed at the second.
+        pipe.gh.required = {"e2e"}
+        merge, tries = pipe.gh.merge, []
+
+        def merged(number, sha, method="squash"):
+            tries.append(sha)
+            if len(tries) == 2:
+                pipe.gh.commit_checks[sha] = [{"id": 9, "name": "e2e", "conclusion": "failure"}]
+            return merge(number, sha, method)
+
+        pipe.gh.merge = merged
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         self.assertEqual([outcome for *_, outcome in pipe.played[1:]], ["merge_waiting", "merged"])
         rounds = [run for _, run in run_comments(pipe.gh.comments(6))]
@@ -644,6 +658,7 @@ class ScenarioTests(unittest.TestCase):
 
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
+        pipe.gh.required = {"e2e"}
         pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
         autopilot.request(pipe.gh, "nexkit.yml", "main")
         pipe.drain()
@@ -670,6 +685,8 @@ class ScenarioTests(unittest.TestCase):
 
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
+        # The rules require `e2e` and `lint`, which have not reported yet.
+        pipe.gh.required = {"e2e", "lint"}
         pipe.gh.merge_error = GitHubError(405, expected)
         autopilot.request(pipe.gh, "nexkit.yml", "main")
         pipe.drain()
@@ -794,7 +811,9 @@ class ScenarioTests(unittest.TestCase):
 
     def behind(self, pipe, pull):
         """Branch protection wants the branch up to date with `main`, which moved while the
-        round reviewed: GitHub refuses the merge, and NexKit merges `main` into it."""
+        round reviewed: GitHub reports it as behind and refuses the merge, and NexKit merges
+        `main` into it."""
+        pipe.gh.pulls[pull]["mergeable_state"] = "behind"
         pipe.gh.merge_error = [
             GitHubError(405, "Head branch is out of date. Review and try again.")
         ]
@@ -1163,6 +1182,7 @@ class ScenarioTests(unittest.TestCase):
                 # Another pull request lands the same change on `main` while this round
                 # reviews; the merge of `main` that NexKit makes then leaves no change.
                 pipe.gh.on_base.update(on_base)
+                pipe.gh.pulls[pull]["mergeable_state"] = "behind"
 
             def script(pipe, inputs):
                 if inputs["command"] == "plan":

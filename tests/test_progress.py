@@ -560,11 +560,12 @@ class UpToDateRuleTests(unittest.TestCase):
         other = {"type": "pull_request", "parameters": {}}
         classic = {"contexts": ["ci/build"], "checks": [{"context": "lint", "app_id": 15368}]}
         gh = self.answers([rule, other], classic)
-        self.assertEqual(gh.required_checks("main"), {"e2e", "ci/build", "lint"})
-        # Classic protection the token may not read, or none, adds no names.
-        for status in (403, 404):
-            gh = self.answers([rule], GitHubError(status, "Resource not accessible"))
-            self.assertEqual(gh.required_checks("main"), {"e2e"})
+        self.assertEqual(gh.required_checks("main"), ({"e2e", "ci/build", "lint"}, True))
+        # No classic protection adds no names; one the token may not read leaves some out.
+        gh = self.answers([rule], GitHubError(404, "Branch not protected"))
+        self.assertEqual(gh.required_checks("main"), ({"e2e"}, True))
+        gh = self.answers([rule], GitHubError(403, "Resource not accessible by integration"))
+        self.assertEqual(gh.required_checks("main"), ({"e2e"}, False))
         with self.assertRaises(GitHubError):
             self.answers([], GitHubError(500, "down")).required_checks("main")
 
@@ -574,6 +575,71 @@ class UpToDateRuleTests(unittest.TestCase):
         with mock.patch.object(gh, "request", return_value=found) as request:
             self.assertEqual(gh.commit_statuses("abc"), found["statuses"])
         self.assertEqual(request.call_args.args[:2], ("GET", "/repos/acme/app/commits/abc/status"))
+
+
+class RequiredContextTests(unittest.TestCase):
+    def contexts(self, nodes, api_url=None):
+        gh = GitHub(repository="acme/app", token="t", api_url=api_url)
+        data = {
+            "repository": {
+                "pullRequest": {
+                    "commits": {
+                        "nodes": [
+                            {
+                                "commit": {
+                                    "oid": "abc",
+                                    "statusCheckRollup": {"contexts": {"nodes": nodes}},
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        with mock.patch.object(gh, "request", return_value={"data": data}) as request:
+            found = gh.required_contexts(6)
+        return found, request.call_args
+
+    def test_only_checks_github_requires_for_the_pull_request_count(self):
+        run = {"__typename": "CheckRun", "name": "e2e", "isRequired": True}
+        status = {"__typename": "StatusContext", "context": "ci/build", "isRequired": True}
+        found, call = self.contexts(
+            [
+                {**run, "conclusion": "FAILURE"},
+                {**run, "name": "unit", "conclusion": None},
+                {**run, "name": "lint", "conclusion": "SUCCESS"},
+                {**run, "name": "docs", "conclusion": "FAILURE", "isRequired": False},
+                {**status, "state": "ERROR"},
+                {**status, "context": "ci/deploy", "state": "EXPECTED"},
+                {**status, "context": "ci/size", "state": "SUCCESS"},
+            ]
+        )
+        states = {item["name"]: item["state"] for item in found}
+        self.assertEqual(
+            states,
+            {
+                "e2e": "failed",
+                "unit": "pending",
+                "lint": "passed",
+                "ci/build": "failed",
+                "ci/deploy": "pending",
+                "ci/size": "passed",
+            },
+        )
+        self.assertTrue(all(item["sha"] == "abc" for item in found))
+        method, url, body = call.args
+        self.assertEqual((method, url), ("POST", "https://api.github.com/graphql"))
+        self.assertEqual(body["variables"], {"owner": "acme", "name": "app", "number": 6})
+
+    def test_graphql_on_an_enterprise_server_and_its_errors(self):
+        _, call = self.contexts([], api_url="https://ghe.example.com/api/v3")
+        self.assertEqual(call.args[1], "https://ghe.example.com/api/graphql")
+        gh = GitHub(repository="acme/app", token="t")
+        errors = {"errors": [{"message": "Resource not accessible by integration"}]}
+        with mock.patch.object(gh, "request", return_value=errors):
+            with self.assertRaises(GitHubError) as raised:
+                gh.required_contexts(6)
+        self.assertIn("Resource not accessible", str(raised.exception))
 
 
 class LatestClosedIssueTests(unittest.TestCase):

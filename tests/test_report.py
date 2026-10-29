@@ -12,7 +12,7 @@ from nexkit import cli
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
 from nexkit.progress import trigger
-from nexkit.report import criterion_status, report, review_body, workflow_file
+from nexkit.report import after_merge, criterion_status, report, review_body, workflow_file
 from nexkit.route import route
 from nexkit.state import check_fingerprint, read_state, render_run, render_state
 from tests.support import FakeGitHub, make_config
@@ -612,6 +612,118 @@ class ReportTests(ReportCase):
         self.run_report(cfg=make_config(merge={"after_workflows": ["ci.yml"]}))
         self.assertFalse(self.gh.merged)
         self.assertFalse(self.gh.dispatches)
+
+    def ci_run(self, sha, event="push", status="completed", repo="acme/app"):
+        """A run of `ci.yml` on `main`, newer than those before it."""
+        runs = self.gh.workflow_history.setdefault("ci.yml", [])
+        run_id = 70 + len(runs)
+        runs.append(
+            {
+                "id": run_id,
+                "head_branch": "main",
+                "head_repository": {"full_name": repo},
+                "event": event,
+                "head_sha": sha,
+                "status": status,
+                "conclusion": "success" if status == "completed" else None,
+                "html_url": f"https://github.com/acme/app/actions/runs/{run_id}",
+            }
+        )
+
+    def merge_into_main(self, every):
+        """What `after_merge` does after one more commit reached `main`."""
+        self.gh.history["main"].append(f"{len(self.gh.history['main']) + 1:040x}")
+        return after_merge(self.gh, [{"workflow": "ci.yml", "every": every}], "main")
+
+    def started(self):
+        return len([d for d in self.gh.dispatches if d["workflow"] == "ci.yml"])
+
+    def test_a_workflow_with_every_starts_once_its_commits_reach_it(self):
+        self.candidate()
+        self.gh.history["main"] = ["0" * 40, "1" * 40]
+        self.ci_run("0" * 40, event="workflow_dispatch")
+        merge = {"auto": True, "after_workflows": ["e2e.yml", {"workflow": "ci.yml", "every": 3}]}
+        outcome = self.run_report(cfg=make_config(merge=merge))
+        self.assertEqual(outcome["outcome"], "merged")
+        # The merge is the second commit since the run: `e2e.yml` starts, `ci.yml` waits.
+        self.assertEqual([d["workflow"] for d in self.gh.dispatches], ["e2e.yml"])
+        [row] = self.gh.run_comments(6)
+        self.assertIn(
+            "- `ci.yml` waits: 2 of 3 commits since its "
+            "[latest run](https://github.com/acme/app/actions/runs/70).",
+            row["body"],
+        )
+        self.assertEqual([r["workflow"] for r in row["run"]["after_merge"]], ["e2e.yml"])
+        # The third starts it.
+        self.assertIn("- Started [`ci.yml`]", self.merge_into_main(3))
+        self.assertEqual(self.started(), 1)
+
+    def test_a_persons_push_that_ran_the_workflow_resets_the_count(self):
+        self.gh.history["main"] = ["0" * 40]
+        self.ci_run("0" * 40, event="workflow_dispatch")
+        self.merge_into_main(3)
+        self.merge_into_main(3)
+        # A person pushes to `main`, which runs `ci.yml`.
+        self.gh.history["main"].append("p" * 40)
+        self.ci_run("p" * 40)
+        self.assertIn("1 of 3 commits", self.merge_into_main(3))
+        self.assertIn("2 of 3 commits", self.merge_into_main(3))
+        self.assertEqual(self.started(), 0)
+        self.merge_into_main(3)
+        self.assertEqual(self.started(), 1)
+
+    def test_a_run_that_has_not_finished_holds_back_a_second_start(self):
+        self.gh.history["main"] = ["0" * 40]
+        self.ci_run("0" * 40)
+        for _ in range(2):
+            self.merge_into_main(2)
+        self.assertEqual(self.started(), 1)
+        head = self.gh.history["main"][-1]
+        # The run it started is queued, then in progress: no merge starts another.
+        for status in ("queued", "in_progress"):
+            self.ci_run(head, event="workflow_dispatch", status=status)
+            for _ in range(3):
+                self.assertIn(
+                    "- `ci.yml` waits: a run on `main` has not finished yet.",
+                    self.merge_into_main(2),
+                )
+            self.gh.workflow_history["ci.yml"].pop()
+        self.assertEqual(self.started(), 1)
+        # Once it ended, the commits since its head start it again.
+        self.ci_run(head, event="workflow_dispatch")
+        self.merge_into_main(2)
+        self.assertEqual(self.started(), 2)
+
+    def test_a_failed_start_is_tried_again_at_the_next_merge(self):
+        self.gh.history["main"] = ["0" * 40]
+        self.ci_run("0" * 40)
+        self.gh.dispatch_errors["ci.yml"] = GitHubError(503, "Service Unavailable")
+        self.merge_into_main(2)
+        self.assertIn("Could not start `ci.yml`", self.merge_into_main(2))
+        del self.gh.dispatch_errors["ci.yml"]
+        self.assertIn("- Started [`ci.yml`]", self.merge_into_main(2))
+
+    def test_a_workflow_starts_when_in_doubt(self):
+        self.gh.history["main"] = ["0" * 40]
+        # No run on `main`: a run of a fork's pull request from its own `main` is none.
+        self.ci_run("9" * 40, event="pull_request", repo="fork/app")
+        self.assertIn("- Started [`ci.yml`]", self.merge_into_main(5))
+        # The latest run's head is no longer on `main`, such as after a force push.
+        self.ci_run("9" * 40)
+        self.assertIn("- Started [`ci.yml`]", self.merge_into_main(5))
+        # GitHub could not compare it.
+        compare = self.gh.compare
+        self.gh.compare = mock.Mock(side_effect=GitHubError(404, "Not Found"))
+        self.assertIn("- Started [`ci.yml`]", self.merge_into_main(5))
+        self.gh.compare = compare
+        self.assertEqual(self.started(), 3)
+
+    def test_a_workflow_without_every_starts_after_every_merge(self):
+        self.gh.history["main"] = ["0" * 40]
+        self.ci_run("0" * 40, status="in_progress")
+        for _ in range(2):
+            self.merge_into_main(1)
+        self.assertEqual(self.started(), 2)
 
     def criterion(self, status, name="floats add"):
         review = review_result()

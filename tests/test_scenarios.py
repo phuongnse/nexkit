@@ -1691,6 +1691,64 @@ class ScenarioTests(unittest.TestCase):
         for number in (5, 6, 7, 8, bug, *pulls.values()):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
+    def test_a_workflow_that_runs_every_third_merge_starts_at_the_third(self):
+        runs = itertools.count(60)
+
+        def ci(pipe, workflow):
+            # A run of `ci.yml` tests the tip of `main`, and passes before the next merge.
+            run_id = next(runs)
+            pipe.gh.workflow_history.setdefault(workflow, []).append(
+                {
+                    "id": run_id,
+                    "head_branch": "main",
+                    "head_repository": {"full_name": "acme/app"},
+                    "event": "workflow_dispatch",
+                    "head_sha": pipe.gh.history["main"][-1],
+                    "status": "completed",
+                    "conclusion": "success",
+                    "run_attempt": 1,
+                    "html_url": f"https://github.com/acme/app/actions/runs/{run_id}",
+                    "created_at": autopilot.iso(datetime.now(autopilot.UTC)),
+                }
+            )
+
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        cfg = config(merge={"after_workflows": ["smoke.yml", {"workflow": "ci.yml", "every": 3}]})
+        pipe = Pipeline(self, cfg, script)
+        dispatch = pipe.gh.dispatch
+
+        def dispatched(workflow, ref, inputs, run_details=False):
+            found = dispatch(workflow, ref, inputs, run_details)
+            if workflow == "ci.yml":
+                ci(pipe, workflow)
+            return found
+
+        pipe.gh.dispatch = dispatched
+        # `ci.yml` last ran on `main` for a person's push, at its tip.
+        pipe.gh.history["main"] = ["0" * 40]
+        ci(pipe, "ci.yml")
+        pipe.gh.workflow_history["ci.yml"][0]["event"] = "push"
+        for number in range(5, 12):
+            pipe.issue(number)
+        pipe.play()
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in range(5, 12)))
+        # Seven merges: `smoke.yml` starts after each, `ci.yml` after the third and sixth.
+        self.assertEqual(len(pipe.gh.history["main"]), 8)
+        merged = [
+            [run for _, run in run_comments(pipe.gh.comments(number)) if "round" in run][-1]
+            for number, _, _ in pipe.gh.merged
+        ]
+        started = [[r["workflow"] for r in run.get("after_merge", [])] for run in merged]
+        self.assertEqual(
+            started,
+            [["smoke.yml"], ["smoke.yml"], ["smoke.yml", "ci.yml"]] * 2 + [["smoke.yml"]],
+        )
+        self.assertEqual(len(pipe.gh.workflow_history["ci.yml"]), 3)
+        last = pipe.gh.merged[-1][0]
+        self.assertTrue(pipe.gh.comments_matching(last, "`ci.yml` waits: 1 of 3 commits"))
+
     def test_a_watched_workflow_is_never_started_but_its_failures_on_main_are_handled(self):
         # `ci.yml` runs on `main` on a schedule only: NexKit watches it, never starts it.
         def script(pipe, inputs):

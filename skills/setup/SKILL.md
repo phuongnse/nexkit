@@ -179,6 +179,12 @@ files or repository settings, and wait for confirmation.
    start it, so a `schedule` such as a nightly run, or a person's push, does. Add its
    `name:` to the `workflow_run` trigger too; it needs no `nexkit-sweep` job. Say that a
    failure on the default branch is then found at its next scheduled run.
+   When GitHub delays or drops its scheduled runs, or the user wants CI tied to the work
+   that lands, offer an entry that runs it every few merges instead, such as
+   `{"workflow": "ci.yml", "every": 5}` in `merge.after_workflows`: NexKit starts it once
+   that many commits reached the default branch since its latest run there, whatever
+   started that run, and never while one is queued or in progress. It needs the
+   `workflow_dispatch` trigger and the `nexkit-sweep` job like every entry there.
    A command that autopilot started and that never ran starts once more as soon as its
    workflow run ended, or after `"lost_after_minutes"` (30 by default) when that run
    cannot be read.

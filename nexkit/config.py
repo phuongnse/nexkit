@@ -112,6 +112,9 @@ AUTOPILOT_SCOPE_CHOICES = (
     'null for every open issue, or "milestone" for the open issues of the earliest open milestone'
 )
 AUTOPILOT_ANSWERS = ("never", "recommended")
+AFTER_WORKFLOW_KEYS = {"workflow", "every"}
+# The most merges an entry of `merge.after_workflows` may wait for.
+MAX_EVERY = 1000
 
 
 class ConfigError(ValueError):
@@ -453,11 +456,46 @@ def _workflow_files(workflows, where):
         _fail(f"{where} lists a workflow twice")
 
 
+def _after_workflows(entries):
+    """`merge.after_workflows`: workflow files, each alone or as {"workflow", "every"}."""
+    where = "merge.after_workflows"
+    if not isinstance(entries, list):
+        _fail(f"{where} must be a list of workflow file names such as 'ci.yml'")
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        extra = set(entry) - AFTER_WORKFLOW_KEYS
+        if extra:
+            _fail(f"Unknown keys in {where}[{index}]: {', '.join(sorted(extra))}")
+        if "workflow" not in entry:
+            _fail(f"{where}[{index}] must name its workflow file, such as 'ci.yml'")
+        _positive_int(entry.get("every", 1), f"{where}[{index}].every", MAX_EVERY)
+    names = [entry["workflow"] if isinstance(entry, dict) else entry for entry in entries]
+    _workflow_files(names, where)
+
+
+def after_workflows(cfg):
+    """The entries of `merge.after_workflows` as {"workflow", "every"}: NexKit starts each
+    workflow once `every` commits reached the base branch since its latest run there. A
+    file name alone starts after every merge."""
+    return [
+        {"workflow": entry["workflow"], "every": entry.get("every", 1)}
+        if isinstance(entry, dict)
+        else {"workflow": entry, "every": 1}
+        for entry in cfg["merge"]["after_workflows"]
+    ]
+
+
+def after_workflow_names(cfg):
+    """The workflow files of `merge.after_workflows`."""
+    return [entry["workflow"] for entry in after_workflows(cfg)]
+
+
 def _watch_workflows(cfg):
     """`autopilot.watch_workflows`: workflow files that no other setting lists."""
     watched = cfg["autopilot"]["watch_workflows"]
     _workflow_files(watched, "autopilot.watch_workflows")
-    both = [name for name in watched if name in cfg["merge"]["after_workflows"]]
+    both = [name for name in watched if name in after_workflow_names(cfg)]
     if both:
         _fail(
             f"autopilot.watch_workflows lists {', '.join(both)}, which merge.after_workflows "
@@ -470,7 +508,7 @@ def watched_workflows(cfg):
     """The workflows whose runs on the default branch autopilot's sweeps watch: those of
     `merge.after_workflows`, which NexKit starts after its merges, then those of
     `autopilot.watch_workflows`, which something else starts."""
-    return [*cfg["merge"]["after_workflows"], *cfg["autopilot"]["watch_workflows"]]
+    return [*after_workflow_names(cfg), *cfg["autopilot"]["watch_workflows"]]
 
 
 def validate(raw, *, layered=False):
@@ -574,7 +612,7 @@ def validate(raw, *, layered=False):
 
     _positive_int(cfg["fix"]["max_auto_rounds"], "fix.max_auto_rounds", 10, minimum=0)
     _bool(cfg["merge"]["auto"], "merge.auto")
-    _workflow_files(cfg["merge"]["after_workflows"], "merge.after_workflows")
+    _after_workflows(cfg["merge"]["after_workflows"])
     _bool(cfg["conflicts"]["auto_resolve"], "conflicts.auto_resolve")
     _positive_int(cfg["conflicts"]["max_rounds"], "conflicts.max_rounds", 10)
     _bool(cfg["usage_limit"]["resume"], "usage_limit.resume")

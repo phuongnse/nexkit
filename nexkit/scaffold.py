@@ -550,7 +550,7 @@ def _triggers(root, cfg, workflow):
     if cfg["autopilot"]["enabled"]:
         findings.append(_autopilot_triggers(cfg, workflow))
         findings += _ci_trigger(root, cfg, workflow)
-        for name in cfg["merge"]["after_workflows"]:
+        for name in configuration.after_workflow_names(cfg):
             findings += _sweep_job(root, name)
     if cfg["usage_limit"]["resume"]:
         if trigger(workflow, "schedule") is None:
@@ -721,7 +721,9 @@ def doctor(root):
         findings.append((True, f"{configuration.CONFIG_PATH} is valid"))
         if not cfg["checks"]:
             findings.append((False, "No checks configured; NexKit cannot verify changes"))
-        findings += [_after_merge_workflow(root, name) for name in cfg["merge"]["after_workflows"]]
+        findings += [
+            _after_merge_workflow(root, name) for name in configuration.after_workflow_names(cfg)
+        ]
         findings += [_watched_workflow(root, n) for n in cfg["autopilot"]["watch_workflows"]]
         findings += _unattended_push(cfg)
         findings += _unheard(cfg)

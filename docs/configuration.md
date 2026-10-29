@@ -74,7 +74,7 @@ their defaults.
 |---|---|---|
 | `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings, or after a required check failed and GitHub refused an automatic merge for it (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see *Failing checks the base branch fixed* under [How it works](how-it-works.md#stages). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
 | `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves, unless it leaves a criterion for a person to confirm. Branch protection still applies. See [Automatic merge](#automatic-merge). |
-| `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. |
+| `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. An entry `{"workflow": "ci.yml", "every": 5}` starts it once 5 commits reached the base branch since its latest run there (1 to 1000; a file name alone is `"every": 1`). See *Running a workflow every few merges* under [Automatic merge](#automatic-merge). |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
 | `conflicts.max_rounds` | `3` | Those rounds per pull request (1 to 10), apart from `fix.max_auto_rounds`. |
 | `usage_limit.resume` | `true` | When the agent stops at the account's usage limit, run the same command again after the limit resets. See [Usage limits](#usage-limits). |
@@ -588,6 +588,38 @@ branch with `workflow_dispatch`:
 - The round's comment links each workflow it started, or says why a start failed. A
   failed start does not undo the merge.
 - Nothing is started when `merge.auto` is `false` or the merge was refused.
+
+**Running a workflow every few merges.** A workflow that costs too much to run after every
+merge, such as a long CI, CodeQL or a performance test, can run once every few merges
+instead of on a `schedule`, which GitHub may delay or drop:
+
+```json
+"after_workflows": [
+  "smoke.yml",
+  {"workflow": "ci.yml", "every": 5},
+  {"workflow": "codeql.yml", "every": 30}
+]
+```
+
+After each merge, NexKit looks at the latest run of each such workflow on the base branch,
+whatever started it and however it ended, and counts the commits on the base branch since
+that run's commit. It keeps no count of its own, so a person's push that ran the workflow
+starts the count again.
+
+- When the count reaches `every`, NexKit starts the workflow, as above.
+- While a run of the workflow on the base branch is queued or in progress, it starts none.
+- When in doubt it starts the workflow: when the workflow has no run on the base branch,
+  when that run's commit is no longer on it, or when GitHub could not tell.
+- A start that failed is tried again at the next merge, since the count is still at
+  `every` or above.
+- The round's comment says, for a workflow it did not start, how many of its commits
+  have come, or that a run has not finished yet.
+
+The runs it starts are watched like those of every entry: with autopilot, a failure on
+the base branch that repeats opens a `bug` issue, and pull requests that fail the same way
+wait for it. A plain file name, or `"every": 1`, starts the workflow after every merge, even
+while another run of it has not finished. `nexkit doctor` rejects an `every` that is not
+an integer from 1 to 1000, and a listed workflow without a `workflow_dispatch` trigger.
 
 ## Parent issues
 

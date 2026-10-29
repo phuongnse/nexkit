@@ -133,6 +133,9 @@ class FakeGitHub:
         self.runs = {}
         self.on_base = set()  # heads of pull requests that change no file against their base
         self.compares = {}  # (base, head) -> GitHub's comparison, for any other
+        # branch -> shas of its commits, oldest first, for the branches a test seeds here:
+        # each merge into one adds a commit, and a comparison counts them.
+        self.history = {}
         self.own_commits = {}  # pull request number -> its commits, oldest first
         self.commit_files = {}  # commit sha -> the files it changed
         self.path_history = {}  # path -> shas of the commits that changed it, newest first
@@ -483,11 +486,20 @@ class FakeGitHub:
         elif self.merge_error:
             raise self.merge_error
         self.merged.append((number, sha, method))
+        commits = self.history.get(self.pulls.get(number, {}).get("base", {}).get("ref"))
+        if commits is not None:
+            commits.append(f"{len(commits) + 1:040x}")
         return {"merged": True, "sha": "d" * 40}
 
     def compare(self, base, head):
         if (base, head) in self.compares:
             return self.compares[(base, head)]
+        if head in self.history:
+            commits = self.history[head]
+            if base not in commits:
+                return {"status": "diverged", "ahead_by": 1, "behind_by": 1}
+            ahead = len(commits) - 1 - commits.index(base)
+            return {"status": "ahead" if ahead else "identical", "ahead_by": ahead, "behind_by": 0}
         files = [] if head in self.on_base else [{"filename": "app.py"}]
         return {"files": files, "commits": [], "merge_base_commit": {"sha": "c" * 40}}
 

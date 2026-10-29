@@ -90,6 +90,35 @@ class ConfigTests(unittest.TestCase):
             ({"merge": {"after_workflows": [".github/workflows/ci.yml"]}}, "workflow file names"),
             ({"merge": {"after_workflows": ["ci"]}}, "workflow file names"),
             ({"merge": {"after_workflows": ["ci.yml", "ci.yml"]}}, "twice"),
+            (
+                {"merge": {"after_workflows": ["ci.yml", {"workflow": "ci.yml", "every": 3}]}},
+                "twice",
+            ),
+            ({"merge": {"after_workflows": [{"every": 3}]}}, r"after_workflows\[0\] must name"),
+            ({"merge": {"after_workflows": [{"workflow": "ci"}]}}, "workflow file names"),
+            ({"merge": {"after_workflows": [{"workflow": 5}]}}, "workflow file names"),
+            (
+                {"merge": {"after_workflows": [{"workflow": "ci.yml", "on": "push"}]}},
+                r"Unknown keys in merge.after_workflows\[0\]: on",
+            ),
+            *(
+                (
+                    {
+                        "merge": {
+                            "after_workflows": ["a.yml", {"workflow": "ci.yml", "every": every}]
+                        }
+                    },
+                    r"merge.after_workflows\[1\].every must be an integer from 1 to 1000",
+                )
+                for every in (0, -2, 1.5, "5", True, None, 1001)
+            ),
+            (
+                {
+                    "merge": {"after_workflows": [{"workflow": "ci.yml", "every": 5}]},
+                    "autopilot": {"watch_workflows": ["ci.yml"]},
+                },
+                "watch_workflows lists ci.yml, which merge.after_workflows lists too",
+            ),
             ({"autopilot": {"watch_workflows": "ci.yml"}}, "watch_workflows must be a list"),
             ({"autopilot": {"watch_workflows": ["ci"]}}, "workflow file names"),
             ({"autopilot": {"watch_workflows": ["ci.yml", "ci.yml"]}}, "twice"),
@@ -244,6 +273,22 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.watched_workflows(cfg), ["ci.yml", "nightly.yml", "codeql.yml"])
         # Only merge.after_workflows is started after a merge.
         self.assertEqual(cfg["merge"]["after_workflows"], ["ci.yml"])
+
+    def test_a_workflow_started_after_a_merge_may_wait_for_several_commits(self):
+        entries = ["smoke.yml", {"workflow": "ci.yml", "every": 5}, {"workflow": "e2e.yml"}]
+        cfg = validate({"merge": {"after_workflows": entries}})
+        # The setting stays as written, and validates again unchanged.
+        self.assertEqual(cfg["merge"]["after_workflows"], entries)
+        self.assertEqual(validate(json.loads(json.dumps(cfg))), cfg)
+        self.assertEqual(
+            config.after_workflows(cfg),
+            [
+                {"workflow": "smoke.yml", "every": 1},
+                {"workflow": "ci.yml", "every": 5},
+                {"workflow": "e2e.yml", "every": 1},
+            ],
+        )
+        self.assertEqual(config.watched_workflows(cfg), ["smoke.yml", "ci.yml", "e2e.yml"])
 
     def test_groups_merge_over_their_defaults(self):
         cfg = validate({"merge": {"after_workflows": ["ci.yml", "e2e.yaml"]}})

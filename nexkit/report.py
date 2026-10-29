@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import autopilot, progress
 from .checks import failing_signatures, skipped_line, skipped_names, with_skipped
+from .config import after_workflows
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
     ON_BASE_FAILED,
@@ -709,15 +710,22 @@ def _paused_agent(gh, decision, cfg, agent):
 
 
 def after_merge(gh, workflows, base, records=None):
-    """Start each workflow on the base branch after NexKit merged into it.
+    """Start each workflow of `workflows`, entries as `config.after_workflows` gives them,
+    on the base branch after NexKit merged into it, when it is due (see `_due`).
 
     GitHub starts no workflow for the merge's push, which uses the Actions token, but it does
-    for a dispatch. A dispatch that fails is reported; the merge stays. Each start is added
-    to `records`, for the round's marker.
+    for a dispatch. A dispatch that fails is reported; the merge stays, and the next merge
+    starts the workflow, which is still due then. Each start is added to `records`, for the
+    round's marker.
     """
     lines = []
     records = [] if records is None else records
-    for workflow in workflows:
+    for entry in workflows:
+        workflow, every = entry["workflow"], entry["every"]
+        waits = _due(gh, workflow, every, base)
+        if waits:
+            lines.append(f"- `{workflow}` waits: {waits}")
+            continue
         try:
             run = gh.dispatch(workflow, base, {}, run_details=True) or {}
             url = run.get("html_url") or dispatched_runs_url(workflow, base)
@@ -727,6 +735,49 @@ def after_merge(gh, workflows, base, records=None):
             lines.append(f"- Could not start `{workflow}`: {exc}")
             records.append({"workflow": workflow, "error": str(exc)[:300]})
     return "\n".join([f"After the merge, on `{base}`:", *lines]) if lines else ""
+
+
+# The runs of a workflow on the base branch that `_due` reads: runs of pull requests from
+# forks whose branch has the same name may be among them.
+AFTER_MERGE_RUNS = 20
+# A run in one of these hasn't finished. One that waits for a person, such as for the
+# approval of a deployment, does not hold the next start back.
+UNFINISHED = {"requested", "queued", "pending", "in_progress"}
+
+
+def _due(gh, workflow, every, base):
+    """None when `workflow` should start on `base` after a merge, or why it waits.
+
+    A workflow with `every` 1 starts after every merge. Otherwise NexKit keeps no count of
+    its own: it counts the commits on the base branch since the head of the workflow's
+    latest run there, whatever started it, so a person's push resets the count. It starts
+    once the count reaches `every`, and also when in doubt: without a run on the base
+    branch, when that run's head is no longer on it, or when GitHub could not tell. A run
+    on the base branch that is queued or in progress holds every start back."""
+    if every == 1:
+        return None
+    try:
+        runs = [
+            run
+            for run in gh.workflow_runs(workflow, base, AFTER_MERGE_RUNS)
+            if autopilot.on_default_branch(gh, run)
+        ]
+    except GitHubError:
+        return None
+    if any(run.get("status") in UNFINISHED for run in runs):
+        return f"a run on `{base}` has not finished yet."
+    if not runs or not runs[0].get("head_sha"):
+        return None
+    try:
+        comparison = gh.compare(runs[0]["head_sha"], base)
+    except GitHubError:
+        return None
+    if comparison.get("behind_by", 0) or comparison.get("status") not in ("ahead", "identical"):
+        return None
+    count = comparison.get("ahead_by", 0)
+    if count >= every:
+        return None
+    return f"{count} of {every} commits since its [latest run]({runs[0].get('html_url', '')})."
 
 
 # Why GitHub refused a merge, for refusals that pass by themselves or by NexKit's rounds:
@@ -792,7 +843,7 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
         lines += close_parents_safely(gh, target["issue"])
     lines += delete_merged_branch(gh, pr, target["base"])
     runs = []
-    started = after_merge(gh, cfg["merge"]["after_workflows"], target["base"], runs)
+    started = after_merge(gh, after_workflows(cfg), target["base"], runs)
     if runs:
         row["after_merge"] = runs
     if cfg["conflicts"]["auto_resolve"]:

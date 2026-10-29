@@ -191,7 +191,11 @@ class InitDoctorTests(unittest.TestCase):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         path = self.root / ".nexkit/config.json"
         cfg = json.loads(path.read_text())
-        cfg["merge"]["after_workflows"] = ["ci.yml", "lint.yml", "e2e.yml"]
+        cfg["merge"]["after_workflows"] = [
+            "ci.yml",
+            {"workflow": "lint.yml", "every": 5},
+            {"workflow": "e2e.yml", "every": 30},
+        ]
         path.write_text(json.dumps(cfg))
         workflows = self.root / ".github/workflows"
         (workflows / "ci.yml").write_text("on:\n  push:\n  workflow_dispatch:\n")
@@ -210,6 +214,13 @@ class InitDoctorTests(unittest.TestCase):
         )
         self.assertIn(
             (False, "merge.after_workflows: .github/workflows/e2e.yml does not exist"), findings
+        )
+        # An entry that waits for no positive number of commits is not valid.
+        cfg["merge"]["after_workflows"][1]["every"] = 0
+        path.write_text(json.dumps(cfg))
+        self.assertIn(
+            (False, "merge.after_workflows[1].every must be an integer from 1 to 1000"),
+            scaffold.doctor(self.root),
         )
 
     def test_concurrency_group_is_on_the_job(self):

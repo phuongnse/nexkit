@@ -34,7 +34,9 @@ from .state import (
     passed_checks,
     read_state,
     render_run,
+    run_action,
     run_comments,
+    run_kinds,
     with_run,
 )
 from .usage import PAUSE_WINDOW, iso, parse_iso
@@ -629,6 +631,8 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
             "round": next_round(comments),
             "url": run.get("url"),
             "trigger": "implement",
+            "action": "implement",
+            "kinds": [],
             # Its checks' setup, so the checks that passed count for the next rounds.
             **({"setup": run["setup"]} if run.get("setup") else {}),
         }
@@ -678,8 +682,7 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
 
 def _give_back(gh, number, comments, run):
     """An automatic fix round that NexKit stopped gives its `fix.max_auto_rounds` back."""
-    labels = run.get("trigger", "").removeprefix("fix (").removesuffix(")").split(", ")
-    automatic = run.get("trigger", "").startswith("fix (") and "auto" in labels
+    automatic = run_action(run) == "fix" and "auto" in run_kinds(run)
     if not automatic or run.get("conflicts") or run.get("retry") or run.get("resumed"):
         return
     state_id, state = read_state(comments)

@@ -11,9 +11,23 @@ from unittest import mock
 
 from nexkit import progress
 from nexkit.github import GitHub, GitHubError
-from nexkit.maintain import WAIT_INPUTS, check_paused, maintain, resume_paused, wait_and_resume
+from nexkit.maintain import (
+    WAIT_INPUTS,
+    _give_back,
+    check_paused,
+    maintain,
+    resume_paused,
+    wait_and_resume,
+)
 from nexkit.report import report
-from nexkit.state import empty_state, read_state, render_run, render_state
+from nexkit.state import (
+    empty_state,
+    read_state,
+    render_run,
+    render_state,
+    run_action,
+    run_kinds,
+)
 from tests.support import FakeGitHub, make_config
 
 HEAD = "c" * 40
@@ -249,6 +263,7 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(
             (stopped["run"]["trigger"], stopped["run"]["status"]), ("fix (auto)", "failure")
         )
+        self.assertEqual((stopped["run"]["action"], stopped["run"]["kinds"]), ("fix", ["auto"]))
         self.assertIn("Unclear", stopped["body"])
         self.assertEqual(len(self.gh.comments(6)), 2)  # state and round, no extra comment
         self.assertEqual(self.gh.reactions, [])  # dispatched rounds have no comment
@@ -339,6 +354,23 @@ class PausedRunTests(unittest.TestCase):
         self.assertEqual(
             progress.trigger({"action": "review", "resumed": True}), "review (resumed)"
         )
+
+    def test_a_rounds_action_and_kinds_are_read_from_its_fields_before_its_trigger(self):
+        old = {"round": 2, "trigger": "fix (auto, conflicts)"}
+        self.assertEqual((run_action(old), run_kinds(old)), ("fix", {"auto", "conflicts"}))
+        self.assertEqual(
+            (run_action({"trigger": "implement"}), run_kinds({})), ("implement", set())
+        )
+        # The fields win over text written any other way.
+        new = {"round": 2, "trigger": "fix: auto; conflicts", "action": "fix", "kinds": ["auto"]}
+        self.assertEqual((run_action(new), run_kinds(new)), ("fix", {"auto"}))
+        self.assertEqual(run_kinds({**old, "kinds": []}), set())
+        # An automatic fix round that NexKit stopped gives its round back, read from them.
+        self.gh.comment(6, render_state({"version": 2, "issue": 5, "auto_fixes": 1}))
+        _give_back(self.gh, 6, self.gh.comments(6), {**old, "kinds": []})
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 1)
+        _give_back(self.gh, 6, self.gh.comments(6), new)
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
 
     def test_a_new_command_replaces_a_paused_one(self):
         self.paused(5, 1)

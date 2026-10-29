@@ -312,6 +312,25 @@ def run_comments(comments):
                 yield comment, json.loads(base64.b64decode(match.group(1)))
 
 
+def run_action(run):
+    """A round's action, such as `fix` or `review`: its `action`, or the first word of its
+    `trigger` in a marker from before NexKit kept the action."""
+    action = run.get("action")
+    if isinstance(action, str) and action:
+        return action
+    return str(run.get("trigger") or "").split(" (", 1)[0].strip()
+
+
+def run_kinds(run):
+    """A round's kinds, such as {"auto", "conflicts"}: its `kinds`, or the labels of its
+    `trigger`, such as `fix (auto, conflicts)`, in a marker from before NexKit kept them."""
+    kinds = run.get("kinds")
+    if isinstance(kinds, list):
+        return {kind for kind in kinds if isinstance(kind, str)}
+    labels = re.search(r"\((.*)\)", str(run.get("trigger") or ""))
+    return {kind.strip() for kind in labels.group(1).split(",")} if labels else set()
+
+
 def run_marker(run):
     return _encode(RUN_PREFIX, run)
 

@@ -48,7 +48,9 @@ from .state import (
     questions,
     read_state,
     round_questions,
+    run_action,
     run_comments,
+    run_kinds,
     with_run,
 )
 from .usage import PAUSE_WINDOW, iso, parse_iso
@@ -728,20 +730,13 @@ def _ended(gh, run):
 def _automatic(run):
     """Whether NexKit started a run by itself: a command autopilot started, or an automatic
     round. A person's command may carry a note that a new start would not have."""
-    return bool(run.get("autopilot")) or bool(_kinds(run) & {"auto", "autopilot"})
-
-
-def _kinds(run):
-    """The labels of a run's trigger, such as {"auto", "conflicts"} for `fix (auto,
-    conflicts)`."""
-    labels = re.search(r"\((.*)\)", str(run.get("trigger") or ""))
-    return {kind.strip() for kind in labels.group(1).split(",")} if labels else set()
+    return bool(run.get("autopilot")) or bool(run_kinds(run) & {"auto", "autopilot"})
 
 
 def _auto_input(run):
     """The `auto` input that starts a run's kind of automatic round again, from its
     trigger, or "" for a command that autopilot started."""
-    kinds = _kinds(run)
+    kinds = run_kinds(run)
     if "conflicts" in kinds:
         found = ["conflicts"]
     elif "auto" in kinds:
@@ -776,8 +771,7 @@ def _stalled(gh, issue, comment, run, record, start, target, now):
         return _step(issue, "waits", "the run that continues it did not start") if lost else None
     if status != RUNNING or not _ended(gh, run):
         return None
-    trigger = str(run.get("trigger") or "")
-    command = run.get("command") or ("fix" if trigger.startswith("fix") else "review")
+    command = run.get("command") or ("fix" if run_action(run) == "fix" else "review")
     stale = {"number": target, "comment": comment["id"]}
     again = record.get("retried") and (record.get("command"), record.get("target")) == (
         command,

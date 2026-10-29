@@ -27,10 +27,10 @@ COMMANDS = {"plan": "plan", "implement": "go", "fix": "fix", "review": "review"}
 STATUS_CONTEXTS = ("nexkit/checks", "nexkit/review")
 
 
-def trigger(decision):
-    """`fix`, `fix (auto)`, `fix (auto, diagnosis)`, `fix (auto, conflicts)`, `review
-    (resumed)`, ..."""
-    labels = [
+def kinds(decision):
+    """The kinds of a round, in order: `auto`, `diagnosis`, `conflicts`, `resumed`, `retry`
+    and `autopilot`, each when it applies."""
+    return [
         label
         for label, on in (
             ("auto", decision.get("auto")),
@@ -42,6 +42,12 @@ def trigger(decision):
         )
         if on
     ]
+
+
+def trigger(decision):
+    """`fix`, `fix (auto)`, `fix (auto, diagnosis)`, `fix (auto, conflicts)`, `review
+    (resumed)`, ...: for people. NexKit reads a round's `action` and `kinds` instead."""
+    labels = kinds(decision)
     return decision["action"] + (f" ({', '.join(labels)})" if labels else "")
 
 
@@ -58,6 +64,7 @@ def find_round(comments, decision):
     comment_id, row = find_run(comments, url)
     row = row or {"round": next_round(comments), "url": url}
     row["trigger"] = trigger(decision)
+    row["action"], row["kinds"] = decision["action"], kinds(decision)
     # `setup`: which setup the round's checks ran, for the next rounds' skips (route).
     for key in ("conflicts", "resumed", "retry", "base_sha", "setup"):
         if decision.get(key):

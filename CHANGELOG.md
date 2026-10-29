@@ -1,5 +1,23 @@
 # Changelog
 
+## 5.8.0
+
+CI on the default branch can follow the work that lands without running after every
+merge, and without a `schedule`, which GitHub may delay or drop.
+
+- An entry of `merge.after_workflows` may be `{"workflow": "ci.yml", "every": 5}` (#193).
+  After each merge, NexKit reads the workflow's latest run on the base branch, whatever
+  started it and however it ended, and counts the commits on the base branch since that
+  run's commit; once the count reaches `every`, it starts the workflow. It keeps no count
+  of its own, so a person's push that ran the workflow starts the count again. It starts
+  none while a run on the base branch is queued or in progress, and starts it when in
+  doubt: without a run there, when that run's commit is no longer on the branch, or when
+  GitHub could not tell. A start that failed is tried again at the next merge. The
+  round's comment says, for a workflow it did not start, how many of its commits have
+  come. Its runs are watched like those of every entry. A plain file name still starts
+  after every merge. `every` is an integer from 1 to 1000, which `nexkit doctor` checks.
+  See [Automatic merge](docs/configuration.md#automatic-merge).
+
 ## 5.7.1
 
 - A check gets `NEXKIT_CHECK_VERIFIED_SHA` only from rounds that ran the same `setup`

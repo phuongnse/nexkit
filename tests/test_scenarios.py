@@ -12,11 +12,13 @@ end or published.
 from __future__ import annotations
 
 import base64
+import io
 import itertools
 import json
 import os
 import tempfile
 import unittest
+import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
@@ -27,7 +29,7 @@ from nexkit.maintain import maintain
 from nexkit.publish import issue_closed, publish_plan
 from nexkit.report import report
 from nexkit.route import auto_kinds, issue_from_branch, route
-from nexkit.state import BOT_LOGIN, UNCOUNTED, read_state, run_comments
+from nexkit.state import BOT_LOGIN, UNCOUNTED, check_fingerprint, read_state, run_comments
 from nexkit.status import collect
 from tests.support import FakeGitHub, make_config
 
@@ -1003,6 +1005,83 @@ class ScenarioTests(unittest.TestCase):
         for number in (5, 6, 7):
             self.assertEqual(pipe.gh.issues[number]["state"], "closed")
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_checks_that_passed_in_a_stopped_round_get_their_commit_in_the_next_round(self):
+        unit, e2e = "scripts/unit.sh", "scripts/e2e.sh"
+
+        def result(name, run, passed, output=""):
+            code = 0 if passed else 1
+            return {"name": name, "run": run, "exit_code": code, "passed": passed, "output": output}
+
+        def checking(pipe, pull):
+            # The check job of `unit` finished: `unit` passed and `types` failed on the
+            # head; `e2e` still runs when another merge moves `main`.
+            if pipe.gh.cancelled:
+                return
+            run_id = int(os.environ["GITHUB_RUN_ID"])
+            head = pipe.gh.pulls[pull]["head"]["sha"]
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, "w") as archive:
+                results = [result("unit", unit, True), result("types", "tsc", False)]
+                archive.writestr("checks.json", json.dumps(results))
+                archive.writestr("checked.json", json.dumps({"head": head}))
+            pipe.gh.zips[run_id] = data.getvalue()
+            artifact = {"id": run_id, "name": "nexkit-checks-unit", "size_in_bytes": 100}
+            pipe.gh.run_artifact_list[run_id] = [artifact]
+            tip = "e" * 40
+            pipe.gh.branches["main"] = tip
+            pipe.gh.compares[(tip, head)] = {"behind_by": 1}
+            pipe.gh.pulls[pull]["mergeable_state"] = "behind"
+            event = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}}
+            decision = route(pipe.gh, "push", event)
+            maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return {**done(), "checking": checking}
+            return done()
+
+        cfg = config(
+            checks=[{"name": "unit", "run": unit}, {"name": "e2e", "run": e2e}],
+            parallel_checks=True,
+        )
+        pipe = Pipeline(self, cfg, script)
+        pipe.gh.strict = True
+        decisions = []
+        stages = pipe.stages
+
+        def recorded(decision, outcome, artifacts):
+            # The check job of the next round: `unit` gets the commit it passed on and
+            # skips its work, which still exits 0; `e2e` runs in full.
+            decisions.append(decision)
+            if "checks" in outcome and decision.get("check_heads"):
+                outcome["checks"] = [
+                    result("unit", unit, True, "Unchanged since the commit it passed on."),
+                    result("e2e", e2e, True),
+                ]
+            return stages(decision, outcome, artifacts)
+
+        pipe.stages = recorded
+        pipe.issue(5)
+        pipe.play()
+        self.assertEqual(
+            [(c, o) for c, _, o in pipe.played],
+            [("plan", "planned"), ("go", "superseded"), ("review", "merged")],
+        )
+        [pull] = pipe.gh.pulls
+        rounds = [run for _, run in run_comments(pipe.gh.comments(pull)) if "round" in run]
+        stopped, review = rounds
+        self.assertEqual(stopped["outcome"], "superseded")
+        # Only the check that passed: not the one that failed, nor the one still running.
+        self.assertEqual(stopped["passed"], {"unit": check_fingerprint(unit)})
+        self.assertEqual(
+            decisions[-1]["check_heads"], {"unit": {check_fingerprint(unit): stopped["head"]}}
+        )
+        # The round passes as it would have without the record.
+        self.assertEqual((review["checks"], review["outcome"]), ("passed", "merged"))
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_a_pull_request_whose_change_is_already_on_its_base_branch_closes(self):
         def play(on_base, refusals):

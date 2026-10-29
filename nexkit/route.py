@@ -13,6 +13,7 @@ from .state import (
     SUCCESS,
     approved_head,
     by_bot,
+    check_heads,
     latest_plan,
     plan_profile,
     repeated_failures,
@@ -326,6 +327,10 @@ def _decide(gh, command, number, on_pull, note, *, auto):
         verified = verified_head(comments)
         if verified:
             decision["verified_sha"] = verified
+        # For each check, the last commit on which it passed, for NEXKIT_CHECK_VERIFIED_SHA.
+        passed = check_heads(comments)
+        if passed:
+            decision["check_heads"] = passed
         run_id = results_run(comments)
         if run_id and decision["action"] == "fix":
             # The agent job downloads that run's `nexkit-checks` artifact for the prompt.

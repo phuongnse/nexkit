@@ -36,6 +36,7 @@ from .state import (
     clip,
     empty_state,
     options_of,
+    passed_checks,
     passed_lines,
     questions,
     read_state,
@@ -1325,6 +1326,13 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         verdict=verdict or "not run",
         tokens=_tokens(agent if action != "review" else None, reviewed),
     )
+    # The checks that passed on this head, also when others failed, for the next rounds'
+    # NEXKIT_CHECK_VERIFIED_SHA.
+    passed = {} if conflicting else passed_checks(checks)
+    if passed:
+        row["passed"] = passed
+    else:
+        row.pop("passed", None)
     _show_agents(row, agent if action != "review" else None, reviewed)
     if carried:
         row["carried"] = reviewed["carried"]

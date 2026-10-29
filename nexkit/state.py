@@ -9,6 +9,7 @@ one state comment on the pull request, edited in place.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 
@@ -313,6 +314,58 @@ def with_run(body, run, line=""):
     if line:
         text += f"\n\n{line}"
     return f"{text}\n\n{run_marker(run)}"
+
+
+# What a round's marker records of the checks that passed (`passed`): at most this many
+# checks, and for each check the latest commits of at most this many of its commands.
+MAX_PASSED = 50
+MAX_COMMANDS = 3
+FINGERPRINT = re.compile(r"[0-9a-f]{16}")
+
+
+def check_fingerprint(command):
+    """A check's command as a round's marker records it, so a check whose command changed
+    gets no commit from rounds that ran another one."""
+    return hashlib.sha256(str(command).encode()).hexdigest()[:16]
+
+
+def passed_checks(results):
+    """{check name: its command's fingerprint} for each check of `results`, the checks
+    of one round on its head, that passed: what the round's marker records as `passed`."""
+    found = {}
+    for result in results or []:
+        if not isinstance(result, dict) or result.get("passed") is not True:
+            continue
+        name, command = result.get("name"), result.get("run")
+        if isinstance(name, str) and 0 < len(name) <= 100 and isinstance(command, str):
+            found[name] = check_fingerprint(command)
+    return dict(list(found.items())[:MAX_PASSED])
+
+
+def check_heads(comments):
+    """For each check, the head of the latest round on which it passed, for each command
+    it ran with: {name: {fingerprint: head}}, from NexKit's own round comments, for
+    NEXKIT_CHECK_VERIFIED_SHA. Rounds stopped as `superseded` count, and so do rounds
+    whose other checks failed."""
+    rounds = [
+        run
+        for _, run in _marked(comments, RUN_PATTERN)
+        if isinstance(run.get("round"), int)
+        and COMMIT.fullmatch(str(run.get("head") or ""))
+        and isinstance(run.get("passed"), dict)
+    ]
+    found = {}
+    for run in sorted(rounds, key=lambda run: run["round"]):
+        for name, fingerprint in run["passed"].items():
+            if not (isinstance(name, str) and FINGERPRINT.fullmatch(str(fingerprint))):
+                continue
+            heads = found.setdefault(name, {})
+            # Newest last, so the oldest command goes first.
+            heads.pop(fingerprint, None)
+            heads[fingerprint] = run["head"]
+            while len(heads) > MAX_COMMANDS:
+                heads.pop(next(iter(heads)))
+    return dict(list(found.items())[-MAX_PASSED:])
 
 
 def verified_head(comments):

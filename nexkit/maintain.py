@@ -8,9 +8,12 @@ checks out or executes repository code and never receives an agent credential.
 
 from __future__ import annotations
 
+import io
+import json
 import re
 import sys
 import time
+import zipfile
 from datetime import UTC, datetime, timedelta
 
 from . import autopilot, progress
@@ -21,12 +24,14 @@ from .route import RUN_ID, implementing, issue_from_branch
 from .state import (
     CONTINUED,
     FAILURE,
+    MAX_PASSED,
     PAUSED,
     RUNNING,
     SUCCESS,
     by_bot,
     conflict_rounds_used,
     next_round,
+    passed_checks,
     read_state,
     render_run,
     run_comments,
@@ -524,6 +529,56 @@ def _behind(gh, tip, head):
         return False
 
 
+# The check jobs' artifacts of a round that NexKit stops, which hold what passed: their
+# names, and the largest one read.
+CHECK_PARTS = "nexkit-checks-"
+PARTS_LIMIT = 20_000_000
+
+
+def passed_before_stop(gh, run_id, head):
+    """{check name: its command's fingerprint} for the checks of the run `run_id` that
+    passed on `head`, the pull request's head, as the check jobs that finished recorded
+    them in their `nexkit-checks-<group>` artifacts. Only with `parallel_checks` does a
+    check job finish before the others; the one job without it records nothing until it
+    ends. An artifact that checked another commit, or cannot be read, adds nothing."""
+    try:
+        artifacts = gh.run_artifacts(run_id)
+    except GitHubError:
+        return {}
+    passed = {}
+    for artifact in artifacts:
+        if not str(artifact.get("name") or "").startswith(CHECK_PARTS):
+            continue
+        if artifact.get("expired") or (artifact.get("size_in_bytes") or 0) > PARTS_LIMIT:
+            continue
+        try:
+            data = gh.artifact_zip(artifact["id"], PARTS_LIMIT)
+        except (GitHubError, KeyError):
+            continue
+        results, checked = _check_part(data)
+        if checked == head:
+            passed.update(passed_checks(results))
+    return dict(list(passed.items())[:MAX_PASSED])
+
+
+def _check_part(data):
+    """(results, commit checked) from a check job's artifact zip, or ([], None)."""
+    if len(data) > PARTS_LIMIT:
+        return [], None
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            files = {info.filename: info for info in archive.infolist()}
+            wanted = [files.get("checks.json"), files.get("checked.json")]
+            if not all(wanted) or any(info.file_size > 5_000_000 for info in wanted):
+                return [], None
+            results, checked = (json.loads(archive.read(info)) for info in wanted)
+    except (zipfile.BadZipFile, ValueError, OSError):
+        return [], None
+    if not isinstance(results, list) or not isinstance(checked, dict):
+        return [], None
+    return results, checked.get("head")
+
+
 def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_rounds):
     """Stop the round of `pull` that runs only its checks when the base branch moved under
     it so that they cannot lead to a merge, and start the round that can, at once:
@@ -560,6 +615,8 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
         return ""
     if not conflicting and _updates_used(comments) >= max_rounds:
         return ""
+    # Before the stop, so only check jobs that finished count.
+    passed = passed_before_stop(gh, run_id, head)
     try:
         gh.cancel_run(run_id)
     except GitHubError as exc:
@@ -575,6 +632,13 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
         f"NexKit stopped this round's checks: `{base}` moved to `{tip[:7]}`, and {why}, so "
         "they could not lead to a merge."
     )
+    if passed:
+        # The next rounds give each its commit in NEXKIT_CHECK_VERIFIED_SHA.
+        run["passed"] = passed
+        names = ", ".join(f"`{name}`" for name in passed)
+        stopped += f" Before it stopped, {names} passed on `{head[:7]}`."
+    else:
+        run.pop("passed", None)
     if conflicting:
         started = start_conflict_round(gh, number, base, workflow, ref, max_rounds, row=run)
         failed = "" if started.startswith("Started") else started or "No round started."

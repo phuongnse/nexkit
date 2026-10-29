@@ -31,7 +31,8 @@ files or repository settings, and wait for confirmation.
      anything that needs them. Each check needs a short lowercase name. A slow check that
      covers only part of the repository can skip itself when `NEXKIT_BASE_SHA` is set and
      none of its paths changed, or, in later rounds, none changed since
-     `NEXKIT_VERIFIED_SHA`, the last commit whose checks passed (see the configuration
+     `NEXKIT_CHECK_VERIFIED_SHA`, the last commit on which that check passed, or
+     `NEXKIT_VERIFIED_SHA`, the last commit whose checks all passed (see the configuration
      reference, Checks). Offer `"slow": true` for a check that takes many minutes, such
      as end-to-end tests: the agent then runs only the tests in it that its change
      touches, and NexKit runs it in full after each round. Suggest saying in CLAUDE.md or

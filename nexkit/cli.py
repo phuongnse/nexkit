@@ -396,8 +396,10 @@ def cmd_carry(args):
 def cmd_checks(args):
     from .checks import find_commits, run_checks
 
-    commits = find_commits(args.repo, _decision())
-    results = run_checks(_config(), args.repo, args.out, commits, group=args.group)
+    decision = _decision()
+    commits = find_commits(args.repo, decision)
+    heads = decision.get("check_heads")
+    results = run_checks(_config(), args.repo, args.out, commits, group=args.group, heads=heads)
     passed = all(r["passed"] for r in results)
     print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
     return 0

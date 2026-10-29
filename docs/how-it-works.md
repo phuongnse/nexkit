@@ -251,7 +251,7 @@ implement and review, only when every run in it has a count; otherwise the cell 
 | Artifact | Contains |
 |---|---|
 | `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
-| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](configuration.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, and `combine` joins them into this one. |
+| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](configuration.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, with `checked.json`, the commit it checked, and `combine` joins them into this one. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
 artifacts of the stages that ran:
@@ -851,9 +851,16 @@ automatic fix round gives back, nor `conflicts.max_rounds`, and nothing retries 
 round it starts counts against `conflicts.max_rounds` as usual; when none is left, NexKit
 leaves the round to end by itself. When the next round cannot start after all, such as
 when GitHub refuses the update, the stopped round ends as `stop_failed`, and a person
-starts the next round. Its results are lost, which is fine: under these rules its checks
-could not lead to a merge, and a failure of the pull request's own code shows again on the
-new head.
+starts the next round. Its result is not kept, which is fine: under these rules its
+checks could not lead to a merge, and a failure of the pull request's own code shows again
+on the new head. What it keeps is which checks had passed: with `parallel_checks`, before
+it cancels the run, NexKit reads the `nexkit-checks-<job>` artifact of each check job that
+finished, and the round's marker records each check that passed there on the head NexKit
+stopped, as its comment says. A job that checked another commit, or whose artifact cannot
+be read, adds nothing. Each of those checks gets that commit in the next rounds'
+`NEXKIT_CHECK_VERIFIED_SHA`, so it can skip work its paths do not need (see [Skipping work
+that a change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect));
+it still runs, and decides by itself.
 
 ### Autopilot
 
@@ -1227,12 +1234,14 @@ status (running, success, failure, paused, continued), the outcome (for example 
 issue it waits for), the agents that ran each
 stage, the reason a person is needed when one is, the resume record of a paused run, and
 after an automatic merge each started `merge.after_workflows` run. A round's marker also
-holds its commit and whether its checks passed. `nexkit status` reads these markers, not
+holds its commit, whether its checks passed, and which of them passed on that commit,
+each with a digest of its `run` command. `nexkit status` reads these markers, not
 the text people read, to list the open NexKit work and what each item waits for. NexKit
 reads a marker only from a comment by the Actions bot, and only where it ends the comment:
 text before it can quote agent output. The latest commit whose checks passed becomes the
-next round's `NEXKIT_VERIFIED_SHA` (see [Skipping work that a change cannot
-affect](configuration.md#skipping-work-that-a-change-cannot-affect)).
+next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
+with its current command becomes its `NEXKIT_CHECK_VERIFIED_SHA` (see [Skipping work that a
+change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect)).
 
 The markers are NexKit's own format and can change between releases. Read them through
 `nexkit status --json`, whose `attention` field gives the reason an item needs a person.

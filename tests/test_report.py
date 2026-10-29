@@ -14,7 +14,7 @@ from nexkit.maintain import WAIT_INPUTS
 from nexkit.progress import trigger
 from nexkit.report import criterion_status, report, review_body, workflow_file
 from nexkit.route import route
-from nexkit.state import read_state, render_run, render_state
+from nexkit.state import check_fingerprint, read_state, render_run, render_state
 from tests.support import FakeGitHub, make_config
 
 HEAD = "c" * 40
@@ -849,6 +849,20 @@ class ReportTests(ReportCase):
         )
         latest = self.gh.run_comments(6)[-1]["body"]
         self.assertIn("it changed `.github/workflows/ci.yml`", latest)
+
+    def test_the_round_records_each_check_that_passed_on_its_head(self):
+        self.candidate(review=review_result("request_changes"))
+        unit = {"name": "unit", "run": "make unit", "exit_code": 0, "passed": True, "output": ""}
+        e2e = {"name": "e2e", "run": "make e2e", "exit_code": 1, "passed": False, "output": "x"}
+        self.write("nexkit-checks", "checks.json", [unit, e2e])
+        self.run_report()
+        [row] = self.gh.run_comments(6)
+        self.assertEqual((row["run"]["head"], row["run"]["checks"]), (HEAD, "failed"))
+        self.assertEqual(row["run"]["passed"], {"unit": check_fingerprint("make unit")})
+        # A round with no check that passed records none.
+        self.write("nexkit-checks", "checks.json", [e2e])
+        self.run_report(decision("fix", pr=6, target=6, head=HEAD))
+        self.assertNotIn("passed", self.gh.run_comments(6)[-1]["run"])
 
     def test_state_names_the_run_that_holds_the_checks_result_files(self):
         self.candidate(checks_pass=False, review=review_result("request_changes"))

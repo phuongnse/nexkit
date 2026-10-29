@@ -321,11 +321,30 @@ only when its paths changed since the last green round. List those paths the sam
 - A round passes when each check exits 0, including checks that skipped work. Skip only
   what the listed paths cannot affect: a wrong skip carries into every later round.
 
-Prefer `NEXKIT_VERIFIED_SHA` and fall back to `NEXKIT_BASE_SHA`:
+Each check also gets `NEXKIT_CHECK_VERIFIED_SHA`, in its own environment only: the head of
+the latest earlier round of the pull request on which that check passed with the same
+`run` command. It counts rounds whose other checks failed, and rounds that NexKit stopped
+in their checks because the base branch moved (`superseded`, see *Stopping a round in its
+checks* under [How it works](how-it-works.md#work-without-a-command)), so after a stop or
+a failed round, a check whose paths did not change since it passed can skip its work
+while the others run again.
+
+- A round's comment records which checks passed on its head. A stopped round records the
+  checks of the check jobs that had finished when NexKit stopped it, so only with
+  [`parallel_checks`](#parallel-checks): the one job without it records its results when
+  it ends. A check that failed, or never finished, gets no commit from that round.
+- A check whose `run` changed gets no commit from rounds that ran another command.
+- It is unset, and the check's part of the job log says why, when no earlier round passed
+  that check or the checkout does not have the commit. Setup does not get it.
+- NexKit itself never skips a check: the check decides, and the round passes or fails as
+  its checks exit, exactly as without the variable.
+
+Prefer `NEXKIT_CHECK_VERIFIED_SHA`, then `NEXKIT_VERIFIED_SHA`, and fall back to
+`NEXKIT_BASE_SHA`:
 
 ```sh
 # Run the dev tooling smoke tests only when the change can affect them.
-since="${NEXKIT_VERIFIED_SHA:-${NEXKIT_BASE_SHA:-}}"
+since="${NEXKIT_CHECK_VERIFIED_SHA:-${NEXKIT_VERIFIED_SHA:-${NEXKIT_BASE_SHA:-}}}"
 changed() {
   [ -n "$since" ] || return 0  # unknown base: run everything
   files=$(git diff --name-only "$since" &&

@@ -119,6 +119,9 @@ def start(gh, decision):
             for context in STATUS_CONTEXTS:
                 gh.set_status(decision["head"], context, "pending", description, run_url())
             comment_id, row = find_round(comments, decision)
+            if row.get("head") != decision["head"]:
+                # What passed on another commit is no record of this one.
+                row.pop("passed", None)
             row.update(
                 status=RUNNING, head=decision["head"], checks=None, verdict=None, tokens=None
             )

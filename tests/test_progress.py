@@ -170,6 +170,17 @@ class ProgressTests(unittest.TestCase):
         progress.start(self.gh, decision("plan"))
         self.assertEqual(len(self.gh.run_comments(5)), 1)
 
+    def test_a_rerun_on_another_commit_drops_the_checks_that_passed_before(self):
+        progress.start(self.gh, decision("fix"))
+        [comment] = self.gh.run_comments(6)
+        passed = {"test": "0123456789abcdef"}
+        self.gh.update_comment(comment["id"], render_run({**comment["run"], "passed": passed}))
+        # The same round run again on its commit keeps them; on another commit it does not.
+        progress.start(self.gh, decision("fix"))
+        self.assertEqual(self.gh.run_comments(6)[0]["run"]["passed"], passed)
+        progress.start(self.gh, decision("fix", head=NEW_HEAD))
+        self.assertNotIn("passed", self.gh.run_comments(6)[0]["run"])
+
     def test_pull_request_round_is_shown_while_running(self):
         d = decision("fix")
         progress.start(self.gh, d)

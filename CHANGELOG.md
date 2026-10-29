@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.7.0
+
+A check that a change cannot affect no longer waits for a runner. When `main` moves and
+NexKit brings waiting pull requests up to date, a check whose paths did not change since
+it passed counts as passed without a job of its own.
+
+- A check can list the paths it never reads in `unaffected_by`, as globs: `*` stays in a
+  folder, `**` crosses folders, and a `!` pattern takes paths back out, the last pattern
+  that matches deciding (#187). In an automatic `/nexkit review`, such as the one after
+  NexKit updated a branch from its base, `route` compares the round's commit with the
+  latest commit on which the check passed with the same `run` and `setup`; when GitHub
+  lists every changed path, and the list names them all, the check is skipped. Its job
+  leaves the check matrix (with `parallel_checks`, a job of several checks only when all
+  are skipped), and when every check is skipped no `verify` job runs; the review still
+  does. The skipped check counts as passed, is recorded on the new commit, and the
+  round's comment, the run summary and a notice name it with the commit it was compared
+  with. At any doubt the check runs in full: a person's `/nexkit review`, implement and
+  fix rounds, a check without such a commit (also in its first round after this
+  upgrade), a commit that does not descend from it, and a comparison of 300 files or
+  more. `nexkit init --check-unaffected NAME=GLOB` writes the list, and `nexkit doctor`
+  rejects a pattern that is not a valid glob. See [Checks that a change cannot
+  affect](docs/configuration.md#checks-that-a-change-cannot-affect).
+
 ## 5.6.0
 
 Two ways to spend less runner time when many pull requests merge one after another:

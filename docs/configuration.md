@@ -325,6 +325,8 @@ only when its paths changed since the last green round. List those paths the sam
   changes, so a check stays on the safe side.
 - A round passes when each check exits 0, including checks that skipped work. Skip only
   what the listed paths cannot affect: a wrong skip carries into every later round.
+- That round may not have run a check added since, or may have run it with another `run`
+  command, so a check compares with its own `NEXKIT_CHECK_VERIFIED_SHA` (below) instead.
 
 Each check also gets `NEXKIT_CHECK_VERIFIED_SHA`, in its own environment only: the head of
 the latest earlier round of the pull request on which that check passed with the same
@@ -345,12 +347,14 @@ while the others run again.
   exactly as without the variable. NexKit itself skips a check only by its
   [`unaffected_by`](#checks-that-a-change-cannot-affect).
 
-Prefer `NEXKIT_CHECK_VERIFIED_SHA`, then `NEXKIT_VERIFIED_SHA`, and fall back to
-`NEXKIT_BASE_SHA`:
+Prefer `NEXKIT_CHECK_VERIFIED_SHA`, and fall back to `NEXKIT_BASE_SHA`. Never fall back to
+`NEXKIT_VERIFIED_SHA`: when the check's own variable is unset because its `run` changed or
+the check is new, the last round whose checks all passed never ran this command, and a
+check that compared with it would skip work that never passed.
 
 ```sh
 # Run the dev tooling smoke tests only when the change can affect them.
-since="${NEXKIT_CHECK_VERIFIED_SHA:-${NEXKIT_VERIFIED_SHA:-${NEXKIT_BASE_SHA:-}}}"
+since="${NEXKIT_CHECK_VERIFIED_SHA:-${NEXKIT_BASE_SHA:-}}"
 changed() {
   [ -n "$since" ] || return 0  # unknown base: run everything
   files=$(git diff --name-only "$since" &&

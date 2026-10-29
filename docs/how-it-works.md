@@ -251,7 +251,7 @@ implement and review, only when every run in it has a count; otherwise the cell 
 | Artifact | Contains |
 |---|---|
 | `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
-| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](configuration.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, and `combine` joins them into this one. |
+| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](configuration.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, with `checked.json`, the commit it checked, and `combine` joins them into this one. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
 artifacts of the stages that ran:
@@ -531,7 +531,7 @@ checks passed, merge the base branch only on a conflict, so they never bring in 
 changes that nobody asked for.
 
 **Failing checks the default branch has.** While autopilot's `bug` issue for a workflow
-of `merge.after_workflows` is open (see [Autopilot](#autopilot)), every pull request
+of `merge.after_workflows` or `autopilot.watch_workflows` is open (see [Autopilot](#autopilot)), every pull request
 branched from the default branch holds that failure, and a fix round on each would fix it
 again in its own way, or change nothing. So a pull request into the default branch whose
 issue is in autopilot's scope gets no automatic fix round when its failing checks are the
@@ -851,9 +851,16 @@ automatic fix round gives back, nor `conflicts.max_rounds`, and nothing retries 
 round it starts counts against `conflicts.max_rounds` as usual; when none is left, NexKit
 leaves the round to end by itself. When the next round cannot start after all, such as
 when GitHub refuses the update, the stopped round ends as `stop_failed`, and a person
-starts the next round. Its results are lost, which is fine: under these rules its checks
-could not lead to a merge, and a failure of the pull request's own code shows again on the
-new head.
+starts the next round. Its result is not kept, which is fine: under these rules its
+checks could not lead to a merge, and a failure of the pull request's own code shows again
+on the new head. What it keeps is which checks had passed: with `parallel_checks`, before
+it cancels the run, NexKit reads the `nexkit-checks-<job>` artifact of each check job that
+finished, and the round's marker records each check that passed there on the head NexKit
+stopped, as its comment says. A job that checked another commit, or whose artifact cannot
+be read, adds nothing. Each of those checks gets that commit in the next rounds'
+`NEXKIT_CHECK_VERIFIED_SHA`, so it can skip work its paths do not need (see [Skipping work
+that a change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect));
+it still runs, and decides by itself.
 
 ### Autopilot
 
@@ -902,9 +909,10 @@ the `null` scope, since it may have replaced a sweep that waited.
   that opens or is reopened. An issue that gets a milestone, and a closed milestone: for
   the milestone scope, the issue comes into scope, or the next milestone becomes the
   scope.
-  A finished run on the default branch of a workflow in `merge.after_workflows`, through
-  a `workflow_run` trigger, and through the job that ends such a workflow and dispatches
-  a sweep that waits for its run to end. The hourly schedule, which
+  A finished run on the default branch of a workflow in `merge.after_workflows` or
+  `autopilot.watch_workflows`, through a `workflow_run` trigger, and for the first,
+  through the job that ends such a workflow and dispatches a sweep that waits for its run
+  to end. The hourly schedule, which
   catches anything the others missed. Nothing waits in a loop: with nothing to start, a
   sweep ends.
 - **Done notices.** Every sweep looks at each open milestone in scope: the current one
@@ -1001,7 +1009,8 @@ the `null` scope, since it may have replaced a sweep that waited.
   that is too large or a time-out, and waits for a person. The limit is fixed, not a
   setting. `nexkit status` shows each of these reasons.
 - **CI on the default branch.** Each sweep looks at the completed runs, on the default
-  branch, of each workflow in `merge.after_workflows`, and at every attempt of each: the
+  branch, of each workflow in `merge.after_workflows` and `autopilot.watch_workflows`,
+  whatever started them, and at every attempt of each: the
   latest run, the runs of the last day and the runs a bug issue reports, among the newest
   100. Runs of pull requests do not count, nor runs from a fork, whose head branch can
   have the same name. When the latest run failed in its first attempt, its failed jobs run
@@ -1057,7 +1066,8 @@ the `null` scope, since it may have replaced a sweep that waited.
   workflow is open. GitHub sends no `workflow_run` event for runs that the Actions token
   started, such as those NexKit starts after its merge, but the Actions token may
   dispatch a workflow: each workflow of `merge.after_workflows` ends with a job that
-  dispatches a sweep naming its run, whatever its other jobs concluded (see [When a
+  dispatches a sweep naming its run (one of `autopilot.watch_workflows`, which NexKit
+  never starts, needs none), whatever its other jobs concluded (see [When a
   finished run is noticed](configuration.md#autopilot)). Without it, the end of the next
   NexKit run checks the newest finished run of each workflow the same way, also a run
   that started the next round itself; the hourly schedule catches the rest.
@@ -1224,12 +1234,14 @@ status (running, success, failure, paused, continued), the outcome (for example 
 issue it waits for), the agents that ran each
 stage, the reason a person is needed when one is, the resume record of a paused run, and
 after an automatic merge each started `merge.after_workflows` run. A round's marker also
-holds its commit and whether its checks passed. `nexkit status` reads these markers, not
+holds its commit, whether its checks passed, and which of them passed on that commit,
+each with a digest of its `run` command. `nexkit status` reads these markers, not
 the text people read, to list the open NexKit work and what each item waits for. NexKit
 reads a marker only from a comment by the Actions bot, and only where it ends the comment:
 text before it can quote agent output. The latest commit whose checks passed becomes the
-next round's `NEXKIT_VERIFIED_SHA` (see [Skipping work that a change cannot
-affect](configuration.md#skipping-work-that-a-change-cannot-affect)).
+next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
+with its current command becomes its `NEXKIT_CHECK_VERIFIED_SHA` (see [Skipping work that a
+change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect)).
 
 The markers are NexKit's own format and can change between releases. Read them through
 `nexkit status --json`, whose `attention` field gives the reason an item needs a person.

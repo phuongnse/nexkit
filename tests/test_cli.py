@@ -426,6 +426,64 @@ class InitDoctorTests(unittest.TestCase):
         ):
             self.assertIn((True, ok), findings)
 
+    def test_init_and_doctor_with_workflows_that_autopilot_only_watches(self):
+        workflows = self.root / ".github/workflows"
+        workflows.mkdir(parents=True)
+        nightly = (
+            "name: Nightly\non:\n  schedule:\n    - cron: '0 3 * * *'\njobs:\n"
+            "  test:\n    runs-on: x\n"
+        )
+        (workflows / "nightly.yml").write_text(nightly)
+        (workflows / "codeql.yml").write_text("on: [workflow_call]\njobs: {}\n")
+        out = io.StringIO()
+        args = ["init", "--repo", str(self.root), "--check", "test=true"]
+        with contextlib.redirect_stdout(out):
+            cli.main([*args, "--watch-workflow", "nightly.yml", "--watch-workflow", "codeql.yml"])
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(cfg["autopilot"], {"watch_workflows": ["nightly.yml", "codeql.yml"]})
+        self.assertNotIn("after_workflows", cfg["merge"])
+        workflow = (workflows / "nexkit.yml").read_text()
+        found = scaffold.trigger(workflow, "workflow_run")
+        self.assertIn('workflows: ["Nightly", ".github/workflows/codeql.yml"]', found)
+        # NexKit starts none of them, so they need no job that starts a sweep.
+        self.assertNotIn("add this job", out.getvalue())
+        cfg["autopilot"]["enabled"] = True
+        (self.root / ".nexkit/config.json").write_text(json.dumps(cfg))
+        findings = scaffold.doctor(self.root)
+        self.assertIn(
+            (True, "autopilot.watch_workflows: autopilot watches the runs of nightly.yml"), findings
+        )
+        self.assertIn(
+            (
+                False,
+                "autopilot.watch_workflows: codeql.yml has no schedule, push or "
+                "workflow_dispatch trigger, so nothing runs it on the default branch for "
+                "autopilot to watch",
+            ),
+            findings,
+        )
+        self.assertIn(
+            (
+                True,
+                "Finished runs of autopilot.watch_workflows on the default branch start sweeps",
+            ),
+            findings,
+        )
+        self.assertFalse(any("sweep when" in m or "started after" in m for _, m in findings))
+        # Listed in merge.after_workflows too, both name the trigger.
+        cfg["merge"]["after_workflows"] = ["ci.yml"]
+        (workflows / "ci.yml").write_text("name: CI\non: [workflow_dispatch]\n")
+        (self.root / ".nexkit/config.json").write_text(json.dumps(cfg))
+        failed = [m for ok, m in scaffold.doctor(self.root) if not ok and "workflow_run" in m]
+        self.assertIn(
+            "does not name 'CI' of merge.after_workflows and autopilot.watch_workflows", failed[0]
+        )
+        (workflows / "codeql.yml").unlink()
+        self.assertIn(
+            (False, "autopilot.watch_workflows: .github/workflows/codeql.yml does not exist"),
+            scaffold.doctor(self.root),
+        )
+
     def test_init_listens_to_pushes_to_the_default_branch(self):
         git(self.root, "init", "-q", "-b", "trunk")
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])

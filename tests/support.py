@@ -171,9 +171,10 @@ class FakeGitHub:
         }
         return self.issues[number]
 
-    def round_comment(self, number, round, head, checks, text=""):
+    def round_comment(self, number, round, head, checks, text="", **fields):
         """A NexKit round comment, as `report` leaves it."""
         run = {
+            **fields,
             "round": round,
             "trigger": "fix",
             "status": "success",

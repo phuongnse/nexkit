@@ -200,11 +200,13 @@ The same applies to a merge by NexKit with `merge.auto`: the push to the base br
 starts no `push` CI, whichever token published the pull request. List those workflows in
 `merge.after_workflows` and give each a `workflow_dispatch` trigger; NexKit then starts
 them on the base branch after it merges (see
-[Automatic merge](configuration.md#automatic-merge)).
+[Automatic merge](configuration.md#automatic-merge)). To have autopilot watch a workflow
+that runs on a schedule instead, without NexKit starting it, list it in
+`autopilot.watch_workflows` (see [Autopilot](configuration.md#autopilot)).
 
 **A pull request waits for a bug issue and starts no fix round.** Its checks fail only in
 commands that also fail on the default branch, in a workflow of `merge.after_workflows`
-whose `bug` issue autopilot opened (outcome `ci_waiting`, state `waiting` in
+or `autopilot.watch_workflows` whose `bug` issue autopilot opened (outcome `ci_waiting`, state `waiting` in
 `nexkit status`), and only in tests that fail there too, or, where neither side names
 failing tests, in none. Fixing that issue fixes the pull request too, so NexKit waits
 instead of fixing the same failure in every pull request. The wait ends by itself once the

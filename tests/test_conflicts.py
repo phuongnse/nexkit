@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import unittest
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
@@ -15,7 +16,14 @@ from nexkit import agent, cli
 from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
 from nexkit.route import route
-from nexkit.state import BOT_LOGIN, approved_head, read_state, render_run, render_state
+from nexkit.state import (
+    BOT_LOGIN,
+    approved_head,
+    check_fingerprint,
+    read_state,
+    render_run,
+    render_state,
+)
 from nexkit.usage import iso
 from tests.support import CALC, SUB, FakeGitHub, GitRepos, git, make_config
 from tests.test_report import HEAD, ReportCase, decision
@@ -281,6 +289,63 @@ class SupersededTests(unittest.TestCase):
         # Once: the next look finds no round in its checks.
         self.assertEqual(self.sweep(), [])
         self.assertEqual(len(rounds_started(self.gh)), 1)
+
+    def part(self, artifact_id, name, results, head=CHECKED, run_id=50):
+        """A check job's artifact of run `run_id`: its results and the commit it checked."""
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, "w") as archive:
+            archive.writestr("checks.json", json.dumps(results))
+            if head is not None:
+                archive.writestr("checked.json", json.dumps({"head": head}))
+            archive.writestr("results/e2e/log.txt", "...")
+        self.gh.zips[artifact_id] = data.getvalue()
+        artifacts = self.gh.run_artifact_list.setdefault(run_id, [])
+        artifacts.append({"id": artifact_id, "name": name, "size_in_bytes": len(data.getvalue())})
+
+    def test_a_stopped_round_records_the_checks_that_passed_on_its_head(self):
+        def result(name, passed):
+            return {"name": name, "run": f"make {name}", "passed": passed, "output": ""}
+
+        # The finished job of group `unit`: `unit` passed, `types` failed.
+        self.part(1, "nexkit-checks-unit", [result("unit", True), result("types", False)])
+        # A job of the same run that checked another commit, one without the commit it
+        # checked, and the round's joined results, which no stopped round has.
+        self.part(2, "nexkit-checks-lint", [result("lint", True)], head="b" * 40)
+        self.part(3, "nexkit-checks-docs", [result("docs", True)], head=None)
+        self.part(4, "nexkit-checks", [result("e2e", True)])
+        self.behind()
+        [line] = self.sweep()
+        self.assertIn("Before it stopped, `unit` passed on `ddddddd`.", line)
+        run = self.latest()["run"]
+        self.assertEqual(
+            (run["outcome"], run["head"], run["checks"]), ("superseded", CHECKED, "not run")
+        )
+        self.assertEqual(run["passed"], {"unit": check_fingerprint("make unit")})
+        # The next round of the pull request gets it.
+        self.gh.pulls[6]["head"]["sha"] = "f" * 40
+        event = {"sender": {"login": "x"}}
+        inputs = {"command": "review", "number": "6", "auto": "true"}
+        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        self.assertEqual(
+            decision["check_heads"], {"unit": {check_fingerprint("make unit"): CHECKED}}
+        )
+
+    def test_a_stopped_round_without_finished_check_jobs_records_none(self):
+        self.gh.run_artifact_list[50] = [{"id": 9, "name": "nexkit-checks-unit"}]
+        self.gh.zips[9] = b"not a zip"
+        self.behind()
+        [line] = self.sweep()
+        self.assertNotIn("Before it stopped", line)
+        self.assertNotIn("passed", self.latest()["run"])
+        self.assertNotIn(
+            "check_heads",
+            route(
+                self.gh,
+                "workflow_dispatch",
+                {"sender": {"login": "x"}},
+                {"command": "review", "number": "6", "auto": "true"},
+            ),
+        )
 
     def test_a_round_checking_a_head_that_now_conflicts_starts_the_conflict_round(self):
         self.gh.pulls[6]["mergeable"] = False

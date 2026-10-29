@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import checks
+from nexkit.state import check_fingerprint
 from tests.support import GitRepos, git, make_config
 
 
@@ -545,6 +546,71 @@ class VerifiedCommitTests(CommitCase):
             unknown = checks.run_checks(cfg, repo, commits={checks.VERIFIED_SHA: None})
         self.assertEqual([r["output"].split() for r in known], [[self.fork, self.fork]] * 2)
         self.assertEqual([r["output"].split() for r in unknown], [["unset", "unset"]] * 2)
+
+
+class CheckVerifiedCommitTests(CommitCase):
+    """NEXKIT_CHECK_VERIFIED_SHA: the last commit of the pull request on which one check
+    passed with its command."""
+
+    def test_each_check_sees_its_own_commit_and_the_log_says_why_one_has_none(self):
+        repo = self.repos.clone("checks")
+        git(repo, "checkout", "-q", "nexkit/issue-5")
+        seen = 'echo "${NEXKIT_CHECK_VERIFIED_SHA-unset}"'
+        cfg = make_config(
+            setup=[f"{seen} > setup.txt"],
+            checks=[
+                {"name": "unit", "run": f"cat setup.txt; {seen}"},
+                {"name": "e2e", "run": f"cat setup.txt; {seen} # e2e"},
+                {"name": "lint", "run": f"cat setup.txt; {seen} # lint"},
+                {"name": "docs", "run": f"cat setup.txt; {seen} # docs"},
+            ],
+        )
+        heads = {
+            "unit": {check_fingerprint(cfg["checks"][0]["run"]): self.fork},
+            # Passed with another command: no commit for this one.
+            "e2e": {check_fingerprint("make e2e"): self.fork},
+            # The checkout does not have it.
+            "lint": {check_fingerprint(cfg["checks"][2]["run"]): "f" * 40},
+        }
+        out = Path(repo) / "out"
+        with mock.patch.dict(os.environ, {"NEXKIT_CHECK_VERIFIED_SHA": "stale"}):
+            results, log = self.quietly(
+                lambda: checks.run_checks(cfg, repo, out_dir=out, heads=heads)
+            )
+        self.assertEqual(
+            [r["output"].split() for r in results],
+            [["unset", self.fork], ["unset", "unset"], ["unset", "unset"], ["unset", "unset"]],
+        )
+        self.assertIn(f"NEXKIT_CHECK_VERIFIED_SHA={self.fork} for `unit`", log)
+        self.assertIn(
+            "NEXKIT_CHECK_VERIFIED_SHA is not set for `e2e`: no earlier round of this pull "
+            "request passed it with this command, so it should run in full.",
+            log,
+        )
+        self.assertIn(
+            "NEXKIT_CHECK_VERIFIED_SHA is not set for `lint`: the checkout does not have "
+            "fffffff, the last commit on which it passed",
+            log,
+        )
+        self.assertIn("NEXKIT_CHECK_VERIFIED_SHA is not set for `docs`: no earlier round", log)
+        # The job records the commit it checked, for a round that NexKit stops.
+        head = git(repo, "rev-parse", "HEAD")
+        self.assertEqual(json.loads((out / checks.CHECKED_FILE).read_text()), {"head": head})
+
+    def test_a_check_that_skips_work_still_passes(self):
+        repo = self.repos.clone("checks")
+        git(repo, "checkout", "-q", "nexkit/issue-5")
+        skip = (
+            'since="${NEXKIT_CHECK_VERIFIED_SHA:-}"; '
+            '[ -n "$since" ] && ! git diff --name-only "$since" | grep -q "^b/" '
+            "&& { echo skipped; exit 0; }; echo ran; exit 1"
+        )
+        cfg = make_config(checks=[{"name": "b", "run": skip}])
+        heads = {"b": {check_fingerprint(skip): self.fork}}
+        [result], _ = self.quietly(lambda: checks.run_checks(cfg, repo, heads=heads))
+        self.assertEqual((result["passed"], result["output"].strip()), (True, "skipped"))
+        [result], _ = self.quietly(lambda: checks.run_checks(cfg, repo))
+        self.assertEqual((result["passed"], result["output"].strip()), (False, "ran"))
 
 
 class SetupTimeoutTests(unittest.TestCase):

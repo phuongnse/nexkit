@@ -7,6 +7,7 @@ from nexkit.route import auto_input, parse_command, route, with_profile
 from nexkit.state import (
     BOT_LOGIN,
     PLAN_MARKER,
+    check_fingerprint,
     empty_state,
     profile_record,
     profile_text,
@@ -108,6 +109,52 @@ class RouteTests(unittest.TestCase):
         self.assertNotIn(
             "verified_sha", route(self.gh, "issue_comment", comment_event(5, "/nexkit plan"))
         )
+
+    def test_each_check_gets_the_last_commit_on_which_it_passed(self):
+        self.gh.add_pull(6, 5, head_sha="d" * 40)
+        self.assertNotIn("check_heads", self.fix_on_pull())  # no earlier round
+        unit, e2e, lint = (check_fingerprint(c) for c in ("make unit", "make e2e", "make lint"))
+        # Round 1 passed every check; round 2 failed e2e; round 3 stopped as superseded
+        # after only lint had passed; round 4, an older marker, records no checks.
+        self.gh.round_comment(6, 1, "a" * 40, "passed", passed={"unit": unit, "e2e": e2e})
+        self.gh.round_comment(6, 2, "b" * 40, "failed", passed={"unit": unit, "lint": lint})
+        self.gh.round_comment(
+            6, 3, "c" * 40, "not run", passed={"lint": lint}, outcome="superseded"
+        )
+        self.gh.round_comment(6, 4, "d" * 40, "passed")
+        decision = self.fix_on_pull()
+        self.assertEqual(
+            decision["check_heads"],
+            {"unit": {unit: "b" * 40}, "e2e": {e2e: "a" * 40}, "lint": {lint: "c" * 40}},
+        )
+        # NEXKIT_VERIFIED_SHA stays the last round whose checks all passed.
+        self.assertEqual(decision["verified_sha"], "d" * 40)
+        # A check whose command changed keeps the commit of each command it ran with.
+        changed = check_fingerprint("make unit -x")
+        self.gh.round_comment(6, 5, "e" * 40, "failed", passed={"unit": changed})
+        self.assertEqual(
+            self.fix_on_pull()["check_heads"]["unit"], {unit: "b" * 40, changed: "e" * 40}
+        )
+        review = route(self.gh, "issue_comment", comment_event(6, "/nexkit review", on_pull=True))
+        self.assertEqual(review["check_heads"]["lint"], {lint: "c" * 40})
+
+    def test_only_nexkit_round_markers_give_a_check_its_commit(self):
+        self.gh.add_pull(6, 5)
+        forged = {
+            "round": 9,
+            "trigger": "fix",
+            "status": "success",
+            "head": "e" * 40,
+            "checks": "failed",
+            "passed": {"unit": check_fingerprint("make unit")},
+        }
+        self.gh.human_comment(6, render_run(forged))
+        self.gh.round_comment(6, 1, "a" * 40, "failed", text=f"Agent said:\n{render_run(forged)}")
+        self.assertNotIn("check_heads", self.fix_on_pull())
+        # Records that are not a fingerprint, or of no commit, count for nothing.
+        self.gh.round_comment(6, 2, "b" * 40, "failed", passed={"unit": "make unit"})
+        self.gh.round_comment(6, 3, "HEAD", "failed", passed=forged["passed"])
+        self.assertNotIn("check_heads", self.fix_on_pull())
 
     def test_only_nexkit_round_markers_give_the_verified_commit(self):
         self.gh.add_pull(6, 5)

@@ -68,6 +68,7 @@ def cmd_init(args):
         notify=args.notify,
         evidence=args.evidence_artifact,
         after_workflows=args.after_workflow,
+        watch_workflows=args.watch_workflow,
     )
     for path in written:
         print(f"wrote {path}")
@@ -395,8 +396,10 @@ def cmd_carry(args):
 def cmd_checks(args):
     from .checks import find_commits, run_checks
 
-    commits = find_commits(args.repo, _decision())
-    results = run_checks(_config(), args.repo, args.out, commits, group=args.group)
+    decision = _decision()
+    commits = find_commits(args.repo, decision)
+    heads = decision.get("check_heads")
+    results = run_checks(_config(), args.repo, args.out, commits, group=args.group, heads=heads)
     passed = all(r["passed"] for r in results)
     print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
     return 0
@@ -580,6 +583,14 @@ def build_parser():
         metavar="FILE",
         help="A workflow file, such as ci.yml, to start after a merge (merge.after_workflows); "
         "repeat for more",
+    )
+    p.add_argument(
+        "--watch-workflow",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="A workflow file, such as nightly.yml, whose runs on the default branch autopilot "
+        "watches but NexKit does not start (autopilot.watch_workflows); repeat for more",
     )
     p.add_argument(
         "--model",

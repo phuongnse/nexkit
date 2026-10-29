@@ -18,7 +18,8 @@ WORKFLOW_PATH = ".github/workflows/nexkit.yml"
 
 
 # What the template holds in place of the `workflow_run` trigger, and what replaces it when
-# `nexkit init` knows the names of the workflows in merge.after_workflows.
+# `nexkit init` knows the names of the workflows that sweeps watch (merge.after_workflows,
+# autopilot.watch_workflows).
 WORKFLOW_RUN_COMMENT = (
     "  # workflow_run:\n"
     "  #   workflows: [CI]\n"
@@ -142,6 +143,7 @@ def init(
     notify=(),
     evidence=(),
     after_workflows=(),
+    watch_workflows=(),
 ):
     root = Path(root)
     config_path = root / configuration.CONFIG_PATH
@@ -175,11 +177,17 @@ def init(
     after_workflows = list(dict.fromkeys(after_workflows))
     if after_workflows:
         raw["merge"]["after_workflows"] = after_workflows
+    watch_workflows = list(dict.fromkeys(watch_workflows))
+    if watch_workflows:
+        raw["autopilot"] = {"watch_workflows": watch_workflows}
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")
     workflow_path.parent.mkdir(parents=True, exist_ok=True)
-    names = [workflow_name(root, name) or f".github/workflows/{name}" for name in after_workflows]
+    names = [
+        workflow_name(root, name) or f".github/workflows/{name}"
+        for name in [*after_workflows, *watch_workflows]
+    ]
     workflow_path.write_text(
         workflow_text(kit_repo, kit_ref or f"v{__version__}", default_branch_of(root), names)
     )
@@ -223,6 +231,22 @@ def _after_merge_workflow(root, name):
             "so NexKit cannot start it after a merge",
         )
     return (True, f"merge.after_workflows: {name} can be started after a merge")
+
+
+def _watched_workflow(root, name):
+    """Whether something runs a workflow of autopilot.watch_workflows on the default
+    branch: a schedule, a push, or a person's dispatch."""
+    path = root / ".github/workflows" / name
+    if not path.is_file():
+        return (False, f"autopilot.watch_workflows: {path.relative_to(root)} does not exist")
+    text = _uncommented(path.read_text(errors="replace"))
+    if not re.search(r"\b(?:schedule|push|workflow_dispatch)\b", text):
+        return (
+            False,
+            f"autopilot.watch_workflows: {name} has no schedule, push or workflow_dispatch "
+            "trigger, so nothing runs it on the default branch for autopilot to watch",
+        )
+    return (True, f"autopilot.watch_workflows: autopilot watches the runs of {name}")
 
 
 def workflow_name(root, name):
@@ -318,10 +342,11 @@ def _sweep_job(root, name):
 
 
 def _ci_trigger(root, cfg, workflow):
-    """A finding: with autopilot, a finished run of each workflow in merge.after_workflows
-    starts a sweep at once, through a `workflow_run` trigger that names it, which the
-    'nexkit' job lets through."""
-    names = [n for n in (workflow_name(root, f) for f in cfg["merge"]["after_workflows"]) if n]
+    """A finding: with autopilot, a finished run of each workflow that sweeps watch
+    (merge.after_workflows, autopilot.watch_workflows) starts a sweep at once, through a
+    `workflow_run` trigger that names it, which the 'nexkit' job lets through."""
+    watched = configuration.watched_workflows(cfg)
+    names = [n for n in (workflow_name(root, f) for f in watched) if n]
     if not names:
         return []
     found = trigger(workflow, "workflow_run")
@@ -340,7 +365,7 @@ def _ci_trigger(root, cfg, workflow):
             (
                 False,
                 f"autopilot is on, but the 'workflow_run' trigger in {WORKFLOW_PATH} does not "
-                f"name {listed} of merge.after_workflows, {later}; add it as "
+                f"name {listed} of {_watched_settings(cfg)}, {later}; add it as "
                 "docs/configuration.md#autopilot shows",
             )
         ]
@@ -362,7 +387,24 @@ def _ci_trigger(root, cfg, workflow):
                 f"through its 'if', {later}; add \"workflow_run\" as 'nexkit init' writes it",
             )
         ]
-    return [(True, "Finished runs of merge.after_workflows on the default branch start sweeps")]
+    return [
+        (
+            True,
+            f"Finished runs of {_watched_settings(cfg)} on the default branch start sweeps",
+        )
+    ]
+
+
+def _watched_settings(cfg):
+    """The settings that list the workflows that sweeps watch, as findings name them."""
+    return " and ".join(
+        key
+        for key, value in (
+            ("merge.after_workflows", cfg["merge"]["after_workflows"]),
+            ("autopilot.watch_workflows", cfg["autopilot"]["watch_workflows"]),
+        )
+        if value
+    )
 
 
 def pipeline_ref(workflow):
@@ -673,6 +715,7 @@ def doctor(root):
         if not cfg["checks"]:
             findings.append((False, "No checks configured; NexKit cannot verify changes"))
         findings += [_after_merge_workflow(root, name) for name in cfg["merge"]["after_workflows"]]
+        findings += [_watched_workflow(root, n) for n in cfg["autopilot"]["watch_workflows"]]
         findings += _unattended_push(cfg)
         findings += _unheard(cfg)
     except configuration.ConfigError as exc:

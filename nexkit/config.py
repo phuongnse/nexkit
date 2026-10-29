@@ -51,6 +51,9 @@ DEFAULTS = {
         # A command autopilot started with no run and no run comment after this long
         # starts once more.
         "lost_after_minutes": 30,
+        # Workflows whose runs on the default branch sweeps watch, as they watch
+        # `merge.after_workflows`, but which NexKit does not start after its merges.
+        "watch_workflows": [],
     },
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -424,6 +427,35 @@ def _autopilot(settings):
     _positive_int(settings["lost_after_minutes"], "autopilot.lost_after_minutes", 1440, minimum=5)
 
 
+def _workflow_files(workflows, where):
+    if not isinstance(workflows, list) or not all(
+        isinstance(w, str) and WORKFLOW_FILE.match(w) for w in workflows
+    ):
+        _fail(f"{where} must be a list of workflow file names such as 'ci.yml'")
+    if len(set(workflows)) != len(workflows):
+        _fail(f"{where} lists a workflow twice")
+
+
+def _watch_workflows(cfg):
+    """`autopilot.watch_workflows`: workflow files that no other setting lists."""
+    watched = cfg["autopilot"]["watch_workflows"]
+    _workflow_files(watched, "autopilot.watch_workflows")
+    both = [name for name in watched if name in cfg["merge"]["after_workflows"]]
+    if both:
+        _fail(
+            f"autopilot.watch_workflows lists {', '.join(both)}, which merge.after_workflows "
+            "lists too; sweeps watch the workflows of merge.after_workflows already, so list "
+            "each in one of them"
+        )
+
+
+def watched_workflows(cfg):
+    """The workflows whose runs on the default branch autopilot's sweeps watch: those of
+    `merge.after_workflows`, which NexKit starts after its merges, then those of
+    `autopilot.watch_workflows`, which something else starts."""
+    return [*cfg["merge"]["after_workflows"], *cfg["autopilot"]["watch_workflows"]]
+
+
 def validate(raw, *, layered=False):
     """Return a complete configuration with defaults applied, or raise ConfigError.
 
@@ -524,13 +556,7 @@ def validate(raw, *, layered=False):
 
     _positive_int(cfg["fix"]["max_auto_rounds"], "fix.max_auto_rounds", 10, minimum=0)
     _bool(cfg["merge"]["auto"], "merge.auto")
-    workflows = cfg["merge"]["after_workflows"]
-    if not isinstance(workflows, list) or not all(
-        isinstance(w, str) and WORKFLOW_FILE.match(w) for w in workflows
-    ):
-        _fail("merge.after_workflows must be a list of workflow file names such as 'ci.yml'")
-    if len(set(workflows)) != len(workflows):
-        _fail("merge.after_workflows lists a workflow twice")
+    _workflow_files(cfg["merge"]["after_workflows"], "merge.after_workflows")
     _bool(cfg["conflicts"]["auto_resolve"], "conflicts.auto_resolve")
     _positive_int(cfg["conflicts"]["max_rounds"], "conflicts.max_rounds", 10)
     _bool(cfg["usage_limit"]["resume"], "usage_limit.resume")
@@ -540,6 +566,7 @@ def validate(raw, *, layered=False):
     )
     _bool(cfg["close_parent_issues"], "close_parent_issues")
     _autopilot(cfg["autopilot"])
+    _watch_workflows(cfg)
     _positive_int(cfg["limits"]["setup_timeout_minutes"], "limits.setup_timeout_minutes", 120)
     _positive_int(cfg["limits"]["max_patch_mb"], "limits.max_patch_mb", 50)
     people = cfg["notify"]

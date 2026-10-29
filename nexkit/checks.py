@@ -17,10 +17,16 @@ from .gitutil import GitError, git, has_commit
 from .redact import Redactor
 from .runlog import fence, one_line, write_summary
 from .runtimes import NAMES_VAR, secret_names
+from .state import COMMIT, check_fingerprint
 
 OUTPUT_TAIL = 12_000
 BASE_SHA = "NEXKIT_BASE_SHA"
 VERIFIED_SHA = "NEXKIT_VERIFIED_SHA"
+# Set in each check's own environment: the last commit on which that check passed.
+CHECK_VERIFIED_SHA = "NEXKIT_CHECK_VERIFIED_SHA"
+# The commit that a `verify` job checked, next to its `checks.json`, so a round that NexKit
+# stops in its checks records only checks that passed on the pull request's head.
+CHECKED_FILE = "checked.json"
 # The files that failing checks name in `results` go into the round's `nexkit-checks`
 # artifact under `results/<check>/`, at most this many bytes per round.
 RESULTS_DIR = "results"
@@ -59,7 +65,7 @@ def environment(commits=None):
     """The environment for repository commands: without any agent credential, and with
     NEXKIT_BASE_SHA and NEXKIT_VERIFIED_SHA only when they are known. `commits` maps
     those names to commits, or to None."""
-    drop = {BASE_SHA, VERIFIED_SHA, NAMES_VAR, *secret_names()}
+    drop = {BASE_SHA, VERIFIED_SHA, CHECK_VERIFIED_SHA, NAMES_VAR, *secret_names()}
     env = {k: v for k, v in os.environ.items() if k not in drop}
     env.update({name: sha for name, sha in (commits or {}).items() if sha})
     return env
@@ -110,6 +116,31 @@ def find_commits(repo, decision):
         BASE_SHA: find_base(repo, decision["base"]),
         VERIFIED_SHA: known_verified(repo, decision.get("verified_sha")),
     }
+
+
+def check_commit(repo, check, heads):
+    """The last commit of the pull request on which `check` passed with its command, for
+    NEXKIT_CHECK_VERIFIED_SHA, when the checkout has it, else None. `heads` is the
+    decision's `check_heads`, which `route` read from NexKit's own round comments."""
+    found = (heads or {}).get(check["name"])
+    sha = found.get(check_fingerprint(check["run"])) if isinstance(found, dict) else None
+    name = check["name"]
+    if not (isinstance(sha, str) and COMMIT.fullmatch(sha)):
+        print(
+            f"{CHECK_VERIFIED_SHA} is not set for `{name}`: no earlier round of this pull "
+            "request passed it with this command, so it should run in full.",
+            flush=True,
+        )
+        return None
+    if not has_commit(repo, sha):
+        print(
+            f"{CHECK_VERIFIED_SHA} is not set for `{name}`: the checkout does not have "
+            f"{sha[:7]}, the last commit on which it passed, so it should run in full.",
+            flush=True,
+        )
+        return None
+    print(f"{CHECK_VERIFIED_SHA}={sha} for `{name}`", flush=True)
+    return sha
 
 
 def _run(command, cwd, timeout_seconds, env=None):
@@ -392,11 +423,13 @@ def _only(cfg, group):
     return {**cfg, "checks": jobs[group]}
 
 
-def run_checks(cfg, cwd, out_dir=None, commits=None, group=""):
+def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None):
     """Run setup, then every check, or with `group` the checks of that job of
-    `check_jobs`. A setup failure is reported as a failed check. With `out_dir`, the
-    failing checks' result files are kept there too (see `keep_results`); each of
-    several jobs keeps its share of RESULTS_LIMIT, so the round stays within it."""
+    `check_jobs`. A setup failure is reported as a failed check. Each check gets the last
+    commit on which it passed, from `heads` (see `check_commit`). With `out_dir`, the
+    failing checks' result files are kept there too (see `keep_results`), and the commit
+    checked; each of several jobs keeps its share of RESULTS_LIMIT, so the round stays
+    within it."""
     jobs = len(check_jobs(cfg)) if group else 1
     cfg = _only(cfg, group)
     failed_setup = setup(cfg, cwd, commits=commits)
@@ -404,7 +437,9 @@ def run_checks(cfg, cwd, out_dir=None, commits=None, group=""):
     env = environment(commits)
     for check in [] if failed_setup else cfg["checks"]:
         print(f"::group::check {check['name']}: {check['run']}", flush=True)
-        code, output, seconds = _run(check["run"], cwd, check["timeout_minutes"] * 60, env)
+        sha = check_commit(cwd, check, heads)
+        own = {**env, CHECK_VERIFIED_SHA: sha} if sha else env
+        code, output, seconds = _run(check["run"], cwd, check["timeout_minutes"] * 60, own)
         print(output[-OUTPUT_TAIL:], flush=True)
         print("::endgroup::", flush=True)
         results.append(
@@ -425,6 +460,11 @@ def run_checks(cfg, cwd, out_dir=None, commits=None, group=""):
         if lines:
             write_summary("\n".join(lines) + "\n", redact)
         (Path(out_dir) / "checks.json").write_text(json.dumps(results, indent=2))
+        try:
+            head = git(cwd, "rev-parse", "HEAD").strip()
+        except GitError:
+            head = None
+        (Path(out_dir) / CHECKED_FILE).write_text(json.dumps({"head": head}))
     return results
 
 

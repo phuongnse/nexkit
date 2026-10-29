@@ -128,6 +128,9 @@ their defaults.
 - `group`: with `parallel_checks`, the job the check runs in, a short lowercase
   identifier; checks with the same `group` share a job. Without it, the check has a job of
   its own. See [Parallel checks](#parallel-checks).
+- `unaffected_by`: globs of the paths the check never reads. Default `[]`, at most 50. In
+  an automatic review, a check whose paths did not change since it passed runs on no
+  runner. See [Checks that a change cannot affect](#checks-that-a-change-cannot-affect).
 
 `nexkit init` writes each check from `--check NAME=COMMAND`, and its other fields from
 flags that name the check: `--check-timeout NAME=MINUTES`, `--check-slow NAME` and
@@ -336,8 +339,9 @@ while the others run again.
 - A check whose `run` changed gets no commit from rounds that ran another command.
 - It is unset, and the check's part of the job log says why, when no earlier round passed
   that check or the checkout does not have the commit. Setup does not get it.
-- NexKit itself never skips a check: the check decides, and the round passes or fails as
-  its checks exit, exactly as without the variable.
+- The check decides what to skip, and the round passes or fails as its checks exit,
+  exactly as without the variable. NexKit itself skips a check only by its
+  [`unaffected_by`](#checks-that-a-change-cannot-affect).
 
 Prefer `NEXKIT_CHECK_VERIFIED_SHA`, then `NEXKIT_VERIFIED_SHA`, and fall back to
 `NEXKIT_BASE_SHA`:
@@ -357,6 +361,68 @@ else
   echo "Dev tooling unchanged since $since: smoke tests skipped."
 fi
 ```
+
+### Checks that a change cannot affect
+
+A check that skips its own work still holds a runner while NexKit checks out the
+repository and runs setup. A check that names the paths it never reads in `unaffected_by`
+gets no runner at all when none of the others changed:
+
+```json
+{
+  "name": "integration",
+  "run": "scripts/integration.sh",
+  "unaffected_by": ["docs/**", "**/*.md", ".github/**", "web/**", "!web/package.json"]
+}
+```
+
+- Paths are relative to the repository root. `*` matches any characters but `/`, `?` one
+  of them, `[abc]` and `[!abc]` one character of a set, and `**`, only as a whole path
+  segment, any number of folders: `docs/**` is everything under `docs/`, `**/*.md` every
+  Markdown file.
+- A pattern that starts with `!` takes paths back out of the list. The last pattern that
+  matches a path decides, as in the `paths` filters of GitHub Actions; a path that no
+  pattern matches is one the check reads. The example lists everything under `web/`
+  except `web/package.json`.
+- NexKit refuses, and `nexkit doctor` says why, a pattern that is empty, starts or ends
+  with `/`, has `**` inside a segment, an unclosed or empty `[`, or a `.` or `..` segment,
+  and a list whose first pattern starts with `!`.
+
+Only an **automatic `/nexkit review`** skips a check: the one after NexKit
+[brought the branch up to date](#conflicts-with-the-base-branch), after a new commit while
+a merge waits, or its one more try. There `route` knows the commit the checks would run
+on before any check job starts. A `/nexkit review` that a person comments runs every
+check. Implement and fix rounds get their commit after the check jobs are fixed, and run
+every check.
+
+`route` compares the round's commit with the check's own record: the head of the latest
+round of the pull request on which the check passed with the same `run` and the same
+`setup` commands. When every path that changed between them, both names of a renamed
+file, is in the list, the check is skipped:
+
+- Its job is left out of the check matrix. With [`parallel_checks`](#parallel-checks), a
+  job of several checks is left out only when all of them are skipped; in a job that runs,
+  a skipped check does not run either. When every check is skipped, no `verify` job runs,
+  and the review still does.
+- It counts as passed, and the round records it as passed on its head with its `run`, so
+  the next round compares with the new head.
+- The round's comment, the run summary and a notice annotation of the `route` job say
+  "`integration` skipped: no path it reads changed since `41533e7`". The AI review's
+  comment shows it as ⏭️.
+
+At any doubt the check runs in full: when no round passed it with this `run` and
+`setup` (also its first round after an upgrade to this release, and a check added since),
+when GitHub cannot compare the commits, when the round's commit does not descend from the
+recorded one (as after a force-push), or when GitHub lists 300 changed files, the most it
+lists. NexKit never falls back to `NEXKIT_VERIFIED_SHA` here: a round whose checks all
+passed may not have run this check at all.
+
+`route` holds write tokens, but it decides from the paths GitHub lists and runs no
+repository code. The list comes from `.nexkit/config.json` on the default branch, like
+every setting, so a pull request cannot widen it for its own checks. A wrong list skips a
+check that should have run, in every later round. Keep `.nexkit/**` out of a list unless
+the check depends on nothing there: a change of `setup` gives the check a new record, but
+other settings do not.
 
 ## Caches
 

@@ -342,17 +342,25 @@ def passed_checks(results):
     return dict(list(found.items())[:MAX_PASSED])
 
 
-def check_heads(comments):
+def setup_fingerprint(commands):
+    """A round's `setup` commands as its marker records them, so a check skipped on its
+    paths (`unaffected_by`) compares only with rounds whose setup was the same."""
+    return check_fingerprint(json.dumps(list(commands)))
+
+
+def check_heads(comments, setup=None):
     """For each check, the head of the latest round on which it passed, for each command
     it ran with: {name: {fingerprint: head}}, from NexKit's own round comments, for
     NEXKIT_CHECK_VERIFIED_SHA. Rounds stopped as `superseded` count, and so do rounds
-    whose other checks failed."""
+    whose other checks failed. With `setup`, from `setup_fingerprint`, only rounds that
+    ran that setup count."""
     rounds = [
         run
         for _, run in _marked(comments, RUN_PATTERN)
         if isinstance(run.get("round"), int)
         and COMMIT.fullmatch(str(run.get("head") or ""))
         and isinstance(run.get("passed"), dict)
+        and (setup is None or run.get("setup") == setup)
     ]
     found = {}
     for run in sorted(rounds, key=lambda run: run["round"]):

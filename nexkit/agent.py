@@ -256,6 +256,9 @@ def check_results_text(results):
     lines = []
     for item in results:
         state = "passed" if item["passed"] else f"FAILED (exit {item['exit_code']})"
+        if item["passed"] and item.get("skipped"):
+            # NexKit did not run it: no path it reads changed since it passed there.
+            state = f"passed on `{item['skipped'][:7]}`; no path it reads changed since"
         lines.append(f"- `{item['name']}` (`{item['run']}`): {state}")
         if not item["passed"]:
             lines.append(f"  End of output:\n```\n{item['output'][-3000:]}\n```")

@@ -42,6 +42,14 @@ files or repository settings, and wait for confirmation.
      repository root (for example `["test-results", "playwright-report"]`). When the check
      fails, NexKit keeps them, at most 50 MB per round, and the next fix round reads them
      first (see the configuration reference, Result files of failing checks).
+   - `unaffected_by` for a check that never reads whole parts of the repository, such as
+     an integration suite that docs, workflows or another app cannot affect: globs of
+     those paths (for example `["docs/**", "**/*.md", "web/**", "!web/package.json"]`; a
+     `!` pattern takes paths back out, and the last pattern that matches decides). When
+     NexKit brings a branch up to date and the update changed only such paths since the
+     check passed, the check gets no runner. Leave out paths it may read, and `.nexkit/**`
+     unless it depends on nothing there (see the configuration reference, Checks that a
+     change cannot affect).
    - `parallel_checks` when two or more checks take many minutes each, such as integration
      and end-to-end suites: each check, or each `group` of checks, then runs in a job of its
      own at once, so a round takes about as long as its slowest job. Group the quick checks

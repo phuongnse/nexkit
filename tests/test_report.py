@@ -864,6 +864,52 @@ class ReportTests(ReportCase):
         self.run_report(decision("fix", pr=6, target=6, head=HEAD))
         self.assertNotIn("passed", self.gh.run_comments(6)[-1]["run"])
 
+    def test_a_check_that_route_skipped_passes_and_is_recorded_on_the_new_head(self):
+        cfg = make_config(
+            checks=[
+                {"name": "unit", "run": "make unit"},
+                {"name": "e2e", "run": "make e2e", "unaffected_by": ["docs/**"]},
+            ]
+        )
+        since = "a" * 40
+        unit = {"name": "unit", "run": "make unit", "exit_code": 0, "passed": True, "output": ""}
+        self.write("nexkit-checks", "checks.json", [unit])
+        self.write("nexkit-review", "result.json", review_result())
+        d = decision(
+            "review",
+            pr=6,
+            target=6,
+            head=HEAD,
+            auto=True,
+            setup="0" * 16,
+            skipped_checks=[{"name": "e2e", "since": since}],
+        )
+        self.assertEqual(self.run_report(d=d, cfg=cfg, published=False)["outcome"], "ready")
+        [row] = self.gh.run_comments(6)
+        self.assertIn("`e2e` skipped: no path it reads changed since `aaaaaaa`.", row["body"])
+        self.assertEqual(row["run"]["checks"], "passed")
+        # The next round compares with this head, with the same command and setup.
+        self.assertEqual(
+            row["run"]["passed"],
+            {"unit": check_fingerprint("make unit"), "e2e": check_fingerprint("make e2e")},
+        )
+        self.assertEqual(row["run"]["setup"], "0" * 16)
+        [created] = self.gh.created_reviews
+        self.assertIn("**Checks**: ✅ `unit`, ⏭️ `e2e`", created["body"])
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["feedback"]["checks"][1]["skipped"], since)
+
+    def test_a_round_whose_checks_route_all_skipped_reports_without_a_verify_job(self):
+        cfg = make_config(checks=[{"name": "e2e", "run": "make e2e", "unaffected_by": ["**"]}])
+        self.write("nexkit-review", "result.json", review_result())
+        skipped = [{"name": "e2e", "since": "a" * 40}]
+        d = decision("review", pr=6, target=6, head=HEAD, auto=True, skipped_checks=skipped)
+        self.assertEqual(self.run_report(d=d, cfg=cfg, published=False)["outcome"], "ready")
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["checks"], "passed")
+        self.assertEqual(row["run"]["passed"], {"e2e": check_fingerprint("make e2e")})
+        self.assertIn(("nexkit/checks", "success"), self.statuses())
+
     def test_state_names_the_run_that_holds_the_checks_result_files(self):
         self.candidate(checks_pass=False, review=review_result("request_changes"))
         self.run_report()

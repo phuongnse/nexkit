@@ -149,10 +149,10 @@ def _refused_dispatch(args, decision, inputs):
 
 def cmd_route(args):
     from . import progress
-    from .checks import check_jobs, check_matrix
+    from .checks import all_skipped, check_jobs, check_matrix
     from .github import GitHubError
     from .maintain import TASKS, enabled
-    from .route import route, with_profile
+    from .route import route, skip_unaffected, with_profile
 
     gh = _gh()
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
@@ -169,6 +169,7 @@ def cmd_route(args):
             }
         else:
             decision, cfg = with_profile(gh, decision, cfg)
+            decision = skip_unaffected(gh, decision, cfg)
     if decision["action"] == "maintain" and not enabled(decision["task"], cfg):
         keys = " and ".join(TASKS[decision["task"]])
         decision = {"action": "none", "reason": f"Nothing to do: {keys} off"}
@@ -192,6 +193,7 @@ def cmd_route(args):
         _output(action="none", decision=decision, config={})
         return 0
     progress.start(gh, decision)
+    _show_skipped(decision)
     # Each stage may run on its agent and then on each fallback in turn.
     agent_minutes = configuration.stage_minutes(cfg, decision["action"])
     if decision["action"] == "plan" and cfg["profiles"]:
@@ -220,13 +222,32 @@ def cmd_route(args):
         # Setup runs before the agent and before the checks; the rest is for the job's steps.
         agent_timeout=str(agent_minutes + setup_minutes),
         review_timeout=str(configuration.stage_minutes(cfg, "review") + 30),
-        # One verify job, or one for each job of parallel checks, each with its time-out.
-        check_matrix=check_matrix(cfg),
+        # One verify job, or one for each job of parallel checks, each with its time-out,
+        # without the jobs whose checks route skipped; none when it skipped every check.
+        check_matrix=check_matrix(cfg, decision.get("skipped_checks")),
+        skip_verify="true" if all_skipped(cfg, decision.get("skipped_checks")) else "false",
         parallel_checks="true" if check_jobs(cfg) else "false",
         agent_secrets=configuration.secret_names(variants, stages),
         review_secrets=configuration.secret_names([cfg], ["review"]),
     )
     return 0
+
+
+def _show_skipped(decision):
+    """A notice annotation and the run summary's lines for each check that route skipped,
+    so the run's page shows what did not run."""
+    from .checks import skipped_line, skipped_names
+    from .redact import Redactor
+    from .runlog import command_data, write_summary
+
+    names = skipped_names(decision.get("skipped_checks"))
+    if not names:
+        return
+    lines = [skipped_line(name, since) for name, since in names.items()]
+    for line in lines:
+        print(f"::notice title=NexKit skipped a check::{command_data(line)}", flush=True)
+    text = "\n".join(f"- {line}" for line in lines)
+    write_summary(f"### NexKit checks: skipped\n\n{text}\n", Redactor())
 
 
 def cmd_install_agents(args):
@@ -350,7 +371,14 @@ def _agent(args, decision, stage, out):
             print(json.dumps(result, indent=2))
             return 0
         cfg = configuration.with_profile(cfg, triage["profile"])
-    checks = json.loads(Path(args.checks).read_text()) if args.checks else None
+    checks = None
+    if args.checks:
+        from .checks import with_skipped
+
+        # No file when route skipped every check, so no `verify` job ran.
+        path = Path(args.checks)
+        found = json.loads(path.read_text()) if path.is_file() else None
+        checks = with_skipped(cfg, found, decision.get("skipped_checks"))
     result = run_stage(
         stage,
         context,
@@ -398,8 +426,10 @@ def cmd_checks(args):
 
     decision = _decision()
     commits = find_commits(args.repo, decision)
-    heads = decision.get("check_heads")
-    results = run_checks(_config(), args.repo, args.out, commits, group=args.group, heads=heads)
+    heads, skipped = decision.get("check_heads"), decision.get("skipped_checks")
+    results = run_checks(
+        _config(), args.repo, args.out, commits, group=args.group, heads=heads, skipped=skipped
+    )
     passed = all(r["passed"] for r in results)
     print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
     return 0
@@ -408,7 +438,8 @@ def cmd_checks(args):
 def cmd_combine_checks(args):
     from .checks import combine
 
-    results = combine(_config(), args.parts, args.out)
+    skipped = _decision().get("skipped_checks") if os.environ.get("NEXKIT_DECISION") else None
+    results = combine(_config(), args.parts, args.out, skipped)
     passed = all(r["passed"] for r in results)
     print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
     return 0

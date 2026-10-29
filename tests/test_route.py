@@ -3,7 +3,14 @@ from unittest import mock
 
 from nexkit import config
 from nexkit.github import GitHubError
-from nexkit.route import auto_input, parse_command, route, with_profile
+from nexkit.route import (
+    COMPARE_FILES,
+    auto_input,
+    parse_command,
+    route,
+    skip_unaffected,
+    with_profile,
+)
 from nexkit.state import (
     BOT_LOGIN,
     PLAN_MARKER,
@@ -13,6 +20,7 @@ from nexkit.state import (
     profile_text,
     render_run,
     render_state,
+    setup_fingerprint,
 )
 from tests.support import FakeGitHub, make_config, profile_config
 
@@ -413,6 +421,138 @@ class ProfileTests(unittest.TestCase):
         decision = route(self.gh, "issue_comment", comment_event(5, "/nexkit go"))
         cfg = make_config()
         self.assertEqual(with_profile(self.gh, decision, cfg), (decision, cfg))
+
+
+class SkipUnaffectedTests(unittest.TestCase):
+    """`route` leaves out a check of an automatic review whose paths did not change since
+    it passed, and runs it at any doubt."""
+
+    PASSED, HEAD = "a" * 40, "e" * 40
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5, head_sha=self.HEAD)
+        self.cfg = make_config(
+            setup=["npm ci"],
+            checks=[
+                {"name": "unit", "run": "make unit"},
+                {"name": "e2e", "run": "make e2e", "unaffected_by": ["docs/**", "**/*.md"]},
+            ],
+        )
+        self.setup = setup_fingerprint(["npm ci"])
+        passed = {"unit": check_fingerprint("make unit"), "e2e": check_fingerprint("make e2e")}
+        self.gh.round_comment(6, 1, self.PASSED, "passed", passed=passed, setup=self.setup)
+        self.changed(["docs/guide.md", "README.md"])
+
+    def changed(self, paths, status="ahead", **fields):
+        files = [{"filename": path, **fields} for path in paths]
+        self.gh.compares[(self.PASSED, self.HEAD)] = {"status": status, "files": files}
+
+    def decide(self, auto="true,carry", cfg=None):
+        inputs = {"command": "review", "number": "6", "note": "", "auto": auto}
+        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        return skip_unaffected(self.gh, decision, cfg or self.cfg)
+
+    def test_a_check_whose_paths_did_not_change_since_it_passed_is_skipped(self):
+        decision = self.decide()
+        self.assertEqual(decision["skipped_checks"], [{"name": "e2e", "since": self.PASSED}])
+        self.assertEqual(decision["setup"], self.setup)
+        # Any automatic review: also after a new commit while a merge waits, or a retry.
+        self.assertIn("skipped_checks", self.decide(auto="true,retry"))
+        # The same head: nothing changed since it passed there.
+        self.gh.compares[(self.PASSED, self.HEAD)] = {"status": "identical", "files": []}
+        self.assertIn("skipped_checks", self.decide())
+
+    def test_any_doubt_runs_the_check(self):
+        cases = [
+            ("a path it reads", lambda: self.changed(["docs/a.md", "src/app.py"])),
+            (
+                "a rename from a path it reads",
+                lambda: self.changed(["docs/app.md"], previous_filename="src/app.py"),
+            ),
+            (
+                "a head that does not descend from it",
+                lambda: self.changed(["docs/a.md"], status="diverged"),
+            ),
+            (
+                "a comparison that may leave files out",
+                lambda: self.changed([f"docs/{i}.md" for i in range(COMPARE_FILES)]),
+            ),
+            (
+                "a comparison without files",
+                lambda: self.gh.compares.update({(self.PASSED, self.HEAD): {"status": "ahead"}}),
+            ),
+            (
+                "a comparison that fails",
+                lambda: self.gh.compares.update(
+                    {(self.PASSED, self.HEAD): GitHubError(404, "No commit found")}
+                ),
+            ),
+        ]
+        compare = self.gh.compare
+
+        def failing(base, head):
+            found = compare(base, head)
+            if isinstance(found, Exception):
+                raise found
+            return found
+
+        self.gh.compare = failing
+        for name, change in cases:
+            with self.subTest(name):
+                self.changed(["docs/guide.md"])
+                change()
+                self.assertNotIn("skipped_checks", self.decide())
+
+    def test_a_person_or_another_round_runs_every_check(self):
+        self.assertNotIn("skipped_checks", self.decide(auto="false"))
+        comment = comment_event(6, "/nexkit review", on_pull=True)
+        decision = skip_unaffected(self.gh, route(self.gh, "issue_comment", comment), self.cfg)
+        self.assertNotIn("skipped_checks", decision)
+        inputs = {"command": "fix", "number": "6", "note": "", "auto": "true"}
+        fix = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        decision = skip_unaffected(self.gh, fix, self.cfg)
+        self.assertNotIn("skipped_checks", decision)
+        self.assertEqual(decision["setup"], self.setup)
+
+    def test_only_the_checks_own_record_counts(self):
+        # Its command changed since it passed: no record of this command.
+        cfg = make_config(
+            setup=["npm ci"],
+            checks=[{"name": "e2e", "run": "make e2e -x", "unaffected_by": ["docs/**"]}],
+        )
+        self.assertNotIn("skipped_checks", self.decide(cfg=cfg))
+        # Another setup ran then.
+        cfg = make_config(
+            setup=["pnpm i"], checks=[{"name": "e2e", "run": "make e2e", "unaffected_by": ["**"]}]
+        )
+        self.assertNotIn("skipped_checks", self.decide(cfg=cfg))
+        # A check added since, which never passed: rounds whose checks all passed do not
+        # count for it.
+        cfg = make_config(
+            setup=["npm ci"], checks=[{"name": "new", "run": "make new", "unaffected_by": ["**"]}]
+        )
+        self.assertNotIn("skipped_checks", self.decide(cfg=cfg))
+
+    def test_a_round_from_before_setup_was_recorded_gives_no_record(self):
+        gh = self.gh
+        gh.issue_comments[6] = []
+        passed = {"e2e": check_fingerprint("make e2e")}
+        gh.round_comment(6, 1, self.PASSED, "passed", passed=passed)
+        self.assertNotIn("skipped_checks", self.decide())
+        # The round after it records its setup, so the next one may skip.
+        gh.round_comment(6, 2, self.PASSED, "passed", passed=passed, setup=self.setup)
+        self.assertIn("skipped_checks", self.decide())
+
+    def test_without_unaffected_by_nothing_is_compared(self):
+        cfg = make_config(checks=[{"name": "unit", "run": "make unit"}])
+        inputs = {"command": "review", "number": "6", "note": "", "auto": "true"}
+        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        self.gh.compare = mock.Mock(side_effect=AssertionError("compared"))
+        decision = skip_unaffected(self.gh, decision, cfg)
+        self.assertNotIn("skipped_checks", decision)
+        self.assertEqual(decision["setup"], setup_fingerprint([]))
 
 
 if __name__ == "__main__":

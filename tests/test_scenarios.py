@@ -24,11 +24,12 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import autopilot, progress
+from nexkit.checks import check_matrix
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.publish import issue_closed, publish_plan
 from nexkit.report import report
-from nexkit.route import auto_kinds, issue_from_branch, route
+from nexkit.route import auto_kinds, issue_from_branch, route, skip_unaffected
 from nexkit.state import BOT_LOGIN, UNCOUNTED, check_fingerprint, read_state, run_comments
 from nexkit.status import collect
 from tests.support import FakeGitHub, make_config
@@ -212,6 +213,8 @@ class Pipeline:
         os.environ["GITHUB_RUN_ID"] = str(run_id)
         self.gh.runs[run_id] = {"status": "in_progress"}
         decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        # As `nexkit route` does once it read the configuration.
+        decision = skip_unaffected(self.gh, decision, self.cfg)
         if outcome == "refused":
             decision = {"action": "none", "reason": "refused"}
         if decision["action"] == "none":
@@ -821,6 +824,77 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_a_check_whose_paths_the_update_did_not_change_gets_no_runner(self):
+        unit, integration = "make unit", "scripts/integration.sh"
+
+        def result(name, run):
+            return {"name": name, "run": run, "exit_code": 0, "passed": True, "output": ""}
+
+        def play(paths):
+            def behind(pipe, pull):
+                # `main` moved with commits that touch `paths` only.
+                self.behind(pipe, pull)
+                head = pipe.gh.pulls[pull]["head"]["sha"]
+                files = [{"filename": path} for path in paths]
+                pipe.gh.compares[(head, "e" * 40)] = {"status": "ahead", "files": files}
+
+            both = [result("unit", unit), result("integration", integration)]
+
+            def script(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                if inputs["command"] == "go":
+                    return {**done(), "checks": both, "meanwhile": behind}
+                return {"checks": both}
+
+            cfg = config(
+                parallel_checks=True,
+                checks=[
+                    {"name": "unit", "run": unit},
+                    {"name": "integration", "run": integration, "unaffected_by": ["docs/**"]},
+                ],
+            )
+            pipe = Pipeline(self, cfg, script)
+            decisions, stages = [], pipe.stages
+
+            def recorded(decision, outcome, artifacts):
+                # Only the check jobs of the matrix run and leave results.
+                decisions.append(decision)
+                matrix = check_matrix(cfg, decision.get("skipped_checks"))["include"]
+                jobs = {entry["group"] for entry in matrix}
+                if "checks" in outcome:
+                    outcome["checks"] = [r for r in outcome["checks"] if r["name"] in jobs]
+                return stages(decision, outcome, artifacts)
+
+            pipe.stages = recorded
+            pipe.issue(5)
+            self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
+            self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "merged"])
+            rounds = [run for _, run in run_comments(pipe.gh.comments(6)) if "round" in run]
+            return pipe, decisions[-1], rounds
+
+        pipe, review, (go, update) = play(["docs/setup.md", "docs/img/flow.png"])
+        self.assertEqual(review["skipped_checks"], [{"name": "integration", "since": go["head"]}])
+        matrix = check_matrix(pipe.cfg, review["skipped_checks"])["include"]
+        self.assertEqual([entry["group"] for entry in matrix], ["unit"])
+        # The round passes on the other check, and records the skipped one on its head.
+        self.assertEqual((update["head"], update["checks"]), ("e" * 40, "passed"))
+        self.assertEqual(
+            update["passed"],
+            {"unit": check_fingerprint(unit), "integration": check_fingerprint(integration)},
+        )
+        self.assertEqual(update["setup"], go["setup"])
+        last = list(run_comments(pipe.gh.comments(6)))[-1][0]["body"]
+        line = f"`integration` skipped: no path it reads changed since `{go['head'][:7]}`."
+        self.assertIn(line, last)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+        # A path the check reads: it runs in its own job.
+        pipe, review, (_, update) = play(["docs/setup.md", "src/api.py"])
+        self.assertNotIn("skipped_checks", review)
+        self.assertEqual(len(check_matrix(pipe.cfg)["include"]), 2)
+        self.assertEqual(update["checks"], "passed")
 
     def test_an_update_that_changes_the_change_or_conflicts_is_reviewed_again(self):
         def script(pipe, inputs):

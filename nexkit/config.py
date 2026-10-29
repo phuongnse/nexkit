@@ -7,6 +7,7 @@ import json
 import re
 from pathlib import Path
 
+from .globs import GlobError, compile_globs
 from .runtimes import PROVIDERS, REMOVED, RUNTIMES, SECRET_SLOTS
 from .runtimes.base import SECRET_NAME, AgentConfigError
 
@@ -96,9 +97,11 @@ STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes", "max_budget_usd"}
 AGENT_KEYS = {"runtime", "provider", "fallback"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
-CHECK_KEYS = {"name", "run", "timeout_minutes", "slow", "results", "group"}
+CHECK_KEYS = {"name", "run", "timeout_minutes", "slow", "results", "group", "unaffected_by"}
 # The most result paths one check may name.
 MAX_RESULTS = 20
+# The most patterns one check's `unaffected_by` may list.
+MAX_UNAFFECTED = 50
 CACHE_KEYS = {"name", "paths", "key_files"}
 # The restore action has one step per entry: .github/actions/restore-caches/action.yml.
 MAX_CACHES = 8
@@ -210,6 +213,20 @@ def _results(paths, where):
             _fail(f"{where}: '{path}' must be a path inside the repository")
     if len(set(paths)) != len(paths):
         _fail(f"{where} lists a path twice")
+
+
+def _unaffected_by(patterns, where):
+    """Check a check's `unaffected_by`: globs of the paths it never reads (nexkit/globs.py)."""
+    if not isinstance(patterns, list) or len(patterns) > MAX_UNAFFECTED:
+        _fail(f"{where} must be a list of at most {MAX_UNAFFECTED} path globs")
+    if not all(isinstance(pattern, str) and len(pattern) <= 200 for pattern in patterns):
+        _fail(f"{where} must be a list of path globs of at most 200 characters")
+    try:
+        compile_globs(patterns)
+    except GlobError as exc:
+        _fail(f"{where}: {exc}")
+    if len(set(patterns)) != len(patterns):
+        _fail(f"{where} lists a pattern twice")
 
 
 def _caches(entries):
@@ -539,6 +556,7 @@ def validate(raw, *, layered=False):
         check.setdefault("slow", False)
         _bool(check["slow"], f"{where}.slow")
         _results(check.setdefault("results", []), f"{where}.results")
+        _unaffected_by(check.setdefault("unaffected_by", []), f"{where}.unaffected_by")
         if "group" in check:
             if not isinstance(check["group"], str) or not NAME.match(check["group"]):
                 _fail(f"{where}.group must be a short lowercase identifier")

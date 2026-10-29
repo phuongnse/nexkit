@@ -58,7 +58,8 @@ def find_round(comments, decision):
     comment_id, row = find_run(comments, url)
     row = row or {"round": next_round(comments), "url": url}
     row["trigger"] = trigger(decision)
-    for key in ("conflicts", "resumed", "retry", "base_sha"):
+    # `setup`: which setup the round's checks ran, for the next rounds' skips (route).
+    for key in ("conflicts", "resumed", "retry", "base_sha", "setup"):
         if decision.get(key):
             row[key] = decision[key]
     return comment_id, row

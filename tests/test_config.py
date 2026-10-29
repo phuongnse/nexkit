@@ -144,6 +144,36 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(results=results), self.assertRaisesRegex(config.ConfigError, message):
                 validate(raw)
 
+    def test_a_check_lists_the_paths_it_never_reads_as_globs(self):
+        listed = ["docs/**", "**/*.md", "web/**", "!web/package.json"]
+        cfg = validate(
+            {
+                "checks": [
+                    {"name": "e2e", "run": "x", "unaffected_by": listed},
+                    {"name": "unit", "run": "y"},
+                ]
+            }
+        )
+        self.assertEqual(cfg["checks"][0]["unaffected_by"], listed)
+        self.assertEqual(cfg["checks"][1]["unaffected_by"], [])
+        cases = [
+            ("docs/**", "must be a list"),
+            ([1], "must be a list of path globs"),
+            (["a" * 201], "at most 200 characters"),
+            ([f"d{i}/**" for i in range(config.MAX_UNAFFECTED + 1)], "at most"),
+            (["docs/"], r"checks\[0\]\.unaffected_by: 'docs/' ends with `/`"),
+            (["a[b"], "without its"),
+            (["!docs/**"], "starts with `!` but is first"),
+            (["docs/**", "docs/**"], "lists a pattern twice"),
+        ]
+        for patterns, message in cases:
+            raw = {"checks": [{"name": "e2e", "run": "x", "unaffected_by": patterns}]}
+            with (
+                self.subTest(patterns=patterns),
+                self.assertRaisesRegex(config.ConfigError, message),
+            ):
+                validate(raw)
+
     def test_autopilot_defaults(self):
         self.assertEqual(
             validate({})["autopilot"],

@@ -204,6 +204,16 @@ them on the base branch after it merges (see
 that runs on a schedule instead, without NexKit starting it, list it in
 `autopilot.watch_workflows` (see [Autopilot](configuration.md#autopilot)).
 
+**A check was skipped, or ran when it could have been skipped.** A round's comment says
+"`name` skipped: no path it reads changed since `abc1234`" for each check that its
+[`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) let NexKit skip,
+and the `route` job's summary and notices say the same. A check that should have run
+means its list names a path the check reads: take that path out, and comment
+`/nexkit review`, which runs every check. A check runs in full in implement and fix
+rounds, in a `/nexkit review` that a person comments, in its first round after its `run`
+or `setup` changed or after an upgrade, after a force-push, and when the update changed
+300 files or more.
+
 **A pull request waits for a bug issue and starts no fix round.** Its checks fail only in
 commands that also fail on the default branch, in a workflow of `merge.after_workflows`
 or `autopilot.watch_workflows` whose `bug` issue autopilot opened (outcome `ci_waiting`, state `waiting` in

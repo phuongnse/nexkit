@@ -399,10 +399,29 @@ def check_jobs(cfg):
     return jobs if len(jobs) > 1 else {}
 
 
-def check_matrix(cfg):
+def skipped_names(skipped):
+    """{name: commit} for the decision's `skipped_checks`, which `route` found unaffected
+    by the paths changed since the commit on which each passed."""
+    return {
+        item["name"]: item["since"]
+        for item in skipped or []
+        if isinstance(item, dict) and isinstance(item.get("name"), str) and item.get("since")
+    }
+
+
+def all_skipped(cfg, skipped):
+    """Whether `route` skipped every check, so no `verify` job runs."""
+    names = skipped_names(skipped)
+    return bool(cfg["checks"]) and all(check["name"] in names for check in cfg["checks"])
+
+
+def check_matrix(cfg, skipped=None):
     """The `verify` job's matrix: one entry per job of `check_jobs`, each with the job's
-    name and time-out, or one entry with no name that runs every check, as one job."""
+    name and time-out, or one entry with no name that runs every check, as one job. A job
+    whose checks `route` all skipped is left out; when that is every job, the matrix keeps
+    them all, since no `verify` job runs (`all_skipped`)."""
     setup = cfg["limits"]["setup_timeout_minutes"]
+    names = skipped_names(skipped)
 
     def entry(group, checks):
         return {"group": group, "timeout": sum(c["timeout_minutes"] for c in checks) + setup + 10}
@@ -410,7 +429,50 @@ def check_matrix(cfg):
     jobs = check_jobs(cfg)
     if not jobs:
         return {"include": [entry("", cfg["checks"])]}
-    return {"include": [entry(group, checks) for group, checks in jobs.items()]}
+    running = {
+        group: checks
+        for group, checks in jobs.items()
+        if not all(check["name"] in names for check in checks)
+    }
+    return {"include": [entry(group, checks) for group, checks in (running or jobs).items()]}
+
+
+def skipped_line(name, since):
+    """What the job log, the run summary and the round's comment say of a skipped check."""
+    return f"`{name}` skipped: no path it reads changed since `{since[:7]}`."
+
+
+def skipped_result(check, since):
+    """The result of a check that `route` skipped: passed, as on the commit `since`."""
+    return {
+        "name": check["name"],
+        "run": check["run"],
+        "exit_code": 0,
+        "passed": True,
+        "seconds": 0,
+        "output": skipped_line(check["name"], since),
+        "skipped": since,
+    }
+
+
+def with_skipped(cfg, results, skipped):
+    """The round's `results` with a passed result for each check that `route` skipped and
+    that has none, in the order of `checks`, a failed setup first. None when no check ran
+    and not every check was skipped: the checks did not run, or left no result."""
+    names = skipped_names(skipped)
+    if not names:
+        return results
+    if results is None:
+        if not all_skipped(cfg, skipped):
+            return None
+        results = []
+    found = {result.get("name"): result for result in results if isinstance(result, dict)}
+    for check in cfg["checks"]:
+        if check["name"] in names and check["name"] not in found:
+            found[check["name"]] = skipped_result(check, names[check["name"]])
+    ordered = [found.pop("setup")] if "setup" in found else []
+    ordered += [found.pop(c["name"]) for c in cfg["checks"] if c["name"] in found]
+    return ordered + list(found.values())
 
 
 def _only(cfg, group):
@@ -423,19 +485,25 @@ def _only(cfg, group):
     return {**cfg, "checks": jobs[group]}
 
 
-def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None):
+def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None, skipped=None):
     """Run setup, then every check, or with `group` the checks of that job of
     `check_jobs`. A setup failure is reported as a failed check. Each check gets the last
-    commit on which it passed, from `heads` (see `check_commit`). With `out_dir`, the
-    failing checks' result files are kept there too (see `keep_results`), and the commit
-    checked; each of several jobs keeps its share of RESULTS_LIMIT, so the round stays
-    within it."""
+    commit on which it passed, from `heads` (see `check_commit`). A check that `route`
+    skipped (`skipped`, the decision's `skipped_checks`) does not run and passes. With
+    `out_dir`, the failing checks' result files are kept there too (see `keep_results`),
+    and the commit checked; each of several jobs keeps its share of RESULTS_LIMIT, so the
+    round stays within it."""
     jobs = len(check_jobs(cfg)) if group else 1
     cfg = _only(cfg, group)
+    names = skipped_names(skipped)
     failed_setup = setup(cfg, cwd, commits=commits)
     results = [failed_setup] if failed_setup else []
     env = environment(commits)
     for check in [] if failed_setup else cfg["checks"]:
+        if check["name"] in names:
+            print(skipped_line(check["name"], names[check["name"]]), flush=True)
+            results.append(skipped_result(check, names[check["name"]]))
+            continue
         print(f"::group::check {check['name']}: {check['run']}", flush=True)
         sha = check_commit(cwd, check, heads)
         own = {**env, CHECK_VERIFIED_SHA: sha} if sha else env
@@ -484,12 +552,13 @@ def _read_results(path):
     return [result for result in results if isinstance(result, dict)]
 
 
-def combine(cfg, parts, out_dir):
+def combine(cfg, parts, out_dir, skipped=None):
     """Join the results of the parallel `verify` jobs, each downloaded to
     `parts/<artifact_name>/`, into `out_dir` as one job would have left them: one
     `checks.json` in the order of `checks`, and each job's `results/<check>/` files. A
     setup that failed comes first, once, and the checks of its job are left out, as after
-    a setup failure in one job. A job that left no result fails each of its checks.
+    a setup failure in one job. A job that left no result fails each of its checks, but a
+    job whose checks `route` all skipped (`skipped`) ran on no runner: they pass.
     Returns the results.
 
     When only one job left an artifact, the download puts it in `parts` itself; it
@@ -497,8 +566,13 @@ def combine(cfg, parts, out_dir):
     parts, out = Path(parts), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     found, setups = {}, []
+    left_out = skipped_names(skipped)
     flat = _read_results(parts / "checks.json")
     for group, checks in check_jobs(cfg).items():
+        if all(check["name"] in left_out for check in checks):
+            for check in checks:
+                found[check["name"]] = skipped_result(check, left_out[check["name"]])
+            continue
         folder = parts / artifact_name(group)
         results = _read_results(folder / "checks.json")
         names = {"setup", *(check["name"] for check in checks)}

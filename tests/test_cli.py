@@ -13,7 +13,7 @@ import nexkit
 import nexkit.config
 from nexkit import cli, maintain, scaffold
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
-from nexkit.state import empty_state, render_state
+from nexkit.state import check_fingerprint, empty_state, render_state, setup_fingerprint
 from tests.support import CLAUDE, PROFILES, FakeClaude, FakeGitHub, GitRepos, git
 from tests.test_agent import CONTEXT, FIX_DONE
 
@@ -78,6 +78,12 @@ class InitDoctorTests(unittest.TestCase):
                 "e2e=test-results",
                 "--check-results",
                 "e2e=artifacts/logs",
+                "--check-unaffected",
+                "e2e=docs/**",
+                "--check-unaffected",
+                "e2e=web/**",
+                "--check-unaffected",
+                "e2e=!web/package.json",
             ]
         )
         self.assertEqual(code, 0)
@@ -92,6 +98,7 @@ class InitDoctorTests(unittest.TestCase):
                     "timeout_minutes": 40,
                     "slow": True,
                     "results": ["test-results", "artifacts/logs"],
+                    "unaffected_by": ["docs/**", "web/**", "!web/package.json"],
                 },
             ],
         )
@@ -129,6 +136,10 @@ class InitDoctorTests(unittest.TestCase):
             ["--check-timeout", "test=soon"],
             ["--check-timeout", "test=0"],
             ["--check-results", "test=../outside"],
+            ["--check-unaffected", "e2e=docs/**"],
+            ["--check-unaffected", "test"],
+            ["--check-unaffected", "test=docs/"],
+            ["--check-unaffected", "test=!docs/**"],
         ):
             with self.subTest(flags=flags):
                 code = cli.main(["init", "--repo", str(self.root), "--check", "test=x", *flags])
@@ -143,6 +154,17 @@ class InitDoctorTests(unittest.TestCase):
         self.assertTrue(any(f"pipeline at v{nexkit.__version__}" in m for ok, m in findings if ok))
         self.assertIn((False, "The 'origin' remote is not a GitHub repository"), findings)
         self.assertEqual(cli.main(["doctor", "--repo", str(self.root)]), 1)
+
+    def test_doctor_rejects_a_path_pattern_that_is_not_a_glob(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["checks"][0]["unaffected_by"] = ["docs/**", "web/[a"]
+        path.write_text(json.dumps(raw))
+        self.assertIn(
+            (False, "checks[0].unaffected_by: 'web/[a' has a `[` without its `]`"),
+            scaffold.doctor(self.root),
+        )
 
     def test_doctor_says_when_unattended_rounds_have_no_push_token(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
@@ -805,6 +827,51 @@ class PipelineCommandTests(unittest.TestCase):
         )
         self.assertEqual(out["parallel_checks"], "true")
 
+    def test_route_leaves_out_and_shows_the_checks_whose_paths_did_not_change(self):
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["parallel_checks"] = True
+        raw["checks"] = [
+            {"name": "unit", "run": "make unit"},
+            {"name": "e2e", "run": "make e2e", "unaffected_by": ["docs/**"]},
+        ]
+        path.write_text(json.dumps(raw))
+        passed, head = "a" * 40, "e" * 40
+        self.gh.add_pull(6, 5, head_sha=head)
+        fingerprints = {name: check_fingerprint(f"make {name}") for name in ("unit", "e2e")}
+        self.gh.round_comment(
+            6, 1, passed, "passed", passed=fingerprints, setup=setup_fingerprint(raw["setup"])
+        )
+        self.gh.compares[(passed, head)] = {"status": "ahead", "files": [{"filename": "docs/a"}]}
+        inputs = {"command": "review", "number": "6", "note": "", "auto": "true,carry"}
+        event = {"inputs": inputs, "sender": {"login": "github-actions[bot]"}}
+        summary = self.root / "summary.md"
+        stdout = io.StringIO()
+        env = {
+            "GITHUB_REPOSITORY": "acme/app",
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "GITHUB_RUN_ID": "99",
+        }
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(stdout):
+            out = self.run_route("workflow_dispatch", event)
+        line = "`e2e` skipped: no path it reads changed since `aaaaaaa`."
+        self.assertEqual(json.loads(out["check_matrix"])["include"][0]["group"], "unit")
+        self.assertEqual(len(json.loads(out["check_matrix"])["include"]), 1)
+        self.assertEqual(out["skip_verify"], "false")
+        self.assertEqual(
+            json.loads(out["decision"])["skipped_checks"], [{"name": "e2e", "since": passed}]
+        )
+        self.assertIn(f"::notice title=NexKit skipped a check::{line}", stdout.getvalue())
+        self.assertIn(f"### NexKit checks: skipped\n\n- {line}", summary.read_text())
+        # Every check unchanged: no verify job runs.
+        self.gh.compares[(passed, head)] = {"status": "identical", "files": []}
+        raw["checks"][0]["unaffected_by"] = ["**"]
+        path.write_text(json.dumps(raw))
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
+            out = self.run_route("workflow_dispatch", event)
+        self.assertEqual(out["skip_verify"], "true")
+        self.assertEqual(len(json.loads(out["check_matrix"])["include"]), 2)
+
     def test_route_allows_for_triage_and_the_longest_plan(self):
         path = self.root / "repo/.nexkit/config.json"
         raw = json.loads(path.read_text())
@@ -1415,6 +1482,17 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn(
             "matrix.group && format('nexkit-checks-{0}', matrix.group) || 'nexkit-checks'", upload
         )
+
+    def test_no_verify_job_runs_when_route_skipped_every_check(self):
+        self.assertIn("needs.route.outputs.skip_verify != 'true'", self.jobs["verify"])
+        self.assertIn("skip_verify: ${{ steps.route.outputs.skip_verify }}", self.jobs["route"])
+        # The review still runs, and reads the skipped checks from the decision.
+        review = self.jobs["review"]
+        self.assertIn("needs.route.outputs.skip_verify == 'true'", review)
+        download = review.split("name: nexkit-checks", 1)[0].rsplit("- uses:", 1)[1]
+        self.assertIn("needs.verify.result != 'skipped'", download)
+        # Combine passes the checks of the jobs that route left out.
+        self.assertIn("NEXKIT_DECISION: ${{ needs.route.outputs.decision }}", self.jobs["combine"])
 
     def test_combine_joins_the_check_jobs_only_with_parallel_checks(self):
         combine = self.jobs["combine"]

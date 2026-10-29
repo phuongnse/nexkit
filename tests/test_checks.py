@@ -171,6 +171,64 @@ class ParallelChecksTests(unittest.TestCase):
         self.assertIn("ended without a result", combined[0]["output"])
         self.assertTrue((self.root / "out/results/e2e/out-e2e/log.txt").is_file())
 
+    def test_a_job_whose_checks_route_all_skipped_is_left_out(self):
+        since = "a" * 40
+        skipped = [{"name": "e2e", "since": since}, {"name": "build", "since": since}]
+        # `fast` still runs `lint`, so only the job of `e2e` is left out.
+        matrix = checks.check_matrix(self.cfg, skipped)
+        self.assertEqual([e["group"] for e in matrix["include"]], ["fast", "unit"])
+        self.assertFalse(checks.all_skipped(self.cfg, skipped))
+        # A job that runs does not run its skipped checks either.
+        repo, out = self.root / "repo-fast", self.root / "parts" / checks.artifact_name("fast")
+        repo.mkdir(parents=True)
+        log = io.StringIO()
+        with contextlib.redirect_stdout(log):
+            results = checks.run_checks(self.cfg, repo, out, group="fast", skipped=skipped)
+        self.assertEqual(
+            [(r["name"], r["passed"]) for r in results], [("build", True), ("lint", True)]
+        )
+        self.assertEqual(results[0]["skipped"], since)
+        self.assertNotIn("echo built", log.getvalue())
+        self.assertIn("`build` skipped: no path it reads changed since `aaaaaaa`.", log.getvalue())
+        self.run_job("unit")
+        # The job that did not run passes its checks, rather than leaving no result.
+        combined = checks.combine(self.cfg, self.root / "parts", self.root / "out", skipped)
+        self.assertEqual(
+            [(r["name"], r["passed"], r.get("skipped")) for r in combined],
+            [
+                ("build", True, since),
+                ("e2e", True, since),
+                ("lint", True, None),
+                ("unit", False, None),
+            ],
+        )
+
+    def test_when_route_skipped_every_check_no_verify_job_runs(self):
+        skipped = [{"name": c["name"], "since": "b" * 40} for c in self.cfg["checks"]]
+        self.assertTrue(checks.all_skipped(self.cfg, skipped))
+        # The matrix keeps every job, so it is never empty; the job does not run.
+        self.assertEqual(checks.check_matrix(self.cfg, skipped), checks.check_matrix(self.cfg))
+        results = checks.with_skipped(self.cfg, None, skipped)
+        self.assertEqual([r["name"] for r in results], ["build", "e2e", "lint", "unit"])
+        self.assertTrue(all(r["passed"] and r["skipped"] == "b" * 40 for r in results))
+        self.assertEqual(
+            results[1]["output"], "`e2e` skipped: no path it reads changed since `bbbbbbb`."
+        )
+
+    def test_one_job_that_ran_and_its_setup_failed_keeps_its_result(self):
+        # Only the job of `unit` runs, and its setup fails; the skipped jobs do not claim
+        # the one artifact, which the download puts in `parts` itself.
+        self.cfg["setup"] = ["exit 3"]
+        skipped = [{"name": n, "since": "a" * 40} for n in ("build", "e2e", "lint")]
+        self.run_job("unit")
+        part = self.root / "parts" / checks.artifact_name("unit")
+        for item in part.iterdir():
+            item.rename(self.root / "parts" / item.name)
+        part.rmdir()
+        combined = checks.combine(self.cfg, self.root / "parts", self.root / "out", skipped)
+        self.assertEqual([r["name"] for r in combined], ["setup", "build", "e2e", "lint"])
+        self.assertEqual(combined[0]["exit_code"], 3)
+
     def test_each_job_keeps_its_share_of_the_result_files_limit(self):
         with (
             mock.patch.object(checks, "RESULTS_LIMIT", 9),
@@ -611,6 +669,46 @@ class CheckVerifiedCommitTests(CommitCase):
         self.assertEqual((result["passed"], result["output"].strip()), (True, "skipped"))
         [result], _ = self.quietly(lambda: checks.run_checks(cfg, repo))
         self.assertEqual((result["passed"], result["output"].strip()), (False, "ran"))
+
+
+class SkippedChecksTests(unittest.TestCase):
+    """A check that route skipped, because no path it reads changed since it passed,
+    passes without running, in one job too."""
+
+    def setUp(self):
+        self.cfg = make_config(
+            checks=[
+                {"name": "unit", "run": "echo unit"},
+                {"name": "e2e", "run": "echo e2e; false", "unaffected_by": ["docs/**"]},
+            ]
+        )
+        self.skipped = [{"name": "e2e", "since": "c" * 40}]
+
+    def test_the_one_job_runs_only_the_checks_route_did_not_skip(self):
+        self.assertEqual(checks.check_matrix(self.cfg, self.skipped), checks.check_matrix(self.cfg))
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+            results = checks.run_checks(self.cfg, tmp, skipped=self.skipped)
+        self.assertEqual(
+            [(r["name"], r["passed"]) for r in results], [("unit", True), ("e2e", True)]
+        )
+        self.assertEqual((results[1]["seconds"], results[1]["run"]), (0, "echo e2e; false"))
+
+    def test_results_get_the_skipped_checks_they_lack_in_the_order_of_checks(self):
+        unit = {"name": "unit", "run": "echo unit", "passed": False, "exit_code": 1}
+        merged = checks.with_skipped(self.cfg, [unit], self.skipped)
+        self.assertEqual([r["name"] for r in merged], ["unit", "e2e"])
+        self.assertEqual(merged[0], unit)
+        # Once there, a skipped result is not added again.
+        self.assertEqual(checks.with_skipped(self.cfg, merged, self.skipped), merged)
+        setup = {"name": "setup", "run": "npm ci", "passed": False, "exit_code": 2}
+        self.assertEqual(
+            [r["name"] for r in checks.with_skipped(self.cfg, [setup], self.skipped)],
+            ["setup", "e2e"],
+        )
+        # Checks that did not run, or left no result, stay unknown unless all were skipped.
+        self.assertIsNone(checks.with_skipped(self.cfg, None, self.skipped))
+        self.assertIsNone(checks.with_skipped(self.cfg, None, []))
+        self.assertEqual(checks.with_skipped(self.cfg, [unit], None), [unit])
 
 
 class SetupTimeoutTests(unittest.TestCase):

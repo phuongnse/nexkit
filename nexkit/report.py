@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import autopilot, progress
-from .checks import failing_signatures
+from .checks import failing_signatures, skipped_line, skipped_names, with_skipped
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
     ON_BASE_FAILED,
@@ -48,6 +48,8 @@ from .state import (
 from .usage import iso, parse_iso, shown
 
 ICONS = {True: "✅", False: "❌"}
+# A check that NexKit did not run: no path it reads changed since it passed.
+SKIPPED_ICON = "⏭️"
 CRITERION_MARKS = {"met": "✅", "unmet": "❌", "unverifiable": "❔"}
 # 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
 RESOLUTIONS = {
@@ -252,7 +254,11 @@ def review_body(review, checks):
     if checks:
         lines += [
             "",
-            "**Checks**: " + ", ".join(f"{ICONS[c['passed']]} `{c['name']}`" for c in checks),
+            "**Checks**: "
+            + ", ".join(
+                f"{SKIPPED_ICON if c.get('skipped') else ICONS[c['passed']]} `{c['name']}`"
+                for c in checks
+            ),
         ]
     evidence = _part("Acceptance criteria", criteria_evidence)
     evidence += _part("Previous findings", previous_evidence)
@@ -1277,7 +1283,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     recheck = action == "fix" and bool(publish.get("recheck"))
     # The round's commit conflicts with the base branch's tip: no checks or review ran.
     conflicting = action in ("implement", "fix") and bool(publish.get("conflicts"))
-    checks = _load(artifacts / "nexkit-checks" / "checks.json")
+    # With the checks that route skipped, which ran on no runner.
+    skipped = decision.get("skipped_checks")
+    checks = with_skipped(cfg, _load(artifacts / "nexkit-checks" / "checks.json"), skipped)
     reviewed = _load(artifacts / "nexkit-review" / "result.json")
     given = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
     review = apply_criteria(given) if given else None
@@ -1460,6 +1468,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             f"want: it changed {files}, and the token NexKit pushes with may not change "
             f"workflow files. The pull request stays behind it.\n\n{message}"
         )
+    if checks is not None and skipped_names(skipped):
+        lines = [skipped_line(name, since) for name, since in skipped_names(skipped).items()]
+        message = "\n".join(lines) + f"\n\n{message}"
     carry_line = _carry_line(decision, decision["base"], carry)
     if carry_line:
         message = f"{carry_line}\n\n{message}"

@@ -71,10 +71,10 @@ Some other events start a run too; they run only `route` and `maintain` (see
 
 | Job | Runs for | Token permissions | Secrets | Does |
 |---|---|---|---|---|
-| `route` | every event | read; comments, reactions, statuses; workflow runs (`actions: read`) | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. Never executes repository code. |
+| `route` | every event | read; comments, reactions, statuses; workflow runs (`actions: read`) | none | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. In an automatic review, leaves out of the check matrix the checks whose [`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) lists every path changed since they passed, from GitHub's comparison. Never executes repository code. |
 | `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | write | the push token, when `publish.push_token_secret` names one | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. When the base branch moved while the agent worked, it merges the base branch's tip after the round's commit if the base branch's rules want pull requests up to date, and finds with git whether that tip conflicts with the commit (see [Stages](#stages)). Never executes repository code. |
-| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. Skipped, with the review, for a published commit that conflicts with the base branch. |
+| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. Skipped, with the review, for a published commit that conflicts with the base branch, and by itself when `route` skipped every check. |
 | `combine` | go, fix, review, with `parallel_checks` | read only | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read. Never checks out or executes repository code. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](#stages), and then runs no agent. |
 | `report` | every action | write | none | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` on the base branch. Never checks out or executes repository code. |
@@ -645,8 +645,10 @@ git and without running any repository code:
 When both hold, the review carries over: no agent runs, `nexkit/review` succeeds with
 "AI review of `abc1234` carried over", the earlier findings stay the last review's, and
 the round's comment says that the review was carried over. The checks run on the new
-commit as after any round: when they pass, NexKit merges it with the earlier approval;
-when they fail, an automatic fix round starts as after any failing checks, counted in
+commit as after any round, but a check whose
+[`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) lists every path
+that changed since it passed gets no runner and counts as passed. When they pass, NexKit
+merges it with the earlier approval; when they fail, an automatic fix round starts as after any failing checks, counted in
 `fix.max_auto_rounds`, and its own review runs as usual. Otherwise the review runs as
 before, and the round's comment says why. A merge that has a conflict is a conflict round
 instead (see *Conflicts with the base branch* above), which the review always follows. The one
@@ -1235,13 +1237,15 @@ issue it waits for), the agents that ran each
 stage, the reason a person is needed when one is, the resume record of a paused run, and
 after an automatic merge each started `merge.after_workflows` run. A round's marker also
 holds its commit, whether its checks passed, and which of them passed on that commit,
-each with a digest of its `run` command. `nexkit status` reads these markers, not
+each with a digest of its `run` command, and a digest of its `setup` commands. `nexkit status` reads these markers, not
 the text people read, to list the open NexKit work and what each item waits for. NexKit
 reads a marker only from a comment by the Actions bot, and only where it ends the comment:
 text before it can quote agent output. The latest commit whose checks passed becomes the
 next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
 with its current command becomes its `NEXKIT_CHECK_VERIFIED_SHA` (see [Skipping work that a
-change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect)).
+change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect)). In an
+automatic review, `route` compares the round's commit with that commit, when the round
+there ran the same `setup`, to skip the checks that a change cannot affect.
 
 The markers are NexKit's own format and can change between releases. Read them through
 `nexkit status --json`, whose `attention` field gives the reason an item needs a person.

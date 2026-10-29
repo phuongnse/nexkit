@@ -7,18 +7,21 @@ import re
 
 from . import config as configuration
 from .github import GitHubError
+from .globs import unaffected
 from .state import (
     FAILURE,
     RUNNING,
     SUCCESS,
     approved_head,
     by_bot,
+    check_fingerprint,
     check_heads,
     latest_plan,
     plan_profile,
     repeated_failures,
     results_run,
     run_comments,
+    setup_fingerprint,
     verified_head,
 )
 
@@ -397,3 +400,63 @@ def with_profile(gh, decision, cfg):
         )
         return _none(reason, decision["target"]), cfg
     return {**decision, "profile": name}, configuration.with_profile(cfg, name)
+
+
+# The most files GitHub's comparison of two commits lists: one that lists as many may have
+# left some out.
+COMPARE_FILES = 300
+
+
+def changed_paths(gh, since, head):
+    """The paths that changed from `since` to `head`, both names of a renamed file, or
+    None when GitHub cannot list them all: the comparison fails, `head` does not descend
+    from `since` (a diff from their merge base would miss changes), or it lists as many
+    files as it can."""
+    try:
+        found = gh.compare(since, head)
+    except GitHubError:
+        return None
+    if not isinstance(found, dict) or found.get("status") not in ("ahead", "identical"):
+        return None
+    files = found.get("files")
+    if not isinstance(files, list) or len(files) >= COMPARE_FILES:
+        return None
+    paths = set()
+    for item in files:
+        names = [item.get("filename")] if isinstance(item, dict) else [None]
+        if isinstance(item, dict) and "previous_filename" in item:
+            names.append(item["previous_filename"])
+        if not all(isinstance(name, str) and name for name in names):
+            return None
+        paths.update(names)
+    return paths
+
+
+def skip_unaffected(gh, decision, cfg):
+    """`decision` with `setup`, the round's setup as its marker records it, and, in an
+    automatic `review` round, `skipped_checks`: [{name, since}] for each check whose
+    `unaffected_by` lists every path that changed since `since`, the head of the latest
+    round on which it passed with its command and this setup. Those checks run on no
+    runner and pass. Only there does `route` know the head the checks run on; a person's
+    `/nexkit review` runs every check. Any doubt runs the check (see `changed_paths`)."""
+    if decision["action"] not in ("implement", "fix", "review"):
+        return decision
+    setup = setup_fingerprint(cfg["setup"])
+    decision = {**decision, "setup": setup}
+    listed = [check for check in cfg["checks"] if check.get("unaffected_by")]
+    if decision["action"] != "review" or not decision.get("auto") or not listed:
+        return decision
+    heads = check_heads(gh.comments(decision["pr"]), setup=setup)
+    changed, skipped = {}, []
+    for check in listed:
+        since = (heads.get(check["name"]) or {}).get(check_fingerprint(check["run"]))
+        if not since:
+            continue
+        if since not in changed:
+            changed[since] = changed_paths(gh, since, decision["head"])
+        paths = changed[since]
+        if paths is not None and unaffected(paths, check["unaffected_by"]):
+            skipped.append({"name": check["name"], "since": since})
+    if skipped:
+        decision["skipped_checks"] = skipped
+    return decision

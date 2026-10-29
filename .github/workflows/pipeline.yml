@@ -1,7 +1,8 @@
 # NexKit's reusable pipeline. Repositories call it from .github/workflows/nexkit.yml.
 #
 # route    decide the action from the event; read config from the default branch;
-#          acknowledge the command and link the run; never runs repo code
+#          acknowledge the command and link the run; in an automatic review, skip the
+#          checks whose unaffected_by lists every changed path; never runs repo code
 # agent    run the stage's agent (plan / implement / fix); no GitHub write token; restores
 #          caches before setup but never saves one; a fix round downloads the result files
 #          that the last round's failing checks kept
@@ -78,6 +79,7 @@ jobs:
       agent_timeout: ${{ steps.route.outputs.agent_timeout }}
       review_timeout: ${{ steps.route.outputs.review_timeout }}
       check_matrix: ${{ steps.route.outputs.check_matrix }}
+      skip_verify: ${{ steps.route.outputs.skip_verify }}
       parallel_checks: ${{ steps.route.outputs.parallel_checks }}
       agent_secrets: ${{ steps.route.outputs.agent_secrets }}
       review_secrets: ${{ steps.route.outputs.review_secrets }}
@@ -240,13 +242,15 @@ jobs:
   verify:
     needs: [route, publish]
     # Not for a head that conflicts with the base branch's tip: it cannot merge, and report
-    # starts the conflict round at once.
+    # starts the conflict round at once. Not when route skipped every check: no path they
+    # read changed since they passed.
     if: >-
-      always() && needs.route.result == 'success' &&
+      always() && needs.route.result == 'success' && needs.route.outputs.skip_verify != 'true' &&
       (needs.route.outputs.action == 'review' ||
        (contains(fromJSON('["implement","fix"]'), needs.route.outputs.action) &&
         needs.publish.outputs.head != '' && needs.publish.outputs.conflicts != 'true'))
-    # One job that runs every check, or with parallel_checks one per check job (route).
+    # One job that runs every check, or with parallel_checks one per check job (route),
+    # without the jobs whose checks route skipped.
     name: ${{ matrix.group && format('verify ({0})', matrix.group) || 'verify' }}
     strategy:
       fail-fast: false
@@ -326,6 +330,7 @@ jobs:
       - name: Combine check results
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit combine-checks --parts parts --out out
         env:
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -336,8 +341,11 @@ jobs:
 
   review:
     needs: [route, publish, verify, combine]
+    # Also when route skipped every check, so no verify job ran.
     if: >-
-      always() && needs.verify.result == 'success' &&
+      always() &&
+      (needs.verify.result == 'success' ||
+       (needs.route.result == 'success' && needs.route.outputs.skip_verify == 'true')) &&
       contains(fromJSON('["success","skipped"]'), needs.combine.result)
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ fromJSON(needs.route.outputs.review_timeout) }}
@@ -371,8 +379,9 @@ jobs:
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit carry --repo repo --out out
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+      # None when route skipped every check: the review reads them from the decision.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        if: steps.carry.outputs.carried != 'true'
+        if: steps.carry.outputs.carried != 'true' && needs.verify.result != 'skipped'
         with:
           name: nexkit-checks
           path: checks

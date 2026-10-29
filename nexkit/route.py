@@ -330,10 +330,6 @@ def _decide(gh, command, number, on_pull, note, *, auto):
         verified = verified_head(comments)
         if verified:
             decision["verified_sha"] = verified
-        # For each check, the last commit on which it passed, for NEXKIT_CHECK_VERIFIED_SHA.
-        passed = check_heads(comments)
-        if passed:
-            decision["check_heads"] = passed
         run_id = results_run(comments)
         if run_id and decision["action"] == "fix":
             # The agent job downloads that run's `nexkit-checks` artifact for the prompt.
@@ -433,20 +429,26 @@ def changed_paths(gh, since, head):
 
 
 def skip_unaffected(gh, decision, cfg):
-    """`decision` with `setup`, the round's setup as its marker records it, and, in an
+    """`decision` with `setup`, the round's setup as its marker records it; in a round of
+    a pull request, `check_heads`: for each check and command, the head of the latest
+    round on which it passed with this setup, for NEXKIT_CHECK_VERIFIED_SHA; and, in an
     automatic `review` round, `skipped_checks`: [{name, since}] for each check whose
-    `unaffected_by` lists every path that changed since `since`, the head of the latest
-    round on which it passed with its command and this setup. Those checks run on no
-    runner and pass. Only there does `route` know the head the checks run on; a person's
-    `/nexkit review` runs every check. Any doubt runs the check (see `changed_paths`)."""
+    `unaffected_by` lists every path that changed since `since`, its head for its
+    command. Those checks run on no runner and pass. Only there does `route` know the
+    head the checks run on; a person's `/nexkit review` runs every check. Any doubt runs
+    the check (see `changed_paths`)."""
     if decision["action"] not in ("implement", "fix", "review"):
         return decision
     setup = setup_fingerprint(cfg["setup"])
     decision = {**decision, "setup": setup}
+    if not decision.get("pr"):
+        return decision
+    heads = check_heads(gh.comments(decision["pr"]), setup=setup)
+    if heads:
+        decision["check_heads"] = heads
     listed = [check for check in cfg["checks"] if check.get("unaffected_by")]
     if decision["action"] != "review" or not decision.get("auto") or not listed:
         return decision
-    heads = check_heads(gh.comments(decision["pr"]), setup=setup)
     changed, skipped = {}, []
     for check in listed:
         since = (heads.get(check["name"]) or {}).get(check_fingerprint(check["run"]))

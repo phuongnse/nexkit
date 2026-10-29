@@ -1242,10 +1242,11 @@ the text people read, to list the open NexKit work and what each item waits for.
 reads a marker only from a comment by the Actions bot, and only where it ends the comment:
 text before it can quote agent output. The latest commit whose checks passed becomes the
 next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
-with its current command becomes its `NEXKIT_CHECK_VERIFIED_SHA` (see [Skipping work that a
-change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect)). In an
-automatic review, `route` compares the round's commit with that commit, when the round
-there ran the same `setup`, to skip the checks that a change cannot affect.
+with its current command and the current `setup` becomes its `NEXKIT_CHECK_VERIFIED_SHA`
+(see [Skipping work that a change cannot
+affect](configuration.md#skipping-work-that-a-change-cannot-affect)). In an automatic
+review, `route` compares the round's commit with that commit to skip the checks that a
+change cannot affect.
 
 The markers are NexKit's own format and can change between releases. Read them through
 `nexkit status --json`, whose `attention` field gives the reason an item needs a person.

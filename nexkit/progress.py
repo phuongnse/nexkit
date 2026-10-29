@@ -89,6 +89,9 @@ def show_command(gh, decision, status, text="", comments=None, **fields):
     run = {"url": url, "command": COMMANDS[decision["action"]], "status": status, **fields}
     if decision.get("autopilot"):
         run["autopilot"] = True
+    if decision.get("setup"):
+        # Which setup an implement round's checks ran, for a round stopped in its checks.
+        run["setup"] = decision["setup"]
     _save(gh, issue, comment_id, render_run(run, text))
 
 

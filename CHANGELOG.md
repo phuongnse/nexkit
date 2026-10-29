@@ -1,5 +1,31 @@
 # Changelog
 
+## 5.6.0
+
+Two ways to spend less runner time when many pull requests merge one after another:
+watching CI on the default branch without starting it after every merge, and letting a
+check skip work that passed in an earlier round, also one NexKit stopped.
+
+- `autopilot.watch_workflows` lists workflow files whose runs on the default branch
+  autopilot watches as it watches `merge.after_workflows`, whatever started them, such
+  as a `schedule`, a person's push or a dispatch: their failed jobs run once more, a
+  second failure opens a `bug` issue planned first, and pull requests that fail the same
+  way wait (#183). NexKit never starts them after its merges, so a scheduled run can
+  replace a run after every merge. A workflow is in one of the two lists, not both. To
+  start a sweep as soon as such a run ends, name the workflow in the `workflow_run`
+  trigger of `.github/workflows/nexkit.yml`, as `nexkit init --watch-workflow FILE`
+  writes it; it needs no `nexkit-sweep` job. `nexkit doctor` checks the trigger and each
+  listed file. See *Watching CI that NexKit does not start* under
+  [Autopilot](docs/configuration.md#autopilot).
+- Each check gets `NEXKIT_CHECK_VERIFIED_SHA`, in its own environment: the latest commit
+  of the pull request on which that check passed with the same `run` command (#184). A
+  round's comment records the checks that passed on its head, also when other checks
+  failed. A round NexKit stops as `superseded` records the checks of the check jobs that
+  had finished, with `parallel_checks`. The check decides what to skip, as with
+  `NEXKIT_VERIFIED_SHA`; the variable is unset, and the job log says why, without such a
+  commit. See [Skipping work that a change cannot
+  affect](docs/configuration.md#skipping-work-that-a-change-cannot-affect).
+
 ## 5.5.0
 
 When the base branch moves while a round runs, which happens often with several issues

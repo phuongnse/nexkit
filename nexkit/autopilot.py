@@ -48,7 +48,9 @@ from .state import (
     questions,
     read_state,
     round_questions,
+    run_action,
     run_comments,
+    run_kinds,
     with_run,
 )
 from .usage import PAUSE_WINDOW, iso, parse_iso
@@ -563,6 +565,14 @@ def asked_again(target_comments, other_comments=()):
     return not any(_by_person(c) and c["id"] > since for c in [*target_comments, *other_comments])
 
 
+def closes(run):
+    """Whether a blocked round found that no change is needed and recommends closing the
+    issue with that finding. A finding alone is not enough: an agent may use `no_change` to
+    say there is none, and recommend waiting or more work."""
+    found = questions(run.get("questions"))
+    return len(found) == 1 and found[0].get("closes", False) and bool(filled(run.get("no_change")))
+
+
 def answer_note(found):
     lines = ["Answers for the owner, each the option NexKit recommended:"]
     for number, item in enumerate(found, 1):
@@ -593,7 +603,7 @@ def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
         return _step(issue, "waits", protected_reason(run["protected_paths"]))
     if found and asked_again(*comments):
         return _step(issue, "waits", REPEATED)
-    if found and len(found) == 1 and command == "go" and filled(run.get("no_change")):
+    if found and command == "go" and closes(run):
         # The recommended answer only closes the issue: another round would find the same.
         reason = "the last round found no change is needed and recommends closing the issue"
         return _step(issue, "close", reason, finding=run["no_change"], run_url=run.get("url"))
@@ -720,20 +730,13 @@ def _ended(gh, run):
 def _automatic(run):
     """Whether NexKit started a run by itself: a command autopilot started, or an automatic
     round. A person's command may carry a note that a new start would not have."""
-    return bool(run.get("autopilot")) or bool(_kinds(run) & {"auto", "autopilot"})
-
-
-def _kinds(run):
-    """The labels of a run's trigger, such as {"auto", "conflicts"} for `fix (auto,
-    conflicts)`."""
-    labels = re.search(r"\((.*)\)", str(run.get("trigger") or ""))
-    return {kind.strip() for kind in labels.group(1).split(",")} if labels else set()
+    return bool(run.get("autopilot")) or bool(run_kinds(run) & {"auto", "autopilot"})
 
 
 def _auto_input(run):
     """The `auto` input that starts a run's kind of automatic round again, from its
     trigger, or "" for a command that autopilot started."""
-    kinds = _kinds(run)
+    kinds = run_kinds(run)
     if "conflicts" in kinds:
         found = ["conflicts"]
     elif "auto" in kinds:
@@ -768,8 +771,7 @@ def _stalled(gh, issue, comment, run, record, start, target, now):
         return _step(issue, "waits", "the run that continues it did not start") if lost else None
     if status != RUNNING or not _ended(gh, run):
         return None
-    trigger = str(run.get("trigger") or "")
-    command = run.get("command") or ("fix" if trigger.startswith("fix") else "review")
+    command = run.get("command") or ("fix" if run_action(run) == "fix" else "review")
     stale = {"number": target, "comment": comment["id"]}
     again = record.get("retried") and (record.get("command"), record.get("target")) == (
         command,

@@ -55,7 +55,7 @@ $round_checks
   When the issue, the plan or the discussion says to stop without a change in that case,
   return `status: done`, and NexKit closes the issue with the finding. Otherwise return
   `status: blocked` with a single question, whose recommended option is to close the
-  issue with that finding.
+  issue with that finding, and set its `closes` to that option's number.
 - When the change must modify a protected path, do not change it. Return
   `status: blocked` and list the paths in `protected_paths`: a person makes that change
   by hand.
@@ -69,12 +69,13 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
 - `status`: `done` or `blocked`.
 - `summary`: two or three sentences: what the change does and why. NexKit also uses it as
   the commit message.
-- `changes`: what changed in behaviour, one bullet each. Leave out how the code is written.
+- `changes`: a list of strings, one for each change in behaviour. Leave out how the code
+  is written.
 - `testing`: one or two sentences on how the change is tested.
-- `outside_plan`: anything you did that the plan did not ask for, with the reason. Empty
-  when you followed the plan.
-- `reviewer_notes`: what a reviewer should know or check, such as a trade-off or a known
-  limit. Empty when there is nothing to add.
+- `outside_plan`: a list of strings, one for each thing you did that the plan did not ask
+  for, with the reason. An empty list when you followed the plan.
+- `reviewer_notes`: a list of strings, each something a reviewer should know or check,
+  such as a trade-off or a known limit. An empty list when there is nothing to add.
 - `blocker`: why you stopped, when `status` is `blocked`; otherwise an empty string.
 - `questions`: when `status` is `blocked` because a person must decide something, one entry
   for each decision; otherwise an empty list. Each has the `question`, the `options` you
@@ -82,11 +83,14 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
   choose, counting from 1, or 0 when none is clearly better. Put the reason in `question`.
   Recommend only an option that a change to the plan or the code carries out. When an
   option needs a person to act outside the repository, such as downloading files,
-  granting access or running something by hand, set `recommended` to 0.
-- `checks_run`: the commands you ran and whether each passed.
+  granting access or running something by hand, set `recommended` to 0. Set `closes` to
+  the number of the option that closes the issue with the `no_change` finding, or 0 when
+  no option does.
+- `checks_run`: a list of strings, one for each command you ran, with whether it passed.
 - `no_change`: only when you changed nothing because no change is needed: the finding,
   followed by the evidence that shows it, such as the commit, log or test output lines,
   and for an outside failure the run that passed since, with its link. Otherwise an empty
-  string.
+  string: when you are blocked for any other reason, such as work that is not merged yet,
+  leave it empty, and never use it to say why there is no finding.
 - `protected_paths`: the protected paths that the change must modify and that you left
   unchanged, each as a path in the repository. Otherwise an empty list.

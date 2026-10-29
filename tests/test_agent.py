@@ -189,6 +189,33 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("changes", fix["required"])
         self.assertIn("status", fix["required"])
 
+    def test_the_implement_prompt_calls_each_array_of_its_result_a_list(self):
+        # A field described as prose, such as "one bullet each", led models to write it as
+        # text or Markdown bullets, which the structured result cannot parse.
+        template = agent._template("implement")
+        properties = agent.SCHEMAS["implement"]["properties"]
+        arrays = [name for name, sub in properties.items() if sub.get("type") == "array"]
+        self.assertIn("outside_plan", arrays)
+        for name in arrays:
+            entry = template.split(f"\n- `{name}`:", 1)[1].split("\n- `", 1)[0]
+            self.assertIn("list", entry, name)
+        self.assertNotIn("bullet", template)
+
+    def test_an_implement_question_names_the_option_that_closes_the_issue(self):
+        item = agent.SCHEMAS["implement"]["properties"]["questions"]["items"]
+        self.assertEqual(item["required"], ["question", "options", "recommended", "closes"])
+        for stage in ("plan", "fix"):
+            item = agent.SCHEMAS[stage]["properties"]["questions"]["items"]
+            self.assertNotIn("closes", item["properties"], stage)
+        template = " ".join(agent._template("implement").split())
+        self.assertIn("and set its `closes` to that option's number", template)
+        self.assertIn("Set `closes` to the number of the option that closes the issue", template)
+        self.assertIn(
+            "when you are blocked for any other reason, such as work that is not merged yet, "
+            "leave it empty, and never use it to say why there is no finding",
+            template,
+        )
+
     def test_review_schema_keeps_evidence_apart_from_the_criterion(self):
         item = agent.SCHEMAS["review"]["properties"]["criteria"]["items"]
         self.assertEqual(item["required"], ["criterion", "status", "test", "evidence"])

@@ -443,6 +443,7 @@ jobs:
       pull-requests: write
       statuses: write
       actions: write # next automatic round and merge.after_workflows
+      checks: read # the required checks that failed or still run when GitHub refuses a merge
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

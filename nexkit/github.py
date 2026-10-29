@@ -25,6 +25,55 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+# The required checks and statuses of a pull request's head (see `required_contexts`).
+REQUIRED_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      commits(last: 1) {
+        nodes {
+          commit {
+            oid
+            statusCheckRollup {
+              contexts(first: 100) {
+                nodes {
+                  __typename
+                  ... on CheckRun {
+                    name
+                    conclusion
+                    isRequired(pullRequestNumber: $number)
+                  }
+                  ... on StatusContext {
+                    context
+                    state
+                    isRequired(pullRequestNumber: $number)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _required_state(item):
+    """(name, "failed" | "pending" | "passed") of a check run or a commit status that
+    GraphQL lists for a commit. A check run has a conclusion once it completed."""
+    if item.get("__typename") == "CheckRun":
+        conclusion = item.get("conclusion")
+        if not conclusion:
+            return item.get("name"), "pending"
+        return item.get("name"), "failed" if conclusion in ("FAILURE", "TIMED_OUT") else "passed"
+    state = item.get("state")
+    if state in ("FAILURE", "ERROR"):
+        return item.get("context"), "failed"
+    return item.get("context"), "pending" if state in ("PENDING", "EXPECTED") else "passed"
+
+
 class GitHubError(RuntimeError):
     def __init__(self, status, message):
         super().__init__(f"GitHub API {status}: {message}")
@@ -304,6 +353,11 @@ class GitHub:
         params = {"filter": "latest", "per_page": 100}
         return self.request("GET", path, params=params).get("check_runs") or []
 
+    def commit_statuses(self, sha):
+        """The latest commit status of each context on a commit: the first 100."""
+        path = f"{self._repo}/commits/{sha}/status"
+        return self.request("GET", path, params={"per_page": 100}).get("statuses") or []
+
     def check_run_annotations(self, check_run_id):
         """The annotations of a check run, such as a job of a workflow run: the first 100."""
         return self.paginate(f"{self._repo}/check-runs/{check_run_id}/annotations", limit=100)
@@ -352,6 +406,63 @@ class GitHub:
                 return False
             raise
         return bool((found or {}).get("strict"))
+
+    def required_checks(self, branch):
+        """(names, complete): the names of the checks that pull requests into `branch` must
+        pass, from its rulesets' required status checks and classic branch protection, and
+        whether those are all of them. The Actions token may not read classic protection
+        (403): then only the rulesets' names are known."""
+        names = set()
+        for rule in self.paginate(f"{self._repo}/rules/branches/{quote(branch)}"):
+            if rule.get("type") == "required_status_checks":
+                found = (rule.get("parameters") or {}).get("required_status_checks") or []
+                names |= {item.get("context") for item in found if isinstance(item, dict)}
+        path = f"{self._repo}/branches/{quote(branch)}/protection/required_status_checks"
+        complete = True
+        try:
+            found = self.request("GET", path) or {}
+        except GitHubError as exc:
+            if exc.status not in (403, 404):
+                raise
+            found, complete = {}, exc.status == 404
+        names |= set(found.get("contexts") or [])
+        names |= {
+            item.get("context") for item in found.get("checks") or [] if isinstance(item, dict)
+        }
+        return {name for name in names if isinstance(name, str) and name}, complete
+
+    def graphql(self, query, variables):
+        """The `data` of a GraphQL query. GitHub Enterprise Server serves GraphQL beside its
+        REST API, at `/api/graphql` rather than `/api/v3`."""
+        base = self.api_url
+        url = base[: -len("/v3")] + "/graphql" if base.endswith("/api/v3") else base + "/graphql"
+        found = self.request("POST", url, {"query": query, "variables": variables}) or {}
+        if found.get("errors"):
+            message = "; ".join(
+                str(e.get("message")) for e in found["errors"] if isinstance(e, dict)
+            )
+            raise GitHubError(200, message or "the GraphQL query failed")
+        return found.get("data") or {}
+
+    def required_contexts(self, number):
+        """The checks and commit statuses of a pull request's head that GitHub requires for
+        its merge, as {name, sha, state}, with `state` "failed", "pending" or "passed". Only
+        those that reported on the head: GitHub lists a required check only once it has."""
+        owner, name = self.repository.split("/", 1)
+        data = self.graphql(REQUIRED_QUERY, {"owner": owner, "name": name, "number": number})
+        pull = ((data.get("repository") or {}).get("pullRequest")) or {}
+        found = []
+        for node in ((pull.get("commits") or {}).get("nodes")) or []:
+            commit = (node or {}).get("commit") or {}
+            contexts = ((commit.get("statusCheckRollup") or {}).get("contexts") or {}).get("nodes")
+            for item in contexts or []:
+                if isinstance(item, dict) and item.get("isRequired"):
+                    label, state = _required_state(item)
+                    if isinstance(label, str) and label:
+                        found.append(
+                            {"name": label, "sha": commit.get("oid") or "", "state": state}
+                        )
+        return found
 
     def delete_branch(self, branch):
         return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")

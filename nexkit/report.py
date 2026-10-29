@@ -400,7 +400,7 @@ def _autopilot_fields(agent):
     if protected and agent.get("status") == "blocked":
         fields["protected_paths"] = protected
     finding = no_change_finding(agent)
-    if finding and agent.get("stage") == "implement":
+    if finding and agent.get("stage") == "implement" and any(q.get("closes") for q in found):
         # The round recommends closing the issue with this finding.
         fields["no_change"] = finding
     return fields
@@ -780,19 +780,13 @@ def _due(gh, workflow, every, base):
     return f"{count} of {every} commits since its [latest run]({runs[0].get('html_url', '')})."
 
 
-# Why GitHub refused a merge, for refusals that pass by themselves or by NexKit's rounds:
-# another merge into the base branch at the same moment, required checks that have not
-# reported yet, and a branch that branch protection wants up to date with its base.
-BASE_MODIFIED = re.compile(r"base branch was modified", re.I)
-# A push to the pull request's branch after the round checked it, such as a person's.
-HEAD_MODIFIED = re.compile(r"head branch was modified", re.I)
+# What GitHub says when it refuses a merge for required checks that have not reported yet.
+# NexKit reads this sentence, which GitHub does not document, only when its data cannot
+# say: the token may not read classic branch protection, which names the required checks,
+# and GitHub lists a required check for a pull request only once it has reported.
 CHECKS_PENDING = re.compile(
     r"required status checks? .*\b(?:is|are) (?:expected|pending|in progress|queued)", re.I
 )
-BEHIND = re.compile(r"out of date|not up to date|is behind", re.I)
-# Required checks that failed, so GitHub refused the merge, and the checks named.
-CHECKS_FAILING = re.compile(r"required status checks?\b.*\b(?:failing|failed)\b", re.I)
-CHECK_NAME = re.compile(r'"([^"]+)"')
 # How often a merge refused because the base branch was modified is tried, and the seconds
 # before the first try again; each later try waits that much longer.
 MERGE_TRIES = 3
@@ -826,11 +820,14 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
             row["on_base"] = commit
         return outcome, f"✅ Checks and AI review passed on `{head[:7]}`.\n\n{text}"
     for attempt in range(MERGE_TRIES):
+        tip = _tip(gh, target["base"])
         try:
             merge = gh.merge(pr, head) or {}
             break
         except GitHubError as exc:
-            if attempt + 1 < MERGE_TRIES and BASE_MODIFIED.search(str(exc)):
+            # Another merge into the base branch at the same moment: the next try may pass.
+            moved = tip is not None and _tip(gh, target["base"]) not in (None, tip)
+            if attempt + 1 < MERGE_TRIES and moved:
                 time.sleep(MERGE_DELAY * (attempt + 1))
                 continue
             return _refused(gh, cfg, target, row, message, exc, workflow, default_branch)
@@ -858,12 +855,14 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
 
 def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     """(outcome, message) after GitHub refused the merge: a conflict round for a conflict,
-    `merge_waiting` for required checks that have not passed yet, which autopilot's next
-    sweeps merge, an automatic fix round for required checks that failed, at the first try
-    or while the merge waits (see `_required_failed`), an update of a branch that is
-    behind with a review of the new commit, also when GitHub only says its required checks
-    are expected, and otherwise `merge_refused` for a person."""
-    pr, base = target["pr"], target["base"]
+    a review of a head that moved, an automatic fix round for required checks that failed,
+    at the first try or while the merge waits (see `_required_failed`), an update of a
+    branch that is behind with a review of the new commit, `merge_waiting` for required
+    checks that have not passed yet, which autopilot's next sweeps merge, and otherwise
+    `merge_refused` for a person. GitHub's data decides: the response's status, the pull
+    request, the base branch's required checks and the head's checks. The error's text
+    counts only for required checks that have not reported, when the data cannot say."""
+    pr, base, head = target["pr"], target["base"], target["head"]
     message += f" Automatic merge was not possible: {exc}"
     auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]
     if auto_resolve and is_conflicting(gh, pr):
@@ -871,13 +870,19 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
         if started.startswith("Started"):
             return "conflict_fix", f"{message}\n\nIt conflicts with `{base}`. {started}"
         return "merge_refused", f"{message}\n\n{started}" if started else message
-    if CHECKS_FAILING.search(str(exc)):
-        return _required_failed(gh, cfg, target, row, message, exc, workflow, default_branch)
-    if CHECKS_PENDING.search(str(exc)):
-        if auto_resolve and _behind(gh, pr):
-            # Checks that passed on a head behind its base count as "expected" when branch
-            # protection wants it up to date: they never pass without an update.
-            return _update_branch(gh, target, row, message, limit, workflow, default_branch)
+    if exc.status == 409 or _head(gh, pr) not in (None, head):
+        # GitHub answers 409 when the head is no longer the commit the round checked.
+        return _head_moved(gh, target, message, workflow, default_branch)
+    failed, pending, complete = required_checks(gh, base, pr, head)
+    if failed:
+        return _required_failed(gh, cfg, target, row, message, failed, workflow, default_branch)
+    state = merge_state(gh, pr)
+    if auto_resolve and state == "behind":
+        # Checks that passed on a head behind its base count as "expected" when branch
+        # protection wants it up to date: they never pass without an update.
+        return _update_branch(gh, target, row, message, limit, workflow, default_branch)
+    unreported = not complete and state in ("blocked", "behind") and CHECKS_PENDING.search(str(exc))
+    if pending or unreported:
         if not _swept(gh, cfg, target["issue"]):
             line = "Required checks have not passed yet. Merge it once they pass."
             return "merge_refused", f"{message}\n\n{line}"
@@ -887,14 +892,81 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
             "they pass."
         )
         return "merge_waiting", f"{message}\n\n{line}"
-    if auto_resolve and BEHIND.search(str(exc)):
-        return _update_branch(gh, target, row, message, limit, workflow, default_branch)
-    if HEAD_MODIFIED.search(str(exc)):
-        return _head_moved(gh, target, message, workflow, default_branch)
     return "merge_refused", message
 
 
-def _required_failed(gh, cfg, target, row, message, exc, workflow, default_branch):
+def required_checks(gh, base, pr, head):
+    """(failed, pending, complete): the names of the checks that the merge of pull request
+    `pr` needs and that failed on `head`, of those that have not reported on it or still
+    run, and whether the names are all of them. The names come from the base branch's
+    rulesets and classic branch protection, checked against the head's check runs and
+    commit statuses, and from the checks GitHub marks as required on the pull request,
+    which it lists only once they reported."""
+    failed, pending = set(), set()
+    try:
+        names, complete = gh.required_checks(base)
+    except GitHubError:
+        names, complete = set(), False
+    if names:
+        try:
+            runs = {run.get("name"): run for run in gh.check_runs(head)}
+            statuses = {item.get("context"): item for item in gh.commit_statuses(head)}
+        except GitHubError:
+            names, complete = set(), False
+        for name in names:
+            run, status = runs.get(name), statuses.get(name)
+            if run:
+                # A check run has a conclusion once it completed.
+                if not run.get("conclusion"):
+                    pending.add(name)
+                elif run["conclusion"] in autopilot.FAILED:
+                    failed.add(name)
+            elif status:
+                if status.get("state") == "pending":
+                    pending.add(name)
+                elif status.get("state") in ("failure", "error"):
+                    failed.add(name)
+            else:
+                pending.add(name)
+    try:
+        contexts = [c for c in gh.required_contexts(pr) if c.get("sha") == head]
+    except GitHubError:
+        contexts = []
+    failed |= {c["name"] for c in contexts if c["state"] == "failed"}
+    pending |= {c["name"] for c in contexts if c["state"] == "pending"}
+    return sorted(failed), sorted(pending - failed), complete
+
+
+def merge_state(gh, pr, tries=6, delay=5):
+    """The pull request's `mergeable_state`, such as "behind" or "blocked", or None. GitHub
+    works it out in the background after a branch moves and says "unknown" until then."""
+    for attempt in range(tries):
+        try:
+            state = gh.pull(pr).get("mergeable_state")
+        except GitHubError:
+            return None
+        if state != "unknown":
+            return state
+        if attempt < tries - 1:
+            time.sleep(delay)
+    return None
+
+
+def _tip(gh, branch):
+    try:
+        return gh.branch_sha(branch)
+    except GitHubError:
+        return None
+
+
+def _head(gh, pr):
+    try:
+        return gh.pull(pr)["head"]["sha"]
+    except (GitHubError, KeyError, TypeError):
+        return None
+
+
+def _required_failed(gh, cfg, target, row, message, names, workflow, default_branch):
     """(outcome, message) after required checks failed, at the round's first try of the
     merge or while it waited for them: an automatic fix round within
     `fix.max_auto_rounds`, as after failing checks of a round, unless they fail as the
@@ -905,7 +977,7 @@ def _required_failed(gh, cfg, target, row, message, exc, workflow, default_branc
     At the first try, `target["state"]` is the state that the reporting round saves, and
     the round starts the fix round for the `auto_fix` outcome; here it is only updated."""
     pr, head = target["pr"], target["head"]
-    failed = autopilot.failed_checks(gh, head, CHECK_NAME.findall(str(exc)))
+    failed = autopilot.failed_checks(gh, head, names)
     reporting = target.get("state")
     if reporting is None:
         comment_id, state = read_state(gh.comments(pr))
@@ -971,12 +1043,6 @@ def _head_moved(gh, target, message, workflow, default_branch):
         "`/nexkit review` on the new commit."
     )
     return "head_moved", f"{message}\n\n{line}"
-
-
-def _behind(gh, pr):
-    """Whether GitHub says the pull request is behind its base branch, which it reports
-    only when branch protection wants the branch up to date before a merge."""
-    return gh.pull(pr).get("mergeable_state") == "behind"
 
 
 def _swept(gh, cfg, number):

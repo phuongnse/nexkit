@@ -182,9 +182,21 @@ def recommended_option(item):
     return chosen if chosen in options else ""
 
 
+def closes_issue(item):
+    """Whether a question's recommended option is the one that closes the issue with the
+    round's `no_change` finding. Agents name that option by its number in `closes`, from 1,
+    with 0 for none; records keep True."""
+    chosen, closes = item.get("recommended"), item.get("closes")
+    if closes is True:
+        return isinstance(chosen, str) and bool(recommended_option(item))
+    number = isinstance(closes, int) and not isinstance(closes, bool)
+    return number and closes > 0 and closes == chosen and bool(recommended_option(item))
+
+
 def questions(items):
     """Questions as {question, options, recommended}, with the recommended option's text
-    or "". Plans from before 4.1 hold plain strings, without options."""
+    or "", and `closes` when that option closes the issue. Plans from before 4.1 hold plain
+    strings, without options."""
     found = []
     for item in items or []:
         if isinstance(item, str):
@@ -198,6 +210,7 @@ def questions(items):
                 "question": clip(item["question"], 1500),
                 "options": options,
                 "recommended": clip(recommended, 500) if recommended else "",
+                **({"closes": True} if closes_issue(item) else {}),
             }
         )
     return found[:MAX_QUESTIONS]
@@ -297,6 +310,25 @@ def run_comments(comments):
             match = RUN_PATTERN.search(comment.get("body", ""))
             if match:
                 yield comment, json.loads(base64.b64decode(match.group(1)))
+
+
+def run_action(run):
+    """A round's action, such as `fix` or `review`: its `action`, or the first word of its
+    `trigger` in a marker from before NexKit kept the action."""
+    action = run.get("action")
+    if isinstance(action, str) and action:
+        return action
+    return str(run.get("trigger") or "").split(" (", 1)[0].strip()
+
+
+def run_kinds(run):
+    """A round's kinds, such as {"auto", "conflicts"}: its `kinds`, or the labels of its
+    `trigger`, such as `fix (auto, conflicts)`, in a marker from before NexKit kept them."""
+    kinds = run.get("kinds")
+    if isinstance(kinds, list):
+        return {kind for kind in kinds if isinstance(kind, str)}
+    labels = re.search(r"\((.*)\)", str(run.get("trigger") or ""))
+    return {kind.strip() for kind in labels.group(1).split(",")} if labels else set()
 
 
 def run_marker(run):

@@ -11,9 +11,23 @@ from unittest import mock
 
 from nexkit import progress
 from nexkit.github import GitHub, GitHubError
-from nexkit.maintain import WAIT_INPUTS, check_paused, maintain, resume_paused, wait_and_resume
+from nexkit.maintain import (
+    WAIT_INPUTS,
+    _give_back,
+    check_paused,
+    maintain,
+    resume_paused,
+    wait_and_resume,
+)
 from nexkit.report import report
-from nexkit.state import empty_state, read_state, render_run, render_state
+from nexkit.state import (
+    empty_state,
+    read_state,
+    render_run,
+    render_state,
+    run_action,
+    run_kinds,
+)
 from tests.support import FakeGitHub, make_config
 
 HEAD = "c" * 40
@@ -249,6 +263,7 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(
             (stopped["run"]["trigger"], stopped["run"]["status"]), ("fix (auto)", "failure")
         )
+        self.assertEqual((stopped["run"]["action"], stopped["run"]["kinds"]), ("fix", ["auto"]))
         self.assertIn("Unclear", stopped["body"])
         self.assertEqual(len(self.gh.comments(6)), 2)  # state and round, no extra comment
         self.assertEqual(self.gh.reactions, [])  # dispatched rounds have no comment
@@ -339,6 +354,23 @@ class PausedRunTests(unittest.TestCase):
         self.assertEqual(
             progress.trigger({"action": "review", "resumed": True}), "review (resumed)"
         )
+
+    def test_a_rounds_action_and_kinds_are_read_from_its_fields_before_its_trigger(self):
+        old = {"round": 2, "trigger": "fix (auto, conflicts)"}
+        self.assertEqual((run_action(old), run_kinds(old)), ("fix", {"auto", "conflicts"}))
+        self.assertEqual(
+            (run_action({"trigger": "implement"}), run_kinds({})), ("implement", set())
+        )
+        # The fields win over text written any other way.
+        new = {"round": 2, "trigger": "fix: auto; conflicts", "action": "fix", "kinds": ["auto"]}
+        self.assertEqual((run_action(new), run_kinds(new)), ("fix", {"auto"}))
+        self.assertEqual(run_kinds({**old, "kinds": []}), set())
+        # An automatic fix round that NexKit stopped gives its round back, read from them.
+        self.gh.comment(6, render_state({"version": 2, "issue": 5, "auto_fixes": 1}))
+        _give_back(self.gh, 6, self.gh.comments(6), {**old, "kinds": []})
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 1)
+        _give_back(self.gh, 6, self.gh.comments(6), new)
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
 
     def test_a_new_command_replaces_a_paused_one(self):
         self.paused(5, 1)
@@ -521,6 +553,93 @@ class UpToDateRuleTests(unittest.TestCase):
             self.assertFalse(gh.wants_up_to_date("main"))
         with self.assertRaises(GitHubError):
             self.answers([], GitHubError(500, "down")).wants_up_to_date("main")
+
+    def test_required_checks_come_from_rulesets_and_classic_protection(self):
+        rule = {"type": "required_status_checks"}
+        rule["parameters"] = {"required_status_checks": [{"context": "e2e"}, {"context": ""}]}
+        other = {"type": "pull_request", "parameters": {}}
+        classic = {"contexts": ["ci/build"], "checks": [{"context": "lint", "app_id": 15368}]}
+        gh = self.answers([rule, other], classic)
+        self.assertEqual(gh.required_checks("main"), ({"e2e", "ci/build", "lint"}, True))
+        # No classic protection adds no names; one the token may not read leaves some out.
+        gh = self.answers([rule], GitHubError(404, "Branch not protected"))
+        self.assertEqual(gh.required_checks("main"), ({"e2e"}, True))
+        gh = self.answers([rule], GitHubError(403, "Resource not accessible by integration"))
+        self.assertEqual(gh.required_checks("main"), ({"e2e"}, False))
+        with self.assertRaises(GitHubError):
+            self.answers([], GitHubError(500, "down")).required_checks("main")
+
+    def test_commit_statuses_are_the_latest_of_each_context(self):
+        gh = GitHub(repository="acme/app", token="t")
+        found = {"state": "pending", "statuses": [{"context": "ci/build", "state": "pending"}]}
+        with mock.patch.object(gh, "request", return_value=found) as request:
+            self.assertEqual(gh.commit_statuses("abc"), found["statuses"])
+        self.assertEqual(request.call_args.args[:2], ("GET", "/repos/acme/app/commits/abc/status"))
+
+
+class RequiredContextTests(unittest.TestCase):
+    def contexts(self, nodes, api_url=None):
+        gh = GitHub(repository="acme/app", token="t", api_url=api_url)
+        data = {
+            "repository": {
+                "pullRequest": {
+                    "commits": {
+                        "nodes": [
+                            {
+                                "commit": {
+                                    "oid": "abc",
+                                    "statusCheckRollup": {"contexts": {"nodes": nodes}},
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        with mock.patch.object(gh, "request", return_value={"data": data}) as request:
+            found = gh.required_contexts(6)
+        return found, request.call_args
+
+    def test_only_checks_github_requires_for_the_pull_request_count(self):
+        run = {"__typename": "CheckRun", "name": "e2e", "isRequired": True}
+        status = {"__typename": "StatusContext", "context": "ci/build", "isRequired": True}
+        found, call = self.contexts(
+            [
+                {**run, "conclusion": "FAILURE"},
+                {**run, "name": "unit", "conclusion": None},
+                {**run, "name": "lint", "conclusion": "SUCCESS"},
+                {**run, "name": "docs", "conclusion": "FAILURE", "isRequired": False},
+                {**status, "state": "ERROR"},
+                {**status, "context": "ci/deploy", "state": "EXPECTED"},
+                {**status, "context": "ci/size", "state": "SUCCESS"},
+            ]
+        )
+        states = {item["name"]: item["state"] for item in found}
+        self.assertEqual(
+            states,
+            {
+                "e2e": "failed",
+                "unit": "pending",
+                "lint": "passed",
+                "ci/build": "failed",
+                "ci/deploy": "pending",
+                "ci/size": "passed",
+            },
+        )
+        self.assertTrue(all(item["sha"] == "abc" for item in found))
+        method, url, body = call.args
+        self.assertEqual((method, url), ("POST", "https://api.github.com/graphql"))
+        self.assertEqual(body["variables"], {"owner": "acme", "name": "app", "number": 6})
+
+    def test_graphql_on_an_enterprise_server_and_its_errors(self):
+        _, call = self.contexts([], api_url="https://ghe.example.com/api/v3")
+        self.assertEqual(call.args[1], "https://ghe.example.com/api/graphql")
+        gh = GitHub(repository="acme/app", token="t")
+        errors = {"errors": [{"message": "Resource not accessible by integration"}]}
+        with mock.patch.object(gh, "request", return_value=errors):
+            with self.assertRaises(GitHubError) as raised:
+                gh.required_contexts(6)
+        self.assertIn("Resource not accessible", str(raised.exception))
 
 
 class LatestClosedIssueTests(unittest.TestCase):

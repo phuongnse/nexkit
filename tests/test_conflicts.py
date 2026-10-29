@@ -805,6 +805,10 @@ if __name__ == "__main__":
     unittest.main()
 
 
+# A refusal in words NexKit does not read, so only GitHub's data can say why.
+UNKNOWN_REFUSAL = GitHubError(405, "Merge refused.")
+
+
 class MergeRefusalTests(ReportCase):
     """Refusals of the automatic merge that pass by themselves or by NexKit's own rounds."""
 
@@ -813,6 +817,9 @@ class MergeRefusalTests(ReportCase):
         sleep = mock.patch("nexkit.report.time.sleep")
         self.sleeps = sleep.start()
         self.addCleanup(sleep.stop)
+        # The base branch's rules require `e2e`, a job of the repository's CI that has not
+        # reported on the approved head yet.
+        self.gh.required = {"e2e"}
         self.cfg = make_config(
             merge={"auto": True},
             conflicts={"auto_resolve": True, "max_rounds": 1},
@@ -822,16 +829,36 @@ class MergeRefusalTests(ReportCase):
 
     def test_a_merge_refused_because_the_base_branch_moved_is_tried_again(self):
         self.candidate()
+        self.gh.required = set()
         modified = GitHubError(405, "Base branch was modified. Review and try the merge again.")
-        self.gh.merge_error = [modified, modified]
-        outcome = self.run_report(cfg=self.cfg)
+        merge = self.gh.merge
+
+        def refuse(times):
+            """`gh.merge` that refuses `times` times, while another merge moves `main`."""
+            left = [times]
+
+            def merged(number, sha, method="squash"):
+                if not left[0]:
+                    return merge(number, sha, method)
+                left[0] -= 1
+                self.gh.branches["main"] = f"{left[0]}" * 40
+                raise modified
+
+            return merged
+
+        with mock.patch.object(self.gh, "merge", side_effect=refuse(2)):
+            outcome = self.run_report(cfg=self.cfg)
         self.assertEqual(outcome["outcome"], "merged")
         self.assertIn("at try 3", outcome["summary"])
         self.assertEqual(self.gh.issues[5]["state"], "closed")
         # Three refusals in a row: a person decides.
         self.gh.issues[5]["state"] = "open"
-        self.gh.merge_error = [modified] * 3
+        with mock.patch.object(self.gh, "merge", side_effect=refuse(3)):
+            self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
+        # The same words while the base branch stays where it was: no other try.
+        self.gh.merge_error = [modified]
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
+        self.assertEqual(len(self.sleeps.call_args_list), 4)
 
     def test_a_merge_refused_because_the_head_moved_reviews_the_new_head(self):
         self.candidate()
@@ -1084,6 +1111,7 @@ class MergeRefusalTests(ReportCase):
 
     def test_a_branch_behind_its_base_is_updated_and_reviewed_again(self):
         self.candidate()
+        self.gh.pulls[6]["mergeable_state"] = "behind"
         self.gh.merge_error = GitHubError(405, "Head branch is out of date. Review and try again.")
         outcome = self.run_report(cfg=self.cfg)
         self.assertEqual(outcome["outcome"], "branch_updated")
@@ -1093,6 +1121,7 @@ class MergeRefusalTests(ReportCase):
         self.assertTrue(self.gh.run_comments(6)[-1]["run"]["updated_branch"])
         # Once per `conflicts.max_rounds`: a person decides after that.
         self.gh.pulls[6]["head"]["sha"] = HEAD
+        self.gh.pulls[6]["mergeable_state"] = "behind"
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
         self.assertEqual(len(self.gh.updated), 1)
 
@@ -1157,6 +1186,7 @@ class MergeRefusalTests(ReportCase):
         # An implement round's report runs beside the review it starts, which reads the
         # approval from the state comment: it is saved before the review is started.
         self.candidate()
+        self.gh.pulls[6]["mergeable_state"] = "behind"
         self.gh.merge_error = GitHubError(405, "Head branch is out of date. Review and try again.")
         seen, dispatch = [], self.gh.dispatch
 
@@ -1171,8 +1201,117 @@ class MergeRefusalTests(ReportCase):
         # One state comment, edited in place afterwards.
         self.assertEqual(len(self.gh.comments_matching(6, "nexkit:state")), 1)
 
+    def test_a_required_check_that_failed_is_found_from_githubs_data(self):
+        # Words NexKit does not know: the base branch's rules and the head's checks decide.
+        self.candidate()
+        self.e2e_fails()
+        self.gh.required = {"e2e", "lint"}
+        self.gh.merge_error = [UNKNOWN_REFUSAL]
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "auto_fix")
+        self.assertIn("Required check `e2e` failed on `ccccccc`", outcome["summary"])
+        state = read_state(self.gh.comments(6))[1]
+        self.assertEqual([item["name"] for item in state["feedback"]["required"]], ["e2e"])
+        self.assertEqual(state["feedback"]["required"][0]["commands"], ["make e2e"])
+
+    def test_required_checks_that_have_not_reported_are_found_from_githubs_data(self):
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.candidate()
+        # A check run still in progress, a commit status still pending, a check not seen yet.
+        for required, checks, statuses in (
+            ({"e2e"}, [{"name": "e2e", "status": "in_progress", "conclusion": None}], []),
+            ({"ci/build"}, [], [("ci/build", "pending")]),
+            ({"deploy-preview"}, [], []),
+        ):
+            with self.subTest(required=required):
+                self.gh.required = required
+                self.gh.commit_checks[HEAD] = checks
+                for context, state in statuses:
+                    self.gh.set_status(HEAD, context, state, "")
+                self.gh.merge_error = [UNKNOWN_REFUSAL]
+                self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_waiting")
+        # A failed commit status is a failed check, as a check run is.
+        self.gh.required = {"ci/build"}
+        self.gh.set_status(HEAD, "ci/build", "failure", "")
+        self.gh.merge_error = [UNKNOWN_REFUSAL]
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "auto_fix")
+
+    def test_a_branch_behind_or_a_moved_head_is_found_from_githubs_data(self):
+        self.candidate()
+        self.gh.pulls[6]["mergeable_state"] = "behind"
+        self.gh.merge_error = [UNKNOWN_REFUSAL]
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "branch_updated")
+        # GitHub answers 409 when the head is not the commit it was asked to merge, and the
+        # pull request names its new head.
+        for error in (GitHubError(409, "Conflict"), UNKNOWN_REFUSAL):
+            with self.subTest(error=error):
+                self.gh.pulls[6]["head"]["sha"] = "9" * 40
+                self.gh.pulls[6].pop("mergeable_state", None)
+                self.gh.merge_error = [error]
+                self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "head_moved")
+
+    def test_required_checks_that_github_marks_on_the_pull_request_count(self):
+        # Classic protection the token may not read: GitHub still marks the checks that
+        # reported on the head as required for this pull request.
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.candidate()
+        self.gh.required, self.gh.required_complete = set(), False
+        for state, outcome in (("pending", "merge_waiting"), ("failed", "auto_fix")):
+            with self.subTest(state=state):
+                self.gh.contexts[6] = [{"name": "Unit tests", "sha": HEAD, "state": state}]
+                self.gh.merge_error = [UNKNOWN_REFUSAL]
+                self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], outcome)
+        state = read_state(self.gh.comments(6))[1]
+        self.assertEqual([item["name"] for item in state["feedback"]["required"]], ["Unit tests"])
+        # A check of another commit, or one that passed, says nothing about this head.
+        for found in ({"sha": "9" * 40, "state": "failed"}, {"sha": HEAD, "state": "passed"}):
+            self.gh.contexts[6] = [{"name": "Unit tests", **found}]
+            self.gh.merge_error = [UNKNOWN_REFUSAL]
+            self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
+
+    def test_githubs_words_count_only_for_checks_its_data_cannot_name(self):
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.candidate()
+        self.gh.required = set()
+        expected = GitHubError(405, 'Required status check "deploy-preview" is expected.')
+        failing = GitHubError(405, 'Required status check "deploy-preview" is failing.')
+        # The words count when the token may not read every required check, and GitHub
+        # holds the pull request back; never for a failed check, which GitHub marks.
+        for complete, state, error, outcome in (
+            (False, "blocked", expected, "merge_waiting"),
+            (False, "behind", expected, "merge_waiting"),
+            (True, "blocked", expected, "merge_refused"),
+            (False, "clean", expected, "merge_refused"),
+            (False, "blocked", failing, "merge_refused"),
+        ):
+            with self.subTest(complete=complete, state=state, error=str(error)):
+                self.gh.required_complete = complete
+                self.gh.pulls[6]["mergeable_state"] = state
+                self.gh.merge_error = [error]
+                cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+                self.assertEqual(self.run_report(cfg=cfg)["outcome"], outcome)
+
+    def test_a_mergeable_state_github_has_not_worked_out_is_asked_again(self):
+        from nexkit.report import merge_state
+
+        self.candidate()
+        answers = iter(["unknown", "unknown", "behind"])
+        with mock.patch.object(
+            self.gh, "pull", side_effect=lambda n: {"mergeable_state": next(answers)}
+        ):
+            self.assertEqual(merge_state(self.gh, 6), "behind")
+        self.assertEqual(len(self.sleeps.call_args_list), 2)
+        with mock.patch.object(self.gh, "pull", return_value={"mergeable_state": "unknown"}):
+            self.assertIsNone(merge_state(self.gh, 6))
+        with mock.patch.object(self.gh, "pull", side_effect=GitHubError(502, "Bad")):
+            self.assertIsNone(merge_state(self.gh, 6))
+
     def test_a_refusal_that_needs_a_person_names_githubs_reason(self):
         self.candidate()
+        self.gh.required = set()
         self.gh.merge_error = GitHubError(405, "At least 1 approving review is required.")
         outcome = self.run_report(cfg=self.cfg)
         self.assertEqual(outcome["outcome"], "merge_refused")

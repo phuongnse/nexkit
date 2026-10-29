@@ -401,9 +401,10 @@ and stops as `blocked` with the paths in `protected_paths`; autopilot answers no
 questions, and a person decides. When the issue, the plan or the discussion says to stop without a change
 in that case, it returns `done`: NexKit opens no pull request, closes the issue as
 completed, and the run's comment shows the finding (outcome `no_change`). Otherwise it
-returns `blocked` with a question whose recommended option is to close the issue, which
-[autopilot](#autopilot) answers by closing it. A `no_change` result that changed files is
-an error and publishes nothing.
+returns `blocked` with a question whose recommended option is to close the issue, and
+names that option in the question's `closes`, which [autopilot](#autopilot) answers by
+closing it. A round blocked for any other reason leaves `no_change` empty. A `no_change`
+result that changed files is an error and publishes nothing.
 
 When the failing checks of the last round kept
 [result files](configuration.md#result-files-of-failing-checks), `route` puts the id of the
@@ -981,8 +982,10 @@ the `null` scope, since it may have replaced a sweep that waited.
   or round that its answers started asks again, with no comment by a person on the issue
   or its pull request since the answers, it waits for a person, so new wording of the
   same question cannot start another run. When a blocked `/nexkit go` found that no change
-  is needed and asks one question, its recommended answer only closes the issue, so autopilot closes it as
-  completed with the round's finding and starts no other round. A recommended option is
+  is needed and asks one question, whose `closes` names its recommended option, that
+  answer only closes the issue, so autopilot closes it as completed with the round's
+  finding and starts no other round. Text in `no_change` alone never closes an issue: a
+  round that recommends waiting or more work is answered as any other. A recommended option is
   one NexKit can carry
   out itself, a change to the plan or the code; the prompts never recommend one that
   needs a person to act outside NexKit, such as downloading files or granting access. A plan that is too large becomes sub-issues, in
@@ -1314,6 +1317,26 @@ state, leaves it as it is and saves the state in a new state comment.
 | A check fails the same way before and after a fix round | The next automatic fix round is a diagnosis round, shown as `fix (auto, diagnosis)`: the agent names the cause, with evidence, before it changes code, then fixes that cause. Without a cause it changes nothing and ends as `blocked` with a question for a person; a change without a cause is rejected and publishes nothing. |
 | The review itself fails | Sets `nexkit/review` to error and says why in the round's comment. A transient error, or a review job that left no result, runs `/nexkit review` once more; otherwise comment `/nexkit review` to retry, after fixing the agent's secrets if it was an authentication error. |
 | NexKit itself fails in the `agent` or `review` job | Reports `NexKit stopped on <exception>` like an agent error; the job log has the traceback. |
+
+**Why a merge was refused.** GitHub documents neither the wording of its refusals nor
+how it quotes check names, so NexKit tells the refusals above apart from GitHub's data:
+
+- *The head moved:* a response of 409, or a pull request whose head is not the approved
+  commit.
+- *Another merge at the same moment:* the base branch's tip moved during the try; the
+  merge is tried again.
+- *Behind its base:* GitHub reports the pull request as `behind`. NexKit asks again for a
+  short while when GitHub has not worked it out yet (`unknown`).
+- *Required checks:* those that the base branch's rulesets and classic branch protection
+  name, against the check runs and commit statuses of the head, and those that GitHub
+  marks as required on the pull request. A check that failed is named from that data;
+  one that has not reported, or still runs, makes the merge wait.
+
+The Actions token may not read classic branch protection, and GitHub marks a check as
+required only once it has reported. Only for a required check that has not reported in
+that case does the text count: when GitHub holds the pull request back (`blocked` or
+`behind`) and says its required checks are expected or pending, the merge waits.
+Rulesets name every required check, so a repository that uses them needs no text at all.
 
 **Diagnosis rounds.** A fix round that tries one change after another without the cause
 spends its time and the automatic rounds on guesses. So when a check fails the same way

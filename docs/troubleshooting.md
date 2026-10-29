@@ -363,7 +363,10 @@ that the failing test no longer fails on the default branch after the commit the
 names, or, for a failure from outside the repository, that the logs name the outside
 cause and that the run the comment links as *Passed since* ran the same jobs.
 When the evidence contradicts the finding, reopen the issue and comment
-`/nexkit plan <what still needs changing, with the evidence>`.
+`/nexkit plan <what still needs changing, with the evidence>`. A blocked round closes its
+issue only when its one question's recommended option is the one its `closes` names, so a
+round that recommended waiting, such as for a pull request that is not merged, never
+closes it.
 
 ### A pull request closed as `already_on_base` whose change is not on the base branch
 

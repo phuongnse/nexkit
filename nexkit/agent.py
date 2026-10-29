@@ -49,6 +49,18 @@ _QUESTIONS = {
     "type": "array",
     "items": {"type": "object", "properties": _QUESTION, "required": list(_QUESTION)},
 }
+# An implement round's question also names the option that closes the issue with its
+# `no_change` finding (from 1), or 0 when none does. Autopilot closes the issue only when
+# that is the recommended option, never on the finding's text alone.
+_CLOSING_QUESTION = {**_QUESTION, "closes": {"type": "integer"}}
+_CLOSING_QUESTIONS = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": _CLOSING_QUESTION,
+        "required": list(_CLOSING_QUESTION),
+    },
+}
 _CHANGE_RESULT = {
     "type": "object",
     "properties": {
@@ -135,8 +147,10 @@ SCHEMAS = {
         "properties": {
             **_CHANGE_RESULT["properties"],
             **_PULL_FIELDS,
+            "questions": _CLOSING_QUESTIONS,
             # The finding and its evidence when no change is needed, or "". Done, NexKit
-            # closes the issue with it; blocked, closing it is the recommended answer.
+            # closes the issue with it; blocked, its one question's `closes` names the
+            # option that closes the issue with it, and that option is the recommended one.
             "no_change": {"type": "string"},
         },
         "required": [*_CHANGE_RESULT["required"], *_PULL_FIELDS, "no_change"],

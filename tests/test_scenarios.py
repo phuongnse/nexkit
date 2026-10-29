@@ -615,6 +615,8 @@ class ScenarioTests(unittest.TestCase):
 
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
+        # The rules require `e2e`, which has not reported yet; it passes before the sweep.
+        pipe.gh.required = {"e2e"}
         pipe.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is expected.')]
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
@@ -629,6 +631,18 @@ class ScenarioTests(unittest.TestCase):
             GitHubError(405, 'Required status check "e2e" is expected.'),
             GitHubError(405, 'Required status check "e2e" is failing.'),
         ]
+        # The rules require `e2e`, which has not reported at the first try of the merge and
+        # has failed at the second.
+        pipe.gh.required = {"e2e"}
+        merge, tries = pipe.gh.merge, []
+
+        def merged(number, sha, method="squash"):
+            tries.append(sha)
+            if len(tries) == 2:
+                pipe.gh.commit_checks[sha] = [{"id": 9, "name": "e2e", "conclusion": "failure"}]
+            return merge(number, sha, method)
+
+        pipe.gh.merge = merged
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         self.assertEqual([outcome for *_, outcome in pipe.played[1:]], ["merge_waiting", "merged"])
         rounds = [run for _, run in run_comments(pipe.gh.comments(6))]
@@ -644,6 +658,7 @@ class ScenarioTests(unittest.TestCase):
 
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
+        pipe.gh.required = {"e2e"}
         pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
         autopilot.request(pipe.gh, "nexkit.yml", "main")
         pipe.drain()
@@ -670,6 +685,8 @@ class ScenarioTests(unittest.TestCase):
 
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
+        # The rules require `e2e` and `lint`, which have not reported yet.
+        pipe.gh.required = {"e2e", "lint"}
         pipe.gh.merge_error = GitHubError(405, expected)
         autopilot.request(pipe.gh, "nexkit.yml", "main")
         pipe.drain()
@@ -794,7 +811,9 @@ class ScenarioTests(unittest.TestCase):
 
     def behind(self, pipe, pull):
         """Branch protection wants the branch up to date with `main`, which moved while the
-        round reviewed: GitHub refuses the merge, and NexKit merges `main` into it."""
+        round reviewed: GitHub reports it as behind and refuses the merge, and NexKit merges
+        `main` into it."""
+        pipe.gh.pulls[pull]["mergeable_state"] = "behind"
         pipe.gh.merge_error = [
             GitHubError(405, "Head branch is out of date. Review and try again.")
         ]
@@ -1163,6 +1182,7 @@ class ScenarioTests(unittest.TestCase):
                 # Another pull request lands the same change on `main` while this round
                 # reviews; the merge of `main` that NexKit makes then leaves no change.
                 pipe.gh.on_base.update(on_base)
+                pipe.gh.pulls[pull]["mergeable_state"] = "behind"
 
             def script(pipe, inputs):
                 if inputs["command"] == "plan":
@@ -1273,6 +1293,7 @@ class ScenarioTests(unittest.TestCase):
                 "question": "The failure is already fixed. Close the issue?",
                 "options": ["Close it as fixed by 8b9cb87", "Keep it open"],
                 "recommended": 1,
+                "closes": 1,
             }
             output = {"status": "blocked", "blocker": "Already fixed.", "questions": [question]}
             output["no_change"] = finding
@@ -1286,6 +1307,34 @@ class ScenarioTests(unittest.TestCase):
         self.assertIn(finding, closing["body"])
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
         self.assertFalse(pipe.gh.comments_matching(5, "answers for the owner"))
+
+    def test_a_blocked_round_that_recommends_waiting_does_not_close_the_issue(self):
+        # The agent says in `no_change` that it found none, and recommends waiting.
+        text = "Not a no-change finding: the issue is blocked on #1848, which is not merged."
+        wait = "Wait until #1848 is merged, then run this plan again"
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            question = {
+                "question": "The part this needs, #1848, is not on `main`.",
+                "options": [wait, "Close the issue"],
+                "recommended": 1,
+                "closes": 0,
+            }
+            output = {"status": "blocked", "blocker": "#1848 is not merged.", "no_change": text}
+            output["questions"] = [question]
+            return {"agent": {"status": "blocked", "error": "Blocked.", "output": output}}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        # Answered as any blocked round, once in a row; then a person decides.
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        self.assertFalse(pipe.gh.comments_matching(5, "NexKit autopilot closes this issue"))
+        [answered] = pipe.gh.comments_matching(5, "answers for the owner")
+        self.assertIn(wait, answered["body"])
+        self.assertTrue(pipe.gh.comments_matching(5, "a person is needed"))
 
     def test_a_plan_whose_change_is_in_protected_paths_waits_for_a_person(self):
         def script(pipe, inputs):

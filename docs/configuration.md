@@ -60,7 +60,7 @@ their defaults.
 | `agent` | `"claude"` | The agent for every stage. It must name an agent in `agents`; when you set it, set `model` too. |
 | `model` | `"sonnet"` | Model for every stage, as the agent's runtime and provider name it. For `claude-code`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
 | `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
-| `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
+| `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. A service that a command starts in the background keeps running for the agent or the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable, and the files where each writes its results. See [Checks](#checks). |
 | `parallel_checks` | `false` | Run the checks in parallel jobs, each check, or each `group` of checks, in a job of its own, so a round takes about as long as its slowest job. See [Parallel checks](#parallel-checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
@@ -120,10 +120,13 @@ their defaults.
 - `run`: a Bash command run from the repository root with `pipefail`.
 - `timeout_minutes`: default 15, at most 360. Leave room to grow: once a check takes more
   than half its limit, raise the limit or make the suite faster, before rounds start to
-  stop on it. At a check's or setup command's time-out, NexKit kills the command's process
-  group and fails it with exit code 124, keeping the output so far. A process that left the
-  group (through `setsid`, `sudo` with a terminal, or a daemon) keeps running, and NexKit
-  reads its output for at most 5 more seconds.
+  stop on it. A check or setup command ends when its shell exits, with the shell's exit
+  code. A process it leaves running, such as a service that `setup` starts for the checks,
+  keeps running; while it still holds the command's output, NexKit reads that output for at
+  most 5 more seconds, then goes on and says so in the output. At the time-out, NexKit kills
+  the command's process group and fails it with exit code 124, keeping the output so far; a
+  process that left the group (through `setsid`, `sudo` with a terminal, or a daemon) is
+  not killed.
 - `slow`: default `false`. See [Slow checks](#slow-checks).
 - `results`: files or folders, relative to the repository root, where the check writes its
   results, such as traces, screenshots, test reports and logs. Default `[]`, at most 20.

@@ -64,25 +64,38 @@ class ChecksTests(unittest.TestCase):
         self.assertEqual(code, 124)
         self.assertIn("stopped the command", output)
 
-    def run_with_a_process_outside_the_group(self, run):
-        """Run `run` on a command that writes, starts a process in its own session that
-        holds stdout, and hangs; kill that process afterwards."""
-        command = "echo before; setsid sleep 30 & echo pid=$!; sleep 60"
+    # Writes, then starts a process in its own session that holds stdout.
+    LEAVES = "echo before; setsid sleep 30 & echo pid=$!"
+
+    def leftover(self, output):
+        """The pid of the process a command left running, from its `pid=` line; killed
+        after the test."""
+        pid = int(re.search(r"pid=(\d+)", output).group(1))
+        self.addCleanup(self.kill, pid)
+        return pid
+
+    def kill(self, pid):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+
+    def timed(self, run, *args):
         with mock.patch.object(checks, "STOP_GRACE_SECONDS", 1):
             started = time.monotonic()
-            result = run(command)
-            elapsed = time.monotonic() - started
-        output = result[1] if isinstance(result, tuple) else result["output"]
-        pid = re.search(r"pid=(\d+)", output)
-        if pid:
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(int(pid.group(1)), signal.SIGKILL)
-        return result, elapsed
+            result = run(*args)
+        return result, time.monotonic() - started
+
+    def alive(self, pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
 
     def test_a_timeout_returns_while_a_process_outside_the_group_holds_the_output(self):
-        (code, output, _), elapsed = self.run_with_a_process_outside_the_group(
-            lambda command: checks._run(command, self.root, 1)
+        (code, output, _), elapsed = self.timed(
+            checks._run, f"{self.LEAVES}; sleep 60", self.root, 1
         )
+        self.leftover(output)
         self.assertEqual(code, 124)
         self.assertLess(elapsed, 10)
         self.assertIn("before", output)  # written before the time-out, kept
@@ -90,21 +103,61 @@ class ChecksTests(unittest.TestCase):
         self.assertIn("outside its process group still held its output", output)
 
     def test_a_setup_that_times_out_that_way_fails_as_setup(self):
-        cfg = make_config(setup=["true"], checks=[{"name": "unit", "run": "true"}])
+        cfg = make_config(setup=[f"{self.LEAVES}; sleep 60"], checks=[])
         cfg["limits"]["setup_timeout_minutes"] = 1 / 60
-
-        def run(command):
-            cfg["setup"] = [command]
-            with contextlib.redirect_stdout(io.StringIO()):
-                return checks.setup(cfg, self.root)
-
-        result, elapsed = self.run_with_a_process_outside_the_group(run)
+        with contextlib.redirect_stdout(io.StringIO()):
+            result, elapsed = self.timed(checks.setup, cfg, self.root)
+        self.leftover(result["output"])
         self.assertLess(elapsed, 10)
         self.assertEqual((result["name"], result["exit_code"]), ("setup", 124))
         self.assertFalse(result["passed"])
         self.assertEqual(result["run"], cfg["setup"][0])
         self.assertIn("before", result["output"])
         self.assertIn("NexKit stopped the command", result["output"])
+
+    def test_a_command_ends_with_its_shell_and_leaves_what_it_started_running(self):
+        for command, code in ((self.LEAVES, 0), ("sleep 30 & echo pid=$!; exit 3", 3)):
+            (found, output, _), elapsed = self.timed(checks._run, command, self.root, 60)
+            pid = self.leftover(output)
+            self.assertEqual(found, code)
+            self.assertLess(elapsed, 10)
+            self.assertIn(f"[The command exited with code {code}, but a process it", output)
+            self.assertTrue(self.alive(pid))
+
+    def test_a_process_left_running_can_go_on_writing(self):
+        ticks = "(while true; do echo tick; sleep 0.1; done) & echo pid=$!"
+        (code, output, _), _ = self.timed(checks._run, ticks, self.root, 60)
+        pid = self.leftover(output)
+        self.assertEqual(code, 0)
+        time.sleep(1)  # NexKit still reads its pipe, so it gets no broken pipe
+        self.assertTrue(self.alive(pid))
+
+    def test_output_written_soon_after_the_shell_exits_is_kept(self):
+        code, output, _ = checks._run("(sleep 0.3; echo late) & echo now", self.root, 60)
+        self.assertEqual((code, output), (0, "now\nlate\n"))
+
+    def test_output_is_text_with_universal_newlines(self):
+        code, output, _ = checks._run("printf 'a\\r\\nb\\rc\\xff\\n'", self.root, 60)
+        self.assertEqual((code, output), (0, "a\nb\nc\ufffd\n"))
+
+    def test_a_setup_that_leaves_a_service_running_passes_and_the_checks_see_it(self):
+        cfg = make_config(
+            setup=[f"{self.LEAVES} > service.pid"],
+            checks=[{"name": "unit", "run": 'kill -0 "$(cut -d= -f2 service.pid)"'}],
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            (results, elapsed) = self.timed(checks.run_checks, cfg, self.root)
+        self.leftover((self.root / "service.pid").read_text())
+        self.assertLess(elapsed, 10)
+        self.assertEqual([(r["name"], r["passed"]) for r in results], [("unit", True)])
+
+    def test_a_setup_whose_service_holds_its_output_passes(self):
+        cfg = make_config(setup=[self.LEAVES], checks=[{"name": "unit", "run": "true"}])
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            (results, elapsed) = self.timed(checks.run_checks, cfg, self.root)
+        self.leftover(out.getvalue())
+        self.assertLess(elapsed, 10)
+        self.assertEqual([(r["name"], r["passed"]) for r in results], [("unit", True)])
 
 
 class ParallelChecksTests(unittest.TestCase):

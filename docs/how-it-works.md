@@ -584,7 +584,9 @@ default branch's failure. It waits instead:
 - The round ends as `ci_waiting`, uses none of `fix.max_auto_rounds`, and mentions
   nobody. Its comment, the state comment, `nexkit status` (state `waiting`) and the
   autopilot sweep name the `bug` issue. The issue keeps its place within
-  `autopilot.max_parallel`.
+  `autopilot.max_parallel`, and the `bug` issue it waits for never waits for a place:
+  it starts even when the issues that wait for it fill `max_parallel`, and counts toward
+  it once started, so nothing else starts beyond the limit.
 - The wait ends when the workflow passes on the default branch again, in its newest run
   that passed or failed, which must be the reported run or a newer one, or when the `bug`
   issue is closed. The next sweep then starts the automatic fix round the pull request
@@ -880,7 +882,8 @@ dispatch of the workflow. A *sweep* decides which:
    has sub-issues. From these alone it decides: start `/nexkit plan`, start `/nexkit go`,
    leave it to a run or pull request that carries it on, or leave it to a person.
 3. It starts what it decided, in that order, while fewer than `autopilot.max_parallel`
-   issues are in progress, and records each start on the issue.
+   issues are in progress, and records each start on the issue. A `bug` issue about the
+   default branch that pull requests wait for starts even when they fill the limit.
 4. With `conflicts.auto_resolve`, it then starts the conflict round of each open NexKit
    pull request that conflicts with its base branch, as described in *Resolving
    conflicts* under [Work without a command](#work-without-a-command). With

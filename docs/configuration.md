@@ -682,7 +682,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 | Anything else that needs a person: other questions, a failed run that nothing answered since, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, a second plan that is too large and suggests no parts, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
 | A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
 | Its pull request is approved, and GitHub refused the merge until required checks pass | Tries the merge again, and merges once the checks pass. A required check that fails gets an automatic fix round within `fix.max_auto_rounds`, unless it fails as the default branch does while its bug issue is open; a new commit gets `/nexkit review`. Checks that neither pass nor fail within six hours wait for a person. |
-| Its pull request waits for a bug issue about the default branch, whose failure its checks repeat | Nothing while that workflow fails on the default branch and the bug issue is open; then starts the automatic fix round the pull request waited for. It keeps its place within `max_parallel`. |
+| Its pull request waits for a bug issue about the default branch, whose failure its checks repeat | Nothing while that workflow fails on the default branch and the bug issue is open; then starts the automatic fix round the pull request waited for. It keeps its place within `max_parallel`; the bug issue starts even when such issues fill it. |
 | The last issue in scope closed | Mentions `notify` once, on the milestone's most recently closed issue, that the milestone is done, and asks a person to close it. With `null`, the same for each open milestone whose issues are all closed, without asking, while the other milestones go on. Any sweep says it, whichever event started it. |
 
 - **Scope.** `"milestone"` takes the open issues of the earliest open milestone: by due
@@ -719,7 +719,9 @@ every open issue in scope, in order, and starts the one command that moves it on
   `nexkit status` shows the issues it leaves alone and why.
 - **At most `max_parallel` at once.** An issue counts while a run on it is running or
   paused, while its pull request is open and needs nobody, and while a command that
-  autopilot started has not run yet. An issue that waits for a person does not count. With `null`, every ready issue starts at once; NexKit's conflict rounds
+  autopilot started has not run yet. An issue that waits for a person does not count. A
+  bug issue for a CI failure that pull requests wait for (see the table above) starts even
+  at the limit, since only it ends their wait; it counts once started. With `null`, every ready issue starts at once; NexKit's conflict rounds
   (see [Conflicts with the base branch](#conflicts-with-the-base-branch)) keep the pull
   requests mergeable.
 - **One command per step.** Autopilot keeps one comment on each issue that names the

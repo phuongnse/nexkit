@@ -1117,13 +1117,26 @@ def preview(gh, cfg):
         or (bool(step.get("pull")) and (step["state"] != "waits" or not step["person"]))
         for step in steps
     )
+    # A bug issue about the default branch whose failure pull requests wait for
+    # (`ci_waiting`) ends their wait, so it never waits for the places they hold. It
+    # counts once it started, so nothing else starts beyond the limit.
+    awaited = {}
+    for step in steps:
+        if step.get("ci_bug"):
+            awaited.setdefault(step["ci_bug"], []).append(step["pull"])
     for step in steps:
         if step["state"] != "start" or step.get("pull"):
             continue
         if limit is not None and busy >= limit:
-            reason = f"{busy} issues are in progress (max_parallel)"
-            step.update(state="waits", reason=reason, person=False)
-            continue
+            if step["number"] not in awaited:
+                reason = f"{busy} issues are in progress (max_parallel)"
+                step.update(state="waits", reason=reason, person=False)
+                continue
+            pulls = awaited[step["number"]]
+            names = ", ".join(f"#{n}" for n in pulls)
+            many = len(pulls) > 1
+            those = f"pull requests {names} wait" if many else f"pull request {names} waits"
+            step["reason"] += f"; {those} for it, so it starts beyond max_parallel"
         busy += 1
     return where, steps
 
@@ -2129,7 +2142,8 @@ def _ci_step(gh, cfg, issue, pull, run, pull_comments, start):
     wait = run.get("ci_wait") or {}
     over = ci_wait_over(gh, wait)
     if over is None:
-        return _step(issue, "waits", f"pull request #{pull} {ci_wait_reason(wait)}", person=False)
+        reason = f"pull request #{pull} {ci_wait_reason(wait)}"
+        return _step(issue, "waits", reason, person=False, ci_bug=wait["bug"])
     _, state = read_state(pull_comments)
     if (state or {}).get("auto_fixes", 0) >= cfg["fix"]["max_auto_rounds"]:
         reason = f"{over}, but pull request #{pull} has no automatic fix rounds left"

@@ -2509,6 +2509,57 @@ class CIWaitTests(AutopilotCase):
         outcome = self.report_round(5, pull, action="fix")
         self.assertEqual((outcome["outcome"], self.state(pull)["auto_fixes"]), ("ci_waiting", 0))
 
+    def bug_ready_to_start(self):
+        """Take back the plan autopilot started on the bug issue, so it is ready again."""
+        self.gh.issue_comments[self.bug] = []
+
+    def test_the_bug_issue_starts_when_the_pull_requests_waiting_for_it_fill_max_parallel(self):
+        from nexkit.status import collect, render
+
+        self.issue(9)
+        cfg = {**self.cfg, "autopilot": {**self.cfg["autopilot"], "max_parallel": 3}}
+        pulls = {5: self.open_pull(5, 10), 7: self.open_pull(7, 11), 9: self.open_pull(9, 12)}
+        for issue, pull in pulls.items():
+            self.assertEqual(self.report_round(issue, pull)["outcome"], "ci_waiting")
+        self.bug_ready_to_start()
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, cfg)[1]}
+        for issue in pulls:
+            self.assertEqual((steps[issue]["state"], steps[issue]["person"]), ("waits", False))
+        step = steps[self.bug]
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertIn("pull requests #10, #11, #12 wait for it", step["reason"])
+        self.assertNotIn("issues are in progress", render(collect(self.gh, cfg, workers=1)))
+        self.sweep(cfg)
+        self.assertIn(("plan", self.bug), self.started())
+
+    def test_other_issues_still_wait_for_a_place(self):
+        self.issue(9)
+        self.issue(11)
+        cfg = {**self.cfg, "autopilot": {**self.cfg["autopilot"], "max_parallel": 3}}
+        # Two pull requests wait for the bug issue and fill two places; another issue's
+        # pull request holds the third.
+        for issue, pull in ((5, 10), (7, 12)):
+            self.open_pull(issue, pull)
+            self.assertEqual(self.report_round(issue, pull)["outcome"], "ci_waiting")
+        self.open_pull(9, 13)
+        self.gh.issue_comments[11] = []
+        self.bug_ready_to_start()
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, cfg)[1]}
+        self.assertEqual(steps[self.bug]["state"], "start")
+        self.assertEqual(
+            (steps[11]["state"], steps[11]["person"], steps[11]["reason"]),
+            ("waits", False, "4 issues are in progress (max_parallel)"),
+        )
+        # With no pull request waiting for it, the bug issue waits for a place as well.
+        for issue in (5, 7):
+            self.gh.issue_comments[issue] = []
+        for pull in (10, 12):
+            self.gh.issue_comments[pull] = []
+        self.open_pull(11, 14)
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, cfg)[1]}
+        self.assertEqual(steps[self.bug]["state"], "waits")
+        self.assertIn("issues are in progress (max_parallel)", steps[self.bug]["reason"])
+
     def test_each_waiting_pull_request_gets_one_round_that_merges_main_once_it_passes(self):
         from nexkit.context import _after_failed_checks
         from nexkit.state import BOT_LOGIN

@@ -120,7 +120,10 @@ their defaults.
 - `run`: a Bash command run from the repository root with `pipefail`.
 - `timeout_minutes`: default 15, at most 360. Leave room to grow: once a check takes more
   than half its limit, raise the limit or make the suite faster, before rounds start to
-  stop on it.
+  stop on it. At a check's or setup command's time-out, NexKit kills the command's process
+  group and fails it with exit code 124, keeping the output so far. A process that left the
+  group (through `setsid`, `sudo` with a terminal, or a daemon) keeps running, and NexKit
+  reads its output for at most 5 more seconds.
 - `slow`: default `false`. See [Slow checks](#slow-checks).
 - `results`: files or folders, relative to the repository root, where the check writes its
   results, such as traces, screenshots, test reports and logs. Default `[]`, at most 20.

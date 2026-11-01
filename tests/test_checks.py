@@ -2,7 +2,10 @@ import contextlib
 import io
 import json
 import os
+import re
+import signal
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -60,6 +63,48 @@ class ChecksTests(unittest.TestCase):
         code, output, _ = checks._run("sleep 30", self.root, 1)
         self.assertEqual(code, 124)
         self.assertIn("stopped the command", output)
+
+    def run_with_a_process_outside_the_group(self, run):
+        """Run `run` on a command that writes, starts a process in its own session that
+        holds stdout, and hangs; kill that process afterwards."""
+        command = "echo before; setsid sleep 30 & echo pid=$!; sleep 60"
+        with mock.patch.object(checks, "STOP_GRACE_SECONDS", 1):
+            started = time.monotonic()
+            result = run(command)
+            elapsed = time.monotonic() - started
+        output = result[1] if isinstance(result, tuple) else result["output"]
+        pid = re.search(r"pid=(\d+)", output)
+        if pid:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(pid.group(1)), signal.SIGKILL)
+        return result, elapsed
+
+    def test_a_timeout_returns_while_a_process_outside_the_group_holds_the_output(self):
+        (code, output, _), elapsed = self.run_with_a_process_outside_the_group(
+            lambda command: checks._run(command, self.root, 1)
+        )
+        self.assertEqual(code, 124)
+        self.assertLess(elapsed, 10)
+        self.assertIn("before", output)  # written before the time-out, kept
+        self.assertIn("[NexKit stopped the command after 1 seconds", output)
+        self.assertIn("outside its process group still held its output", output)
+
+    def test_a_setup_that_times_out_that_way_fails_as_setup(self):
+        cfg = make_config(setup=["true"], checks=[{"name": "unit", "run": "true"}])
+        cfg["limits"]["setup_timeout_minutes"] = 1 / 60
+
+        def run(command):
+            cfg["setup"] = [command]
+            with contextlib.redirect_stdout(io.StringIO()):
+                return checks.setup(cfg, self.root)
+
+        result, elapsed = self.run_with_a_process_outside_the_group(run)
+        self.assertLess(elapsed, 10)
+        self.assertEqual((result["name"], result["exit_code"]), ("setup", 124))
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["run"], cfg["setup"][0])
+        self.assertIn("before", result["output"])
+        self.assertIn("NexKit stopped the command", result["output"])
 
 
 class ParallelChecksTests(unittest.TestCase):

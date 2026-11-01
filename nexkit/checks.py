@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import posixpath
@@ -20,6 +21,8 @@ from .runtimes import NAMES_VAR, secret_names
 from .state import COMMIT, check_fingerprint
 
 OUTPUT_TAIL = 12_000
+# How long NexKit still reads the output of a command it stopped at its time-out.
+STOP_GRACE_SECONDS = 5
 BASE_SHA = "NEXKIT_BASE_SHA"
 VERIFIED_SHA = "NEXKIT_VERIFIED_SHA"
 # Set in each check's own environment: the last commit on which that check passed.
@@ -160,11 +163,36 @@ def _run(command, cwd, timeout_seconds, env=None):
         output, _ = proc.communicate(timeout=timeout_seconds)
         code = proc.returncode
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        output, _ = proc.communicate()
-        output += f"\n[NexKit stopped the command after {timeout_seconds} seconds]"
+        output, held = _stop(proc)
+        output += f"\n[NexKit stopped the command after {timeout_seconds} seconds"
+        if held:
+            output += (
+                f"; a process it started outside its process group still held its output "
+                f"{STOP_GRACE_SECONDS} seconds later, so NexKit stopped reading"
+            )
+        output += "]"
         code = 124
     return code, output, round(time.monotonic() - started, 1)
+
+
+def _stop(proc):
+    """Kill the process group of a command that ran out of time, and return the output it
+    wrote and whether a process still held the pipe. A process that left the group (through
+    `setsid`, `sudo` with a terminal, a daemon) is not killed and may keep the pipe open
+    until it exits: read only STOP_GRACE_SECONDS more, then keep what was read."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    try:
+        output, _ = proc.communicate(timeout=STOP_GRACE_SECONDS)
+        return output, False
+    except subprocess.TimeoutExpired as exc:
+        read = exc.output or b""
+    encoding = proc.stdout.encoding
+    proc.stdout.close()
+    proc.wait()
+    if isinstance(read, bytes):
+        read = read.decode(encoding, errors="replace")
+    return read.replace("\r\n", "\n").replace("\r", "\n"), True
 
 
 def setup(cfg, cwd, redact=str, commits=None):

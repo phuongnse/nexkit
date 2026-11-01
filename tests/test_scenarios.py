@@ -430,6 +430,38 @@ class Pipeline:
         self.test.assertEqual(state["auto_fixes"], len(ran) + waiting, f"#{pull}: {self.played}")
 
 
+def red_main(gh):
+    """`ci.yml` failed on `main` twice, in the step that runs `make test`, where its test
+    reporter names the failing test."""
+    gh.workflow_history["ci.yml"] = [
+        {
+            "id": 50,
+            "head_branch": "main",
+            "head_repository": {"full_name": "acme/app"},
+            "event": "push",
+            "head_sha": "e" * 40,
+            "status": "completed",
+            "conclusion": "failure",
+            "run_attempt": 2,
+            "html_url": "https://github.com/acme/app/actions/runs/50",
+            "created_at": autopilot.iso(datetime.now(autopilot.UTC)),
+        }
+    ]
+    gh.jobs[50] = [{"id": 501, "name": "Unit tests", "conclusion": "failure"}]
+    gh.logs[501] = (
+        b"##[group]Run make test\n##[endgroup]\nFAIL\n"
+        b"##[error]Process completed with exit code 1.\n"
+    )
+    gh.annotations[501] = [
+        {
+            "annotation_level": "failure",
+            "title": "Orders > adds tax",
+            "path": "web/src/orders.test.ts",
+            "message": "expected 2 to be 3",
+        }
+    ]
+
+
 def config(**kw):
     autopilot_settings = {"enabled": True, "answer": "recommended", **kw.pop("autopilot", {})}
     return make_config(
@@ -1687,35 +1719,7 @@ class ScenarioTests(unittest.TestCase):
         pipe.gh.comment = stamped
         for number in (5, 6, 7, 8):
             pipe.issue(number)
-        # `ci.yml` failed on `main` twice, in the step that runs `make test`, where its test
-        # reporter names the failing test.
-        pipe.gh.workflow_history["ci.yml"] = [
-            {
-                "id": 50,
-                "head_branch": "main",
-                "head_repository": {"full_name": "acme/app"},
-                "event": "push",
-                "head_sha": "e" * 40,
-                "status": "completed",
-                "conclusion": "failure",
-                "run_attempt": 2,
-                "html_url": "https://github.com/acme/app/actions/runs/50",
-                "created_at": autopilot.iso(datetime.now(autopilot.UTC)),
-            }
-        ]
-        pipe.gh.jobs[50] = [{"id": 501, "name": "Unit tests", "conclusion": "failure"}]
-        pipe.gh.logs[501] = (
-            b"##[group]Run make test\n##[endgroup]\nFAIL\n"
-            b"##[error]Process completed with exit code 1.\n"
-        )
-        pipe.gh.annotations[501] = [
-            {
-                "annotation_level": "failure",
-                "title": "Orders > adds tax",
-                "path": "web/src/orders.test.ts",
-                "message": "expected 2 to be 3",
-            }
-        ]
+        red_main(pipe.gh)
         played = pipe.play()
         [bug] = [n for n, i in pipe.gh.issues.items() if autopilot.ci_workflow(i)]
         pulls = {issue_from_branch(p["head"]["ref"]): n for n, p in pipe.gh.pulls.items()}
@@ -1738,6 +1742,84 @@ class ScenarioTests(unittest.TestCase):
         self.assertLess(played.index(("fix", pulls[8])), played.index(("fix", pulls[5])))
         self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7, 8, bug)))
         for number in (5, 6, 7, 8, bug, *pulls.values()):
+            self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_the_bug_issue_starts_when_pull_requests_waiting_for_it_fill_max_parallel(self):
+        self.bug_issue_at_max_parallel(split=False)
+
+    def test_the_parts_of_that_bug_issue_start_too(self):
+        self.bug_issue_at_max_parallel(split=True)
+
+    def bug_issue_at_max_parallel(self, split):
+        """Three issues fill `max_parallel` and their pull requests wait for the bug issue
+        about `main`. It starts all the same, and so do its parts when its plan is split."""
+        runs = itertools.count(60)
+        parts = [
+            {"title": "First part", "body": "A.", "depends_on": []},
+            {"title": "Second part", "body": "B.", "depends_on": [1]},
+        ]
+
+        def ci(pipe, workflow):
+            # CI that NexKit starts after a merge passes: the merge fixed `main`.
+            run = {
+                "id": next(runs),
+                "head_branch": "main",
+                "head_repository": {"full_name": "acme/app"},
+                "event": "workflow_dispatch",
+                "status": "completed",
+                "conclusion": "success",
+                "run_attempt": 1,
+                "created_at": autopilot.iso(datetime.now(autopilot.UTC)),
+            }
+            pipe.gh.workflow_history[workflow].append(run)
+
+        def turn_main_red(pipe):
+            # While the first implement agent works, `ci.yml` fails on `main` and a sweep
+            # opens its bug issue. The three issues in progress fill `max_parallel`.
+            if "ci.yml" not in pipe.gh.workflow_history:
+                red_main(pipe.gh)
+                autopilot.sweep(pipe.gh, pipe.cfg, "nexkit.yml", "main")
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                bug = autopilot.ci_workflow(pipe.gh.issues[int(inputs["number"])])
+                return plan(too_large=True, split=parts) if split and bug else plan()
+            # Every implement round fails in the test that fails on `main`; the fix rounds
+            # pass.
+            found = done(checks=inputs["command"] == "fix")
+            if inputs["command"] != "fix":
+                found["checks"][0]["failed_tests"] = ["orders.test.ts::adds tax"]
+                found["working"] = turn_main_red
+            return found
+
+        cfg = config(
+            merge={"after_workflows": ["ci.yml"]},
+            autopilot={"max_parallel": 3},
+            close_parent_issues=True,
+        )
+        pipe = Pipeline(self, cfg, script, workflow=ci)
+        for number in (5, 6, 7):
+            pipe.issue(number)
+        played = pipe.play()
+        [bug] = [n for n, i in pipe.gh.issues.items() if autopilot.ci_workflow(i)]
+        pulls = {issue_from_branch(p["head"]["ref"]): n for n, p in pipe.gh.pulls.items()}
+        outcomes = {(c, n): o for c, n, o in pipe.played if c != "plan"}
+        for number in (5, 6, 7):
+            self.assertEqual(outcomes[("go", number)], "ci_waiting")
+        # The pull requests waiting for it hold every place, and the bug issue starts all
+        # the same; once it is merged, they get their round.
+        self.assertLess(played.index(("plan", bug)), played.index(("fix", pulls[5])))
+        fixing = [n for n in pipe.gh.issues if pipe.gh.parent_issue(n)] if split else [bug]
+        self.assertEqual(len(fixing), 2 if split else 1)
+        # The first part, or the bug issue itself, fixes `main`, and that ends the wait.
+        self.assertLess(played.index(("go", min(fixing))), played.index(("fix", pulls[5])))
+        for number in fixing:
+            self.assertEqual(outcomes[("fix", pulls[number])], "merged")
+        for number in (5, 6, 7):
+            self.assertEqual(outcomes[("fix", pulls[number])], "merged")
+        done_ = (5, 6, 7, bug, *fixing)
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in done_), played)
+        for number in (*done_, *pulls.values()):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
     def test_a_workflow_that_runs_every_third_merge_starts_at_the_third(self):

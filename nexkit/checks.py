@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import posixpath
@@ -9,6 +11,7 @@ import re
 import shutil
 import signal
 import subprocess
+import threading
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -20,6 +23,9 @@ from .runtimes import NAMES_VAR, secret_names
 from .state import COMMIT, check_fingerprint
 
 OUTPUT_TAIL = 12_000
+# How long NexKit still reads a command's output after its shell exited or was killed,
+# while a process it started holds the pipe.
+STOP_GRACE_SECONDS = 5
 BASE_SHA = "NEXKIT_BASE_SHA"
 VERIFIED_SHA = "NEXKIT_VERIFIED_SHA"
 # Set in each check's own environment: the last commit on which that check passed.
@@ -145,6 +151,11 @@ def check_commit(repo, check, heads):
 
 
 def _run(command, cwd, timeout_seconds, env=None):
+    """Run a Bash command in its own process group: (exit code, output, seconds). The
+    command ends when its shell exits, with the shell's exit code. A process it leaves
+    behind, such as a service that setup starts for the checks, keeps running; if it still
+    holds the output STOP_GRACE_SECONDS later, NexKit keeps what was read and goes on
+    without it. At the time-out, NexKit kills the process group and returns 124."""
     started = time.monotonic()
     proc = subprocess.Popen(
         ["bash", "-o", "pipefail", "-c", command],
@@ -152,19 +163,70 @@ def _run(command, cwd, timeout_seconds, env=None):
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        errors="replace",
         start_new_session=True,
     )
+    reader = _Output(proc.stdout)
     try:
-        output, _ = proc.communicate(timeout=timeout_seconds)
-        code = proc.returncode
+        code = proc.wait(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        output, _ = proc.communicate()
-        output += f"\n[NexKit stopped the command after {timeout_seconds} seconds]"
+        # A process that left the group (through `setsid`, `sudo` with a terminal, a
+        # daemon) is not killed.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=STOP_GRACE_SECONDS)
+        code = None
+    held = not reader.ended(STOP_GRACE_SECONDS)
+    output = reader.text()
+    if code is None:
+        output += f"\n[NexKit stopped the command after {timeout_seconds} seconds"
+        if held:
+            output += (
+                "; a process it started outside its process group still held its output, "
+                "so NexKit stopped reading it"
+            )
+        output += "]"
         code = 124
+    elif held:
+        output += (
+            f"\n[The command exited with code {code}, but a process it started still held "
+            f"its output {STOP_GRACE_SECONDS} seconds later. NexKit stopped reading it and "
+            "left that process running.]"
+        )
     return code, output, round(time.monotonic() - started, 1)
+
+
+class _Output:
+    """Reads a command's output pipe on a thread until end of file. After `text`, it reads
+    on but drops what it reads, so a process that still holds the pipe, such as a service
+    that setup started, can go on writing without a broken pipe."""
+
+    def __init__(self, pipe):
+        self.pipe = pipe
+        self.chunks = []
+        self.kept = True
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._read, daemon=True)
+        self.thread.start()
+
+    def _read(self):
+        while chunk := os.read(self.pipe.fileno(), 65536):
+            with self.lock:
+                if self.kept:
+                    self.chunks.append(chunk)
+        self.pipe.close()
+
+    def ended(self, timeout):
+        """Whether the pipe reached end of file, waiting at most `timeout` seconds."""
+        self.thread.join(timeout)
+        return not self.thread.is_alive()
+
+    def text(self):
+        """What was read so far, decoded as text mode would, with universal newlines."""
+        with self.lock:
+            self.kept = False
+            data, self.chunks = b"".join(self.chunks), []
+        return io.TextIOWrapper(io.BytesIO(data), errors="replace").read()
 
 
 def setup(cfg, cwd, redact=str, commits=None):

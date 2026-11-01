@@ -60,7 +60,7 @@ their defaults.
 | `agent` | `"claude"` | The agent for every stage. It must name an agent in `agents`; when you set it, set `model` too. |
 | `model` | `"sonnet"` | Model for every stage, as the agent's runtime and provider name it. For `claude-code`: an alias (`sonnet`, `opus`, `haiku`) or a full model name. |
 | `effort` | `null` | Reasoning effort for every stage, or `null` for the runtime's default. Each runtime takes its own levels; see [Agents](#agents). |
-| `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. |
+| `setup` | `[]` | Shell commands that install dependencies. They run before the agent works and before the checks. A service that a command starts in the background keeps running for the agent or the checks. |
 | `checks` | `[]` | Commands that decide whether a change is acceptable, and the files where each writes its results. See [Checks](#checks). |
 | `parallel_checks` | `false` | Run the checks in parallel jobs, each check, or each `group` of checks, in a job of its own, so a round takes about as long as its slowest job. See [Parallel checks](#parallel-checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
@@ -120,7 +120,13 @@ their defaults.
 - `run`: a Bash command run from the repository root with `pipefail`.
 - `timeout_minutes`: default 15, at most 360. Leave room to grow: once a check takes more
   than half its limit, raise the limit or make the suite faster, before rounds start to
-  stop on it.
+  stop on it. A check or setup command ends when its shell exits, with the shell's exit
+  code. A process it leaves running, such as a service that `setup` starts for the checks,
+  keeps running; while it still holds the command's output, NexKit reads that output for at
+  most 5 more seconds, then goes on and says so in the output. At the time-out, NexKit kills
+  the command's process group and fails it with exit code 124, keeping the output so far; a
+  process that left the group (through `setsid`, `sudo` with a terminal, or a daemon) is
+  not killed.
 - `slow`: default `false`. See [Slow checks](#slow-checks).
 - `results`: files or folders, relative to the repository root, where the check writes its
   results, such as traces, screenshots, test reports and logs. Default `[]`, at most 20.
@@ -679,7 +685,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 | Anything else that needs a person: other questions, a failed run that nothing answered since, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, a second plan that is too large and suggests no parts, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
 | A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
 | Its pull request is approved, and GitHub refused the merge until required checks pass | Tries the merge again, and merges once the checks pass. A required check that fails gets an automatic fix round within `fix.max_auto_rounds`, unless it fails as the default branch does while its bug issue is open; a new commit gets `/nexkit review`. Checks that neither pass nor fail within six hours wait for a person. |
-| Its pull request waits for a bug issue about the default branch, whose failure its checks repeat | Nothing while that workflow fails on the default branch and the bug issue is open; then starts the automatic fix round the pull request waited for. It keeps its place within `max_parallel`. |
+| Its pull request waits for a bug issue about the default branch, whose failure its checks repeat | Nothing while that workflow fails on the default branch and the bug issue is open; then starts the automatic fix round the pull request waited for. It keeps its place within `max_parallel`; the bug issue, and each of its parts, starts even when such issues fill it. |
 | The last issue in scope closed | Mentions `notify` once, on the milestone's most recently closed issue, that the milestone is done, and asks a person to close it. With `null`, the same for each open milestone whose issues are all closed, without asking, while the other milestones go on. Any sweep says it, whichever event started it. |
 
 - **Scope.** `"milestone"` takes the open issues of the earliest open milestone: by due
@@ -716,7 +722,10 @@ every open issue in scope, in order, and starts the one command that moves it on
   `nexkit status` shows the issues it leaves alone and why.
 - **At most `max_parallel` at once.** An issue counts while a run on it is running or
   paused, while its pull request is open and needs nobody, and while a command that
-  autopilot started has not run yet. An issue that waits for a person does not count. With `null`, every ready issue starts at once; NexKit's conflict rounds
+  autopilot started has not run yet. An issue that waits for a person does not count. A
+  bug issue for a CI failure that pull requests wait for (see the table above), and each
+  of its parts, starts even at the limit, since only it ends their wait; it counts once
+  started. With `null`, every ready issue starts at once; NexKit's conflict rounds
   (see [Conflicts with the base branch](#conflicts-with-the-base-branch)) keep the pull
   requests mergeable.
 - **One command per step.** Autopilot keeps one comment on each issue that names the
@@ -905,7 +914,8 @@ every open issue in scope, in order, and starts the one command that moves it on
   The marker, not the title, ties a failure to its issue, so an issue opened with an
   older title keeps getting its records.
 - **Parts.** Parts that autopilot creates are trusted because they start with a NexKit
-  marker and are sub-issues of an issue it trusts. A part's own plan that is too large is
+  marker and are sub-issues of an issue it trusts, such as one opened by a person with
+  write access or a bug issue NexKit opened for a CI failure. A part's own plan that is too large is
   split again, within these limits:
   - A part inherits the time-outs of the issues above it. When one of them already asked
     for a split, a part that runs out of time waits for a person instead.

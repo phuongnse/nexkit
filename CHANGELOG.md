@@ -1,5 +1,29 @@
 # Changelog
 
+## 5.9.1
+
+- A setup command or check ends when its shell exits, with the shell's exit code, and a
+  time-out always stops it (#201). Before, NexKit waited for end of file on the command's
+  output, so a process that left the command's process group and still held that output
+  (through `setsid`, `sudo` with a terminal, or a daemon) kept the command running. Even
+  at its time-out NexKit waited for that process, until the job's own time-out cancelled
+  the job, leaving no result and no output. Now:
+  - At the time-out, NexKit kills the process group, reads the output for at most
+    5 more seconds, and fails the command with exit code 124 and the output so far. A
+    setup that hangs fails as `setup`.
+  - A command that exits while a process it started still holds its output gets the same
+    5 seconds, then counts with its own exit code, and the output says so. That process
+    keeps running, so a service that `setup` starts in the background stays up for the
+    checks and the agent. See [Checks](docs/configuration.md#checks).
+- The bug issue that pull requests in `ci_waiting` wait for starts even when they fill
+  `autopilot.max_parallel`, and so do its parts when it is split (#202). Before, it waited
+  for a place that the waiting pull requests held, and nothing moved, without a mention.
+  It counts toward the limit once started, so nothing else starts beyond it; any other
+  issue still waits for a place. See [Autopilot](docs/configuration.md#autopilot).
+- The parts of an issue NexKit opened for a CI failure or for flaky runs are trusted, as
+  the parts of any trusted issue are. Before, they waited for a person as opened by the
+  Actions token.
+
 ## 5.9.0
 
 NexKit decides from structured data where it read free text: whether a blocked round

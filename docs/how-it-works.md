@@ -584,9 +584,10 @@ default branch's failure. It waits instead:
 - The round ends as `ci_waiting`, uses none of `fix.max_auto_rounds`, and mentions
   nobody. Its comment, the state comment, `nexkit status` (state `waiting`) and the
   autopilot sweep name the `bug` issue. The issue keeps its place within
-  `autopilot.max_parallel`, and the `bug` issue it waits for never waits for a place:
-  it starts even when the issues that wait for it fill `max_parallel`, and counts toward
-  it once started, so nothing else starts beyond the limit.
+  `autopilot.max_parallel`, and the `bug` issue it waits for never waits for a place,
+  nor do its parts when it is split: it starts even when the issues that wait for it fill
+  `max_parallel`, and counts toward it once started, so nothing else starts beyond the
+  limit.
 - The wait ends when the workflow passes on the default branch again, in its newest run
   that passed or failed, which must be the reported run or a newer one, or when the `bug`
   issue is closed. The next sweep then starts the automatic fix round the pull request

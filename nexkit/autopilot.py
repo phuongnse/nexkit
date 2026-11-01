@@ -345,7 +345,8 @@ def trusted(gh, issue):
 
 def _trusted_part(gh, issue, depth=0):
     """A part that autopilot created: it starts with the part marker, and the issue it
-    names is its parent and is trusted itself."""
+    names is its parent and is trusted itself, as a part or an issue for a CI failure or
+    flaky runs that NexKit opened."""
     match = PART.match(issue.get("body") or "")
     if not match or depth > 5:
         return False
@@ -353,7 +354,7 @@ def _trusted_part(gh, issue, depth=0):
     if not parent or parent["number"] != int(match.group(1)) or not in_repository(gh, parent):
         return False
     if author(parent) == BOT_LOGIN:
-        return _trusted_part(gh, parent, depth + 1)
+        return _rank(parent) < 2 or _trusted_part(gh, parent, depth + 1)
     return gh.can_write(author(parent))
 
 
@@ -1118,27 +1119,41 @@ def preview(gh, cfg):
         for step in steps
     )
     # A bug issue about the default branch whose failure pull requests wait for
-    # (`ci_waiting`) ends their wait, so it never waits for the places they hold. It
-    # counts once it started, so nothing else starts beyond the limit.
+    # (`ci_waiting`) ends their wait, so neither it nor its parts, once it is split, wait
+    # for the places they hold. Each counts once it started, so nothing else starts
+    # beyond the limit.
     awaited = {}
     for step in steps:
         if step.get("ci_bug"):
             awaited.setdefault(step["ci_bug"], []).append(step["pull"])
+    issues = {issue["number"]: issue for issue in where["issues"]}
     for step in steps:
         if step["state"] != "start" or step.get("pull"):
             continue
         if limit is not None and busy >= limit:
-            if step["number"] not in awaited:
+            waiting = _awaited_by(gh, issues.get(step["number"]), awaited)
+            if not waiting:
                 reason = f"{busy} issues are in progress (max_parallel)"
                 step.update(state="waits", reason=reason, person=False)
                 continue
-            pulls = awaited[step["number"]]
-            names = ", ".join(f"#{n}" for n in pulls)
-            many = len(pulls) > 1
+            names = ", ".join(f"#{n}" for n in waiting)
+            many = len(waiting) > 1
             those = f"pull requests {names} wait" if many else f"pull request {names} waits"
             step["reason"] += f"; {those} for it, so it starts beyond max_parallel"
         busy += 1
     return where, steps
+
+
+def _awaited_by(gh, issue, awaited):
+    """The pull requests that wait for `issue`, or for an issue above it, as a bug issue
+    about the default branch: [] when none do. `awaited` maps each such bug issue to the
+    pull requests that wait for it."""
+    if not issue or not awaited:
+        return []
+    for found in (issue, *lineage(gh, issue)):
+        if found["number"] in awaited:
+            return awaited[found["number"]]
+    return []
 
 
 def mention(gh, cfg, step):

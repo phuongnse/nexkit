@@ -1745,7 +1745,19 @@ class ScenarioTests(unittest.TestCase):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
     def test_the_bug_issue_starts_when_pull_requests_waiting_for_it_fill_max_parallel(self):
+        self.bug_issue_at_max_parallel(split=False)
+
+    def test_the_parts_of_that_bug_issue_start_too(self):
+        self.bug_issue_at_max_parallel(split=True)
+
+    def bug_issue_at_max_parallel(self, split):
+        """Three issues fill `max_parallel` and their pull requests wait for the bug issue
+        about `main`. It starts all the same, and so do its parts when its plan is split."""
         runs = itertools.count(60)
+        parts = [
+            {"title": "First part", "body": "A.", "depends_on": []},
+            {"title": "Second part", "body": "B.", "depends_on": [1]},
+        ]
 
         def ci(pipe, workflow):
             # CI that NexKit starts after a merge passes: the merge fixed `main`.
@@ -1770,7 +1782,8 @@ class ScenarioTests(unittest.TestCase):
 
         def script(pipe, inputs):
             if inputs["command"] == "plan":
-                return plan()
+                bug = autopilot.ci_workflow(pipe.gh.issues[int(inputs["number"])])
+                return plan(too_large=True, split=parts) if split and bug else plan()
             # Every implement round fails in the test that fails on `main`; the fix rounds
             # pass.
             found = done(checks=inputs["command"] == "fix")
@@ -1779,7 +1792,11 @@ class ScenarioTests(unittest.TestCase):
                 found["working"] = turn_main_red
             return found
 
-        cfg = config(merge={"after_workflows": ["ci.yml"]}, autopilot={"max_parallel": 3})
+        cfg = config(
+            merge={"after_workflows": ["ci.yml"]},
+            autopilot={"max_parallel": 3},
+            close_parent_issues=True,
+        )
         pipe = Pipeline(self, cfg, script, workflow=ci)
         for number in (5, 6, 7):
             pipe.issue(number)
@@ -1792,11 +1809,17 @@ class ScenarioTests(unittest.TestCase):
         # The pull requests waiting for it hold every place, and the bug issue starts all
         # the same; once it is merged, they get their round.
         self.assertLess(played.index(("plan", bug)), played.index(("fix", pulls[5])))
-        self.assertEqual(outcomes[("fix", pulls[bug])], "merged")
+        fixing = [n for n in pipe.gh.issues if pipe.gh.parent_issue(n)] if split else [bug]
+        self.assertEqual(len(fixing), 2 if split else 1)
+        # The first part, or the bug issue itself, fixes `main`, and that ends the wait.
+        self.assertLess(played.index(("go", min(fixing))), played.index(("fix", pulls[5])))
+        for number in fixing:
+            self.assertEqual(outcomes[("fix", pulls[number])], "merged")
         for number in (5, 6, 7):
             self.assertEqual(outcomes[("fix", pulls[number])], "merged")
-        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7, bug)))
-        for number in (5, 6, 7, bug, *pulls.values()):
+        done_ = (5, 6, 7, bug, *fixing)
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in done_), played)
+        for number in (*done_, *pulls.values()):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
     def test_a_workflow_that_runs_every_third_merge_starts_at_the_third(self):

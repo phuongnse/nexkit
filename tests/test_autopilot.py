@@ -1073,6 +1073,18 @@ class SplitTests(AnswerAndSplitCase):
         self.gh.issues[5]["user"] = {"login": "alice"}
         self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[6]))
 
+    def test_parts_of_an_issue_nexkit_opened_for_a_ci_failure_are_trusted(self):
+        bot = "github-actions[bot]"
+        self.issue(5, user=bot, body="<!-- nexkit:ci ci.yml -->\n`ci.yml` fails on `main`.")
+        self.issue(6, user=bot, body="<!-- nexkit:part 5 -->\nDo A.")
+        self.gh.parents[6] = 5
+        self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[5]))
+        self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[6]))
+        # An issue the Actions token opened without NexKit's marker is not trusted, nor
+        # are its parts.
+        self.gh.issues[5]["body"] = "`ci.yml` fails on `main`."
+        self.assertFalse(autopilot.trusted(self.gh, self.gh.issues[6]))
+
     def test_an_agent_that_ran_out_of_time_leads_to_one_split_plan(self):
         self.issue(5)
         self.posted_plan(5)

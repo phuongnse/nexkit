@@ -189,7 +189,8 @@ def _stop(proc):
         read = exc.output or b""
     encoding = proc.stdout.encoding
     proc.stdout.close()
-    proc.wait()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=STOP_GRACE_SECONDS)
     if isinstance(read, bytes):
         read = read.decode(encoding, errors="replace")
     return read.replace("\r\n", "\n").replace("\r", "\n"), True

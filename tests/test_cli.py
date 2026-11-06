@@ -527,16 +527,28 @@ class InitDoctorTests(unittest.TestCase):
         self.assertIn(ok, scaffold.doctor(self.root))
         workflow = self.root / ".github/workflows/nexkit.yml"
         text = workflow.read_text()
-        workflow.write_text(text.replace(", milestoned]", "]"))
+        workflow.write_text(text.replace(", milestoned,", ","))
         findings = scaffold.doctor(self.root)
         self.assertTrue(any("does not listen to 'milestoned'" in m for ok, m in findings if not ok))
+        # Label events count only for `priority` and `labels` of the repository's own.
+        old = text.replace(", labeled, unlabeled]", "]")
+        workflow.write_text(old)
+        self.assertIn(ok, scaffold.doctor(self.root))
+        cfg["autopilot"] = {"enabled": True, "labels": {"on-hold": {"hold": True}}}
+        path.write_text(json.dumps(cfg))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(
+            any("'labeled', 'unlabeled'" in m for ok, m in findings if not ok), findings
+        )
+        cfg["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(cfg))
         workflow.write_text(re.sub(r"  milestone:\n.*\n", "", text))
         findings = scaffold.doctor(self.root)
         self.assertTrue(any("'milestone: closed'" in m for ok, m in findings if not ok))
         # With null, milestones change nothing: only issues opening and closing count.
         cfg["autopilot"] = {"enabled": True, "scope": None}
         path.write_text(json.dumps(cfg))
-        no_milestones = re.sub(r"  milestone:\n.*\n", "", text).replace(", milestoned]", "]")
+        no_milestones = re.sub(r"  milestone:\n.*\n", "", text).replace(", milestoned,", ",")
         workflow.write_text(no_milestones)
         self.assertIn(ok, scaffold.doctor(self.root))
         for needed in ("opened", "reopened", "closed"):

@@ -745,7 +745,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 | Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. When that plan does not split the issue and needs nobody, starts `/nexkit go`, or `/nexkit fix` on its pull request. |
 | A parent issue whose sub-issues are all closed | With `close_parent_issues`, NexKit closed it already; without, it waits for a person to close it. |
 | In a wave above 0, with an issue of a lower wave in its milestone open | Nothing yet: it starts once they are closed. See *Labels* below. |
-| On hold: a label with `"hold": true` | Nothing: no plan, no `/nexkit go`, no automatic round and no merge of its pull request. A round that runs finishes. Once the label is removed, the next sweep takes the issue again and starts what the hold kept back. See *Labels* below. |
+| On hold: a label with `"hold": true` | Nothing: no plan, no `/nexkit go`, no automatic round and no merge of its pull request. A round that runs finishes. Removing the label starts a sweep, which takes the issue again and starts what the hold kept back. See *Labels* below. |
 | With a label of `autopilot.priority`, such as a bug issue that autopilot opened for a CI failure on the default branch (`nexkit:ci`) | Goes first, in the list's order, and is in scope also without a milestone. |
 | Anything else that needs a person: other questions, a failed run that nothing answered since, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, a second plan that is too large and suggests no parts, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
 | A run on it is running or paused, or its pull request is open and NexKit carries it on | Nothing: the run, or the pull request's automatic rounds, carry it on. |
@@ -822,8 +822,8 @@ every open issue in scope, in order, and starts the one command that moves it on
     plan, no `/nexkit go`, no automatic fix or conflict round and no merge of its pull
     request. A round that is already running finishes, also when it runs once more after a
     transient error or resumes after the usage limit, and ends as `held`, with what it kept
-    back; one that cannot read the label holds too. Once the label is removed, the next
-    sweep takes the issue again and starts that: the automatic fix round, within
+    back; one that cannot read the label holds too. Removing the label starts a sweep,
+    which takes the issue again and starts that: the automatic fix round, within
     `fix.max_auto_rounds`, the merge, or the round that resolves conflicts, or
     `/nexkit review` when the pull request got a new commit meanwhile or no longer
     conflicts. A held issue takes no place within `max_parallel` once no run on it is
@@ -1629,9 +1629,10 @@ through, as it does every `/nexkit` comment.
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls
 `phuongnse/nexkit/.github/workflows/pipeline.yml` at a fixed release tag. It starts NexKit
 for `/nexkit` comments, *Request changes* reviews on NexKit pull requests, dispatches,
-closed issues (for `close_parent_issues` and `autopilot`), opened, reopened and
-milestoned issues and closed milestones (for `autopilot`; the `null` scope needs no
-milestone events), pushes to the default branch
+closed issues (for `close_parent_issues` and `autopilot`), opened, reopened,
+milestoned, labelled and unlabelled issues and closed milestones (for `autopilot`; the
+`null` scope needs no milestone events, and only `autopilot.priority` and
+`autopilot.labels` need label events), pushes to the default branch
 (for `conflicts.auto_resolve`) and an hourly schedule (for `usage_limit.resume`,
 `conflicts.auto_resolve` and `autopilot`). With those settings off, these events start
 short runs that end at once; remove the triggers you do not use if you prefer. Issue and

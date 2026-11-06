@@ -105,8 +105,9 @@ AUTOPILOT = "autopilot"
 # The note of a sweep that waits for a workflow run to end first, and how route reads it.
 AFTER_RUN = "after run {}"
 AFTER_RUN_PATTERN = re.compile(r"after run (\d+)")
-# Issue events after which an issue may have come into autopilot's scope.
-AUTOPILOT_EVENTS = ("opened", "reopened", "milestoned")
+# Issue events after which an issue may have come into autopilot's scope, or a label of
+# `autopilot.priority` or `autopilot.labels` may have changed what it does.
+AUTOPILOT_EVENTS = ("opened", "reopened", "milestoned", "labeled", "unlabeled")
 
 
 def auto_kinds(value):

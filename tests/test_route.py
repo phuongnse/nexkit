@@ -422,6 +422,14 @@ class RouteTests(unittest.TestCase):
         event["review"].update(state="changes_requested", user={"login": "bob"})
         self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
 
+    def test_a_label_added_or_removed_starts_a_sweep(self):
+        for action in ("labeled", "unlabeled"):
+            event = {"action": action, "issue": {"number": 5}, "label": {"name": "on-hold"}}
+            self.assertEqual(
+                route(self.gh, "issues", event),
+                {"action": "maintain", "task": "autopilot", "event": action},
+            )
+
     def test_an_approval_of_a_nexkit_pull_request_starts_a_merge(self):
         pull = self.gh.add_pull(9, 5)
         event = {

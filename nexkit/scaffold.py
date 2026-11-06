@@ -354,6 +354,7 @@ def ensure_label(root, label):
     return f"Created the label `{label}` on {repo}."
 
 
+DEFAULT_PRIORITY = configuration.DEFAULTS["autopilot"]["priority"]
 # The labels of the issues NexKit opens, which `autopilot.priority` puts first by default:
 # (name, description, colour).
 OWN_LABELS = (
@@ -835,6 +836,9 @@ def _autopilot_triggers(cfg, workflow):
     # that `nexkit init` writes still start a sweep, as every event in the group does.
     by_milestone = cfg["autopilot"]["scope"] == "milestone"
     needed = ["opened", "reopened", "closed", *(["milestoned"] if by_milestone else [])]
+    if cfg["autopilot"]["labels"] or cfg["autopilot"]["priority"] != DEFAULT_PRIORITY:
+        # A label that a person adds or removes, such as a hold, takes effect at once.
+        needed += ["labeled", "unlabeled"]
     issues = trigger(workflow, "issues")
     # Whole words: `reopened` holds `opened`.
     missing = [

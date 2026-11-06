@@ -816,8 +816,8 @@ class InitDoctorTests(unittest.TestCase):
             any("publish.push_token_secret is gone" in m for _, m in scaffold.doctor(self.root))
         )
 
-    def app_findings(self, answers=None, key_file=None, inspected=None, app_id=None):
-        cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
+    def app_findings(self, answers=None, key_file=None, inspected=None, app_id=None, cfg=None):
+        cfg = cfg or nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
         answers = answers if answers is not None else {}
 
         def fake_gh(*args):
@@ -837,6 +837,62 @@ class InitDoctorTests(unittest.TestCase):
         self.assertFalse(found[1][0])
         self.assertIn("gh secret set NEXKIT_APP_PRIVATE_KEY --repo acme/app", found[1][1])
         self.assertIn("https://github.com/settings/apps/nexkit-acme", found[1][1])
+
+    def dependabot_findings(self, answer, status=None):
+        cfg = nexkit.config.validate(
+            {"agents": CLAUDE, "github_app": APP, "autopilot": {"dependabot": "high"}}
+        )
+        with (
+            mock.patch.object(scaffold, "_gh_answer", return_value=answer),
+            mock.patch.object(scaffold, "_gh", return_value=status),
+        ):
+            return scaffold._dependabot(cfg, "acme/app", "main")
+
+    def test_doctor_says_when_alerts_are_turned_off(self):
+        said = '{"message":"Dependabot alerts are disabled for this repository."}'
+        [(ok, found)] = self.dependabot_findings((False, said))
+        self.assertFalse(ok)
+        self.assertIn("alerts are off for acme/app", found)
+        self.assertIn("https://github.com/acme/app/settings/security_analysis", found)
+
+    def test_doctor_says_what_the_last_sweep_found_missing(self):
+        problem = "The App may not read alerts: grant it Dependabot alerts: read"
+        on, missing = self.dependabot_findings((True, "[]"), f"{problem}\n")
+        self.assertEqual(on, (True, "autopilot.dependabot: Dependabot alerts are on"))
+        self.assertFalse(missing[0])
+        self.assertIn(problem, missing[1])
+
+    def test_doctor_cannot_always_tell_and_that_is_no_failure(self):
+        [(ok, found)] = self.dependabot_findings((False, "HTTP 403: Must have admin rights"))
+        self.assertTrue(ok)
+        self.assertIn("could not tell", found)
+
+    def test_doctor_asks_nothing_about_alerts_without_the_setting(self):
+        cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
+        self.assertEqual(scaffold._dependabot(cfg, "acme/app", "main"), [])
+
+    def test_only_the_setting_needs_the_permission_for_alerts(self):
+        cfg = nexkit.config.validate(
+            {"agents": CLAUDE, "github_app": APP, "autopilot": {"dependabot": "high"}}
+        )
+        self.assertEqual(app.missing(app.PERMISSIONS), [])
+        self.assertEqual(app.missing(app.PERMISSIONS, cfg), ["vulnerability_alerts: read"])
+        self.assertEqual(app.missing({**app.PERMISSIONS, **app.ALERTS_PERMISSION}, cfg), [])
+        # An App that `nexkit init` creates does without it.
+        self.assertNotIn("vulnerability_alerts", app.PERMISSIONS)
+
+    def test_with_its_key_doctor_checks_the_permission_for_alerts(self):
+        cfg = nexkit.config.validate(
+            {"agents": CLAUDE, "github_app": APP, "autopilot": {"dependabot": "high"}}
+        )
+        state = {
+            "slug": "nexkit-acme",
+            "granted": app.PERMISSIONS,
+            "installed": True,
+            "permissions": app.PERMISSIONS,
+        }
+        found = self.app_findings({}, "key.pem", {"return_value": state}, app_id="7", cfg=cfg)
+        self.assertTrue(any(not ok and "vulnerability_alerts" in m for ok, m in found))
 
     def test_doctor_says_which_permissions_a_public_app_lacks(self):
         granted = {**app.PERMISSIONS, "workflows": "read"}
@@ -1884,12 +1940,11 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_each_job_that_writes_mints_its_token_with_only_what_it_needs(self):
         for name in ("route", "publish", "report", "maintain", "finish"):
-            [step] = [s for s in self.jobs[name].split("\n      - ") if "app-token@" in s]
+            step = self.token_step(name)
             asked = dict(re.findall(r"permission-([a-z-]+): (read|write)", step))
             for permission, level in asked.items():
                 needed = app.PERMISSIONS[permission.replace("-", "_")]
                 self.assertGreaterEqual(app.LEVELS[needed], app.LEVELS[level], permission)
-            self.assertIn("id: token", step, name)
             # The key goes to the action, and only the token it mints to NexKit.
             uses = [s for s in self.jobs[name].split("\n      - ") if "nexkit " in s]
             for later in uses:
@@ -1898,9 +1953,33 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(self.minted("finish"), {"actions": "write"})
         self.assertEqual(self.minted("route")["contents"], "read")
 
+    def token_step(self, name):
+        """The step of job `name` that mints the token the job writes with."""
+        [step] = [
+            s
+            for s in self.jobs[name].split("\n      - ")
+            if "app-token@" in s and s.startswith("id: token")
+        ]
+        return step
+
     def minted(self, name):
-        [step] = [s for s in self.jobs[name].split("\n      - ") if "app-token@" in s]
-        return dict(re.findall(r"permission-([a-z-]+): (read|write)", step))
+        return dict(re.findall(r"permission-([a-z-]+): (read|write)", self.token_step(name)))
+
+    def test_only_a_sweep_with_the_setting_asks_for_alerts_and_it_may_fail(self):
+        # A token request for a permission the App lacks fails, which must not stop a sweep.
+        self.assertNotIn("vulnerability-alerts", self.token_step("maintain"))
+        [step] = [
+            s for s in self.jobs["maintain"].split("\n      - ") if s.startswith("id: alerts")
+        ]
+        self.assertIn("continue-on-error: true", step)
+        self.assertIn("decision).task == 'sweep'", step)
+        self.assertIn("config).autopilot.dependabot", step)
+        found = dict(re.findall(r"permission-([a-z-]+): (read|write)", step))
+        self.assertEqual(found, {"vulnerability-alerts": "read"})
+        self.assertEqual(app.ALERTS_PERMISSION, {"vulnerability_alerts": "read"})
+        self.assertIn(
+            "NEXKIT_ALERTS_TOKEN: ${{ steps.alerts.outputs.token }}", self.jobs["maintain"]
+        )
 
     def test_nothing_writes_with_the_actions_token(self):
         for name, job in self.jobs.items():

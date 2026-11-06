@@ -96,6 +96,12 @@ class GitHubError(RuntimeError):
         self.status = status
 
 
+def alerts_off(text):
+    """Whether GitHub's answer `text` says that a repository has Dependabot alerts turned
+    off, not that the caller may not read them. Both are a 403; only the words differ."""
+    return "alerts are disabled" in str(text).lower()
+
+
 class GitHub:
     def __init__(self, repository=None, token=None, api_url=None):
         self.repository = repository or os.environ["GITHUB_REPOSITORY"]
@@ -286,6 +292,18 @@ class GitHub:
         """Record that issue `number` is blocked by the issue with database id `blocker_id`."""
         path = f"{self._repo}/issues/{number}/dependencies/blocked_by"
         return self.request("POST", path, {"issue_id": blocker_id})
+
+    def dependabot_alerts(self, severities):
+        """The open Dependabot alerts of these severities, oldest first: the first 100. The
+        token needs the *Dependabot alerts* permission."""
+        params = {
+            "state": "open",
+            "severity": ",".join(severities),
+            "sort": "created",
+            "direction": "asc",
+            "per_page": 100,
+        }
+        return self.request("GET", f"{self._repo}/dependabot/alerts", params=params) or []
 
     def milestones(self):
         """Open milestones."""

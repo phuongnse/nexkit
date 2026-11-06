@@ -574,6 +574,7 @@ def cmd_report(args):
 
 
 def cmd_maintain(args):
+    from .github import GitHub
     from .maintain import maintain, wait_for_paused
     from .report import workflow_file
 
@@ -581,12 +582,15 @@ def cmd_maintain(args):
     if args.wait:
         wait_for_paused(gh, _config()["usage_limit"]["wait_minutes"])
         return 0
+    # Apart from the job's token: an App without the permission gets no such token.
+    token = os.environ.get("NEXKIT_ALERTS_TOKEN")
     lines = maintain(
         gh,
         _decision(),
         _config(),
         workflow=workflow_file(os.environ.get("GITHUB_WORKFLOW_REF", "")),
         ref=os.environ.get("NEXKIT_DEFAULT_BRANCH") or gh.default_branch(),
+        alerts=GitHub(token=token) if token else None,
     )
     for line in lines:
         print(line)

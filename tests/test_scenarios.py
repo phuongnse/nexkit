@@ -139,6 +139,8 @@ class Pipeline:
         # `publish` merges a base branch that moved while the agent worked, when the rules
         # want pull requests up to date (`publish.catch_up`); off, it publishes as before.
         self.catch_up = True
+        # What may read Dependabot alerts in a sweep, when the App may.
+        self.alerts = None
 
     def posted(self, number, body):
         """A comment, posted now: how recent a round's comment is tells whether the round
@@ -197,7 +199,14 @@ class Pipeline:
                     self.workflow(self, dispatch["workflow"])
             elif inputs["command"] == "autopilot":
                 decision = route(self.gh, "workflow_dispatch", {}, inputs)
-                maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+                maintain(
+                    self.gh,
+                    decision,
+                    self.cfg,
+                    workflow="nexkit.yml",
+                    ref="main",
+                    alerts=self.alerts,
+                )
                 self.gh.runs[dispatch["run_id"]] = {"status": "completed"}
                 self.check()
             else:
@@ -466,6 +475,28 @@ def red_main(gh):
     ]
 
 
+def alert(number=1, ghsa="GHSA-aaaa-bbbb-cccc", severity="high", package="lodash"):
+    """A Dependabot alert, as GitHub lists it."""
+    return {
+        "number": number,
+        "html_url": f"https://github.com/acme/app/security/dependabot/{number}",
+        "dependency": {
+            "package": {"ecosystem": "npm", "name": package},
+            "manifest_path": "web/package-lock.json",
+        },
+        "security_advisory": {
+            "ghsa_id": ghsa,
+            "cve_id": "CVE-2026-1",
+            "summary": "Prototype pollution",
+            "severity": severity,
+        },
+        "security_vulnerability": {
+            "vulnerable_version_range": "< 4.17.21",
+            "first_patched_version": {"identifier": "4.17.21"},
+        },
+    }
+
+
 def config(**kw):
     autopilot_settings = {"enabled": True, "answer": "recommended", **kw.pop("autopilot", {})}
     return make_config(
@@ -565,6 +596,49 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "open")
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
         self.assertIn("@bob edited it without write access", mention["body"])
+
+    def test_an_advisory_is_planned_fixed_and_merged_once(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(autopilot={"dependabot": "high"}), script)
+        pipe.alerts = pipe.gh
+        pipe.gh.alerts = [alert()]
+        pipe.issue(4)
+        played = pipe.play()
+        # In the milestone scope too, though it has no milestone, and before other issues.
+        self.assertEqual(played, [("plan", 5), ("plan", 4), ("go", 5), ("go", 4)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertIsNone(pipe.gh.issues[5]["milestone"])
+
+    def test_an_alert_that_outlives_its_issue_starts_no_more_work(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(autopilot={"dependabot": "high"}), script)
+        pipe.alerts = pipe.gh
+        pipe.gh.alerts = [alert()]
+        # The alert stays open after the merge: more sweeps open no second issue.
+        played = pipe.play()
+        self.assertEqual(played, [("plan", 1), ("go", 1)])
+        pipe.later(timedelta(days=2))
+        self.assertEqual(pipe.play(), played)
+        self.assertEqual(len(pipe.gh.issues), 2)  # the issue and its pull request
+        [word] = pipe.gh.comments_matching(1, autopilot.DEPENDABOT_STILL_OPEN)
+        self.assertIn("@olivia", word["body"])
+        pipe.later(timedelta(days=2))
+        pipe.play()
+        self.assertEqual(len(pipe.gh.comments_matching(1, autopilot.DEPENDABOT_STILL_OPEN)), 1)
+
+    def test_an_app_that_may_not_read_alerts_opens_nothing_and_the_other_work_goes_on(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(autopilot={"dependabot": "high"}), script)
+        pipe.gh.alerts = [alert()]
+        pipe.issue(4)
+        self.assertEqual(pipe.play(), [("plan", 4), ("go", 4)])
+        self.assertEqual(sorted(pipe.gh.issues), [4, 5])  # the issue and its pull request
 
     def test_an_issue_marked_to_run_last_runs_after_the_rest_of_its_milestone(self):
         def script(pipe, inputs):

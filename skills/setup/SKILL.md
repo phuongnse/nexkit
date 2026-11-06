@@ -190,6 +190,11 @@ files or repository settings, and wait for confirmation.
    that many commits reached the default branch since its latest run there, whatever
    started that run, and never while one is queued or in progress. It needs the
    `workflow_dispatch` trigger like every entry there.
+   When the repository relays Dependabot alerts to issues by a script of its own, or wants
+   them worked on, offer `"autopilot": {"dependabot": "high"}` instead: each sweep opens one
+   issue per advisory at or above that severity. Say that the App then needs the *Dependabot
+   alerts: read* permission, which the user adds on its settings page and accepts on the
+   installation, and that alerts must be on.
    A command that autopilot started and that never ran starts once more as soon as its
    workflow run ended, or after `"lost_after_minutes"` (30 by default) when that run
    cannot be read.

@@ -854,8 +854,9 @@ def answer_trust(gh, cfg, decision, workflow, ref):
     return [f"@{actor} vouched for #{number}.", *autopilot.request_safely(gh, cfg, workflow, ref)]
 
 
-def maintain(gh, decision, cfg, *, workflow="", ref=""):
-    """Run the decision's task. Returns lines for the job log."""
+def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
+    """Run the decision's task. Returns lines for the job log. `alerts` is the client whose
+    token may read Dependabot alerts, or None: see `autopilot.check_dependabot`."""
     task = decision["task"]
     if task == "trust":
         return answer_trust(gh, cfg, decision, workflow, ref)
@@ -871,7 +872,8 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
         lines = [wait_for_end(gh, decision["after"])] if decision.get("after") else []
         busy = set()
         if autopilot.takes(cfg):
-            lines += autopilot.sweep(gh, cfg, workflow, ref, decision.get("closed"), busy)
+            closed = decision.get("closed")
+            lines += autopilot.sweep(gh, cfg, workflow, ref, closed, busy, alerts=alerts)
         if cfg["conflicts"]["auto_resolve"]:
             # After the commands it started, which merge the base branch themselves.
             max_rounds = cfg["conflicts"]["max_rounds"]

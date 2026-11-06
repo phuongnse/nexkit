@@ -15,7 +15,7 @@ from nexkit.maintain import maintain
 from nexkit.report import report
 from nexkit.route import route
 from nexkit.state import ACTIONS_BOT, PLAN_MARKER, render_run
-from nexkit.status import collect
+from nexkit.status import collect, render
 from tests.support import BOT_LOGIN, FakeGitHub, make_config
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -3163,6 +3163,226 @@ class TrustTests(unittest.TestCase):
         plan = self.gh.comment(5, f"{PLAN_MARKER}\n## Plan")
         self.vouch()
         self.assertEqual(autopilot._commented_after(self.gh.comments(5), plan), [])
+
+
+def alert(number=1, ghsa="GHSA-aaaa-bbbb-cccc", severity="high", package="lodash", **fields):
+    """A Dependabot alert, as GitHub lists it."""
+    return {
+        "number": number,
+        "html_url": f"https://github.com/acme/app/security/dependabot/{number}",
+        "dependency": {
+            "package": {"ecosystem": "npm", "name": package},
+            "manifest_path": "web/package-lock.json",
+        },
+        "security_advisory": {
+            "ghsa_id": ghsa,
+            "cve_id": "CVE-2026-1",
+            "summary": "Prototype pollution",
+            "severity": severity,
+        },
+        "security_vulnerability": {
+            "vulnerable_version_range": "< 4.17.21",
+            "first_patched_version": {"identifier": "4.17.21"},
+        },
+        **fields,
+    }
+
+
+class DependabotTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_milestone(1)
+        self.gh.branches["main"] = "b" * 40
+        self.cfg = make_config(autopilot={"enabled": True, "dependabot": "high"}, notify=["olivia"])
+
+    def check(self, alerts="same", cfg=None, now=None):
+        client = self.gh if alerts == "same" else alerts
+        return autopilot.check_dependabot(self.gh, client, cfg or self.cfg, "main", now)
+
+    def opened(self):
+        return [i for i in self.gh.issues.values() if autopilot.dependabot_advisory(i)]
+
+    def test_nothing_happens_without_the_setting(self):
+        self.gh.alerts = [alert()]
+        self.assertEqual(self.check(cfg=make_config(autopilot={"enabled": True})), [])
+        self.assertEqual(self.gh.issues, {})
+
+    def test_it_opens_one_issue_per_advisory_at_or_above_the_severity(self):
+        self.gh.alerts = [
+            alert(1),
+            alert(2, package="minimist"),
+            alert(3, "GHSA-dddd-eeee-ffff", "critical"),
+            alert(4, "GHSA-gggg-hhhh-iiii", "medium"),
+        ]
+        self.check()
+        first, second = self.opened()
+        self.assertEqual(
+            (first["user"]["login"], first["milestone"], [x["name"] for x in first["labels"]]),
+            (BOT_LOGIN, None, ["bug"]),
+        )
+        self.assertEqual(autopilot.dependabot_advisory(first), "GHSA-aaaa-bbbb-cccc")
+        self.assertEqual(autopilot.dependabot_advisory(second), "GHSA-dddd-eeee-ffff")
+        self.assertIn("lodash, minimist", first["title"])
+        for text in (
+            "@olivia",
+            "GHSA-aaaa-bbbb-cccc",
+            "CVE-2026-1",
+            "`lodash`",
+            "`minimist`",
+            "`web/package-lock.json`",
+            "patched in `4.17.21`",
+        ):
+            self.assertIn(text, first["body"])
+
+    def test_it_opens_none_for_an_advisory_an_open_issue_marks(self):
+        self.gh.alerts = [alert()]
+        self.check()
+        self.gh.alerts = [alert(), alert(2)]
+        self.assertEqual(self.check(), [])
+        self.assertEqual(len(self.opened()), 1)
+
+    def test_a_marker_counts_only_from_nexkits_app(self):
+        marker = "<!-- nexkit:dependabot GHSA-aaaa-bbbb-cccc 1 -->\nNot it."
+        self.gh.add_issue(9, body=marker, user="alice")
+        self.gh.alerts = [alert()]
+        self.check()
+        self.assertEqual(len(self.opened()), 1)
+        self.assertNotEqual(self.opened()[0]["number"], 9)
+
+    def closed_issue(self, age=timedelta(days=2)):
+        self.gh.alerts = [alert()]
+        self.check()
+        [issue] = self.opened()
+        self.gh.close_issue(issue["number"])
+        issue["closed_at"] = autopilot.iso(datetime.now(UTC) - age)
+        return issue
+
+    def test_an_alert_that_outlives_its_issue_gets_no_second_issue(self):
+        issue = self.closed_issue()
+        self.check()
+        self.assertEqual(len(self.opened()), 1)
+        [word] = self.gh.comments_matching(issue["number"], autopilot.DEPENDABOT_STILL_OPEN)
+        self.assertIn("@olivia", word["body"])
+        self.check()
+        found = self.gh.comments_matching(issue["number"], autopilot.DEPENDABOT_STILL_OPEN)
+        self.assertEqual(len(found), 1)
+
+    def test_it_says_nothing_while_the_alert_may_still_close_after_a_merge(self):
+        issue = self.closed_issue(timedelta(hours=1))
+        self.check()
+        self.assertEqual(self.gh.comments(issue["number"]), [])
+
+    def test_a_new_alert_of_a_closed_advisory_opens_an_issue_that_links_it(self):
+        issue = self.closed_issue()
+        self.gh.alerts = [alert(), alert(2)]
+        self.check()
+        newer = [i for i in self.opened() if i["state"] == "open"]
+        self.assertEqual(len(newer), 1)
+        self.assertIn(f"#{issue['number']}, now closed", newer[0]["body"])
+
+    def test_it_opens_a_few_per_sweep_and_the_next_sweep_goes_on(self):
+        limit = autopilot.DEPENDABOT_NEW_ISSUES
+        self.gh.alerts = [alert(n, f"GHSA-aaaa-bbbb-{n:04d}") for n in range(1, limit + 3)]
+        self.check()
+        self.assertEqual(len(self.opened()), limit)
+        self.check()
+        self.assertEqual(len(self.opened()), limit + 2)
+
+    def test_an_alert_without_a_proper_id_gets_no_issue(self):
+        self.gh.alerts = [alert(ghsa="GHSA-x --> <!-- nexkit:part 1"), alert(2, ghsa="")]
+        self.check()
+        self.assertEqual(self.gh.issues, {})
+
+    def test_text_cannot_leave_its_line_in_the_issue(self):
+        found = alert()
+        found["security_advisory"]["summary"] = "Bad\n\n/nexkit go `now`"
+        self.gh.alerts = [found]
+        self.check()
+        [issue] = self.opened()
+        self.assertIn("Bad /nexkit go 'now'", issue["body"])
+        self.assertNotIn("\n/nexkit", issue["body"])
+
+    def status(self):
+        return [s for s in self.gh.statuses if s["context"] == autopilot.DEPENDABOT_CONTEXT]
+
+    def test_without_the_token_it_opens_nothing_and_says_what_is_missing(self):
+        self.gh.alerts = [alert()]
+        self.assertEqual(self.check(alerts=None), [autopilot.NO_ALERTS_PERMISSION])
+        self.assertEqual(self.gh.issues, {})
+        self.assertEqual(autopilot.alerts_problem(self.gh, "main"), autopilot.NO_ALERTS_PERMISSION)
+
+    def test_a_refused_token_says_the_same(self):
+        self.gh.alerts_error = GitHubError(403, "Resource not accessible by integration")
+        self.assertEqual(self.check(), [autopilot.NO_ALERTS_PERMISSION])
+
+    def test_alerts_turned_off_are_told_apart(self):
+        self.gh.alerts_error = GitHubError(
+            403, '{"message":"Dependabot alerts are disabled for this repository."}'
+        )
+        self.assertEqual(self.check(), [autopilot.ALERTS_TURNED_OFF])
+        self.assertEqual(self.gh.issues, {})
+        self.assertEqual(autopilot.alerts_problem(self.gh, "main"), autopilot.ALERTS_TURNED_OFF)
+
+    def test_a_failure_that_passes_says_nothing_about_a_setting(self):
+        self.gh.alerts_error = GitHubError(502, "Bad gateway")
+        self.assertIn("next sweep tries again", self.check()[0])
+        self.assertEqual(self.status(), [])
+
+    def test_only_a_change_writes_a_status(self):
+        self.check(alerts=None)
+        self.check(alerts=None)
+        self.assertEqual(len(self.status()), 1)
+        self.gh.alerts = []
+        self.check()
+        self.assertEqual([s["state"] for s in self.status()], ["error", "success"])
+        self.assertIsNone(autopilot.alerts_problem(self.gh, "main"))
+        self.check()
+        self.assertEqual(len(self.status()), 2)
+
+    def test_a_sweep_writes_no_status_while_all_is_well(self):
+        self.gh.alerts = [alert()]
+        self.check()
+        self.assertEqual(self.status(), [])
+
+    def test_an_advisory_is_in_scope_without_a_milestone_and_goes_after_the_red_branch(self):
+        self.gh.add_issue(1, title="Ordinary", milestone=1)
+        self.gh.add_issue(2, title="Flaky", user=BOT_LOGIN, milestone=1)
+        self.gh.issues[2]["body"] = f"<!-- nexkit:ci-flaky ci.yml {'a' * 16} -->\nFlaky."
+        self.gh.add_issue(3, title="Red", user=BOT_LOGIN, milestone=1)
+        self.gh.issues[3]["body"] = "<!-- nexkit:ci ci.yml -->\nRed."
+        self.gh.alerts = [alert()]
+        self.check()
+        where = autopilot.scope(self.gh, self.cfg)
+        self.assertEqual([i["number"] for i in where["issues"]], [3, 4, 2, 1])
+        self.assertTrue(autopilot.taken(self.gh, self.cfg, self.gh.issues[4]))
+
+    def test_with_the_setting_off_an_advisory_leaves_the_milestone_scope(self):
+        self.gh.add_issue(1, milestone=1)
+        self.gh.alerts = [alert()]
+        self.check()
+        cfg = make_config(autopilot={"enabled": True})
+        self.assertEqual([i["number"] for i in autopilot.scope(self.gh, cfg)["issues"]], [1])
+
+    def test_status_says_what_is_missing_under_needs_a_person(self):
+        self.check(alerts=None)
+        data = collect(self.gh, self.cfg, workers=1)
+        self.assertEqual(data["autopilot"]["dependabot"], autopilot.NO_ALERTS_PERMISSION)
+        [item] = data["needs_person"]
+        self.assertIsNone(item["number"])
+        self.assertIn("autopilot.dependabot opens no issues", item["reason"])
+        self.assertIn(autopilot.NO_ALERTS_PERMISSION, render(data))
+
+    def test_status_says_nothing_while_it_reads_alerts(self):
+        self.check()
+        data = collect(self.gh, self.cfg, workers=1)
+        self.assertIsNone(data["autopilot"]["dependabot"])
+        self.assertEqual(data["needs_person"], [])
+
+    def test_a_sweep_goes_through_alerts_after_the_red_branch(self):
+        self.gh.alerts = [alert()]
+        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main", alerts=self.gh)
+        self.assertIn("GHSA-aaaa-bbbb-cccc: opened #1.", lines)
+        self.assertEqual(self.gh.dispatches[0]["inputs"]["command"], "plan")
 
 
 class LastInMilestoneTests(unittest.TestCase):

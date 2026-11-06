@@ -37,7 +37,8 @@ A complete configuration with every key at its default, except `agents`, `setup`
     "scope": "milestone",
     "max_parallel": null,
     "answer": "never",
-    "watch_workflows": []
+    "watch_workflows": [],
+    "dependabot": null
   },
   "notify": [],
   "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -92,6 +93,7 @@ their defaults.
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
 | `autopilot.last_in_milestone_label` | `null` | The label that marks an issue to run only once every other issue of its milestone is closed, such as `"last-in-milestone"`. See *Running an issue last* under [Autopilot](#autopilot). |
 | `autopilot.trusted_workflows` | `[]` | Workflow files, such as `["docs-audit.yml"]`, whose issues autopilot takes when their marker names a run that checks out. See [Issues from a workflow](#issues-from-a-workflow). |
+| `autopilot.dependabot` | `null` | The lowest severity of Dependabot alert that gets an issue: `"low"`, `"medium"`, `"high"` or `"critical"`. `null` opens none. It needs an extra permission of the App. See *Dependabot advisories* under [Autopilot](#autopilot). |
 | `autopilot.watch_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, whose runs on the default branch autopilot watches as it watches `merge.after_workflows`, whatever started them, but which NexKit does not start after its merges. File names only, each listed once, none also in `merge.after_workflows`. See *Watching CI that NexKit does not start* under [Autopilot](#autopilot). |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`, each listed once. See [Mentions](#mentions). |
 
@@ -692,7 +694,8 @@ at once.
   "answer": "never",
   "lost_after_minutes": 30,
   "trusted_workflows": [],
-  "last_in_milestone_label": null
+  "last_in_milestone_label": null,
+  "dependabot": null
 }
 ```
 
@@ -1049,6 +1052,41 @@ release.
   the issue. An issue that is a part but was not opened by NexKit's App inherits nothing, so
   it needs the comment itself.
 - With autopilot off, the command says so and does nothing.
+
+### Dependabot advisories
+
+Autopilot can turn Dependabot alerts into issues, as it does for a failure of CI on the
+default branch, without a relay of your own:
+
+```json
+"autopilot": {"enabled": true, "dependabot": "high"}
+```
+
+Each sweep then opens one issue for each advisory of an open alert at or above that severity,
+as NexKit's App, in no milestone, with a marker of the advisory id. Its text names the
+advisory, the packages, their manifests and the patched versions, and mentions `notify`.
+Autopilot takes it in either scope, and plans it right after the `bug` issues for CI on the
+default branch and before the issues for flaky runs.
+
+- An advisory that an open issue marks gets no other issue, whatever its alerts.
+- A sweep opens at most five, so that the first one on a repository with old alerts stays
+  short; the next sweeps open the rest. It reads the oldest 100 alerts of those severities.
+- A closed issue does not lead to another for the same alerts, so a fix that an alert
+  outlives is not repeated: a day after the issue closed, one comment on it mentions `notify`.
+  Reopen the issue or dismiss the alerts. An alert that no issue covered, such as in another
+  manifest, opens a new issue that links the closed one.
+
+This takes the App's *Dependabot alerts: read* permission, which NexKit asks for only in a
+sweep with this setting, and in a token of its own. `nexkit init` does not grant it: add it on
+the App's settings page and accept it on the installation (see [The GitHub
+App](#the-github-app)).
+
+Without the permission, or with Dependabot alerts turned off for the repository, the sweep
+opens nothing and the rest of its work goes on. It leaves what is missing as a
+`nexkit/dependabot` commit status on the default branch's tip, since nothing else can tell the
+two apart: `nexkit status` shows it under *Needs a person* and `nexkit doctor` reports it.
+Doctor also asks GitHub whether alerts are on, and with `--app-id ID --app-private-key FILE`
+checks the permission itself. The status turns green once a sweep can read them.
 
 ## Mentions
 
@@ -1452,6 +1490,7 @@ it uses:
 | Pull requests | write | Opening, updating and reviewing pull requests |
 | Commit statuses | write | `nexkit/checks` and `nexkit/review` |
 | Workflows | write | Pushing and merging changes to `.github/workflows/` |
+| Dependabot alerts | read | Only with [`autopilot.dependabot`](#dependabot-advisories): reading open alerts. `nexkit init` leaves it out, so add it by hand. |
 
 **Who holds what.** Each job that writes, `route`, `publish`, `report`, `maintain` and
 `finish`, mints an installation token for this repository in a step of its own, with

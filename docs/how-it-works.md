@@ -80,7 +80,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `combine` | go, fix, review, with `parallel_checks` | read only | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read. Never checks out or executes repository code. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](#stages), and then runs no agent. |
 | `report` | every action | the App's: write | the App's, for its token | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` that are due on the base branch. Never checks out or executes repository code. |
-| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches | the App's: contents (to merge); issues, comments, workflows, statuses; check annotations | the App's, for its token | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches, `/nexkit trust` | the App's: contents (to merge); issues, comments, workflows, statuses; check annotations; with `autopilot.dependabot`, a second token that reads Dependabot alerts | the App's, for its token | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
 | `finish` | a command whose `report` did not finish | the App's: starting workflows | the App's, for its token | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](#work-without-a-command)). Not for a round NexKit stopped in its checks after the base branch moved: that round's `report` and `finish` do not run, and the next round has started already. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and NexKit turns those edits
@@ -890,8 +890,9 @@ dispatch of the workflow. A *sweep* decides which:
 
 1. It finds the scope: the open issues of the earliest open milestone, oldest first, or
    with `autopilot.scope: null` every open issue, by milestone in the same order and then
-   the issues without one, each group oldest first. Issues for CI failures and flaky runs
-   go before all others.
+   the issues without one, each group oldest first. Issues for CI failures, then for
+   [Dependabot advisories](configuration.md#dependabot-advisories), then for flaky runs go
+   before all others. An issue for an advisory has no milestone and is in either scope.
 2. For each issue, it reads the markers of NexKit's run comments on the issue and its pull
    request, the latest plan, the issue's *blocked by* relationships and whether it
    has sub-issues. From these alone it decides: start `/nexkit plan`, start `/nexkit go`,
@@ -1416,8 +1417,8 @@ once the limit has reset.
 - Autopilot starts `/nexkit go` without a person's approval of the plan. It takes only
   issues opened by people with write access, and anyone else's issues stay untouched, so
   an outsider cannot start an implement session by opening or editing an issue. Issues
-  that NexKit opens itself, the parts of a split and the issues for CI failures and flaky
-  runs, are trusted by a marker at the start of their text; such an issue opened by the
+  that NexKit opens itself, the parts of a split and the issues for CI failures, flaky
+  runs and Dependabot advisories, are trusted by a marker at the start of their text; such an issue opened by the
   App is NexKit's, unless a workflow of the repository that holds the App's key writes
   untrusted text there. The Actions bot proves nothing, since a pull request's CI can write
   as it. An issue from a workflow in

@@ -280,6 +280,10 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
     if cfg.get("autopilot", {}).get("enabled"):
         data["autopilot"] = autopilot_item(gh, cfg)
         _autopilot_needs(data)
+        problem = data["autopilot"].get("dependabot")
+        if problem:
+            reason = f"autopilot.dependabot opens no issues: {problem}"
+            data["needs_person"].append({"number": None, "kind": "setting", "reason": reason})
     return data
 
 
@@ -310,7 +314,7 @@ def _autopilot_needs(data):
 def autopilot_item(gh, cfg):
     """What the next autopilot sweep would do with each issue in scope."""
     where, steps = autopilot.preview(gh, cfg)
-    return {
+    item = {
         "scope": where["name"],
         "max_parallel": cfg["autopilot"]["max_parallel"],
         "issues": [
@@ -322,6 +326,10 @@ def autopilot_item(gh, cfg):
             for step in [*steps, *autopilot.left_out(gh, cfg)]
         ],
     }
+    if cfg["autopilot"]["dependabot"]:
+        # What is missing, as the last sweep found: only its token can tell.
+        item["dependabot"] = autopilot.alerts_problem(gh, gh.default_branch())
+    return item
 
 
 def _short(text, width=50):
@@ -393,7 +401,8 @@ def render(data):
             lines.append("  no open issues")
     lines += ["", "Needs a person"]
     for item in data["needs_person"]:
-        lines.append(f"  #{item['number']:<5} {item['reason']}")
+        number = f"#{item['number']:<5}" if item["number"] else " " * 6
+        lines.append(f"  {number} {item['reason']}")
     if not data["needs_person"]:
         lines.append("  nothing")
     return "\n".join(lines)

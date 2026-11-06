@@ -448,10 +448,21 @@ jobs:
           permission-pull-requests: write # paused runs on pull requests; close a pull request a split supersedes
           permission-statuses: write # the pending statuses of a round that ended without a report
           permission-workflows: write # a merge may change workflow files
+      # A token of its own, which may fail: an App without this permission gets no token at
+      # all, and that must not stop the sweep, which says what is missing.
+      - id: alerts
+        if: fromJSON(needs.route.outputs.decision).task == 'sweep' && fromJSON(needs.route.outputs.config).autopilot.dependabot
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets[fromJSON(needs.route.outputs.config).github_app.app_id_secret] }}
+          private-key: ${{ secrets[fromJSON(needs.route.outputs.config).github_app.private_key_secret] }}
+          permission-vulnerability-alerts: read # autopilot.dependabot
       - name: Maintain
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit maintain
         env:
           GITHUB_TOKEN: ${{ steps.token.outputs.token }}
+          NEXKIT_ALERTS_TOKEN: ${{ steps.alerts.outputs.token }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
           NEXKIT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

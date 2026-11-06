@@ -25,8 +25,8 @@ import string
 from datetime import UTC, datetime, timedelta
 
 from .checks import same_test, test_name
-from .config import after_workflow_names, watched_workflows
-from .github import TRUSTED_ASSOCIATIONS, GitHubError
+from .config import SEVERITIES, after_workflow_names, watched_workflows
+from .github import TRUSTED_ASSOCIATIONS, GitHubError, alerts_off
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
 from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command
@@ -170,6 +170,23 @@ CI_LOOK_BACK = timedelta(days=1)
 # The most issues autopilot opened that a sweep reads at once: the open ones, and those
 # updated within `CI_LOOK_BACK`.
 ISSUES_LIMIT = 1000
+# An issue that autopilot opened for a Dependabot advisory: at the start of its text, the
+# advisory's id and the numbers of the alerts the issue covers.
+DEPENDABOT_PREFIX = "<!-- nexkit:dependabot "
+DEPENDABOT = re.compile(r"\A<!-- nexkit:dependabot (GHSA[a-z0-9-]+) ([0-9,]+) -->")
+GHSA_ID = re.compile(r"GHSA(?:-[a-z0-9]{4}){3}")
+# The most issues for advisories that a sweep opens, so that the first sweep on a repository
+# with old alerts stays short: the next sweeps open the rest.
+DEPENDABOT_NEW_ISSUES = 5
+# What marks the comment on a closed issue whose advisory still has open alerts, and how long
+# after it closed that comment waits: an alert closes some time after the fix merges.
+DEPENDABOT_STILL_OPEN = "<!-- nexkit:dependabot-open -->"
+DEPENDABOT_SETTLE = timedelta(days=1)
+# Why a sweep could not read alerts stays on the default branch's tip, where `nexkit status`
+# and `nexkit doctor` read it: only the sweep's token can tell, and it holds nothing else.
+DEPENDABOT_CONTEXT = "nexkit/dependabot"
+NO_ALERTS_PERMISSION = "The App may not read alerts: grant it Dependabot alerts: read"
+ALERTS_TURNED_OFF = "Dependabot alerts are turned off for this repository"
 FAILED = {"failure", "timed_out"}
 # Events whose runs test a pull request rather than the branch they name.
 PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
@@ -275,14 +292,19 @@ def current_milestone(gh):
 def locate(gh, cfg):
     """The scope's name for people and its milestone. `every` is the `null` scope, which
     holds every open issue of this repository, with `milestones` for its order. Without an
-    open milestone, the milestone scope holds nothing."""
+    open milestone, the milestone scope holds nothing but the issues for advisories, which
+    have no milestone: with `dependabot`, they are in scope anyway."""
+    alerts = bool(cfg["autopilot"]["dependabot"])
+    return {**_located(gh, cfg), "dependabot": alerts, "repository": gh.repository}
+
+
+def _located(gh, cfg):
     if cfg["autopilot"]["scope"] is None:
         return {
             "name": "every open issue",
             "every": True,
             "milestone": None,
             "milestones": milestones(gh),
-            "repository": gh.repository,
         }
     milestone = current_milestone(gh)
     if not milestone:
@@ -307,9 +329,16 @@ def scope(gh, cfg):
     else:
         items = []
     issues = [i for i in items if "pull_request" not in i]
-    # A bug issue for a CI failure on the default branch goes before everything else, and
-    # an issue for flaky runs right after. An issue whose milestone is closed goes with
-    # those without one.
+    if where["dependabot"] and not where["every"]:
+        known = {issue["number"] for issue in issues}
+        issues += [
+            issue
+            for issue in nexkit_issues(gh, "open")
+            if dependabot_advisory(issue) and issue["number"] not in known
+        ]
+    # A bug issue for a CI failure on the default branch goes before everything else, then
+    # an issue for a Dependabot advisory, then one for flaky runs. An issue whose milestone
+    # is closed goes with those without one.
     order = {m["number"]: index for index, m in enumerate(where.get("milestones") or [])}
     issues.sort(
         key=lambda i: (
@@ -328,10 +357,14 @@ def taken(gh, cfg, issue):
 
 def in_scope(where, issue):
     """Whether an issue, open or closed, belongs to the scope. With `null` every issue of
-    this repository does; a blocker can be in another repository."""
+    this repository does; a blocker can be in another repository. The issues for advisories
+    are in every scope, since they have no milestone."""
+    url = issue.get("repository_url")
+    here = not url or url.lower().endswith(f"/repos/{where['repository']}".lower())
     if where["every"]:
-        url = issue.get("repository_url")
-        return not url or url.lower().endswith(f"/repos/{where['repository']}".lower())
+        return here
+    if where["dependabot"] and here and dependabot_advisory(issue):
+        return True
     milestone = issue.get("milestone") or {}
     return where["milestone"] is not None and milestone.get("number") == where["milestone"]
 
@@ -393,7 +426,7 @@ def _vouch_problem(gh, issue, problem):
 def _source_problem(gh, issue, cfg, level):
     """Why who opened an issue does not make autopilot take it, or None."""
     login = author(issue)
-    if is_bot(login) and (_rank(issue) < 2 or _trusted_part(gh, issue, cfg, level)):
+    if is_bot(login) and (_rank(issue) < OTHER_RANK or _trusted_part(gh, issue, cfg, level)):
         return None
     if is_bot(login) or login == ACTIONS_BOT:
         return workflow_problem(gh, issue, cfg)
@@ -1560,11 +1593,24 @@ def flaky_failure(issue):
     return match.group(2) if match and is_bot(author(issue)) else None
 
 
+def dependabot_advisory(issue):
+    """The id of the Dependabot advisory an issue that autopilot opened is about, or None."""
+    match = DEPENDABOT.match(issue.get("body") or "")
+    return match.group(1) if match and is_bot(author(issue)) else None
+
+
+# The rank of every issue that NexKit did not open for a failure or an advisory.
+OTHER_RANK = 3
+
+
 def _rank(issue):
-    """0 for a bug issue for a CI failure, 1 for an issue for flaky runs, else 2."""
+    """0 for a bug issue for a CI failure, 1 for an issue for a Dependabot advisory, 2 for
+    an issue for flaky runs, else `OTHER_RANK`."""
     if ci_workflow(issue) is not None:
         return 0
-    return 1 if flaky_workflow(issue) is not None else 2
+    if dependabot_advisory(issue) is not None:
+        return 1
+    return 2 if flaky_workflow(issue) is not None else OTHER_RANK
 
 
 def nexkit_issues(gh, state="all", since=None):
@@ -2198,6 +2244,175 @@ def check_ci(gh, cfg, where, branch, now=None):
     return lines
 
 
+# -- Dependabot alerts -----------------------------------------------------------------
+
+
+def _read_alerts(alerts, wanted):
+    """(the open alerts of the severities `wanted`, why they cannot be read), through
+    `alerts`, the client that holds the token for them, or None when the App gave none.
+    (None, None) when GitHub failed for a reason that passes."""
+    if alerts is None:
+        return None, NO_ALERTS_PERMISSION
+    try:
+        return alerts.dependabot_alerts(wanted), None
+    except GitHubError as exc:
+        if alerts_off(exc):
+            return None, ALERTS_TURNED_OFF
+        return None, NO_ALERTS_PERMISSION if exc.status in (401, 403, 404) else None
+
+
+def _show_problem(gh, branch, problem):
+    """Keep why a sweep cannot read alerts on the tip of `branch`, as a status that says what
+    is missing, and take it back once it can. Only a change writes anything."""
+    tip = gh.branch_sha(branch)
+    found = next((s for s in gh.commit_statuses(tip) if s.get("context") == DEPENDABOT_CONTEXT), {})
+    if problem and (found.get("state") != "error" or found.get("description") != problem):
+        gh.set_status(tip, DEPENDABOT_CONTEXT, "error", problem)
+    elif not problem and found.get("state") == "error":
+        gh.set_status(tip, DEPENDABOT_CONTEXT, "success", "Autopilot reads Dependabot alerts")
+
+
+def alerts_problem(gh, branch):
+    """What the last sweep on the tip of `branch` said was missing, or None."""
+    statuses = gh.commit_statuses(gh.branch_sha(branch))
+    found = next((s for s in statuses if s.get("context") == DEPENDABOT_CONTEXT), {})
+    return found.get("description") if found.get("state") == "error" else None
+
+
+def _advisories(alerts):
+    """{advisory id: {"advisory", "alerts"}} for open alerts, in their order. An alert
+    without a well-formed id cannot be marked, so it gets no issue."""
+    found = {}
+    for alert in alerts:
+        advisory = alert.get("security_advisory") or {}
+        ghsa = str(advisory.get("ghsa_id") or "")
+        if GHSA_ID.fullmatch(ghsa) and isinstance(alert.get("number"), int):
+            found.setdefault(ghsa, {"advisory": advisory, "alerts": []})["alerts"].append(alert)
+    return found
+
+
+def _advisory_issues(gh):
+    """{advisory id: its issues that autopilot opened, newest first}."""
+    found = {}
+    for issue in nexkit_issues(gh):
+        ghsa = dependabot_advisory(issue)
+        if ghsa:
+            found.setdefault(ghsa, []).append(issue)
+    return found
+
+
+def _covered(issue):
+    """The numbers of the alerts that an advisory's issue covers."""
+    match = DEPENDABOT.match(issue.get("body") or "")
+    return {int(number) for number in match.group(2).split(",") if number} if match else set()
+
+
+def _package(alert):
+    return ((alert.get("dependency") or {}).get("package") or {}).get("name") or "a package"
+
+
+def _alert_line(alert):
+    """One alert of an advisory's issue, in words that come from GitHub's own fields."""
+    dependency = alert.get("dependency") or {}
+    package = dependency.get("package") or {}
+    vulnerability = alert.get("security_vulnerability") or {}
+    number = alert["number"]
+    link = f"[#{number}]({alert['html_url']})" if alert.get("html_url") else f"#{number}"
+    line = f"- {link}: `{_plain(package.get('name'))}` ({_plain(package.get('ecosystem'))})"
+    line += f" in `{_plain(dependency.get('manifest_path'))}`"
+    versions = _plain(vulnerability.get("vulnerable_version_range"))
+    patched = _plain((vulnerability.get("first_patched_version") or {}).get("identifier"))
+    if versions:
+        line += f", affected: `{versions}`"
+    return line + (f", patched in `{patched}`" if patched else ", no patched version yet")
+
+
+def _advisory_title(ghsa, found):
+    advisory = found["advisory"]
+    names = list(dict.fromkeys(_plain(_package(alert)) for alert in found["alerts"]))
+    packages = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+    severity = _plain(advisory.get("severity"))
+    return _fit(f"Dependabot: {_plain(advisory.get('summary'))} in {packages} ({ghsa}, {severity})")
+
+
+def _open_advisory(gh, cfg, ghsa, found, earlier):
+    """Open the issue of an advisory. Its text holds only what GitHub's advisory database
+    and the repository's manifests say, each on one line, since it drives an agent."""
+    advisory, alerts = found["advisory"], found["alerts"]
+    numbers = ",".join(str(alert["number"]) for alert in alerts)
+    people = "".join(f"@{login} " for login in cfg["notify"])
+    cve = _plain(advisory.get("cve_id"))
+    named = f"[{ghsa}](https://github.com/advisories/{ghsa})" + (f", {cve}" if cve else "")
+    closed = f"\n\n#{earlier['number']}, now closed, was about it too." if earlier else ""
+    body = (
+        f"{DEPENDABOT_PREFIX}{ghsa} {numbers} -->\n{people}Dependabot reports {named} "
+        f"({_plain(advisory.get('severity'))}): {_plain(advisory.get('summary'))}\n\n"
+        + "\n".join(_alert_line(alert) for alert in alerts)
+        + "\n\nUpdate each package to a patched version. Without one, stop using what the "
+        f"advisory names.{closed}"
+    )
+    return gh.create_issue(_advisory_title(ghsa, found), body, None, ["bug"])
+
+
+def _still_open(gh, cfg, ghsa, issue, now):
+    """Say once on the closed `issue` of an advisory that its alerts stayed open, a while
+    after it closed, so a person decides. Returns lines for the log."""
+    closed = parse_iso(issue.get("closed_at"))
+    if closed is None or now - closed < DEPENDABOT_SETTLE:
+        return []
+    number = issue["number"]
+    if any(
+        by_bot(c) and DEPENDABOT_STILL_OPEN in (c.get("body") or "") for c in gh.comments(number)
+    ):
+        return []
+    people = "".join(f"@{login} " for login in cfg["notify"])
+    gh.comment(
+        number,
+        f"{DEPENDABOT_STILL_OPEN}\n{people}Dependabot still reports {ghsa} after this issue "
+        "closed, and NexKit opens no second issue for the same alerts. Reopen this one, or "
+        "dismiss the alerts.",
+    )
+    return [f"{ghsa} is still open after #{number} closed; said so there."]
+
+
+def check_dependabot(gh, alerts, cfg, branch, now=None):
+    """With `autopilot.dependabot`, open one issue for each advisory of an open alert at or
+    above that severity, in no milestone, with a marker of the advisory. An open issue with
+    that marker is enough. So that a fix an alert outlives never repeats, an advisory whose
+    closed issue covers its alerts gets no second issue, only a word on that one; an alert
+    no issue covered does. `alerts` is the client that holds the token for reading alerts,
+    or None. Without it, or with alerts turned off, it opens nothing and leaves what is
+    missing on the tip of `branch`. Returns lines for the job log."""
+    level = cfg["autopilot"]["dependabot"]
+    if not level:
+        return []
+    now = now or datetime.now(UTC)
+    found, problem = _read_alerts(alerts, list(SEVERITIES[SEVERITIES.index(level) :]))
+    lines = []
+    try:
+        if found is not None or problem:
+            _show_problem(gh, branch, problem)
+        if found is None:
+            return [problem or "Could not read Dependabot alerts; the next sweep tries again."]
+        issues = _advisory_issues(gh) if found else {}
+        opened = 0
+        for ghsa, advisory in _advisories(found).items():
+            known = issues.get(ghsa, [])
+            if any(issue.get("state") == "open" for issue in known):
+                continue
+            covered = set().union(*(_covered(issue) for issue in known))
+            if known and {alert["number"] for alert in advisory["alerts"]} <= covered:
+                lines += _still_open(gh, cfg, ghsa, known[0], now)
+                continue
+            if opened < DEPENDABOT_NEW_ISSUES:
+                issue = _open_advisory(gh, cfg, ghsa, advisory, known[0] if known else None)
+                opened += 1
+                lines.append(f"{ghsa}: opened #{issue['number']}.")
+    except GitHubError as exc:
+        lines.append(f"Could not go through Dependabot alerts: {exc}")
+    return lines
+
+
 # -- pull requests that wait for the default branch -----------------------------------
 
 # The runs of a workflow on the default branch that show whether it passes again.
@@ -2414,15 +2629,17 @@ def _count_round(gh, pull):
     return lambda: save_state(gh, pull, comment_id, before)
 
 
-def sweep(gh, cfg, workflow, ref, closed=None, busy=None):
+def sweep(gh, cfg, workflow, ref, closed=None, busy=None, alerts=None):
     """Start what moves each issue in scope on. Returns lines for the job log. Parts that
     a split creates are in scope at once, so the sweep looks again after a split. A CI
-    failure on the default branch comes first, so its bug issue is planned first. Adds
-    each pull request it started a command on, or merged, to `busy`. `closed`, the issue
-    whose closing started the sweep, changes nothing: `done` reads what is done from
-    GitHub, so a sweep that replaced this one loses nothing."""
+    failure on the default branch comes first, so its bug issue is planned first, and then
+    each Dependabot advisory; `alerts` is the client that may read them (see
+    `check_dependabot`). Adds each pull request it started a command on, or merged, to
+    `busy`. `closed`, the issue whose closing started the sweep, changes nothing: `done`
+    reads what is done from GitHub, so a sweep that replaced this one loses nothing."""
     busy = set() if busy is None else busy
     lines = check_ci(gh, cfg, locate(gh, cfg), ref)
+    lines += check_dependabot(gh, alerts, cfg, ref)
     for _ in range(PASSES):
         where, steps = preview(gh, cfg)
         splits = [step for step in steps if step["state"] == "split"]

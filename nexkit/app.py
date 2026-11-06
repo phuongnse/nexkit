@@ -33,6 +33,8 @@ PERMISSIONS = {
     "statuses": "write",  # nexkit/checks and nexkit/review
     "workflows": "write",  # push and merge changes to .github/workflows/
 }
+# Only for `autopilot.dependabot`, so an App that does without the setting needs nothing new.
+ALERTS_PERMISSION = {"vulnerability_alerts": "read"}
 LEVELS = {"read": 1, "write": 2}
 # GitHub's limit on an App's name.
 NAME_LIMIT = 34
@@ -79,11 +81,14 @@ def key_steps(slug, owner, organization=False):
     )
 
 
-def missing(granted):
-    """The permissions NexKit needs that `granted` lacks, as `name: level`."""
+def missing(granted, cfg=None):
+    """The permissions NexKit needs, with the configuration `cfg`, that `granted` lacks, as
+    `name: level`."""
+    alerts = cfg and cfg["autopilot"]["dependabot"]
+    needed = {**PERMISSIONS, **(ALERTS_PERMISSION if alerts else {})}
     return [
         f"{name}: {level}"
-        for name, level in PERMISSIONS.items()
+        for name, level in needed.items()
         if LEVELS.get((granted or {}).get(name), 0) < LEVELS[level]
     ]
 

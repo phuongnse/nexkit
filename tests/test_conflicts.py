@@ -186,7 +186,9 @@ class SweepTests(unittest.TestCase):
 
     def test_a_sweep_leaves_alone_a_pull_request_autopilot_started_a_command_on(self):
         busy = {6}
-        with mock.patch("nexkit.autopilot.sweep", side_effect=lambda *a: a[-1].update(busy) or []):
+        with mock.patch(
+            "nexkit.autopilot.sweep", side_effect=lambda *a, **_: a[-1].update(busy) or []
+        ):
             self.assertEqual(self.swept(autopilot={"enabled": True}), [])
         with mock.patch("nexkit.autopilot.sweep", return_value=["Autopilot: nothing."]):
             self.assertEqual(self.swept(autopilot={"enabled": True}), ["6"])

@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 from . import __version__, app
 from . import config as configuration
+from .github import alerts_off
 from .globs import branch_matches
 from .runtimes import DECLARED_SECRETS, PROVIDERS
 
@@ -273,6 +274,14 @@ def _gh(*args):
         return None
     proc = subprocess.run(["gh", *args], capture_output=True, text=True)
     return proc.stdout if proc.returncode == 0 else None
+
+
+def _gh_answer(*args):
+    """(whether `gh` succeeded, what it said), for a failure whose words matter."""
+    if not shutil.which("gh"):
+        return False, ""
+    proc = subprocess.run(["gh", *args], capture_output=True, text=True)
+    return proc.returncode == 0, f"{proc.stdout}{proc.stderr}"
 
 
 def gh_token():
@@ -845,6 +854,31 @@ def _last_label(cfg, repo):
     ]
 
 
+def _dependabot(cfg, repo, branch):
+    """Findings: autopilot.dependabot can read alerts. Only the App can tell about its own
+    permission, so this says what the last sweep left on the default branch's tip; `nexkit
+    doctor --app-id ID --app-private-key FILE` checks the permission too."""
+    if not cfg["autopilot"]["dependabot"]:
+        return []
+    setting = "autopilot.dependabot"
+    findings = []
+    ok, said = _gh_answer("api", f"repos/{repo}/dependabot/alerts?per_page=1")
+    if ok:
+        findings.append((True, f"{setting}: Dependabot alerts are on"))
+    elif alerts_off(said):
+        where = f"https://github.com/{repo}/settings/security_analysis"
+        findings.append(
+            (False, f"{setting} is on, but alerts are off for {repo}: turn them on at {where}")
+        )
+    else:
+        findings.append((True, f"{setting}: could not tell whether alerts are on"))
+    query = '.statuses[] | select(.context == "nexkit/dependabot" and .state == "error")'
+    found = _gh("api", f"repos/{repo}/commits/{branch}/status", "-q", f"{query} | .description")
+    if found and found.strip():
+        findings.append((False, f"{setting}: the last sweep says: {found.strip()}"))
+    return findings
+
+
 def _secrets_set(cfg, names, repo):
     """Findings: a secret of each agent that a stage uses is set in the repository."""
     findings = []
@@ -902,7 +936,7 @@ def _app_on_github(cfg, repo, key_file=None, app_id=None):
                     f"token; {hint} it and its installation on {repo}",
                 )
             ]
-        findings = [_granted(slug, json.loads(found).get("permissions"), where)]
+        findings = [_granted(slug, json.loads(found).get("permissions"), where, cfg)]
         findings.append((True, f"Could not tell whether {slug} is installed on {repo}; {hint}"))
         return findings
     try:
@@ -917,12 +951,12 @@ def _app_on_github(cfg, repo, key_file=None, app_id=None):
                 f"{slug}; correct one of them",
             )
         ]
-    findings = [_granted(slug, state["granted"], where)]
+    findings = [_granted(slug, state["granted"], where, cfg)]
     if not state["installed"]:
         how = f"install it at {app.install_url(slug)}"
         return [*findings, (False, f"The App {slug} is not installed on {repo}: {how}")]
     findings.append((True, f"The App {slug} is installed on {repo}"))
-    lacking = app.missing(state["permissions"])
+    lacking = app.missing(state["permissions"], cfg)
     if lacking:
         accept = f"https://github.com/{owner}/{repo.split('/')[1]}/settings/installations"
         findings.append(
@@ -935,8 +969,8 @@ def _app_on_github(cfg, repo, key_file=None, app_id=None):
     return findings
 
 
-def _granted(slug, granted, where):
-    lacking = app.missing(granted)
+def _granted(slug, granted, where, cfg=None):
+    lacking = app.missing(granted, cfg)
     if lacking:
         return (
             False,
@@ -1022,6 +1056,8 @@ def doctor(root, key_file=None, app_id=None):
                 )
             )
     branch = (_gh("api", f"repos/{repo}", "-q", ".default_branch") or "").strip()
+    if cfg and branch:
+        findings += _dependabot(cfg, repo, branch)
     if branch and workflow.is_file():
         push = trigger(workflow.read_text(), "push")
         if push is not None and not re.search(rf"[\[\s,'\"]{re.escape(branch)}[\]\s,'\"]", push):

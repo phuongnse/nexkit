@@ -111,6 +111,8 @@ class FakeGitHub:
         self.repository = repository
         self.roles = {"alice": "write", "olivia": "admin", "bob": "read"}
         self.editors = {}
+        self.alerts = []  # the open Dependabot alerts
+        self.alerts_error = None
         self.edits = {}  # issue number -> (login, time) of each change to its text or title
         self.issues = {}
         self.issue_comments = defaultdict(list)
@@ -406,6 +408,11 @@ class FakeGitHub:
 
     def issue_editors(self, number):
         return self.editors.get(number, [])
+
+    def dependabot_alerts(self, severities):
+        if self.alerts_error:
+            raise self.alerts_error
+        return [a for a in self.alerts if a["security_advisory"]["severity"] in severities]
 
     def issue_edits(self, number):
         return list(self.edits.get(number, []))

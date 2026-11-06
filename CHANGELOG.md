@@ -1,5 +1,73 @@
 # Changelog
 
+## 6.0.0
+
+NexKit acts on GitHub as a GitHub App of your own, so its pushes, pull requests and merges
+count like a person's: they start your workflows, its runs send `workflow_run`, and rounds
+can merge changes to `.github/workflows/`. Autopilot also takes issues from workflows you
+trust, runs an issue last in its milestone, and every plan and review answers your own
+checklist. See [The GitHub App](docs/configuration.md#the-github-app).
+
+- NexKit writes only as a GitHub App, set in `github_app` (#206). Each job that writes mints
+  a token for the repository with only what it needs; `github.token` only reads. The jobs
+  that run an agent hold neither the App's key nor a token: `agent` and `review` are now
+  reusable workflows of their own (`pipeline-agent.yml`, `pipeline-review.yml`), so their
+  runners get only their agents' secrets.
+  - `nexkit init` creates the App with GitHub's App manifest flow and sets its two
+    secrets, or with `--app-id ID --app-private-key FILE` checks that an App you have is
+    installed and sets them. `--app-name` chooses its name, and `--app-slug` names an App
+    whose secrets an organization holds. Each owner keeps one App for all their
+    repositories.
+  - `nexkit doctor` checks the settings, the secrets and, with
+    `--app-id ID --app-private-key FILE`, the App's permissions and its installation.
+  - A run without `github_app` stops at its start with what to do, and so does one that
+    gets no token.
+  - What NexKit's App writes is NexKit's; what the Actions bot writes no longer counts,
+    since your CI on an agent's code can write as it.
+  - Gone with the Actions token's limits: `publish.push_token_secret`, merges held back
+    for workflow files, the `needs_merge` outcome, and the `nexkit-sweep` job at the end
+    of after-merge workflows. `merge.after_workflows` is now a choice to save runners.
+  - The run that waits for paused commands waits with `github.token` and mints the App's
+    token after the wait, since a token lasts an hour.
+- `autopilot.trusted_workflows` lists workflow files whose issues autopilot takes (#205).
+  The issue's first line holds a marker that names the run that opened it, and GitHub's
+  record of that run must show the listed file, the default branch, an event a writer or a
+  schedule controls, and that it ran when the issue was opened. An edit by someone without
+  write access leaves the issue alone. See
+  [Issues from a workflow](docs/configuration.md#issues-from-a-workflow).
+- `autopilot.last_in_milestone_label` names a label for an issue that runs only once every
+  other issue of its milestone is closed, including issues opened later and the parts of a
+  split, with no *blocked by* marks (#207). `nexkit status` names what it waits for. See
+  *Running an issue last* under [Autopilot](docs/configuration.md#autopilot).
+- `review.checklist` lists short rules that every plan and review answers one by one (#208).
+  An item not met requests changes like a blocking finding, and a review that leaves an
+  item out gives no verdict. See [Review checklist](docs/configuration.md#review-checklist).
+- The action `phuongnse/nexkit/cache@<ref>` restores the caches that `.nexkit/config.json`
+  names, and saves them on the base branch under the keys NexKit restores, so a repository
+  states its caches once (#209). `nexkit doctor` warns when `cache` is set and no workflow
+  saves them. See [Caches](docs/configuration.md#caches).
+
+### Upgrade
+
+- **Set up the GitHub App before the new refs reach the default branch.** Runs of this
+  release stop at their start without it, and `publish.push_token_secret` is refused. Follow
+  [Moving to the GitHub App](docs/configuration.md#moving-to-the-github-app): create the
+  App once per owner, install it on the repository, set its two secrets, and replace
+  `publish` with `github_app` in `.nexkit/config.json`.
+- **Upgrade between rounds.** NexKit no longer reads what the Actions bot wrote, so an issue
+  with a plan is planned again, a pull request starts its automatic rounds afresh, and a
+  run under way is not picked up. Close the bug issues that autopilot opened as the Actions
+  bot; the next failure opens a new one.
+- **Shrink the workflow's permissions** to `contents`, `issues`, `pull-requests`, `actions`
+  and `checks`, all `read`, as `nexkit init` writes it. A workflow that lists secrets one by
+  one also passes `NEXKIT_APP_ID` and `NEXKIT_APP_PRIVATE_KEY`.
+- **Remove the workarounds** for the Actions token: the push token secret, each
+  `nexkit-sweep` job, CI that left NexKit's branches out, and a workflow's `push` trigger
+  for the default branch when it is also in `merge.after_workflows`, which would run twice.
+- **Keep your CI's permissions low**: NexKit's pushes now run it on code an agent wrote.
+- **Replace hand-written cache steps**, if you have them, with
+  `uses: phuongnse/nexkit/cache@v6.0.0` in the workflow that saves them.
+
 ## 5.9.1
 
 - A setup command or check ends when its shell exits, with the shell's exit code, and a

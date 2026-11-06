@@ -237,6 +237,64 @@ SCHEMAS = {
 }
 
 
+# What a plan and a review return for `review.checklist`, only when it has items.
+CHECKLIST = {
+    "plan": {"number": {"type": "integer"}, "how": {"type": "string"}},
+    "review": {
+        "number": {"type": "integer"},
+        "answer": {"enum": ["met", "not_met", "not_applicable"]},
+        "evidence": {"type": "string"},
+    },
+}
+
+
+def with_checklist(schema, stage, cfg):
+    """`schema` with the checklist field, when this stage answers a checklist."""
+    if stage not in CHECKLIST or not cfg["review"]["checklist"]:
+        return schema
+    properties = CHECKLIST[stage]
+    entry = {"type": "object", "properties": properties, "required": list(properties)}
+    return {
+        **schema,
+        "properties": {**schema["properties"], "checklist": {"type": "array", "items": entry}},
+        "required": [*schema["required"], "checklist"],
+    }
+
+
+def checklist_text(stage, cfg):
+    """The prompt's section about `review.checklist`, or "" without items or for a stage
+    that does not answer them, so that its prompt stays as it is."""
+    items = cfg["review"]["checklist"]
+    if stage not in CHECKLIST or not items:
+        return ""
+    numbered = "\n".join(f"{number}. {item}" for number, item in enumerate(items, 1))
+    return Template(_template(f"{stage}_checklist")).safe_substitute(items=numbered).rstrip()
+
+
+def answer_checklist(result, stage, cfg):
+    """Put each item's text next to its answer, in the order of `review.checklist`, so what
+    reads the result needs no configuration. An answer for an item that does not exist goes.
+    A review that leaves an item out is incomplete: nothing shows that the item holds, so it
+    gives no verdict. A plan that leaves one out is shown as it is; the review decides."""
+    items = cfg["review"]["checklist"]
+    if stage not in CHECKLIST or not items or result["status"] != "done":
+        return
+    output = result["output"]
+    given = {entry["number"]: entry for entry in output.get("checklist") or []}
+    missing = [number for number in range(1, len(items) + 1) if number not in given]
+    if stage == "review" and missing:
+        listed = ", ".join(str(number) for number in missing)
+        result.update(
+            status="error",
+            output=None,
+            error=f"The review gave no answer for item {listed} of `review.checklist`.",
+        )
+        return
+    output["checklist"] = [
+        {**given[number], "item": item} for number, item in enumerate(items, 1) if number in given
+    ]
+
+
 def _check_lines(checks, indent="  "):
     return [f"{indent}- `{c['name']}`: `{c['run']}`" for c in checks]
 
@@ -646,6 +704,7 @@ def build_prompt(stage, context, cfg, extra=None):
         "writing": _template("writing"),
         "protected": ", ".join(f"`{p}`" for p in cfg["protected_paths"]),
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
+        "checklist": checklist_text(stage, cfg),
         **(extra or {}),
     }
     return Template(template).safe_substitute({k: str(v) for k, v in values.items()})
@@ -657,7 +716,7 @@ def stage_schema(stage, cfg):
     if stage == "triage":
         schema = copy.deepcopy(schema)
         schema["properties"]["profile"]["enum"] = list(cfg["profiles"])
-    return schema
+    return with_checklist(schema, stage, cfg)
 
 
 def stage_spec(stage, cfg, home, dirs=()):
@@ -904,7 +963,7 @@ def _run_one(
         cfg["usage_limit"]["retry_minutes"],
         label=runtime.label,
         # NexKit's own schema: triage names an unknown profile in its error, not here.
-        schema=SCHEMAS[stage],
+        schema=with_checklist(SCHEMAS[stage], stage, cfg),
     )
     return result, log.calls
 
@@ -1144,6 +1203,7 @@ def run_stage(
         restore=restore if base_commit else None,
         dirs=[found["folder"]] if found and Path(found["folder"]).is_dir() else [],
     )
+    answer_checklist(result, stage, cfg)
     if stage in ("implement", "fix") and result["status"] == "done":
         left = leftover_markers(repo, conflicts)
         files, size = collect_changes(repo, base_commit, out)

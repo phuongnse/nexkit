@@ -102,6 +102,7 @@ their defaults.
 | `limits.setup_timeout_minutes` | `30` | Time each `setup` command may take (1 to 120). The agent and verify jobs allow for it. |
 | `limits.max_patch_mb` | `5` | Largest change an implement or fix round may publish, in megabytes (1 to 50). |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
+| `review.checklist` | `[]` | Short rules, in your own words, that every plan and review answers one by one. See [Review checklist](#review-checklist). |
 | `transcript` | `true` | Write the agent's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See [Logs and transcripts](#logs-and-transcripts). |
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. |
 | `github_app` | none, required | The GitHub App that NexKit acts as: its `slug`, as in `github.com/apps/<slug>`, and the names of the secrets that hold its id (`app_id_secret`) and its private key (`private_key_secret`). `nexkit init` sets it. The secrets cannot be an agent's or start with `GITHUB_`. See [The GitHub App](#the-github-app). |
@@ -524,6 +525,36 @@ key had no cache. For NexKit to find what it saves:
 **A miss is not a failure.** A missing cache, or a restore that fails, never fails a run.
 The *Restore caches* step in the job log lists each entry as restored, restored from an
 older key, or missed, with the key it looked for.
+
+## Review checklist
+
+A repository has rules that every pull request must meet beyond its checks, for example that
+the docs change with the code. Written in CLAUDE.md or AGENTS.md they depend on the agent
+remembering them. `review.checklist` makes each one a question that needs an answer:
+
+```json
+"review": {
+  "checklist": [
+    "The `Docs:` line names every doc section the change makes false, and each is fixed",
+    "A new setting has a default that keeps today's behaviour"
+  ]
+}
+```
+
+- **The plan** states how it meets each item, in its *Checklist* section.
+- **The review** answers each item as `met`, `not_met` or `not_applicable`, with its evidence
+  from the diff. The review comment lists each item with its answer, and the evidence
+  collapsed.
+- **An item not met** requests changes as a blocking finding does, whatever verdict the
+  review returned, so an automatic fix round addresses it, within `fix.max_auto_rounds`.
+- **A review that leaves an item out** is incomplete: it gives no verdict, `nexkit/review`
+  shows an error, nothing merges, and `/nexkit review` tries again. A plan that leaves one out
+  is posted as it is, since the review decides.
+
+Write each item as something an agent can check in the code and change, in at most 300
+characters; a list holds at most 20. An item about what agents cannot change, such as an
+approval or the pull request's text, can never be met. An empty list, the default, leaves
+plans and reviews as they are.
 
 ## Automatic merge
 

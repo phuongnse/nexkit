@@ -464,6 +464,22 @@ class ConfigTests(unittest.TestCase):
         where = [call.args[1] for call in checked.call_args_list]
         self.assertEqual(where, [f"stages.{name}" for name in again["stages"]])
 
+    def test_review_checklist(self):
+        self.assertEqual(validate({})["review"], {"checklist": []})
+        items = ["Docs change with the code", "A setting has a safe default"]
+        self.assertEqual(validate({"review": {"checklist": items}})["review"]["checklist"], items)
+        for value, message in (
+            ("x", "must be a list"),
+            (["x"] * 21, "must be a list of at most 20"),
+            ([""], "must be one line"),
+            (["a\nb"], "must be one line"),
+            (["x" * 301], "must be one line of at most 300"),
+            ([5], "must be one line"),
+            (["a", "a"], "lists an item twice"),
+        ):
+            with self.assertRaisesRegex(ConfigError, f"review.checklist.*{message}"):
+                validate({"review": {"checklist": value}})
+
     def test_last_in_milestone_label(self):
         found = validate({"autopilot": {"last_in_milestone_label": "last"}})
         self.assertEqual(found["autopilot"]["last_in_milestone_label"], "last")

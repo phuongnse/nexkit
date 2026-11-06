@@ -12,7 +12,14 @@ from nexkit import cli
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
 from nexkit.progress import trigger
-from nexkit.report import after_merge, criterion_status, report, review_body, workflow_file
+from nexkit.report import (
+    after_merge,
+    apply_criteria,
+    criterion_status,
+    report,
+    review_body,
+    workflow_file,
+)
 from nexkit.route import route
 from nexkit.state import check_fingerprint, read_state, render_run, render_state
 from tests.support import FakeGitHub, make_config
@@ -823,6 +830,37 @@ class ReportTests(ReportCase):
             [(c["run"]["round"], c["run"]["trigger"]) for c in self.gh.run_comments(6)],
             [(1, "implement"), (2, "fix (auto)")],
         )
+
+    def checklist_review(self, *answers):
+        review = review_result()
+        review["output"]["checklist"] = [
+            {"item": f"Rule {n}", "answer": answer, "evidence": f"file:{n}"}
+            for n, answer in enumerate(answers, 1)
+        ]
+        return review
+
+    def test_a_checklist_item_not_met_requests_changes_and_starts_a_fix_round(self):
+        self.candidate(review=self.checklist_review("met", "not_met", "not_applicable"))
+        outcome = self.run_report(cfg=make_config(fix={"max_auto_rounds": 1}))
+        self.assertEqual(outcome["outcome"], "auto_fix")
+        self.assertEqual(self.gh.dispatches[-1]["inputs"]["command"], "fix")
+        [body] = [review["body"] for review in self.gh.created_reviews]
+        self.assertIn("### NexKit review: changes requested", body)
+        self.assertIn("NexKit requests changes because a checklist item is not met.", body)
+        self.assertIn("🛑 Blocking: Checklist item not met: Rule 2. file:2", body)
+        self.assertIn("- ✅ met: Rule 1", body)
+        self.assertIn("- ❌ not met: Rule 2", body)
+        self.assertIn("- ➖ not applicable: Rule 3", body)
+        self.assertIn("- ❌ not met: Rule 2: file:2", body.split("<details>")[1])
+
+    def test_a_review_with_every_item_met_or_not_applicable_approves(self):
+        given = self.checklist_review("met", "not_applicable")
+        self.assertEqual(apply_criteria(given["output"]), given["output"])
+
+    def test_a_review_without_a_checklist_shows_none(self):
+        self.candidate()
+        self.run_report()
+        self.assertNotIn("Checklist", self.gh.created_reviews[0]["body"])
 
     def report_published(self, published, d=None, cfg=None):
         """Report a round whose `publish` returned `published`, with no checks or review."""

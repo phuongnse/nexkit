@@ -156,6 +156,13 @@ def render_plan(output, profile=None, replan=False, passed=()):
     parts += _section(
         "Acceptance criteria", [f"- [ ] {item}" for item in output.get("acceptance_criteria", [])]
     )
+    parts += _section(
+        "Checklist",
+        [
+            f"- **{entry['item']}** {entry['how'].strip()}"
+            for entry in output.get("checklist") or []
+        ],
+    )
     parts += _section("Questions", question_lines(output.get("questions")))
     if output.get("too_large"):
         split = output.get("split") or []

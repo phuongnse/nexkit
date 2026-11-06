@@ -106,4 +106,4 @@ $writing
   finding, followed by the evidence that shows it: the commit, or the log lines that name
   the outside cause and the run that passed since, with its link. Otherwise an empty
   string. With a finding, keep the other fields short: `summary` says that no change is
-  needed, and `acceptance_criteria` may be empty.
+  needed, and `acceptance_criteria` may be empty.$checklist

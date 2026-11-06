@@ -488,6 +488,13 @@ the CI workflow's `actions/cache` steps: the same paths in the same order, and t
 key files in the same order (see [Caches](configuration.md#caches)). Check that CI on the
 default branch succeeds: `actions/cache` saves only at the end of a successful job.
 
+### A review gave no answer for a checklist item
+
+A review must answer every item of [`review.checklist`](configuration.md#review-checklist),
+so it gave no verdict and nothing merged. Comment `/nexkit review`. When it happens again,
+read the item in the run's prompt: an item that says two things at once or that the diff
+cannot show is hard to answer, so reword it.
+
 ### The review job errored
 
 NexKit already ran the review once more after a transient error or a review that left no

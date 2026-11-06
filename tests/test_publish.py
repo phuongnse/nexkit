@@ -541,6 +541,12 @@ class PublishTests(unittest.TestCase):
         # The notes appear only inside <details>.
         self.assertEqual(body.count("calc.py"), 1)
 
+    def test_the_plan_says_how_it_meets_each_checklist_item(self):
+        entry = {"number": 1, "how": "It fixes the section.", "item": "Docs change with the code"}
+        body = render_plan({**PLAN, "checklist": [entry]})
+        self.assertIn("### Checklist\n\n- **Docs change with the code** It fixes", body)
+        self.assertNotIn("Checklist", render_plan(PLAN))
+
     def test_a_plan_in_protected_paths_says_a_person_makes_the_change(self):
         body = render_plan({**PLAN, "protected_paths": [".github/workflows/ci.yml"]})
         self.assertIn("### Needs a hand-made change\n\nThe change modifies protected paths", body)

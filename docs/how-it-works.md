@@ -608,8 +608,9 @@ the agent's edits count, and the App may push changes to `.github/workflows/` th
 brings from the base branch.
 
 **Review.** Read-only access, like the plan. Returns `approve` or `request_changes`, a
-status for each acceptance criterion with the test that covers it and the evidence, and
-findings marked `blocking` or `suggestion`. The prompt tells the reviewer not to block on
+status for each acceptance criterion with the test that covers it and the evidence,
+findings marked `blocking` or `suggestion`, and an answer for each item of the
+[`review.checklist`](configuration.md#review-checklist). The prompt tells the reviewer not to block on
 things the implementer cannot change, such as PR text or CI files.
 
 A criterion is `met` or `unmet` when the diff, its tests or the check results show either,

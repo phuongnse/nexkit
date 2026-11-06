@@ -52,6 +52,7 @@ ICONS = {True: "✅", False: "❌"}
 # A check that NexKit did not run: no path it reads changed since it passed.
 SKIPPED_ICON = "⏭️"
 CRITERION_MARKS = {"met": "✅", "unmet": "❌", "unverifiable": "❔"}
+CHECKLIST_MARKS = {"met": "✅ met", "not_met": "❌ not met", "not_applicable": "➖ not applicable"}
 # 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
 RESOLUTIONS = {
     "resolved": "✅ resolved",
@@ -181,15 +182,23 @@ def _criteria(review, status):
     return [c for c in (review or {}).get("criteria") or [] if criterion_status(c) == status]
 
 
+def _not_met(review):
+    return [c for c in (review or {}).get("checklist") or [] if c["answer"] == "not_met"]
+
+
 def apply_criteria(review):
-    """The review NexKit acts on. Each unmet criterion is a blocking finding and requests
-    changes, whatever verdict the reviewer returned."""
+    """The review NexKit acts on. Each unmet criterion and each checklist item not met is a
+    blocking finding and requests changes, whatever verdict the reviewer returned."""
     unmet = _criteria(review, "unmet")
-    if not unmet:
+    not_met = _not_met(review)
+    if not unmet and not not_met:
         return review
     findings = []
     for c in unmet:
         body = f"Acceptance criterion not met: {c['criterion']}. {c.get('evidence') or ''}"
+        findings.append({"severity": "blocking", "file": "", "line": 0, "body": body.strip()})
+    for c in not_met:
+        body = f"Checklist item not met: {c['item']}. {c.get('evidence') or ''}"
         findings.append({"severity": "blocking", "file": "", "line": 0, "body": body.strip()})
     return {
         **review,
@@ -230,6 +239,12 @@ def review_body(review, checks):
         criteria.append(f"- {mark} {item['criterion']} ({test})")
         if item.get("evidence"):
             criteria_evidence.append(f"- {mark} {item['criterion']}: {item['evidence'].strip()}")
+    checklist, checklist_evidence = [], []
+    for item in output.get("checklist") or []:
+        mark = CHECKLIST_MARKS[item["answer"]]
+        checklist.append(f"- {mark}: {item['item']}")
+        if item.get("evidence"):
+            checklist_evidence.append(f"- {mark}: {item['item']}: {item['evidence'].strip()}")
 
     lines = [
         f"### NexKit review: {'approve' if approved else 'changes requested'}",
@@ -237,7 +252,8 @@ def review_body(review, checks):
         output["summary"].strip(),
     ]
     if given["verdict"] == "approve" and not approved:
-        lines += ["", "NexKit requests changes because an acceptance criterion is not met."]
+        what = "an acceptance criterion" if _criteria(given, "unmet") else "a checklist item"
+        lines += ["", f"NexKit requests changes because {what} is not met."]
     confirm = unverified(output)
     if confirm:
         lines += [
@@ -248,6 +264,7 @@ def review_body(review, checks):
     lines += _part("Things to look at", findings)
     lines += _part("Previous findings", previous)
     lines += _part("Acceptance criteria", criteria)
+    lines += _part("Checklist", checklist)
     if checks:
         lines += [
             "",
@@ -258,6 +275,7 @@ def review_body(review, checks):
             ),
         ]
     evidence = _part("Acceptance criteria", criteria_evidence)
+    evidence += _part("Checklist", checklist_evidence)
     evidence += _part("Previous findings", previous_evidence)
     if evidence:
         # GitHub renders Markdown inside <details> only after a blank line.

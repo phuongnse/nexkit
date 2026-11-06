@@ -579,6 +579,24 @@ class ScenarioTests(unittest.TestCase):
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
         self.assertTrue(pipe.gh.comments_matching(6, "a person is needed"))
 
+    def test_a_checklist_item_not_met_leads_to_a_fix_round(self):
+        def reviewed(answer):
+            found = done()
+            entry = {"item": "Docs change with the code", "answer": answer, "evidence": "x:1"}
+            found["review"]["output"]["checklist"] = [entry]
+            return found
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            return reviewed("not_met" if inputs["command"] == "go" else "met")
+
+        pipe = Pipeline(self, config(review={"checklist": ["Docs change with the code"]}), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
+
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done(checks=False)

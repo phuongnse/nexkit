@@ -37,6 +37,8 @@ DEFAULTS = {
     },
     "profiles": {},
     "default_profile": None,
+    # Short rules, in the repository's words, that each plan and review answers one by one.
+    "review": {"checklist": []},
     # What NexKit does by itself, grouped by feature.
     "fix": {"max_auto_rounds": 2},
     "merge": {"auto": False, "after_workflows": []},
@@ -79,6 +81,7 @@ MAX_WAIT = 330
 MAX_STAGE_MINUTES = 340
 # Objects whose keys are merged over the defaults one by one.
 GROUPS = (
+    "review",
     "fix",
     "merge",
     "conflicts",
@@ -117,6 +120,9 @@ AUTOPILOT_SCOPE_CHOICES = (
 )
 AUTOPILOT_ANSWERS = ("never", "recommended")
 AFTER_WORKFLOW_KEYS = {"workflow", "every"}
+# Each item costs every plan and review an answer, so a checklist stays short.
+MAX_CHECKLIST = 20
+MAX_CHECKLIST_ITEM = 300
 # GitHub's limit on a label's name.
 MAX_LABEL = 50
 # GitHub's slug of an App, which `<slug>[bot]` makes its login.
@@ -388,6 +394,23 @@ def _secret_slots(cfg):
                 f"The {job} stage can need {len(names)} agent secrets ({', '.join(names)}); "
                 f"NexKit passes at most {SECRET_SLOTS} to one job"
             )
+
+
+def _checklist(items):
+    """`review.checklist`: short items, one line each."""
+    where = "review.checklist"
+    if not isinstance(items, list) or len(items) > MAX_CHECKLIST:
+        _fail(f"{where} must be a list of at most {MAX_CHECKLIST} items")
+    for item in items:
+        if (
+            not isinstance(item, str)
+            or not item.strip()
+            or "\n" in item
+            or len(item) > MAX_CHECKLIST_ITEM
+        ):
+            _fail(f"{where} items must be one line of at most {MAX_CHECKLIST_ITEM} characters")
+    if len(set(items)) != len(items):
+        _fail(f"{where} lists an item twice")
 
 
 def _github_app(cfg):
@@ -716,6 +739,7 @@ def validate(raw, *, layered=False):
     if cfg["log"]["tool_output"] not in TOOL_OUTPUT:
         _fail(f"log.tool_output must be one of {', '.join(TOOL_OUTPUT)}")
     _github_app(cfg)
+    _checklist(cfg["review"]["checklist"])
     _artifacts(cfg["evidence"]["artifacts"])
     return cfg
 

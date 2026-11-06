@@ -33,9 +33,10 @@ from nexkit.publish import pull_body, render_plan  # noqa: E402
 from nexkit.report import review_body  # noqa: E402
 from nexkit.runtimes import RUNTIMES  # noqa: E402
 from nexkit.runtimes.base import TOKENS  # noqa: E402
-from nexkit.state import BOT_LOGIN, PLAN_MARKER, empty_state, render_state  # noqa: E402
+from nexkit.state import ACTIONS_BOT, PLAN_MARKER, empty_state, render_state  # noqa: E402
 
 CHECKS = [{"name": "test", "run": "python3 -m unittest -v"}]
+CHECKLIST = ["A changed function has a test that calls it"]
 CONFIG = {}  # set by main() for the runtime under test
 
 
@@ -98,7 +99,7 @@ class StateComments:
         self.body = render_state(state)
 
     def comments(self, number):
-        return [{"id": 1, "body": self.body, "user": {"login": BOT_LOGIN}}]
+        return [{"id": 1, "body": self.body, "user": {"login": ACTIONS_BOT}}]
 
 
 def stage(name, work, out, program, context=None, *, want="done", **kw):
@@ -309,7 +310,9 @@ def main():
     runtime = RUNTIMES[args.runtime]
     args.program = args.program or runtime.program
     CONFIG["settings"] = SETTINGS[args.runtime]
-    CONFIG["cfg"] = validate({**CONFIG["settings"], "checks": CHECKS})
+    CONFIG["cfg"] = validate(
+        {**CONFIG["settings"], "checks": CHECKS, "review": {"checklist": CHECKLIST}}
+    )
 
     said = subprocess.run(
         [args.program, "--version"], capture_output=True, text=True, check=True
@@ -380,6 +383,8 @@ def main():
         if not review["output"]["criteria"]:
             raise SystemExit("review: no acceptance criteria assessed")
         print(review_body(review, checks), flush=True)
+        if [entry["item"] for entry in review["output"]["checklist"]] != CHECKLIST:
+            raise SystemExit(f"review: the checklist is not answered: {review['output']}")
 
         # A fix round, then a second review that gets the previous round as input.
         reviewed = git(work, "rev-parse", "HEAD")

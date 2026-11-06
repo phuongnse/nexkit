@@ -31,9 +31,9 @@ from nexkit.maintain import maintain
 from nexkit.publish import issue_closed, publish_plan
 from nexkit.report import report
 from nexkit.route import auto_kinds, issue_from_branch, route, skip_unaffected
-from nexkit.state import BOT_LOGIN, UNCOUNTED, check_fingerprint, read_state, run_comments
+from nexkit.state import ACTIONS_BOT, UNCOUNTED, check_fingerprint, read_state, run_comments
 from nexkit.status import collect
-from tests.support import FakeGitHub, make_config
+from tests.support import BOT_LOGIN, FakeGitHub, make_config
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
 # The jobs of a run in each stage, as GitHub lists them while it runs there.
@@ -516,7 +516,7 @@ class ScenarioTests(unittest.TestCase):
             "updated_at": "2026-11-01T10:10:00Z",
         }
         body = "<!-- nexkit:workflow audit.yml 900 -->\nStale docs."
-        pipe.issue(5, body=body, user=BOT_LOGIN)["created_at"] = "2026-11-01T10:05:00Z"
+        pipe.issue(5, body=body, user=ACTIONS_BOT)["created_at"] = "2026-11-01T10:05:00Z"
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
@@ -524,7 +524,7 @@ class ScenarioTests(unittest.TestCase):
         cfg = config(autopilot={"trusted_workflows": ["audit.yml"]})
         pipe = Pipeline(self, cfg, lambda pipe, inputs: plan())
         body = "<!-- nexkit:workflow audit.yml 404 -->\nStale docs."
-        pipe.issue(5, body=body, user=BOT_LOGIN)
+        pipe.issue(5, body=body, user=ACTIONS_BOT)
         self.assertEqual(pipe.play(), [])
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
         self.assertIn("its marker names run 404, which does not exist", mention["body"])
@@ -596,6 +596,23 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
+
+    def test_two_issues_that_run_last_and_a_split_never_wait_in_a_circle(self):
+        parts = [{"title": "One", "body": "Do one.", "depends_on": []}]
+
+        def script(pipe, inputs):
+            if inputs["command"] != "plan":
+                return done()
+            big = inputs["number"] == "5"
+            return plan(too_large=big, split=parts if big else [])
+
+        settings = {"last_in_milestone_label": "last"}
+        pipe = Pipeline(self, config(autopilot=settings, close_parent_issues=True), script)
+        pipe.issue(5, labels=("last",))
+        pipe.issue(6, labels=("last",))
+        played = pipe.play()
+        self.assertEqual(played[-2:], [("plan", 6), ("go", 6)])
+        self.assertEqual(pipe.gh.issues[6]["state"], "closed")
 
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):

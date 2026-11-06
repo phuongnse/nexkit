@@ -20,7 +20,7 @@ from nexkit.github import GitHubError
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.base import Launch, Runtime
 from nexkit.runtimes.claude_code import ClaudeReader
-from nexkit.state import BOT_LOGIN, RUN_PATTERN, render_run
+from nexkit.state import RUN_PATTERN, render_run, use_app
 
 # The Claude agent that `nexkit init` declares.
 CLAUDE = {
@@ -38,6 +38,11 @@ APP = {
     "app_id_secret": "NEXKIT_APP_ID",
     "private_key_secret": "NEXKIT_APP_PRIVATE_KEY",
 }
+
+
+# Who NexKit writes as, in every test.
+BOT_LOGIN = f"{APP['slug']}[bot]"
+use_app(BOT_LOGIN)
 
 
 def with_claude(raw):

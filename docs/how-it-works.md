@@ -88,10 +88,15 @@ into a commit in a different job. As a result:
 
 - The session that runs the agent never holds a token that can write to the repository.
 - Jobs that hold write tokens never run code from the repository or from the agent.
-- Each job that writes mints its own token from the App, with only what it needs. The key
-  reaches only the step that mints it, and the token expires within an hour. So the run
-  that waits for paused commands waits with the job's read-only token and mints the App's
-  token after the wait.
+- Each job that writes mints its own token from the App, with only what it needs. Of the
+  steps, only the one that mints it gets the key, and the token expires within an hour. So
+  the run that waits for paused commands waits with the job's read-only token and mints the
+  App's token after the wait.
+- GitHub gives a job that reads a secret by a name known only at run time every secret on
+  its runner. The jobs that write do that for the App's key and run only NexKit, so nothing
+  reads the rest. The `agent` and `review` jobs must not: they are reusable workflows of
+  their own, and `pipeline.yml` reads their secrets in the call, off the runner, into
+  numbered slots.
 - Checks run in a job with no secrets at all, and so does each of the parallel check jobs.
 - Jobs that run the agent's code restore caches but never save one, so nothing they
   produce reaches later runs.
@@ -1236,8 +1241,7 @@ after an automatic merge each started `merge.after_workflows` run. A round's mar
 holds its commit, whether its checks passed, and which of them passed on that commit,
 each with a digest of its `run` command, and a digest of its `setup` commands. `nexkit status` reads these markers, not
 the text people read, to list the open NexKit work and what each item waits for. NexKit
-reads a marker only from a comment by its App, or by the Actions bot, which wrote the
-comments of earlier releases, and only where it ends the comment:
+reads a marker only from a comment by its App, and only where it ends the comment:
 text before it can quote agent output. The latest commit whose checks passed becomes the
 next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
 with its current command and the current `setup` becomes its `NEXKIT_CHECK_VERIFIED_SHA`
@@ -1397,8 +1401,9 @@ once the limit has reset.
   an outsider cannot start an implement session by opening or editing an issue. Issues
   that NexKit opens itself, the parts of a split and the issues for CI failures and flaky
   runs, are trusted by a marker at the start of their text; such an issue opened by the
-  App or the Actions bot is NexKit's, unless another workflow of the repository that holds
-  their token writes untrusted text there. An issue from a workflow in
+  App is NexKit's, unless a workflow of the repository that holds the App's key writes
+  untrusted text there. The Actions bot proves nothing, since a pull request's CI can write
+  as it. An issue from a workflow in
   `autopilot.trusted_workflows` is trusted only when GitHub's record of the run its marker
   names confirms it: the listed file, the default branch, an event a writer or a schedule
   controls, and a run that was running when the issue was opened (see [Issues from a

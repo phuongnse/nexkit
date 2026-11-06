@@ -13,9 +13,9 @@ from nexkit import autopilot, state
 from nexkit.maintain import maintain
 from nexkit.report import report
 from nexkit.route import route
-from nexkit.state import BOT_LOGIN, PLAN_MARKER, render_run
+from nexkit.state import ACTIONS_BOT, PLAN_MARKER, render_run
 from nexkit.status import collect
-from tests.support import FakeGitHub, make_config
+from tests.support import BOT_LOGIN, FakeGitHub, make_config
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
 # The annotation the runner adds to every job whose step fails.
@@ -259,7 +259,7 @@ class SweepTests(AutopilotCase):
     def test_takes_only_issues_opened_by_people_who_can_write(self):
         self.issue(3, user="bob")  # read access
         self.issue(4, user="mallory")  # no access
-        self.issue(5, user="github-actions[bot]")
+        self.issue(5, user="nexkit-acme[bot]")
         _, steps = autopilot.preview(self.gh, self.cfg)
         self.assertEqual([s["state"] for s in steps], ["waits"] * 3)
         self.assertIn("@bob, who cannot write", steps[0]["reason"])
@@ -1079,30 +1079,26 @@ class SplitTests(AnswerAndSplitCase):
 
     def test_only_parts_of_a_trusted_parent_are_trusted(self):
         self.issue(5, user="bob")
-        self.issue(6, user="github-actions[bot]", body="<!-- nexkit:part 5 -->\nDo A.")
+        self.issue(6, user="nexkit-acme[bot]", body="<!-- nexkit:part 5 -->\nDo A.")
         self.gh.parents[6] = 5
-        self.issue(7, user="github-actions[bot]", body="<!-- nexkit:part 5 -->\nDo B.")
+        self.issue(7, user="nexkit-acme[bot]", body="<!-- nexkit:part 5 -->\nDo B.")
         self.assertFalse(autopilot.trusted(self.gh, self.gh.issues[6]))  # bob cannot write
         self.assertFalse(autopilot.trusted(self.gh, self.gh.issues[7]))  # not a sub-issue
         self.gh.issues[5]["user"] = {"login": "alice"}
         self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[6]))
 
-    def test_the_issues_of_the_app_count_like_those_of_the_actions_bot(self):
-        app = "nexkit-acme[bot]"
-        state.use_app(app)
-        self.addCleanup(state.BOT_LOGINS.discard, app)
-        self.issue(5, user=app, body="<!-- nexkit:ci ci.yml -->\nFailed")
-        self.issue(6, user=BOT_LOGIN, body="<!-- nexkit:ci lint.yml -->\nFailed")
+    def test_only_the_issues_of_the_app_are_nexkits(self):
+        self.issue(5, user=BOT_LOGIN, body="<!-- nexkit:ci ci.yml -->\nFailed")
         self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[5]))
-        self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[6]))
-        self.assertEqual(sorted(autopilot.open_bugs(self.gh)), ["ci.yml", "lint.yml"])
-        # Another App's issue is no more NexKit's than a stranger's.
-        self.issue(7, user="other[bot]", body="<!-- nexkit:ci x.yml -->\nFailed")
-        self.assertFalse(autopilot.trusted(self.gh, self.gh.issues[7]))
+        self.assertEqual(sorted(autopilot.open_bugs(self.gh)), ["ci.yml"])
+        # A pull request's CI can write as the Actions bot, and another App is a stranger.
+        for number, login in ((6, ACTIONS_BOT), (7, "other[bot]")):
+            self.issue(number, user=login, body="<!-- nexkit:ci x.yml -->\nFailed")
+            self.assertFalse(autopilot.trusted(self.gh, self.gh.issues[number]))
         self.assertNotIn("x.yml", autopilot.open_bugs(self.gh))
 
     def test_parts_of_an_issue_nexkit_opened_for_a_ci_failure_are_trusted(self):
-        bot = "github-actions[bot]"
+        bot = "nexkit-acme[bot]"
         self.issue(5, user=bot, body="<!-- nexkit:ci ci.yml -->\n`ci.yml` fails on `main`.")
         self.issue(6, user=bot, body="<!-- nexkit:part 5 -->\nDo A.")
         self.gh.parents[6] = 5
@@ -1188,7 +1184,7 @@ class SplitTests(AnswerAndSplitCase):
     def part(self, number, parent):
         """A part that autopilot created, as a sub-issue of `parent`."""
         body = f"<!-- nexkit:part {parent} -->\nDo it."
-        self.issue(number, user="github-actions[bot]", body=body)
+        self.issue(number, user="nexkit-acme[bot]", body=body)
         self.gh.parents[number] = parent
 
     def test_a_part_of_an_issue_that_asked_for_a_split_waits_after_its_own_time_out(self):
@@ -1285,7 +1281,7 @@ class SplitTests(AnswerAndSplitCase):
         self.part(7, 6)
         self.part(8, 7)  # depth 3
         self.part(9, 7)  # depth 3
-        self.issue(10, user="github-actions[bot]", body="<!-- nexkit:part 5 -->\nDo it.")
+        self.issue(10, user="nexkit-acme[bot]", body="<!-- nexkit:part 5 -->\nDo it.")
         self.gh.parents[10] = 7  # names another parent: not one of autopilot's parts
         depths = [
             autopilot.depth(self.gh.issues[n], autopilot.lineage(self.gh, self.gh.issues[n]))
@@ -1547,7 +1543,7 @@ class RecordTests(unittest.TestCase):
 
         body = render_plan(plan_output(questions=[QUESTION, "An old plain question?"]))
         self.assertIn("1. Which port?\n   - 8080 (recommended)\n   - 9090\n2. An old", body)
-        comment = {"body": body, "user": {"login": "github-actions[bot]"}}
+        comment = {"body": body, "user": {"login": "nexkit-acme[bot]"}}
         data = plan_data(comment)
         self.assertEqual(data["questions"][0], RECORDED)
         self.assertEqual(data["questions"][1]["options"], [])
@@ -2602,7 +2598,6 @@ class CIWaitTests(AutopilotCase):
 
     def test_each_waiting_pull_request_gets_one_round_that_merges_main_once_it_passes(self):
         from nexkit.context import _after_failed_checks
-        from nexkit.state import BOT_LOGIN
 
         pulls = {5: self.open_pull(5, 10), 7: self.open_pull(7, 11)}
         for issue, pull in pulls.items():
@@ -2656,7 +2651,6 @@ class CIWaitTests(AutopilotCase):
 
     def test_a_round_waited_for_that_ends_without_a_report_starts_as_the_same_kind(self):
         from nexkit.context import _after_failed_checks
-        from nexkit.state import BOT_LOGIN
 
         pull = self.open_pull(5, 10)
         self.report_round(5, pull)
@@ -2855,7 +2849,7 @@ class TrustedWorkflowTests(unittest.TestCase):
         self.gh.runs[900] = dict(AUDIT_RUN)
         self.issue()
 
-    def issue(self, marker="<!-- nexkit:workflow audit.yml 900 -->", user=BOT_LOGIN, number=5):
+    def issue(self, marker="<!-- nexkit:workflow audit.yml 900 -->", user=ACTIONS_BOT, number=5):
         found = self.gh.add_issue(number, body=f"{marker}\nStale docs.", user=user, milestone=1)
         found["created_at"] = "2026-11-01T10:05:00Z"
         return found
@@ -2938,9 +2932,9 @@ class TrustedWorkflowTests(unittest.TestCase):
             )
 
     def test_an_edit_by_someone_without_write_access_leaves_it_alone(self):
-        self.gh.editors[5] = [BOT_LOGIN, "alice"]
+        self.gh.editors[5] = [ACTIONS_BOT, "alice"]
         self.assertIsNone(self.problem())
-        self.gh.editors[5] = [BOT_LOGIN, "bob"]
+        self.gh.editors[5] = [ACTIONS_BOT, "bob"]
         self.assertEqual(self.problem(), "@bob edited it without write access to the repository")
         self.gh.editors[5] = [""]
         self.assertEqual(
@@ -2949,10 +2943,7 @@ class TrustedWorkflowTests(unittest.TestCase):
         )
 
     def test_an_issue_opened_as_the_app_goes_through_the_same_checks(self):
-        app = "nexkit-acme[bot]"
-        state.use_app(app)
-        self.addCleanup(state.BOT_LOGINS.discard, app)
-        self.issue(user=app)
+        self.issue(user=BOT_LOGIN)
         self.assertIsNone(self.problem())
         self.gh.runs[900]["event"] = "issues"
         self.assertIn("was started by `issues`", self.problem())
@@ -3030,6 +3021,20 @@ class LastInMilestoneTests(unittest.TestCase):
         self.gh.blockers[6] = [5]
         self.gh.blockers[7] = [6]
         self.assertIsNone(self.wait())
+
+    def test_a_part_keeps_the_place_of_the_issue_it_came_from(self):
+        self.gh.add_issue(6, milestone=1, labels=("last",))
+        self.gh.add_issue(7, milestone=1, labels=("last",))
+        self.gh.parents[7] = 5  # #5 split after #6 opened
+        self.assertIsNone(self.wait(7))
+        self.assertIn("#5, #7", self.wait(6)[0])
+
+    def test_it_does_not_wait_for_what_waits_for_the_issue_above_it(self):
+        self.gh.add_issue(6, milestone=1)
+        self.gh.add_issue(7, milestone=1, labels=("last",))
+        self.gh.parents[7] = 5
+        self.gh.blockers[6] = [5]
+        self.assertIsNone(self.wait(7))
 
     def test_without_a_milestone_it_waits_for_a_person_and_says_why(self):
         self.gh.issues[5]["milestone"] = None

@@ -24,7 +24,8 @@ REMOVED = {
 # them, so a workflow that passes secrets one by one keeps working with those names.
 DECLARED_SECRETS = CREDENTIALS
 # route names the secrets a job's stages need in NAMES_VAR, and pipeline.yml reads each
-# one by name into a numbered slot: SLOT_VAR % 1 … SLOT_VAR % SECRET_SLOTS.
+# one by name into a numbered slot of the workflow that runs the job:
+# SLOT_VAR % 1 … SLOT_VAR % SECRET_SLOTS.
 NAMES_VAR = "NEXKIT_AGENT_SECRETS"
 SLOT_VAR = "NEXKIT_AGENT_SECRET_%d"
 SECRET_SLOTS = 8

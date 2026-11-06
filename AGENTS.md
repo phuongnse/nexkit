@@ -35,8 +35,8 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   workflows, NexKit's own too, so each write must leave a following run nothing to do.
 - Agent output is untrusted: validate it before publishing, pass everything printed or
   stored from a session through `redact.py`, print tool output with workflow commands
-  stopped. Markers count only in comments of the App or, for earlier releases, the Actions
-  bot, and a run marker only where it ends the comment.
+  stopped. Markers count only in comments of the App, never the Actions bot, which CI on an
+  agent's code can write as, and a run marker only where it ends the comment.
 - State lives only on GitHub (comments, pull requests, statuses).
 - Agent errors and `blocked` results never retry automatically; only check failures and
   review findings do, up to `fix.max_auto_rounds`. The one exception is a run that stopped
@@ -66,7 +66,9 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   `Provider`; never branch on runtime names elsewhere. Settings that identify an account or
   resource (such as an endpoint) are secret fields.
 - NexKit reads only secrets the configuration names (`agents`, `github_app`).
-  `pipeline.yml` reads the names `route` lists for a job into its `SECRET_SLOTS`. Agent
+  `pipeline.yml` reads the names `route` lists for a job into its `SECRET_SLOTS`, in the
+  call of `pipeline-agent.yml` and `pipeline-review.yml`: a job that runs an agent never
+  indexes `secrets` itself, since that puts every secret on its runner. Agent
   secret names may not start with `GITHUB_` or `NEXKIT_`, the App's not with `GITHUB_`.
 
 ## Releases

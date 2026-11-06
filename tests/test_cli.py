@@ -14,6 +14,7 @@ import nexkit.config
 from nexkit import app, cli, maintain, scaffold
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
 from nexkit.state import (
+    ACTIONS_BOT,
     BOT_LOGINS,
     by_bot,
     check_fingerprint,
@@ -904,7 +905,7 @@ class PipelineCommandTests(unittest.TestCase):
         )
         self.gh.compares[(passed, head)] = {"status": "ahead", "files": [{"filename": "docs/a"}]}
         inputs = {"command": "review", "number": "6", "note": "", "auto": "true,carry"}
-        event = {"inputs": inputs, "sender": {"login": "github-actions[bot]"}}
+        event = {"inputs": inputs, "sender": {"login": "nexkit-acme[bot]"}}
         summary = self.root / "summary.md"
         stdout = io.StringIO()
         env = {
@@ -1026,7 +1027,7 @@ class PipelineCommandTests(unittest.TestCase):
         # is open. A sweep that waits for this run to end finds the command lost.
         self.gh.add_pull(6, 5)
         inputs = {"command": "go", "number": "5", "note": "", "auto": "autopilot"}
-        event = {"inputs": inputs, "sender": {"login": "github-actions[bot]"}}
+        event = {"inputs": inputs, "sender": {"login": "nexkit-acme[bot]"}}
         with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "81"}):
             out = self.run_route("workflow_dispatch", event)
         self.assertEqual(out["action"], "none")
@@ -1112,11 +1113,14 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertIn("::error::github_app.slug is nexkit-acme", out.getvalue())
         self.assertIn("belongs to someone-else", out.getvalue())
 
-    def test_route_counts_the_comments_of_the_app_as_nexkits(self):
-        BOT_LOGINS.discard("nexkit-acme[bot]")
-        self.assertFalse(by_bot({"user": {"login": "nexkit-acme[bot]"}}))
+    def test_route_counts_only_the_comments_of_the_app_as_nexkits(self):
+        self.addCleanup(BOT_LOGINS.update, set(BOT_LOGINS))
+        self.addCleanup(BOT_LOGINS.clear)
+        BOT_LOGINS.clear()
+        BOT_LOGINS.add(ACTIONS_BOT)
         self.run_route("schedule", {})
         self.assertTrue(by_bot({"user": {"login": "nexkit-acme[bot]"}}))
+        self.assertFalse(by_bot({"user": {"login": ACTIONS_BOT}}))
         self.assertFalse(by_bot({"user": {"login": "other[bot]"}}))
 
     def test_a_run_without_the_app_stops_at_its_start_and_says_why(self):
@@ -1498,6 +1502,11 @@ class WorkflowSafetyTests(unittest.TestCase):
         cls.text = (ROOT / ".github/workflows/pipeline.yml").read_text()
         body = cls.text.split("\njobs:\n", 1)[1]
         cls.jobs = dict(re.findall(r"^  (\w+):\n((?:    .*\n|\n)*)", body, re.M))
+        # What pipeline.yml says in the call of these two, and the job that runs.
+        cls.calls = {name: cls.jobs[name] for name in ("agent", "review")}
+        for name in cls.calls:
+            nested = (ROOT / f".github/workflows/pipeline-{name}.yml").read_text()
+            cls.jobs[name] = nested.split("\njobs:\n", 1)[1]
 
     def test_jobs(self):
         self.assertEqual(
@@ -1539,7 +1548,7 @@ class WorkflowSafetyTests(unittest.TestCase):
     def test_a_fix_round_downloads_the_result_files_outside_the_checkout(self):
         agent = self.jobs["agent"]
         step = agent.split("- name: Download check results\n", 1)[1].split("\n      - ", 1)[0]
-        decision = "fromJSON(needs.route.outputs.decision).results_run"
+        decision = "fromJSON(inputs.decision).results_run"
         self.assertIn(f"if: {decision}\n", step)
         self.assertIn("continue-on-error: true", step)  # an expired artifact never fails
         self.assertIn("name: nexkit-checks\n", step)
@@ -1555,7 +1564,7 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("conflicts: ${{ steps.publish.outputs.conflicts }}", self.jobs["publish"])
         self.assertIn("needs.publish.outputs.conflicts != 'true'", self.jobs["verify"])
         # The review runs only after verify succeeded, so it is skipped with it.
-        self.assertIn("needs.verify.result == 'success'", self.jobs["review"])
+        self.assertIn("needs.verify.result == 'success'", self.calls["review"])
         with mock.patch("nexkit.cli._output") as output, mock.patch("builtins.print"):
             self.publish_outcome({"published": True, "pr": 6, "head": "c" * 40, "conflicts": ["a"]})
         self.assertEqual(output.call_args.kwargs["conflicts"], "true")
@@ -1604,9 +1613,10 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("skip_verify: ${{ steps.route.outputs.skip_verify }}", self.jobs["route"])
         # The review still runs, and reads the skipped checks from the decision.
         review = self.jobs["review"]
-        self.assertIn("needs.route.outputs.skip_verify == 'true'", review)
+        self.assertIn("needs.route.outputs.skip_verify == 'true'", self.calls["review"])
         download = review.split("name: nexkit-checks", 1)[0].rsplit("- uses:", 1)[1]
-        self.assertIn("needs.verify.result != 'skipped'", download)
+        self.assertIn("inputs.verify_result != 'skipped'", download)
+        self.assertIn("verify_result: ${{ needs.verify.result }}", self.calls["review"])
         # Combine passes the checks of the jobs that route left out.
         self.assertIn("NEXKIT_DECISION: ${{ needs.route.outputs.decision }}", self.jobs["combine"])
 
@@ -1627,10 +1637,10 @@ class WorkflowSafetyTests(unittest.TestCase):
                 run.startswith("${{ steps.python.outputs.python-path }} kit/bin/nexkit ")
             )
         # The review and report wait for it; the review only when it did not fail.
-        self.assertIn("needs: [route, publish, verify, combine]", self.jobs["review"])
+        self.assertIn("needs: [route, publish, verify, combine]", self.calls["review"])
         self.assertIn(
             'contains(fromJSON(\'["success","skipped"]\'), needs.combine.result)',
-            self.jobs["review"],
+            self.calls["review"],
         )
         self.assertIn(
             "needs: [route, agent, publish, verify, combine, review]", self.jobs["report"]
@@ -1652,6 +1662,26 @@ class WorkflowSafetyTests(unittest.TestCase):
             ):
                 self.assertNotIn(text, job, name)
             self.assertNotIn("secrets.", job, name)
+
+    def test_the_runner_of_an_agent_job_holds_only_its_slots(self):
+        # An index known only at run time gets the job every secret, the App's key too.
+        for name, call in self.calls.items():
+            job = self.jobs[name]
+            self.assertNotIn("secrets[", job, name)
+            self.assertEqual(
+                re.findall(r"\bsecrets\.(\w+)", job),
+                [f"AGENT_SECRET_{n}" for n in range(1, SECRET_SLOTS + 1)],
+            )
+            self.assertNotIn("github_app", call, name)
+            self.assertEqual(call.count("secrets["), SECRET_SLOTS, name)
+            self.assertIn(f"uses: ./.github/workflows/pipeline-{name}.yml", call)
+            self.assertNotIn("inherit", call, name)
+        self.assertIn("needs.route.outputs.agent_secrets)[7]", self.calls["agent"])
+        self.assertIn("needs.route.outputs.review_secrets)[7]", self.calls["review"])
+
+    def test_verify_and_combine_reference_no_secret(self):
+        for name in ("verify", "combine"):
+            self.assertNotIn("secrets", self.jobs[name].replace("NEXKIT", ""), name)
 
     def test_each_job_that_writes_mints_its_token_with_only_what_it_needs(self):
         for name in ("route", "publish", "report", "maintain", "finish"):
@@ -1706,15 +1736,20 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertEqual([n for n, _ in receiving], ["agent", "review"])
         for (job, step), needed in zip(receiving, ("agent_secrets", "review_secrets"), strict=True):
             self.assertIn("kit/bin/nexkit agent ", step)
+            self.assertIn("NEXKIT_AGENT_SECRETS: ${{ inputs.secret_names }}\n", step)
+            slots = re.findall(
+                r"NEXKIT_AGENT_SECRET_(\d+): \$\{\{ secrets\.AGENT_SECRET_(\d+) \}\}", step
+            )
+            numbers = [str(i + 1) for i in range(SECRET_SLOTS)]
+            self.assertEqual(slots, list(zip(numbers, numbers, strict=True)), job)
             # Only the names route lists for the job's stages, each read into a slot.
             names = f"needs.route.outputs.{needed}"
-            self.assertIn(f"NEXKIT_AGENT_SECRETS: ${{{{ {names} }}}}\n", step)
-            slots = re.findall(
-                r"NEXKIT_AGENT_SECRET_(\d+): \$\{\{ secrets\[fromJSON\((.*?)\)\[(\d+)\]\] \}\}",
-                step,
+            self.assertIn(f"secret_names: ${{{{ {names} }}}}\n", self.calls[job])
+            read = re.findall(
+                r"AGENT_SECRET_(\d+): \$\{\{ secrets\[fromJSON\((.*?)\)\[(\d+)\]\] \}\}",
+                self.calls[job],
             )
-            self.assertEqual(slots, [(str(i + 1), names, str(i)) for i in range(SECRET_SLOTS)], job)
-            self.assertEqual(re.findall(r"secrets\.\w+", step), [], job)
+            self.assertEqual(read, [(str(i + 1), names, str(i)) for i in range(SECRET_SLOTS)], job)
 
     def test_agent_jobs_install_the_runtimes_with_nexkit(self):
         for name in ("agent", "review"):
@@ -1797,7 +1832,7 @@ class WorkflowSafetyTests(unittest.TestCase):
         review = self.jobs["review"]
         steps = review.split("\n      - ")
         [carry] = [step for step in steps if "name: Carry over the approved review" in step]
-        self.assertIn("if: fromJSON(needs.route.outputs.decision).carry_from\n", carry)
+        self.assertIn("if: fromJSON(inputs.decision).carry_from\n", carry)
         self.assertIn("kit/bin/nexkit carry --repo repo --out out", carry)
         self.assertNotIn("SECRET", carry)
         self.assertNotIn("GITHUB_TOKEN", carry)
@@ -1843,9 +1878,9 @@ class WorkflowSafetyTests(unittest.TestCase):
             self.assertIn(f"'{name}' }}}}\n" if job == "verify" else f"name: {name}\n", upload, job)
 
     def test_fix_rounds_check_out_the_history_they_merge(self):
-        checkout = self.jobs["agent"].split("ref: ${{ needs.route.outputs.agent_ref }}", 1)[1]
+        checkout = self.jobs["agent"].split("ref: ${{ inputs.agent_ref }}", 1)[1]
         self.assertIn(
-            "fetch-depth: ${{ needs.route.outputs.action == 'fix' && '0' || '1' }}",
+            "fetch-depth: ${{ inputs.action == 'fix' && '0' || '1' }}",
             checkout.split("- name:", 1)[0],
         )
         self.assertIn("fetch-depth: 0", self.jobs["publish"])
@@ -1867,9 +1902,9 @@ class WorkflowSafetyTests(unittest.TestCase):
             self.assertLess(job.index(uses), job.index(setup[name]), name)
             step = job.split("- name: Restore caches\n", 1)[1].split("\n      - ", 1)[0]
             self.assertIn("continue-on-error: true", step, name)
-            self.assertIn("fromJSON(needs.route.outputs.config).cache[0]", step, name)
+            self.assertIn(".config).cache[0]", step, name)
         # A plan runs no setup.
-        self.assertIn("if: needs.route.outputs.action != 'plan' &&", self.jobs["agent"])
+        self.assertIn("if: inputs.action != 'plan' &&", self.jobs["agent"])
 
         action = (ROOT / ".github/actions/restore-caches/action.yml").read_text()
         for text in (self.text, action):

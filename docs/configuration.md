@@ -759,9 +759,8 @@ every open issue in scope, in order, and starts the one command that moves it on
   opened after it and the parts of a split count without any *blocked by* mark. Issues of
   other milestones do not hold it back. `nexkit status` shows it as waiting and names the
   open issues. So that nothing waits in a circle, it does not wait for an issue above it, or
-  for one that a person marked as *blocked by* it, and of two such issues the older goes
-  first; the parts of a marked issue carry its label and run in that order, unless they say
-  otherwise with *blocked by* marks. A marked issue with no milestone is left alone, and
+  for one that a person marked as *blocked by* it or an issue above it, and of two such
+  issues the older goes first, with its parts, which carry its label and keep its place. A marked issue with no milestone is left alone, and
   `nexkit status` says why: with the `null` scope it waits for a person, and with the
   `"milestone"` scope it is outside the scope, like any issue without a milestone.
 - **Trust.** Autopilot skips a person's approval of the plan, so the issue text drives an
@@ -1411,9 +1410,15 @@ it uses:
 **Who holds what.** Each job that writes, `route`, `publish`, `report`, `maintain` and
 `finish`, mints an installation token for this repository in a step of its own, with
 [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token). A
-job that runs an agent or repository code holds neither the key nor a token. Those jobs, and
-the run's wait for paused commands, read with the job's `github.token`, which is why the
-workflow file still gives read permissions.
+job that runs an agent or repository code holds neither the key nor a token: its runner gets
+only the secrets its stages need, which is why the `agent` and `review` jobs are reusable
+workflows of their own. Those jobs, and the run's wait for paused commands, read with the
+job's `github.token`, which is why the workflow file still gives read permissions.
+
+**Your CI runs what agents wrote.** NexKit's pushes start your `pull_request` and `push`
+workflows on its branches, on code an agent wrote. Give those workflows only what they need,
+with `permissions:` or a read-only default under *Settings → Actions → General*, as for a
+contributor's pull request. Their secrets are reachable from that code.
 
 **Checking it.** `nexkit doctor` checks that the settings and the secrets are there and that
 the App has the permissions. GitHub lets only the App itself ask where it is installed, so
@@ -1421,9 +1426,9 @@ the App has the permissions. GitHub lets only the App itself ask where it is ins
 key stays in its file. Without that option doctor says that it could not tell. A run without
 `github_app` stops at its start with what to do, and so does one that gets no token.
 
-**Comments of earlier releases.** NexKit keeps reading what the Actions bot wrote as its
-own, so plans and rounds from before the App count. Only the repository's own workflows can
-write as that bot.
+**Comments of earlier releases.** NexKit counts only what its App wrote. Your CI can write
+as the Actions bot, also on code an agent wrote, so what that bot wrote proves nothing, and
+that includes the plans and rounds of earlier releases.
 
 ## Workflow file
 
@@ -1471,6 +1476,11 @@ change.
 NexKit now writes only as a [GitHub App](#the-github-app), so an existing repository needs
 one before it upgrades. Runs of the new release stop at their start without it, and
 `publish.push_token_secret` is refused.
+
+Do this between rounds. NexKit no longer reads the comments of earlier releases, so an issue
+with a plan is planned again, a pull request starts its automatic rounds afresh, and a run
+that is under way when you upgrade is not picked up. Bug issues that autopilot opened as the
+Actions bot are left alone: close them, and the next failure opens a new one.
 
 1. Create the App once per owner. Run `nexkit init --force` in a clone and let it create
    the App, then restore your `.nexkit/config.json` and workflow file and keep only the new

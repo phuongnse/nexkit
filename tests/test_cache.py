@@ -129,6 +129,13 @@ class SavingTests(unittest.TestCase):
                 saved[f"save{number}"][0].split("@")[1], restored[f"cache{number}"][0].split("@")[1]
             )
 
+    def test_a_failed_cache_never_fails_the_run(self):
+        text = (ROOT / "cache/action.yml").read_text()
+        steps = text.split("\n    - ")[1:]
+        self.assertEqual(len(steps), 2 + 2 * MAX_CACHES)
+        for step in steps:
+            self.assertIn("continue-on-error: true", step)
+
     def test_only_a_step_for_the_base_branch_saves(self):
         saved = steps_of("cache/action.yml")
         for number in range(1, MAX_CACHES + 1):

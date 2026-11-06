@@ -17,7 +17,6 @@ from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
 from nexkit.route import route, skip_unaffected
 from nexkit.state import (
-    BOT_LOGIN,
     approved_head,
     check_fingerprint,
     read_state,
@@ -26,7 +25,7 @@ from nexkit.state import (
     setup_fingerprint,
 )
 from nexkit.usage import iso
-from tests.support import CALC, SUB, FakeGitHub, GitRepos, git, make_config
+from tests.support import BOT_LOGIN, CALC, SUB, FakeGitHub, GitRepos, git, make_config
 from tests.test_report import HEAD, ReportCase, decision
 from tests.test_route import comment_event
 

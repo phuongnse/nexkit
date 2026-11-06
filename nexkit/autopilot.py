@@ -32,6 +32,7 @@ from .redact import Redactor
 from .route import AFTER_RUN, RUN_ID, issue_from_branch, parse_command
 from .schema import filled
 from .state import (
+    ACTIONS_BOT,
     BOT_LOGINS,
     CONTINUED,
     FAILURE,
@@ -346,12 +347,12 @@ def trusted(gh, issue, cfg=None):
 def distrust(gh, issue, cfg=None):
     """Why autopilot leaves an issue alone, or None. It skips a person's approval of the
     plan, so issue text drives an implement session. It takes issues opened by someone with
-    write access, since only they and other writers can edit them, and of the issues opened
-    as NexKit's App or the Actions bot those that NexKit opened or a workflow it trusts."""
+    write access, since only they and other writers can edit them, the issues NexKit opened
+    as its App, and those a trusted workflow opened as the App or the Actions bot."""
     login = author(issue)
-    if is_bot(login):
-        if _rank(issue) < 2 or _trusted_part(gh, issue, cfg):
-            return None
+    if is_bot(login) and (_rank(issue) < 2 or _trusted_part(gh, issue, cfg)):
+        return None
+    if is_bot(login) or login == ACTIONS_BOT:
         return workflow_problem(gh, issue, cfg)
     return None if login and gh.can_write(login) else _no_writer(login)
 
@@ -417,7 +418,8 @@ def _edit_problem(gh, issue):
     """Who changed the issue who may not, or None. A bot is the workflow that opened it, or
     another of the repository's workflows, which nothing tells apart."""
     for login in gh.issue_editors(issue["number"]):
-        if not is_bot(login) and not (login and gh.can_write(login)):
+        bot = is_bot(login) or login == ACTIONS_BOT
+        if not bot and not (login and gh.can_write(login)):
             who = f"@{login}" if login else "someone GitHub cannot name"
             return f"{who} edited it without write access to the repository"
     return None
@@ -433,12 +435,10 @@ def _trusted_part(gh, issue, cfg=None, depth=0):
     parent = gh.parent_issue(issue["number"])
     if not parent or parent["number"] != int(match.group(1)) or not in_repository(gh, parent):
         return False
-    if is_bot(author(parent)):
-        return (
-            _rank(parent) < 2
-            or _trusted_part(gh, parent, cfg, depth + 1)
-            or workflow_problem(gh, parent, cfg) is None
-        )
+    if is_bot(author(parent)) and (_rank(parent) < 2 or _trusted_part(gh, parent, cfg, depth + 1)):
+        return True
+    if is_bot(author(parent)) or author(parent) == ACTIONS_BOT:
+        return workflow_problem(gh, parent, cfg) is None
     return gh.can_write(author(parent))
 
 
@@ -513,19 +513,25 @@ def _no_milestone(label):
 
 
 def _ancestors(gh, number):
-    """The issues above `number` in its sub-issues. A part of an issue marked to run last
-    has its labels, and its parent stays open until the part closes."""
-    found = set()
+    """The issues above `number` in its sub-issues, nearest first. A part of an issue marked
+    to run last has its labels, and its parent stays open until the part closes."""
+    found = []
     parent = gh.parent_issue(number)
     while parent and parent["number"] not in found:
-        found.add(parent["number"])
+        found.append(parent["number"])
         parent = gh.parent_issue(parent["number"])
     return found
 
 
-def _needing(gh, number):
-    """The open issues that wait for `number` through *blocked by* marks, at any depth."""
-    found, todo = set(), [number]
+def _last_order(gh, number):
+    """The order of issues marked to run last: by the issue at the top of its sub-issues,
+    so that a part keeps the place of the issue it came from."""
+    return (*(_ancestors(gh, number)[-1:] or [number]), number)
+
+
+def _needing(gh, numbers):
+    """The open issues that wait for `numbers` through *blocked by* marks, at any depth."""
+    found, todo = set(), list(numbers)
     while todo:
         for issue in gh.blocking(todo.pop()):
             if issue.get("state") == "open" and issue["number"] not in found:
@@ -538,8 +544,9 @@ def rest_of_milestone(gh, cfg, issue):
     """(why an issue marked to run last is not ready yet, whether a person must act), or
     None. It waits for every other open issue of its milestone, read now, so an issue
     opened later and the parts of a split count without a mark. So that nothing waits in a
-    circle, it does not wait for an issue above it or one that a person marked as needing
-    it, and of two issues marked to run last the older goes first."""
+    circle, it does not wait for an issue above it, or one that a person marked as needing
+    it or an issue above it, and of two issues marked to run last the older goes first, with
+    its parts."""
     label = cfg["autopilot"]["last_in_milestone_label"]
     if not label or not _labeled(issue, label):
         return None
@@ -547,16 +554,18 @@ def rest_of_milestone(gh, cfg, issue):
     if milestone is None:
         return _no_milestone(label), True
     number = issue["number"]
+    order = _last_order(gh, number)
     others = [
         other
         for other in gh.scoped_issues(milestone=milestone)
         if "pull_request" not in other
         and other["number"] != number
-        and not (_labeled(other, label) and other["number"] > number)
+        and not (_labeled(other, label) and _last_order(gh, other["number"]) > order)
     ]
     if not others:
         return None
-    exempt = _ancestors(gh, number) | _needing(gh, number)
+    above = _ancestors(gh, number)
+    exempt = {*above, *_needing(gh, [number, *above])}
     rest = [f"#{other['number']}" for other in others if other["number"] not in exempt]
     if not rest:
         return None
@@ -1502,7 +1511,7 @@ def _rank(issue):
 
 
 def nexkit_issues(gh, state="all", since=None):
-    """The issues NexKit opened, as its App or earlier as the Actions bot, newest first."""
+    """The issues NexKit opened as its App, newest first."""
     found = {
         issue["number"]: issue
         for login in sorted(BOT_LOGINS)

@@ -16,11 +16,11 @@ import re
 from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
 from .schema import filled
 
-BOT_LOGIN = "github-actions[bot]"
-# Who writes as NexKit: the App that `use_app` names, and the Actions bot, which wrote the
-# plans and rounds of runs from before the App and which only the repository's own
-# workflows can write as.
-BOT_LOGINS = {BOT_LOGIN}
+ACTIONS_BOT = "github-actions[bot]"
+# Who writes as NexKit: the App that `use_app` names, and only it. A pull request's own CI
+# can write as the Actions bot, and NexKit's App starts that CI on code that an agent wrote,
+# so what that bot writes proves nothing.
+BOT_LOGINS = {ACTIONS_BOT}
 PLAN_MARKER = "<!-- nexkit:plan -->"
 STATE_PREFIX = "<!-- nexkit:state "
 STATE_PATTERN = re.compile(r"<!-- nexkit:state ([A-Za-z0-9+/=]+) -->")
@@ -41,7 +41,7 @@ PROFILE_TEXT_PATTERN = re.compile(
 # end of the plan comment, after everything the agent wrote.
 PLAN_DATA_PREFIX = "<!-- nexkit:plan-data "
 PLAN_DATA = re.compile(r"\n*<!-- nexkit:plan-data ([A-Za-z0-9+/=]+) -->\s*\Z")
-# Answers that autopilot gave for the owner. Only where the marker ends a bot's comment.
+# Answers that autopilot gave for the owner. Only where the marker ends NexKit's comment.
 ANSWERS_PREFIX = "<!-- nexkit:answers "
 ANSWERS = re.compile(r"\n*<!-- nexkit:answers ([A-Za-z0-9+/=]+) -->\s*\Z")
 
@@ -83,8 +83,10 @@ MAX_QUESTIONS = 10
 
 
 def use_app(login):
-    """Count what the App's bot `login` writes as NexKit's. `None` means no App."""
+    """Count what the App's bot `login` writes as NexKit's, and nothing else. `None` means
+    no App."""
     if login:
+        BOT_LOGINS.clear()
         BOT_LOGINS.add(login)
 
 

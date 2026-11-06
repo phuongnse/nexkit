@@ -14,6 +14,7 @@ from . import autopilot
 from .config import DEFAULTS
 from .report import READY
 from .route import issue_from_branch
+from .snapshot import Snapshot
 from .state import (
     CONTINUED,
     FAILURE,
@@ -232,10 +233,15 @@ def _nexkit_pull(gh, pull):
     return issue_from_branch(head.get("ref")) is not None and repo == gh.repository
 
 
-def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
-    """Everything `nexkit status` shows, as a JSON-serialisable dict."""
+def collect(gh, cfg=None, merges=MERGES, workers=WORKERS, progress=None, batch=True):
+    """Everything `nexkit status` shows, as a JSON-serialisable dict. It reads GitHub once
+    through a `Snapshot`, the open issues and pull requests in batches, saying how far it
+    got through `progress(text)`; `batch=False` reads it all as sweeps do, item by item."""
     # Without a valid configuration, the defaults: status reads only what NexKit does itself.
     cfg = cfg or copy.deepcopy(DEFAULTS)
+    if batch and not isinstance(gh, Snapshot):
+        gh = Snapshot(gh).load(progress)
+    say = progress or (lambda text: None)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         listed = list(gh.open_issues())
         pulls = [p for p in gh.list_pulls("open") if _nexkit_pull(gh, p)]
@@ -264,6 +270,8 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
             issue_item(i, c, open_pulls) for i, c in zip(issues, issue_comments, strict=True)
         ]
         candidates = closed[: merges * 2]
+        if isinstance(gh, Snapshot):
+            gh.read_comments(p["number"] for p in [*candidates, *unmerged])
         merge_details = pool.map(lambda p: {**p, **gh.pull(p["number"])}, candidates)
         merge_comments = pool.map(lambda p: gh.comments(p["number"]), candidates)
         merge_items = [
@@ -271,6 +279,7 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
         ]
         closed_comments = pool.map(lambda p: gh.comments(p["number"]), unmerged)
         closed_items = [closed_item(p, c) for p, c in zip(unmerged, closed_comments, strict=True)]
+        say(f"read {len(candidates) + len(unmerged)} closed pull requests")
     issue_items = sorted((i for i in issue_items if i), key=lambda i: i["number"])
     pull_items.sort(key=lambda p: p["number"])
     needs = [
@@ -288,6 +297,7 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
         "needs_person": needs,
     }
     if cfg.get("autopilot", {}).get("enabled"):
+        say("looking at what the next autopilot sweep does")
         data["autopilot"] = autopilot_item(gh, cfg)
         _autopilot_needs(data)
         problem = data["autopilot"].get("dependabot")

@@ -131,3 +131,23 @@ class RefusalReadsTests(unittest.TestCase):
         with mock.patch.object(self.gh, "request", side_effect=GitHubError(500, "x")):
             with self.assertRaises(GitHubError):
                 self.gh.file_text("CODEOWNERS", "main")
+
+
+class TransportTests(unittest.TestCase):
+    def test_a_read_that_times_out_is_tried_again_then_fails_as_github(self):
+        gh = GitHub(repository="acme/app", token="t")
+        answer = mock.MagicMock()
+        answer.__enter__.return_value.read.return_value = b'{"ok": true}'
+        with (
+            mock.patch("nexkit.github.urlopen", side_effect=[TimeoutError("timed out"), answer]),
+            mock.patch("nexkit.github.time.sleep") as sleep,
+        ):
+            self.assertEqual(gh.request("GET", "/x"), {"ok": True})
+        sleep.assert_called_once()
+        with (
+            mock.patch("nexkit.github.urlopen", side_effect=ConnectionResetError("reset")),
+            mock.patch("nexkit.github.time.sleep"),
+            self.assertRaises(GitHubError) as caught,
+        ):
+            gh.request("GET", "/x")
+        self.assertEqual(caught.exception.status, 0)

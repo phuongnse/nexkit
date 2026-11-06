@@ -26,7 +26,10 @@ gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: appli
 1. **Snapshot.** Run `nexkit status --json` in the repository. It reads GitHub with the
    `gh` login, judges with the `.nexkit/config.json` on the default branch, as the
    pipeline does, whatever branch the checkout is on, and warns on stderr when the
-   checkout's file differs; `--local-config` previews the checkout's instead. It returns:
+   checkout's file differs; `--local-config` previews the checkout's instead. It reads the
+   open issues and pull requests in a few batched queries, and says on stderr how far it
+   got, so give it a minute on a large repository before you take it for stuck. It
+   returns:
    - `issues`: open issues NexKit worked on, each with a `state` (`planning`, `planned`
      with the plan's link and profile, `implementing`, `paused`, `failed`,
      `in_pull_request`, `implemented`) and the link to its last run comment.

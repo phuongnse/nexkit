@@ -202,7 +202,11 @@ class StatusTests(unittest.TestCase):
         ):
             code = cli.main(["status", "--repository", "acme/app", "--repo", str(repo), *flags])
         client.assert_called_once_with(repository="acme/app", token="t")
-        return code, stdout.getvalue(), stderr.getvalue()
+        # Without the lines that say how far it got.
+        err = "".join(
+            line for line in stderr.getvalue().splitlines(True) if not line.startswith("status: ")
+        )
+        return code, stdout.getvalue(), err
 
     def config(self, **overrides):
         return json.dumps({"agents": CLAUDE, "github_app": APP, **overrides}, indent=2)

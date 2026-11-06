@@ -148,14 +148,41 @@ def cmd_status(args):
         # every judgement of trust would be wrong.
         print(f"nexkit: status judges nothing without a configuration: {exc}", file=sys.stderr)
         return 1
+    progress = Progress(sys.stderr)
     try:
-        data = collect(gh, _as_app(cfg), merges=args.merges)
+        data = collect(gh, _as_app(cfg), merges=args.merges, progress=progress)
     except GitHubError as exc:
+        progress.close()
         print(f"nexkit: {exc}", file=sys.stderr)
         return 1
+    progress.close()
     data["configuration"] = source
     print(to_json(data) if args.json else render(data))
     return 0
+
+
+class Progress:
+    """How far `nexkit status` got, on stderr: one line that changes on a terminal, a line
+    for each step otherwise, such as in a log."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.terminal = stream.isatty()
+        self.shown = False
+
+    def __call__(self, text):
+        if self.terminal:
+            self.stream.write(f"\r\033[Kstatus: {text}…")
+            self.shown = True
+        else:
+            self.stream.write(f"status: {text}\n")
+        self.stream.flush()
+
+    def close(self):
+        if self.shown:
+            self.stream.write("\r\033[K")
+            self.stream.flush()
+            self.shown = False
 
 
 def _status_config(gh, args):

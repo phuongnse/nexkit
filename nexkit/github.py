@@ -153,11 +153,12 @@ class GitHub:
                     time.sleep(2 * (attempt + 1))
                     continue
                 raise GitHubError(exc.code, detail) from None
-            except URLError as exc:
+            except (URLError, TimeoutError, ConnectionError) as exc:
+                # A read that timed out or a connection that dropped, like a network error.
                 if attempt < 2:
                     time.sleep(2 * (attempt + 1))
                     continue
-                raise GitHubError(0, str(exc.reason)) from None
+                raise GitHubError(0, str(getattr(exc, "reason", exc))) from None
         raise AssertionError("unreachable")
 
     def download(self, path, limit=DOWNLOAD_LIMIT):

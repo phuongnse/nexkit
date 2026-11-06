@@ -1387,14 +1387,26 @@ App on the repository at the link it prints. A name is unique across GitHub, and
 taken: the page proposes "NexKit <owner>", which you can change there, or choose one with
 `nexkit init --app-name NAME`. Its comments then show as `<slug>[bot]`.
 
-**Every other repository.**
+**Every other repository.** The first repository needed no key by hand, because the manifest
+flow hands the key to `nexkit init` once, and it goes straight into that repository's
+secrets. GitHub shows a key only then, and no one can read a secret back, so each later
+repository of a personal account needs a new key. An organization can hold the secrets once
+instead.
 
-1. Install the App on it, under the App's *Install App* page.
-2. Set its two secrets, which `nexkit init --app-id ID --app-private-key FILE` does after it
-   checked that the App is installed. A key GitHub showed once is gone, so generate a new
-   one on the App's settings page when you did not keep it. An organization can hold both
-   as organization secrets once instead, and run `nexkit init --app-slug SLUG`.
-3. Run `nexkit init` as usual, if the options above did not.
+1. Install the App on the repository, at `https://github.com/apps/<slug>/installations/new`.
+2. Open the App's settings page: `https://github.com/settings/apps/<slug>`, or for an
+   organization `https://github.com/organizations/<org>/settings/apps/<slug>`. The App ID is
+   under *About*, and *Generate a private key* is under *Private keys*, near the bottom.
+   This is not the page of the App's installation
+   (`https://github.com/settings/installations/<id>`), which GitHub links from the repository
+   and from the list of Apps and which shows neither.
+3. Run `nexkit init --app-id ID --app-private-key FILE`, which checks that the App is
+   installed and sets both secrets. An App can have several keys, so a new one leaves the
+   other repositories as they are.
+
+An organization can set both as organization secrets once, then run `nexkit init --app-slug
+SLUG` in each repository. Without the secrets, that command stops before it writes anything
+and prints the two links and the command above.
 
 **Permissions.** NexKit needs these repository permissions, and each job asks for only what
 it uses:

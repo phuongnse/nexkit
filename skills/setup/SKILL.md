@@ -123,9 +123,11 @@ files or repository settings, and wait for confirmation.
    App id and the private key as secrets, so never ask for them in the chat. Then the user
    installs the App on the repository at the link it prints. With an App, the user installs
    it on this repository and runs `nexkit init --app-id ID --app-private-key FILE` themselves,
-   which checks the installation and sets both secrets; with an organization's secrets,
-   `--app-slug SLUG` is enough. Run `nexkit doctor`; only with the key file can it check the
-   installation.
+   which checks the installation and sets both secrets. The id and a new key are on the
+   App's settings page, `https://github.com/settings/apps/<slug>` (for an organization
+   `https://github.com/organizations/<org>/settings/apps/<slug>`), not on its installation's
+   page. With an organization's secrets, `--app-slug SLUG` is enough. Run `nexkit doctor`;
+   only with the key file can it check the installation.
 
 7. **Automatic merges.** The repository's own CI runs on NexKit's pull requests and on its
    merges, as for a person's. If the user wants `"merge": {"auto": true}`, say that branch

@@ -141,7 +141,8 @@ def github_app(root, *, slug=None, app_id=None, key_file=None, name=None):
     with an App keeps it, and any other creates one with the manifest flow."""
     if bool(app_id) != bool(key_file):
         raise app.AppError("--app-id and --app-private-key go together")
-    if slug:
+    if slug and not app_id:
+        _refuse_without_secrets(root, slug)
         return app.settings(slug), []
     known = configured_app(root)
     if known and not app_id:
@@ -164,6 +165,30 @@ def github_app(root, *, slug=None, app_id=None, key_file=None, name=None):
         f"Created the App {slug} and set its secrets. Install it on {repo}, and on every other "
         f"repository of this owner that uses NexKit: {app.install_url(slug)}"
     ]
+
+
+def _refuse_without_secrets(root, slug):
+    """Stop `nexkit init --app-slug` when the App's secrets are missing, before it writes
+    anything, with where they come from. A repository that GitHub cannot be asked about
+    goes on: `nexkit doctor` checks the secrets later."""
+    repo = repository_of(root)
+    names = secret_names(repo) if repo else None
+    lacking = [name for name in configuration.APP_SECRETS.values() if name not in (names or ())]
+    if names is None or not lacking:
+        return
+    kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
+    organization = kind == "Organization"
+    held = (
+        "; or set them once as organization secrets"
+        if organization
+        else ". A personal account holds no shared secrets, and no one can read a secret back, "
+        "so each of its repositories needs a new key"
+    )
+    steps = app.key_steps(slug, repo.split("/")[0], organization)
+    raise app.AppError(
+        f"{repo} has no secret {' or '.join(lacking)} for the App {slug}. {steps}{held} "
+        f"(see {configuration.APP_DOCS})"
+    )
 
 
 def init(
@@ -249,7 +274,22 @@ def gh_token():
     return (_gh("auth", "token") or "").strip() or None
 
 
+def secret_names(repo):
+    """The names of the secrets that `repo` can read: its own and, since an organization
+    can hold secrets once for all its repositories, its owner's. None when GitHub cannot
+    be asked."""
+    own = _gh("secret", "list", "--repo", repo, "--json", "name", "-q", ".[].name")
+    if own is None:
+        return None
+    shared = _gh("api", f"repos/{repo}/actions/organization-secrets", "-q", ".secrets[].name")
+    return {*own.split(), *(shared or "").split()}
+
+
 def repository_of(root):
+    """`owner/name` of the `origin` remote in `root`, or None, also for a folder that
+    `nexkit init` has yet to create."""
+    if not Path(root).is_dir():
+        return None
     proc = subprocess.run(
         ["git", "remote", "get-url", "origin"], cwd=root, capture_output=True, text=True
     )
@@ -648,19 +688,23 @@ def _secrets_set(cfg, names, repo):
 def _app_secrets(cfg, names, repo):
     """Findings: the secrets of `github_app` are set, for the repository or its owner."""
     findings = []
+    kind = None
     for key in configuration.APP_SECRETS:
         name = cfg["github_app"][key]
         if name in names:
             findings.append((True, f"github_app.{key}: {name} is set"))
-        else:
-            findings.append(
-                (
-                    False,
-                    f"github_app.{key} names {name}, which is not set: run 'gh secret set "
-                    f"{name} --repo {repo}', or 'nexkit init --force --app-id ID "
-                    "--app-private-key FILE', which sets both",
-                )
+            continue
+        kind = kind or (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
+        where = app.app_url(cfg["github_app"]["slug"], repo.split("/")[0], kind == "Organization")
+        findings.append(
+            (
+                False,
+                f"github_app.{key} names {name}, which is not set: run 'gh secret set "
+                f"{name} --repo {repo}', or 'nexkit init --force --app-id ID "
+                f"--app-private-key FILE', which sets both. The App's id and a new key are "
+                f"at {where}",
             )
+        )
     return findings
 
 
@@ -780,15 +824,7 @@ def doctor(root, key_file=None, app_id=None):
 
     if pinned:
         findings += _newer_release(*pinned)
-    names = set(
-        (_gh("secret", "list", "--repo", repo, "--json", "name", "-q", ".[].name") or "").split()
-    )
-    # An organization can hold secrets once for all its repositories.
-    names |= set(
-        (
-            _gh("api", f"repos/{repo}/actions/organization-secrets", "-q", ".secrets[].name") or ""
-        ).split()
-    )
+    names = secret_names(repo) or set()
     if cfg:
         findings += _secrets_set(cfg, names, repo)
     if cfg and not configuration.app_problem(cfg):

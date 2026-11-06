@@ -669,6 +669,7 @@ class InitDoctorTests(unittest.TestCase):
         self.assertEqual(found[0], (True, "github_app.app_id_secret: NEXKIT_APP_ID is set"))
         self.assertFalse(found[1][0])
         self.assertIn("gh secret set NEXKIT_APP_PRIVATE_KEY --repo acme/app", found[1][1])
+        self.assertIn("https://github.com/settings/apps/nexkit-acme", found[1][1])
 
     def test_doctor_says_which_permissions_a_public_app_lacks(self):
         granted = {**app.PERMISSIONS, "workflows": "read"}

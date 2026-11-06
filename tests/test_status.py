@@ -2,14 +2,17 @@ import contextlib
 import io
 import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from nexkit import cli
+from nexkit.config import CONFIG_PATH
 from nexkit.report import READY
 from nexkit.state import PLAN_MARKER, profile_record, render_run
 from nexkit.status import collect, render
-from tests.support import FakeGitHub, make_config
+from tests.support import APP, CLAUDE, FakeGitHub, make_config
 
 
 class StatusTests(unittest.TestCase):
@@ -187,21 +190,87 @@ class StatusTests(unittest.TestCase):
         self.assertIn("Issues\n  none", text)
         self.assertIn("Needs a person\n  nothing", text)
 
-    def test_command(self):
-        self.command(1, "plan", "running")
-        stdout = io.StringIO()
+    def status(self, *flags, repo="/nonexistent"):
+        """(exit code, stdout, stderr) of `nexkit status` against the fake GitHub."""
+        stdout, stderr = io.StringIO(), io.StringIO()
         env = {"GITHUB_TOKEN": "t", "GH_TOKEN": ""}
         with (
             mock.patch.dict(os.environ, env),
             mock.patch("nexkit.github.GitHub", return_value=self.gh) as client,
             contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
         ):
-            code = cli.main(
-                ["status", "--repository", "acme/app", "--json", "--repo", "/nonexistent"]
-            )
-        self.assertEqual(code, 0)
+            code = cli.main(["status", "--repository", "acme/app", "--repo", str(repo), *flags])
         client.assert_called_once_with(repository="acme/app", token="t")
-        self.assertEqual(json.loads(stdout.getvalue())["issues"][0]["state"], "planning")
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def config(self, **overrides):
+        return json.dumps({"agents": CLAUDE, "github_app": APP, **overrides}, indent=2)
+
+    def test_command(self):
+        self.gh.files[CONFIG_PATH] = self.config()
+        self.command(1, "plan", "running")
+        code, out, err = self.status("--json")
+        self.assertEqual((code, err), (0, ""))
+        data = json.loads(out)
+        self.assertEqual(data["issues"][0]["state"], "planning")
+        self.assertEqual(
+            data["configuration"],
+            {"path": CONFIG_PATH, "from": "default_branch", "branch": "main"},
+        )
+
+    def test_it_judges_with_the_default_branchs_configuration_as_the_pipeline_does(self):
+        # The checkout is a branch from before the App: its config names none, and with it
+        # status would count nothing that the App wrote as NexKit's.
+        self.gh.files[CONFIG_PATH] = self.config(notify=["olivia"])
+        self.command(1, "plan", "running")
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / ".nexkit").mkdir()
+            (Path(root) / CONFIG_PATH).write_text(json.dumps({"agents": CLAUDE}))
+            code, out, err = self.status(repo=root)
+            self.assertEqual(code, 0)
+            self.assertIn("#1     planning", out)
+            self.assertIn("Configuration: .nexkit/config.json on `main`", out)
+            self.assertEqual(
+                err.strip(),
+                "warning: .nexkit/config.json in this checkout differs from the one on `main`; "
+                "status judges with the one on `main`, as the pipeline does (--local-config "
+                "uses this checkout's)",
+            )
+            # The same settings in another layout differ in nothing.
+            (Path(root) / CONFIG_PATH).write_text(
+                json.dumps(json.loads(self.config(notify=["olivia"])))
+            )
+            self.assertEqual(self.status(repo=root)[2], "")
+            # --local-config previews the checkout's file, and says so.
+            (Path(root) / CONFIG_PATH).write_text(self.config(notify=["bob"]))
+            code, out, err = self.status("--local-config", repo=root)
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn(
+                "Configuration: .nexkit/config.json in this checkout (--local-config)", out
+            )
+
+    def test_without_a_configuration_it_judges_nothing(self):
+        cases = [
+            (
+                None,
+                "status judges nothing without a configuration: .nexkit/config.json is not "
+                "on `main`; commit it there, or pass --local-config to use this checkout's",
+            ),
+            ("{", "the .nexkit/config.json on `main` is not valid JSON"),
+            ('{"autopilot": {"scope": 3}}', "the .nexkit/config.json on `main` is not valid: "),
+        ]
+        for text, said in cases:
+            with self.subTest(text):
+                self.gh.files.pop(CONFIG_PATH, None)
+                if text is not None:
+                    self.gh.files[CONFIG_PATH] = text
+                code, out, err = self.status()
+                self.assertEqual((code, out), (1, ""))
+                self.assertIn(said, err)
+        code, out, err = self.status("--local-config")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("Missing .nexkit/config.json", err)
 
 
 if __name__ == "__main__":

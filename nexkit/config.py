@@ -773,12 +773,18 @@ def setting(cfg, path):
 def load(root="."):
     path = Path(root) / CONFIG_PATH
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         raise ConfigError(f"Missing {CONFIG_PATH}; run 'nexkit init'") from None
+    return validate(parse(text))
+
+
+def parse(text, where=CONFIG_PATH):
+    """The JSON of a configuration file's `text`, not yet validated."""
+    try:
+        return json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ConfigError(f"{CONFIG_PATH} is not valid JSON: {exc}") from None
-    return validate(raw)
+        raise ConfigError(f"{where} is not valid JSON: {exc}") from None
 
 
 def with_profile(cfg, name):

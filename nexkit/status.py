@@ -348,6 +348,14 @@ def _short(text, width=50):
 def render(data):
     """The plain text form: one line per item, then what needs a person."""
     lines = [f"NexKit status for {data['repository']}"]
+    source = data.get("configuration")
+    if source:
+        where = (
+            f"on `{source['branch']}`"
+            if source["from"] == "default_branch"
+            else "in this checkout (--local-config)"
+        )
+        lines.append(f"Configuration: {source['path']} {where}")
     lines += ["", "Issues"]
     for item in data["issues"]:
         detail = ""

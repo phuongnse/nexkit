@@ -138,17 +138,58 @@ def cmd_status(args):
     if not token:
         print("nexkit: sign in with 'gh auth login' or set GITHUB_TOKEN", file=sys.stderr)
         return 2
+    gh = GitHub(repository=repository, token=token)
     try:
-        cfg = _as_app(configuration.load(args.repo))
-    except configuration.ConfigError:
-        cfg = {}
+        cfg, source = _status_config(gh, args)
+    except (configuration.ConfigError, GitHubError) as exc:
+        # Without the configuration, NexKit's App and the trusted workflows are unknown, and
+        # every judgement of trust would be wrong.
+        print(f"nexkit: status judges nothing without a configuration: {exc}", file=sys.stderr)
+        return 1
     try:
-        data = collect(GitHub(repository=repository, token=token), cfg, merges=args.merges)
+        data = collect(gh, _as_app(cfg), merges=args.merges)
     except GitHubError as exc:
         print(f"nexkit: {exc}", file=sys.stderr)
         return 1
+    data["configuration"] = source
     print(to_json(data) if args.json else render(data))
     return 0
+
+
+def _status_config(gh, args):
+    """(configuration, where it comes from) for `nexkit status`: the one on the default
+    branch, which the pipeline uses, read through the API; with `--local-config`, the
+    checkout's. A checkout whose file differs from the default branch's gets a warning."""
+    path = configuration.CONFIG_PATH
+    if args.local_config:
+        return configuration.load(args.repo), {"path": path, "from": "checkout"}
+    branch = gh.default_branch()
+    text = gh.file_text(path, branch)
+    if text is None:
+        raise configuration.ConfigError(
+            f"{path} is not on `{branch}`; commit it there, or pass --local-config to use "
+            "this checkout's"
+        )
+    where = f"the {path} on `{branch}`"
+    raw = configuration.parse(text, where)
+    try:
+        cfg = configuration.validate(raw)
+    except configuration.ConfigError as exc:
+        raise configuration.ConfigError(f"{where} is not valid: {exc}") from None
+    local = Path(args.repo) / path
+    if local.is_file():
+        try:
+            same = configuration.parse(local.read_text(encoding="utf-8")) == raw
+        except (configuration.ConfigError, OSError, UnicodeDecodeError):
+            same = False
+        if not same:
+            print(
+                f"warning: {path} in this checkout differs from the one on `{branch}`; status "
+                f"judges with the one on `{branch}`, as the pipeline does (--local-config "
+                "uses this checkout's)",
+                file=sys.stderr,
+            )
+    return cfg, {"path": path, "from": "default_branch", "branch": branch}
 
 
 def _refused_dispatch(args, decision, inputs):
@@ -749,6 +790,12 @@ def build_parser():
     p.add_argument("--json", action="store_true", help="Print JSON")
     p.add_argument(
         "--merges", type=int, default=MERGES, help=f"Recent merges to show (default {MERGES})"
+    )
+    p.add_argument(
+        "--local-config",
+        action="store_true",
+        help="Judge with this checkout's .nexkit/config.json, to preview a change (default: "
+        "the one on the default branch, which the pipeline uses)",
     )
     p.set_defaults(func=cmd_status)
 

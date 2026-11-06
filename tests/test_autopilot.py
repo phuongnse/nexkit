@@ -14,6 +14,7 @@ from nexkit.maintain import maintain
 from nexkit.report import report
 from nexkit.route import route
 from nexkit.state import BOT_LOGIN, PLAN_MARKER, render_run
+from nexkit.status import collect
 from tests.support import FakeGitHub, make_config
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -2969,3 +2970,88 @@ class TrustedWorkflowTests(unittest.TestCase):
         self.assertEqual(steps[0]["state"], "waits")
         self.assertTrue(steps[0]["person"])
         self.assertEqual(steps[0]["reason"], "its marker names run 900, which does not exist")
+
+
+class LastInMilestoneTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_milestone(1)
+        self.gh.add_milestone(2)
+        self.cfg = make_config(autopilot={"enabled": True, "last_in_milestone_label": "last"})
+        self.gh.add_issue(5, milestone=1, labels=("last",))
+
+    def wait(self, number=5, cfg=None):
+        return autopilot.rest_of_milestone(self.gh, cfg or self.cfg, self.gh.issues[number])
+
+    def test_it_waits_for_every_other_open_issue_of_its_milestone(self):
+        self.assertIsNone(self.wait())
+        self.gh.add_issue(6, milestone=1)
+        self.gh.add_issue(7, milestone=1, state="closed")
+        self.gh.add_issue(8, milestone=1)  # opened after it, with no mark
+        self.assertEqual(self.wait(), ("runs last in its milestone, so it waits for #6, #8", False))
+        self.gh.issues[6]["state"] = self.gh.issues[8]["state"] = "closed"
+        self.assertIsNone(self.wait())
+
+    def test_an_issue_of_another_milestone_or_none_does_not_hold_it_back(self):
+        self.gh.add_issue(6, milestone=2)
+        self.gh.add_issue(7)
+        self.assertIsNone(self.wait())
+
+    def test_a_pull_request_of_the_milestone_does_not_count(self):
+        self.gh.add_issue(6, milestone=1)["pull_request"] = {}
+        self.assertIsNone(self.wait())
+
+    def test_without_the_label_or_the_setting_nothing_changes(self):
+        self.gh.add_issue(6, milestone=1)
+        self.gh.add_issue(7, milestone=1)
+        self.assertIsNone(self.wait(7))
+        self.assertIsNone(self.wait(cfg=make_config(autopilot={"enabled": True})))
+
+    def test_a_part_of_a_split_holds_it_back_without_a_mark(self):
+        self.gh.add_issue(6, milestone=1)
+        self.gh.add_issue(7, milestone=1)
+        self.gh.parents[7] = 6
+        self.gh.issues[6]["state"] = "closed"
+        self.assertEqual(self.wait(), ("runs last in its milestone, so it waits for #7", False))
+
+    def test_of_two_marked_issues_the_older_goes_first(self):
+        self.gh.add_issue(6, milestone=1, labels=("last",))
+        self.assertIsNone(self.wait(5))
+        self.assertIn("waits for #5", self.wait(6)[0])
+
+    def test_the_parts_of_a_marked_issue_do_not_wait_for_it(self):
+        self.gh.add_issue(6, milestone=1, labels=("last",))
+        self.gh.parents[6] = 5
+        self.assertIsNone(self.wait(6))
+
+    def test_it_does_not_wait_for_what_waits_for_it(self):
+        self.gh.add_issue(6, milestone=1)
+        self.gh.add_issue(7, milestone=1)
+        self.gh.blockers[6] = [5]
+        self.gh.blockers[7] = [6]
+        self.assertIsNone(self.wait())
+
+    def test_without_a_milestone_it_waits_for_a_person_and_says_why(self):
+        self.gh.issues[5]["milestone"] = None
+        self.assertEqual(
+            self.wait(), ("it runs last in its milestone (`last`), but has no milestone", True)
+        )
+
+    def test_status_says_why_the_milestone_scope_leaves_one_without_a_milestone(self):
+        self.gh.issues[5]["milestone"] = None
+        [step] = autopilot.left_out(self.gh, self.cfg)
+        self.assertEqual(step["number"], 5)
+        self.assertIn("has no milestone", step["reason"])
+        self.assertFalse(step["person"])
+        everything = make_config(
+            autopilot={"enabled": True, "scope": None, "last_in_milestone_label": "last"}
+        )
+        self.assertEqual(autopilot.left_out(self.gh, everything), [])
+
+    def test_status_names_what_it_waits_for(self):
+        self.gh.add_issue(6, milestone=1)
+        data = collect(self.gh, self.cfg)
+        [step] = [i for i in data["autopilot"]["issues"] if i["number"] == 5]
+        self.assertEqual(step["reason"], "runs last in its milestone, so it waits for #6")
+        self.assertFalse(step["person"])
+        self.assertFalse(any(item["number"] == 5 for item in data["needs_person"]))

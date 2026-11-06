@@ -215,6 +215,7 @@ class ConfigTests(unittest.TestCase):
                 "lost_after_minutes": 30,
                 "watch_workflows": [],
                 "trusted_workflows": [],
+                "last_in_milestone_label": None,
             },
         )
         # An explicit null replaces the default: every open issue.
@@ -462,6 +463,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(again, layered)
         where = [call.args[1] for call in checked.call_args_list]
         self.assertEqual(where, [f"stages.{name}" for name in again["stages"]])
+
+    def test_last_in_milestone_label(self):
+        found = validate({"autopilot": {"last_in_milestone_label": "last"}})
+        self.assertEqual(found["autopilot"]["last_in_milestone_label"], "last")
+        for value in ("", " ", 5, "x" * 51):
+            with self.assertRaisesRegex(ConfigError, "autopilot.last_in_milestone_label"):
+                validate({"autopilot": {"last_in_milestone_label": value}})
 
     def test_trusted_workflows(self):
         self.assertEqual(validate({})["autopilot"]["trusted_workflows"], [])

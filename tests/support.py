@@ -264,6 +264,18 @@ class FakeGitHub:
     def blocked_by(self, number):
         return [self.issues[n] for n in self.blockers[number]]
 
+    def blocking(self, number):
+        return [self.issues[n] for n, found in self.blockers.items() if number in found]
+
+    def labeled_without_milestone(self, label):
+        return [
+            issue
+            for issue in self.issues.values()
+            if issue["state"] == "open"
+            and not issue.get("milestone")
+            and label in [item["name"] for item in issue.get("labels") or []]
+        ]
+
     def add_blocked_by(self, number, blocker_id):
         self.blockers[number].append(blocker_id - 90000)
 

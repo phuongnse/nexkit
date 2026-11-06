@@ -504,6 +504,77 @@ def waits_for(gh, issue, where=None):
     return reason, False
 
 
+def _labeled(issue, label):
+    return any(item.get("name") == label for item in issue.get("labels") or [])
+
+
+def _no_milestone(label):
+    return f"it runs last in its milestone (`{label}`), but has no milestone"
+
+
+def _ancestors(gh, number):
+    """The issues above `number` in its sub-issues. A part of an issue marked to run last
+    has its labels, and its parent stays open until the part closes."""
+    found = set()
+    parent = gh.parent_issue(number)
+    while parent and parent["number"] not in found:
+        found.add(parent["number"])
+        parent = gh.parent_issue(parent["number"])
+    return found
+
+
+def _needing(gh, number):
+    """The open issues that wait for `number` through *blocked by* marks, at any depth."""
+    found, todo = set(), [number]
+    while todo:
+        for issue in gh.blocking(todo.pop()):
+            if issue.get("state") == "open" and issue["number"] not in found:
+                found.add(issue["number"])
+                todo.append(issue["number"])
+    return found
+
+
+def rest_of_milestone(gh, cfg, issue):
+    """(why an issue marked to run last is not ready yet, whether a person must act), or
+    None. It waits for every other open issue of its milestone, read now, so an issue
+    opened later and the parts of a split count without a mark. So that nothing waits in a
+    circle, it does not wait for an issue above it or one that a person marked as needing
+    it, and of two issues marked to run last the older goes first."""
+    label = cfg["autopilot"]["last_in_milestone_label"]
+    if not label or not _labeled(issue, label):
+        return None
+    milestone = (issue.get("milestone") or {}).get("number")
+    if milestone is None:
+        return _no_milestone(label), True
+    number = issue["number"]
+    others = [
+        other
+        for other in gh.scoped_issues(milestone=milestone)
+        if "pull_request" not in other
+        and other["number"] != number
+        and not (_labeled(other, label) and other["number"] > number)
+    ]
+    if not others:
+        return None
+    exempt = _ancestors(gh, number) | _needing(gh, number)
+    rest = [f"#{other['number']}" for other in others if other["number"] not in exempt]
+    if not rest:
+        return None
+    return f"runs last in its milestone, so it waits for {', '.join(rest)}", False
+
+
+def left_out(gh, cfg):
+    """Steps for the open issues marked to run last that have no milestone, which the
+    milestone scope never reaches, so `nexkit status` can say why nothing happens."""
+    label = cfg["autopilot"]["last_in_milestone_label"]
+    if not label or cfg["autopilot"]["scope"] is None:
+        return []
+    return [
+        _step(issue, "waits", _no_milestone(label), person=False)
+        for issue in gh.labeled_without_milestone(label)
+    ]
+
+
 # -- the record of what autopilot started -------------------------------------------
 
 
@@ -1092,7 +1163,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
                 gh, cfg, issue, pull, rounds, record, start, comments, pull_comments, now
             )
         return {**step, "pull": pull}
-    blocked = waits_for(gh, issue, where)
+    blocked = waits_for(gh, issue, where) or rest_of_milestone(gh, cfg, issue)
     if blocked:
         return _step(issue, "waits", blocked[0], person=blocked[1])
     if last is None or plan is None:

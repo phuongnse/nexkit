@@ -266,6 +266,15 @@ class GitHub:
                 raise
             return []
 
+    def blocking(self, number):
+        """The issues that this one blocks, or [] where the API does not exist."""
+        try:
+            return self.paginate(f"{self._repo}/issues/{number}/dependencies/blocking")
+        except GitHubError as exc:
+            if exc.status != 404:
+                raise
+            return []
+
     def add_blocked_by(self, number, blocker_id):
         """Record that issue `number` is blocked by the issue with database id `blocker_id`."""
         path = f"{self._repo}/issues/{number}/dependencies/blocked_by"
@@ -282,6 +291,12 @@ class GitHub:
         if milestone is not None:
             params["milestone"] = str(milestone)
         return self.paginate(f"{self._repo}/issues", params)
+
+    def labeled_without_milestone(self, label):
+        """Open issues with the label `label` and no milestone, without pull requests."""
+        params = {"state": "open", "labels": label, "milestone": "none"}
+        found = self.paginate(f"{self._repo}/issues", params)
+        return [item for item in found if "pull_request" not in item]
 
     def latest_closed_issue(self, milestone):
         """The issue in a milestone (its number) that closed last, or None. Issues sort by

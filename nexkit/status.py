@@ -319,7 +319,7 @@ def autopilot_item(gh, cfg):
                 for key in ("number", "title", "state", "reason", "command", "person", "pull")
                 if key in step
             }
-            for step in steps
+            for step in [*steps, *autopilot.left_out(gh, cfg)]
         ],
     }
 

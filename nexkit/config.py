@@ -57,6 +57,8 @@ DEFAULTS = {
         "watch_workflows": [],
         # Workflows of the default branch whose issues autopilot takes, by their marker.
         "trusted_workflows": [],
+        # The label of an issue that runs only once the rest of its milestone is closed.
+        "last_in_milestone_label": None,
     },
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -115,6 +117,8 @@ AUTOPILOT_SCOPE_CHOICES = (
 )
 AUTOPILOT_ANSWERS = ("never", "recommended")
 AFTER_WORKFLOW_KEYS = {"workflow", "every"}
+# GitHub's limit on a label's name.
+MAX_LABEL = 50
 # GitHub's slug of an App, which `<slug>[bot]` makes its login.
 APP_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 # The secrets of `github_app`, with the names that `nexkit init` gives them.
@@ -504,6 +508,11 @@ def _autopilot(settings):
     if settings["answer"] not in AUTOPILOT_ANSWERS:
         _fail(f"autopilot.answer must be one of {', '.join(AUTOPILOT_ANSWERS)}")
     _positive_int(settings["lost_after_minutes"], "autopilot.lost_after_minutes", 1440, minimum=5)
+    label = settings["last_in_milestone_label"]
+    if label is not None and (
+        not isinstance(label, str) or not label.strip() or len(label) > MAX_LABEL
+    ):
+        _fail(f"autopilot.last_in_milestone_label must be null or a label of {MAX_LABEL} or fewer")
 
 
 def _workflow_files(workflows, where):

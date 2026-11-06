@@ -16,6 +16,7 @@ import io
 import itertools
 import json
 import os
+import re
 import tempfile
 import unittest
 import zipfile
@@ -385,6 +386,7 @@ class Pipeline:
         _, steps = autopilot.preview(self.gh, self.cfg)
         data = collect(self.gh, self.cfg, workers=1)
         listed = {(item["number"], item["reason"]) for item in data["needs_person"]}
+        people = {s["number"] for s in steps if s["state"] == "waits" and s.get("person")}
         for step in steps:
             where = f"#{step['number']} {step['state']}: {step['reason']} after {self.played}"
             if step["state"] == "waits" and step.get("person"):
@@ -395,8 +397,10 @@ class Pipeline:
                 if self.cfg["notify"]:
                     self.test.assertTrue(step.get("mentioned"), f"nobody mentioned: {where}")
             if quiet:
+                # Or it waits for an issue that waits for a person, who hears about that one.
+                awaited = {int(n) for n in re.findall(r"#(\d+)", step["reason"])}
                 self.test.assertTrue(
-                    step["state"] == "waits" and step.get("person"),
+                    step["state"] == "waits" and (step.get("person") or awaited & people),
                     f"stuck with nothing running: {where}",
                 )
         for pull in self.gh.pulls.values():
@@ -524,6 +528,56 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [])
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
         self.assertIn("its marker names run 404, which does not exist", mention["body"])
+
+    def test_an_issue_marked_to_run_last_runs_after_the_rest_of_its_milestone(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["number"] == "6":
+                # Opened while the milestone runs, with no mark on either issue.
+                pipe.issue(8)
+            return done()
+
+        pipe = Pipeline(self, config(autopilot={"last_in_milestone_label": "last"}), script)
+        pipe.issue(5, labels=("last",))
+        pipe.issue(6)
+        played = pipe.play()
+        self.assertLess(played.index(("go", 8)), played.index(("plan", 5)))
+        self.assertEqual(played[-2:], [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_the_parts_of_a_split_hold_an_issue_marked_to_run_last_back(self):
+        parts = [
+            {"title": "One", "body": "Do one.", "depends_on": []},
+            {"title": "Two", "body": "Do two.", "depends_on": []},
+        ]
+
+        def script(pipe, inputs):
+            if inputs["command"] != "plan":
+                return done()
+            big = inputs["number"] == "6"
+            return plan(too_large=big, split=parts if big else [])
+
+        settings = {"last_in_milestone_label": "last"}
+        pipe = Pipeline(self, config(autopilot=settings, close_parent_issues=True), script)
+        pipe.issue(5, labels=("last",))
+        pipe.issue(6)
+        played = pipe.play()
+        self.assertEqual(played[-2:], [("plan", 5), ("go", 5)])
+        self.assertEqual(len(played), 7)  # #6 plans, each part plans and goes, then #5
+
+    def test_an_issue_that_runs_last_waits_for_a_person_with_the_rest(self):
+        def script(pipe, inputs):
+            if inputs["number"] == "6":
+                return plan(questions=[{"question": "Which?", "options": ["a", "b"]}])
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(autopilot={"last_in_milestone_label": "last"}), script)
+        pipe.issue(5, labels=("last",))
+        pipe.issue(6)
+        self.assertEqual(pipe.play(), [("plan", 6)])
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+        self.assertTrue(pipe.gh.comments_matching(6, "a person is needed"))
 
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):

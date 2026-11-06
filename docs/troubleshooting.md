@@ -568,6 +568,13 @@ when the issue was opened, or an edit by someone without write access. Fix the w
 the setting for the issues it opens next, and open a new issue for this one: see [Issues from
 a workflow](configuration.md#issues-from-a-workflow).
 
+### An issue marked to run last does not start
+
+`nexkit status` names the open issues of its milestone that it waits for (see *Running an
+issue last* under [Autopilot](configuration.md#autopilot)). Each carries on by itself or
+waits for a person, listed under *Needs a person*; once they are closed it starts. Without a
+milestone it never starts: give it one, or take the label off.
+
 ### An issue is blocked by an issue outside the scope
 
 Autopilot does not work on the blocker, so the issue waits. With the `"milestone"` scope,

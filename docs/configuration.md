@@ -90,6 +90,7 @@ their defaults.
 | `autopilot.max_parallel` | `null` | How many issues in scope may have a NexKit run or an open NexKit pull request at once (1 to 100); `null` for no limit. |
 | `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started once more when it has posted no run comment and its workflow run ended, at once, or when that run cannot be read, after this many minutes (5 to 1440). A second such command waits for a person. A sweep notices a lost command: the one that a run `route` refused starts when that run ends, and the end of the run that replaced a waiting one in its concurrency group usually starts one too. Nothing notices a dispatch that names no run, as on older GitHub Enterprise Servers, before the first sweep after this time, which in a quiet repository is the hourly schedule. |
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
+| `autopilot.last_in_milestone_label` | `null` | The label that marks an issue to run only once every other issue of its milestone is closed, such as `"last-in-milestone"`. See *Running an issue last* under [Autopilot](#autopilot). |
 | `autopilot.trusted_workflows` | `[]` | Workflow files, such as `["docs-audit.yml"]`, whose issues autopilot takes when their marker names a run that checks out. See [Issues from a workflow](#issues-from-a-workflow). |
 | `autopilot.watch_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, whose runs on the default branch autopilot watches as it watches `merge.after_workflows`, whatever started them, but which NexKit does not start after its merges. File names only, each listed once, none also in `merge.after_workflows`. See *Watching CI that NexKit does not start* under [Autopilot](#autopilot). |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`, each listed once. See [Mentions](#mentions). |
@@ -658,7 +659,8 @@ at once.
   "max_parallel": null,
   "answer": "never",
   "lost_after_minutes": 30,
-  "trusted_workflows": []
+  "trusted_workflows": [],
+  "last_in_milestone_label": null
 }
 ```
 
@@ -683,6 +685,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 | Its last `/nexkit go` stopped as blocked or failed, not for running out of time, and something changed since that round started: a collaborator commented, other than with a command, or an issue that blocks it closed, such as one a person marked as its blocker after the round asked to wait for it | Starts `/nexkit plan`, so the plan holds what changed, then goes on as after any plan. While nothing changed since the round started, the issue waits for a person. A blocker that closed before the round started changes nothing. |
 | Its last `/nexkit go` or fix round ran out of time | Starts `/nexkit plan` once, with a note to split the issue into parts that each fit one session, and to say why the round did not finish. When that plan does not split the issue and needs nobody, starts `/nexkit go`, or `/nexkit fix` on its pull request. |
 | A parent issue whose sub-issues are all closed | With `close_parent_issues`, NexKit closed it already; without, it waits for a person to close it. |
+| Marked to run last, with other issues of its milestone open | Nothing yet: it starts once they are closed. See *Running an issue last* below. |
 | A bug issue that autopilot opened for a CI failure on the default branch | Goes first: it is planned before every other issue in scope. |
 | An issue that autopilot opened for a failure of flaky runs on the default branch | Goes right after those bug issues. |
 | Anything else that needs a person: other questions, a failed run that nothing answered since, a refused merge, a second timeout, a part that runs out of time after an issue above it asked for a split, a second plan with parts titled like the issue, a second plan that is too large and suggests no parts, an issue three levels of parts deep, a pull request that needs a person, a blocker outside the scope | Nothing: a person decides, as without autopilot, and `notify` mentions them once. `nexkit status` lists it under *Needs a person*. Other issues go on, and it does not count toward `max_parallel`. |
@@ -719,6 +722,18 @@ every open issue in scope, in order, and starts the one command that moves it on
   issue adds: a mark that is not needed only slows the work, and touching the same files
   is no reason, since NexKit resolves conflicts. The [`request`
   skill](../skills/request/SKILL.md) has the rules.
+- **Running an issue last.** An issue such as a docs sweep that checks what a milestone
+  changed must run after everything else in it. Name a label in
+  `autopilot.last_in_milestone_label` and put it on the issue. Autopilot then plans it only
+  when every other issue of the same milestone is closed, read at each sweep, so an issue
+  opened after it and the parts of a split count without any *blocked by* mark. Issues of
+  other milestones do not hold it back. `nexkit status` shows it as waiting and names the
+  open issues. So that nothing waits in a circle, it does not wait for an issue above it, or
+  for one that a person marked as *blocked by* it, and of two such issues the older goes
+  first; the parts of a marked issue carry its label and run in that order, unless they say
+  otherwise with *blocked by* marks. A marked issue with no milestone is left alone, and
+  `nexkit status` says why: with the `null` scope it waits for a person, and with the
+  `"milestone"` scope it is outside the scope, like any issue without a milestone.
 - **Trust.** Autopilot skips a person's approval of the plan, so the issue text drives an
   implement session, which can read the secrets of its job. It takes only issues opened by
   someone with write access to the repository; only they and other writers can edit them.

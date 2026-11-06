@@ -495,6 +495,36 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(pipe.gh.comments_matching(5, "answers for the owner")), 1)
         self.assertEqual(len(pipe.gh.comments_matching(5, "@olivia a person is needed")), 1)
 
+    def test_an_issue_of_a_trusted_workflow_runs_like_a_persons(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        cfg = config(autopilot={"trusted_workflows": ["audit.yml"]})
+        pipe = Pipeline(self, cfg, script)
+        pipe.gh.runs[900] = {
+            "id": 900,
+            "path": ".github/workflows/audit.yml",
+            "head_branch": "main",
+            "head_repository": {"full_name": "acme/app"},
+            "event": "schedule",
+            "status": "completed",
+            "created_at": "2026-11-01T10:00:00Z",
+            "updated_at": "2026-11-01T10:10:00Z",
+        }
+        body = "<!-- nexkit:workflow audit.yml 900 -->\nStale docs."
+        pipe.issue(5, body=body, user=BOT_LOGIN)["created_at"] = "2026-11-01T10:05:00Z"
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_an_issue_whose_marker_fails_waits_for_a_person_and_says_why(self):
+        cfg = config(autopilot={"trusted_workflows": ["audit.yml"]})
+        pipe = Pipeline(self, cfg, lambda pipe, inputs: plan())
+        body = "<!-- nexkit:workflow audit.yml 404 -->\nStale docs."
+        pipe.issue(5, body=body, user=BOT_LOGIN)
+        self.assertEqual(pipe.play(), [])
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("its marker names run 404, which does not exist", mention["body"])
+
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done(checks=False)

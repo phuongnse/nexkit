@@ -214,6 +214,7 @@ class ConfigTests(unittest.TestCase):
                 "answer": "never",
                 "lost_after_minutes": 30,
                 "watch_workflows": [],
+                "trusted_workflows": [],
             },
         )
         # An explicit null replaces the default: every open issue.
@@ -461,6 +462,17 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(again, layered)
         where = [call.args[1] for call in checked.call_args_list]
         self.assertEqual(where, [f"stages.{name}" for name in again["stages"]])
+
+    def test_trusted_workflows(self):
+        self.assertEqual(validate({})["autopilot"]["trusted_workflows"], [])
+        listed = {"trusted_workflows": ["docs-audit.yml"]}
+        self.assertEqual(
+            validate({"autopilot": listed})["autopilot"]["trusted_workflows"], ["docs-audit.yml"]
+        )
+        with self.assertRaisesRegex(ConfigError, "autopilot.trusted_workflows"):
+            validate({"autopilot": {"trusted_workflows": [".github/workflows/x.yml"]}})
+        with self.assertRaisesRegex(ConfigError, "autopilot.trusted_workflows"):
+            validate({"autopilot": {"trusted_workflows": "x.yml"}})
 
     def test_github_app(self):
         self.assertIsNone(validate({})["github_app"]["slug"])

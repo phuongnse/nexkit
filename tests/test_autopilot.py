@@ -31,6 +31,19 @@ def pilot(**settings):
     return make_config(autopilot={"enabled": True, **settings})
 
 
+AUDIT_RUN = {
+    "id": 900,
+    "path": ".github/workflows/audit.yml",
+    "head_branch": "main",
+    "head_repository": {"full_name": "acme/app"},
+    "event": "schedule",
+    "status": "completed",
+    "created_at": "2026-11-01T10:00:00Z",
+    "updated_at": "2026-11-01T10:10:00Z",
+    "actor": {"login": "alice"},
+}
+
+
 class AutopilotCase(unittest.TestCase):
     """Issues in milestone 1, and helpers that leave the comments NexKit's runs leave."""
 
@@ -2831,3 +2844,128 @@ class CIWaitTests(AutopilotCase):
                 "main",
             )
         )
+
+
+class TrustedWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_milestone(1)
+        self.cfg = make_config(autopilot={"enabled": True, "trusted_workflows": ["audit.yml"]})
+        self.gh.runs[900] = dict(AUDIT_RUN)
+        self.issue()
+
+    def issue(self, marker="<!-- nexkit:workflow audit.yml 900 -->", user=BOT_LOGIN, number=5):
+        found = self.gh.add_issue(number, body=f"{marker}\nStale docs.", user=user, milestone=1)
+        found["created_at"] = "2026-11-01T10:05:00Z"
+        return found
+
+    def problem(self, cfg=None):
+        return autopilot.distrust(self.gh, self.gh.issues[5], cfg or self.cfg)
+
+    def test_an_issue_of_a_listed_workflow_on_the_default_branch_is_taken(self):
+        self.assertIsNone(self.problem())
+        self.assertTrue(autopilot.taken(self.gh, self.cfg, self.gh.issues[5]))
+        self.gh.runs[900]["status"] = "in_progress"
+        self.gh.runs[900]["updated_at"] = "2026-11-01T10:01:00Z"
+        self.assertIsNone(self.problem())
+
+    def test_with_the_setting_empty_no_issue_of_a_workflow_is_taken(self):
+        found = self.problem(make_config(autopilot={"enabled": True}))
+        self.assertEqual(
+            found, "opened by @github-actions[bot], who cannot write to the repository"
+        )
+
+    def test_a_workflow_that_is_not_listed_is_left_alone(self):
+        self.issue("<!-- nexkit:workflow other.yml 900 -->")
+        self.assertEqual(
+            self.problem(),
+            "its marker names `other.yml`, which autopilot.trusted_workflows does not list",
+        )
+
+    def test_a_marker_that_names_a_run_of_another_workflow_is_left_alone(self):
+        self.gh.runs[900]["path"] = ".github/workflows/other.yml"
+        self.assertEqual(
+            self.problem(), "its marker names `audit.yml`, but run 900 is a run of `other.yml`"
+        )
+
+    def test_a_run_on_another_branch_is_left_alone(self):
+        self.gh.runs[900]["head_branch"] = "feature"
+        self.assertEqual(self.problem(), "run 900 of `audit.yml` did not run on `main`")
+        # GitHub matches a branch by name alone, which a fork's branch can share.
+        self.gh.runs[900].update(head_branch="main", head_repository={"full_name": "x/app"})
+        self.assertEqual(self.problem(), "run 900 of `audit.yml` did not run on `main`")
+
+    def test_a_run_a_pull_request_started_is_left_alone(self):
+        for event in ("pull_request", "pull_request_target"):
+            self.gh.runs[900]["event"] = event
+            self.assertEqual(self.problem(), "run 900 of `audit.yml` did not run on `main`")
+        self.gh.runs[900]["event"] = "issues"
+        self.assertEqual(self.problem(), "run 900 of `audit.yml` was started by `issues`")
+
+    def test_a_run_that_does_not_exist_is_left_alone(self):
+        del self.gh.runs[900]
+        self.assertEqual(self.problem(), "its marker names run 900, which does not exist")
+
+    def test_a_missing_marker_is_left_alone(self):
+        self.issue("Found by the audit.")
+        self.assertEqual(
+            self.problem(),
+            "opened by @github-actions[bot], without the marker of a trusted workflow",
+        )
+        # Text the workflow quotes cannot forge it.
+        self.issue("Quoted:\n<!-- nexkit:workflow audit.yml 900 -->")
+        self.assertIn("without the marker", self.problem())
+
+    def test_a_dispatch_counts_from_a_writer_or_nexkit_own_merge_workflows(self):
+        self.gh.runs[900].update(event="workflow_dispatch", triggering_actor={"login": "alice"})
+        self.assertIsNone(self.problem())
+        self.gh.runs[900]["triggering_actor"] = {"login": "bob"}
+        self.assertEqual(self.problem(), "run 900 of `audit.yml` was started by @bob")
+        self.gh.runs[900]["triggering_actor"] = {"login": BOT_LOGIN}
+        self.assertIn("was started by", self.problem())
+        cfg = make_config(
+            autopilot={"enabled": True, "trusted_workflows": ["audit.yml"]},
+            merge={"auto": True, "after_workflows": ["audit.yml"]},
+        )
+        self.assertIsNone(self.problem(cfg))
+
+    def test_a_run_that_was_not_running_when_the_issue_opened_is_left_alone(self):
+        for created in ("2026-11-01T09:59:00Z", "2026-11-01T10:11:00Z"):
+            self.gh.issues[5]["created_at"] = created
+            self.assertEqual(
+                self.problem(), "run 900 of `audit.yml` was not running when this issue was opened"
+            )
+
+    def test_an_edit_by_someone_without_write_access_leaves_it_alone(self):
+        self.gh.editors[5] = [BOT_LOGIN, "alice"]
+        self.assertIsNone(self.problem())
+        self.gh.editors[5] = [BOT_LOGIN, "bob"]
+        self.assertEqual(self.problem(), "@bob edited it without write access to the repository")
+        self.gh.editors[5] = [""]
+        self.assertEqual(
+            self.problem(),
+            "someone GitHub cannot name edited it without write access to the repository",
+        )
+
+    def test_an_issue_opened_as_the_app_goes_through_the_same_checks(self):
+        app = "nexkit-acme[bot]"
+        state.use_app(app)
+        self.addCleanup(state.BOT_LOGINS.discard, app)
+        self.issue(user=app)
+        self.assertIsNone(self.problem())
+        self.gh.runs[900]["event"] = "issues"
+        self.assertIn("was started by `issues`", self.problem())
+
+    def test_parts_of_such_an_issue_are_trusted_like_it(self):
+        self.gh.add_issue(6, body="<!-- nexkit:part 5 -->\nDo A.", user=BOT_LOGIN, milestone=1)
+        self.gh.parents[6] = 5
+        self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[6], self.cfg))
+        del self.gh.runs[900]
+        self.assertFalse(autopilot.trusted(self.gh, self.gh.issues[6], self.cfg))
+
+    def test_status_says_why_an_issue_is_left_alone(self):
+        del self.gh.runs[900]
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(steps[0]["state"], "waits")
+        self.assertTrue(steps[0]["person"])
+        self.assertEqual(steps[0]["reason"], "its marker names run 900, which does not exist")

@@ -25,7 +25,7 @@ import string
 from datetime import UTC, datetime, timedelta
 
 from .checks import same_test, test_name
-from .config import watched_workflows
+from .config import after_workflow_names, watched_workflows
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
@@ -114,6 +114,11 @@ DEPTH_REASON = f"a part {MAX_DEPTH} levels deep, which autopilot does not split;
 LINEAGE = 8
 # A bug issue that autopilot opened because a workflow failed twice on the default branch,
 # and the commit each of its reports is about.
+# The workflow file and the run that opened an issue, at the start of its text, where
+# nothing the workflow quotes can be.
+WORKFLOW_ISSUE = re.compile(r"\A<!-- nexkit:workflow ([A-Za-z0-9_.-]+) (\d+) -->")
+# What may start a run whose issue autopilot takes; a dispatch only by a writer or NexKit.
+WORKFLOW_EVENTS = ("schedule", "push", "workflow_dispatch")
 CI_BUG_PREFIX = "<!-- nexkit:ci "
 CI_BUG = re.compile(r"\A<!-- nexkit:ci ([A-Za-z0-9_.-]+) -->")
 CI_SHA_PREFIX = "<!-- nexkit:ci-sha "
@@ -317,7 +322,7 @@ def scope(gh, cfg):
 
 def taken(gh, cfg, issue):
     """Whether autopilot works on an issue: in scope, from someone it trusts."""
-    return in_scope(locate(gh, cfg), issue) and trusted(gh, issue)
+    return in_scope(locate(gh, cfg), issue) and trusted(gh, issue, cfg)
 
 
 def in_scope(where, issue):
@@ -334,20 +339,94 @@ def author(issue):
     return (issue.get("user") or {}).get("login") or ""
 
 
-def trusted(gh, issue):
-    """Autopilot skips a person's approval of the plan, so issue text drives an implement
-    session. It takes only issues opened by someone with write access; only they and other
-    writers can edit the issue."""
+def trusted(gh, issue, cfg=None):
+    return distrust(gh, issue, cfg) is None
+
+
+def distrust(gh, issue, cfg=None):
+    """Why autopilot leaves an issue alone, or None. It skips a person's approval of the
+    plan, so issue text drives an implement session. It takes issues opened by someone with
+    write access, since only they and other writers can edit them, and of the issues opened
+    as NexKit's App or the Actions bot those that NexKit opened or a workflow it trusts."""
     login = author(issue)
     if is_bot(login):
-        return _rank(issue) < 2 or _trusted_part(gh, issue)
-    return bool(login) and gh.can_write(login)
+        if _rank(issue) < 2 or _trusted_part(gh, issue, cfg):
+            return None
+        return workflow_problem(gh, issue, cfg)
+    return None if login and gh.can_write(login) else _no_writer(login)
 
 
-def _trusted_part(gh, issue, depth=0):
+def _no_writer(login):
+    return f"opened by @{login or 'an unknown user'}, who cannot write to the repository"
+
+
+def workflow_problem(gh, issue, cfg):
+    """Why an issue that a bot opened is not one that autopilot.trusted_workflows vouches
+    for, or None. Its marker names the run that opened it; GitHub's record of that run
+    proves the claim, and `github-actions[bot]` alone proves nothing, since any workflow of
+    the repository, also on a pull request's branch, can write as it."""
+    listed = cfg["autopilot"]["trusted_workflows"] if cfg else []
+    if not listed:
+        return _no_writer(author(issue))
+    match = WORKFLOW_ISSUE.match(issue.get("body") or "")
+    if not match:
+        return f"opened by @{author(issue)}, without the marker of a trusted workflow"
+    name, run_id = match.group(1), int(match.group(2))
+    if name not in listed:
+        return f"its marker names `{name}`, which autopilot.trusted_workflows does not list"
+    try:
+        run = gh.workflow_run(run_id)
+    except GitHubError as exc:
+        if exc.status != 404:
+            raise
+        return f"its marker names run {run_id}, which does not exist"
+    return _run_problem(gh, cfg, issue, name, run) or _edit_problem(gh, issue)
+
+
+def _run_problem(gh, cfg, issue, name, run):
+    """Why the run `run` did not open this issue as a trusted workflow, or None."""
+    number = run.get("id")
+    found = posixpath.basename(str(run.get("path") or "").split("@")[0])
+    if found != name:
+        return f"its marker names `{name}`, but run {number} is a run of `{found}`"
+    branch = gh.default_branch()
+    if run.get("head_branch") != branch or not on_default_branch(gh, run):
+        return f"run {number} of `{name}` did not run on `{branch}`"
+    event = run.get("event")
+    if event not in WORKFLOW_EVENTS:
+        return f"run {number} of `{name}` was started by `{event}`"
+    actor = (run.get("triggering_actor") or run.get("actor") or {}).get("login") or ""
+    if event == "workflow_dispatch" and not _may_dispatch(gh, cfg, actor, name):
+        return f"run {number} of `{name}` was started by @{actor or 'an unknown user'}"
+    started, opened = parse_iso(run.get("created_at")), parse_iso(issue.get("created_at"))
+    ended = parse_iso(run.get("updated_at")) if run.get("status") == "completed" else None
+    if not started or not opened or opened < started or (ended and opened > ended):
+        return f"run {number} of `{name}` was not running when this issue was opened"
+    return None
+
+
+def _may_dispatch(gh, cfg, actor, name):
+    """Whether a dispatch by `actor` can start a run whose issue autopilot takes: a writer's,
+    or NexKit's own of a workflow in `merge.after_workflows`."""
+    if is_bot(actor):
+        return name in after_workflow_names(cfg)
+    return bool(actor) and gh.can_write(actor)
+
+
+def _edit_problem(gh, issue):
+    """Who changed the issue who may not, or None. A bot is the workflow that opened it, or
+    another of the repository's workflows, which nothing tells apart."""
+    for login in gh.issue_editors(issue["number"]):
+        if not is_bot(login) and not (login and gh.can_write(login)):
+            who = f"@{login}" if login else "someone GitHub cannot name"
+            return f"{who} edited it without write access to the repository"
+    return None
+
+
+def _trusted_part(gh, issue, cfg=None, depth=0):
     """A part that autopilot created: it starts with the part marker, and the issue it
-    names is its parent and is trusted itself, as a part or an issue for a CI failure or
-    flaky runs that NexKit opened."""
+    names is its parent and is trusted itself, as a part, an issue for a CI failure or
+    flaky runs that NexKit opened, or an issue of a trusted workflow."""
     match = PART.match(issue.get("body") or "")
     if not match or depth > 5:
         return False
@@ -355,7 +434,11 @@ def _trusted_part(gh, issue, depth=0):
     if not parent or parent["number"] != int(match.group(1)) or not in_repository(gh, parent):
         return False
     if is_bot(author(parent)):
-        return _rank(parent) < 2 or _trusted_part(gh, parent, depth + 1)
+        return (
+            _rank(parent) < 2
+            or _trusted_part(gh, parent, cfg, depth + 1)
+            or workflow_problem(gh, parent, cfg) is None
+        )
     return gh.can_write(author(parent))
 
 
@@ -954,9 +1037,9 @@ def mention_text(cfg, reason):
 
 def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     number = issue["number"]
-    if not trusted(gh, issue):
-        login = author(issue) or "an unknown user"
-        return _step(issue, "waits", f"opened by @{login}, who cannot write to the repository")
+    left_alone = distrust(gh, issue, cfg)
+    if left_alone:
+        return _step(issue, "waits", left_alone)
     parts = gh.sub_issues(number)
     if parts and all(part.get("state") == "closed" for part in parts):
         # `close_parent_issues` closes it by itself; without it, a person does.

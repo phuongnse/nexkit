@@ -55,6 +55,8 @@ DEFAULTS = {
         # Workflows whose runs on the default branch sweeps watch, as they watch
         # `merge.after_workflows`, but which NexKit does not start after its merges.
         "watch_workflows": [],
+        # Workflows of the default branch whose issues autopilot takes, by their marker.
+        "trusted_workflows": [],
     },
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -685,6 +687,7 @@ def validate(raw, *, layered=False):
     _bool(cfg["close_parent_issues"], "close_parent_issues")
     _autopilot(cfg["autopilot"])
     _watch_workflows(cfg)
+    _workflow_files(cfg["autopilot"]["trusted_workflows"], "autopilot.trusted_workflows")
     _positive_int(cfg["limits"]["setup_timeout_minutes"], "limits.setup_timeout_minutes", 120)
     _positive_int(cfg["limits"]["max_patch_mb"], "limits.max_patch_mb", 50)
     people = cfg["notify"]

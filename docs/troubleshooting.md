@@ -561,6 +561,13 @@ issue"](#agents)). Autopilot never takes an issue opened by someone without writ
 access, because its text would drive an implement session. A person with write access
 reads it as untrusted text, and opens a new issue with what they trust.
 
+An issue that a workflow opened needs its workflow in `autopilot.trusted_workflows` and a
+marker that checks out. The reason names what failed: a workflow that is not listed, a run
+that does not exist, ran on another branch, was started by a pull request or was not running
+when the issue was opened, or an edit by someone without write access. Fix the workflow or
+the setting for the issues it opens next, and open a new issue for this one: see [Issues from
+a workflow](configuration.md#issues-from-a-workflow).
+
 ### An issue is blocked by an issue outside the scope
 
 Autopilot does not work on the blocker, so the issue waits. With the `"milestone"` scope,

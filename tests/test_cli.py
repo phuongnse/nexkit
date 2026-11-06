@@ -592,6 +592,21 @@ class InitDoctorTests(unittest.TestCase):
         workflow.write_text(inherit)
         self.assertFalse(any("does not pass it" in m for _, m in scaffold.doctor(self.root)))
 
+    def test_doctor_checks_the_workflows_autopilot_trusts(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["autopilot"] = {"trusted_workflows": ["audit.yml"]}
+        path.write_text(json.dumps(raw))
+        problem = (
+            False,
+            "autopilot.trusted_workflows: .github/workflows/audit.yml does not exist",
+        )
+        self.assertIn(problem, scaffold.doctor(self.root))
+        (self.root / ".github/workflows/audit.yml").write_text("on: push\n")
+        ok = (True, "autopilot.trusted_workflows: autopilot takes the issues audit.yml opens")
+        self.assertIn(ok, scaffold.doctor(self.root))
+
     def test_doctor_refuses_a_configuration_without_the_app(self):
         self.github_app.return_value = (None, [])
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])

@@ -290,6 +290,14 @@ def _watched_workflow(root, name):
     return (True, f"autopilot.watch_workflows: autopilot watches the runs of {name}")
 
 
+def _trusted_workflow(root, name):
+    """Whether a workflow of autopilot.trusted_workflows exists."""
+    path = root / ".github/workflows" / name
+    if not path.is_file():
+        return (False, f"autopilot.trusted_workflows: {path.relative_to(root)} does not exist")
+    return (True, f"autopilot.trusted_workflows: autopilot takes the issues {name} opens")
+
+
 def workflow_name(root, name):
     """The name GitHub gives the workflow file `name`: its `name:`, else its path. None
     when the file does not exist."""
@@ -699,6 +707,7 @@ def doctor(root, key_file=None):
             _after_merge_workflow(root, name) for name in configuration.after_workflow_names(cfg)
         ]
         findings += [_watched_workflow(root, n) for n in cfg["autopilot"]["watch_workflows"]]
+        findings += [_trusted_workflow(root, n) for n in cfg["autopilot"]["trusted_workflows"]]
         problem = configuration.app_problem(cfg)
         if problem:
             findings.append((False, problem))

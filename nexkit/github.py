@@ -60,6 +60,21 @@ query($owner: String!, $name: String!, $number: Int!) {
 """
 
 
+# Who edited an issue's text: GitHub keeps each edit, and the first entry is its author.
+EDITORS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      userContentEdits(first: 100) {
+        pageInfo { hasNextPage }
+        nodes { editor { __typename login } }
+      }
+    }
+  }
+}
+"""
+
+
 def _required_state(item):
     """(name, "failed" | "pending" | "passed") of a check run or a commit status that
     GraphQL lists for a commit. A check run has a conclusion once it completed."""
@@ -220,6 +235,26 @@ class GitHub:
 
     def sub_issues(self, number):
         return self.paginate(f"{self._repo}/issues/{number}/sub_issues")
+
+    def issue_editors(self, number):
+        """The logins of everyone who changed an issue's text or title, its author too, as
+        REST writes them. "" stands for someone GitHub cannot name: a deleted account, or
+        edits beyond the most it lists."""
+        owner, name = self.repository.split("/")
+        found = self.graphql(EDITORS_QUERY, {"owner": owner, "name": name, "number": number})
+        edits = ((found.get("repository") or {}).get("issue") or {}).get("userContentEdits") or {}
+        editors = set()
+        for node in edits.get("nodes") or []:
+            editor = (node or {}).get("editor") or {}
+            login = editor.get("login") or ""
+            # GraphQL names a bot without the suffix that REST gives it.
+            editors.add(f"{login}[bot]" if editor.get("__typename") == "Bot" else login)
+        if (edits.get("pageInfo") or {}).get("hasNextPage"):
+            editors.add("")
+        for event in self.paginate(f"{self._repo}/issues/{number}/events"):
+            if event.get("event") == "renamed":
+                editors.add((event.get("actor") or {}).get("login") or "")
+        return sorted(editors)
 
     def blocked_by(self, number):
         """The issues that block this one (GitHub issue dependencies), or [] where the API

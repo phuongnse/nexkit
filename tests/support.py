@@ -105,6 +105,7 @@ class FakeGitHub:
     def __init__(self, repository="acme/app"):
         self.repository = repository
         self.roles = {"alice": "write", "olivia": "admin", "bob": "read"}
+        self.editors = {}
         self.issues = {}
         self.issue_comments = defaultdict(list)
         self.pulls = {}
@@ -384,6 +385,9 @@ class FakeGitHub:
 
     def list_pulls(self, state="open", limit=1000):
         return [p for p in self.pulls.values() if state == "all" or p["state"] == state]
+
+    def issue_editors(self, number):
+        return self.editors.get(number, [])
 
     def workflow_run(self, run_id):
         if run_id not in self.runs:

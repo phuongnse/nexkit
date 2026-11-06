@@ -154,7 +154,8 @@ files or repository settings, and wait for confirmation.
    moves on when an issue closes; `"scope": null` takes every open issue instead, in
    every milestone and without one, so *blocked by* relationships alone order the work
    across milestones. Say that it skips their approval of each plan, that it
-   takes only issues opened by people with write access, and that it stops on questions,
+   takes only issues opened by people with write access (and, with
+   `"trusted_workflows"`, those of the workflows it lists), and that it stops on questions,
    blocked or failed runs and mentions `notify` (after a stopped `/nexkit go`, a person's
    comment or a blocker that closes lets it plan again), so recommend setting `notify` with it
    (`nexkit init --notify <login>`, or `"notify": ["<login>"]`). `"max_parallel": <n>` limits how many

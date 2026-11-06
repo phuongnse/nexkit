@@ -1398,4 +1398,8 @@ once the limit has reset.
   that NexKit opens itself, the parts of a split and the issues for CI failures and flaky
   runs, are trusted by a marker at the start of their text; such an issue opened by the
   App or the Actions bot is NexKit's, unless another workflow of the repository that holds
-  their token writes untrusted text there.
+  their token writes untrusted text there. An issue from a workflow in
+  `autopilot.trusted_workflows` is trusted only when GitHub's record of the run its marker
+  names confirms it: the listed file, the default branch, an event a writer or a schedule
+  controls, and a run that was running when the issue was opened (see [Issues from a
+  workflow](configuration.md#issues-from-a-workflow)).

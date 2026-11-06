@@ -90,6 +90,7 @@ their defaults.
 | `autopilot.max_parallel` | `null` | How many issues in scope may have a NexKit run or an open NexKit pull request at once (1 to 100); `null` for no limit. |
 | `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started once more when it has posted no run comment and its workflow run ended, at once, or when that run cannot be read, after this many minutes (5 to 1440). A second such command waits for a person. A sweep notices a lost command: the one that a run `route` refused starts when that run ends, and the end of the run that replaced a waiting one in its concurrency group usually starts one too. Nothing notices a dispatch that names no run, as on older GitHub Enterprise Servers, before the first sweep after this time, which in a quiet repository is the hourly schedule. |
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
+| `autopilot.trusted_workflows` | `[]` | Workflow files, such as `["docs-audit.yml"]`, whose issues autopilot takes when their marker names a run that checks out. See [Issues from a workflow](#issues-from-a-workflow). |
 | `autopilot.watch_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, whose runs on the default branch autopilot watches as it watches `merge.after_workflows`, whatever started them, but which NexKit does not start after its merges. File names only, each listed once, none also in `merge.after_workflows`. See *Watching CI that NexKit does not start* under [Autopilot](#autopilot). |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`, each listed once. See [Mentions](#mentions). |
 
@@ -656,7 +657,8 @@ at once.
   "scope": "milestone",
   "max_parallel": null,
   "answer": "never",
-  "lost_after_minutes": 30
+  "lost_after_minutes": 30,
+  "trusted_workflows": []
 }
 ```
 
@@ -720,7 +722,9 @@ every open issue in scope, in order, and starts the one command that moves it on
 - **Trust.** Autopilot skips a person's approval of the plan, so the issue text drives an
   implement session, which can read the secrets of its job. It takes only issues opened by
   someone with write access to the repository; only they and other writers can edit them.
-  `nexkit status` shows the issues it leaves alone and why.
+  It also takes the issues NexKit opens itself, and those of a [trusted
+  workflow](#issues-from-a-workflow). `nexkit status` shows the issues it leaves alone and
+  why.
 - **At most `max_parallel` at once.** An issue counts while a run on it is running or
   paused, while its pull request is open and needs nobody, and while a command that
   autopilot started has not run yet. An issue that waits for a person does not count. A
@@ -920,6 +924,55 @@ gh workflow run nexkit.yml -f command=autopilot -f number=autopilot
 ```
 
 See [How it works](how-it-works.md#autopilot).
+
+### Issues from a workflow
+
+A workflow can find work and file it, such as a dependency scan that turns alerts into
+issues, or an audit that reads the docs against the code. `github-actions[bot]` as an
+issue's author proves little: any workflow of the repository can write as it, also on a
+pull request. So autopilot leaves such issues alone, unless the setting lists the workflow:
+
+```json
+"autopilot": {"trusted_workflows": ["docs-audit.yml"]}
+```
+
+The default is `[]`: no issue that a workflow opens is taken. A listed workflow writes a
+marker as the first line of the issue's text, with its file name and its run:
+
+```yaml
+- run: |
+    body="<!-- nexkit:workflow docs-audit.yml $GITHUB_RUN_ID -->
+    $(cat findings.md)"
+    gh issue create --title "Docs audit: stale sections" --body "$body"
+  env:
+    GH_TOKEN: ${{ github.token }}
+```
+
+The marker counts only on the first line, so text the workflow quotes cannot forge it. The
+workflow file is a change to `.github/`, which `protected_paths` keeps from the agents and
+your rules keep for your writers, so a run of it on the default branch is as trusted as a
+writer. NexKit checks that through the API. It takes an issue opened as `github-actions[bot]`,
+or as NexKit's [App](#the-github-app) by a workflow that holds its token, when its marker
+names a run that:
+
+- belongs to a listed workflow file, the one the marker names;
+- ran on the default branch of this repository;
+- was started by a schedule, a push, a writer's `workflow_dispatch`, or NexKit's own
+  dispatch of a workflow in `merge.after_workflows`, never by a pull request;
+- was running when the issue was opened.
+
+An edit of the issue's title or text by anyone but a writer or a workflow of the repository
+makes autopilot leave it alone too; a bot's edit cannot be told apart from the workflow's
+own. An issue that fails any check waits for a person, and `nexkit status` says which one.
+
+The check proves that the run opened the issue, not what its text says. A workflow that puts
+outside text in an issue, such as a package's changelog, hands that text to an implement
+session, so list only workflows whose output you would act on unread.
+
+GitHub starts no workflow for an issue opened with `github.token`, so the next sweep takes
+it: at the hourly schedule, or sooner when the workflow dispatches one with
+`gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`. Parts of a split of
+such an issue are trusted like the issue.
 
 ## Mentions
 

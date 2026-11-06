@@ -12,6 +12,7 @@ from unittest import mock
 import nexkit
 import nexkit.config
 from nexkit import app, cli, maintain, scaffold
+from nexkit.globs import branch_matches
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
 from nexkit.state import (
     ACTIONS_BOT,
@@ -212,6 +213,172 @@ class InitDoctorTests(unittest.TestCase):
             (False, "merge.after_workflows[1].every must be an integer from 1 to 1000"),
             scaffold.doctor(self.root),
         )
+
+    def after_merge_findings(self, text, branch="main"):
+        """What doctor says about ci.yml with `text`, in merge.after_workflows, about a
+        merge also starting it."""
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--force"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["merge"]["after_workflows"] = ["ci.yml"]
+        path.write_text(json.dumps(cfg))
+        (self.root / ".github/workflows/ci.yml").write_text(text)
+        with mock.patch.object(scaffold, "default_branch_of", return_value=branch):
+            findings = scaffold.doctor(self.root)
+        return [m for ok, m in findings if not ok and "a merge also starts" in m]
+
+    def test_doctor_warns_of_an_after_merge_workflow_that_a_push_also_starts(self):
+        dispatch = "  workflow_dispatch:\n"
+        for how, text in (
+            ("no branch filter", f"on:\n  push:\n{dispatch}"),
+            ("no branch filter", "on: push\n"),
+            ("no branch filter", "on: [push, workflow_dispatch]\n"),
+            ("no branch filter", "on:\n  - push\n  - workflow_dispatch\n"),
+            ("no branch filter", "'on':\n    push:\n        paths: ['src/**']\n"),
+            ("'branches' include main", "on:\n  push:\n    branches: [main]\n"),
+            ("'branches' include main", "on:\n  push:\n    branches:\n      - 'ma*'\n"),
+            ("'branches' include main", "on:\n  push:\n    branches:\n    - main\n"),
+            ("'branches' include main", "on:\n  push:\n    branches: ['**', '!dev']\n"),
+            ("'branches' include main", "on: {push: {branches: [main]}, pull_request: {}}\n"),
+            ("'branches' include main", "on:\n  push: {branches: [main]}\n"),
+            ("no branch filter", "on: {push: {}, workflow_dispatch: {}}\n"),
+            ("no branch filter", "on:\n  push: null\n"),
+            (
+                "'branches-ignore' leaves main out",
+                "on:\n  push:\n    branches-ignore: ['nexkit/**', 'design/**']\n",
+            ),
+        ):
+            [found] = self.after_merge_findings(text)
+            self.assertIn(how, found)
+            self.assertIn("'push' trigger", found)
+            self.assertIn("leaves main out", found)
+
+    def test_doctor_says_nothing_of_an_after_merge_workflow_a_merge_does_not_start(self):
+        for text in (
+            "on:\n  workflow_dispatch:\n  pull_request:\n    branches: [main]\n",
+            "on: workflow_dispatch\n",
+            "on:\n  push:\n    branches: [develop, 'release/*']\n",
+            "on:\n  push:\n    branches: ['**', '!main']\n",
+            "on:\n  push:\n    branches-ignore: [main]\n",
+            "on:\n  push:\n    branches-ignore:\n      - 'ma*'\n",
+            "on:\n  push:\n    tags: ['v*']\n",
+            "on: {pull_request: {}, workflow_dispatch: {}}\n",
+            "on: {push: {branches-ignore: [main]}}\n",
+            # A comment is no trigger.
+            "on:\n  # push:\n  workflow_dispatch:\n",
+        ):
+            self.assertEqual(self.after_merge_findings(text), [], text)
+
+    def test_the_default_branch_decides_whether_a_merge_starts_it(self):
+        text = "on:\n  push:\n    branches: [main]\n"
+        self.assertEqual(self.after_merge_findings(text, "trunk"), [])
+
+    def test_a_branch_filter_reads_as_github_reads_it(self):
+        for pattern, branch, found in (
+            ("main", "main", True),
+            ("main", "maintenance", False),
+            ("re*", "release", True),
+            ("re*", "release/1", False),
+            ("re**", "release/1", True),
+            ("v[12]", "v2", True),
+            ("v[12]", "v3", False),
+            ("a.b", "axb", False),
+            ("[", "main", False),
+        ):
+            self.assertEqual(branch_matches(pattern, branch), found, pattern)
+
+    def doctor_online(self, answers):
+        """`doctor` with `gh` answering as `answers` says, by part of an argument."""
+
+        def fake_gh(*args):
+            if args[:2] == ("auth", "status"):
+                return "Logged in"
+            for key, value in answers.items():
+                if any(key in arg for arg in args):
+                    return value
+            return None
+
+        with (
+            mock.patch.object(scaffold, "repository_of", return_value="acme/app"),
+            mock.patch.object(scaffold, "_gh", side_effect=fake_gh),
+        ):
+            return scaffold.doctor(self.root)
+
+    def label_findings(self, label, answers):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--force"])
+        path = self.root / ".nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["autopilot"] = {"last_in_milestone_label": label}
+        path.write_text(json.dumps(raw))
+        return [
+            (ok, message)
+            for ok, message in self.doctor_online(answers)
+            if "last_in_milestone_label" in message
+        ]
+
+    def test_doctor_warns_of_a_label_to_run_last_that_the_repository_lacks(self):
+        [(ok, found)] = self.label_findings("run last", {})
+        self.assertFalse(ok)
+        self.assertIn("names `run last`, which acme/app does not have", found)
+        self.assertIn("gh label create 'run last' --repo acme/app", found)
+
+    def test_doctor_accepts_a_label_to_run_last_that_the_repository_has(self):
+        [(ok, found)] = self.label_findings("last", {"labels/last": "last\n"})
+        self.assertTrue(ok, found)
+
+    def test_doctor_warns_of_a_label_that_differs_in_case_since_nexkit_compares_it_exactly(self):
+        [(ok, found)] = self.label_findings("last", {"labels/last": "Last\n"})
+        self.assertFalse(ok)
+        self.assertIn("spells the label `Last`", found)
+
+    def test_doctor_asks_about_no_label_without_the_setting(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        findings = self.doctor_online({})
+        self.assertFalse(any("last_in_milestone_label" in m for _, m in findings))
+
+    def init_with_label(self, label, answers):
+        calls = []
+
+        def fake_gh(*args):
+            calls.append(args)
+            for key, value in answers.items():
+                if any(key in arg for arg in args):
+                    return value
+            return None
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(scaffold, "repository_of", return_value="acme/app"),
+            mock.patch.object(scaffold, "_gh", side_effect=fake_gh),
+            contextlib.redirect_stdout(output),
+        ):
+            flags = ["--last-in-milestone-label", label, "--app-slug", APP["slug"], "--force"]
+            with mock.patch.object(scaffold, "_refuse_without_secrets"):
+                code = cli.main(["init", "--repo", str(self.root), "--check", "t=true", *flags])
+        self.assertEqual(code, 0)
+        raw = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(raw["autopilot"]["last_in_milestone_label"], label)
+        return calls, output.getvalue()
+
+    def test_init_creates_the_label_to_run_last_when_it_is_missing(self):
+        calls, output = self.init_with_label("run last", {"create": "ok"})
+        self.assertIn(("label", "create", "run last", "--repo", "acme/app"), calls)
+        self.assertIn("Created the label `run last` on acme/app.", output)
+
+    def test_init_keeps_a_label_to_run_last_that_exists(self):
+        calls, output = self.init_with_label("last", {"labels/last": "last\n"})
+        self.assertFalse(any(args[0] == "label" for args in calls))
+        self.assertNotIn("the label", output)
+
+    def test_init_says_how_to_create_a_label_it_could_not(self):
+        _, output = self.init_with_label("last", {})
+        self.assertIn("Could not create the label `last`", output)
+        self.assertIn("gh label create last --repo acme/app", output)
+
+    def test_init_says_how_to_create_the_label_without_a_github_remote(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "t=true", "--force"])
+        line = scaffold.ensure_label(self.root, "last")
+        self.assertIn("gh label create last", line)
 
     def test_concurrency_group_is_on_the_job(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])

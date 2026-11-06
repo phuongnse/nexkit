@@ -619,7 +619,9 @@ starts every listed workflow that is due on the base branch with `workflow_dispa
 - Each workflow needs a `workflow_dispatch` trigger without required inputs, for example
   `on: {pull_request: {}, workflow_dispatch: {}}`.
   `nexkit init --after-workflow FILE`, repeated for each file, sets the list.
-  `nexkit doctor` warns when a listed file is missing or has no such trigger.
+  `nexkit doctor` warns when a listed file is missing or has no such trigger, and when a
+  `push` trigger also runs it on the default branch: by `branches`, by a `branches-ignore`
+  that leaves that branch out, or by no filter.
 - With autopilot, a finished run starts a sweep, so a failure is noticed within minutes;
   see *When a finished run is noticed* under [Autopilot](#autopilot).
 - The run uses the base branch's newest commit when it starts, normally the merge commit.
@@ -754,7 +756,10 @@ every open issue in scope, in order, and starts the one command that moves it on
   skill](../skills/request/SKILL.md) has the rules.
 - **Running an issue last.** An issue such as a docs sweep that checks what a milestone
   changed must run after everything else in it. Name a label in
-  `autopilot.last_in_milestone_label` and put it on the issue. Autopilot then plans it only
+  `autopilot.last_in_milestone_label` and put it on the issue. `nexkit init
+  --last-in-milestone-label LABEL` sets it and creates the label when it is missing, and
+  `nexkit doctor` reports a label the repository does not have, since no issue can carry it,
+  and one spelled otherwise, since NexKit compares it exactly. Autopilot then plans it only
   when every other issue of the same milestone is closed, read at each sweep, so an issue
   opened after it and the parts of a split count without any *blocked by* mark. Issues of
   other milestones do not hold it back. `nexkit status` shows it as waiting and names the
@@ -1526,7 +1531,9 @@ Actions bot are left alone: close them, and the next failure opens a new one.
    and check the rules that restrict who may push.
 8. Expect more of your own CI: pushes and pull requests by NexKit now start it. Workflows
    you listed in `merge.after_workflows` also start from a merge when they have a `push`
-   trigger for the default branch, so remove one of the two.
+   trigger for the default branch, so remove one of the two. `nexkit doctor` names each such
+   workflow, whether by `branches`, by a `branches-ignore` that leaves the default branch
+   out, or by no filter.
 
 ### Label scope removed in 5.0
 

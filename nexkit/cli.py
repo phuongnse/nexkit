@@ -94,12 +94,17 @@ def cmd_init(args):
         evidence=args.evidence_artifact,
         after_workflows=args.after_workflow,
         watch_workflows=args.watch_workflow,
+        last_label=args.last_in_milestone_label,
         github_app=github_app,
     )
     for path in written:
         print(f"wrote {path}")
     for line in app_lines:
         print(line)
+    if args.last_in_milestone_label:
+        line = scaffold.ensure_label(args.repo, args.last_in_milestone_label)
+        if line:
+            print(line)
     print(
         "Next: review the files, set the secret each agent in .nexkit/config.json names "
         "(gh secret set CLAUDE_CODE_OAUTH_TOKEN), commit both files to the default branch, "
@@ -700,6 +705,12 @@ def build_parser():
         metavar="FILE",
         help="A workflow file, such as nightly.yml, whose runs on the default branch autopilot "
         "watches but NexKit does not start (autopilot.watch_workflows); repeat for more",
+    )
+    p.add_argument(
+        "--last-in-milestone-label",
+        metavar="LABEL",
+        help="The label of an issue that runs after the rest of its milestone "
+        "(autopilot.last_in_milestone_label); init creates it when it is missing",
     )
     p.add_argument(
         "--model",

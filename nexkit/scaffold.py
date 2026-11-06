@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 from importlib import resources
 from pathlib import Path
+from urllib.parse import quote
 
 from . import __version__, app
 from . import config as configuration
+from .globs import branch_matches
 from .runtimes import DECLARED_SECRETS, PROVIDERS
 
 KIT_REPOSITORY = "phuongnse/nexkit"
@@ -210,6 +213,7 @@ def init(
     evidence=(),
     after_workflows=(),
     watch_workflows=(),
+    last_label=None,
     github_app=None,
 ):
     root = Path(root)
@@ -248,6 +252,8 @@ def init(
     watch_workflows = list(dict.fromkeys(watch_workflows))
     if watch_workflows:
         raw["autopilot"] = {"watch_workflows": watch_workflows}
+    if last_label:
+        raw.setdefault("autopilot", {})["last_in_milestone_label"] = last_label
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")
@@ -297,6 +303,33 @@ def repository_of(root):
     return match.group(1) if match else None
 
 
+def repository_label(repo, label):
+    """The name of the label `label` of `repo`, as GitHub, which ignores case, finds it, or
+    None."""
+    found = _gh("api", f"repos/{repo}/labels/{quote(label, safe='')}", "-q", ".name")
+    return found.strip() if found else None
+
+
+def _label_command(label, repo=None):
+    return f"gh label create {shlex.quote(label)}" + (f" --repo {repo}" if repo else "")
+
+
+def ensure_label(root, label):
+    """Create `label`, which `nexkit init` set as `autopilot.last_in_milestone_label`, when
+    the repository lacks it. Returns a line for the person, or "" with nothing to say."""
+    repo = repository_of(root)
+    if not repo:
+        return f"Create the label in the repository: '{_label_command(label)}'"
+    found = repository_label(repo, label)
+    if found == label:
+        return ""
+    if found:
+        return f"{repo} spells the label `{found}`; NexKit compares `{label}` exactly."
+    if _gh("label", "create", label, "--repo", repo) is None:
+        return f"Could not create the label `{label}`: run '{_label_command(label, repo)}'"
+    return f"Created the label `{label}` on {repo}."
+
+
 def _uncommented(text):
     return re.sub(r"(^|\s)#.*", "", text)
 
@@ -314,6 +347,120 @@ def _after_merge_workflow(root, name):
             "so NexKit cannot start it after a merge",
         )
     return (True, f"merge.after_workflows: {name} can be started after a merge")
+
+
+def _items(text):
+    """The items of a YAML value on one line: a word, or a `[list]` of them."""
+    return [item.strip(" \t'\"") for item in text.strip(" \t[]").split(",") if item.strip(" \t")]
+
+
+def _indent(line):
+    return len(line) - len(line.lstrip())
+
+
+def push_filters(workflow):
+    """The filters of a workflow's `push` trigger, such as {"branches": ["main"]}, or None
+    without that trigger. Reads `on: push`, a list of events, a `{mapping}` on one line and
+    the usual block form, at any indent."""
+    lines = _uncommented(workflow).splitlines()
+    found = next(
+        (
+            (at, match.group(1).strip())
+            for at, line in enumerate(lines)
+            if (match := re.fullmatch(r"""['"]?on['"]?:(.*)""", line))
+        ),
+        None,
+    )
+    if found is None:
+        return None
+    start, inline = found
+    if inline.startswith("{"):
+        return _flow_push(inline)
+    if inline:
+        return {} if "push" in _items(inline) else None
+    block = []
+    for line in lines[start + 1 :]:
+        if line.strip() and not line[0].isspace():
+            break
+        if line.strip():
+            block.append(line)
+    events = _indent(block[0]) if block else 0
+    for at, line in enumerate(block):
+        text = line.strip()
+        if _indent(line) != events:
+            continue
+        if text.startswith("-") and _items(text[1:]) == ["push"]:
+            return {}
+        match = re.fullmatch(r"""['"]?push['"]?:(.*)""", text)
+        if match:
+            inline = match.group(1).strip()
+            return _flow_push(f"push: {inline}") if inline else _filters(block[at + 1 :], events)
+    return None
+
+
+def _flow_push(text):
+    """The filters of `push` in a `{mapping}` on one line, or None without it."""
+    match = re.search(r"\bpush\b\s*:?\s*(\{.*?\})?", text)
+    if not match:
+        return None
+    found = re.findall(r"([a-z-]+)\s*:\s*(\[[^\]]*\]|[^,{}\s]+)", match.group(1) or "")
+    return {key: _items(value) for key, value in found}
+
+
+def _filters(lines, events):
+    """The filters in `lines`, which follow the `push:` of an event at the indent `events`."""
+    filters, key = {}, None
+    for line in lines:
+        if _indent(line) <= events:
+            break
+        text = line.strip()
+        match = re.fullmatch(r"([a-z-]+):(.*)", text)
+        if match:
+            key = match.group(1)
+            filters[key] = _items(match.group(2))
+        elif key and text.startswith("-"):
+            filters[key] += _items(text[1:])
+    return filters
+
+
+def _pushes_to(filters, branch):
+    """How the filters of a `push` trigger let a push to `branch` through, or None, as
+    GitHub reads them: `branches` with its `!` patterns, the last match deciding, or
+    `branches-ignore`. With neither, `tags` means that only tags start the workflow."""
+    if "branches" in filters:
+        listed = False
+        for pattern in filters["branches"]:
+            negated = pattern.startswith("!")
+            if branch_matches(pattern.removeprefix("!"), branch):
+                listed = not negated
+        return f"its 'branches' include {branch}" if listed else None
+    if "branches-ignore" in filters:
+        if any(branch_matches(pattern, branch) for pattern in filters["branches-ignore"]):
+            return None
+        return f"its 'branches-ignore' leaves {branch} out"
+    if "tags" in filters or "tags-ignore" in filters:
+        return None
+    return "it has no branch filter"
+
+
+def _after_merge_push(root, name, branch):
+    """Findings: a workflow of merge.after_workflows that a push to the default branch also
+    starts. NexKit's merge is such a push, so it runs after every merge and again at its
+    count."""
+    path = root / ".github/workflows" / name
+    filters = push_filters(path.read_text(errors="replace")) if path.is_file() else None
+    how = None if filters is None else _pushes_to(filters, branch)
+    if not how:
+        return []
+    return [
+        (
+            False,
+            f"merge.after_workflows: a merge also starts {name} through its 'push' trigger: "
+            f"{how}. It runs after every merge and again when NexKit starts it; change that "
+            f"trigger so that it leaves {branch} out, or take {name} out of "
+            "merge.after_workflows",
+        )
+    ]
 
 
 def _watched_workflow(root, name):
@@ -671,6 +818,33 @@ def _unheard(cfg):
     ]
 
 
+def _last_label(cfg, repo):
+    """Findings: the repository has the label that marks an issue to run last. NexKit
+    compares it exactly, so another spelling carries nothing either."""
+    label = cfg["autopilot"]["last_in_milestone_label"]
+    if not label:
+        return []
+    setting = "autopilot.last_in_milestone_label"
+    found = repository_label(repo, label)
+    if found == label:
+        return [(True, f"{setting}: {repo} has the label `{label}`")]
+    if found:
+        return [
+            (
+                False,
+                f"{setting} is `{label}`, but {repo} spells the label `{found}`, and NexKit "
+                "compares it exactly; change one of them",
+            )
+        ]
+    return [
+        (
+            False,
+            f"{setting} names `{label}`, which {repo} does not have, so no issue can carry it "
+            f"and nothing runs last: run '{_label_command(label, repo)}'",
+        )
+    ]
+
+
 def _secrets_set(cfg, names, repo):
     """Findings: a secret of each agent that a stage uses is set in the repository."""
     findings = []
@@ -783,9 +957,11 @@ def doctor(root, key_file=None, app_id=None):
         findings.append((True, f"{configuration.CONFIG_PATH} is valid"))
         if not cfg["checks"]:
             findings.append((False, "No checks configured; NexKit cannot verify changes"))
-        findings += [
-            _after_merge_workflow(root, name) for name in configuration.after_workflow_names(cfg)
-        ]
+        after = configuration.after_workflow_names(cfg)
+        findings += [_after_merge_workflow(root, name) for name in after]
+        branch = default_branch_of(root) if after else None
+        for name in after:
+            findings += _after_merge_push(root, name, branch)
         findings += [_watched_workflow(root, n) for n in cfg["autopilot"]["watch_workflows"]]
         findings += [_trusted_workflow(root, n) for n in cfg["autopilot"]["trusted_workflows"]]
         problem = configuration.app_problem(cfg)
@@ -827,6 +1003,7 @@ def doctor(root, key_file=None, app_id=None):
     names = secret_names(repo) or set()
     if cfg:
         findings += _secrets_set(cfg, names, repo)
+        findings += _last_label(cfg, repo)
     if cfg and not configuration.app_problem(cfg):
         findings += _app_secrets(cfg, names, repo)
         findings += _app_on_github(cfg, repo, key_file, app_id)

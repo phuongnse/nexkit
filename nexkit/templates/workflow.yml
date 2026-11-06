@@ -16,8 +16,8 @@ on:
   schedule:
     - cron: "23 * * * *" # usage_limit.resume, conflicts.auto_resolve, autopilot
   # autopilot with merge.after_workflows or autopilot.watch_workflows: a finished run of
-  # those workflows on the default branch starts a sweep at once. Name each workflow as its
-  # `name:` does.
+  # those workflows on the default branch starts a sweep at once, also a run that NexKit
+  # started. Name each workflow as its `name:` does.
   # workflow_run:
   #   workflows: [CI]
   #   types: [completed]
@@ -42,12 +42,12 @@ on:
         type: string
         default: "false"
 
+# Read only: NexKit writes as the repository's GitHub App (github_app in the config).
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  statuses: write
-  actions: write
+  contents: read
+  issues: read
+  pull-requests: read
+  actions: read
   checks: read
 
 jobs:
@@ -68,5 +68,5 @@ jobs:
       nexkit_repository: __KIT_REPO__
       nexkit_ref: __KIT_REF__
     # The pipeline passes each job only the secrets .nexkit/config.json names for it (its
-    # stages' agents, or the push token), so it can read them by those names.
+    # stages' agents, or the App's), so it can read them by those names.
     secrets: inherit

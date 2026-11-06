@@ -1,0 +1,163 @@
+# Restore and save the caches in `cache` of .nexkit/config.json, for a workflow of the
+# repository: `uses: phuongnse/nexkit/cache@<ref>`, after the checkout and before setup. Each
+# entry gets the key that NexKit's runs restore (.github/actions/restore-caches), so a
+# repository states its caches once. NexKit's own jobs never use this action: they run code
+# the agent wrote, and only restore.
+#
+# It saves, at the end of a successful job, only on the base branch; caches saved elsewhere
+# are not visible to NexKit. Other refs only restore. A workflow cannot loop over steps, so
+# there are two steps per possible entry: MAX_CACHES in nexkit/config.py.
+name: NexKit caches
+description: Restore the caches in .nexkit/config.json, and save them on the base branch
+inputs:
+  repo:
+    description: The repository checkout, relative to the workspace
+    default: "."
+  base:
+    description: The branch that saves the caches
+    default: ${{ github.event.repository.default_branch }}
+runs:
+  using: composite
+  steps:
+    - id: python
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: "3.12"
+        update-environment: false # repository commands keep their own Python
+    - id: plan
+      continue-on-error: true # such as on a branch from before .nexkit/config.json
+      shell: bash
+      run: '"$NEXKIT_PYTHON" "$GITHUB_ACTION_PATH/../bin/nexkit" cache --save --repo "$NEXKIT_REPO" --base "$NEXKIT_BASE"'
+      env:
+        NEXKIT_PYTHON: ${{ steps.python.outputs.python-path }}
+        NEXKIT_REPO: ${{ inputs.repo }}
+        NEXKIT_BASE: ${{ inputs.base }}
+    - id: save1
+      if: steps.plan.outputs.name1 && steps.plan.outputs.save == 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths1 }}
+        key: ${{ steps.plan.outputs.prefix1 }}${{ hashFiles(steps.plan.outputs.files1) }}
+        restore-keys: ${{ steps.plan.outputs.prefix1 }}
+    - id: cache1
+      if: steps.plan.outputs.name1 && steps.plan.outputs.save != 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths1 }}
+        key: ${{ steps.plan.outputs.prefix1 }}${{ hashFiles(steps.plan.outputs.files1) }}
+        restore-keys: ${{ steps.plan.outputs.prefix1 }}
+    - id: save2
+      if: steps.plan.outputs.name2 && steps.plan.outputs.save == 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths2 }}
+        key: ${{ steps.plan.outputs.prefix2 }}${{ hashFiles(steps.plan.outputs.files2) }}
+        restore-keys: ${{ steps.plan.outputs.prefix2 }}
+    - id: cache2
+      if: steps.plan.outputs.name2 && steps.plan.outputs.save != 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths2 }}
+        key: ${{ steps.plan.outputs.prefix2 }}${{ hashFiles(steps.plan.outputs.files2) }}
+        restore-keys: ${{ steps.plan.outputs.prefix2 }}
+    - id: save3
+      if: steps.plan.outputs.name3 && steps.plan.outputs.save == 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths3 }}
+        key: ${{ steps.plan.outputs.prefix3 }}${{ hashFiles(steps.plan.outputs.files3) }}
+        restore-keys: ${{ steps.plan.outputs.prefix3 }}
+    - id: cache3
+      if: steps.plan.outputs.name3 && steps.plan.outputs.save != 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths3 }}
+        key: ${{ steps.plan.outputs.prefix3 }}${{ hashFiles(steps.plan.outputs.files3) }}
+        restore-keys: ${{ steps.plan.outputs.prefix3 }}
+    - id: save4
+      if: steps.plan.outputs.name4 && steps.plan.outputs.save == 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths4 }}
+        key: ${{ steps.plan.outputs.prefix4 }}${{ hashFiles(steps.plan.outputs.files4) }}
+        restore-keys: ${{ steps.plan.outputs.prefix4 }}
+    - id: cache4
+      if: steps.plan.outputs.name4 && steps.plan.outputs.save != 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths4 }}
+        key: ${{ steps.plan.outputs.prefix4 }}${{ hashFiles(steps.plan.outputs.files4) }}
+        restore-keys: ${{ steps.plan.outputs.prefix4 }}
+    - id: save5
+      if: steps.plan.outputs.name5 && steps.plan.outputs.save == 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths5 }}
+        key: ${{ steps.plan.outputs.prefix5 }}${{ hashFiles(steps.plan.outputs.files5) }}
+        restore-keys: ${{ steps.plan.outputs.prefix5 }}
+    - id: cache5
+      if: steps.plan.outputs.name5 && steps.plan.outputs.save != 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths5 }}
+        key: ${{ steps.plan.outputs.prefix5 }}${{ hashFiles(steps.plan.outputs.files5) }}
+        restore-keys: ${{ steps.plan.outputs.prefix5 }}
+    - id: save6
+      if: steps.plan.outputs.name6 && steps.plan.outputs.save == 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths6 }}
+        key: ${{ steps.plan.outputs.prefix6 }}${{ hashFiles(steps.plan.outputs.files6) }}
+        restore-keys: ${{ steps.plan.outputs.prefix6 }}
+    - id: cache6
+      if: steps.plan.outputs.name6 && steps.plan.outputs.save != 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths6 }}
+        key: ${{ steps.plan.outputs.prefix6 }}${{ hashFiles(steps.plan.outputs.files6) }}
+        restore-keys: ${{ steps.plan.outputs.prefix6 }}
+    - id: save7
+      if: steps.plan.outputs.name7 && steps.plan.outputs.save == 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths7 }}
+        key: ${{ steps.plan.outputs.prefix7 }}${{ hashFiles(steps.plan.outputs.files7) }}
+        restore-keys: ${{ steps.plan.outputs.prefix7 }}
+    - id: cache7
+      if: steps.plan.outputs.name7 && steps.plan.outputs.save != 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths7 }}
+        key: ${{ steps.plan.outputs.prefix7 }}${{ hashFiles(steps.plan.outputs.files7) }}
+        restore-keys: ${{ steps.plan.outputs.prefix7 }}
+    - id: save8
+      if: steps.plan.outputs.name8 && steps.plan.outputs.save == 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths8 }}
+        key: ${{ steps.plan.outputs.prefix8 }}${{ hashFiles(steps.plan.outputs.files8) }}
+        restore-keys: ${{ steps.plan.outputs.prefix8 }}
+    - id: cache8
+      if: steps.plan.outputs.name8 && steps.plan.outputs.save != 'true'
+      continue-on-error: true # a failed cache never fails the run
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths8 }}
+        key: ${{ steps.plan.outputs.prefix8 }}${{ hashFiles(steps.plan.outputs.files8) }}
+        restore-keys: ${{ steps.plan.outputs.prefix8 }}

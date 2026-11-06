@@ -192,7 +192,7 @@ def route(gh, event_name, event, inputs=None):
         return {"action": "maintain", "task": "schedule"}
 
     if event_name == "push":
-        # A person pushed or merged into a branch; NexKit's own merges start no push.
+        # A person or NexKit pushed or merged into a branch.
         branch = (event.get("ref") or "").removeprefix("refs/heads/")
         if branch != (event.get("repository") or {}).get("default_branch"):
             return _none("Only pushes to the default branch are handled")

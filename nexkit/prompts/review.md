@@ -94,4 +94,4 @@ A person reads the review to decide what to do next. NexKit shows the verdict an
     assertions that check it.
 - `previous_findings`: one entry for each finding of the previous review, with `finding`
   (a short restatement), `severity` (the severity that review gave it), `resolution` and
-  `evidence`. Empty when there was no previous review.
+  `evidence`. Empty when there was no previous review.$checklist

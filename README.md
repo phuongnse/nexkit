@@ -63,7 +63,8 @@ Install the plugin once:
 ```
 
 Then open Claude Code in your repository and run `/nexkit:setup`. It finds your test
-commands, writes the two NexKit files, helps you add the secret and runs `nexkit doctor`.
+commands, creates the GitHub App that NexKit acts as, writes the two NexKit files, helps you
+add the secret and runs `nexkit doctor`.
 
 ### By hand
 
@@ -71,10 +72,10 @@ commands, writes the two NexKit files, helps you add the secret and runs `nexkit
 pipx install git+https://github.com/phuongnse/nexkit@v5.9.1   # or run bin/nexkit from a clone
 cd your-repository
 nexkit init --check "test=npm test" --check "lint=npm run lint" --setup "npm ci"
+                                         # opens your browser to create the GitHub App, then
+                                         # install it on the repository at the link it prints
 claude setup-token                       # copy the token it prints
 gh secret set CLAUDE_CODE_OAUTH_TOKEN    # paste it when asked
-gh api -X PUT repos/OWNER/REPO/actions/permissions/workflow \
-  -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
 git add .nexkit .github/workflows/nexkit.yml && git commit -m "Add NexKit" && git push
 nexkit doctor
 ```
@@ -86,6 +87,10 @@ read each secret by the name the configuration gives it.
 
 The workflow must be on the default branch, because GitHub only runs comment-triggered
 workflows from there.
+
+NexKit acts on GitHub as a GitHub App of your own: one App per owner, for all their
+repositories. For another repository, install the same App on it, set its two secrets and
+run `nexkit init`; see [The GitHub App](docs/configuration.md#the-github-app).
 
 ## Use it
 

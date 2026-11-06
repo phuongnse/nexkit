@@ -52,6 +52,7 @@ ICONS = {True: "✅", False: "❌"}
 # A check that NexKit did not run: no path it reads changed since it passed.
 SKIPPED_ICON = "⏭️"
 CRITERION_MARKS = {"met": "✅", "unmet": "❌", "unverifiable": "❔"}
+CHECKLIST_MARKS = {"met": "✅ met", "not_met": "❌ not met", "not_applicable": "➖ not applicable"}
 # 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
 RESOLUTIONS = {
     "resolved": "✅ resolved",
@@ -98,10 +99,6 @@ NEEDS_PERSON = {
     "recheck_failed": (
         "the checks or review still fail after the fix agent found nothing to change and "
         "NexKit ran them again"
-    ),
-    "needs_merge": (
-        "the base branch changed workflow files that NexKit may not push; merge it into the "
-        "pull request yourself"
     ),
     "on_base_failed": ON_BASE_FAILED,
     "conflicting": (
@@ -185,15 +182,23 @@ def _criteria(review, status):
     return [c for c in (review or {}).get("criteria") or [] if criterion_status(c) == status]
 
 
+def _not_met(review):
+    return [c for c in (review or {}).get("checklist") or [] if c["answer"] == "not_met"]
+
+
 def apply_criteria(review):
-    """The review NexKit acts on. Each unmet criterion is a blocking finding and requests
-    changes, whatever verdict the reviewer returned."""
+    """The review NexKit acts on. Each unmet criterion and each checklist item not met is a
+    blocking finding and requests changes, whatever verdict the reviewer returned."""
     unmet = _criteria(review, "unmet")
-    if not unmet:
+    not_met = _not_met(review)
+    if not unmet and not not_met:
         return review
     findings = []
     for c in unmet:
         body = f"Acceptance criterion not met: {c['criterion']}. {c.get('evidence') or ''}"
+        findings.append({"severity": "blocking", "file": "", "line": 0, "body": body.strip()})
+    for c in not_met:
+        body = f"Checklist item not met: {c['item']}. {c.get('evidence') or ''}"
         findings.append({"severity": "blocking", "file": "", "line": 0, "body": body.strip()})
     return {
         **review,
@@ -234,6 +239,12 @@ def review_body(review, checks):
         criteria.append(f"- {mark} {item['criterion']} ({test})")
         if item.get("evidence"):
             criteria_evidence.append(f"- {mark} {item['criterion']}: {item['evidence'].strip()}")
+    checklist, checklist_evidence = [], []
+    for item in output.get("checklist") or []:
+        mark = CHECKLIST_MARKS[item["answer"]]
+        checklist.append(f"- {mark}: {item['item']}")
+        if item.get("evidence"):
+            checklist_evidence.append(f"- {mark}: {item['item']}: {item['evidence'].strip()}")
 
     lines = [
         f"### NexKit review: {'approve' if approved else 'changes requested'}",
@@ -241,7 +252,8 @@ def review_body(review, checks):
         output["summary"].strip(),
     ]
     if given["verdict"] == "approve" and not approved:
-        lines += ["", "NexKit requests changes because an acceptance criterion is not met."]
+        what = "an acceptance criterion" if _criteria(given, "unmet") else "a checklist item"
+        lines += ["", f"NexKit requests changes because {what} is not met."]
     confirm = unverified(output)
     if confirm:
         lines += [
@@ -252,6 +264,7 @@ def review_body(review, checks):
     lines += _part("Things to look at", findings)
     lines += _part("Previous findings", previous)
     lines += _part("Acceptance criteria", criteria)
+    lines += _part("Checklist", checklist)
     if checks:
         lines += [
             "",
@@ -262,6 +275,7 @@ def review_body(review, checks):
             ),
         ]
     evidence = _part("Acceptance criteria", criteria_evidence)
+    evidence += _part("Checklist", checklist_evidence)
     evidence += _part("Previous findings", previous_evidence)
     if evidence:
         # GitHub renders Markdown inside <details> only after a blank line.
@@ -440,7 +454,7 @@ def _no_change(gh, cfg, decision, agent):
         }
     lines = [f"No change is needed, so NexKit closed #{issue} as completed.", "", finding]
     if cfg["close_parent_issues"]:
-        # Closing with the Actions token starts no workflow for `issues: closed`.
+        # At once, for this round's comment; the `issues: closed` run finds nothing left.
         lines += ["", *close_parents_safely(gh, issue)]
     return {
         "outcome": "no_change",
@@ -465,8 +479,6 @@ def _stage_failure(decision, agent, publish):
     action = decision["action"]
     if agent is None:
         return "agent_failed", f"NexKit could not run the {action} agent."
-    if agent["status"] == "needs_merge":
-        return "needs_merge", f"NexKit did not run the {action} agent: {agent['error']}"
     if publish.get("issue_closed"):
         return "issue_closed", (
             f"#{decision['issue']} closed while the {action} round ran, so NexKit published "
@@ -478,8 +490,7 @@ def _stage_failure(decision, agent, publish):
         return "agent_" + agent["status"], "\n\n".join([message, *filter(None, extra)])
     if not publish.get("published") and not publish.get("recheck") and not publish.get("no_change"):
         reason = publish.get("error") or "the publish job failed"
-        outcome = "needs_merge" if publish.get("workflows") else "publish_failed"
-        return outcome, f"NexKit could not publish the {action} result: {reason}"
+        return "publish_failed", f"NexKit could not publish the {action} result: {reason}"
     return None
 
 
@@ -713,10 +724,10 @@ def after_merge(gh, workflows, base, records=None):
     """Start each workflow of `workflows`, entries as `config.after_workflows` gives them,
     on the base branch after NexKit merged into it, when it is due (see `_due`).
 
-    GitHub starts no workflow for the merge's push, which uses the Actions token, but it does
-    for a dispatch. A dispatch that fails is reported; the merge stays, and the next merge
-    starts the workflow, which is still due then. Each start is added to `records`, for the
-    round's marker.
+    The merge's push starts the workflows that listen to it by themselves; these are the
+    ones a repository starts only every few merges, to save runners. A dispatch that fails
+    is reported; the merge stays, and the next merge starts the workflow, which is still
+    due then. Each start is added to `records`, for the round's marker.
     """
     lines = []
     records = [] if records is None else records
@@ -836,7 +847,7 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
         message += f" GitHub took it at try {attempt + 1}, after the base branch moved."
     closed, lines = close_merged_issue(gh, target["issue"], pr, merge.get("sha"))
     if closed and cfg["close_parent_issues"]:
-        # Closing with the Actions token starts no workflow for `issues: closed`.
+        # At once, for this round's comment; the `issues: closed` run finds nothing left.
         lines += close_parents_safely(gh, target["issue"])
     lines += delete_merged_branch(gh, pr, target["base"])
     runs = []
@@ -844,7 +855,8 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     if runs:
         row["after_merge"] = runs
     if cfg["conflicts"]["auto_resolve"]:
-        # The merge's push starts no workflow, so look for new conflicts here.
+        # At once, and also without a `push` trigger. A `push` run that starts the same
+        # round adds nothing: `route` drops a second round on one base commit.
         swept = resolve_conflicts(
             gh, target["base"], workflow, default_branch, cfg["conflicts"]["max_rounds"], {pr}
         )
@@ -1160,8 +1172,9 @@ def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
 def close_merged_issue(gh, issue, pr, sha):
     """Close the issue a pull request implements after NexKit merged it.
 
-    GitHub closes it when a person merges, but not after a merge with the Actions token.
-    Returns (closed, lines for the round's comment). A failure leaves the merge as it is."""
+    GitHub closes it too, through the pull request's `Closes` line, but not at once and not
+    when a person edited that line away. Returns (closed, lines for the round's comment). A
+    failure leaves the merge as it is."""
     try:
         if gh.issue(issue).get("state") != "open":
             return False, []
@@ -1175,10 +1188,10 @@ def close_merged_issue(gh, issue, pr, sha):
 
 def delete_merged_branch(gh, pr, base):
     """Delete the head branch of a pull request NexKit merged, when the repository deletes
-    head branches on merge: GitHub does that after a person's merge, but not after a merge
-    with the Actions token. Only a NexKit branch of this repository goes, never the base
-    branch, nor one that open pull requests target, which its deletion would close.
-    Returns lines for the round's comment. A failure leaves the merge as it is."""
+    head branches on merge, in case GitHub has not done it by itself. Only a NexKit branch
+    of this repository goes, never the base branch, nor one that open pull requests target,
+    which its deletion would close. Returns lines for the round's comment. A failure leaves
+    the merge as it is."""
     branch = ""
     try:
         if not gh.deletes_merged_branches():
@@ -1559,14 +1572,6 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         )
     if action == "fix" and cause:
         message = f"**Cause found by the fix agent:** {clip(cause, 1500)}\n\n{message}"
-    if action == "fix" and agent and agent.get("merge_held"):
-        files = ", ".join(f"`{name}`" for name in agent["merge_held"])
-        message = (
-            f"Did not merge `{decision['base']}`, which changed {files}: the token NexKit "
-            "pushes with may not change workflow files. The pull request stays behind it until "
-            "a person merges it, or `publish.push_token_secret` names a token that may.\n\n"
-            f"{message}"
-        )
     if action == "fix" and agent and agent.get("start_base"):
         files = ", ".join(f"`{name}`" for name in agent.get("conflicts") or [])
         merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"
@@ -1577,13 +1582,6 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             f"Merged `{decision['base']}` (`{publish['updated'][:7]}`) after this round's "
             "commit: its rules want pull requests up to date, so the checks ran on a head that "
             f"contains it.\n\n{message}"
-        )
-    if publish.get("held"):
-        files = ", ".join(f"`{name}`" for name in publish["held"])
-        message = (
-            f"Did not merge `{decision['base']}` after this round's commit, which its rules "
-            f"want: it changed {files}, and the token NexKit pushes with may not change "
-            f"workflow files. The pull request stays behind it.\n\n{message}"
         )
     if checks is not None and skipped_names(skipped):
         lines = [skipped_line(name, since) for name, since in skipped_names(skipped).items()]

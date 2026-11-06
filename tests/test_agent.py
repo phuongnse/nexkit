@@ -72,6 +72,92 @@ VERDICT = {
 }
 
 
+CHECKLIST = ["Docs change with the code", "A setting has a safe default"]
+
+
+class ChecklistTests(unittest.TestCase):
+    def setUp(self):
+        self.cfg = make_config(review={"checklist": CHECKLIST})
+
+    def result(self, stage, output):
+        return {"stage": stage, "status": "done", "output": output, "error": ""}
+
+    def test_the_items_are_in_the_plan_and_review_prompts(self):
+        for stage in ("plan", "review"):
+            prompt = agent.build_prompt(stage, CONTEXT, self.cfg)
+            self.assertIn("1. Docs change with the code\n2. A setting has a safe default", prompt)
+            self.assertIn("`checklist`:", prompt)
+            self.assertNotIn("$items", prompt)
+            self.assertNotIn("$checklist", prompt)
+        review = agent.build_prompt("review", CONTEXT, self.cfg)
+        self.assertIn("`not_met`", review)
+        self.assertIn("`not_applicable`", review)
+
+    def test_with_the_setting_empty_the_prompts_and_results_are_as_before(self):
+        cfg = make_config()
+        for stage in ("plan", "review"):
+            prompt = agent.build_prompt(stage, CONTEXT, cfg)
+            self.assertNotIn("checklist", prompt)
+            self.assertNotIn("$checklist", prompt)
+            self.assertIs(agent.stage_schema(stage, cfg), agent.SCHEMAS[stage])
+        result = self.result("review", dict(VERDICT))
+        agent.answer_checklist(result, "review", cfg)
+        self.assertEqual(result, self.result("review", dict(VERDICT)))
+
+    def test_the_other_stages_have_no_checklist(self):
+        for stage in ("implement", "fix"):
+            self.assertNotIn("checklist", agent.build_prompt(stage, CONTEXT, self.cfg))
+            self.assertIs(agent.stage_schema(stage, self.cfg), agent.SCHEMAS[stage])
+
+    def test_the_schema_asks_for_an_answer_to_each_item(self):
+        schema = agent.stage_schema("review", self.cfg)
+        self.assertIn("checklist", schema["required"])
+        entry = schema["properties"]["checklist"]["items"]
+        self.assertEqual(
+            entry["properties"]["answer"]["enum"], ["met", "not_met", "not_applicable"]
+        )
+        self.assertEqual(entry["required"], ["number", "answer", "evidence"])
+        self.assertNotIn("checklist", agent.SCHEMAS["review"]["properties"])
+
+    def test_a_review_that_lacks_an_answer_is_incomplete(self):
+        answers = [{"number": 2, "answer": "met", "evidence": "x"}]
+        result = self.result("review", {**VERDICT, "checklist": answers})
+        agent.answer_checklist(result, "review", self.cfg)
+        self.assertEqual(result["status"], "error")
+        self.assertIsNone(result["output"])
+        self.assertEqual(
+            result["error"], "The review gave no answer for item 1 of `review.checklist`."
+        )
+
+    def test_each_answer_gets_the_text_of_its_item(self):
+        answers = [
+            {"number": 2, "answer": "not_met", "evidence": "y"},
+            {"number": 1, "answer": "met", "evidence": "x"},
+            {"number": 9, "answer": "met", "evidence": "no such item"},
+        ]
+        result = self.result("review", {**VERDICT, "checklist": answers})
+        agent.answer_checklist(result, "review", self.cfg)
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(
+            result["output"]["checklist"],
+            [
+                {"number": 1, "answer": "met", "evidence": "x", "item": CHECKLIST[0]},
+                {"number": 2, "answer": "not_met", "evidence": "y", "item": CHECKLIST[1]},
+            ],
+        )
+
+    def test_a_plan_that_leaves_an_item_out_is_shown_as_it_is(self):
+        result = self.result("plan", {"checklist": [{"number": 1, "how": "It edits the docs."}]})
+        agent.answer_checklist(result, "plan", self.cfg)
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["output"]["checklist"][0]["item"], CHECKLIST[0])
+
+    def test_a_stopped_review_stays_as_it_stopped(self):
+        result = {"stage": "review", "status": "error", "output": None, "error": "It failed."}
+        agent.answer_checklist(result, "review", self.cfg)
+        self.assertEqual(result["error"], "It failed.")
+
+
 class PromptTests(unittest.TestCase):
     def test_prompt_keeps_untrusted_text_literal(self):
         prompt = agent.build_prompt("implement", CONTEXT, make_config())
@@ -575,6 +661,24 @@ class RunStageTests(StageCase):
         self.assertIn("+    return a + b", prompt)
         self.assertIn("`test` (`true`): passed", prompt)
 
+    def test_a_review_that_skips_a_checklist_item_gives_no_verdict(self):
+        cfg = make_config(review={"checklist": CHECKLIST})
+        git(self.repo, "checkout", "-q", "-b", "nexkit/issue-5")
+        (self.repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+        git(self.repo, "add", "-A")
+        self.repos.commit(self.repo, "fix")
+        checks = [{"name": "test", "run": "true", "exit_code": 0, "passed": True, "output": ""}]
+        answer = {"number": 1, "answer": "met", "evidence": "docs/x.md:3"}
+        self.claude.configure(result={**VERDICT, "checklist": [answer]})
+        result = self.run_stage("review", cfg, checks=checks, base="main")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("no answer for item 2", result["error"])
+        both = [answer, {**answer, "number": 2, "answer": "not_applicable"}]
+        self.claude.configure(result={**VERDICT, "checklist": both})
+        result = self.run_stage("review", cfg, checks=checks, base="main")
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["output"]["checklist"][1]["item"], CHECKLIST[1])
+
     def commit_legacy_subtitles(self):
         """A commit on the NexKit branch that adds a cp1250 file, as git diffs it as text."""
         git(self.repo, "checkout", "-q", "-b", "nexkit/issue-5")
@@ -785,36 +889,15 @@ class ConflictTests(StageCase):
             self.assertNotIn("recheck", result)
         self.assertIn(f"What it found: {cause}", result["error"])
 
-    def test_a_moved_base_that_changed_workflows_is_left_out_without_a_push_token(self):
+    def test_a_moved_base_that_changed_workflows_merges_like_any_other(self):
         workflow = {".github/workflows/ci.yml": "on: push\n"}
         self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
         self.repos.push_commit("dev", "main", workflow, "Change CI")
         self.checkout_branch()
-        head = git(self.repo, "rev-parse", "HEAD")
-        result = self.run_after_failed_checks(write={"calc.py": CALC + SUB + "# fixed\n"})
-        self.assertEqual(result["status"], "done")
-        self.assertEqual((result["start_head"], result["start_base"]), (head, None))
-        self.assertEqual(result["merge_held"], [".github/workflows/ci.yml"])
-        self.assertEqual(result["changed_files"], ["calc.py"])
-        self.assertNotIn("## Merge of", self.claude.call()["prompt"])
-        # A token that may push workflows merges as before.
-        self.checkout_branch()
-        cfg = make_config(publish={"push_token_secret": "PUSH_TOKEN"})
         self.claude.configure(result=FIX_DONE)
         context = {**CONTEXT, "merge_moved_base": True}
-        result = self.run_stage("fix", cfg, context=context, base="main")
+        result = self.run_stage("fix", make_config(), context=context, base="main")
         self.assertEqual(result["changed_files"], [".github/workflows/ci.yml"])
-        self.assertNotIn("merge_held", result)
-
-    def test_a_conflict_whose_merge_changes_workflows_stops_before_the_agent(self):
-        self.repos.diverge({".github/workflows/ci.yml": "on: push\n"})
-        self.checkout_branch()
-        result = self.run_fix(write={"calc.py": CALC + SUB + MUL})
-        self.assertEqual(result["status"], "needs_merge")
-        self.assertEqual(result["workflows"], [".github/workflows/ci.yml"])
-        self.assertIn("Merge the base branch into the pull request yourself", result["error"])
-        self.assertEqual(self.claude.calls(), [])
-        self.assertFalse(Path(self.repo, ".git", "MERGE_HEAD").exists())
 
     def test_leftover_conflict_markers_are_an_error(self):
         self.repos.diverge()

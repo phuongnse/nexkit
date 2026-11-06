@@ -20,7 +20,7 @@ from nexkit.github import GitHubError
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.base import Launch, Runtime
 from nexkit.runtimes.claude_code import ClaudeReader
-from nexkit.state import BOT_LOGIN, RUN_PATTERN, render_run
+from nexkit.state import RUN_PATTERN, render_run, use_app
 
 # The Claude agent that `nexkit init` declares.
 CLAUDE = {
@@ -32,13 +32,26 @@ CLAUDE = {
 }
 
 
+# The App that `nexkit init` names.
+APP = {
+    "slug": "nexkit-acme",
+    "app_id_secret": "NEXKIT_APP_ID",
+    "private_key_secret": "NEXKIT_APP_PRIVATE_KEY",
+}
+
+
+# Who NexKit writes as, in every test.
+BOT_LOGIN = f"{APP['slug']}[bot]"
+use_app(BOT_LOGIN)
+
+
 def with_claude(raw):
     """`raw` with the Claude agent declared next to the agents it has."""
     return {**raw, "agents": {**CLAUDE, **raw.get("agents", {})}}
 
 
 def make_config(**overrides):
-    raw = {"checks": [{"name": "test", "run": "true"}], **overrides}
+    raw = {"checks": [{"name": "test", "run": "true"}], "github_app": APP, **overrides}
     return validate(with_claude(raw))
 
 
@@ -97,6 +110,7 @@ class FakeGitHub:
     def __init__(self, repository="acme/app"):
         self.repository = repository
         self.roles = {"alice": "write", "olivia": "admin", "bob": "read"}
+        self.editors = {}
         self.issues = {}
         self.issue_comments = defaultdict(list)
         self.pulls = {}
@@ -230,6 +244,9 @@ class FakeGitHub:
     def role(self, user):
         return self.roles.get(user, "none")
 
+    def user(self, login):
+        return {"login": login, "id": 4242}
+
     def can_write(self, user):
         return self.role(user) in {"admin", "maintain", "write"}
 
@@ -251,6 +268,18 @@ class FakeGitHub:
 
     def blocked_by(self, number):
         return [self.issues[n] for n in self.blockers[number]]
+
+    def blocking(self, number):
+        return [self.issues[n] for n, found in self.blockers.items() if number in found]
+
+    def labeled_without_milestone(self, label):
+        return [
+            issue
+            for issue in self.issues.values()
+            if issue["state"] == "open"
+            and not issue.get("milestone")
+            and label in [item["name"] for item in issue.get("labels") or []]
+        ]
 
     def add_blocked_by(self, number, blocker_id):
         self.blockers[number].append(blocker_id - 90000)
@@ -373,6 +402,9 @@ class FakeGitHub:
 
     def list_pulls(self, state="open", limit=1000):
         return [p for p in self.pulls.values() if state == "all" or p["state"] == state]
+
+    def issue_editors(self, number):
+        return self.editors.get(number, [])
 
     def workflow_run(self, run_id):
         if run_id not in self.runs:

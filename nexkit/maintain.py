@@ -202,7 +202,7 @@ def close_on_base(gh, cfg, target, commit=None):
             gh.close_issue(issue, "completed")
             lines.append(f"Closed #{issue} as completed.")
             if cfg["close_parent_issues"]:
-                # Closing with the Actions token starts no workflow for `issues: closed`.
+                # At once, for this comment; the `issues: closed` run finds nothing left.
                 lines += close_parents_safely(gh, issue)
     except GitHubError as exc:
         lines.append(f"Could not close #{issue}: {exc}. Close it yourself.")
@@ -296,19 +296,32 @@ def start_waiting(gh, workflow, ref):
     gh.dispatch(workflow, ref, WAIT_INPUTS)
 
 
-def wait_and_resume(gh, workflow, ref, wait_minutes, now=datetime.now, sleep=time.sleep):
-    """Resume paused commands as they come due, for up to `wait_minutes`. Looks again every
-    `POLL`, so runs that pause meanwhile are resumed too. A resume due later is left to a
-    later scheduled check, which starts another wait when it comes within reach."""
+def wait_for_paused(gh, wait_minutes, now=datetime.now, sleep=time.sleep):
+    """Wait until a paused command comes due, for up to `wait_minutes`. It only reads, with
+    the job's own token: the App's token lasts an hour, and this can last hours, so the job
+    mints that token after it. Looks again every `POLL`, so a run that pauses meanwhile
+    counts too. Returns at once when nothing comes due in that time."""
     deadline = now(UTC) + timedelta(minutes=wait_minutes)
-    lines = []
     while True:
-        done, upcoming = resume_paused(gh, workflow, ref, now(UTC))
-        lines += done
         current = now(UTC)
-        if upcoming is None or upcoming > deadline or current >= deadline:
-            return lines
+        upcoming = min((at for _, _, _, at in paused_runs(gh, current)), default=None)
+        if upcoming is None or upcoming <= current or upcoming > deadline:
+            return
+        if current >= deadline:
+            return
         sleep(max(0.0, min((upcoming - current).total_seconds(), POLL.total_seconds())))
+
+
+def resume_due(gh, workflow, ref, wait_minutes, now=None):
+    """Resume what came due. When another resume comes within `wait_minutes`, this starts
+    the next wait; one due later is left to a scheduled check, which starts a wait when it
+    comes within reach."""
+    now = now or datetime.now(UTC)
+    lines, upcoming = resume_paused(gh, workflow, ref, now)
+    if upcoming is not None and upcoming <= now + timedelta(minutes=wait_minutes):
+        start_waiting(gh, workflow, ref)
+        lines.append("Started a run that waits for the next paused command.")
+    return lines
 
 
 def check_paused(gh, workflow, ref, wait_minutes, now=None):
@@ -430,10 +443,6 @@ def start_conflict_round(
         # that pushed now would make its merge fail. Its report, or a later check, starts
         # this round with the branch as that round left it.
         return ""
-    if latest.get("conflicts") and latest.get("outcome") == "needs_merge":
-        # The last round stopped because NexKit may not push the merge: a person merges
-        # it, and their next round lets conflict rounds start again.
-        return f"#{number} conflicts with `{base}`, which a person merges."
     if conflict_rounds_used(tried) >= max_rounds:
         return (
             f"#{number} conflicts with `{base}`, but its {max_rounds} automatic "
@@ -773,7 +782,7 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
         )
     wait = cfg["usage_limit"]["wait_minutes"]
     if task == "resume":
-        return wait_and_resume(gh, workflow, ref, wait)
+        return resume_due(gh, workflow, ref, wait)
     if task == "schedule":
         lines = []
         if cfg["usage_limit"]["resume"]:
@@ -786,6 +795,6 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
             settle = not autopilot.takes(cfg)
             max_rounds = cfg["conflicts"]["max_rounds"]
             lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, settle=settle)
-        # Also catches events that started no workflow, such as issues NexKit closed.
+        # Also catches events that started no run, or a run that was lost.
         return lines + autopilot.request_safely(gh, cfg, workflow, ref)
     raise ValueError(f"Unknown maintenance task: {task}")

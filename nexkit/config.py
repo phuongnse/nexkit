@@ -37,6 +37,8 @@ DEFAULTS = {
     },
     "profiles": {},
     "default_profile": None,
+    # Short rules, in the repository's words, that each plan and review answers one by one.
+    "review": {"checklist": []},
     # What NexKit does by itself, grouped by feature.
     "fix": {"max_auto_rounds": 2},
     "merge": {"auto": False, "after_workflows": []},
@@ -55,14 +57,18 @@ DEFAULTS = {
         # Workflows whose runs on the default branch sweeps watch, as they watch
         # `merge.after_workflows`, but which NexKit does not start after its merges.
         "watch_workflows": [],
+        # Workflows of the default branch whose issues autopilot takes, by their marker.
+        "trusted_workflows": [],
+        # The label of an issue that runs only once the rest of its milestone is closed.
+        "last_in_milestone_label": None,
     },
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
     "protected_paths": [".github/", ".nexkit/"],
     "transcript": True,
     "log": {"tool_output": "truncated"},
-    # The secret with the token that pushes NexKit's branches, or the Actions token.
-    "publish": {"push_token_secret": None},
+    # The GitHub App that NexKit acts as: its slug, and the secrets with its id and key.
+    "github_app": {"slug": None, "app_id_secret": None, "private_key_secret": None},
     # The artifacts of the CI runs an issue names that the implement and fix agents get.
     "evidence": {"artifacts": []},
 }
@@ -75,6 +81,7 @@ MAX_WAIT = 330
 MAX_STAGE_MINUTES = 340
 # Objects whose keys are merged over the defaults one by one.
 GROUPS = (
+    "review",
     "fix",
     "merge",
     "conflicts",
@@ -82,7 +89,7 @@ GROUPS = (
     "autopilot",
     "limits",
     "log",
-    "publish",
+    "github_app",
     "evidence",
 )
 # The most artifact names `evidence.artifacts` may list.
@@ -113,6 +120,22 @@ AUTOPILOT_SCOPE_CHOICES = (
 )
 AUTOPILOT_ANSWERS = ("never", "recommended")
 AFTER_WORKFLOW_KEYS = {"workflow", "every"}
+# Each item costs every plan and review an answer, so a checklist stays short.
+MAX_CHECKLIST = 20
+MAX_CHECKLIST_ITEM = 300
+# GitHub's limit on a label's name.
+MAX_LABEL = 50
+# GitHub's slug of an App, which `<slug>[bot]` makes its login.
+APP_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+# The secrets of `github_app`, with the names that `nexkit init` gives them.
+APP_SECRETS = {"app_id_secret": "NEXKIT_APP_ID", "private_key_secret": "NEXKIT_APP_PRIVATE_KEY"}
+APP_DOCS = "https://github.com/phuongnse/nexkit/blob/main/docs/configuration.md#the-github-app"
+NO_TOKEN = (
+    "NexKit could not get a token from its GitHub App: check that the App is installed on this "
+    "repository and has NexKit's permissions, and that the secrets in github_app are set. Run "
+    "'nexkit doctor --app-private-key FILE', or see "
+    "https://github.com/phuongnse/nexkit/blob/main/docs/troubleshooting.md#the-github-app"
+)
 # The most merges an entry of `merge.after_workflows` may wait for.
 MAX_EVERY = 1000
 
@@ -373,20 +396,83 @@ def _secret_slots(cfg):
             )
 
 
-def _push_token(cfg):
-    """`publish.push_token_secret`: null, or a secret that no agent uses, since the publish
-    job may write to the repository and agents must never hold its token."""
-    name = cfg["publish"]["push_token_secret"]
-    if name is None:
+def _checklist(items):
+    """`review.checklist`: short items, one line each."""
+    where = "review.checklist"
+    if not isinstance(items, list) or len(items) > MAX_CHECKLIST:
+        _fail(f"{where} must be a list of at most {MAX_CHECKLIST} items")
+    for item in items:
+        if (
+            not isinstance(item, str)
+            or not item.strip()
+            or "\n" in item
+            or len(item) > MAX_CHECKLIST_ITEM
+        ):
+            _fail(f"{where} items must be one line of at most {MAX_CHECKLIST_ITEM} characters")
+    if len(set(items)) != len(items):
+        _fail(f"{where} lists an item twice")
+
+
+def _github_app(cfg):
+    """`github_app`: unset, or a slug and two secrets that no agent uses, since an agent
+    must never hold what mints a token that can write to the repository."""
+    app = cfg["github_app"]
+    if not any(value is not None for value in app.values()):
         return
-    if not isinstance(name, str) or not SECRET_NAME.match(name) or name.startswith("GITHUB_"):
-        _fail(
-            "publish.push_token_secret must be null or the name of a repository secret, such "
-            "as NEXKIT_PUSH_TOKEN; the config holds only its name"
-        )
+    if not isinstance(app["slug"], str) or not APP_SLUG.match(app["slug"]):
+        _fail("github_app.slug must be the App's slug, as in github.com/apps/<slug>")
     variants = [cfg, *(with_profile(cfg, profile) for profile in cfg["profiles"])]
-    if name in secret_names(variants, list(cfg["stages"])):
-        _fail(f"publish.push_token_secret: {name} is an agent's secret; use another secret")
+    agents = secret_names(variants, list(cfg["stages"]))
+    for key in APP_SECRETS:
+        name = app[key]
+        if not isinstance(name, str) or not SECRET_NAME.match(name) or name.startswith("GITHUB_"):
+            _fail(
+                f"github_app.{key} must be the name of a secret, such as {APP_SECRETS[key]}; "
+                "the config holds only its name"
+            )
+        if name in agents:
+            _fail(f"github_app.{key}: {name} is an agent's secret; use another secret")
+    if app["app_id_secret"] == app["private_key_secret"]:
+        _fail("github_app.app_id_secret and github_app.private_key_secret must differ")
+
+
+def app_problem(cfg):
+    """Why NexKit cannot act on GitHub with this configuration, or None. NexKit writes only
+    as a GitHub App, so `nexkit doctor` and the start of each run refuse one without it."""
+    if cfg["github_app"]["slug"]:
+        return None
+    return (
+        "github_app is not set: NexKit acts on GitHub as a GitHub App. Run 'nexkit init', or "
+        f"see {APP_DOCS}"
+    )
+
+
+def read_app(root="."):
+    """The `github_app` of the configuration in `root`. A configuration wrong elsewhere
+    still gives it, so `route` gets a token to say what is wrong; one without a usable App
+    raises what is wrong, since nothing can be said on GitHub without a token."""
+    try:
+        cfg = load(root)
+    except ConfigError as exc:
+        try:
+            raw = json.loads((Path(root) / CONFIG_PATH).read_text(encoding="utf-8"))
+            found = {**DEFAULTS["github_app"], **raw["github_app"]}
+            _github_app({"github_app": found, "profiles": {}, "stages": {}})
+        except (OSError, ValueError, KeyError, TypeError):
+            raise exc from None
+        if not found["slug"]:
+            raise exc
+        return found
+    problem = app_problem(cfg)
+    if problem:
+        raise ConfigError(problem)
+    return cfg["github_app"]
+
+
+def app_login(cfg):
+    """The login that NexKit's comments, issues and commits carry, or None without an App."""
+    slug = (cfg.get("github_app") or {}).get("slug")
+    return f"{slug}[bot]" if slug else None
 
 
 def _profiles(cfg):
@@ -445,6 +531,11 @@ def _autopilot(settings):
     if settings["answer"] not in AUTOPILOT_ANSWERS:
         _fail(f"autopilot.answer must be one of {', '.join(AUTOPILOT_ANSWERS)}")
     _positive_int(settings["lost_after_minutes"], "autopilot.lost_after_minutes", 1440, minimum=5)
+    label = settings["last_in_milestone_label"]
+    if label is not None and (
+        not isinstance(label, str) or not label.strip() or len(label) > MAX_LABEL
+    ):
+        _fail(f"autopilot.last_in_milestone_label must be null or a label of {MAX_LABEL} or fewer")
 
 
 def _workflow_files(workflows, where):
@@ -524,6 +615,11 @@ def validate(raw, *, layered=False):
         _fail(
             "Configuration keys were renamed: " + "; ".join(renamed) + ". Move them in "
             f"{CONFIG_PATH} (see docs/configuration.md)"
+        )
+    if "publish" in raw:
+        _fail(
+            "publish.push_token_secret is gone: NexKit now acts on GitHub as a GitHub App. "
+            f"Remove `publish`, set `github_app`, and delete the old token; see {APP_DOCS}"
         )
     unknown = set(raw) - TOP_KEYS
     if unknown:
@@ -623,6 +719,7 @@ def validate(raw, *, layered=False):
     _bool(cfg["close_parent_issues"], "close_parent_issues")
     _autopilot(cfg["autopilot"])
     _watch_workflows(cfg)
+    _workflow_files(cfg["autopilot"]["trusted_workflows"], "autopilot.trusted_workflows")
     _positive_int(cfg["limits"]["setup_timeout_minutes"], "limits.setup_timeout_minutes", 120)
     _positive_int(cfg["limits"]["max_patch_mb"], "limits.max_patch_mb", 50)
     people = cfg["notify"]
@@ -641,7 +738,8 @@ def validate(raw, *, layered=False):
     _bool(cfg["transcript"], "transcript")
     if cfg["log"]["tool_output"] not in TOOL_OUTPUT:
         _fail(f"log.tool_output must be one of {', '.join(TOOL_OUTPUT)}")
-    _push_token(cfg)
+    _github_app(cfg)
+    _checklist(cfg["review"]["checklist"])
     _artifacts(cfg["evidence"]["artifacts"])
     return cfg
 

@@ -19,7 +19,6 @@ from . import config as configuration
 from .checks import BASE_SHA, RESULTS_LIMIT, environment, known_base
 from .evidence import since_text
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
-from .publish import WORKFLOWS, workflow_message
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
@@ -236,6 +235,64 @@ SCHEMAS = {
         "required": ["verdict", "summary", "criteria", "findings", "previous_findings"],
     },
 }
+
+
+# What a plan and a review return for `review.checklist`, only when it has items.
+CHECKLIST = {
+    "plan": {"number": {"type": "integer"}, "how": {"type": "string"}},
+    "review": {
+        "number": {"type": "integer"},
+        "answer": {"enum": ["met", "not_met", "not_applicable"]},
+        "evidence": {"type": "string"},
+    },
+}
+
+
+def with_checklist(schema, stage, cfg):
+    """`schema` with the checklist field, when this stage answers a checklist."""
+    if stage not in CHECKLIST or not cfg["review"]["checklist"]:
+        return schema
+    properties = CHECKLIST[stage]
+    entry = {"type": "object", "properties": properties, "required": list(properties)}
+    return {
+        **schema,
+        "properties": {**schema["properties"], "checklist": {"type": "array", "items": entry}},
+        "required": [*schema["required"], "checklist"],
+    }
+
+
+def checklist_text(stage, cfg):
+    """The prompt's section about `review.checklist`, or "" without items or for a stage
+    that does not answer them, so that its prompt stays as it is."""
+    items = cfg["review"]["checklist"]
+    if stage not in CHECKLIST or not items:
+        return ""
+    numbered = "\n".join(f"{number}. {item}" for number, item in enumerate(items, 1))
+    return Template(_template(f"{stage}_checklist")).safe_substitute(items=numbered).rstrip()
+
+
+def answer_checklist(result, stage, cfg):
+    """Put each item's text next to its answer, in the order of `review.checklist`, so what
+    reads the result needs no configuration. An answer for an item that does not exist goes.
+    A review that leaves an item out is incomplete: nothing shows that the item holds, so it
+    gives no verdict. A plan that leaves one out is shown as it is; the review decides."""
+    items = cfg["review"]["checklist"]
+    if stage not in CHECKLIST or not items or result["status"] != "done":
+        return
+    output = result["output"]
+    given = {entry["number"]: entry for entry in output.get("checklist") or []}
+    missing = [number for number in range(1, len(items) + 1) if number not in given]
+    if stage == "review" and missing:
+        listed = ", ".join(str(number) for number in missing)
+        result.update(
+            status="error",
+            output=None,
+            error=f"The review gave no answer for item {listed} of `review.checklist`.",
+        )
+        return
+    output["checklist"] = [
+        {**given[number], "item": item} for number, item in enumerate(items, 1) if number in given
+    ]
 
 
 def _check_lines(checks, indent="  "):
@@ -472,19 +529,6 @@ def merge_base_branch(repo, base, moved=False):
     return commit, list(dict.fromkeys(conflicts))
 
 
-def held_merge(repo, base, moved=False):
-    """The workflow files that the merge `merge_base_branch` would make changes, with
-    whether the branch conflicts with the base branch, or None when it makes no merge or
-    changes none. Call only when the push token may not change workflow files."""
-    commit = git(repo, "rev-parse", "--verify", f"origin/{base}^{{commit}}").strip()
-    tree, conflicts = merge_tree(repo, "HEAD", commit)
-    if not conflicts and not (moved and not is_ancestor(repo, commit, "HEAD")):
-        return None
-    diff = git(repo, "diff", "--name-only", "--no-renames", "-z", "HEAD", tree, "--", WORKFLOWS)
-    files = names(diff)
-    return {"files": files, "conflicts": bool(conflicts)} if files else None
-
-
 def conflicts_text(base, commit, files):
     """The fix prompt's section about a merge of the base branch, or ""."""
     if not commit:
@@ -660,6 +704,7 @@ def build_prompt(stage, context, cfg, extra=None):
         "writing": _template("writing"),
         "protected": ", ".join(f"`{p}`" for p in cfg["protected_paths"]),
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
+        "checklist": checklist_text(stage, cfg),
         **(extra or {}),
     }
     return Template(template).safe_substitute({k: str(v) for k, v in values.items()})
@@ -671,7 +716,7 @@ def stage_schema(stage, cfg):
     if stage == "triage":
         schema = copy.deepcopy(schema)
         schema["properties"]["profile"]["enum"] = list(cfg["profiles"])
-    return schema
+    return with_checklist(schema, stage, cfg)
 
 
 def stage_spec(stage, cfg, home, dirs=()):
@@ -918,7 +963,7 @@ def _run_one(
         cfg["usage_limit"]["retry_minutes"],
         label=runtime.label,
         # NexKit's own schema: triage names an unknown profile in its error, not here.
-        schema=SCHEMAS[stage],
+        schema=with_checklist(SCHEMAS[stage], stage, cfg),
     )
     return result, log.calls
 
@@ -1096,7 +1141,7 @@ def run_stage(
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     extra = {}
-    start = base_commit = merged = held = None
+    start = base_commit = merged = None
     conflicts = []
     if stage in ("implement", "fix"):
         start, base_commit = baseline(repo)
@@ -1104,23 +1149,7 @@ def run_stage(
     if stage in ("plan", "implement", "fix"):
         extra["ci_evidence"] = ci_evidence_text(found)
     if stage == "fix":
-        moved = bool(context.get("merge_moved_base"))
-        if not cfg["publish"]["push_token_secret"]:
-            # The Actions token may not push a merge that changes workflow files.
-            held = held_merge(repo, base, moved)
-        if held and held["conflicts"]:
-            # The round must merge the base branch, and its push would be refused, so the
-            # agent does not run.
-            result = {
-                "stage": stage,
-                "status": "needs_merge",
-                "error": workflow_message(base, held["files"]),
-                "workflows": held["files"],
-            }
-            return _save(result, out, Redactor(), [], start=start, merged=None, conflicts=[])
-        # A merge that only brings a moved base branch is left out: the fix goes on the
-        # branch as it is, which stays behind the base branch until a person merges it.
-        merged, conflicts = merge_base_branch(repo, base, moved and not held)
+        merged, conflicts = merge_base_branch(repo, base, bool(context.get("merge_moved_base")))
         extra["conflicts"] = conflicts_text(base, merged, conflicts)
         extra["evidence"] = evidence_text(context.get("evidence"))
         extra["earlier_fixes"] = context.get("earlier_fixes") or NO_EARLIER_FIXES
@@ -1174,6 +1203,7 @@ def run_stage(
         restore=restore if base_commit else None,
         dirs=[found["folder"]] if found and Path(found["folder"]).is_dir() else [],
     )
+    answer_checklist(result, stage, cfg)
     if stage in ("implement", "fix") and result["status"] == "done":
         left = leftover_markers(repo, conflicts)
         files, size = collect_changes(repo, base_commit, out)
@@ -1231,8 +1261,6 @@ def run_stage(
             result["passed_since"] = passed_runs(found)
     if triage:
         result.update(profile=triage["profile"], triage=triage)
-    if held:
-        result["merge_held"] = held["files"]
     return _save(result, out, redact, calls, start=start, merged=merged, conflicts=conflicts)
 
 

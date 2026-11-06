@@ -32,7 +32,7 @@ class StatusTests(unittest.TestCase):
         }
         self.gh.comment(number, render_run({**row, **run}))
 
-    def merged(self, number, issue, at, by="github-actions[bot]"):
+    def merged(self, number, issue, at, by="nexkit-acme[bot]"):
         self.gh.add_pull(number, issue, state="closed")
         self.gh.pulls[number].update(merged_at=at, merged_by={"login": by}, title=f"PR {number}")
 

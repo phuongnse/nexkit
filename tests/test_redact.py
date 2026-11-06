@@ -6,7 +6,6 @@ from nexkit.redact import Redactor
 
 ENV = {
     "CLAUDE_CODE_OAUTH_TOKEN": "oauth-value-1234567890",
-    "NEXKIT_PUSH_TOKEN": "push-value-abcdefgh",
     "MY_SERVICE_SECRET": "service-secret-value",
     "Db_Password": "hunter2hunter2",
     "SHORT_TOKEN": "abc123",
@@ -25,7 +24,7 @@ class RedactTests(unittest.TestCase):
         return redacted
 
     def test_environment_values(self):
-        for value in ("oauth-value-1234567890", "push-value-abcdefgh", "service-secret-value"):
+        for value in ("oauth-value-1234567890", "service-secret-value"):
             with self.subTest(value=value):
                 self.assertEqual(self.redact(f"x={value}!"), "x=***!")
         self.assertEqual(self.redact("hunter2hunter2"), "***")  # name matched in any case
@@ -117,7 +116,7 @@ class RedactTests(unittest.TestCase):
         self.assertEqual(self.redact(text), text)
 
     def test_data_redacts_every_string(self):
-        data = {"a": ["push-value-abcdefgh", 3, None], "push-value-abcdefgh": {"b": True}}
+        data = {"a": ["service-secret-value", 3, None], "service-secret-value": {"b": True}}
         self.assertEqual(self.redact.data(data), {"a": ["***", 3, None], "***": {"b": True}})
 
 

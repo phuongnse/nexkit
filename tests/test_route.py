@@ -12,7 +12,6 @@ from nexkit.route import (
     with_profile,
 )
 from nexkit.state import (
-    BOT_LOGIN,
     PLAN_MARKER,
     check_fingerprint,
     empty_state,
@@ -22,7 +21,7 @@ from nexkit.state import (
     render_state,
     setup_fingerprint,
 )
-from tests.support import FakeGitHub, make_config, profile_config
+from tests.support import BOT_LOGIN, FakeGitHub, make_config, profile_config
 
 
 def comment_event(number, body, login="alice", on_pull=False, user_type="User"):

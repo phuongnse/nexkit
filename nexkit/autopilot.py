@@ -25,14 +25,15 @@ import string
 from datetime import UTC, datetime, timedelta
 
 from .checks import same_test, test_name
-from .config import watched_workflows
+from .config import after_workflow_names, watched_workflows
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
 from .route import AFTER_RUN, RUN_ID, issue_from_branch, parse_command
 from .schema import filled
 from .state import (
-    BOT_LOGIN,
+    ACTIONS_BOT,
+    BOT_LOGINS,
     CONTINUED,
     FAILURE,
     PAUSED,
@@ -43,6 +44,7 @@ from .state import (
     by_bot,
     ci_wait_reason,
     conflict_rounds_used,
+    is_bot,
     latest_plan,
     plan_data,
     questions,
@@ -113,6 +115,11 @@ DEPTH_REASON = f"a part {MAX_DEPTH} levels deep, which autopilot does not split;
 LINEAGE = 8
 # A bug issue that autopilot opened because a workflow failed twice on the default branch,
 # and the commit each of its reports is about.
+# The workflow file and the run that opened an issue, at the start of its text, where
+# nothing the workflow quotes can be.
+WORKFLOW_ISSUE = re.compile(r"\A<!-- nexkit:workflow ([A-Za-z0-9_.-]+) (\d+) -->")
+# What may start a run whose issue autopilot takes; a dispatch only by a writer or NexKit.
+WORKFLOW_EVENTS = ("schedule", "push", "workflow_dispatch")
 CI_BUG_PREFIX = "<!-- nexkit:ci "
 CI_BUG = re.compile(r"\A<!-- nexkit:ci ([A-Za-z0-9_.-]+) -->")
 CI_SHA_PREFIX = "<!-- nexkit:ci-sha "
@@ -228,8 +235,8 @@ def after_unreported(gh, cfg, workflow, ref, run_id):
 def after_ci_run(gh, cfg, decision, workflow, ref):
     """Start a sweep after a run of another workflow finished, when it is a run of a
     workflow that sweeps watch (`watched_workflows`) on the default branch `ref` that a
-    sweep acts on. GitHub sends no such event for runs that the Actions token started; the
-    end of the next NexKit run notices those (`after_run`)."""
+    sweep acts on. A run whose event never came is noticed at the end of the next NexKit
+    run (`after_run`)."""
     name = decision.get("workflow")
     if name not in watched_workflows(cfg):
         return [f"`{name}` is in neither merge.after_workflows nor autopilot.watch_workflows."]
@@ -316,7 +323,7 @@ def scope(gh, cfg):
 
 def taken(gh, cfg, issue):
     """Whether autopilot works on an issue: in scope, from someone it trusts."""
-    return in_scope(locate(gh, cfg), issue) and trusted(gh, issue)
+    return in_scope(locate(gh, cfg), issue) and trusted(gh, issue, cfg)
 
 
 def in_scope(where, issue):
@@ -333,28 +340,105 @@ def author(issue):
     return (issue.get("user") or {}).get("login") or ""
 
 
-def trusted(gh, issue):
-    """Autopilot skips a person's approval of the plan, so issue text drives an implement
-    session. It takes only issues opened by someone with write access; only they and other
-    writers can edit the issue."""
+def trusted(gh, issue, cfg=None):
+    return distrust(gh, issue, cfg) is None
+
+
+def distrust(gh, issue, cfg=None):
+    """Why autopilot leaves an issue alone, or None. It skips a person's approval of the
+    plan, so issue text drives an implement session. It takes issues opened by someone with
+    write access, since only they and other writers can edit them, the issues NexKit opened
+    as its App, and those a trusted workflow opened as the App or the Actions bot."""
     login = author(issue)
-    if login == BOT_LOGIN:
-        return _rank(issue) < 2 or _trusted_part(gh, issue)
-    return bool(login) and gh.can_write(login)
+    if is_bot(login) and (_rank(issue) < 2 or _trusted_part(gh, issue, cfg)):
+        return None
+    if is_bot(login) or login == ACTIONS_BOT:
+        return workflow_problem(gh, issue, cfg)
+    return None if login and gh.can_write(login) else _no_writer(login)
 
 
-def _trusted_part(gh, issue, depth=0):
+def _no_writer(login):
+    return f"opened by @{login or 'an unknown user'}, who cannot write to the repository"
+
+
+def workflow_problem(gh, issue, cfg):
+    """Why an issue that a bot opened is not one that autopilot.trusted_workflows vouches
+    for, or None. Its marker names the run that opened it; GitHub's record of that run
+    proves the claim, and `github-actions[bot]` alone proves nothing, since any workflow of
+    the repository, also on a pull request's branch, can write as it."""
+    listed = cfg["autopilot"]["trusted_workflows"] if cfg else []
+    if not listed:
+        return _no_writer(author(issue))
+    match = WORKFLOW_ISSUE.match(issue.get("body") or "")
+    if not match:
+        return f"opened by @{author(issue)}, without the marker of a trusted workflow"
+    name, run_id = match.group(1), int(match.group(2))
+    if name not in listed:
+        return f"its marker names `{name}`, which autopilot.trusted_workflows does not list"
+    try:
+        run = gh.workflow_run(run_id)
+    except GitHubError as exc:
+        if exc.status != 404:
+            raise
+        return f"its marker names run {run_id}, which does not exist"
+    return _run_problem(gh, cfg, issue, name, run) or _edit_problem(gh, issue)
+
+
+def _run_problem(gh, cfg, issue, name, run):
+    """Why the run `run` did not open this issue as a trusted workflow, or None."""
+    number = run.get("id")
+    found = posixpath.basename(str(run.get("path") or "").split("@")[0])
+    if found != name:
+        return f"its marker names `{name}`, but run {number} is a run of `{found}`"
+    branch = gh.default_branch()
+    if run.get("head_branch") != branch or not on_default_branch(gh, run):
+        return f"run {number} of `{name}` did not run on `{branch}`"
+    event = run.get("event")
+    if event not in WORKFLOW_EVENTS:
+        return f"run {number} of `{name}` was started by `{event}`"
+    actor = (run.get("triggering_actor") or run.get("actor") or {}).get("login") or ""
+    if event == "workflow_dispatch" and not _may_dispatch(gh, cfg, actor, name):
+        return f"run {number} of `{name}` was started by @{actor or 'an unknown user'}"
+    started, opened = parse_iso(run.get("created_at")), parse_iso(issue.get("created_at"))
+    ended = parse_iso(run.get("updated_at")) if run.get("status") == "completed" else None
+    if not started or not opened or opened < started or (ended and opened > ended):
+        return f"run {number} of `{name}` was not running when this issue was opened"
+    return None
+
+
+def _may_dispatch(gh, cfg, actor, name):
+    """Whether a dispatch by `actor` can start a run whose issue autopilot takes: a writer's,
+    or NexKit's own of a workflow in `merge.after_workflows`."""
+    if is_bot(actor):
+        return name in after_workflow_names(cfg)
+    return bool(actor) and gh.can_write(actor)
+
+
+def _edit_problem(gh, issue):
+    """Who changed the issue who may not, or None. A bot is the workflow that opened it, or
+    another of the repository's workflows, which nothing tells apart."""
+    for login in gh.issue_editors(issue["number"]):
+        bot = is_bot(login) or login == ACTIONS_BOT
+        if not bot and not (login and gh.can_write(login)):
+            who = f"@{login}" if login else "someone GitHub cannot name"
+            return f"{who} edited it without write access to the repository"
+    return None
+
+
+def _trusted_part(gh, issue, cfg=None, depth=0):
     """A part that autopilot created: it starts with the part marker, and the issue it
-    names is its parent and is trusted itself, as a part or an issue for a CI failure or
-    flaky runs that NexKit opened."""
+    names is its parent and is trusted itself, as a part, an issue for a CI failure or
+    flaky runs that NexKit opened, or an issue of a trusted workflow."""
     match = PART.match(issue.get("body") or "")
     if not match or depth > 5:
         return False
     parent = gh.parent_issue(issue["number"])
     if not parent or parent["number"] != int(match.group(1)) or not in_repository(gh, parent):
         return False
-    if author(parent) == BOT_LOGIN:
-        return _rank(parent) < 2 or _trusted_part(gh, parent, depth + 1)
+    if is_bot(author(parent)) and (_rank(parent) < 2 or _trusted_part(gh, parent, cfg, depth + 1)):
+        return True
+    if is_bot(author(parent)) or author(parent) == ACTIONS_BOT:
+        return workflow_problem(gh, parent, cfg) is None
     return gh.can_write(author(parent))
 
 
@@ -385,7 +469,7 @@ def depth(issue, above):
     level, child = 0, issue
     for parent in above:
         match = PART.match(child.get("body") or "")
-        if not match or author(child) != BOT_LOGIN or int(match.group(1)) != parent["number"]:
+        if not match or not is_bot(author(child)) or int(match.group(1)) != parent["number"]:
             break
         level, child = level + 1, parent
     return level
@@ -418,6 +502,86 @@ def waits_for(gh, issue, where=None):
         listed = ", ".join(f"#{b['number']}" for b in outside)
         return f"{reason}; {listed} {'is' if len(outside) == 1 else 'are'} not in scope", True
     return reason, False
+
+
+def _labeled(issue, label):
+    return any(item.get("name") == label for item in issue.get("labels") or [])
+
+
+def _no_milestone(label):
+    return f"it runs last in its milestone (`{label}`), but has no milestone"
+
+
+def _ancestors(gh, number):
+    """The issues above `number` in its sub-issues, nearest first. A part of an issue marked
+    to run last has its labels, and its parent stays open until the part closes."""
+    found = []
+    parent = gh.parent_issue(number)
+    while parent and parent["number"] not in found:
+        found.append(parent["number"])
+        parent = gh.parent_issue(parent["number"])
+    return found
+
+
+def _last_order(gh, number):
+    """The order of issues marked to run last: by the issue at the top of its sub-issues,
+    so that a part keeps the place of the issue it came from."""
+    return (*(_ancestors(gh, number)[-1:] or [number]), number)
+
+
+def _needing(gh, numbers):
+    """The open issues that wait for `numbers` through *blocked by* marks, at any depth."""
+    found, todo = set(), list(numbers)
+    while todo:
+        for issue in gh.blocking(todo.pop()):
+            if issue.get("state") == "open" and issue["number"] not in found:
+                found.add(issue["number"])
+                todo.append(issue["number"])
+    return found
+
+
+def rest_of_milestone(gh, cfg, issue):
+    """(why an issue marked to run last is not ready yet, whether a person must act), or
+    None. It waits for every other open issue of its milestone, read now, so an issue
+    opened later and the parts of a split count without a mark. So that nothing waits in a
+    circle, it does not wait for an issue above it, or one that a person marked as needing
+    it or an issue above it, and of two issues marked to run last the older goes first, with
+    its parts."""
+    label = cfg["autopilot"]["last_in_milestone_label"]
+    if not label or not _labeled(issue, label):
+        return None
+    milestone = (issue.get("milestone") or {}).get("number")
+    if milestone is None:
+        return _no_milestone(label), True
+    number = issue["number"]
+    order = _last_order(gh, number)
+    others = [
+        other
+        for other in gh.scoped_issues(milestone=milestone)
+        if "pull_request" not in other
+        and other["number"] != number
+        and not (_labeled(other, label) and _last_order(gh, other["number"]) > order)
+    ]
+    if not others:
+        return None
+    above = _ancestors(gh, number)
+    exempt = {*above, *_needing(gh, [number, *above])}
+    rest = [f"#{other['number']}" for other in others if other["number"] not in exempt]
+    if not rest:
+        return None
+    return f"runs last in its milestone, so it waits for {', '.join(rest)}", False
+
+
+def left_out(gh, cfg):
+    """Steps for the open issues marked to run last that have no milestone, which the
+    milestone scope never reaches, so `nexkit status` can say why nothing happens."""
+    label = cfg["autopilot"]["last_in_milestone_label"]
+    if not label or cfg["autopilot"]["scope"] is None:
+        return []
+    return [
+        _step(issue, "waits", _no_milestone(label), person=False)
+        for issue in gh.labeled_without_milestone(label)
+    ]
 
 
 # -- the record of what autopilot started -------------------------------------------
@@ -953,9 +1117,9 @@ def mention_text(cfg, reason):
 
 def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     number = issue["number"]
-    if not trusted(gh, issue):
-        login = author(issue) or "an unknown user"
-        return _step(issue, "waits", f"opened by @{login}, who cannot write to the repository")
+    left_alone = distrust(gh, issue, cfg)
+    if left_alone:
+        return _step(issue, "waits", left_alone)
     parts = gh.sub_issues(number)
     if parts and all(part.get("state") == "closed" for part in parts):
         # `close_parent_issues` closes it by itself; without it, a person does.
@@ -1008,7 +1172,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
                 gh, cfg, issue, pull, rounds, record, start, comments, pull_comments, now
             )
         return {**step, "pull": pull}
-    blocked = waits_for(gh, issue, where)
+    blocked = waits_for(gh, issue, where) or rest_of_milestone(gh, cfg, issue)
     if blocked:
         return _step(issue, "waits", blocked[0], person=blocked[1])
     if last is None or plan is None:
@@ -1242,7 +1406,8 @@ def close(gh, cfg, step, workflow, ref):
     gh.close_issue(number, "completed")
     lines = [f"Closed #{number}: {step['reason']}."]
     if cfg["close_parent_issues"]:
-        # `maintain` imports this module. Closing with the Actions token starts no workflow.
+        # `maintain` imports this module. Here it runs at once; the `issues: closed` run
+        # that follows finds nothing left.
         from .maintain import close_parents_safely
 
         lines += close_parents_safely(gh, number)
@@ -1322,20 +1487,20 @@ def done(gh, cfg, where):
 def ci_workflow(issue):
     """The workflow a bug issue that autopilot opened for a CI failure is about, or None."""
     match = CI_BUG.match(issue.get("body") or "")
-    return match.group(1) if match and author(issue) == BOT_LOGIN else None
+    return match.group(1) if match and is_bot(author(issue)) else None
 
 
 def flaky_workflow(issue):
     """The workflow an issue that autopilot opened for flaky runs is about, or None."""
     match = CI_FLAKY.match(issue.get("body") or "")
-    return match.group(1) if match and author(issue) == BOT_LOGIN else None
+    return match.group(1) if match and is_bot(author(issue)) else None
 
 
 def flaky_failure(issue):
     """The key of the failure an issue that autopilot opened for flaky runs is about; None
     for one from NexKit 4.3.0, which holds every failure of its workflow, and for others."""
     match = CI_FLAKY.match(issue.get("body") or "")
-    return match.group(2) if match and author(issue) == BOT_LOGIN else None
+    return match.group(2) if match and is_bot(author(issue)) else None
 
 
 def _rank(issue):
@@ -1345,13 +1510,23 @@ def _rank(issue):
     return 1 if flaky_workflow(issue) is not None else 2
 
 
+def nexkit_issues(gh, state="all", since=None):
+    """The issues NexKit opened as its App, newest first."""
+    found = {
+        issue["number"]: issue
+        for login in sorted(BOT_LOGINS)
+        for issue in gh.issues_by(login, ISSUES_LIMIT, state, since)
+    }
+    return sorted(found.values(), key=lambda issue: -issue["number"])
+
+
 def ci_issues(gh, since):
     """The issues autopilot opened that can hold a record a sweep needs, newest first:
     every open one, and every one updated since `since`. A record of a run created since
     then was written after the run started, so its issue was updated since then too,
     however many issues and pull requests NexKit opened after it."""
-    found = {i["number"]: i for i in gh.issues_by(BOT_LOGIN, ISSUES_LIMIT, "open")}
-    for issue in gh.issues_by(BOT_LOGIN, ISSUES_LIMIT, since=iso(since)):
+    found = {i["number"]: i for i in nexkit_issues(gh, "open")}
+    for issue in nexkit_issues(gh, since=iso(since)):
         found.setdefault(issue["number"], issue)
     return sorted(found.values(), key=lambda issue: -issue["number"])
 
@@ -1873,7 +2048,7 @@ def open_bugs(gh):
     """{workflow: the open bug issue about it} for the bug issues that autopilot opened for
     a CI failure on the default branch: the newest open one of each, which reports go to."""
     bugs = {}
-    for found in gh.issues_by(BOT_LOGIN, ISSUES_LIMIT, "open"):
+    for found in nexkit_issues(gh, "open"):
         if found.get("state") == "open" and ci_workflow(found):
             bugs.setdefault(ci_workflow(found), found)
     return bugs

@@ -61,12 +61,11 @@ files or repository settings, and wait for confirmation.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the
    configuration reference, Caches): each has a `name`, `paths` outside the repository
    (`~/.npm`, `~/.gradle/caches`) and the `key_files` that decide the key, such as lock
-   files. NexKit only restores them. The repository's own CI on the default branch must
-   save each one with an `actions/cache` step before its setup, with the same `path`
-   lines in the same order and the key
-   `nexkit-${{ runner.os }}-<name>-${{ hashFiles(<key_files, in order>) }}`; offer that
-   change to the CI workflow too. `nexkit init` does not write `cache`; add it to
-   `.nexkit/config.json` after step 4.
+   files. NexKit only restores them. The repository's own CI on the default branch saves
+   them with one step before its setup, `uses: phuongnse/nexkit/cache@<the tag of the
+   NexKit workflow>`, which reads the entries from the config, so they are stated once;
+   offer that change to the CI workflow too. `nexkit init` does not write `cache`; add it
+   to `.nexkit/config.json` after step 4.
 
 3. **Choose the agents and models.** Default: the `claude` agent with `sonnet` for every
    stage. Mention that `opus` gives stronger results at a higher cost, and that each stage
@@ -118,24 +117,30 @@ files or repository settings, and wait for confirmation.
    the subscription token. Never ask the user to paste a token or key into the chat, or to
    put one in `.nexkit/config.json`: the config holds only the secret's name.
 
-6. **Allow Actions to open pull requests.** After confirmation, run
-   `gh api -X PUT repos/OWNER/REPO/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true`.
+6. **Set up the GitHub App.** NexKit writes only as a GitHub App, one per owner for all
+   their repositories. Ask whether the owner has one already. Without one, `nexkit init`
+   creates it: it opens the browser, the user confirms the App's name, and it stores the
+   App id and the private key as secrets, so never ask for them in the chat. Then the user
+   installs the App on the repository at the link it prints. With an App, the user installs
+   it on this repository and runs `nexkit init --app-id ID --app-private-key FILE` themselves,
+   which checks the installation and sets both secrets; with an organization's secrets,
+   `--app-slug SLUG` is enough. Run `nexkit doctor`; only with the key file can it check the
+   installation.
 
-7. **Optional: let the repository's own CI run on NexKit pull requests.** Pull requests
-   opened with the default Actions token do not trigger other workflows. NexKit runs the
-   configured checks itself, so this is optional. To also trigger the repository's CI,
-   store a fine-grained token with Contents and Pull requests write access as a secret,
-   for example `gh secret set NEXKIT_PUSH_TOKEN`, and name it in the config:
-   `"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}`. NexKit uses a push token only
-   when the config names it.
-
-   If the user wants `"merge": {"auto": true}`, say that branch protection still applies,
-   that a pull request whose review could not verify an acceptance criterion waits for a
-   person, and that a merge by NexKit starts no `push` CI on the base branch. Offer to list those CI
-   workflows in `merge.after_workflows` (for example `["ci.yml"]`, or
+7. **Automatic merges.** The repository's own CI runs on NexKit's pull requests and on its
+   merges, as for a person's. If the user wants `"merge": {"auto": true}`, say that branch
+   protection still applies, also to the App, and that a pull request whose review could
+   not verify an acceptance criterion waits for a person. To save runners, offer to take a
+   costly CI workflow's `push` trigger off for the default branch and list it in
+   `merge.after_workflows` (for example `["ci.yml"]`, or
    `nexkit init --after-workflow ci.yml`) so NexKit starts them after each merge; each one
    needs a `workflow_dispatch` trigger, which is a change the user makes to that workflow
    file.
+
+   If the repository's agent instructions hold rules that every pull request must meet,
+   such as docs that change with the code, offer `"review": {"checklist": ["<rule>"]}`:
+   every plan and review answers each item, and an item not met requests changes. Keep
+   each item to something an agent can check and change in the code.
 
    Offer `"notify": ["<login>"]` so the user gets a GitHub notification when a run needs
    a person, for example a plan with questions or a pull request ready to merge.
@@ -153,7 +158,8 @@ files or repository settings, and wait for confirmation.
    moves on when an issue closes; `"scope": null` takes every open issue instead, in
    every milestone and without one, so *blocked by* relationships alone order the work
    across milestones. Say that it skips their approval of each plan, that it
-   takes only issues opened by people with write access, and that it stops on questions,
+   takes only issues opened by people with write access (and, with
+   `"trusted_workflows"`, those of the workflows it lists), and that it stops on questions,
    blocked or failed runs and mentions `notify` (after a stopped `/nexkit go`, a person's
    comment or a blocker that closes lets it plan again), so recommend setting `notify` with it
    (`nexkit init --notify <login>`, or `"notify": ["<login>"]`). `"max_parallel": <n>` limits how many
@@ -166,32 +172,26 @@ files or repository settings, and wait for confirmation.
    failed CI run on the default branch once more and, if it fails again, opens a `bug`
    issue that it plans first; runs that passed only when run again are recorded on their
    own `bug` issue, planned next. Then also add the `workflow_run` trigger that names
-   those workflows by their `name:` (`nexkit init --after-workflow` writes it), and offer
-   to add the `nexkit-sweep` job that `nexkit init --after-workflow` prints to the end of
-   each of those workflows, with the user's agreement since it changes their CI: GitHub
-   sends no `workflow_run` event for the runs NexKit starts after its merges, and that
-   job starts the sweep instead, so a failure is noticed within minutes.
+   those workflows by their `name:` (`nexkit init --after-workflow` writes it), so a
+   failure is noticed within minutes.
    If running CI on the default branch after every merge costs too much runner time, for
    example when the rules want pull requests up to date so a merge only repeats checks
    that just passed, offer `"autopilot": {"watch_workflows": ["ci.yml"]}` instead of
    `merge.after_workflows` for that workflow (`nexkit init --watch-workflow ci.yml`):
    autopilot watches its runs on the default branch the same way, but NexKit does not
-   start it, so a `schedule` such as a nightly run, or a person's push, does. Add its
-   `name:` to the `workflow_run` trigger too; it needs no `nexkit-sweep` job. Say that a
+   start it, so a `schedule` such as a nightly run, or a push, does. Add its
+   `name:` to the `workflow_run` trigger too. Say that a
    failure on the default branch is then found at its next scheduled run.
    When GitHub delays or drops its scheduled runs, or the user wants CI tied to the work
    that lands, offer an entry that runs it every few merges instead, such as
    `{"workflow": "ci.yml", "every": 5}` in `merge.after_workflows`: NexKit starts it once
    that many commits reached the default branch since its latest run there, whatever
    started that run, and never while one is queued or in progress. It needs the
-   `workflow_dispatch` trigger and the `nexkit-sweep` job like every entry there.
+   `workflow_dispatch` trigger like every entry there.
    A command that autopilot started and that never ran starts once more as soon as its
    workflow run ended, or after `"lost_after_minutes"` (30 by default) when that run
    cannot be read.
-   With `autopilot` or `conflicts.auto_resolve`, recommend the push token above with
-   Workflows write access too: without it, a round that merges a change to
-   `.github/workflows/` from the base branch cannot push and waits for a person.
-   `nexkit doctor` says so. After the commit, start the first sweep with
+   After the commit, start the first sweep with
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
    If the work should go on while nobody watches, mention the `drive` skill: a Claude Code
    session on a schedule, such as a routine, runs it to act where autopilot stops for a

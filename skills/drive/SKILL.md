@@ -160,7 +160,7 @@ bounds:
   [a command that got the still-runs reply](../../docs/troubleshooting.md#a-command-got-the-reply-that-the-implement-round-still-runs)
   and [a profile that no longer exists](../../docs/troubleshooting.md#the-plan-names-a-profile-that-no-longer-exists):
   as the entry says.
-- **[A manual merge](../../docs/troubleshooting.md#a-round-needs-a-manual-merge-needs_merge)
+- **[A manual merge](../../docs/troubleshooting.md#a-round-needs-a-manual-merge)
   and [a change in protected paths](../../docs/troubleshooting.md#the-plans-change-is-in-protected-paths):**
   only when the repository lets the driver push or open hand-made pull requests, running
   what it says before each push. Otherwise notify.

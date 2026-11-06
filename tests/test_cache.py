@@ -9,7 +9,10 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import cache, cli
-from tests.support import make_config
+from nexkit.config import MAX_CACHES
+from tests.support import make_config, with_claude
+
+ROOT = Path(__file__).resolve().parent.parent
 
 GRADLE = {
     "name": "gradle",
@@ -74,6 +77,81 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(len(cache.report(make_config(cache=[NPM]), steps)), 2)
 
 
+def steps_of(path):
+    """{step id: (`uses`, its text)} of a composite action."""
+    found = {}
+    for step in (ROOT / path).read_text().split("\n    - ")[1:]:
+        name = re.search(r"^id: (\S+)", step, re.M)
+        uses = re.search(r"uses: (\S+)", step)
+        if name and uses:
+            found[name.group(1)] = (uses.group(1), step)
+    return found
+
+
+def inputs_of(step):
+    """The `with:` of a step, which decides its cache's key and version."""
+    return dict(re.findall(r"^\s+(path|key|restore-keys): (.*)$", step, re.M))
+
+
+class SavingTests(unittest.TestCase):
+    def test_the_action_plans_the_key_and_paths_nexkit_restores(self):
+        cfg = make_config(cache=[GRADLE, NPM, CRATES])
+        restored = cache.plan(cfg, "repo", "Linux")
+        saved = cache.plan(cfg, ".", "Linux")
+        self.assertEqual(saved["count"], "3")
+        for number in (1, 2, 3):
+            for field in ("name", "paths", "prefix"):
+                self.assertEqual(saved[f"{field}{number}"], restored[f"{field}{number}"])
+            # The same files, from a checkout at the workspace instead of in `repo/`.
+            self.assertEqual(
+                saved[f"files{number}"].split("\n"),
+                [line.replace("repo/", "", 1) for line in restored[f"files{number}"].split("\n")],
+            )
+        self.assertEqual(
+            saved["files1"],
+            "android/gradle/libs.versions.toml\nandroid/*.kts\n!android/build/**",
+        )
+        # In a folder, as NexKit's own jobs have it.
+        self.assertEqual(cache.plan(cfg, "code", "Linux")["files2"], "code/web/package-lock.json")
+
+    def test_each_step_of_the_action_uses_the_key_of_the_restore_step(self):
+        restored = steps_of(".github/actions/restore-caches/action.yml")
+        saved = steps_of("cache/action.yml")
+        for number in range(1, MAX_CACHES + 1):
+            wanted = inputs_of(restored[f"cache{number}"][1])
+            self.assertEqual(len(wanted), 3)
+            self.assertEqual(inputs_of(saved[f"save{number}"][1]), wanted)
+            self.assertEqual(inputs_of(saved[f"cache{number}"][1]), wanted)
+            self.assertTrue(saved[f"save{number}"][0].startswith("actions/cache@"))
+            self.assertTrue(saved[f"cache{number}"][0].startswith("actions/cache/restore@"))
+            # The same cache action, so the same version of a cache.
+            self.assertEqual(
+                saved[f"save{number}"][0].split("@")[1], restored[f"cache{number}"][0].split("@")[1]
+            )
+
+    def test_a_failed_cache_never_fails_the_run(self):
+        text = (ROOT / "cache/action.yml").read_text()
+        steps = text.split("\n    - ")[1:]
+        self.assertEqual(len(steps), 2 + 2 * MAX_CACHES)
+        for step in steps:
+            self.assertIn("continue-on-error: true", step)
+
+    def test_only_a_step_for_the_base_branch_saves(self):
+        saved = steps_of("cache/action.yml")
+        for number in range(1, MAX_CACHES + 1):
+            self.assertIn("steps.plan.outputs.save == 'true'", saved[f"save{number}"][1])
+            self.assertIn("steps.plan.outputs.save != 'true'", saved[f"cache{number}"][1])
+
+    def test_it_saves_only_on_the_base_branch(self):
+        self.assertTrue(cache.saves("push", "main", "main"))
+        self.assertTrue(cache.saves("workflow_dispatch", "main", "main"))
+        self.assertFalse(cache.saves("push", "feature", "main"))
+        self.assertFalse(cache.saves("pull_request", "main", "main"))
+        self.assertFalse(cache.saves("pull_request_target", "main", "main"))
+        # A run that does not say which branch is the base one only restores.
+        self.assertFalse(cache.saves("schedule", "main", ""))
+
+
 class CacheCommandTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -98,6 +176,31 @@ class CacheCommandTests(unittest.TestCase):
         outputs = {key: value for key, _, value in found}
         self.assertEqual(outputs["prefix1"], "nexkit-Linux-npm-")
         self.assertEqual(outputs["files1"], "repo/web/package-lock.json")
+
+    def test_the_action_reads_the_entries_from_the_checkout(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / ".nexkit/config.json"
+            path.parent.mkdir()
+            raw = with_claude({"cache": [NPM]})
+            path.write_text(json.dumps(raw))
+            argv = ["cache", "--save", "--repo", root, "--base", "main"]
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF_NAME": "main", "NEXKIT_CONFIG": ""}
+            printed = self.run_cli(argv, **env)
+            self.assertIn("Saves them at the end of the job: yes", printed)
+            self.assertIn("Caches: npm", printed)
+            outputs = self.outputs()
+            self.assertEqual(outputs["save"], "true")
+            self.assertEqual(outputs["prefix1"], "nexkit-Linux-npm-")
+            self.assertEqual(outputs["paths1"], "~/.npm")
+            self.output.write_text("")
+            env["GITHUB_REF_NAME"] = "feature"
+            self.assertIn("no, it only restores", self.run_cli(argv, **env))
+            self.assertEqual(self.outputs()["save"], "false")
+
+    def outputs(self):
+        pattern = r"^(\w+)<<(EOF_\w+)\n(.*?)\n\2$"
+        found = re.findall(pattern, self.output.read_text(), re.M | re.S)
+        return {key: value for key, _, value in found}
 
     def test_report_reads_the_restore_steps(self):
         steps = {"cache1": restore_step(key="nexkit-Linux-npm-a")}

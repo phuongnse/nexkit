@@ -1,4 +1,4 @@
-"""Pipeline state lives in GitHub comments written by the Actions bot.
+"""Pipeline state lives in GitHub comments written by the repository's GitHub App.
 
 Every run has its own run comment, posted where the run was started: on the issue for
 `plan` and `go`, on the pull request for a round. A hidden marker in it holds the run URL,
@@ -16,7 +16,11 @@ import re
 from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
 from .schema import filled
 
-BOT_LOGIN = "github-actions[bot]"
+ACTIONS_BOT = "github-actions[bot]"
+# Who writes as NexKit: the App that `use_app` names, and only it. A pull request's own CI
+# can write as the Actions bot, and NexKit's App starts that CI on code that an agent wrote,
+# so what that bot writes proves nothing.
+BOT_LOGINS = {ACTIONS_BOT}
 PLAN_MARKER = "<!-- nexkit:plan -->"
 STATE_PREFIX = "<!-- nexkit:state "
 STATE_PATTERN = re.compile(r"<!-- nexkit:state ([A-Za-z0-9+/=]+) -->")
@@ -37,7 +41,7 @@ PROFILE_TEXT_PATTERN = re.compile(
 # end of the plan comment, after everything the agent wrote.
 PLAN_DATA_PREFIX = "<!-- nexkit:plan-data "
 PLAN_DATA = re.compile(r"\n*<!-- nexkit:plan-data ([A-Za-z0-9+/=]+) -->\s*\Z")
-# Answers that autopilot gave for the owner. Only where the marker ends a bot's comment.
+# Answers that autopilot gave for the owner. Only where the marker ends NexKit's comment.
 ANSWERS_PREFIX = "<!-- nexkit:answers "
 ANSWERS = re.compile(r"\n*<!-- nexkit:answers ([A-Za-z0-9+/=]+) -->\s*\Z")
 
@@ -48,7 +52,8 @@ CONTINUED = "continued"
 RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️", CONTINUED: "⏭️"}
 # Outcomes of rounds that published nothing for a reason outside the agent's work, or that
 # NexKit stopped in their checks because the base branch moved. They count against neither
-# `fix.max_auto_rounds` nor `conflicts.max_rounds`.
+# `fix.max_auto_rounds` nor `conflicts.max_rounds`. `needs_merge`, of rounds whose token may
+# not change workflow files, is only in the comments of releases before the GitHub App.
 UNCOUNTED = {"needs_merge", "already_on_base", "on_base_failed", "superseded", "stop_failed"}
 
 
@@ -77,8 +82,20 @@ PROTECTED_ENTRY = f"{TROUBLESHOOTING}#the-plans-change-is-in-protected-paths"
 MAX_QUESTIONS = 10
 
 
+def use_app(login):
+    """Count what the App's bot `login` writes as NexKit's, and nothing else. `None` means
+    no App."""
+    if login:
+        BOT_LOGINS.clear()
+        BOT_LOGINS.add(login)
+
+
+def is_bot(login):
+    return login in BOT_LOGINS
+
+
 def by_bot(comment):
-    return (comment.get("user") or {}).get("login") == BOT_LOGIN
+    return is_bot((comment.get("user") or {}).get("login"))
 
 
 def clip(text, limit=4000):

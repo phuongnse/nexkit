@@ -1,0 +1,146 @@
+# The review job, called by pipeline.yml.
+#
+# A workflow of its own, for its secrets: a job that reads `secrets[...]` with a name known
+# only at run time gets every secret on its runner, the App's key too, and an agent can read
+# its runner. pipeline.yml does that read in the `secrets:` of the call, which GitHub
+# evaluates off the runner, so this job's runner holds only the slots below.
+name: NexKit review
+
+on:
+  workflow_call:
+    inputs:
+      nexkit_repository:
+        type: string
+        required: true
+      nexkit_ref:
+        type: string
+        required: true
+      action:
+        type: string
+        required: true
+      decision:
+        type: string
+        required: true
+      config:
+        type: string
+        required: true
+      timeout:
+        type: string
+        required: true
+      secret_names:
+        type: string
+        required: true
+      head:
+        type: string
+        required: true
+      pr:
+        type: string
+        required: true
+      verify_result:
+        type: string
+        required: true
+    secrets:
+      AGENT_SECRET_1:
+        required: false
+      AGENT_SECRET_2:
+        required: false
+      AGENT_SECRET_3:
+        required: false
+      AGENT_SECRET_4:
+        required: false
+      AGENT_SECRET_5:
+        required: false
+      AGENT_SECRET_6:
+        required: false
+      AGENT_SECRET_7:
+        required: false
+      AGENT_SECRET_8:
+        required: false
+
+permissions: {}
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ fromJSON(inputs.timeout) }}
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false # repository commands keep their own Python
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.head }}
+          path: repo
+          fetch-depth: 0
+          persist-credentials: false
+      # After NexKit merged the base branch into an approved pull request that branch
+      # protection wants up to date: no review agent when the change is the approved one.
+      - name: Carry over the approved review
+        id: carry
+        if: fromJSON(inputs.decision).carry_from
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit carry --repo repo --out out
+        env:
+          NEXKIT_DECISION: ${{ inputs.decision }}
+      # None when route skipped every check: the review reads them from the decision.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.carry.outputs.carried != 'true' && inputs.verify_result != 'skipped'
+        with:
+          name: nexkit-checks
+          path: checks
+      # The pinned version of each runtime the configuration uses (nexkit/__init__.py).
+      - name: Install agents
+        if: steps.carry.outputs.carried != 'true'
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit install-agents
+        env:
+          NEXKIT_CONFIG: ${{ inputs.config }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: inputs.action == 'fix'
+        with:
+          name: nexkit-agent
+          path: agent
+      - name: Collect issue context
+        if: steps.carry.outputs.carried != 'true'
+        run: >-
+          ${{ steps.python.outputs.python-path }} kit/bin/nexkit context --out out --pr "$PR"
+          --stage review --fix-result agent/result.json
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXKIT_DECISION: ${{ inputs.decision }}
+          NEXKIT_CONFIG: ${{ inputs.config }}
+          PR: ${{ inputs.pr }}
+      - name: Run agent review
+        if: steps.carry.outputs.carried != 'true'
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit agent --stage review --repo repo --out out --checks checks/checks.json
+        env:
+          NEXKIT_DECISION: ${{ inputs.decision }}
+          NEXKIT_CONFIG: ${{ inputs.config }}
+          # The agent secrets of this job's stages, which pipeline.yml put in these slots
+          # (nexkit/runtimes/__init__.py); each CLI gets only its own.
+          NEXKIT_AGENT_SECRETS: ${{ inputs.secret_names }}
+          NEXKIT_AGENT_SECRET_1: ${{ secrets.AGENT_SECRET_1 }}
+          NEXKIT_AGENT_SECRET_2: ${{ secrets.AGENT_SECRET_2 }}
+          NEXKIT_AGENT_SECRET_3: ${{ secrets.AGENT_SECRET_3 }}
+          NEXKIT_AGENT_SECRET_4: ${{ secrets.AGENT_SECRET_4 }}
+          NEXKIT_AGENT_SECRET_5: ${{ secrets.AGENT_SECRET_5 }}
+          NEXKIT_AGENT_SECRET_6: ${{ secrets.AGENT_SECRET_6 }}
+          NEXKIT_AGENT_SECRET_7: ${{ secrets.AGENT_SECRET_7 }}
+          NEXKIT_AGENT_SECRET_8: ${{ secrets.AGENT_SECRET_8 }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: nexkit-review
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 14

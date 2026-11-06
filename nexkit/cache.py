@@ -1,13 +1,16 @@
-"""Restore the caches in `cache` before setup, for the agent and verify jobs.
+"""Restore the caches in `cache` before setup, for the agent and verify jobs, and save them
+from the repository's own workflow.
 
 Those jobs only restore. They run code the agent wrote, and NexKit's runs use the base
-branch's cache scope, so a cache they saved would reach every later run there. The
-repository's own workflow on the base branch saves the caches under the same keys.
+branch's cache scope, so a cache they saved would reach every later run there. A workflow
+of the repository on the base branch saves them, with the action in `cache/`, which reads
+the same entries and so saves under the keys these jobs restore.
 """
 
 from __future__ import annotations
 
 DOCS = "https://github.com/phuongnse/nexkit/blob/main/docs/configuration.md#caches"
+PULL_REQUEST_EVENTS = ("pull_request", "pull_request_target")
 
 
 def key_prefix(runner_os, name):
@@ -17,7 +20,15 @@ def key_prefix(runner_os, name):
 
 def _in_checkout(pattern, repo):
     negate = "!" if pattern.startswith("!") else ""
-    return f"{negate}{repo.rstrip('/')}/{pattern.removeprefix('!').removeprefix('./')}"
+    bare = pattern.removeprefix("!").removeprefix("./")
+    return f"{negate}{bare}" if repo in (".", "./") else f"{negate}{repo.rstrip('/')}/{bare}"
+
+
+def saves(event, ref_name, base):
+    """Whether a run of the repository's workflow saves the caches: on the base branch
+    only, since NexKit sees no cache saved anywhere else, and never for a pull request,
+    whose `ref_name` is its merge ref and whose code a fork can write."""
+    return bool(base) and ref_name == base and event not in PULL_REQUEST_EVENTS
 
 
 def plan(cfg, repo, runner_os):

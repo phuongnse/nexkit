@@ -60,6 +60,21 @@ query($owner: String!, $name: String!, $number: Int!) {
 """
 
 
+# Who edited an issue's text: GitHub keeps each edit, and the first entry is its author.
+EDITORS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      userContentEdits(first: 100) {
+        pageInfo { hasNextPage }
+        nodes { editor { __typename login } }
+      }
+    }
+  }
+}
+"""
+
+
 def _required_state(item):
     """(name, "failed" | "pending" | "passed") of a check run or a commit status that
     GraphQL lists for a commit. A check run has a conclusion once it completed."""
@@ -195,6 +210,9 @@ class GitHub:
                 self._roles[user] = "none"
         return self._roles[user]
 
+    def user(self, login):
+        return self.request("GET", f"/users/{quote(login)}")
+
     def can_write(self, user):
         return self.role(user) in WRITE_ROLES
 
@@ -218,11 +236,40 @@ class GitHub:
     def sub_issues(self, number):
         return self.paginate(f"{self._repo}/issues/{number}/sub_issues")
 
+    def issue_editors(self, number):
+        """The logins of everyone who changed an issue's text or title, its author too, as
+        REST writes them. "" stands for someone GitHub cannot name: a deleted account, or
+        edits beyond the most it lists."""
+        owner, name = self.repository.split("/")
+        found = self.graphql(EDITORS_QUERY, {"owner": owner, "name": name, "number": number})
+        edits = ((found.get("repository") or {}).get("issue") or {}).get("userContentEdits") or {}
+        editors = set()
+        for node in edits.get("nodes") or []:
+            editor = (node or {}).get("editor") or {}
+            login = editor.get("login") or ""
+            # GraphQL names a bot without the suffix that REST gives it.
+            editors.add(f"{login}[bot]" if editor.get("__typename") == "Bot" else login)
+        if (edits.get("pageInfo") or {}).get("hasNextPage"):
+            editors.add("")
+        for event in self.paginate(f"{self._repo}/issues/{number}/events"):
+            if event.get("event") == "renamed":
+                editors.add((event.get("actor") or {}).get("login") or "")
+        return sorted(editors)
+
     def blocked_by(self, number):
         """The issues that block this one (GitHub issue dependencies), or [] where the API
         does not exist, such as on older GitHub Enterprise Server versions."""
         try:
             return self.paginate(f"{self._repo}/issues/{number}/dependencies/blocked_by")
+        except GitHubError as exc:
+            if exc.status != 404:
+                raise
+            return []
+
+    def blocking(self, number):
+        """The issues that this one blocks, or [] where the API does not exist."""
+        try:
+            return self.paginate(f"{self._repo}/issues/{number}/dependencies/blocking")
         except GitHubError as exc:
             if exc.status != 404:
                 raise
@@ -244,6 +291,12 @@ class GitHub:
         if milestone is not None:
             params["milestone"] = str(milestone)
         return self.paginate(f"{self._repo}/issues", params)
+
+    def labeled_without_milestone(self, label):
+        """Open issues with the label `label` and no milestone, without pull requests."""
+        params = {"state": "open", "labels": label, "milestone": "none"}
+        found = self.paginate(f"{self._repo}/issues", params)
+        return [item for item in found if "pull_request" not in item]
 
     def latest_closed_issue(self, milestone):
         """The issue in a milestone (its number) that closed last, or None. Issues sort by
@@ -410,8 +463,9 @@ class GitHub:
     def required_checks(self, branch):
         """(names, complete): the names of the checks that pull requests into `branch` must
         pass, from its rulesets' required status checks and classic branch protection, and
-        whether those are all of them. The Actions token may not read classic protection
-        (403): then only the rulesets' names are known."""
+        whether those are all of them. NexKit's token may not read classic protection
+        (403), which takes the Administration permission: then only the rulesets' names are
+        known."""
         names = set()
         for rule in self.paginate(f"{self._repo}/rules/branches/{quote(branch)}"):
             if rule.get("type") == "required_status_checks":
@@ -465,7 +519,13 @@ class GitHub:
         return found
 
     def delete_branch(self, branch):
-        return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")
+        """Delete a branch. One that is gone already, which GitHub may have deleted by
+        itself after a merge, is no failure: GitHub answers 422 for it."""
+        try:
+            return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")
+        except GitHubError as exc:
+            if exc.status not in (404, 422):
+                raise
 
     def close_pull(self, number):
         return self.request("PATCH", f"{self._repo}/pulls/{number}", {"state": "closed"})

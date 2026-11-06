@@ -32,7 +32,7 @@ class RegistryTests(unittest.TestCase):
         for name in (
             "GITHUB_TOKEN",
             "GITHUB_ANYTHING",
-            "NEXKIT_PUSH_TOKEN",
+            "NEXKIT_APP_ID",
             "NEXKIT_AGENT_SECRET_1",
         ):
             self.assertTrue(reserved(name), name)
@@ -162,9 +162,9 @@ class SlotTests(unittest.TestCase):
         self.assertEqual(secret_names(environ), {*DECLARED_SECRETS, *names})
 
     def test_reserved_names_are_never_unpacked(self):
-        environ = {NAMES_VAR: '["NEXKIT_PUSH_TOKEN"]', SLOT_VAR % 1: "token"}
+        environ = {NAMES_VAR: '["NEXKIT_APP_ID"]', SLOT_VAR % 1: "token"}
         unpack_secrets(environ)
-        self.assertNotIn("NEXKIT_PUSH_TOKEN", environ)
+        self.assertNotIn("NEXKIT_APP_ID", environ)
 
 
 class FieldTests(unittest.TestCase):
@@ -177,7 +177,7 @@ class FieldTests(unittest.TestCase):
         self.check(secret, "GPT_SOL_KEY")
         with self.assertRaisesRegex(AgentConfigError, "the config holds only its name"):
             self.check(secret, "sk-ant-api03-abcdefghijklmnop")
-        for name in ("GITHUB_TOKEN", "NEXKIT_PUSH_TOKEN", "NEXKIT_FUTURE"):
+        for name in ("GITHUB_TOKEN", "NEXKIT_APP_ID", "NEXKIT_FUTURE"):
             with self.assertRaisesRegex(AgentConfigError, "reserved for GitHub and NexKit"):
                 self.check(secret, name)
 

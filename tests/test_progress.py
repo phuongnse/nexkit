@@ -16,8 +16,9 @@ from nexkit.maintain import (
     _give_back,
     check_paused,
     maintain,
+    resume_due,
     resume_paused,
-    wait_and_resume,
+    wait_for_paused,
 )
 from nexkit.report import report
 from nexkit.state import (
@@ -440,7 +441,7 @@ class PausedRunTests(unittest.TestCase):
         self.assertEqual(check_paused(self.gh, "nexkit.yml", "main", 60, now), [])
         self.assertEqual(len(self.gh.dispatches), 1)
 
-    def test_the_waiting_run_resumes_commands_as_they_come_due(self):
+    def test_the_waiting_run_waits_with_reads_until_a_command_comes_due(self):
         clock = [datetime(2026, 10, 11, 4, 15, tzinfo=UTC)]
         slept = []
 
@@ -448,29 +449,44 @@ class PausedRunTests(unittest.TestCase):
             slept.append(seconds)
             clock[0] += timedelta(seconds=seconds)
             if len(slept) == 1:
-                # A run that pauses while this one waits is resumed too.
+                # A run that pauses while this one waits counts too.
                 self.gh.add_issue(7)
-                self.paused(7, 2, at="2026-10-11T04:50:00Z")
+                self.paused(7, 2, at="2026-10-11T04:30:00Z")
 
-        lines = wait_and_resume(
-            self.gh, "nexkit.yml", "main", 330, now=lambda tz: clock[0], sleep=sleep
-        )
-        self.assertEqual(lines, [])  # nothing was due at first
         self.paused(5, 1)  # due at 04:40
-        lines = wait_and_resume(
-            self.gh, "nexkit.yml", "main", 330, now=lambda tz: clock[0], sleep=sleep
-        )
-        self.assertEqual(lines, ["Resumed /nexkit plan on #5.", "Resumed /nexkit plan on #7."])
-        self.assertEqual(slept, [600, 600, 300, 600])  # looks again at least every ten minutes
-        self.assertEqual(clock[0], datetime(2026, 10, 11, 4, 50, tzinfo=UTC))
+        wait_for_paused(self.gh, 330, now=lambda tz: clock[0], sleep=sleep)
+        self.assertEqual(slept, [600, 300])  # looks again at least every ten minutes
+        self.assertEqual(clock[0], datetime(2026, 10, 11, 4, 30, tzinfo=UTC))
+        # The App's token comes after this wait, so it writes nothing.
+        self.assertFalse(self.gh.dispatches)
 
-    def test_the_waiting_run_leaves_later_resumes_to_the_schedule(self):
+    def test_the_waiting_run_does_not_wait_for_what_comes_too_late(self):
         now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
-        self.paused(5, 1)  # due at 04:40
         sleep = mock.Mock()
-        lines = wait_and_resume(self.gh, "nexkit.yml", "main", 60, now=lambda tz: now, sleep=sleep)
-        self.assertEqual(lines, [])
+        wait_for_paused(self.gh, 60, now=lambda tz: now, sleep=sleep)  # nothing paused
+        self.paused(5, 1)  # due at 04:40
+        wait_for_paused(self.gh, 60, now=lambda tz: now, sleep=sleep)
         sleep.assert_not_called()
+
+    def test_after_the_wait_it_resumes_what_is_due_and_starts_the_next_wait(self):
+        self.paused(5, 1)  # due at 04:40
+        self.gh.add_issue(7)
+        self.paused(7, 2, at="2026-10-11T06:00:00Z")
+        now = datetime(2026, 10, 11, 4, 41, tzinfo=UTC)
+        lines = resume_due(self.gh, "nexkit.yml", "main", 330, now)
+        self.assertEqual(
+            lines,
+            [
+                "Resumed /nexkit plan on #5.",
+                "Started a run that waits for the next paused command.",
+            ],
+        )
+        self.assertEqual([d["inputs"]["command"] for d in self.gh.dispatches], ["plan", "resume"])
+
+    def test_after_the_wait_a_later_resume_is_left_to_the_schedule(self):
+        self.paused(5, 1)  # due at 04:40
+        now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
+        self.assertEqual(resume_due(self.gh, "nexkit.yml", "main", 60, now), [])
         self.assertFalse(self.gh.dispatches)
 
     def test_a_pull_request_command_continues_the_issues_paused_go(self):

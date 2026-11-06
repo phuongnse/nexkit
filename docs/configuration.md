@@ -602,11 +602,15 @@ No merge by hand is needed after a person's part. NexKit merges a pull request w
 merge GitHub refused, on the head its checks and review passed:
 
 - **after an approval** by someone with write access: the *Approve* review starts the
-  merge at once. It needs the workflow's `pull_request_review` trigger to let approvals
-  through, as `nexkit init` writes it; `nexkit doctor` says when it does not;
+  merge at once, in a concurrency group of its own, so it never replaces a command that
+  waits on the pull request. For a round that left criteria to a person, only an approval
+  of the commit that round checked counts. It needs the workflow's `pull_request_review`
+  trigger and job condition to let approvals through, and that group, as `nexkit init`
+  writes them; `nexkit doctor` says when they do not;
 - **at each sweep** with autopilot, once GitHub reports the pull request as mergeable
-  (`clean`), such as after an approval while runs were busy, or after a rule changed. A
-  head that GitHub reported as mergeable and still refused is not tried again by sweeps.
+  (`clean`, or `unstable` for a check it does not require), such as after an approval
+  while runs were busy, or after a rule changed. A head that GitHub reported as mergeable
+  and still refused, at the round or at a sweep, is not tried again by sweeps.
 
 Each try has the guards of every merge: an issue that closed, an edit by someone without
 write access, a label that holds the issue, or a base branch that already holds the change
@@ -809,17 +813,21 @@ every open issue in scope, in order, and starts the one command that moves it on
     of the same wave run side by side, so a milestone's journey (wave 1) runs before its
     docs sweep (wave 2) whatever order they were opened in. A part keeps its parent's
     labels, and so that nothing waits in a circle, an issue never waits for an issue above
-    it, or for one that a person marked as *blocked by* it or an issue above it. `nexkit
+    it, or for one that a person marked as *blocked by* it, an issue above it, or an issue
+    of its wave or a higher one. `nexkit
     status` shows a waiting issue and names the issues it waits for. An issue with a wave
     and no milestone waits: with the `null` scope, or a label of `priority`, for a person;
     otherwise it is outside the scope, and `nexkit status` says why.
   - **`hold`** makes autopilot start nothing for the issue, a label on the issue itself: no
     plan, no `/nexkit go`, no automatic fix or conflict round and no merge of its pull
-    request. A round that is already running finishes and ends as `held`, with what it kept
-    back. Once the label is removed, the next sweep takes the issue again and starts that:
-    the automatic fix round, within `fix.max_auto_rounds`, the merge, or the round that
-    resolves conflicts. A held issue takes no place within `max_parallel`, and a person's
-    own commands still run. `nexkit status` shows it as `held`. It needs autopilot to take
+    request. A round that is already running finishes, also when it runs once more after a
+    transient error or resumes after the usage limit, and ends as `held`, with what it kept
+    back; one that cannot read the label holds too. Once the label is removed, the next
+    sweep takes the issue again and starts that: the automatic fix round, within
+    `fix.max_auto_rounds`, the merge, or the round that resolves conflicts, or
+    `/nexkit review` when the pull request got a new commit meanwhile or no longer
+    conflicts. A held issue takes no place within `max_parallel` once no run on it is
+    under way, and a person's own commands still run. `nexkit status` shows it as `held`. It needs autopilot to take
     the issue, since only its sweeps start what was kept back.
   - **Labels never grant trust.** Anyone with triage access can add one, so trust stays
     with markers, authors and [`/nexkit trust`](#vouching-for-an-issue).

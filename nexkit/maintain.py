@@ -880,8 +880,9 @@ def merge_approved(gh, cfg, decision, workflow, ref):
     """Merge a NexKit pull request that a writer approved, when its latest round ended as
     `merge_refused`, or `ready`, on the head that its checks and review passed, with the
     guards of every merge (see `report.merge_pull`): a head that moved since gets a review
-    instead. A label that holds its issue, a round on its way, or any other outcome starts
-    nothing. Returns lines for the log."""
+    instead. A label that holds its issue, a round on its way, any other outcome, or, for a
+    `ready` round, an approval of another commit than its head starts nothing. Returns
+    lines for the log."""
     # `report` imports this module.
     from .report import merge_waiting
 
@@ -894,6 +895,13 @@ def merge_approved(gh, cfg, decision, workflow, ref):
     if run.get("status") != SUCCESS or run.get("outcome") not in APPROVABLE:
         state = run.get("outcome") or run.get("status")
         return [f"#{pr}: its latest round is `{state}`, so the approval starts nothing."]
+    commit = decision.get("commit")
+    if run.get("outcome") == "ready" and commit and commit != run.get("head"):
+        # A person confirms the criteria of the commit they approved, and no other.
+        return [
+            f"#{pr}: the approval is of `{commit[:7]}`, not of `{str(run.get('head'))[:7]}`, "
+            "whose criteria wait for a person; it starts nothing."
+        ]
     if implementing(gh, issue):
         return [f"#{pr}: the implement round on #{issue} still runs; it merges by itself."]
     label = autopilot.held(gh, cfg, issue)

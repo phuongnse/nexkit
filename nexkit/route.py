@@ -172,7 +172,7 @@ def route(gh, event_name, event, inputs=None):
         if review["user"].get("type") == "Bot" or not gh.can_write(actor):
             return _none(f"Review by @{actor} cannot start anything")
         if state == "approved":
-            return _approved(event["pull_request"], actor)
+            return _approved(event["pull_request"], actor, review.get("commit_id"))
         decision = _decide(
             gh, "fix", event["pull_request"]["number"], True, review.get("body") or "", auto=False
         )
@@ -268,9 +268,11 @@ def route(gh, event_name, event, inputs=None):
     return _none(f"Event '{event_name}' is not handled")
 
 
-def _approved(pull, actor):
-    """A writer's approval of a NexKit pull request: the `maintain` job merges it when its
-    latest round could not (see `maintain.merge_approved`). It starts no agent."""
+def _approved(pull, actor, commit=None):
+    """A writer's approval of the commit `commit` of a NexKit pull request: the `maintain`
+    job merges it when its latest round could not (see `maintain.merge_approved`). It
+    starts no agent, and runs in a concurrency group of its own, so it never replaces a
+    command that waits."""
     issue = issue_from_branch((pull.get("head") or {}).get("ref"))
     repo = ((pull.get("head") or {}).get("repo") or {}).get("full_name")
     base = (pull.get("base") or {}).get("repo") or {}
@@ -282,6 +284,7 @@ def _approved(pull, actor):
         "pr": pull["number"],
         "issue": issue,
         "actor": actor,
+        "commit": commit,
     }
 
 

@@ -357,12 +357,15 @@ class Snapshot:
         if (found or {}).get("totalCount", 0) <= len(nodes):
             self._known[(what, number)] = [self._related(n) for n in nodes if n]
 
+    def _whole_labels(self, number, node, item):
+        """`item` with every label: a query holds only the first, so REST reads the rest."""
+        if (node.get("labels") or {}).get("totalCount", 0) > len(item["labels"]):
+            item["labels"] = self._once("issue", number).get("labels") or []
+        return item
+
     def _add_issue(self, node):
         number = node["number"]
-        if (node.get("labels") or {}).get("totalCount", 0) > len(_labels(node)):
-            # A page holds only the first labels: this issue is read over REST.
-            return
-        self._issues[number] = self._item(node)
+        self._issues[number] = self._whole_labels(number, node, self._item(node))
         parent = node.get("parent")
         self._known[("parent", number)] = self._related(parent) if parent else None
         self._connection("sub_issues", number, node.get("subIssues"))
@@ -408,10 +411,9 @@ class Snapshot:
 
     def _add_pull(self, node):
         number = node["number"]
-        if (node.get("labels") or {}).get("totalCount", 0) > len(_labels(node)):
-            return
         head_repo = (node.get("headRepository") or {}).get("nameWithOwner")
-        self._issues[number] = {**self._item(node), "pull_request": {}}
+        item = self._whole_labels(number, node, {**self._item(node), "pull_request": {}})
+        self._issues[number] = item
         self._pulls[number] = {
             "number": number,
             "state": "open",
@@ -430,7 +432,7 @@ class Snapshot:
             "base": {"ref": node.get("baseRefName")},
             "mergeable": MERGEABLE.get(node.get("mergeable")),
             "mergeable_state": _lower(node.get("mergeStateStatus")) or "unknown",
-            "labels": _labels(node),
+            "labels": item["labels"],
             "milestone": _milestone(node.get("milestone")),
         }
         self._comments(number, node)

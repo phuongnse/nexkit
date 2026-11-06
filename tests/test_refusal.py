@@ -130,7 +130,7 @@ class ExplainTests(unittest.TestCase):
         self.assertEqual(
             do,
             "the reviewer who requested changes (`@olivia`) approves the pull request, which "
-            "NexKit then merges, or dismisses the review",
+            "NexKit then merges, or dismisses the review and merges it",
         )
         self.assertIn("while a review requests changes", why)
 
@@ -357,3 +357,141 @@ class CleanMergeSweepTests(ReportCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixTests(ReportCase):
+    """What the independent review of #221 and #224 found."""
+
+    def test_a_protected_path_from_an_agent_mentions_nobody_and_fakes_no_state(self):
+        from nexkit.state import STATE_PREFIX, read_state
+
+        path = ".github/x` @victim `y <!-- nexkit:state e30= -->"
+        reason = autopilot.protected_reason([path])
+        self.assertNotIn("<!--", reason)
+        text = autopilot.mention_text(make_config(notify=["owner"]), reason)
+        self.assertNotIn(STATE_PREFIX, text)
+        outside = "".join(text.removeprefix("@owner").split("`")[::2])
+        self.assertNotIn("@", outside)
+        self.gh.comment(6, text)
+        self.assertEqual(read_state(self.gh.comments(6)), (None, None))
+
+    def test_a_mention_names_logins_in_code_spans(self):
+        reason = autopilot.person("do it", "opened by @bob, after @acme/team and @ci[bot]")
+        text = autopilot.mention_text(make_config(notify=["owner"]), reason)
+        self.assertEqual(
+            text,
+            "@owner a person is needed: do it. Opened by `@bob`, after `@acme/team` and "
+            "`@ci[bot]`.",
+        )
+
+    def test_quoted_text_keeps_the_length_it_asks_for(self):
+        self.assertEqual(len(autopilot.quoted("x" * 500, 300)), 302)
+
+    def test_an_approval_of_another_commit_confirms_nothing(self):
+        self.candidate()
+        row = {"round": 1, "trigger": "fix", "url": "u", "status": "success", "head": HEAD}
+        self.gh.comment(6, render_run({**row, "outcome": "ready"}, "Ready."))
+        approval = {**APPROVED, "commit": "b" * 40}
+        cfg = make_config(merge={"auto": True})
+        lines = maintain(self.gh, approval, cfg, workflow="nexkit.yml", ref="main")
+        self.assertIn("the approval is of `bbbbbbb`", lines[0])
+        self.assertEqual(self.gh.merged, [])
+        lines = maintain(self.gh, {**APPROVED, "commit": HEAD}, cfg, workflow="w", ref="main")
+        self.assertEqual(lines, ["#6: merged."])
+
+    def test_a_conflict_without_auto_resolve_says_to_comment_fix(self):
+        self.candidate()
+        self.gh.pulls[6]["mergeable_state"] = "dirty"
+        self.gh.merge_error = GitHubError(405, "Pull Request is not mergeable")
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertTrue(outcome["attention"].startswith("comment `/nexkit fix` on the pull"))
+        self.gh.pulls[6]["mergeable_state"] = "behind"
+        outcome = self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertTrue(outcome["attention"].startswith("merge `main` into the pull request"))
+
+    def test_a_refusal_while_github_calls_it_mergeable_is_not_swept_again(self):
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+        self.candidate()
+        self.gh.pulls[6]["mergeable_state"] = "clean"
+        self.gh.repo_settings["allow_squash_merge"] = False
+        self.gh.merge_error = GitHubError(405, "Squash merges are not allowed on this repository.")
+        self.assertEqual(self.run_report(cfg=cfg)["outcome"], "merge_refused")
+        self.assertEqual(self.gh.run_comments(6)[-1]["run"]["refused_clean"], HEAD)
+        before = len(self.gh.comments(6))
+        autopilot.sweep(self.gh, cfg, "nexkit.yml", "main")
+        self.assertEqual(len(self.gh.comments(6)), before)
+
+    def test_a_pull_request_github_would_merge_with_a_check_it_does_not_require_is_swept(self):
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+        self.candidate()
+        self.gh.merge_error = GitHubError(405, "At least 1 approving review is required.")
+        self.run_report(cfg=cfg)
+        self.gh.pulls[6]["mergeable_state"] = "unstable"
+        self.gh.merge_error = None
+        autopilot.sweep(self.gh, cfg, "nexkit.yml", "main")
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+
+
+class RulesetTests(unittest.TestCase):
+    def test_rules_of_one_type_from_several_rulesets_are_joined(self):
+        gh = FakeGitHub()
+        gh.add_pull(6, 5)
+        gh.rules = [
+            {
+                "type": "pull_request",
+                "parameters": {
+                    "require_code_owner_review": True,
+                    "required_approving_review_count": 1,
+                    "allowed_merge_methods": ["merge", "squash"],
+                },
+            },
+            {
+                "type": "pull_request",
+                "parameters": {
+                    "require_code_owner_review": False,
+                    "required_approving_review_count": 2,
+                    "allowed_merge_methods": ["squash", "rebase"],
+                },
+            },
+        ]
+        rules = refusal._rules(gh, "main")
+        self.assertEqual(
+            rules["pull_request"],
+            {
+                "require_code_owner_review": True,
+                "required_approving_review_count": 2,
+                "allowed_merge_methods": ["squash"],
+            },
+        )
+
+    def test_classic_protection_names_its_count_in_githubs_words(self):
+        gh = FakeGitHub()
+        gh.add_pull(6, 5)
+        refused = GitHubError(
+            405, "At least 2 approving reviews are required by reviewers with write access."
+        )
+        _, why = explain(gh, TARGET, refused)
+        self.assertTrue(why.startswith("GitHub requires 2 approving reviews (0 given)"), why)
+
+
+class UnreadHoldTests(ReportCase):
+    def test_a_round_that_cannot_read_the_hold_merges_nothing(self):
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        cfg = make_config(
+            merge={"auto": True},
+            autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}},
+        )
+        self.candidate()
+        with mock.patch.object(autopilot, "held", side_effect=GitHubError(502, "down")):
+            outcome = self.run_report(cfg=cfg)
+        self.assertEqual(outcome["outcome"], "held")
+        self.assertEqual(self.gh.merged, [])
+        self.assertIn("could not read whether a label holds #5", outcome["summary"])
+        # The next sweep reads that no label holds it, and merges.
+        autopilot.sweep(self.gh, cfg, "nexkit.yml", "main")
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])

@@ -1049,7 +1049,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
             "refused": (
                 "comment `/nexkit fix` on the pull request, with any rule the conflict needs",
                 f"it conflicts with `{base}`, and NexKit started no round to resolve it"
-                + (f": {started.rstrip('.')}" if started else ""),
+                + (f": {autopilot.quoted(started)}" if started else ""),
             )
         }
         return "merge_refused", f"{message}\n\n{started}" if started else message
@@ -1083,9 +1083,33 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
             "they pass."
         )
         return "merge_waiting", f"{message}\n\n{line}"
-    do, why = refusal.explain_safely(gh, target, exc)
+    if state == "clean":
+        # GitHub calls it mergeable and still refuses it: sweeps do not try this head again.
+        row["refused_clean"] = head
+    if state in ("dirty", "behind"):
+        # Only without `conflicts.auto_resolve` does a refusal for these get here.
+        do, why = _not_up_to_date(state, base)
+    else:
+        do, why = refusal.explain_safely(gh, target, exc)
     target["found"] = {"refused": (do, why)}
     return "merge_refused", f"{message}\n\n**What unblocks it:** {autopilot.person(do, why)}."
+
+
+def _not_up_to_date(state, base):
+    """(do, why) for a pull request that conflicts with its base branch (`dirty`), or is
+    behind it where the rules want it up to date (`behind`), with `conflicts.auto_resolve`
+    off."""
+    if state == "dirty":
+        return (
+            "comment `/nexkit fix` on the pull request, with any rule the conflict needs",
+            f"it conflicts with `{base}`, and with `conflicts.auto_resolve` off NexKit starts "
+            "no round to resolve it",
+        )
+    return (
+        f"merge `{base}` into the pull request's branch, then comment `/nexkit review`",
+        f"the rules of `{base}` want pull requests up to date, and with "
+        "`conflicts.auto_resolve` off NexKit does not update the branch",
+    )
 
 
 def required_checks(gh, base, pr, head):
@@ -1274,7 +1298,7 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
             "refused": (
                 f"merge `{base}` into the pull request's branch, then comment `/nexkit review`",
                 f"`{base}` wants pull requests up to date, and NexKit did not update it: "
-                + why.rstrip("."),
+                + autopilot.quoted(why),
             )
         }
         return "merge_refused", f"{message}\n\n{why}"
@@ -1292,11 +1316,22 @@ def _held(gh, cfg, number):
     try:
         return autopilot.held(gh, cfg, number)
     except GitHubError as exc:
+        # Held, to be safe: the next sweep starts what this held back once it can read
+        # that no label holds the issue.
         print(f"warning: could not read whether #{number} is on hold: {exc}", file=sys.stderr)
-        return None
+        return UNREAD_HOLD
+
+
+# What `_held` gives when it could not read whether a label holds an issue.
+UNREAD_HOLD = "a label it could not read"
 
 
 def _held_line(issue, label, held, later):
+    if label == UNREAD_HOLD:
+        return (
+            f"NexKit could not read whether a label holds #{issue}, so it {held}. The next "
+            f"autopilot sweep {later} once it can read that none does."
+        )
     return (
         f"#{issue} is on hold (`{label}`), so NexKit {held}. Once the label is removed, the "
         f"next autopilot sweep {later}."

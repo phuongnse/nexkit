@@ -808,13 +808,22 @@ def _approval_trigger(workflow):
     """A finding: with `merge.auto`, an approval of a refused pull request merges it, which
     needs the `pull_request_review` trigger and the job's condition to let it through."""
     review = trigger(workflow, "pull_request_review")
-    approved = re.search(r"['\"]approved['\"]", _uncommented(workflow))
+    # The job's condition, up to the next key of the job.
+    condition = re.search(r"(?ms)^    if:(.*?)(?=^    [a-z-]+:)", _uncommented(workflow))
+    approved = condition and re.search(r"['\"]approved['\"]", condition.group(1))
     if review is None or ("types" in review and "submitted" not in review) or not approved:
         return (
             False,
             f"merge.auto is on, but {WORKFLOW_PATH} does not let an approval through, so "
             "a pull request whose merge GitHub refused is merged only by hand; use the "
             "'pull_request_review' trigger and the job's 'if' as 'nexkit init' writes them",
+        )
+    if "approved-" not in _uncommented(workflow):
+        return (
+            False,
+            f"merge.auto is on, but the concurrency group in {WORKFLOW_PATH} does not give "
+            "an approval a group of its own, so it can replace a command that waits on the "
+            "pull request; use the group 'nexkit init' writes",
         )
     return (True, "An approval merges a pull request whose merge GitHub refused")
 
@@ -906,8 +915,8 @@ def _deprecated_label(cfg):
     return [
         (
             True,
-            "autopilot.last_in_milestone_label still works as a label of wave 1, but NexKit "
-            f"7.0 removes it: in autopilot, replace it with {replacement[1:-1]}",
+            "Deprecated: autopilot.last_in_milestone_label still works as a label of wave 1, "
+            f"but NexKit 7.0 removes it: in autopilot, replace it with {replacement[1:-1]}",
         )
     ]
 

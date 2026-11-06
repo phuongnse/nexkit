@@ -597,7 +597,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "open")
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
-        self.assertIn("@bob edited it without write access", mention["body"])
+        # It names who edited it in a code span, which mentions nobody.
+        self.assertIn("`@bob` edited it without write access", mention["body"])
 
     def test_an_advisory_is_planned_fixed_and_merged_once(self):
         def script(pipe, inputs):
@@ -845,6 +846,20 @@ class ScenarioTests(unittest.TestCase):
         self.assertLess(index(("go", 7)), index(("plan", 8)))
         self.assertLess(max(index(("go", 6)), index(("go", 8))), index(("plan", 5)))
         self.assertEqual(played[-2:], [("plan", 5), ("go", 5)])
+
+    def test_a_wave_never_waits_in_a_circle_with_blocked_by_marks(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        labels = {"journey": {"wave": 1}, "docs": {"wave": 2}}
+        pipe = Pipeline(self, config(autopilot={"labels": labels}), script)
+        pipe.issue(5, labels=("journey",))
+        pipe.issue(6)  # a follow-up that a person marked blocked by the docs sweep
+        pipe.issue(7, labels=("docs",))
+        pipe.gh.blockers[6] = [7]
+        played = pipe.play()
+        self.assertEqual([n for c, n in played if c == "go"], [5, 7, 6])
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7)))
 
     def test_a_held_issue_starts_nothing_until_its_label_is_removed(self):
         def script(pipe, inputs):

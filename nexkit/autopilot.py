@@ -209,6 +209,9 @@ CI_WAITING = "ci_waiting"
 # it did not start, "fix", "merge" or "conflicts", which a sweep starts once no label holds
 # the issue.
 HELD = "held"
+# The `mergeable_state` of a pull request that GitHub would merge: a check that it does not
+# require may fail (`unstable`), or hooks may run (`has_hooks`).
+MERGEABLE_STATES = ("clean", "unstable", "has_hooks")
 
 
 def takes(cfg):
@@ -352,7 +355,13 @@ def scope(gh, cfg):
     issues = [i for i in items if "pull_request" not in i]
     if not where["every"]:
         known = {issue["number"] for issue in issues}
-        extra = [item for label in where["priority"] for item in gh.labeled_issues(label)]
+        # GitHub finds labels whatever their case; NexKit compares them exactly.
+        extra = [
+            item
+            for label in where["priority"]
+            for item in gh.labeled_issues(label)
+            if _labeled(item, label)
+        ]
         if where["dependabot"]:
             extra += [issue for issue in nexkit_issues(gh, "open") if advisory_work(issue)]
         for issue in extra:
@@ -638,7 +647,11 @@ def waits_for(gh, issue, where=None):
     that block it on GitHub. The order of sub-issues does not count; a part that needs
     another says so with a *blocked by* relationship. Autopilot works on the blockers in
     its scope by itself; one outside it waits for a person."""
-    blockers = [b for b in gh.blocked_by(issue["number"]) if b.get("state") == "open"]
+    # By number: GitHub's REST and GraphQL list them in different orders.
+    blockers = sorted(
+        (b for b in gh.blocked_by(issue["number"]) if b.get("state") == "open"),
+        key=lambda b: b["number"],
+    )
     if not blockers:
         return None
     reason = "waits for " + ", ".join(f"#{b['number']}" for b in blockers)
@@ -743,7 +756,15 @@ def lower_waves(gh, cfg, issue):
     if not lower:
         return None
     above = _ancestors(gh, number)
-    exempt = {*above, *_needing(gh, [number, *above])}
+    # So that nothing waits in a circle, no issue waits for a lower wave that waits, through
+    # *blocked by* marks, for it, an issue above it, or any issue of its wave or a higher
+    # one in its milestone, which itself waits for that lower wave.
+    level_up = [
+        other["number"]
+        for other in gh.scoped_issues(milestone=milestone)
+        if "pull_request" not in other and wave(cfg, other)[0] >= level
+    ]
+    exempt = {*above, *_needing(gh, [number, *above, *level_up])}
     rest = [f"#{other['number']}" for other in lower if other["number"] not in exempt]
     if not rest:
         return None
@@ -891,7 +912,7 @@ def person(do, why):
 def quoted(text, size=150):
     """Text that an agent, GitHub or a person wrote, for a reason: in a code span on one
     line, where it can mention nobody and close no comment."""
-    return f"`{_inert(_plain(text, size))}`"
+    return "`" + _plain(text, size).replace("<", "‹").replace(">", "›") + "`"
 
 
 # What ends the wait of an issue that autopilot leaves alone.
@@ -934,7 +955,8 @@ def failed_reason(command):
 def protected_reason(paths):
     """Why an issue waits when its change needs protected paths, which only a person
     changes."""
-    listed = ", ".join(f"`{path}`" for path in paths[:5])
+    # The paths come from an agent: quoted, so they mention nobody and fake no marker.
+    listed = ", ".join(quoted(path) for path in paths[:5])
     more = f" and {len(paths) - 5} more" if len(paths) > 5 else ""
     return person(
         f"make the change in the protected paths ({listed}{more}) by hand, as the plan says",
@@ -1038,11 +1060,11 @@ def _since_stop(gh, issue, comments, stop):
     if _commented_after(comments, stop):
         return "collaborators commented after the stopped `/nexkit go`, so autopilot plans again"
     started = parse_iso(stop.get("created_at"))
-    closed = [
+    closed = sorted(
         blocker["number"]
         for blocker in gh.blocked_by(issue["number"])
         if blocker.get("state") == "closed" and _later(blocker.get("closed_at"), started)
-    ]
+    )
     if closed:
         listed = ", ".join(f"#{n}" for n in closed)
         reason = f"{listed}, which blocked it, closed after the stopped `/nexkit go`"
@@ -1298,7 +1320,9 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
 
 def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now):
     """The step once no label holds an issue any more whose pull request's round held
-    back its merge, its automatic fix round or its conflict round (`HELD`): that, now."""
+    back its merge, its automatic fix round or its conflict round (`HELD`): that, now, for
+    what is still so. A head that moved meanwhile, such as by a person's own commit, gets
+    `/nexkit review` instead, as does a conflict that is gone."""
     back = run.get("held_back")
     gone = "the label that held it is gone"
     if back == "merge":
@@ -1306,14 +1330,24 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now):
         if step["state"] == "merge":
             step["reason"] = f"{gone}, so autopilot merges pull request #{pull}"
         return step
+    details = gh.pull(pull)
+    head = (details.get("head") or {}).get("sha")
+    review = {**start, "target": pull, "auto": "true"}
+    if head != run.get("head"):
+        reason = f"{gone}, and pull request #{pull} got the new commit `{str(head)[:7]}`"
+        return _step(issue, "start", reason, command="review", **review)
     rounds = [r for _, r in run_comments(pull_comments) if "round" in r]
     if back == "conflicts":
         # `maintain` imports this module.
         from .maintain import conflict_note
 
-        if conflict_rounds_used(rounds) >= cfg["conflicts"]["max_rounds"]:
-            return _step(issue, "waits", _conflict_wait(gh, cfg, pull, rounds) or gone)
-        base = (gh.pull(pull).get("base") or {}).get("ref") or ""
+        if details.get("mergeable") is not False:
+            reason = f"{gone}, and pull request #{pull} no longer conflicts, so it is checked"
+            return _step(issue, "start", reason, command="review", **review)
+        waits = _conflict_wait(gh, cfg, pull, rounds)
+        if waits:
+            return _step(issue, "waits", waits)
+        base = (details.get("base") or {}).get("ref") or ""
         fields = {**start, "target": pull, "auto": "conflicts", "note": conflict_note(base)}
         reason = f"{gone}, so pull request #{pull} gets the round that resolves its conflicts"
         return _step(issue, "start", reason, command="fix", **fields)
@@ -1333,7 +1367,7 @@ def _refused_step(gh, issue, pull, comment, run):
     called mergeable and still refused is not tried again."""
     details = gh.pull(pull)
     head = (details.get("head") or {}).get("sha")
-    if details.get("mergeable_state") != "clean" or head != run.get("head"):
+    if details.get("mergeable_state") not in MERGEABLE_STATES or head != run.get("head"):
         return None
     if run.get("refused_clean") == head:
         return None
@@ -1401,7 +1435,8 @@ def assess(gh, cfg, issue, open_pulls, now=None, where=None):
       `mentioned` says whether `notify` was mentioned since the latest run; otherwise it
       waits for another issue or for a place within `max_parallel`.
     - `held`: a label of `autopilot.labels` with `hold` holds it: nothing starts, its pull
-      request gets no automatic round or merge, and it takes no place.
+      request gets no automatic round or merge, and it takes no place unless a run on it
+      is still `running`.
 
     `where` is the scope, from `locate`.
     """
@@ -1430,7 +1465,25 @@ def mention_text(cfg, reason):
     if not cfg["notify"]:
         return None
     people = " ".join(f"@{login}" for login in cfg["notify"])
-    return f"{people} {NEEDED}{reason.rstrip('.')}."
+    return f"{people} {NEEDED}{_unmentioned(reason).rstrip('.')}."
+
+
+MENTION = re.compile(r"@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9._-]+|\[bot\])?")
+
+
+def _unmentioned(reason):
+    """`reason` as it may stand in a comment that mentions `notify`: outside its code
+    spans, a login such as the author of an issue goes in a code span of its own, so that
+    nobody outside `notify` is mentioned, and nothing opens or closes an HTML comment."""
+    # NexKit's markers are HTML comments: none may start or end here, in a span either.
+    parts = reason.replace("<!--", "‹!--").replace("-->", "--›").split("`")
+    if len(parts) % 2 == 0:
+        # An unpaired backtick: no part counts as a code span.
+        parts = ["'".join(parts)]
+    for index in range(0, len(parts), 2):
+        text = parts[index].replace("<", "‹").replace(">", "›")
+        parts[index] = MENTION.sub(lambda m: f"`{m.group(0)}`", text)
+    return "`".join(parts)
 
 
 def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
@@ -1438,7 +1491,15 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     label = hold_label(cfg, issue)
     if label:
         pull = open_pulls.get(number)
-        return _step(issue, "held", held_reason(label), **({"pull": pull} if pull else {}))
+        found = [gh.comments(number), gh.comments(pull) if pull else []]
+        # A run that is under way finishes, and keeps its place within max_parallel.
+        running = any(
+            run.get("status") in ACTIVE
+            for comments in found
+            for run in [r for _, r in run_comments(comments)][-1:]
+        )
+        fields = {"pull": pull} if pull else {}
+        return _step(issue, "held", held_reason(label), running=running, **fields)
     left_alone = distrust(gh, issue, cfg)
     if left_alone:
         return _step(issue, "waits", person(TRUST_DO, f"autopilot leaves it alone: {left_alone}"))
@@ -1618,6 +1679,7 @@ def preview(gh, cfg):
     # place to the others.
     busy = sum(
         step["state"] == "active"
+        or bool(step.get("running"))
         or (
             bool(step.get("pull"))
             and step["state"] != "held"

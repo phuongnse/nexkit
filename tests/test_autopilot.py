@@ -3728,3 +3728,70 @@ class HoldTests(AutopilotCase):
             (step["state"], step["command"], step["auto"]), ("start", "fix", "conflicts")
         )
         self.assertIn("Merge `main` into this branch", step["note"])
+
+
+class SecondReviewTests(AutopilotCase):
+    """What the independent review of #223 and #225 found."""
+
+    def test_waves_and_blocked_by_marks_never_wait_in_a_circle(self):
+        cfg = pilot(labels={"journey": {"wave": 1}, "docs": {"wave": 2}})
+        self.issue(1, labels=("journey",))
+        self.issue(2)  # wave 0, but it waits for the docs sweep
+        self.issue(3, labels=("docs",))
+        self.gh.blockers[2] = [3]
+        waits = {n: autopilot.lower_waves(self.gh, cfg, self.gh.issues[n]) for n in (1, 3)}
+        self.assertIsNone(waits[1])
+        self.assertIn("waits for #1 of lower waves", waits[3][0])
+
+    def pull_held(self, back, **fields):
+        cfg = pilot(labels={"on-hold": {"hold": True}})
+        cfg["conflicts"]["auto_resolve"] = True
+        self.issue(5)
+        self.gh.add_pull(7, 5)
+        self.gh.round_comment(7, 1, "a" * 40, "failed", outcome="held", held_back=back)
+        self.gh.pulls[7].update(fields)
+        return autopilot.assess(self.gh, cfg, self.gh.issues[5], {5: 7})
+
+    def test_a_released_fix_or_conflict_round_checks_a_head_that_moved_instead(self):
+        for back in ("fix", "conflicts"):
+            with self.subTest(back):
+                self.setUp()
+                self.pull_held(back)
+                self.gh.pulls[7]["head"]["sha"] = "e" * 40
+                step = autopilot.assess(self.gh, self.cfg_conflicts(), self.gh.issues[5], {5: 7})
+                self.assertEqual((step["state"], step["command"]), ("start", "review"))
+
+    def test_a_released_conflict_round_that_has_no_conflict_left_checks_instead(self):
+        step = self.pull_held("conflicts")
+        self.assertEqual((step["state"], step["command"]), ("start", "review"))
+        self.gh.pulls[7]["mergeable"] = False
+        step = autopilot.assess(self.gh, self.cfg_conflicts(), self.gh.issues[5], {5: 7})
+        self.assertEqual(
+            (step["state"], step["command"], step["auto"]), ("start", "fix", "conflicts")
+        )
+
+    def cfg_conflicts(self):
+        cfg = pilot(labels={"on-hold": {"hold": True}})
+        cfg["conflicts"]["auto_resolve"] = True
+        return cfg
+
+    def test_a_held_issue_with_a_run_under_way_keeps_its_place(self):
+        cfg = pilot(labels={"on-hold": {"hold": True}}, max_parallel=1)
+        self.issue(5, labels=("on-hold",))
+        self.run_comment(5, "go", status="running")
+        self.issue(6)
+        _, steps = autopilot.preview(self.gh, cfg)
+        states = {s["number"]: (s["state"], s.get("running")) for s in steps}
+        self.assertEqual(states[5], ("held", True))
+        self.assertEqual(states[6][0], "waits")
+        self.gh.issue_comments[5].clear()
+        _, steps = autopilot.preview(self.gh, cfg)
+        self.assertEqual({s["number"]: s["state"] for s in steps}[6], "start")
+
+    def test_scope_takes_a_priority_label_only_as_spelled(self):
+        self.issue(5)
+        self.issue(6, milestone=None, labels=("Bug",))
+        # GitHub finds `Bug` for `bug`; NexKit compares labels exactly.
+        self.gh.labeled_issues = lambda label: [self.gh.issues[6]]
+        found = autopilot.scope(self.gh, pilot(priority=["bug"]))["issues"]
+        self.assertEqual([i["number"] for i in found], [5])

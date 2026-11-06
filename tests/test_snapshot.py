@@ -306,7 +306,7 @@ class Recorded:
             "author": _actor(item["user"]),
             "labels": {
                 "totalCount": len(item["labels"]),
-                "nodes": [{"name": n} for n in item["labels"]],
+                "nodes": [{"name": n} for n in item["labels"][:50]],
             },
             "milestone": self.gql_milestone(item["milestone"]),
             "comments": self.gql_comments(item),
@@ -318,8 +318,9 @@ class Recorded:
             **self.gql_item(item),
             "parent": self.related(self.items[item["parent"]]) if item["parent"] else None,
             "subIssues": self.connection(self.sub_issues(number), snapshot.RELATED),
+            # GitHub's GraphQL lists them in another order than REST does.
             "blockedBy": self.connection(
-                [self.items[n] for n in item["blocked_by"]], snapshot.RELATED
+                [self.items[n] for n in item["blocked_by"]][::-1], snapshot.RELATED
             ),
             "blocking": self.connection(self.blocking(number), snapshot.RELATED),
             "userContentEdits": {
@@ -479,8 +480,8 @@ def repository(issues):
                 "head": f"{pull:040x}",
             }
             repo.comment(pull, render_run(row, "Ready."))
-        elif kind == 3:  # blocked by the issue before it
-            item["blocked_by"] = [number - 1]
+        elif kind == 3:  # blocked by the two issues before it
+            item["blocked_by"] = [n for n in (number - 1, number - 3) if n > 0]
         elif kind == 4:  # opened by someone without write access, vouched for, then edited
             item["user"] = "bob"
             repo.comment(number, "/nexkit trust", user="alice", association="COLLABORATOR")
@@ -610,6 +611,14 @@ class SnapshotTests(unittest.TestCase):
         found = collect(gh, make_config(**CONFIG), workers=1, progress=said.append)
         self.assertEqual(found, status(6, batch=False)[1])
         self.assertIn("reading one by one", said[0])
+
+    def test_an_issue_with_more_labels_than_a_query_holds_stays_in_status(self):
+        def many_labels(repo):
+            repo.items[1]["labels"] = [f"l{n}" for n in range(60)] + ["bug"]
+
+        batched = status(12, change=many_labels)
+        self.assertEqual(batched[1], status(12, False, many_labels)[1])
+        self.assertEqual(batched[0].reads(r".*/issues/1"), {"/repos/acme/app/issues/1": 1})
 
     def test_it_says_how_far_it_got(self):
         said = []

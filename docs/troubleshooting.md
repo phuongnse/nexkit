@@ -335,15 +335,16 @@ each outcome of a run is:
 | `retry_failed` | post the command again once the cause has passed. The run stopped on a transient error twice, and NexKit tries a command only once more | the error |
 | `conflicting` | comment `/nexkit fix` on the pull request, with any rule the conflict needs. Its commit conflicts with the base branch, and NexKit started no round to resolve it | |
 | `ready`, with `merge.auto` off | review the pull request, then merge it or close it. Checks and the AI review passed, and with `merge.auto` off a person decides the merge | |
-| `ready`, with criteria the review could not verify | confirm from the diff and the checks the acceptance criteria that the review could not verify, then merge the pull request | the first criterion |
+| `ready`, with criteria the review could not verify | confirm from the diff and the checks the acceptance criteria that the review could not verify, then merge the pull request; with `merge.auto`, approve the pull request, which NexKit then merges | the first criterion |
 | `merge_refused` | what unblocks the merge, and the rule that refused it, such as `approve the pull request as a code owner (@owner), which NexKit then merges. GitHub requires a code owner's review for this file, and NexKit's App cannot review its own pull request: docs/reference/ui-glossary.json (+6 −0, owned by @owner)`: see [The automatic merge was refused](#the-automatic-merge-was-refused) | the rule, the files and their owners |
 | `merge_issue_closed` | merge the pull request or close it. Its issue closed before NexKit merged it, and NexKit leaves the pull request of a closed issue to a person | |
 | `agent_untrusted`, `merge_untrusted` | read the issue, and comment `/nexkit trust` on it if you trust it. Someone without write access edited it after a writer vouched for it, so NexKit does not act on its text (or merge its pull request) | |
 | `close_failed`, `on_base_failed` | close the issue (and the pull request) yourself. No change is needed, or the base branch already holds this change, but GitHub refused NexKit's close | the error |
 | `paused`, not resumed | post the command again once the usage limit has reset. The agent hit its usage limit, and NexKit does not resume this run | |
 
-Text that an agent, GitHub or a person wrote, such as a question or an error, is quoted in
-a code span on one line, so that it mentions nobody. Autopilot's own reasons follow the
+Text that an agent, GitHub or a person wrote, such as a question, an error or a path, is
+quoted in a code span on one line, and a login such as an issue's author is named in a code
+span too, so that a mention reaches only `notify`. Autopilot's own reasons follow the
 same form, such as `read the issue, and comment /nexkit trust on it if you trust it.
 Autopilot leaves it alone: opened by @someone, who cannot write to the repository`.
 

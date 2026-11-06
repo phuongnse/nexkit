@@ -316,9 +316,7 @@ class InitDoctorTests(unittest.TestCase):
         raw["autopilot"] = autopilot
         path.write_text(json.dumps(raw))
         return [
-            (ok, message)
-            for ok, message in self.doctor_online(answers)
-            if message.startswith("autopilot.")
+            (ok, message) for ok, message in self.doctor_online(answers) if "autopilot." in message
         ]
 
     def test_doctor_warns_of_a_label_that_the_repository_lacks(self):
@@ -350,9 +348,9 @@ class InitDoctorTests(unittest.TestCase):
             [
                 (
                     True,
-                    "autopilot.last_in_milestone_label still works as a label of wave 1, but "
-                    'NexKit 7.0 removes it: in autopilot, replace it with "labels": {"last": '
-                    '{"wave": 1}}',
+                    "Deprecated: autopilot.last_in_milestone_label still works as a label of "
+                    'wave 1, but NexKit 7.0 removes it: in autopilot, replace it with "labels": '
+                    '{"last": {"wave": 1}}',
                 ),
                 (True, "autopilot.last_in_milestone_label: acme/app has the label `last`"),
             ],
@@ -423,8 +421,10 @@ class InitDoctorTests(unittest.TestCase):
         group = (
             "concurrency:\n      group: nexkit-${{ (github.event_name == 'milestone' || "
             "(github.event_name == 'issues' && github.event.action != 'closed')) && "
-            "'autopilot' || github.event.issue.number || github.event.pull_request.number || "
-            "inputs.number || github.event_name }}\n"
+            "'autopilot' || (github.event_name == 'pull_request_review' && "
+            "github.event.review.state == 'approved') && format('approved-{0}', "
+            "github.event.pull_request.number) || github.event.issue.number || "
+            "github.event.pull_request.number || inputs.number || github.event_name }}\n"
         )
         self.assertIn("\n    " + group, text.split("\n  nexkit:\n", 1)[1])
         self.assertNotRegex(text, r"(?m)^concurrency:|cancel-in-progress")
@@ -494,6 +494,10 @@ class InitDoctorTests(unittest.TestCase):
         findings = scaffold.doctor(self.root)
         self.assertNotIn(ok, findings)
         self.assertTrue(any("does not let an approval through" in m for k, m in findings if not k))
+        # Approvals in the pull request's own group would replace a command that waits.
+        workflow.write_text(text.replace("format('approved-{0}', ", "format('{0}', "))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("a group of its own" in m for k, m in findings if not k))
         cfg["merge"] = {"auto": False}
         path.write_text(json.dumps(cfg))
         self.assertFalse(any("approval" in m for _, m in scaffold.doctor(self.root)))

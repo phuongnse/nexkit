@@ -173,8 +173,11 @@ def _code_owners(owned):
     )
 
 
-def _approvals(gh, pr, review):
-    count = review.get("required_approving_review_count") or 1
+def _approvals(gh, pr, review, said=""):
+    # Classic branch protection, which NexKit's token may not read, names its count only
+    # in GitHub's words, such as "At least 2 approving reviews are required".
+    words = re.search(r"at least (\d+) approving review", said)
+    count = review.get("required_approving_review_count") or (int(words.group(1)) if words else 1)
     given = len(_approvers(gh, pr))
     plural = "s" if count != 1 else ""
     return (
@@ -193,7 +196,7 @@ def _reviews(gh, target, rules, state, lowered):
         who = f" ({_people(requesters)})" if requesters else ""
         return (
             f"the reviewer who requested changes{who} approves the pull request, which "
-            f"{MERGES}, or dismisses the review",
+            f"{MERGES}, or dismisses the review and merges it",
             "GitHub does not merge a pull request while a review requests changes",
         )
     # GitHub's decision covers classic branch protection too, which NexKit's token may not
@@ -207,7 +210,7 @@ def _reviews(gh, target, rules, state, lowered):
         owned = owned_files(gh, pr, base) if owners else []
         if owned or said or (owners and owned is None):
             return _code_owners(owned)
-        return _approvals(gh, pr, review)
+        return _approvals(gh, pr, review, lowered)
     unresolved = state.get("unresolved") or 0
     if unresolved and (
         review.get("required_review_thread_resolution") or "conversation" in lowered
@@ -222,11 +225,28 @@ def _reviews(gh, target, rules, state, lowered):
 
 
 def _rules(gh, base):
-    """{type: parameters} of the rules of `base`; {} when they cannot be read."""
+    """{type: parameters} of the rules of `base`, the rules of one type from several
+    rulesets joined, as GitHub applies them all: a flag set by any, the highest count, the
+    merge methods that every one allows. {} when they cannot be read."""
     try:
-        return {rule.get("type"): rule.get("parameters") or {} for rule in gh.branch_rules(base)}
+        found = gh.branch_rules(base)
     except GitHubError:
         return {}
+    rules = {}
+    for rule in found:
+        joined = rules.setdefault(rule.get("type"), {})
+        for key, value in (rule.get("parameters") or {}).items():
+            if key not in joined:
+                joined[key] = value
+            elif isinstance(value, bool):
+                joined[key] = joined[key] or value
+            elif isinstance(value, int):
+                joined[key] = max(joined[key], value)
+            elif key == "allowed_merge_methods" and isinstance(value, list):
+                joined[key] = [m for m in joined[key] if m in value]
+            elif isinstance(value, list):
+                joined[key] = list(dict.fromkeys([*joined[key], *value]))
+    return rules
 
 
 def _review_state(gh, pr):

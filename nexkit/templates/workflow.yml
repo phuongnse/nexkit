@@ -63,9 +63,10 @@ jobs:
        startsWith(github.event.pull_request.head.ref, 'nexkit/'))
     # One run at a time per issue or pull request. Set on the job, so only commands join.
     # Runs for other events, such as the schedule, form a group per event. Autopilot's
-    # events and sweeps share one group, so they never replace a command that waits.
+    # events and sweeps share one group, and an approval has a group of its own for its
+    # pull request, so they never replace a command that waits.
     concurrency:
-      group: nexkit-${{ (github.event_name == 'milestone' || (github.event_name == 'issues' && github.event.action != 'closed')) && 'autopilot' || github.event.issue.number || github.event.pull_request.number || inputs.number || github.event_name }}
+      group: nexkit-${{ (github.event_name == 'milestone' || (github.event_name == 'issues' && github.event.action != 'closed')) && 'autopilot' || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') && format('approved-{0}', github.event.pull_request.number) || github.event.issue.number || github.event.pull_request.number || inputs.number || github.event_name }}
     uses: __KIT_REPO__/.github/workflows/pipeline.yml@__KIT_REF__
     with:
       nexkit_repository: __KIT_REPO__

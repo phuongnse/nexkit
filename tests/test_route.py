@@ -426,12 +426,24 @@ class RouteTests(unittest.TestCase):
         pull = self.gh.add_pull(9, 5)
         event = {
             "action": "submitted",
-            "review": {"state": "approved", "body": "", "user": {"login": "olivia"}},
+            "review": {
+                "state": "approved",
+                "body": "",
+                "user": {"login": "olivia"},
+                "commit_id": "a" * 40,
+            },
             "pull_request": {**pull, "base": {"ref": "main", "repo": {"full_name": "acme/app"}}},
         }
         self.assertEqual(
             route(self.gh, "pull_request_review", event),
-            {"action": "maintain", "task": "approved", "pr": 9, "issue": 5, "actor": "olivia"},
+            {
+                "action": "maintain",
+                "task": "approved",
+                "pr": 9,
+                "issue": 5,
+                "actor": "olivia",
+                "commit": "a" * 40,
+            },
         )
         # Not from a person with write access, a bot, or on a pull request NexKit did not open.
         for review in ({"login": "bob"}, {"login": "ci[bot]", "type": "Bot"}):

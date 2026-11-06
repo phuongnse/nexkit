@@ -19,6 +19,7 @@ from .state import answers_text, by_bot, clip, latest_plan, plan_text, read_stat
 
 MAX_COMMENTS = 30
 NO_PLAN = "No plan was posted. Implement the issue as described."
+PERSON_PLAN = "None: a person wrote this pull request."
 # The section of a NexKit pull request description that `publish.pull_body` writes from the
 # implement result's `outside_plan`.
 OUTSIDE_PLAN = re.compile(r"^## Outside the plan\n(.*?)(?=^## |^---$|\Z)", re.M | re.S)
@@ -351,7 +352,12 @@ def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg
             at = comments.index(plan)
             context["discussion"] = _discussion(comments[:at])
             context["since_plan"] = _discussion(comments[at + 1 :], notes=True)
-    if stage == "review" and decision.get("pr"):
+    if decision.get("person"):
+        # Its issue is the pull request itself, with its description and comments, so the
+        # review needs neither a plan nor the same discussion twice.
+        context.update(person=True, plan=PERSON_PLAN, discussion=_discussion(comments, notes=True))
+        context.update(previous_review(gh, decision, fix_result) or {})
+    elif stage == "review" and decision.get("pr"):
         context["discussion"] = _discussion(comments, notes=True)
         pr_comments = gh.comments(decision["pr"])
         context["discussion"] += "\n\n---\n\nOn the pull request:\n\n" + _discussion(

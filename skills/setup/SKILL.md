@@ -7,7 +7,8 @@ description: Set up the NexKit pipeline in the current GitHub repository - choos
 
 NexKit adds one workflow (`.github/workflows/nexkit.yml`) and one config file
 (`.nexkit/config.json`). Collaborators then drive work with issue comments:
-`/nexkit plan`, `/nexkit go`, and on NexKit pull requests `/nexkit fix` and `/nexkit review`.
+`/nexkit plan`, `/nexkit go`, and on NexKit pull requests `/nexkit fix` and `/nexkit review`;
+`/nexkit review` also works on a person's own pull request.
 
 The NexKit CLI ships with this plugin. Run it as
 `python3 <base directory of this skill>/../../bin/nexkit` (Python 3.12 or newer; no

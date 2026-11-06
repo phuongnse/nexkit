@@ -640,6 +640,41 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 4), ("go", 4)])
         self.assertEqual(sorted(pipe.gh.issues), [4, 5])  # the issue and its pull request
 
+    def persons_pull_request(self, pipe):
+        pull = pipe.gh.add_pull(9, 0, branch="upgrade/nexkit")
+        pipe.head(9)
+        inputs = {"command": "review", "number": "9", "note": "", "auto": "false"}
+        pipe.gh.dispatch("nexkit.yml", "main", inputs)
+        return pull
+
+    def test_a_writers_review_of_a_persons_pull_request_changes_nothing_on_it(self):
+        for checks, verdict in ((True, "approve"), (False, "request_changes")):
+            outcome = done(checks, verdict)
+            pipe = Pipeline(self, config(), lambda pipe, inputs, found=outcome: found)
+            pull = self.persons_pull_request(pipe)
+            head = pull["head"]["sha"]
+            pipe.play()
+            self.assertEqual(pipe.played, [("review", 9, "person_reviewed")])
+            self.assertEqual(pipe.reviews, 1)
+            self.assertEqual(pipe.gh.merged, [])
+            self.assertEqual((pull["state"], pull["head"]["sha"]), ("open", head))
+            states = {
+                s["context"]: s["state"]
+                for s in pipe.gh.statuses
+                if s["sha"] == head and s["context"].startswith("nexkit/")
+            }
+            good = "success" if checks else "failure"
+            self.assertEqual(states["nexkit/checks"], good)
+            self.assertEqual(states["nexkit/review"], good)
+
+    def test_a_base_branch_move_starts_no_round_on_a_persons_pull_request(self):
+        pipe = Pipeline(self, config(), lambda pipe, inputs: done())
+        pull = self.persons_pull_request(pipe)
+        pipe.play()
+        pull["mergeable"] = False
+        pipe.play()
+        self.assertEqual(pipe.played, [("review", 9, "person_reviewed")])
+
     def test_an_issue_marked_to_run_last_runs_after_the_rest_of_its_milestone(self):
         def script(pipe, inputs):
             if inputs["command"] == "plan":

@@ -11,6 +11,7 @@ from nexkit.route import (
     skip_unaffected,
     with_profile,
 )
+from nexkit.scaffold import workflow_text
 from nexkit.state import (
     PLAN_MARKER,
     check_fingerprint,
@@ -43,6 +44,87 @@ class ParseCommandTests(unittest.TestCase):
         self.assertEqual(parse_command("  /nexkit go"), ("go", ""))
         self.assertEqual(parse_command("hello /nexkit go"), (None, ""))
         self.assertEqual(parse_command("/nexkitgo"), (None, ""))
+
+
+class PersonsPullRequestTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_pull(10, 5, branch="upgrade/nexkit")
+
+    def review(self, number=10, login="alice"):
+        event = comment_event(number, "/nexkit review", login=login, on_pull=True)
+        return route(self.gh, "issue_comment", event)
+
+    def test_a_writer_gets_a_review_of_the_current_commit(self):
+        found = self.review()
+        self.assertEqual(found["action"], "review")
+        self.assertTrue(found["person"])
+        self.assertEqual((found["issue"], found["pr"], found["target"]), (10, 10, 10))
+        self.assertEqual((found["branch"], found["base"]), ("upgrade/nexkit", "main"))
+        self.assertEqual(found["head"], "a" * 40)
+        self.assertFalse(found["auto"])
+
+    def test_a_nexkit_pull_request_is_no_persons(self):
+        self.gh.add_issue(5)
+        self.gh.add_pull(11, 5)
+        self.assertNotIn("person", self.review(11))
+
+    def test_someone_without_write_access_runs_nothing_and_is_told_why(self):
+        found = self.review(login="bob")
+        self.assertEqual(found["action"], "none")
+        self.assertEqual(found["reply_to"], 10)
+        self.assertIn("@bob needs write access", found["reason"])
+
+    def test_a_pull_request_from_a_fork_runs_nothing_and_says_why(self):
+        self.gh.add_pull(11, 5, branch="upgrade/nexkit", repo="someone/fork")
+        found = self.review(11)
+        self.assertEqual(found["action"], "none")
+        self.assertEqual(found["reply_to"], 11)
+        self.assertIn("comes from a fork", found["reason"])
+
+    def test_a_fork_whose_repository_is_gone_is_a_fork_too(self):
+        self.gh.pulls[10]["head"]["repo"] = None
+        self.assertIn("comes from a fork", self.review()["reason"])
+
+    def test_no_fix_round_starts_on_it(self):
+        event = comment_event(10, "/nexkit fix Do it", on_pull=True)
+        found = route(self.gh, "issue_comment", event)
+        self.assertEqual(found["action"], "none")
+        review = {
+            "action": "submitted",
+            "review": {
+                "state": "changes_requested",
+                "user": {"login": "alice", "type": "User"},
+                "body": "Fix it.",
+            },
+            "pull_request": {"number": 10},
+        }
+        self.assertEqual(route(self.gh, "pull_request_review", review)["action"], "none")
+
+    def test_a_pull_request_that_changes_nothing_is_never_closed(self):
+        self.gh.on_base.add("a" * 40)
+        found = self.review()
+        self.assertEqual(found["action"], "none")
+        self.assertIn("nothing to review", found["reason"])
+        self.assertEqual(self.gh.pulls[10]["state"], "open")
+
+    def test_a_closed_pull_request_is_refused(self):
+        self.gh.pulls[10]["state"] = "closed"
+        self.assertIn("closed", self.review()["reason"])
+
+    def test_a_resumed_review_stays_a_persons(self):
+        inputs = {"command": "review", "number": "10", "note": "", "auto": "resume"}
+        found = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        self.assertTrue(found["person"])
+        self.assertTrue(found["resumed"])
+        self.assertEqual(auto_input(found, resume=True), "resume")
+
+    def test_the_workflow_file_lets_the_command_through(self):
+        text = workflow_text("acme/nexkit", "v1")
+        condition = text.split("if: >-", 1)[1].split("# One run at a time", 1)[0]
+        line = next(part for part in condition.splitlines() if "issue_comment" in part)
+        self.assertIn("startsWith(github.event.comment.body, '/nexkit')", line)
+        self.assertNotIn("head", line)
 
 
 class TrustCommandTests(unittest.TestCase):
@@ -305,11 +387,11 @@ class RouteTests(unittest.TestCase):
         self.gh.add_pull(10, 5, branch="feature/x")
         self.gh.add_pull(11, 5, repo="someone/fork")
         self.gh.add_pull(12, 5, state="closed")
-        for number in (10, 11):
-            decision = route(
-                self.gh, "issue_comment", comment_event(number, "/nexkit fix", on_pull=True)
-            )
-            self.assertIn("not opened by NexKit", decision["reason"])
+        person = route(self.gh, "issue_comment", comment_event(10, "/nexkit fix", on_pull=True))
+        self.assertIn("acts only on NexKit's pull requests", person["reason"])
+        self.assertIn("`/nexkit review` checks and reviews this one", person["reason"])
+        fork = route(self.gh, "issue_comment", comment_event(11, "/nexkit fix", on_pull=True))
+        self.assertIn("comes from a fork", fork["reason"])
         closed = route(self.gh, "issue_comment", comment_event(12, "/nexkit fix", on_pull=True))
         self.assertIn("closed", closed["reason"])
         plan = route(self.gh, "issue_comment", comment_event(10, "/nexkit plan", on_pull=True))

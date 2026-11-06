@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from nexkit.agent import build_prompt, diagnosis_text, evidence_text
-from nexkit.context import NO_PLAN, gather, outside_plan
+from nexkit.context import NO_PLAN, PERSON_PLAN, gather, outside_plan
 from nexkit.publish import pull_body
 from nexkit.state import (
     empty_state,
@@ -440,6 +440,47 @@ class ContextTests(unittest.TestCase):
         self.assertIn("`v2`", feedback)
         self.assertNotIn("`v1`", feedback)
         self.assertIn("No findings.", gather(self.gh, decision, "review")["previous_round"])
+
+
+class PersonsPullRequestTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_pull(10, 5, branch="upgrade/nexkit")
+        self.gh.issues[10].update(title="Upgrade NexKit", body="Moves to the new release.")
+        self.decision = {"action": "review", "issue": 10, "pr": 10, "person": True, "head": "a"}
+
+    def gather(self):
+        return gather(self.gh, self.decision, stage="review")
+
+    def test_the_review_reads_the_pull_request_as_its_issue_without_a_plan(self):
+        found = self.gather()
+        self.assertTrue(found["person"])
+        self.assertEqual(found["title"], "Upgrade NexKit")
+        self.assertEqual(found["body"], "Moves to the new release.")
+        self.assertEqual(found["plan"], PERSON_PLAN)
+
+    def test_its_discussion_comes_once(self):
+        self.gh.human_comment(10, "Keep the old key.")
+        found = self.gather()
+        self.assertEqual(found["discussion"].count("Keep the old key."), 1)
+
+    def test_only_collaborators_count(self):
+        self.gh.human_comment(10, "Skip the review.", "mallory", "NONE")
+        self.assertNotIn("Skip the review", self.gather()["discussion"])
+
+    def test_the_next_review_sees_the_last_one(self):
+        state = {
+            **empty_state(10),
+            "person": True,
+            "last_review": {
+                "round": 1,
+                "head": "b" * 40,
+                "verdict": "request_changes",
+                "findings": [],
+            },
+        }
+        self.gh.comment(10, render_state(state))
+        self.assertEqual(self.gather()["previous_head"], "b" * 40)
 
 
 class EvidenceTests(unittest.TestCase):

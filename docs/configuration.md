@@ -1516,6 +1516,25 @@ in its file. Without that option doctor says that it could not tell. A run witho
 as the Actions bot, also on code an agent wrote, so what that bot wrote proves nothing, and
 that includes the plans and rounds of earlier releases.
 
+## Reviewing your own pull requests
+
+NexKit's agents may not change `protected_paths`, so a change to `.github/` or `.nexkit/`,
+such as a NexKit upgrade, is a person's pull request. Comment `/nexkit review` on it, from an
+account with write access. NexKit runs its checks and its review on the head and sets
+`nexkit/checks` and `nexkit/review`, as for a NexKit pull request, and reviews the protected
+paths like any other code. See *A person's pull request* under [How it
+works](how-it-works.md#stages).
+
+So a repository whose rules on the default branch require those two statuses needs no admin
+bypass for these changes: comment the command, read the review, and merge. A new commit needs
+the command again.
+
+It works for a pull request from a branch of this repository. It never pushes, starts a fix
+round or merges, also with `merge.auto` on, so a person makes any change and the merge. The
+checks and `setup` come from `.nexkit/config.json` on the default branch, so a change to them
+counts from its merge on. The workflow file that `nexkit init` writes lets the command
+through, as it does every `/nexkit` comment.
+
 ## Workflow file
 
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls
@@ -1538,7 +1557,8 @@ failing: staying on a release is your choice.
 
 NexKit's pull requests come from branches named `nexkit/issue-<number>`. The job's `if:`
 in the workflow file lets a *Request changes* review start a run only on a branch that
-starts with `nexkit/`.
+starts with `nexkit/`. A `/nexkit` comment gets through on any pull request, and `route`
+says what it does there.
 
 ## Upgrading from earlier releases
 
@@ -1553,6 +1573,8 @@ pull request:
    names of its own CI workflows or artifacts.
 4. Check that the workflow file grants every permission the release asks for.
 5. Run `nexkit doctor` at the new release, and fix every ✗ line.
+6. Comment [`/nexkit review`](#reviewing-your-own-pull-requests) on the pull request, which
+   checks and reviews it and sets the statuses your rules may require.
 
 A configuration from an earlier release that no longer fits is rejected with what to
 change.

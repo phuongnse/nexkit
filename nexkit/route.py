@@ -36,8 +36,8 @@ TRUST = "trust"
 USAGE = (
     "NexKit commands: on an issue, `/nexkit plan` drafts a plan, `/nexkit go` implements it and "
     "`/nexkit trust` vouches for it, so that autopilot takes it; on a NexKit pull request, "
-    "`/nexkit fix <instructions>` starts a repair round and `/nexkit review` re-checks the "
-    "current commit."
+    "`/nexkit fix <instructions>` starts a repair round; on any pull request of this "
+    "repository's branches, `/nexkit review` checks and reviews the current commit."
 )
 
 
@@ -312,12 +312,30 @@ def _decide(gh, command, number, on_pull, note, *, auto):
         if command not in PR_COMMANDS:
             return _none(f"`/nexkit {command}` is not a pull request command. {USAGE}", number)
         pull = gh.pull(number)
+        if (pull["head"].get("repo") or {}).get("full_name") != gh.repository:
+            return _none(
+                "This pull request comes from a fork, so NexKit runs nothing on it: its checks "
+                "would run code that nobody with write access pushed.",
+                number,
+            )
         issue = issue_from_branch(pull["head"]["ref"])
-        if issue is None or pull["head"]["repo"]["full_name"] != gh.repository:
-            return _none("This pull request was not opened by NexKit", number)
+        # A person's pull request: NexKit checks and reviews it on request, and no more.
+        person = issue is None
+        if person and command != "review":
+            return _none(
+                f"`/nexkit {command}` acts only on NexKit's pull requests, and a person makes "
+                "any change here. `/nexkit review` checks and reviews this one.",
+                number,
+            )
         if pull["state"] != "open":
             return _none("The pull request is closed", number)
         merged = on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
+        if merged and person:
+            return _none(
+                f"This pull request changes no file against `{pull['base']['ref']}`, so there "
+                "is nothing to review.",
+                number,
+            )
         if merged:
             # Its base branch already holds its change: no round, review or merge would
             # change anything, so the `maintain` job closes it and its issue.
@@ -332,7 +350,8 @@ def _decide(gh, command, number, on_pull, note, *, auto):
             }
         decision = {
             "action": PR_COMMANDS[command],
-            "issue": issue,
+            # GitHub keeps a pull request's text and comments as an issue's.
+            "issue": number if person else issue,
             "pr": number,
             "target": number,
             "branch": pull["head"]["ref"],
@@ -341,6 +360,8 @@ def _decide(gh, command, number, on_pull, note, *, auto):
             "note": note,
             "auto": auto,
         }
+        if person:
+            decision["person"] = True
         comments = gh.comments(number)
         # The last commit whose checks passed, for NEXKIT_VERIFIED_SHA.
         verified = verified_head(comments)

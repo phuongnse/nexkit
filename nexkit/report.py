@@ -79,6 +79,7 @@ COMPLETED = {
     "issue_closed",
     "merge_issue_closed",
     "conflicting",
+    "person_reviewed",
     autopilot.CI_WAITING,
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
@@ -215,8 +216,15 @@ def unverified(review):
     return [c["criterion"] for c in _criteria(review, "unverifiable")]
 
 
-def review_body(review, checks):
-    """What a person acts on comes first: verdict, findings, criteria. Evidence is collapsed."""
+PERSON_LINE = (
+    "NexKit changes nothing on this pull request: a person makes any change, then comments "
+    "`/nexkit review` again."
+)
+
+
+def review_body(review, checks, person=False):
+    """What a person acts on comes first: verdict, findings, criteria. Evidence is collapsed.
+    With `person`, it says who makes any change."""
     given = review["output"]
     output = apply_criteria(given)
     approved = output["verdict"] == "approve"
@@ -252,6 +260,8 @@ def review_body(review, checks):
         "",
         output["summary"].strip(),
     ]
+    if person:
+        lines += ["", PERSON_LINE]
     if given["verdict"] == "approve" and not approved:
         what = "an acceptance criterion" if _criteria(given, "unmet") else "a checklist item"
         lines += ["", f"NexKit requests changes because {what} is not met."]
@@ -1402,6 +1412,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     comments = gh.comments(pr)
     comment_id, state = read_state(comments)
     state = state or empty_state(decision["issue"])
+    person = bool(decision.get("person"))
+    if person:
+        state["person"] = True
     # Only the review this round's decision named carries over.
     carried = (
         bool(reviewed)
@@ -1432,7 +1445,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         failed = "" if review else review_failure(reviewed)[0]
         checks_ok, verdict = _set_statuses(gh, head, checks, review, url, failed)
     if given:
-        gh.create_review(pr, head, review_body({"output": given}, checks))
+        gh.create_review(pr, head, review_body({"output": given}, checks, person))
 
     row.update(
         head=head,
@@ -1477,6 +1490,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         row["verdict"] = "paused"
         if resume:
             row["resume"] = resume
+    elif person and verdict:
+        # A person's pull request: nothing here pushes, starts a fix round or merges.
+        outcome = "person_reviewed"
+        if checks_ok and verdict == "approve":
+            message = f"✅ Checks passed and the AI review approved `{head[:7]}`."
+        else:
+            message = f"Checks or review need attention on `{head[:7]}`."
+        message += f" {PERSON_LINE}"
     elif checks_ok and verdict == "approve":
         outcome = "ready"
         approved = f"the AI review approved `{head[:7]}`"

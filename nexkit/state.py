@@ -576,6 +576,14 @@ def ci_wait_reason(wait):
 
 
 def render_state(state):
+    if state.get("person"):
+        lines = [
+            "### NexKit",
+            "",
+            "A person's pull request: NexKit changes nothing on it. Comment `/nexkit review` to "
+            "check and review the current commit.",
+        ]
+        return "\n".join(lines) + "\n\n" + _encode(STATE_PREFIX, state)
     lines = [
         "### NexKit",
         "",

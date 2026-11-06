@@ -137,6 +137,89 @@ class ReportCase(unittest.TestCase):
         return {(s["context"], s["state"]) for s in self.gh.statuses}
 
 
+class PersonsPullRequestTests(ReportCase):
+    def setUp(self):
+        super().setUp()
+        self.auto = make_config(merge={"auto": True}, conflicts={"auto_resolve": False})
+
+    def person(self, **kw):
+        fields = {"pr": 6, "issue": 6, "target": 6, "head": HEAD, "person": True}
+        return decision("review", branch="upgrade/nexkit", **{**fields, **kw})
+
+    def report_person(self, cfg=None, **kw):
+        return self.run_report(self.person(**kw), cfg or self.auto, published=False)
+
+    def test_an_approved_pull_request_gets_both_statuses_and_stays_as_it_is(self):
+        self.candidate()
+        outcome = self.report_person()
+        self.assertEqual(outcome["outcome"], "person_reviewed")
+        self.assertEqual(
+            self.statuses(), {("nexkit/checks", "success"), ("nexkit/review", "success")}
+        )
+        self.assertEqual(self.gh.merged, [])
+        self.assertEqual(self.gh.updated, [])
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_failing_checks_start_no_fix_round_and_mention_nobody(self):
+        self.candidate(checks_pass=False)
+        outcome = self.report_person()
+        self.assertEqual(outcome["outcome"], "person_reviewed")
+        self.assertFalse(outcome.get("attention"))
+        self.assertIn(("nexkit/checks", "failure"), self.statuses())
+        self.assertNotIn("fix", [d["inputs"]["command"] for d in self.gh.dispatches])
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["status"], "success")
+        self.assertIn("a person makes any change", row["body"])
+
+    def test_a_review_that_requests_changes_starts_no_fix_round(self):
+        finding = {"severity": "blocking", "file": "a.yml", "line": 1, "body": "It breaks."}
+        self.candidate(review=review_result("request_changes", [finding]))
+        self.assertEqual(self.report_person()["outcome"], "person_reviewed")
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertIn(("nexkit/review", "failure"), self.statuses())
+
+    def test_the_review_comment_says_who_makes_any_change(self):
+        self.candidate()
+        self.report_person()
+        [review] = self.gh.created_reviews
+        self.assertIn("a person makes any change", review["body"])
+
+    def test_a_review_of_a_nexkit_pull_request_does_not_say_so(self):
+        self.candidate()
+        self.run_report(decision("review", head=HEAD), published=False)
+        [review] = self.gh.created_reviews
+        self.assertNotIn("a person makes any change", review["body"])
+
+    def test_a_review_that_stopped_is_shown_and_tried_once_more_like_any_other(self):
+        self.candidate(review=False)
+        needs = {"review": {"result": "failure"}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "9"}):
+            found = report(
+                self.gh,
+                self.person(),
+                self.auto,
+                needs,
+                self.artifacts,
+                workflow_ref=WORKFLOW,
+                default_branch="main",
+            )
+        self.assertEqual(found["outcome"], "retry")
+        [start] = self.gh.dispatches
+        self.assertEqual(start["inputs"]["command"], "review")
+        self.assertEqual(self.gh.merged, [])
+
+    def test_the_round_shows_whose_pull_request_it_is(self):
+        self.assertEqual(trigger(self.person()), "review (person)")
+
+    def test_the_state_comment_keeps_the_review_and_offers_no_fix_round(self):
+        self.candidate()
+        self.report_person()
+        [state] = self.gh.comments_matching(6, "nexkit:state")
+        self.assertIn("A person's pull request", state["body"])
+        self.assertNotIn("/nexkit fix", state["body"])
+        self.assertEqual(read_state(self.gh.comments(6))[1]["last_review"]["head"], HEAD)
+
+
 class ReportTests(ReportCase):
     def no_change(self, cfg=None):
         output = {

@@ -63,7 +63,7 @@ gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: appli
    person](../../docs/troubleshooting.md#when-nexkit-waits-for-a-person), and suggest what
    it says, for example the answers to a plan's questions, `/nexkit fix <instructions>`
    for another round or to answer a blocked conflict, or `/nexkit review` after pushing a
-   manual change. For a pull
+   manual change, also on a person's pull request, such as one for a protected path. For a pull
    request that is ready to merge, suggest the checks in [Reviewing a pull
    request](../../docs/how-it-works.md#reviewing-a-pull-request); for a change to a plan,
    [Changing a plan](../../docs/how-it-works.md#stages). To see a plan, read the newest

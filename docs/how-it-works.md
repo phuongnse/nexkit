@@ -10,7 +10,8 @@ Three parts are played around NexKit:
   each merge while `merge.auto` is off, and confirm the acceptance criteria that the
   review could not verify. They change what NexKit may not change: the settings in
   `.nexkit/`, the workflow and anything else in `protected_paths`, in pull requests they
-  make by hand. [Troubleshooting](troubleshooting.md#when-nexkit-waits-for-a-person) says
+  make by hand, which [`/nexkit review`](#stages) checks and reviews on request.
+  [Troubleshooting](troubleshooting.md#when-nexkit-waits-for-a-person) says
   what to do at each stop.
 - **A local agent session:** a Claude Code session with NexKit's plugin, working for the
   person who decides. It writes issues and the *blocked by* relationships between them
@@ -690,6 +691,28 @@ against its base branch, as its *Files changed* tab shows. When it does not:
 A pull request whose own change differs from the base branch, however small, goes on as
 usual, and so does one that GitHub cannot compare.
 
+**A person's pull request.** A change to `protected_paths`, such as a NexKit upgrade, is a
+person's pull request, and those are the changes that matter most to review. So `/nexkit
+review`, from someone with write access, also works on a pull request that NexKit did not
+open, from a branch of this repository. The run is the review round of a NexKit pull request,
+shown as `review (person)`: `verify` runs `setup` and the checks on its head, as the
+configuration on the default branch says, without secrets, and the `review` job reviews it.
+Both statuses are set on that head.
+
+- It pushes nothing, starts no fix or conflict round and never merges, also with `merge.auto`
+  on. The outcome is `person_reviewed`, whatever the checks and the review found, and nobody
+  is mentioned; the review says that a person makes any change.
+- The reviewer gets no plan. It judges the change against the pull request's title and
+  description, and it reviews `.github/`, `.nexkit/` and every other protected path like any
+  other code, since a person wrote them.
+- The state comment keeps the review, so the next `/nexkit review` sees its findings.
+- `/nexkit fix` is refused there, a pull request that changes no file has nothing to review,
+  and a pull request from a fork runs nothing, since its checks would run code that nobody
+  with write access pushed. Each reply says why.
+- Autopilot and `nexkit status` leave such a pull request out. Each review takes a new comment,
+  so a new commit needs `/nexkit review` again, and a run lost on the way shows no outcome
+  until then.
+
 **After an automatic merge.** NexKit closes the issue the pull request implements, unless
 GitHub closed it first through the pull request's `Closes` line. When the repository's
 *Automatically delete head branches* setting (`delete_branch_on_merge`) is on, NexKit
@@ -1286,6 +1309,7 @@ Names a person meets in run comments and in that output:
 | `already_on_base` | The base branch already holds the pull request's change, so it changes no file against it. NexKit closed the pull request without merging and its issue as completed; the round's marker names the commit that brought the change when NexKit can tell one. See *A pull request brought up to date that changes nothing* under [Stages](#stages). |
 | `issue_closed` | The issue closed while its plan or `/nexkit go` ran, so NexKit published nothing. |
 | `merge_issue_closed` | Checks and review approved the pull request, but its issue is closed, so NexKit did not merge it; a person merges or closes it. |
+| `person_reviewed` | `/nexkit review` checked and reviewed a person's pull request. NexKit changes nothing on it, whatever the round found. See *A person's pull request* under [Stages](#stages). |
 | `no_change` | An implement round found that no change is needed. The issue closes with its finding, at once or through autopilot's answer (see [Stages](#stages)). A plan's finding closes it through autopilot. |
 | `attention` | The reason a person is needed, when one is. |
 | `conflicts`, `base_sha` | The round was a conflict round, started for that commit of the base branch. |
@@ -1413,7 +1437,9 @@ once the limit has reset.
   cannot alter its own pipeline or configuration. The App may push workflow changes, but
   only those a merge brings from the base branch, since `publish` rejects any such edit by
   an agent.
-- Fork pull requests are never NexKit pull requests: commands on them are refused.
+- Fork pull requests are never NexKit pull requests: commands on them are refused. Only a
+  writer's `/nexkit review` runs anything on a person's pull request, and only from a branch
+  of this repository, which only writers can push to.
 - Autopilot starts `/nexkit go` without a person's approval of the plan. It takes only
   issues opened by people with write access, and anyone else's issues stay untouched, so
   an outsider cannot start an implement session by opening or editing an issue. Issues

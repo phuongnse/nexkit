@@ -1624,6 +1624,28 @@ checks and `setup` come from `.nexkit/config.json` on the default branch, so a c
 counts from its merge on. The workflow file that `nexkit init` writes lets the command
 through, as it does every `/nexkit` comment.
 
+**CI that runs the same checks.** Before 6.1.0, a repository's own CI was the only check of
+a person's branch, so many CI workflows run on every push to any branch. With `/nexkit
+review`, the commands of `checks` then run twice on such a branch: once in CI on the push,
+once in NexKit's `verify` on the command. `nexkit doctor` names each workflow whose `run`
+steps call a command of `checks` and whose `push` trigger reaches a branch other than the
+default branch and NexKit's, or whose `pull_request` trigger runs for a pull request into
+the default branch, with the trigger and the checks it repeats. Let such a workflow run on
+the default branch only, and on a pull request only when it changes the workflow itself:
+
+```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: [.github/workflows/ci.yml]
+```
+
+When the default branch's rules require that workflow's jobs, require `nexkit/checks` and
+`nexkit/review` instead, which `/nexkit review` sets. A workflow that runs other commands
+than `checks`, such as a deployment, needs no change, nor does a CodeQL scan
+(`github/codeql-action`), whose build serves its analysis.
+
 ## Workflow file
 
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls

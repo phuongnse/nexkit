@@ -139,7 +139,11 @@ files or repository settings, and wait for confirmation.
    `merge.after_workflows` (for example `["ci.yml"]`, or
    `nexkit init --after-workflow ci.yml`) so NexKit starts them after each merge; each one
    needs a `workflow_dispatch` trigger, which is a change the user makes to that workflow
-   file.
+   file. When a CI workflow runs the commands of `checks` on every branch, `/nexkit review`
+   runs them again on a person's pull request, and `nexkit doctor` says so: offer to let
+   that workflow run on the default branch only, with a `paths` filter of its own file for
+   pull requests, and to require `nexkit/checks` instead of its jobs (see *Reviewing your
+   own pull requests* in the configuration docs).
 
    If the repository's agent instructions hold rules that every pull request must meet,
    such as docs that change with the code, offer `"review": {"checklist": ["<rule>"]}`:

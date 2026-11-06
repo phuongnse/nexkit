@@ -2303,3 +2303,101 @@ class WorkflowSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepeatedChecksTests(unittest.TestCase):
+    """Doctor warns of a workflow that runs the commands of `checks` on a person's branch,
+    which `/nexkit review` checks too (#227)."""
+
+    CHECKS = [
+        {"name": "unit", "run": "python3 -m unittest discover -s tests"},
+        {"name": "lint", "run": "make lint\nmake typecheck"},
+    ]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / ".github/workflows").mkdir(parents=True)
+        branch = mock.patch.object(scaffold, "default_branch_of", return_value="main")
+        branch.start()
+        self.addCleanup(branch.stop)
+
+    def findings(self, triggers, steps="      - run: python3 -m unittest discover -s tests\n"):
+        job = "  test:\n    runs-on: ubuntu-latest\n    steps:\n"
+        text = f"name: CI\non:\n{triggers}jobs:\n{job}{steps}"
+        (self.root / ".github/workflows/ci.yml").write_text(text)
+        return scaffold._repeated_checks(self.root, {"checks": self.CHECKS})
+
+    def test_a_workflow_on_every_branch_runs_the_checks_twice(self):
+        [(ok, message)] = self.findings("  push:\n  pull_request:\n")
+        self.assertFalse(ok)
+        self.assertIn("ci.yml runs the commands of checks `unit`", message)
+        self.assertIn("through its 'push' trigger: it has no branch filter", message)
+        self.assertIn("with a 'paths' filter of .github/workflows/ci.yml", message)
+        self.assertIn("require `nexkit/checks` instead", message)
+
+    def test_each_trigger_that_reaches_a_persons_branch_counts(self):
+        cases = {
+            "  push:\n    branches-ignore: [main]\n": "its 'branches-ignore' does not cover",
+            "  push:\n    branches: ['release/*']\n": "its 'branches' include `release/",
+            "  pull_request:\n    branches: [main]\n": "'pull_request' trigger: a pull request",
+            "on_list": "'push' trigger",
+        }
+        for triggers, said in cases.items():
+            with self.subTest(triggers):
+                if triggers == "on_list":
+                    steps = "jobs:\n  t:\n    steps:\n      - run: make lint\n"
+                    text = f"on: [push, pull_request]\n{steps}"
+                    (self.root / ".github/workflows/ci.yml").write_text(text)
+                    found = scaffold._repeated_checks(self.root, {"checks": self.CHECKS})
+                else:
+                    found = self.findings(triggers)
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(said, found[0][1])
+
+    def test_a_workflow_on_the_default_branch_or_its_own_file_only_is_fine(self):
+        for triggers in (
+            "  push:\n    branches: [main]\n",
+            "  push:\n    branches: [main, 'nexkit/**']\n",
+            "  push:\n    branches: [main]\n"
+            "  pull_request:\n    paths: ['.github/workflows/ci.yml']\n",
+            "  push:\n    paths: [.github/workflows/ci.yml]\n",
+            "  pull_request:\n    branches: [develop]\n",
+            "  schedule:\n    - cron: '0 0 * * *'\n",
+        ):
+            with self.subTest(triggers):
+                self.assertEqual(self.findings(triggers), [])
+
+    def test_only_a_command_of_checks_counts_as_a_whole(self):
+        triggers = "  push:\n"
+        self.assertEqual(self.findings(triggers, "      - run: make lint-docs\n"), [])
+        block = "      - name: Test\n        run: |\n          cd app\n          make lint\n"
+        [(_, message)] = self.findings(triggers, block)
+        self.assertIn("`lint` (`make lint`)", message)
+        quoted = '      - run: "cd app && python3 -m unittest discover -s tests"\n'
+        self.assertEqual(len(self.findings(triggers, quoted)), 1)
+
+    def test_a_code_scan_that_builds_the_code_is_left_out(self):
+        steps = (
+            "      - uses: github/codeql-action/init@v3\n"
+            "      - run: python3 -m unittest discover -s tests\n"
+        )
+        self.assertEqual(self.findings("  pull_request:\n", steps), [])
+
+    def test_nexkits_own_workflow_and_a_repository_without_checks_are_left_out(self):
+        (self.root / ".github/workflows/nexkit.yml").write_text(
+            "on: [push]\njobs:\n  t:\n    steps:\n      - run: make lint\n"
+        )
+        self.assertEqual(scaffold._repeated_checks(self.root, {"checks": self.CHECKS}), [])
+        self.findings("  push:\n")
+        self.assertEqual(scaffold._repeated_checks(self.root, {"checks": []}), [])
+
+    def test_doctor_reports_it(self):
+        with mock.patch.object(scaffold, "github_app", return_value=(APP, [])):
+            cli.main(["init", "--repo", str(self.root), "--check", "test=make test", "--force"])
+        (self.root / ".github/workflows/ci.yml").write_text(
+            "on: [push]\njobs:\n  t:\n    steps:\n      - run: make test\n"
+        )
+        failed = [m for ok, m in scaffold.doctor(self.root) if not ok]
+        self.assertTrue(any("ci.yml runs the commands of checks `test`" in m for m in failed))

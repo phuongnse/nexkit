@@ -15,6 +15,7 @@ from . import __version__, app, autopilot
 from . import config as configuration
 from .github import alerts_off
 from .globs import branch_matches
+from .route import BRANCH_PREFIX
 from .runtimes import DECLARED_SECRETS, PROVIDERS
 
 KIT_REPOSITORY = "phuongnse/nexkit"
@@ -418,7 +419,12 @@ def _indent(line):
 
 
 def push_filters(workflow):
-    """The filters of a workflow's `push` trigger, such as {"branches": ["main"]}, or None
+    """The filters of a workflow's `push` trigger (see `trigger_filters`)."""
+    return trigger_filters(workflow, "push")
+
+
+def trigger_filters(workflow, event="push"):
+    """The filters of a workflow's trigger `event`, such as {"branches": ["main"]}, or None
     without that trigger. Reads `on: push`, a list of events, a `{mapping}` on one line and
     the block form. What only a YAML parser reads, such as a list over several lines inside
     brackets or a `push: *alias`, counts as no filter, or as no trigger."""
@@ -435,9 +441,9 @@ def push_filters(workflow):
         return None
     start, inline = found
     if inline.startswith("{"):
-        return _flow_push(inline)
+        return _flow_push(inline, event)
     if inline:
-        return {} if "push" in _items(inline) else None
+        return {} if event in _items(inline) else None
     block = []
     for line in lines[start + 1 :]:
         if line.strip() and not line[0].isspace() and not line.startswith("-"):
@@ -449,20 +455,22 @@ def push_filters(workflow):
         text = line.strip()
         if _indent(line) != events:
             continue
-        if text.startswith("-") and _items(text[1:]) == ["push"]:
+        if text.startswith("-") and _items(text[1:]) == [event]:
             return {}
-        match = re.fullmatch(r"""['"]?push['"]?:(.*)""", text)
+        match = re.fullmatch(rf"""['"]?{event}['"]?:(.*)""", text)
         if match:
             inline = match.group(1).strip()
             if inline.startswith(("*", "&")):
                 return None
-            return _flow_push(f"push: {inline}") if inline else _filters(block[at + 1 :], events)
+            if inline:
+                return _flow_push(f"{event}: {inline}", event)
+            return _filters(block[at + 1 :], events)
     return None
 
 
-def _flow_push(text):
-    """The filters of `push` in a `{mapping}` on one line, or None without it."""
-    match = re.search(r"\bpush\b['\"]?\s*:\s*(\{.*?\})?", text)
+def _flow_push(text, event="push"):
+    """The filters of `event` in a `{mapping}` on one line, or None without it."""
+    match = re.search(rf"\b{event}\b['\"]?\s*:\s*(\{{.*?\}})?", text)
     if not match:
         return None
     found = re.findall(r"([a-z-]+)\s*:\s*(\[[^\]]*\]|[^,{}\s]+)", match.group(1) or "")
@@ -523,6 +531,120 @@ def _after_merge_push(root, name, branch):
             "merge.after_workflows",
         )
     ]
+
+
+# Branches a person may push to, which a workflow's `push` filters are tried on, besides the
+# branches those filters name.
+PERSON_BRANCHES = ("feature/x", "fix-1", "dev", "release/1")
+# Events whose runs test a pull request, which a person's pull request into the default
+# branch starts whatever its own branch is.
+PULL_EVENTS = ("pull_request", "pull_request_target")
+BLOCK_SCALAR = re.compile(r"[|>][+-]?\d*")
+CODE_SCAN = re.compile(r"^\s*(-\s*)?uses:\s*['\"]?github/codeql-action/", re.M)
+
+
+def run_lines(workflow):
+    """The lines of every `run` step of a workflow, each on one line: a `run: cmd`, and each
+    line of a `run: |` block."""
+    lines, found = _uncommented(workflow).splitlines(), []
+    for at, line in enumerate(lines):
+        match = re.match(r"^(\s*)(?:-\s+)?(run:)\s*(.*)$", line)
+        if not match:
+            continue
+        value = match.group(3).strip()
+        if value and not BLOCK_SCALAR.fullmatch(value):
+            found.append(value.strip("'\""))
+            continue
+        key = line.index("run:")
+        for text in lines[at + 1 :]:
+            if text.strip() and _indent(text) <= key:
+                break
+            if text.strip():
+                found.append(text.strip())
+    return [" ".join(line.split()) for line in found]
+
+
+def _repeats(check, lines):
+    """Whether one of a workflow's `run` lines calls the command of `check`, as a whole."""
+    from .autopilot import command_line
+
+    command = command_line(check["run"])
+    pattern = re.compile(rf"(?<!\S){re.escape(command)}(?!\S)")
+    return bool(command) and any(pattern.search(line) for line in lines)
+
+
+def _own_paths(filters, path):
+    """Whether a trigger's `paths` filter names only the workflow's own file."""
+    paths = filters.get("paths")
+    return bool(paths) and all(item.strip("'\"") == path for item in paths)
+
+
+def _person_trigger(workflow, path, branch):
+    """(trigger, how) of the first trigger of a workflow that runs it for a person's
+    branch: a push to a branch other than `branch` and NexKit's, or a pull request into
+    `branch`. None when every trigger stays on `branch`, or runs only for a change of the
+    workflow's own file."""
+    filters = trigger_filters(workflow, "push")
+    if filters is not None and not _own_paths(filters, path):
+        named = [
+            re.sub(r"[*?]+", "x", p) for p in filters.get("branches", []) if not p.startswith("!")
+        ]
+        for name in [*PERSON_BRANCHES, *named]:
+            # NexKit's own branches, `nexkit/issue-<n>`, which `verify` checks.
+            if name == branch or name.startswith(BRANCH_PREFIX.split("/")[0] + "/"):
+                continue
+            how = _pushes_to(filters, name)
+            if how and "branches-ignore" in how:
+                return "push", f"its 'branches-ignore' does not cover `{name}`"
+            if how:
+                return "push", how.replace(f" {name}", f" `{name}`")
+    for event in PULL_EVENTS:
+        filters = trigger_filters(workflow, event)
+        if filters is None or _own_paths(filters, path):
+            continue
+        how = _pushes_to(filters, branch)
+        if how:
+            return event, f"a pull request into `{branch}` starts it ({how})"
+    return None
+
+
+def _repeated_checks(root, cfg):
+    """Findings: a workflow of the repository that runs a command of `checks` on a person's
+    branch, which `/nexkit review` checks too, so each push there runs it twice."""
+    folder = root / ".github/workflows"
+    if not cfg["checks"] or not folder.is_dir():
+        return []
+    findings, branch = [], None
+    for file in sorted(folder.glob("*.y*ml")):
+        path = f".github/workflows/{file.name}"
+        if path == WORKFLOW_PATH:
+            continue
+        text = file.read_text(errors="replace")
+        if CODE_SCAN.search(_uncommented(text)):
+            # A code scan builds the code for its analysis, which checks do not replace.
+            continue
+        repeated = [check for check in cfg["checks"] if _repeats(check, run_lines(text))]
+        if not repeated:
+            continue
+        branch = branch or default_branch_of(root)
+        found = _person_trigger(text, path, branch)
+        if not found:
+            continue
+        event, how = found
+        names = ", ".join(
+            f"`{check['name']}` (`{check['run'].splitlines()[0]}`)" for check in repeated
+        )
+        findings.append(
+            (
+                False,
+                f"{file.name} runs the commands of checks {names} on a person's branch, "
+                f"through its '{event}' trigger: {how}. `/nexkit review` runs them there too, "
+                f"so they run twice. Let {file.name} run on pushes to `{branch}` only, and "
+                f"on pull requests with a 'paths' filter of {path}; if `{branch}`'s rules "
+                "require its jobs, require `nexkit/checks` instead",
+            )
+        )
+    return findings
 
 
 def _watched_workflow(root, name):
@@ -1108,6 +1230,7 @@ def doctor(root, key_file=None, app_id=None):
             findings += _after_merge_push(root, name, branch)
         findings += [_watched_workflow(root, n) for n in cfg["autopilot"]["watch_workflows"]]
         findings += [_trusted_workflow(root, n) for n in cfg["autopilot"]["trusted_workflows"]]
+        findings += _repeated_checks(root, cfg)
         problem = configuration.app_problem(cfg)
         if problem:
             findings.append((False, problem))

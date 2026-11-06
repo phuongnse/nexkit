@@ -1,5 +1,57 @@
 # Changelog
 
+## 6.2.0
+
+Each mention says what to do and why, autopilot follows labels you choose, an approval is
+enough for NexKit to merge a pull request GitHub refused, and `nexkit status` is fast and
+judges by the configuration the pipeline uses.
+
+- Every mention of `notify`, and every reason under *Needs a person* in `nexkit status`,
+  says what to do, why NexKit does not do it itself, and where to look: the question, the
+  error, the failing checks, the criteria to confirm (#221). A refused merge names the rule
+  and the step that unblocks it, such as a code owner's review with the files, their lines
+  and their owners. Text from an agent, GitHub or a person, and logins, are in code spans,
+  so a mention reaches only `notify`. See [What a mention
+  says](docs/troubleshooting.md#what-a-mention-says).
+- An approval by a writer merges a NexKit pull request whose merge GitHub refused, or one
+  left `ready` with criteria to confirm, on the head its checks and review passed, with the
+  guards of every merge (#224). With autopilot, each sweep also merges one that GitHub now
+  reports as mergeable, such as after a rule changed. See [Automatic
+  merge](docs/configuration.md#automatic-merge).
+- Autopilot follows labels (#223): `autopilot.priority` lists the labels whose issues go
+  first, also without a milestone; `autopilot.labels` gives a label a `wave`, which waits
+  for the lower waves of its milestone, or `hold`, which starts nothing for the issue, not
+  even its automatic rounds and merge, until the label is removed. NexKit labels the issues
+  it opens `nexkit:ci`, `nexkit:dependabot` and `nexkit:flaky`, which the default priority
+  lists, so the order stays as it was. Adding or removing a label starts a sweep. See
+  *Labels* under [Autopilot](docs/configuration.md#autopilot).
+- `nexkit status` judges with `.nexkit/config.json` on the default branch, as the pipeline
+  does, and warns when the checkout's differs; `--local-config` previews the checkout's
+  (#222). Without a valid configuration it stops and says why.
+- `nexkit status` reads in a few batched GraphQL queries and says how far it got on stderr
+  (#225): on a repository with 111 open issues it takes about 16 seconds instead of minutes.
+- `nexkit doctor` names a CI workflow that runs the commands of `checks` on a person's
+  branch, which `/nexkit review` runs there too (#227). See [Reviewing your own pull
+  requests](docs/configuration.md#reviewing-your-own-pull-requests).
+- A read from GitHub that timed out, or a dropped connection, is tried again like a network
+  error instead of stopping the run.
+
+### Upgrade
+
+- **Update three more parts of the caller workflow**, which `nexkit init --force` writes
+  too: the job's `if:` lets approvals through
+  (`contains(fromJSON('["changes_requested","approved"]'), github.event.review.state)`),
+  the concurrency group gives an approval a group of its own (`approved-<number>`), and the
+  `issues` types add `labeled, unlabeled`. Until then an approval starts nothing, and
+  `nexkit doctor` says so.
+- **Replace `autopilot.last_in_milestone_label`** with `"labels": {"<label>": {"wave":
+  1}}`, as `nexkit doctor` shows. It still works through 6.x, but two issues with that
+  label now run side by side; give one a higher wave to keep them in order.
+- **Let a CI workflow that runs `checks` on every branch run on the default branch only**,
+  when `nexkit doctor` names it, and require `nexkit/checks` instead of its jobs.
+- `nexkit status` now reads the configuration on the default branch; pass `--local-config`
+  to judge with the checkout's.
+
 ## 6.1.0
 
 A writer can vouch for an issue that autopilot leaves alone, `/nexkit review` checks and

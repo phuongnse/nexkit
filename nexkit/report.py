@@ -623,9 +623,14 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), found=None):
         return None
     if outcome == "ready":
         if confirm:
+            then = (
+                "approve the pull request, which NexKit then merges"
+                if cfg["merge"]["auto"]
+                else "merge the pull request"
+            )
             return autopilot.person(
                 "confirm from the diff and the checks the acceptance criteria that the review "
-                "could not verify, then merge the pull request",
+                f"could not verify, then {then}",
                 "the review could not verify " + _listed(list(confirm)),
             )
         return None if cfg["merge"]["auto"] else READY
@@ -1362,19 +1367,27 @@ def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
 
 
 def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
-    """Try the merge again for a pull request whose required checks had not passed, from
-    an autopilot sweep. A required check that failed meanwhile gets an automatic fix round
-    (see `_required_failed`). The round's comment shows what happened. Returns a line for
-    the log."""
+    """Try the merge again for a pull request whose round approved it but did not merge it:
+    from an autopilot sweep, once required checks that had not passed may have
+    (`merge_waiting`), or once GitHub reports a refused one as mergeable (`clean`); or
+    after a writer approved it (see `maintain.merge_approved`), whose `intro` then starts
+    the text. A required check that failed meanwhile gets an automatic fix round (see
+    `_required_failed`). The round's comment shows what happened. Returns a line for the
+    log."""
     pr = step["pull"]
     for comment, run in run_comments(gh.comments(pr)):
         if comment["id"] != step["round_comment"]:
             continue
+        waited = run.get("outcome") == "merge_waiting"
         target = {"pr": pr, "head": run["head"], "issue": step["number"], "base": step["base"]}
-        target["waiting"] = True
-        outcome, text = merge_pull(gh, cfg, target, run, "", workflow, default_branch)
-        if outcome == "merge_waiting":
+        target["waiting"] = waited
+        intro = step.get("intro", "")
+        outcome, text = merge_pull(gh, cfg, target, run, intro, workflow, default_branch)
+        if outcome == "merge_waiting" and waited:
             return f"#{pr} still waits for its required checks."
+        if outcome == "merge_refused" and step.get("clean"):
+            # GitHub called it mergeable and still refused: sweeps leave this head alone.
+            run["refused_clean"] = run["head"]
         run.update(outcome=outcome, status=run_status(outcome))
         reason = needs_person(outcome, cfg, found={"pull": True, **target.get("found", {})})
         if reason:

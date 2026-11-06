@@ -156,7 +156,7 @@ says](troubleshooting.md#what-a-mention-says)):
 | Checks or review still fail after a fix round found nothing to change for a cause outside the code and ran them again | yes |
 | Ready, with `merge.auto` off | yes |
 | Ready, with an acceptance criterion the review could not verify | yes, also with `merge.auto` on |
-| GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](#failure-handling) |
+| GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](#failure-handling). The person's part, such as a code owner's approval, is enough: NexKit merges after an approval, or with autopilot once GitHub reports the pull request as mergeable (see [Automatic merge](configuration.md#automatic-merge)) |
 | Merged, or an automatic fix or conflict round started | no |
 | The round's commit conflicts with the base branch, and no conflict round is left to start (`conflicting`) | yes |
 | Paused at the usage limit, resuming by itself | no |
@@ -830,6 +830,14 @@ sub-issue, NexKit looks at its parent's sub-issues:
 A merge by a person closes the issue through GitHub, and the `issues: closed` event starts
 the check. When NexKit closes the issue itself after an automatic merge, `report` runs the
 same check in that run, for its comment, and the event's run finds nothing left.
+
+**Merging after an approval** (`merge.auto`). A writer's approval of a NexKit pull request
+whose latest round ended as `merge_refused`, or as `ready` for criteria the review could not
+verify, merges it on the head its checks and review passed, with the guards of every merge;
+a head that moved gets `/nexkit review`. The run waits in the pull request's queue, and an
+approval while a round runs, or of a pull request whose round ended otherwise, starts
+nothing. With autopilot, each sweep also merges a `merge_refused` pull request that GitHub
+reports as mergeable (see [Automatic merge](configuration.md#automatic-merge)).
 
 **Resolving conflicts** (`conflicts.auto_resolve`). When the base branch moves, NexKit
 checks its open pull requests into it. GitHub's own mergeability check decides, so no

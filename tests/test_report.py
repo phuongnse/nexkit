@@ -897,7 +897,9 @@ class ReportTests(ReportCase):
         self.assertIn("Confirm them before merging:\n\n- passes five runs in a row", row["body"])
         self.assertIn("could not verify", row["run"]["attention"])
         [mention] = [c["body"] for c in self.gh.comments(6) if c["body"].startswith("@owner")]
-        self.assertIn("could not verify, then merge the pull request", mention)
+        self.assertIn(
+            "could not verify, then approve the pull request, which NexKit then merges", mention
+        )
         body = self.gh.created_reviews[0]["body"]
         self.assertIn("- ❔ passes five runs in a row (no test)", body)
         self.assertEqual(self.gh.issues[5]["state"], "open")

@@ -1274,6 +1274,10 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         return _released(gh, cfg, issue, pull, comment, latest, pull_comments, start, now)
     if latest.get("outcome") == "merge_waiting":
         return _merge_step(gh, cfg, issue, pull, comment, latest, start, now)
+    if latest.get("outcome") == "merge_refused":
+        step = _refused_step(gh, issue, pull, comment, latest)
+        if step:
+            return step
     if latest.get("outcome") == CI_WAITING:
         return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start)
     if latest.get("status") == FAILURE:
@@ -1320,6 +1324,22 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now):
     fields = {**start, "target": pull, "auto": "true", "count": True}
     reason = f"{gone}, so pull request #{pull} gets the automatic fix round it held back"
     return _step(issue, "start", reason, command="fix", **fields)
+
+
+def _refused_step(gh, issue, pull, comment, run):
+    """The merge of a pull request whose merge GitHub refused, once GitHub reports it as
+    mergeable (`clean`) on the head that its checks and review passed, such as after an
+    owner approved it while no run could, or a rule changed; or None. A head that GitHub
+    called mergeable and still refused is not tried again."""
+    details = gh.pull(pull)
+    head = (details.get("head") or {}).get("sha")
+    if details.get("mergeable_state") != "clean" or head != run.get("head"):
+        return None
+    if run.get("refused_clean") == head:
+        return None
+    base = (details.get("base") or {}).get("ref") or ""
+    reason = f"GitHub now accepts the merge of pull request #{pull}, which it refused"
+    return _step(issue, "merge", reason, round_comment=comment["id"], base=base, clean=True)
 
 
 def _merge_step(gh, cfg, issue, pull, comment, run, start, now):

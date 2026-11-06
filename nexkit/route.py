@@ -165,11 +165,14 @@ def route(gh, event_name, event, inputs=None):
 
     if event_name == "pull_request_review":
         review = event["review"]
-        if event.get("action") != "submitted" or review.get("state") != "changes_requested":
-            return _none("Only 'Request changes' reviews start a fix round")
+        state = review.get("state")
+        if event.get("action") != "submitted" or state not in ("changes_requested", "approved"):
+            return _none("Only 'Request changes' reviews and approvals start anything")
         actor = review["user"]["login"]
         if review["user"].get("type") == "Bot" or not gh.can_write(actor):
-            return _none(f"Review by @{actor} cannot start a fix round")
+            return _none(f"Review by @{actor} cannot start anything")
+        if state == "approved":
+            return _approved(event["pull_request"], actor)
         decision = _decide(
             gh, "fix", event["pull_request"]["number"], True, review.get("body") or "", auto=False
         )
@@ -263,6 +266,23 @@ def route(gh, event_name, event, inputs=None):
         return decision
 
     return _none(f"Event '{event_name}' is not handled")
+
+
+def _approved(pull, actor):
+    """A writer's approval of a NexKit pull request: the `maintain` job merges it when its
+    latest round could not (see `maintain.merge_approved`). It starts no agent."""
+    issue = issue_from_branch((pull.get("head") or {}).get("ref"))
+    repo = ((pull.get("head") or {}).get("repo") or {}).get("full_name")
+    base = (pull.get("base") or {}).get("repo") or {}
+    if issue is None or (base.get("full_name") and repo != base["full_name"]):
+        return _none("Only an approval of a NexKit pull request starts a merge")
+    return {
+        "action": "maintain",
+        "task": "approved",
+        "pr": pull["number"],
+        "issue": issue,
+        "actor": actor,
+    }
 
 
 def _trust(issue, note):

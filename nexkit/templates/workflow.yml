@@ -1,6 +1,8 @@
 # Installed by `nexkit init`. Commands: /nexkit plan, /nexkit go, /nexkit trust (issues);
 # /nexkit fix (NexKit pull requests); /nexkit review (any pull request of this repository's
-# branches). Settings: .nexkit/config.json
+# branches). On a NexKit pull request, a writer's *Request changes* review starts a fix
+# round, and an approval merges one whose merge GitHub refused (merge.auto). Settings:
+# .nexkit/config.json
 name: NexKit
 
 on:
@@ -57,7 +59,7 @@ jobs:
       contains(fromJSON('["workflow_dispatch","issues","milestone","push","schedule","workflow_run"]'), github.event_name) ||
       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/nexkit')) ||
       (github.event_name == 'pull_request_review' &&
-       github.event.review.state == 'changes_requested' &&
+       contains(fromJSON('["changes_requested","approved"]'), github.event.review.state) &&
        startsWith(github.event.pull_request.head.ref, 'nexkit/'))
     # One run at a time per issue or pull request. Set on the job, so only commands join.
     # Runs for other events, such as the schedule, form a group per event. Autopilot's

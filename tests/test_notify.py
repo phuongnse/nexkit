@@ -104,13 +104,17 @@ class RuleTests(unittest.TestCase):
         self.assertIsNone(needs_person("ready", make_config(merge={"auto": True})))
 
     def test_ready_with_criteria_to_confirm(self):
-        for cfg in (self.cfg, make_config(merge={"auto": True})):
+        for cfg, then in (
+            (self.cfg, "then merge the pull request."),
+            (make_config(merge={"auto": True}), "then approve the pull request, which NexKit"),
+        ):
             reason = needs_person("ready", cfg, confirm=["passes five runs", "is fast"])
             self.assertReason(
                 reason,
                 "confirm from the diff and the checks the acceptance criteria",
                 "The review could not verify `passes five runs` and 1 more",
             )
+            self.assertIn(then, reason)
 
     def test_merge_refused_says_what_unblocks_it(self):
         found = {"refused": ("approve it", "GitHub wants a review")}

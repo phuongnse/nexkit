@@ -21,6 +21,8 @@ CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
 # The most owned files a reason names one by one.
 FILES = 5
 APP = "NexKit's App cannot review its own pull request"
+# What follows an approval: NexKit merges then (see `maintain.merge_approved`).
+MERGES = "NexKit then merges"
 FALLBACK_DO = (
     "read GitHub's answer in the round's comment, then merge the pull request yourself or "
     "change the rule"
@@ -157,7 +159,7 @@ def _code_owners(owned):
     (see `owned_files`), or of files NexKit cannot name."""
     if not owned:
         return (
-            "a code owner approves the pull request, then merge it",
+            f"a code owner approves the pull request, which {MERGES}",
             f"GitHub requires a code owner's review, and {APP}",
         )
     owners = list(dict.fromkeys(owner for _, found in owned for owner in found))
@@ -165,7 +167,7 @@ def _code_owners(owned):
     more = f"; and {len(owned) - FILES} more" if len(owned) > FILES else ""
     one = len(owned) == 1
     return (
-        f"approve the pull request as a code owner ({_people(owners)}), then merge it",
+        f"approve the pull request as a code owner ({_people(owners)}), which {MERGES}",
         f"GitHub requires a code owner's review for {'this file' if one else 'these files'}, "
         f"and {APP}: {files}{more}",
     )
@@ -176,7 +178,7 @@ def _approvals(gh, pr, review):
     given = len(_approvers(gh, pr))
     plural = "s" if count != 1 else ""
     return (
-        "approve the pull request, then merge it",
+        f"approve the pull request, which {MERGES}",
         f"GitHub requires {count} approving review{plural} ({given} given), and {APP}",
     )
 
@@ -190,19 +192,20 @@ def _reviews(gh, target, rules, state, lowered):
         requesters = _requesters(gh, pr)
         who = f" ({_people(requesters)})" if requesters else ""
         return (
-            f"the reviewer who requested changes{who} approves the pull request or dismisses "
-            "the review",
+            f"the reviewer who requested changes{who} approves the pull request, which "
+            f"{MERGES}, or dismisses the review",
             "GitHub does not merge a pull request while a review requests changes",
         )
     # GitHub's decision covers classic branch protection too, which NexKit's token may not
     # read; only its words then say that the review is a code owner's.
-    owners = bool(review.get("require_code_owner_review")) or "code owner" in lowered
+    said = "code owner" in lowered
+    owners = bool(review.get("require_code_owner_review")) or said
     needed = decision == "REVIEW_REQUIRED" or (
-        decision is None and ("code owner" in lowered or "approving review" in lowered)
+        decision is None and (said or "approving review" in lowered)
     )
     if needed:
         owned = owned_files(gh, pr, base) if owners else []
-        if (owners and owned is None) or owned:
+        if owned or said or (owners and owned is None):
             return _code_owners(owned)
         return _approvals(gh, pr, review)
     unresolved = state.get("unresolved") or 0

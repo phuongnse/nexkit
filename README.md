@@ -102,6 +102,7 @@ run `nexkit init`; see [The GitHub App](docs/configuration.md#the-github-app).
 | NexKit PR | `/nexkit fix [instructions]` | Another implementation round using the failing checks, review findings and your instructions. When the pull request conflicts with its base branch, the round merges the base branch and resolves the conflicts, or asks you to decide the ones that need a choice. |
 | NexKit PR | `/nexkit review` | Re-run the checks and the AI review, for example after you pushed a commit. |
 | NexKit PR | *Request changes* review | Same as `/nexkit fix`, with your review as the instructions. |
+| NexKit PR | *Approve* review | With `merge.auto`, merges a pull request whose merge GitHub refused, such as for a code owner's review, on the head its checks and review passed. No merge by hand is needed. |
 | Your PR | `/nexkit review` | Run the checks and the AI review on a pull request of your own, from a branch of this repository, and set `nexkit/checks` and `nexkit/review`. NexKit pushes nothing to it and never merges it. |
 
 Only people with write access can run commands. When checks fail or the review finds a

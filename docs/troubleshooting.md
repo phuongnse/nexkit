@@ -336,7 +336,7 @@ each outcome of a run is:
 | `conflicting` | comment `/nexkit fix` on the pull request, with any rule the conflict needs. Its commit conflicts with the base branch, and NexKit started no round to resolve it | |
 | `ready`, with `merge.auto` off | review the pull request, then merge it or close it. Checks and the AI review passed, and with `merge.auto` off a person decides the merge | |
 | `ready`, with criteria the review could not verify | confirm from the diff and the checks the acceptance criteria that the review could not verify, then merge the pull request | the first criterion |
-| `merge_refused` | what unblocks the merge, and the rule that refused it: see [The automatic merge was refused](#the-automatic-merge-was-refused) | the rule, the files and their owners |
+| `merge_refused` | what unblocks the merge, and the rule that refused it, such as `approve the pull request as a code owner (@owner), which NexKit then merges. GitHub requires a code owner's review for this file, and NexKit's App cannot review its own pull request: docs/reference/ui-glossary.json (+6 −0, owned by @owner)`: see [The automatic merge was refused](#the-automatic-merge-was-refused) | the rule, the files and their owners |
 | `merge_issue_closed` | merge the pull request or close it. Its issue closed before NexKit merged it, and NexKit leaves the pull request of a closed issue to a person | |
 | `agent_untrusted`, `merge_untrusted` | read the issue, and comment `/nexkit trust` on it if you trust it. Someone without write access edited it after a writer vouched for it, so NexKit does not act on its text (or merge its pull request) | |
 | `close_failed`, `on_base_failed` | close the issue (and the pull request) yourself. No change is needed, or the base branch already holds this change, but GitHub refused NexKit's close | the error |
@@ -557,7 +557,12 @@ either. It waits for a person only:
   yourself, or bring the issue back into the scope.
 
 For any other rule, the round's comment and the mention say what unblocks the merge, under
-**What unblocks it**. NexKit reads the base branch's rules, the pull request's reviews,
+**What unblocks it**. No merge by hand is needed after that: an approval by someone with
+write access merges the pull request at once, and with autopilot, each sweep merges it once
+GitHub reports it as mergeable, such as after a rule changed (see [Automatic
+merge](configuration.md#automatic-merge)). An approval starts nothing while the workflow's
+`pull_request_review` trigger lets only *Request changes* reviews through: update it as
+`nexkit init` writes it, which `nexkit doctor` checks. NexKit reads the base branch's rules, the pull request's reviews,
 files and conversations, and the repository's merge settings, and names:
 
 - **a code owner's review**: the files that need it, each with its lines added and removed

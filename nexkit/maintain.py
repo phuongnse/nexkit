@@ -62,6 +62,8 @@ TASKS = {
     "on_base": (),
     # A writer's `/nexkit trust` on an issue.
     "trust": ("autopilot.enabled",),
+    # A writer's approval of a NexKit pull request whose merge GitHub refused.
+    "approved": ("merge.auto",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
@@ -868,12 +870,49 @@ def answer_trust(gh, cfg, decision, workflow, ref):
     return [f"@{actor} vouched for #{number}.", *autopilot.request_safely(gh, cfg, workflow, ref)]
 
 
+# The outcomes of a round after which a person's approval may let the merge through: one
+# that GitHub refused, and a ready one that NexKit left to a person, such as for criteria
+# the review could not verify, which the approval confirms.
+APPROVABLE = ("merge_refused", "ready")
+
+
+def merge_approved(gh, cfg, decision, workflow, ref):
+    """Merge a NexKit pull request that a writer approved, when its latest round ended as
+    `merge_refused`, or `ready`, on the head that its checks and review passed, with the
+    guards of every merge (see `report.merge_pull`): a head that moved since gets a review
+    instead. A label that holds its issue, a round on its way, or any other outcome starts
+    nothing. Returns lines for the log."""
+    # `report` imports this module.
+    from .report import merge_waiting
+
+    pr, issue, actor = decision["pr"], decision["issue"], decision.get("actor") or "someone"
+    rounds = _rounds(gh, pr)
+    found = [(c, run) for c, run in rounds if run.get("outcome") != "up_to_date"]
+    if not found:
+        return [f"#{pr} has no round to merge after the approval."]
+    comment, run = found[-1]
+    if run.get("status") != SUCCESS or run.get("outcome") not in APPROVABLE:
+        state = run.get("outcome") or run.get("status")
+        return [f"#{pr}: its latest round is `{state}`, so the approval starts nothing."]
+    if implementing(gh, issue):
+        return [f"#{pr}: the implement round on #{issue} still runs; it merges by itself."]
+    label = autopilot.held(gh, cfg, issue)
+    if label:
+        return [f"#{pr}: #{issue} is on hold (`{label}`), so NexKit does not merge it."]
+    base = (gh.pull(pr).get("base") or {}).get("ref") or ref
+    intro = f"@{actor} approved the pull request."
+    step = {"pull": pr, "number": issue, "round_comment": comment["id"], "base": base}
+    return [merge_waiting(gh, cfg, {**step, "intro": intro}, workflow, ref)]
+
+
 def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
     """Run the decision's task. Returns lines for the job log. `alerts` is the client whose
     token may read Dependabot alerts, or None: see `autopilot.check_dependabot`."""
     task = decision["task"]
     if task == "trust":
         return answer_trust(gh, cfg, decision, workflow, ref)
+    if task == "approved":
+        return merge_approved(gh, cfg, decision, workflow, ref)
     if task == "parents":
         lines = close_parents_safely(gh, decision["issue"]) if cfg["close_parent_issues"] else []
         return lines + autopilot.request_safely(gh, cfg, workflow, ref, decision["issue"])

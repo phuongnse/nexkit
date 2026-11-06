@@ -474,6 +474,30 @@ class InitDoctorTests(unittest.TestCase):
         path.write_text(json.dumps(cfg))
         self.assertFalse(any("issues: closed" in m for _, m in scaffold.doctor(self.root)))
 
+    def test_doctor_checks_that_an_approval_reaches_nexkit_with_merge_auto(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["merge"] = {"auto": True}
+        path.write_text(json.dumps(cfg))
+        ok = (True, "An approval merges a pull request whose merge GitHub refused")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        # The condition of NexKit 6.1 and earlier lets only *Request changes* through.
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        text = workflow.read_text()
+        old = "github.event.review.state == 'changes_requested' &&"
+        new = (
+            'contains(fromJSON(\'["changes_requested","approved"]\'), github.event.review.state) &&'
+        )
+        self.assertIn(new, text)
+        workflow.write_text(text.replace(new, old))
+        findings = scaffold.doctor(self.root)
+        self.assertNotIn(ok, findings)
+        self.assertTrue(any("does not let an approval through" in m for k, m in findings if not k))
+        cfg["merge"] = {"auto": False}
+        path.write_text(json.dumps(cfg))
+        self.assertFalse(any("approval" in m for _, m in scaffold.doctor(self.root)))
+
     def test_doctor_checks_the_schedule_that_resumes_paused_runs(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         ok = (True, "A schedule resumes runs paused at the agent's usage limit")

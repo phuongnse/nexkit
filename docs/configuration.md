@@ -572,8 +572,9 @@ description says which of the two applies.
 
 The review approves only when no acceptance criterion is unmet. When it could not verify a
 criterion from the diff, its tests and the check results, NexKit does not merge: the
-round's comment lists the criteria for a person to confirm before merging by hand, and
-`notify` mentions its people. See [How it works](how-it-works.md#stages).
+round's comment lists the criteria for a person to confirm, and `notify` mentions its
+people. Once they are confirmed, approving the pull request is enough: NexKit merges it
+(see below). See [How it works](how-it-works.md#stages).
 
 After the merge, NexKit closes the issue the pull request implements as completed and
 comments a link to the pull request and the merge commit on it, unless GitHub closed it
@@ -591,12 +592,28 @@ round's comment. With the setting off, NexKit deletes no branch.
 
 Branch protection and rulesets still apply, also to the App, unless you add it to their
 bypass list. When
-a rule is not met, GitHub refuses the merge, the round's comment says why, and the pull
-request waits for a person. Before merging, NexKit sets the `nexkit/checks` and
-`nexkit/review` statuses, so you can require those two. Rules that block every automatic
-merge:
+a rule is not met, GitHub refuses the merge, the round's comment says which rule and what
+unblocks it, such as a code owner's review of named files, and the pull request waits for
+a person (see [The automatic merge was refused](troubleshooting.md#the-automatic-merge-was-refused)).
+Before merging, NexKit sets the `nexkit/checks` and `nexkit/review` statuses, so you can
+require those two.
 
-- a required approval from a person;
+No merge by hand is needed after a person's part. NexKit merges a pull request whose
+merge GitHub refused, on the head its checks and review passed:
+
+- **after an approval** by someone with write access: the *Approve* review starts the
+  merge at once. It needs the workflow's `pull_request_review` trigger to let approvals
+  through, as `nexkit init` writes it; `nexkit doctor` says when it does not;
+- **at each sweep** with autopilot, once GitHub reports the pull request as mergeable
+  (`clean`), such as after an approval while runs were busy, or after a rule changed. A
+  head that GitHub reported as mergeable and still refused is not tried again by sweeps.
+
+Each try has the guards of every merge: an issue that closed, an edit by someone without
+write access, a label that holds the issue, or a base branch that already holds the change
+merges nothing, and a head that moved gets `/nexkit review` instead. A refusal for another
+reason stays `merge_refused`, and the new mention says why. Rules that block every
+automatic merge:
+
 - a required merge queue, or squash merging turned off for the repository.
 
 GitHub's *Require branches to be up to date before merging* keeps two pull requests that

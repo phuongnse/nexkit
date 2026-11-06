@@ -875,6 +875,39 @@ class ScenarioTests(unittest.TestCase):
         self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6)))
         self.assertEqual(read_state(pipe.gh.comments(7))[1]["auto_fixes"], 1)
 
+    def test_a_merge_waiting_for_a_code_owner_merges_after_the_approval(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.review_states[6] = {"decision": "REVIEW_REQUIRED"}
+        pipe.gh.files["CODEOWNERS"] = "* @olivia\n"
+        pipe.gh.pr_files[6] = [{"filename": "app.py", "additions": 3, "deletions": 1}]
+        pipe.gh.merge_error = GitHubError(405, "Waiting on code owner review from olivia.")
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "merge_refused")
+        [mention] = pipe.gh.comments_matching(6, "a person is needed")
+        self.assertIn("approve the pull request as a code owner (`@olivia`)", mention["body"])
+        # The owner approves; nothing else is needed.
+        pipe.gh.merge_error = None
+        event = {
+            "action": "submitted",
+            "review": {"state": "approved", "user": {"login": "olivia"}},
+            "pull_request": {
+                **pipe.gh.pulls[6],
+                "base": {"ref": "main", "repo": {"full_name": "acme/app"}},
+            },
+        }
+        decision = route(pipe.gh, "pull_request_review", event)
+        self.assertEqual(
+            maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main"),
+            ["#6: merged."],
+        )
+        pipe.play()
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
+
     def test_a_held_merge_merges_once_the_label_is_removed(self):
         def script(pipe, inputs):
             if inputs["command"] == "plan":

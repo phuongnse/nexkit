@@ -130,7 +130,8 @@ bounds:
 - **[A refused merge](../../docs/troubleshooting.md#the-automatic-merge-was-refused):**
   only what NexKit leaves to a person. When the checks neither passed nor failed within
   six hours, act on what their runs show, or notify. For a rule on the default branch, or
-  an issue that left the scope, notify. Never merge.
+  an issue that left the scope, notify with the step the reason names, such as a code
+  owner's approval, after which NexKit merges by itself. Never merge or approve.
 - **[A diagnosis round with no cause](../../docs/troubleshooting.md#a-diagnosis-round-stopped-as-blocked):**
   act only on a cause that the evidence shows; otherwise notify.
 - **[A `no_change` closing](../../docs/troubleshooting.md#an-issue-closed-as-no_change-that-still-needs-a-change):**

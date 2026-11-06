@@ -784,6 +784,8 @@ def _triggers(root, cfg, workflow):
             )
         else:
             findings.append((True, "Pushes to the default branch start the conflict check"))
+    if cfg["merge"]["auto"]:
+        findings.append(_approval_trigger(workflow))
     if cfg["autopilot"]["enabled"]:
         findings.append(_autopilot_triggers(cfg, workflow))
         findings += _ci_trigger(root, cfg, workflow)
@@ -800,6 +802,21 @@ def _triggers(root, cfg, workflow):
         else:
             findings.append((True, "A schedule resumes runs paused at the agent's usage limit"))
     return findings
+
+
+def _approval_trigger(workflow):
+    """A finding: with `merge.auto`, an approval of a refused pull request merges it, which
+    needs the `pull_request_review` trigger and the job's condition to let it through."""
+    review = trigger(workflow, "pull_request_review")
+    approved = re.search(r"['\"]approved['\"]", _uncommented(workflow))
+    if review is None or ("types" in review and "submitted" not in review) or not approved:
+        return (
+            False,
+            f"merge.auto is on, but {WORKFLOW_PATH} does not let an approval through, so "
+            "a pull request whose merge GitHub refused is merged only by hand; use the "
+            "'pull_request_review' trigger and the job's 'if' as 'nexkit init' writes them",
+        )
+    return (True, "An approval merges a pull request whose merge GitHub refused")
 
 
 def _autopilot_triggers(cfg, workflow):

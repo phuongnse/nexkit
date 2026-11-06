@@ -4,11 +4,13 @@ owner review the files and their owners."""
 import unittest
 from unittest import mock
 
-from nexkit import refusal
+from nexkit import autopilot, refusal
 from nexkit.github import GitHubError
+from nexkit.maintain import maintain
 from nexkit.refusal import codeowners, explain, owners_of
+from nexkit.state import render_run
 from tests.support import FakeGitHub, make_config
-from tests.test_report import ReportCase
+from tests.test_report import HEAD, ReportCase
 
 # What GitHub answers when a ruleset refuses a merge for a code owner review.
 OWNER_REFUSAL = GitHubError(
@@ -68,7 +70,9 @@ class ExplainTests(unittest.TestCase):
         # Alice approved, so her file needs nothing more.
         self.gh.pr_reviews[6] = [{"user": {"login": "alice"}, "state": "APPROVED"}]
         do, why = explain(self.gh, TARGET, OWNER_REFUSAL)
-        self.assertEqual(do, "approve the pull request as a code owner (`@olivia`), then merge it")
+        self.assertEqual(
+            do, "approve the pull request as a code owner (`@olivia`), which NexKit then merges"
+        )
         self.assertEqual(
             why,
             "GitHub requires a code owner's review for this file, and NexKit's App cannot "
@@ -86,7 +90,7 @@ class ExplainTests(unittest.TestCase):
         # Without a CODEOWNERS file, NexKit still says whose review it waits for.
         del self.gh.files["CODEOWNERS"]
         do, why = explain(self.gh, TARGET, OWNER_REFUSAL)
-        self.assertEqual(do, "a code owner approves the pull request, then merge it")
+        self.assertEqual(do, "a code owner approves the pull request, which NexKit then merges")
         self.assertIn("requires a code owner's review", why)
 
     def test_many_owned_files_are_counted(self):
@@ -113,7 +117,7 @@ class ExplainTests(unittest.TestCase):
         self.assertEqual(
             explain(self.gh, TARGET, refused),
             (
-                "approve the pull request, then merge it",
+                "approve the pull request, which NexKit then merges",
                 "GitHub requires 2 approving reviews (1 given), and NexKit's App cannot review "
                 "its own pull request",
             ),
@@ -125,8 +129,8 @@ class ExplainTests(unittest.TestCase):
         do, why = explain(self.gh, TARGET, GitHubError(405, "Changes requested"))
         self.assertEqual(
             do,
-            "the reviewer who requested changes (`@olivia`) approves the pull request or "
-            "dismisses the review",
+            "the reviewer who requested changes (`@olivia`) approves the pull request, which "
+            "NexKit then merges, or dismisses the review",
         )
         self.assertIn("while a review requests changes", why)
 
@@ -208,9 +212,9 @@ class RefusedMergeReportTests(ReportCase):
         outcome = self.run_report(cfg=make_config(merge={"auto": True}, notify=["owner"]))
         self.assertEqual(outcome["outcome"], "merge_refused")
         reason = (
-            "approve the pull request as a code owner (`@olivia`), then merge it. GitHub "
-            "requires a code owner's review for this file, and NexKit's App cannot review its "
-            "own pull request: `docs/a.md` (+6 −0, owned by `@olivia`)"
+            "approve the pull request as a code owner (`@olivia`), which NexKit then merges. "
+            "GitHub requires a code owner's review for this file, and NexKit's App cannot "
+            "review its own pull request: `docs/a.md` (+6 −0, owned by `@olivia`)"
         )
         self.assertEqual(outcome["attention"], reason)
         [row] = self.gh.run_comments(6)
@@ -218,6 +222,137 @@ class RefusedMergeReportTests(ReportCase):
         self.assertEqual(row["run"]["attention"], reason)
         mentions = [c["body"] for c in self.gh.comments(6) if c["body"].startswith("@owner")]
         self.assertEqual(mentions, [f"@owner a person is needed: {reason}."])
+
+
+APPROVED = {"action": "maintain", "task": "approved", "pr": 6, "issue": 5, "actor": "olivia"}
+
+
+class ApprovedMergeTests(ReportCase):
+    """A writer's approval, or GitHub's `clean`, merges a pull request it refused."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(merge={"auto": True}, notify=["owner"])
+        self.candidate()
+        self.gh.review_states[6] = {"decision": "REVIEW_REQUIRED"}
+        self.gh.files["CODEOWNERS"] = "* @olivia\n"
+        self.gh.pr_files[6] = [{"filename": "app.py", "additions": 1, "deletions": 0}]
+        self.gh.merge_error = OWNER_REFUSAL
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
+        self.gh.merge_error = None
+
+    def approve(self, cfg=None):
+        return maintain(self.gh, APPROVED, cfg or self.cfg, workflow="nexkit.yml", ref="main")
+
+    def latest(self):
+        return self.gh.run_comments(6)[-1]["run"]
+
+    def test_an_approval_merges_the_pull_request_on_the_head_that_passed(self):
+        self.assertEqual(self.approve(), ["#6: merged."])
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+        run = self.latest()
+        self.assertEqual((run["outcome"], run["status"]), ("merged", "success"))
+        self.assertNotIn("attention", run)
+
+    def test_an_approval_after_the_head_moved_reviews_the_new_head(self):
+        self.gh.pulls[6]["head"]["sha"] = "e" * 40
+        self.gh.merge_error = GitHubError(409, "Head branch was modified.")
+        self.assertEqual(self.approve(), ["#6: head_moved."])
+        self.assertEqual(self.gh.merged, [])
+        [review] = [d for d in self.gh.dispatches if d["inputs"]["command"] == "review"]
+        self.assertEqual(review["inputs"]["number"], "6")
+
+    def test_an_approval_merges_nothing_for_a_closed_issue_or_an_untrusted_edit(self):
+        self.gh.issues[5]["state"] = "closed"
+        self.assertEqual(self.approve(), ["#6: merge_issue_closed."])
+        self.gh.issues[5]["state"] = "open"
+        self.gh.round_comment(6, 2, HEAD, "passed", outcome="merge_refused")
+        self.gh.human_comment(5, "/nexkit trust")
+        self.gh.edits[5] = [("bob", "2026-02-01T00:00:00Z")]
+        self.assertEqual(self.approve(), [f"#6: {autopilot.UNTRUSTED_MERGE}."])
+        self.assertEqual(self.gh.merged, [])
+
+    def test_an_approval_starts_nothing_after_another_outcome_or_on_hold(self):
+        self.gh.round_comment(6, 2, HEAD, "failed", outcome="needs_human")
+        self.assertEqual(
+            self.approve(),
+            ["#6: its latest round is `needs_human`, so the approval starts nothing."],
+        )
+        self.gh.round_comment(6, 3, HEAD, "passed", outcome="merge_refused")
+        self.gh.issues[5]["labels"] = [{"name": "on-hold"}]
+        held = make_config(
+            merge={"auto": True}, autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}}
+        )
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.assertEqual(
+            self.approve(held), ["#6: #5 is on hold (`on-hold`), so NexKit does not merge it."]
+        )
+        self.assertEqual(self.gh.merged, [])
+
+    def test_an_approval_confirms_criteria_the_review_could_not_verify(self):
+        row = {"round": 2, "trigger": "fix", "url": "u", "status": "success", "head": HEAD}
+        self.gh.comment(6, render_run({**row, "outcome": "ready"}, "Ready."))
+        self.assertEqual(self.approve(), ["#6: merged."])
+
+    def test_a_refusal_for_another_reason_stays_and_says_why(self):
+        self.gh.merge_error = GitHubError(
+            405, '{"message": "Commits must have verified signatures."}'
+        )
+        self.gh.rules = [{"type": "required_signatures"}]
+        self.gh.review_states[6] = {"decision": "APPROVED"}
+        self.assertEqual(self.approve(), ["#6: merge_refused."])
+        self.assertIn("requires signed commits", self.latest()["attention"])
+        mentions = [c["body"] for c in self.gh.comments(6) if c["body"].startswith("@owner")]
+        self.assertIn("requires signed commits", mentions[-1])
+        self.assertIn("@olivia approved the pull request.", self.gh.run_comments(6)[-1]["body"])
+
+
+class CleanMergeSweepTests(ReportCase):
+    """Each sweep merges a refused pull request that GitHub now reports as `clean`."""
+
+    def setUp(self):
+        super().setUp()
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+        self.candidate()
+        self.gh.merge_error = GitHubError(405, "At least 1 approving review is required.")
+        self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
+
+    def sweep(self):
+        return autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+
+    def test_a_refused_merge_merges_once_github_reports_it_clean(self):
+        self.gh.pulls[6]["mergeable_state"] = "blocked"
+        self.sweep()
+        self.assertEqual(self.gh.merged, [])
+        self.gh.pulls[6]["mergeable_state"] = "clean"
+        self.gh.merge_error = None
+        self.sweep()
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+
+    def test_a_clean_head_that_github_still_refuses_is_tried_once(self):
+        self.gh.pulls[6]["mergeable_state"] = "clean"
+        self.sweep()
+        self.assertEqual(self.gh.run_comments(6)[-1]["run"]["refused_clean"], HEAD)
+        tried = len(self.gh.comments(6))
+        self.sweep()
+        self.assertEqual(len(self.gh.comments(6)), tried)
+        # A new head or a person's approval still tries it.
+        self.assertEqual(
+            maintain(self.gh, APPROVED, self.cfg, workflow="nexkit.yml", ref="main"),
+            ["#6: merge_refused."],
+        )
+
+    def test_a_head_that_moved_is_not_merged(self):
+        self.gh.pulls[6]["mergeable_state"] = "clean"
+        self.gh.pulls[6]["head"]["sha"] = "e" * 40
+        self.gh.merge_error = None
+        self.sweep()
+        self.assertEqual(self.gh.merged, [])
 
 
 if __name__ == "__main__":

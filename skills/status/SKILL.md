@@ -32,7 +32,9 @@ gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: appli
      `in_pull_request`, `implemented`) and the link to its last run comment.
    - `pull_requests`: open NexKit pull requests, each with a `state` (`running`, `ready`,
      `blocked`, `failing`, `conflicting`, `merge_refused`, `merge_waiting`, `paused`,
-     `failed`, `waiting`), the round and the link to its last round. A `waiting` pull
+     `failed`, `waiting`, `held`), the round and the link to its last round. A `held` one
+     has an issue that a label holds (see *Labels* under
+     [Autopilot](../../docs/configuration.md#autopilot)), which only a person releases. A `waiting` pull
      request has `waits_for`, the autopilot `bug` issue it waits for, and the `reason`
      (see *Failing checks the default branch has* under
      [Stages](../../docs/how-it-works.md#stages)). Like a `merge_waiting` one, it needs
@@ -47,7 +49,8 @@ gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: appli
      the failing checks or the files a code owner reviews.
    - `autopilot`, only with `autopilot.enabled`: the scope, `max_parallel`, and for each
      open issue in scope what the next sweep does with it, a `state` (`start` with its
-     `command`, `active`, `waits`) and the `reason`.
+     `command`, `active`, `waits`, `held`) and the `reason`. Do not take the label off a
+     `held` issue unless the user asks: holding it was a person's choice.
    Rely on these states rather than reading comment text: they come from NexKit's
    markers. Do not post a command for an item whose state is `planning`,
    `implementing` or `running`; it would queue behind the running one. A `paused` item

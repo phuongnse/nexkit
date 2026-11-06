@@ -408,8 +408,10 @@ class Pipeline:
             if quiet:
                 # Or it waits for an issue that waits for a person, who hears about that one.
                 awaited = {int(n) for n in re.findall(r"#(\d+)", step["reason"])}
+                # A label that holds an issue is a person's own choice.
                 self.test.assertTrue(
-                    step["state"] == "waits" and (step.get("person") or awaited & people),
+                    step["state"] == "held"
+                    or (step["state"] == "waits" and (step.get("person") or awaited & people)),
                     f"stuck with nothing running: {where}",
                 )
         for pull in self.gh.pulls.values():
@@ -801,8 +803,94 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5, labels=("last",))
         pipe.issue(6, labels=("last",))
         played = pipe.play()
-        self.assertEqual(played[-2:], [("plan", 6), ("go", 6)])
-        self.assertEqual(pipe.gh.issues[6]["state"], "closed")
+        # One wave runs side by side: #5 splits into #7, which runs beside #6.
+        self.assertEqual(
+            sorted(played), [("go", 6), ("go", 7), ("plan", 5), ("plan", 6), ("plan", 7)]
+        )
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7)))
+
+    def test_a_persons_bug_issue_runs_before_a_ready_milestone_issue(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        priority = ["nexkit:ci", "nexkit:dependabot", "bug", "nexkit:flaky"]
+        pipe = Pipeline(self, config(autopilot={"priority": priority, "max_parallel": 1}), script)
+        pipe.issue(5)
+        # A red dependency scan that the owner opened, in no milestone.
+        pipe.gh.add_issue(6, title="Scan fails", labels=("bug",))
+        self.assertEqual(pipe.play(), [("plan", 6), ("go", 6), ("plan", 5), ("go", 5)])
+        # Without `bug` in the list, the milestone scope never reaches it.
+        pipe = Pipeline(self, config(autopilot={"max_parallel": 1}), script)
+        pipe.issue(5)
+        pipe.gh.add_issue(6, title="Scan fails", labels=("bug",))
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+
+    def test_waves_run_in_order_whatever_the_age_of_their_issues(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["number"] == "7":
+                pipe.issue(9)  # opened while the milestone runs, with no label
+            return done()
+
+        labels = {"journey": {"wave": 1}, "docs": {"wave": 2}}
+        pipe = Pipeline(self, config(autopilot={"labels": labels}), script)
+        pipe.issue(5, labels=("docs",))
+        pipe.issue(6, labels=("journey",))
+        pipe.issue(7)
+        pipe.issue(8, labels=("journey",))
+        played = pipe.play()
+        index = played.index
+        self.assertLess(index(("go", 9)), index(("plan", 6)))
+        self.assertLess(index(("go", 7)), index(("plan", 8)))
+        self.assertLess(max(index(("go", 6)), index(("go", 8))), index(("plan", 5)))
+        self.assertEqual(played[-2:], [("plan", 5), ("go", 5)])
+
+    def test_a_held_issue_starts_nothing_until_its_label_is_removed(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go" and inputs["number"] == "6":
+                # A person holds it while its round runs: the round finishes, and starts
+                # neither its fix round nor, later, its merge.
+                pipe.gh.issues[6]["labels"] = [{"name": "on-hold"}]
+                return done(checks=False)
+            return done()
+
+        settings = {"labels": {"on-hold": {"hold": True}}}
+        pipe = Pipeline(self, config(autopilot=settings), script)
+        pipe.issue(5, labels=("on-hold",))
+        pipe.issue(6)
+        self.assertEqual(pipe.play(), [("plan", 6), ("go", 6)])
+        self.assertEqual(pipe.played[-1][2], "held")
+        steps = {s["number"]: s for s in autopilot.preview(pipe.gh, pipe.cfg)[1]}
+        self.assertEqual((steps[5]["state"], steps[6]["state"]), ("held", "held"))
+        data = collect(pipe.gh, pipe.cfg, workers=1)
+        self.assertEqual(data["needs_person"], [])
+        [pull] = data["pull_requests"]
+        self.assertEqual(pull["state"], "held")
+        # Without the label, the next sweep starts what it held back, and #5 runs.
+        pipe.gh.issues[5]["labels"] = pipe.gh.issues[6]["labels"] = []
+        self.assertEqual(pipe.play(), [("plan", 6), ("go", 6), ("plan", 5), ("fix", 7), ("go", 5)])
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6)))
+        self.assertEqual(read_state(pipe.gh.comments(7))[1]["auto_fixes"], 1)
+
+    def test_a_held_merge_merges_once_the_label_is_removed(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            pipe.gh.issues[5]["labels"] = [{"name": "on-hold"}]
+            return done()
+
+        settings = {"labels": {"on-hold": {"hold": True}}}
+        pipe = Pipeline(self, config(autopilot=settings), script)
+        pipe.issue(5)
+        pipe.play()
+        self.assertEqual((pipe.gh.merged, pipe.played[-1][2]), ([], "held"))
+        pipe.gh.issues[5]["labels"] = []
+        pipe.play()
+        self.assertEqual(len(pipe.gh.merged), 1)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):

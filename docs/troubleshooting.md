@@ -632,12 +632,18 @@ have read it: see [Issues from a workflow](configuration.md#issues-from-a-workfl
 An issue that a writer vouched for is left alone again after an edit by someone without write
 access. Read what changed, and comment `/nexkit trust` again if you trust it.
 
-### An issue marked to run last does not start
+### An issue in a later wave does not start
 
-`nexkit status` names the open issues of its milestone that it waits for (see *Running an
-issue last* under [Autopilot](configuration.md#autopilot)). Each carries on by itself or
+`nexkit status` names the open issues of lower waves in its milestone that it waits for
+(see *Labels* under [Autopilot](configuration.md#autopilot)). Each carries on by itself or
 waits for a person, listed under *Needs a person*; once they are closed it starts. Without a
 milestone it never starts: give it one, or take the label off.
+
+### An issue or pull request shows as `held`
+
+A label with `"hold": true` is on the issue, so autopilot starts nothing for it, and its
+pull request gets no automatic round or merge. Remove the label when the issue may go on:
+the next sweep starts what the hold kept back.
 
 ### An issue is blocked by an issue outside the scope
 

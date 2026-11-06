@@ -112,6 +112,8 @@ def pull_state(run, conflicting):
         return "ready"
     if outcome == autopilot.CI_WAITING:
         return "waiting"
+    if outcome == autopilot.HELD:
+        return "held"
     if outcome is None:
         # Rounds from releases before outcomes were recorded.
         passed = run.get("checks") == "passed" and run.get("verdict") == "approve"

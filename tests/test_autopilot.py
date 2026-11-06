@@ -1736,7 +1736,7 @@ class CITests(AutopilotCase):
         self.assertEqual(self.gh.reruns, [50])
         [bug] = self.bugs()
         self.assertEqual(bug["title"], 'Step "Run tests" of job "test" in ci.yml fails on main')
-        self.assertEqual([x["name"] for x in bug["labels"]], ["bug"])
+        self.assertEqual([x["name"] for x in bug["labels"]], ["bug", "nexkit:ci"])
         self.assertEqual(bug["milestone"], {"number": 1})
         self.assertIn(
             "@olivia [`ci.yml` failed](https://github.com/acme/app/actions/runs/50)", bug["body"]
@@ -1788,7 +1788,7 @@ class CITests(AutopilotCase):
         # Without annotations, the failure is named by its job and first failed step.
         title = 'Step "Run tests" of job "test" in ci.yml fails at times on main'
         self.assertEqual(issue["title"], title)
-        self.assertEqual([x["name"] for x in issue["labels"]], ["bug"])
+        self.assertEqual([x["name"] for x in issue["labels"]], ["bug", "nexkit:flaky"])
         self.assertEqual(issue["milestone"], {"number": 1})
         body = issue["body"]
         self.assertRegex(body, r"\A<!-- nexkit:ci-flaky ci\.yml [0-9a-f]{16} -->\n@olivia ")
@@ -2404,7 +2404,7 @@ class CITests(AutopilotCase):
         )
         self.sweep(cfg)
         [bug] = self.bugs()
-        self.assertEqual([x["name"] for x in bug["labels"]], ["bug"])
+        self.assertEqual([x["name"] for x in bug["labels"]], ["bug", "nexkit:ci"])
         self.assertIsNone(bug["milestone"])
         self.assertEqual(self.started()[0], ("plan", bug["number"]))
 
@@ -3286,7 +3286,7 @@ class DependabotTests(unittest.TestCase):
         first, second = self.opened()
         self.assertEqual(
             (first["user"]["login"], first["milestone"], [x["name"] for x in first["labels"]]),
-            (BOT_LOGIN, None, ["bug"]),
+            (BOT_LOGIN, None, ["bug", "nexkit:dependabot"]),
         )
         self.assertEqual(autopilot.dependabot_advisory(first), "GHSA-aaaa-bbbb-cccc")
         self.assertEqual(autopilot.dependabot_advisory(second), "GHSA-dddd-eeee-ffff")
@@ -3472,7 +3472,10 @@ class DependabotTests(unittest.TestCase):
         self.gh.add_issue(1, milestone=1)
         self.gh.alerts = [alert()]
         self.check()
+        # Its label keeps it in scope, while `autopilot.priority` lists it.
         cfg = make_config(autopilot={"enabled": True})
+        self.assertEqual([i["number"] for i in autopilot.scope(self.gh, cfg)["issues"]], [2, 1])
+        cfg = make_config(autopilot={"enabled": True, "priority": ["nexkit:ci"]})
         self.assertEqual([i["number"] for i in autopilot.scope(self.gh, cfg)["issues"]], [1])
 
     def test_status_says_what_is_missing_under_needs_a_person(self):
@@ -3497,25 +3500,50 @@ class DependabotTests(unittest.TestCase):
         self.assertEqual(self.gh.dispatches[0]["inputs"]["command"], "plan")
 
 
-class LastInMilestoneTests(unittest.TestCase):
+class WaveTests(unittest.TestCase):
+    """`autopilot.labels` with `wave`: an issue waits for the lower waves of its milestone."""
+
     def setUp(self):
         self.gh = FakeGitHub()
         self.gh.add_milestone(1)
         self.gh.add_milestone(2)
-        self.cfg = make_config(autopilot={"enabled": True, "last_in_milestone_label": "last"})
-        self.gh.add_issue(5, milestone=1, labels=("last",))
+        labels = {"journey": {"wave": 1}, "docs": {"wave": 2}}
+        self.cfg = make_config(autopilot={"enabled": True, "labels": labels})
+        self.gh.add_issue(5, milestone=1, labels=("docs",))
 
     def wait(self, number=5, cfg=None):
-        return autopilot.rest_of_milestone(self.gh, cfg or self.cfg, self.gh.issues[number])
+        return autopilot.lower_waves(self.gh, cfg or self.cfg, self.gh.issues[number])
 
-    def test_it_waits_for_every_other_open_issue_of_its_milestone(self):
+    def test_it_waits_for_every_open_issue_of_a_lower_wave_in_its_milestone(self):
         self.assertIsNone(self.wait())
         self.gh.add_issue(6, milestone=1)
         self.gh.add_issue(7, milestone=1, state="closed")
-        self.gh.add_issue(8, milestone=1)  # opened after it, with no mark
-        self.assertEqual(self.wait(), ("runs last in its milestone, so it waits for #6, #8", False))
-        self.gh.issues[6]["state"] = self.gh.issues[8]["state"] = "closed"
+        self.gh.add_issue(8, milestone=1, labels=("journey",))  # opened after it
+        self.assertEqual(
+            self.wait(), ("it is in wave 2 (`docs`), so it waits for #6, #8 of lower waves", False)
+        )
+        self.assertEqual(
+            self.wait(8), ("it is in wave 1 (`journey`), so it waits for #6 of lower waves", False)
+        )
+        self.gh.issues[6]["state"] = "closed"
+        self.assertIsNone(self.wait(8))
+        self.assertIn("waits for #8", self.wait()[0])
+        self.gh.issues[8]["state"] = "closed"
         self.assertIsNone(self.wait())
+
+    def test_waves_run_in_order_whatever_their_age_and_one_wave_runs_side_by_side(self):
+        self.gh.add_issue(6, milestone=1, labels=("journey",))  # newer, but an earlier wave
+        self.gh.add_issue(7, milestone=1, labels=("docs",))
+        self.assertIn("waits for #6", self.wait()[0])
+        self.assertIsNone(self.wait(6))
+        self.gh.issues[6]["state"] = "closed"
+        self.assertIsNone(self.wait(5))
+        self.assertIsNone(self.wait(7))
+
+    def test_the_highest_wave_of_its_labels_counts(self):
+        self.gh.issues[5]["labels"] = [{"name": "journey"}, {"name": "docs"}]
+        self.gh.add_issue(6, milestone=1, labels=("journey",))
+        self.assertIn("waits for #6", self.wait()[0])
 
     def test_an_issue_of_another_milestone_or_none_does_not_hold_it_back(self):
         self.gh.add_issue(6, milestone=2)
@@ -3526,55 +3554,53 @@ class LastInMilestoneTests(unittest.TestCase):
         self.gh.add_issue(6, milestone=1)["pull_request"] = {}
         self.assertIsNone(self.wait())
 
-    def test_without_the_label_or_the_setting_nothing_changes(self):
+    def test_without_a_wave_or_the_setting_nothing_changes(self):
         self.gh.add_issue(6, milestone=1)
         self.gh.add_issue(7, milestone=1)
         self.assertIsNone(self.wait(7))
         self.assertIsNone(self.wait(cfg=make_config(autopilot={"enabled": True})))
 
-    def test_a_part_of_a_split_holds_it_back_without_a_mark(self):
+    def test_a_part_of_a_split_holds_a_higher_wave_back_without_a_mark(self):
         self.gh.add_issue(6, milestone=1)
         self.gh.add_issue(7, milestone=1)
         self.gh.parents[7] = 6
         self.gh.issues[6]["state"] = "closed"
-        self.assertEqual(self.wait(), ("runs last in its milestone, so it waits for #7", False))
+        self.assertIn("waits for #7", self.wait()[0])
 
-    def test_of_two_marked_issues_the_older_goes_first(self):
-        self.gh.add_issue(6, milestone=1, labels=("last",))
-        self.assertIsNone(self.wait(5))
-        self.assertIn("waits for #5", self.wait(6)[0])
-
-    def test_the_parts_of_a_marked_issue_do_not_wait_for_it(self):
-        self.gh.add_issue(6, milestone=1, labels=("last",))
-        self.gh.parents[6] = 5
+    def test_a_part_does_not_wait_for_its_parent_its_siblings_or_what_needs_it(self):
+        # Parts keep their parent's labels, and the parent stays open until they close.
+        self.gh.add_issue(6, milestone=1, labels=("docs",))
+        self.gh.add_issue(7, milestone=1, labels=("docs",))
+        self.gh.parents[6] = self.gh.parents[7] = 5
         self.assertIsNone(self.wait(6))
-
-    def test_it_does_not_wait_for_what_waits_for_it(self):
-        self.gh.add_issue(6, milestone=1)
-        self.gh.add_issue(7, milestone=1)
-        self.gh.blockers[6] = [5]
-        self.gh.blockers[7] = [6]
+        # A lower wave that a person marked as needing it, or an issue above it, does not
+        # hold it back either, since that one waits for it.
+        self.gh.add_issue(8, milestone=1)
+        self.gh.add_issue(9, milestone=1)
+        self.gh.blockers[8] = [5]
+        self.gh.blockers[9] = [8]
+        self.assertIsNone(self.wait(6))
         self.assertIsNone(self.wait())
 
-    def test_a_part_keeps_the_place_of_the_issue_it_came_from(self):
-        self.gh.add_issue(6, milestone=1, labels=("last",))
-        self.gh.add_issue(7, milestone=1, labels=("last",))
-        self.gh.parents[7] = 5  # #5 split after #6 opened
-        self.assertIsNone(self.wait(7))
-        self.assertIn("#5, #7", self.wait(6)[0])
-
-    def test_it_does_not_wait_for_what_waits_for_the_issue_above_it(self):
+    def test_the_label_to_run_last_is_wave_1(self):
+        cfg = make_config(autopilot={"enabled": True, "last_in_milestone_label": "last"})
+        self.gh.issues[5]["labels"] = [{"name": "last"}]
         self.gh.add_issue(6, milestone=1)
         self.gh.add_issue(7, milestone=1, labels=("last",))
-        self.gh.parents[7] = 5
-        self.gh.blockers[6] = [5]
-        self.assertIsNone(self.wait(7))
+        self.assertEqual(
+            self.wait(cfg=cfg),
+            ("it is in wave 1 (`last`), so it waits for #6 of lower waves", False),
+        )
+        # Two issues that run last run side by side.
+        self.gh.issues[6]["state"] = "closed"
+        self.assertIsNone(self.wait(cfg=cfg))
+        self.assertIsNone(self.wait(7, cfg=cfg))
 
     def test_without_a_milestone_it_waits_for_a_person_and_says_why(self):
         self.gh.issues[5]["milestone"] = None
         reason = (
-            "give it a milestone, or take the label `last` off. It runs last in its milestone "
-            "(`last`), but has no milestone"
+            "give it a milestone, or take the label `docs` off. It runs in wave 2 of its "
+            "milestone (`docs`), but has no milestone"
         )
         self.assertEqual(self.wait(), (reason, True))
 
@@ -3585,14 +3611,120 @@ class LastInMilestoneTests(unittest.TestCase):
         self.assertIn("has no milestone", step["reason"])
         self.assertFalse(step["person"])
         everything = make_config(
-            autopilot={"enabled": True, "scope": None, "last_in_milestone_label": "last"}
+            autopilot={"enabled": True, "scope": None, "labels": {"docs": {"wave": 2}}}
         )
         self.assertEqual(autopilot.left_out(self.gh, everything), [])
+        # With a label of `priority`, it is in scope, where it waits for a person.
+        self.gh.issues[5]["labels"].append({"name": "nexkit:ci"})
+        self.assertEqual(autopilot.left_out(self.gh, self.cfg), [])
 
     def test_status_names_what_it_waits_for(self):
         self.gh.add_issue(6, milestone=1)
         data = collect(self.gh, self.cfg)
         [step] = [i for i in data["autopilot"]["issues"] if i["number"] == 5]
-        self.assertEqual(step["reason"], "runs last in its milestone, so it waits for #6")
+        self.assertEqual(
+            step["reason"], "it is in wave 2 (`docs`), so it waits for #6 of lower waves"
+        )
         self.assertFalse(step["person"])
         self.assertFalse(any(item["number"] == 5 for item in data["needs_person"]))
+
+
+class PriorityTests(AutopilotCase):
+    """`autopilot.priority`: listed labels go first, in scope wherever they are."""
+
+    def numbers(self, cfg):
+        return [issue["number"] for issue in autopilot.scope(self.gh, cfg)["issues"]]
+
+    def test_listed_labels_go_first_in_list_order_then_todays_order(self):
+        self.issue(5)
+        self.issue(6, labels=("bug",))
+        self.issue(7, milestone=None, labels=("bug", "urgent"))  # its highest label counts
+        self.issue(8, milestone=None)  # out of the milestone scope
+        self.gh.add_milestone(2)
+        self.issue(9, milestone=2, labels=("urgent",))  # outside the earliest milestone
+        cfg = pilot(priority=["urgent", "bug"])
+        self.assertEqual(self.numbers(cfg), [7, 9, 6, 5])
+        # Without the setting's labels, today's order: the earliest milestone, oldest first.
+        self.assertEqual(self.numbers(pilot()), [5, 6])
+        # With `null`, every open issue, the listed ones first.
+        everything = pilot(scope=None, priority=["urgent", "bug"])
+        self.assertEqual(self.numbers(everything), [9, 7, 6, 5, 8])
+
+    def test_nexkits_own_issues_go_first_by_their_marker_until_a_sweep_labels_them(self):
+        self.issue(5)
+        marker = "<!-- nexkit:ci-flaky ci.yml 0123456789abcdef -->"
+        flaky = self.issue(6, user=BOT_LOGIN, body=f"{marker}\nx")
+        red = self.issue(7, user=BOT_LOGIN, body="<!-- nexkit:ci ci.yml -->\nx")
+        self.assertEqual(self.numbers(self.cfg), [7, 6, 5])
+        # The order is the setting's: without it, they go with the rest.
+        self.assertEqual(self.numbers(pilot(priority=[])), [5, 6, 7])
+        lines = autopilot.label_own(self.gh)
+        self.assertEqual(lines, ["Labelled #7 `nexkit:ci`.", "Labelled #6 `nexkit:flaky`."])
+        self.assertEqual(red["labels"], [{"name": "nexkit:ci"}])
+        self.assertEqual(flaky["labels"], [{"name": "nexkit:flaky"}])
+        self.assertEqual(autopilot.label_own(self.gh), [])
+
+    def test_a_label_never_grants_trust(self):
+        self.issue(5, user="bob", labels=("nexkit:ci",))
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {})
+        self.assertEqual(step["state"], "waits")
+        self.assertIn("who cannot write to the repository", step["reason"])
+
+    def test_a_sweep_labels_nexkits_own_issues(self):
+        self.issue(5, user=BOT_LOGIN, body="<!-- nexkit:ci ci.yml -->\nx")
+        self.sweep()
+        self.assertEqual(self.gh.labeled, [(5, ["nexkit:ci"])])
+
+
+class HoldTests(AutopilotCase):
+    """`autopilot.labels` with `hold`: autopilot starts nothing for the issue."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = pilot(labels={"on-hold": {"hold": True}}, max_parallel=1)
+
+    def test_a_held_issue_gets_no_plan_and_takes_no_place(self):
+        self.issue(5, labels=("on-hold",))
+        self.issue(6)
+        self.gh.add_pull(7, 5)
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 6)])
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 7})
+        self.assertEqual(
+            (step["state"], step["reason"], step["pull"]),
+            (
+                "held",
+                "on hold (`on-hold`): autopilot starts nothing for it until the label is removed",
+                7,
+            ),
+        )
+        data = collect(self.gh, self.cfg, workers=1)
+        self.assertIn("#5     held", render(data))
+        self.assertFalse(any(item["number"] == 5 for item in data["needs_person"]))
+
+    def test_held_only_while_autopilot_takes_the_issue(self):
+        self.issue(5, labels=("on-hold",))
+        self.assertEqual(autopilot.held(self.gh, self.cfg, 5), "on-hold")
+        self.assertIsNone(autopilot.held(self.gh, pilot(), 5))
+        off = make_config(autopilot={"labels": {"on-hold": {"hold": True}}})
+        self.assertIsNone(autopilot.held(self.gh, off, 5))
+        self.gh.issues[5]["user"] = {"login": "bob"}  # who cannot write: autopilot leaves it
+        self.assertIsNone(autopilot.held(self.gh, self.cfg, 5))
+
+    def test_no_conflict_round_starts_for_a_held_issue(self):
+        self.issue(5, labels=("on-hold",))
+        self.gh.add_pull(7, 5)
+        self.gh.pulls[7]["mergeable"] = False
+        cfg = pilot(labels={"on-hold": {"hold": True}})
+        cfg["conflicts"]["auto_resolve"] = True
+        lines = maintain(self.gh, {"action": "maintain", "task": "conflicts", "base": "main"}, cfg)
+        self.assertEqual(lines, ["#7: #5 is on hold (`on-hold`); no conflict round."])
+        self.assertEqual(self.gh.dispatches, [])
+        # Once the label is gone, the round that held back its conflict round starts it.
+        self.gh.issues[5]["labels"] = []
+        self.gh.round_comment(7, 1, "a" * 40, "not run", outcome="held", held_back="conflicts")
+        step = autopilot.assess(self.gh, cfg, self.gh.issues[5], {5: 7})
+        self.assertEqual(
+            (step["state"], step["command"], step["auto"]), ("start", "fix", "conflicts")
+        )
+        self.assertIn("Merge `main` into this branch", step["note"])

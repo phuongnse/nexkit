@@ -59,9 +59,12 @@ succeeds. Help the user write issues that one session can finish and test.
      helper, or a lint rule that its checks will meet. When two open issues need the same
      new thing, one builds it and the other waits for it, so it is built once.
 
-   An issue that must run after everything else in its milestone, such as a docs sweep,
-   needs no marks at all when `autopilot.last_in_milestone_label` names a label: give it
-   that label, and new issues and the parts of a split hold it back by themselves.
+   An issue that must run after the rest of its milestone, such as a docs sweep, needs no
+   marks at all when `autopilot.labels` gives a label a `wave`: give it the label of a
+   higher wave than the rest, and new issues and the parts of a split hold it back by
+   themselves. Issues of one wave run side by side, so a milestone's journey and then its
+   docs sweep take waves 1 and 2. A label of `autopilot.priority`, such as `bug`, puts an
+   issue first, also without a milestone.
 
    Touching the same files, or a tidier order, is no reason to wait: NexKit merges the
    base branch and resolves conflicts by itself. Nor is adding a new case of something

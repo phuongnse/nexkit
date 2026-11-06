@@ -59,7 +59,14 @@ DEFAULTS = {
         "watch_workflows": [],
         # Workflows of the default branch whose issues autopilot takes, by their marker.
         "trusted_workflows": [],
-        # The label of an issue that runs only once the rest of its milestone is closed.
+        # Labels, highest first, whose issues go before the others, in scope also without
+        # a milestone or outside the scope's milestone.
+        "priority": ["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"],
+        # What a label does: {"wave": N} holds an issue until every issue of a lower wave in
+        # its milestone is closed; {"hold": true} starts nothing for it.
+        "labels": {},
+        # Before `labels`: the label of an issue that runs only once the rest of its
+        # milestone is closed, now as if it were `labels: {"<label>": {"wave": 1}}`.
         "last_in_milestone_label": None,
         # The lowest severity of Dependabot alert that gets an issue, or None for none.
         "dependabot": None,
@@ -129,6 +136,9 @@ MAX_CHECKLIST = 20
 MAX_CHECKLIST_ITEM = 300
 # GitHub's limit on a label's name.
 MAX_LABEL = 50
+# What a label in `autopilot.labels` may do, and its highest wave.
+LABEL_KEYS = {"wave", "hold"}
+MAX_WAVE = 100
 # GitHub's slug of an App, which `<slug>[bot]` makes its login.
 APP_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 # The secrets of `github_app`, with the names that `nexkit init` gives them.
@@ -536,12 +546,45 @@ def _autopilot(settings):
         _fail(f"autopilot.answer must be one of {', '.join(AUTOPILOT_ANSWERS)}")
     _positive_int(settings["lost_after_minutes"], "autopilot.lost_after_minutes", 1440, minimum=5)
     label = settings["last_in_milestone_label"]
-    if label is not None and (
-        not isinstance(label, str) or not label.strip() or len(label) > MAX_LABEL
-    ):
+    if label is not None and not _label(label):
         _fail(f"autopilot.last_in_milestone_label must be null or a label of {MAX_LABEL} or fewer")
+    priority = settings["priority"]
+    if not isinstance(priority, list) or not all(_label(name) for name in priority):
+        _fail(f"autopilot.priority must be a list of labels of {MAX_LABEL} characters or fewer")
+    if len(set(priority)) != len(priority):
+        _fail("autopilot.priority lists a label twice")
+    labels = settings["labels"]
+    if not isinstance(labels, dict):
+        _fail('autopilot.labels must be an object such as {"journey": {"wave": 1}}')
+    for name, does in labels.items():
+        where = f"autopilot.labels.{name}"
+        if not _label(name):
+            _fail(f"autopilot.labels names a label of more than {MAX_LABEL} characters, or none")
+        if not isinstance(does, dict) or not does:
+            _fail(f'{where} must be an object such as {{"wave": 1}} or {{"hold": true}}')
+        extra = set(does) - LABEL_KEYS
+        if extra:
+            _fail(f"Unknown keys in {where}: {', '.join(sorted(extra))}")
+        if "wave" in does:
+            _positive_int(does["wave"], f"{where}.wave", MAX_WAVE, minimum=0)
+        if "hold" in does and does["hold"] is not True:
+            _fail(f"{where}.hold must be true; leave it out for a label that holds nothing")
     if settings["dependabot"] is not None and settings["dependabot"] not in SEVERITIES:
         _fail(f"autopilot.dependabot must be null or one of {', '.join(SEVERITIES)}")
+
+
+def _label(name):
+    return isinstance(name, str) and bool(name.strip()) and len(name) <= MAX_LABEL
+
+
+def autopilot_labels(cfg):
+    """`autopilot.labels`, with `autopilot.last_in_milestone_label` as a label of wave 1
+    unless `labels` names it too."""
+    found = dict(cfg["autopilot"]["labels"])
+    last = cfg["autopilot"]["last_in_milestone_label"]
+    if last and last not in found:
+        found[last] = {"wave": 1}
+    return found
 
 
 def _workflow_files(workflows, where):

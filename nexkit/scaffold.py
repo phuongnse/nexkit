@@ -11,7 +11,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import quote
 
-from . import __version__, app
+from . import __version__, app, autopilot
 from . import config as configuration
 from .github import alerts_off
 from .globs import branch_matches
@@ -256,7 +256,7 @@ def init(
     if watch_workflows:
         raw["autopilot"] = {"watch_workflows": watch_workflows}
     if last_label:
-        raw.setdefault("autopilot", {})["last_in_milestone_label"] = last_label
+        raw.setdefault("autopilot", {})["labels"] = {last_label: {"wave": 1}}
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")
@@ -339,8 +339,8 @@ def _label_command(label, repo=None):
 
 
 def ensure_label(root, label):
-    """Create `label`, which `nexkit init` set as `autopilot.last_in_milestone_label`, when
-    the repository lacks it. Returns a line for the person, or "" with nothing to say."""
+    """Create `label`, which `nexkit init` named in `autopilot.labels`, when the repository
+    lacks it. Returns a line for the person, or "" with nothing to say."""
     repo = repository_of(root)
     if not repo:
         return f"Create the label in the repository: '{_label_command(label)}'"
@@ -352,6 +352,40 @@ def ensure_label(root, label):
     if _gh("label", "create", label, "--repo", repo) is None:
         return f"Could not create the label `{label}`: run '{_label_command(label, repo)}'"
     return f"Created the label `{label}` on {repo}."
+
+
+# The labels of the issues NexKit opens, which `autopilot.priority` puts first by default:
+# (name, description, colour).
+OWN_LABELS = (
+    (autopilot.CI_LABEL, "NexKit: a CI failure on the default branch", "d73a4a"),
+    (autopilot.DEPENDABOT_LABEL, "NexKit: a Dependabot advisory", "0e8a16"),
+    (autopilot.FLAKY_LABEL, "NexKit: a failure of flaky runs on the default branch", "fbca04"),
+)
+
+
+def ensure_own_labels(root):
+    """Create the labels of the issues NexKit opens, with their descriptions, when the
+    repository lacks them. Without them, GitHub creates each one plain when NexKit first
+    uses it. Returns lines for the person."""
+    repo = repository_of(root)
+    if not repo:
+        return []
+    created, failed = [], []
+    for name, description, colour in OWN_LABELS:
+        if repository_label(repo, name):
+            continue
+        args = ("label", "create", name, "--description", description, "--color", colour)
+        if _gh(*args, "--repo", repo) is None:
+            failed.append(name)
+        else:
+            created.append(name)
+    lines = []
+    if created:
+        lines.append(f"Created the labels {', '.join(f'`{n}`' for n in created)} on {repo}.")
+    if failed:
+        names = ", ".join(f"`{n}`" for n in failed)
+        lines.append(f"Could not create {names}; GitHub creates each when NexKit first uses it.")
+    return lines
 
 
 def _uncommented(text):
@@ -845,31 +879,59 @@ def _unheard(cfg):
     ]
 
 
-def _last_label(cfg, repo):
-    """Findings: the repository has the label that marks an issue to run last. NexKit
-    compares it exactly, so another spelling carries nothing either."""
+def _deprecated_label(cfg):
+    """Findings: `autopilot.last_in_milestone_label` works through 6.x, as a label of wave
+    1, and 7.0 removes it."""
     label = cfg["autopilot"]["last_in_milestone_label"]
     if not label:
         return []
-    setting = "autopilot.last_in_milestone_label"
-    found = repository_label(repo, label)
-    if found == label:
-        return [(True, f"{setting}: {repo} has the label `{label}`")]
-    if found:
-        return [
-            (
-                False,
-                f"{setting} is `{label}`, but {repo} spells the label `{found}`, and NexKit "
-                "compares it exactly; change one of them",
-            )
-        ]
+    replacement = json.dumps({"labels": {label: {"wave": 1}}})
     return [
         (
-            False,
-            f"{setting} names `{label}`, which {repo} does not have, so no issue can carry it "
-            f"and nothing runs last: run '{_label_command(label, repo)}'",
+            True,
+            "autopilot.last_in_milestone_label still works as a label of wave 1, but NexKit "
+            f"7.0 removes it: in autopilot, replace it with {replacement[1:-1]}",
         )
     ]
+
+
+def _labels(cfg, repo):
+    """Findings: the repository has each label that autopilot's settings name. NexKit
+    compares labels exactly, so another spelling carries nothing either. NexKit's own
+    labels need no check: GitHub creates each when NexKit first uses it."""
+    own = {name for name, _, _ in OWN_LABELS}
+    named = {}
+    for label in cfg["autopilot"]["priority"]:
+        named.setdefault(label, "autopilot.priority")
+    for label in cfg["autopilot"]["labels"]:
+        named.setdefault(label, "autopilot.labels")
+    last = cfg["autopilot"]["last_in_milestone_label"]
+    if last:
+        named.setdefault(last, "autopilot.last_in_milestone_label")
+    findings = []
+    for label, setting in named.items():
+        if label in own:
+            continue
+        found = repository_label(repo, label)
+        if found == label:
+            findings.append((True, f"{setting}: {repo} has the label `{label}`"))
+        elif found:
+            findings.append(
+                (
+                    False,
+                    f"{setting} names `{label}`, but {repo} spells the label `{found}`, and "
+                    "NexKit compares it exactly; change one of them",
+                )
+            )
+        else:
+            findings.append(
+                (
+                    False,
+                    f"{setting} names `{label}`, which {repo} does not have, so no issue can "
+                    f"carry it: run '{_label_command(label, repo)}'",
+                )
+            )
+    return findings
 
 
 def _dependabot(cfg, repo, branch):
@@ -1020,6 +1082,7 @@ def doctor(root, key_file=None, app_id=None):
         if problem:
             findings.append((False, problem))
         findings += _unheard(cfg)
+        findings += _deprecated_label(cfg)
     except configuration.ConfigError as exc:
         findings.append((False, str(exc)))
 
@@ -1055,7 +1118,7 @@ def doctor(root, key_file=None, app_id=None):
     names = secret_names(repo) or set()
     if cfg:
         findings += _secrets_set(cfg, names, repo)
-        findings += _last_label(cfg, repo)
+        findings += _labels(cfg, repo)
     if cfg and not configuration.app_problem(cfg):
         findings += _app_secrets(cfg, names, repo)
         findings += _app_on_github(cfg, repo, key_file, app_id)

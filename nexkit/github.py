@@ -350,6 +350,17 @@ class GitHub:
             params["milestone"] = str(milestone)
         return self.paginate(f"{self._repo}/issues", params)
 
+    def labeled_issues(self, label):
+        """Open issues with the label `label`, oldest first, without pull requests."""
+        params = {"state": "open", "labels": label, "sort": "created", "direction": "asc"}
+        found = self.paginate(f"{self._repo}/issues", params)
+        return [item for item in found if "pull_request" not in item]
+
+    def add_labels(self, number, labels):
+        """Add labels to an issue, keeping those it has. GitHub creates a missing one."""
+        path = f"{self._repo}/issues/{number}/labels"
+        return self.request("POST", path, {"labels": list(labels)})
+
     def labeled_without_milestone(self, label):
         """Open issues with the label `label` and no milestone, without pull requests."""
         params = {"state": "open", "labels": label, "milestone": "none"}

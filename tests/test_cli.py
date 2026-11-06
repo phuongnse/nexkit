@@ -309,37 +309,59 @@ class InitDoctorTests(unittest.TestCase):
         ):
             return scaffold.doctor(self.root)
 
-    def label_findings(self, label, answers):
+    def label_findings(self, autopilot, answers):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--force"])
         path = self.root / ".nexkit/config.json"
         raw = json.loads(path.read_text())
-        raw["autopilot"] = {"last_in_milestone_label": label}
+        raw["autopilot"] = autopilot
         path.write_text(json.dumps(raw))
         return [
             (ok, message)
             for ok, message in self.doctor_online(answers)
-            if "last_in_milestone_label" in message
+            if message.startswith("autopilot.")
         ]
 
-    def test_doctor_warns_of_a_label_to_run_last_that_the_repository_lacks(self):
-        [(ok, found)] = self.label_findings("run last", {})
-        self.assertFalse(ok)
-        self.assertIn("names `run last`, which acme/app does not have", found)
-        self.assertIn("gh label create 'run last' --repo acme/app", found)
-
-    def test_doctor_accepts_a_label_to_run_last_that_the_repository_has(self):
-        [(ok, found)] = self.label_findings("last", {"labels/last": "last\n"})
-        self.assertTrue(ok, found)
+    def test_doctor_warns_of_a_label_that_the_repository_lacks(self):
+        settings = {"labels": {"run last": {"wave": 1}}, "priority": ["bug", "nexkit:ci"]}
+        found = self.label_findings(settings, {"labels/bug": "bug\n"})
+        self.assertEqual(
+            found,
+            [
+                (True, "autopilot.priority: acme/app has the label `bug`"),
+                (
+                    False,
+                    "autopilot.labels names `run last`, which acme/app does not have, so no "
+                    "issue can carry it: run 'gh label create 'run last' --repo acme/app'",
+                ),
+            ],
+        )
 
     def test_doctor_warns_of_a_label_that_differs_in_case_since_nexkit_compares_it_exactly(self):
-        [(ok, found)] = self.label_findings("last", {"labels/last": "Last\n"})
+        [(ok, found)] = self.label_findings(
+            {"labels": {"last": {"wave": 1}}}, {"labels/last": "Last\n"}
+        )
         self.assertFalse(ok)
         self.assertIn("spells the label `Last`", found)
+
+    def test_doctor_names_the_replacement_of_the_label_to_run_last(self):
+        found = self.label_findings({"last_in_milestone_label": "last"}, {"labels/last": "last\n"})
+        self.assertEqual(
+            found,
+            [
+                (
+                    True,
+                    "autopilot.last_in_milestone_label still works as a label of wave 1, but "
+                    'NexKit 7.0 removes it: in autopilot, replace it with "labels": {"last": '
+                    '{"wave": 1}}',
+                ),
+                (True, "autopilot.last_in_milestone_label: acme/app has the label `last`"),
+            ],
+        )
 
     def test_doctor_asks_about_no_label_without_the_setting(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         findings = self.doctor_online({})
-        self.assertFalse(any("last_in_milestone_label" in m for _, m in findings))
+        self.assertFalse(any("label" in m for _, m in findings))
 
     def init_with_label(self, label, answers):
         calls = []
@@ -362,7 +384,7 @@ class InitDoctorTests(unittest.TestCase):
                 code = cli.main(["init", "--repo", str(self.root), "--check", "t=true", *flags])
         self.assertEqual(code, 0)
         raw = json.loads((self.root / ".nexkit/config.json").read_text())
-        self.assertEqual(raw["autopilot"]["last_in_milestone_label"], label)
+        self.assertEqual(raw["autopilot"]["labels"], {label: {"wave": 1}})
         return calls, output.getvalue()
 
     def test_init_creates_the_label_to_run_last_when_it_is_missing(self):
@@ -372,8 +394,17 @@ class InitDoctorTests(unittest.TestCase):
 
     def test_init_keeps_a_label_to_run_last_that_exists(self):
         calls, output = self.init_with_label("last", {"labels/last": "last\n"})
-        self.assertFalse(any(args[0] == "label" for args in calls))
-        self.assertNotIn("the label", output)
+        self.assertFalse(any(args[:3] == ("label", "create", "last") for args in calls))
+        self.assertNotIn("the label `last`", output)
+
+    def test_init_creates_the_labels_of_nexkits_own_issues(self):
+        calls, output = self.init_with_label("last", {"labels/last": "last\n", "create": "ok"})
+        created = [args[2] for args in calls if args[:2] == ("label", "create")]
+        self.assertEqual(created, ["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"])
+        self.assertIn(
+            "Created the labels `nexkit:ci`, `nexkit:dependabot`, `nexkit:flaky` on acme/app.",
+            output,
+        )
 
     def test_init_says_how_to_create_a_label_it_could_not(self):
         _, output = self.init_with_label("last", {})

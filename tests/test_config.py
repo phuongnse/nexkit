@@ -5,7 +5,14 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import config
-from nexkit.config import CONFIG_PATH, ConfigError, app_login, app_problem, read_app
+from nexkit.config import (
+    CONFIG_PATH,
+    ConfigError,
+    app_login,
+    app_problem,
+    autopilot_labels,
+    read_app,
+)
 from tests.support import APP, CLAUDE, with_claude
 
 
@@ -223,6 +230,8 @@ class ConfigTests(unittest.TestCase):
                 "lost_after_minutes": 30,
                 "watch_workflows": [],
                 "trusted_workflows": [],
+                "priority": ["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"],
+                "labels": {},
                 "last_in_milestone_label": None,
                 "dependabot": None,
             },
@@ -488,6 +497,49 @@ class ConfigTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ConfigError, f"review.checklist.*{message}"):
                 validate({"review": {"checklist": value}})
+
+    def test_priority_and_labels(self):
+        found = validate(
+            {
+                "autopilot": {
+                    "priority": ["bug", "nexkit:ci"],
+                    "labels": {
+                        "journey": {"wave": 1},
+                        "docs": {"wave": 2},
+                        "on-hold": {"hold": True},
+                    },
+                }
+            }
+        )["autopilot"]
+        self.assertEqual(found["priority"], ["bug", "nexkit:ci"])
+        self.assertEqual(found["labels"]["on-hold"], {"hold": True})
+        bad = [
+            {"priority": "bug"},
+            {"priority": ["bug", "bug"]},
+            {"priority": [""]},
+            {"priority": ["x" * 51]},
+            {"labels": []},
+            {"labels": {"journey": 1}},
+            {"labels": {"journey": {}}},
+            {"labels": {"journey": {"wave": -1}}},
+            {"labels": {"journey": {"wave": True}}},
+            {"labels": {"journey": {"wave": 101}}},
+            {"labels": {"journey": {"hold": False}}},
+            {"labels": {"journey": {"after": 1}}},
+            {"labels": {"": {"wave": 1}}},
+        ]
+        for settings in bad:
+            with self.subTest(settings), self.assertRaisesRegex(ConfigError, "autopilot"):
+                validate({"autopilot": settings})
+
+    def test_the_label_to_run_last_is_a_label_of_wave_1(self):
+        cfg = validate({"autopilot": {"last_in_milestone_label": "last"}})
+        self.assertEqual(autopilot_labels(cfg), {"last": {"wave": 1}})
+        # `labels` decides for a label it names too.
+        cfg = validate(
+            {"autopilot": {"last_in_milestone_label": "last", "labels": {"last": {"wave": 3}}}}
+        )
+        self.assertEqual(autopilot_labels(cfg), {"last": {"wave": 3}})
 
     def test_last_in_milestone_label(self):
         found = validate({"autopilot": {"last_in_milestone_label": "last"}})

@@ -105,6 +105,8 @@ def cmd_init(args):
         line = scaffold.ensure_label(args.repo, args.last_in_milestone_label)
         if line:
             print(line)
+    for line in scaffold.ensure_own_labels(args.repo):
+        print(line)
     print(
         "Next: review the files, set the secret each agent in .nexkit/config.json names "
         "(gh secret set CLAUDE_CODE_OAUTH_TOKEN), commit both files to the default branch, "
@@ -761,8 +763,8 @@ def build_parser():
     p.add_argument(
         "--last-in-milestone-label",
         metavar="LABEL",
-        help="The label of an issue that runs after the rest of its milestone "
-        "(autopilot.last_in_milestone_label); init creates it when it is missing",
+        help="The label of an issue that runs after the rest of its milestone, a label of "
+        "wave 1 in autopilot.labels; init creates it when it is missing",
     )
     p.add_argument(
         "--model",

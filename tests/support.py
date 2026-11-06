@@ -169,6 +169,7 @@ class FakeGitHub:
         self.files = {}  # path -> its text on the base branch
         self.pr_files = {}  # pull request number -> the files it changes
         self.repo_settings = {"default_branch": "main", "allow_squash_merge": True}
+        self.labeled = []  # (number, labels) for each add_labels
         self._next = 1000
 
     def _id(self):
@@ -288,6 +289,21 @@ class FakeGitHub:
             and not issue.get("milestone")
             and label in [item["name"] for item in issue.get("labels") or []]
         ]
+
+    def labeled_issues(self, label):
+        return [
+            issue
+            for issue in sorted(self.issues.values(), key=lambda i: i["number"])
+            if issue["state"] == "open"
+            and "pull_request" not in issue
+            and label in [item["name"] for item in issue.get("labels") or []]
+        ]
+
+    def add_labels(self, number, labels):
+        issue = self.issues[number]
+        names = [item["name"] for item in issue.get("labels") or []]
+        issue["labels"] = [{"name": n} for n in dict.fromkeys([*names, *labels])]
+        self.labeled.append((number, list(labels)))
 
     def add_blocked_by(self, number, blocker_id):
         self.blockers[number].append(blocker_id - 90000)

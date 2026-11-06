@@ -1103,7 +1103,9 @@ the `null` scope, since it may have replaced a sweep that waited.
   in scope, titled by the failure in plain words, for example 'Test "pages through more
   than twenty orders" in OrderHistory.test.tsx fails at times on main' (see [the title
   forms](configuration.md#autopilot)), starts with its own marker that names the workflow and a key for
-  the failure, and is planned right after the `bug` issues for a failing default branch.
+  the failure, labelled `nexkit:flaky`, and is planned right after the `bug` issues for a
+  failing default branch, labelled `nexkit:ci` (see *Labels* under
+  [Autopilot](configuration.md#autopilot)).
   Each record names the commit, the run, and the job, file and line, and message where
   the failure showed in each failed attempt. A later record of the same failure is a
   comment on its issue while that is open; once closed, a new issue opens that links it.
@@ -1284,7 +1286,7 @@ last. Nothing else is stored, so there is nothing to migrate or repair.
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
 status (running, success, failure, paused, continued), the outcome (for example `planned`,
 `ready`, `merged`, `merge_refused`, `agent_blocked`, `paused`, `ci_waiting` with the `bug`
-issue it waits for), the agents that ran each
+issue it waits for, `held` with what it kept back), the agents that ran each
 stage, the reason a person is needed when one is, the resume record of a paused run, and
 after an automatic merge each started `merge.after_workflows` run. A round's marker also
 holds its commit, whether its checks passed, and which of them passed on that commit,

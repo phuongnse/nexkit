@@ -67,6 +67,7 @@ Where the instructions say nothing, the driver does not act and notifies instead
 
 - Keep every issue and NexKit pull request in scope moving until it is merged or closed.
   Act only where NexKit waits for a person: what it carries on by itself needs nothing.
+  An issue a label holds (state `held`) is a person's choice: leave the label alone.
 - Never guess a cause. A cause counts only when a run log, a trace or a result file shows
   it.
 - NexKit stops on purpose where a cause is missing: a diagnosis round that found none, a

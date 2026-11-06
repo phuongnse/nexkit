@@ -82,6 +82,7 @@ COMPLETED = {
     "person_reviewed",
     autopilot.UNTRUSTED_MERGE,
     autopilot.CI_WAITING,
+    autopilot.HELD,
 }
 # What a person does after a run with this outcome, and why NexKit does not, without what
 # the run found (see `needs_person`). The other outcomes need nobody: NexKit continues by
@@ -1010,7 +1011,13 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
         # At once, and also without a `push` trigger. A `push` run that starts the same
         # round adds nothing: `route` drops a second round on one base commit.
         swept = resolve_conflicts(
-            gh, target["base"], workflow, default_branch, cfg["conflicts"]["max_rounds"], {pr}
+            gh,
+            target["base"],
+            workflow,
+            default_branch,
+            cfg["conflicts"]["max_rounds"],
+            {pr},
+            cfg=cfg,
         )
         started = "\n".join(filter(None, [started, *swept]))
     parts = ["\n".join(lines), started]
@@ -1274,16 +1281,40 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
     return "branch_updated", f"{message}\n\n{line}"
 
 
+def _held(gh, cfg, number):
+    """The label that holds issue `number`, or None (see `autopilot.held`), for a round that
+    must not fail because of it."""
+    try:
+        return autopilot.held(gh, cfg, number)
+    except GitHubError as exc:
+        print(f"warning: could not read whether #{number} is on hold: {exc}", file=sys.stderr)
+        return None
+
+
+def _held_line(issue, label, held, later):
+    return (
+        f"#{issue} is on hold (`{label}`), so NexKit {held}. Once the label is removed, the "
+        f"next autopilot sweep {later}."
+    )
+
+
 def _skipped_conflicting(gh, cfg, decision, pr, head, files, row, workflow_ref, default_branch):
     """(outcome, message) for a round whose commit conflicts with the base branch's tip as
     `publish` saw it: such a head cannot merge, so its checks and review did not run, and
-    the conflict round starts at once, within `conflicts.max_rounds`."""
+    the conflict round starts at once, within `conflicts.max_rounds`, unless a label holds
+    its issue."""
     base = decision["base"]
     listed = ", ".join(f"`{name}`" for name in files)
     message = (
         f"`{head[:7]}` conflicts with `{base}` in {listed}, so NexKit skipped its checks and "
         f"AI review: the pull request cannot merge until the conflict is resolved."
     )
+    label = _held(gh, cfg, decision["issue"])
+    if label:
+        row["held_back"] = "conflicts"
+        later = "starts the round that resolves it"
+        held = "starts no round to resolve it"
+        return autopilot.HELD, f"{message} {_held_line(decision['issue'], label, held, later)}"
     try:
         started = start_conflict_round(
             gh,
@@ -1309,7 +1340,10 @@ IMPLEMENT_LEFT = {"ready", "needs_human", "review_failed", "retry_failed", autop
 
 def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
     """Start the conflict round that NexKit left out while this implement round ran, when
-    the pull request conflicts with its base branch now. Returns text for the round."""
+    the pull request conflicts with its base branch now and no label holds its issue.
+    Returns text for the round."""
+    if _held(gh, cfg, decision["issue"]):
+        return ""
     try:
         if not is_conflicting(gh, pr):
             return ""
@@ -1693,6 +1727,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 f"{held}\n\nThe review could not verify these acceptance criteria. Confirm "
                 f"them before merging:\n\n{items}"
             )
+        elif cfg["merge"]["auto"] and (label := _held(gh, cfg, decision["issue"])):
+            outcome, row["held_back"] = autopilot.HELD, "merge"
+            message += " " + _held_line(decision["issue"], label, "does not merge it", "merges it")
         elif cfg["merge"]["auto"]:
             target = {"pr": pr, "head": head, "issue": decision["issue"], "base": decision["base"]}
             # A required check that failed gets its fix round through this round's state.
@@ -1729,6 +1766,13 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         state["ci_wait"] = row["ci_wait"] = wait
         state["feedback"].pop("repeated", None)
         message = autopilot.ci_wait_message(wait)
+    elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"] and (
+        label := _held(gh, cfg, decision["issue"])
+    ):
+        outcome, row["held_back"] = autopilot.HELD, "fix"
+        message = _held_line(
+            decision["issue"], label, "starts no automatic fix round", "starts the fix round"
+        )
     elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"]:
         state["auto_fixes"] += 1
         outcome = "auto_fix"

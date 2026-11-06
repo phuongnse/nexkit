@@ -802,12 +802,15 @@ def _give_back(gh, number, comments, run):
         progress.save_state(gh, number, state_id, state)
 
 
-def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5, settle=False):
+def resolve_conflicts(
+    gh, base, workflow, ref, max_rounds, skip=(), delay=5, settle=False, cfg=None
+):
     """Start a conflict round for each open NexKit pull request into `base` that conflicts
-    with it. A round that runs only its checks on a head that can no longer merge stops
-    first (see `stop_superseded`). With `settle`, a latest round whose run ended without a
-    report holds nothing up (see `start_conflict_round`). Returns lines for a log or
-    comment."""
+    with it, unless a label holds its issue (see `autopilot.held`; `cfg` is the
+    configuration). A round that runs only its checks on a head that can no longer merge
+    stops first (see `stop_superseded`). With `settle`, a latest round whose run ended
+    without a report holds nothing up (see `start_conflict_round`). Returns lines for a log
+    or comment."""
     lines, rules = [], []
 
     def strict():
@@ -822,10 +825,14 @@ def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5, set
 
     for pull in gh.pulls_into(base):
         number = pull["number"]
-        nexkit = issue_from_branch(pull["head"]["ref"]) is not None
-        if number in skip or not nexkit or pull["head"]["repo"]["full_name"] != gh.repository:
+        issue = issue_from_branch(pull["head"]["ref"])
+        if number in skip or issue is None or pull["head"]["repo"]["full_name"] != gh.repository:
             continue
         try:
+            label = cfg and autopilot.held(gh, cfg, issue)
+            if label:
+                lines.append(f"#{number}: #{issue} is on hold (`{label}`); no conflict round.")
+                continue
             conflicting = is_conflicting(gh, number, delay=delay)
             stopped = stop_superseded(
                 gh, pull, base, conflicting, strict, workflow, ref, max_rounds
@@ -886,7 +893,9 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
             max_rounds = cfg["conflicts"]["max_rounds"]
             # Without autopilot, nothing else ends a round whose report did not finish.
             settle = not autopilot.takes(cfg)
-            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, skip=busy, settle=settle)
+            lines += resolve_conflicts(
+                gh, ref, workflow, ref, max_rounds, skip=busy, settle=settle, cfg=cfg
+            )
         lines += delete_stale_branches(gh)
         return lines or ["Nothing to start."]
     if task == "ci":
@@ -904,6 +913,7 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
             ref,
             cfg["conflicts"]["max_rounds"],
             settle=not autopilot.takes(cfg),
+            cfg=cfg,
         )
     wait = cfg["usage_limit"]["wait_minutes"]
     if task == "resume":
@@ -919,7 +929,7 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
             # Also catches base branch moves whose push started no run.
             settle = not autopilot.takes(cfg)
             max_rounds = cfg["conflicts"]["max_rounds"]
-            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, settle=settle)
+            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, settle=settle, cfg=cfg)
         # Also catches events that started no run, or a run that was lost.
         return lines + autopilot.request_safely(gh, cfg, workflow, ref)
     raise ValueError(f"Unknown maintenance task: {task}")

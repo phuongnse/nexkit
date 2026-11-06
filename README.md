@@ -102,6 +102,7 @@ run `nexkit init`; see [The GitHub App](docs/configuration.md#the-github-app).
 | NexKit PR | `/nexkit fix [instructions]` | Another implementation round using the failing checks, review findings and your instructions. When the pull request conflicts with its base branch, the round merges the base branch and resolves the conflicts, or asks you to decide the ones that need a choice. |
 | NexKit PR | `/nexkit review` | Re-run the checks and the AI review, for example after you pushed a commit. |
 | NexKit PR | *Request changes* review | Same as `/nexkit fix`, with your review as the instructions. |
+| NexKit PR | *Approve* review | With `merge.auto`, merges a pull request whose merge GitHub refused, such as for a code owner's review, on the head its checks and review passed. No merge by hand is needed. |
 | Your PR | `/nexkit review` | Run the checks and the AI review on a pull request of your own, from a branch of this repository, and set `nexkit/checks` and `nexkit/review`. NexKit pushes nothing to it and never merges it. |
 
 Only people with write access can run commands. When checks fail or the review finds a
@@ -136,7 +137,7 @@ what](docs/how-it-works.md#who-does-what).
 |---|---|
 | `nexkit init` | Writes `.nexkit/config.json` and `.github/workflows/nexkit.yml`. |
 | `nexkit doctor` | Checks the repository's setup: config, workflow triggers and NexKit ref, each agent's secrets and that the workflow passes them, permissions. Mentions a newer NexKit release. |
-| `nexkit status [--json]` | Lists the open NexKit issues and pull requests with what each waits for and a link to its last run, recent merges by NexKit and pull requests it closed without merging, the items that need a person and why, and with autopilot what its next sweep does with each issue in scope. It reads NexKit's hidden markers and changes nothing. |
+| `nexkit status [--json] [--local-config]` | Lists the open NexKit issues and pull requests with what each waits for and a link to its last run, recent merges by NexKit and pull requests it closed without merging, the items that need a person and why, and with autopilot what its next sweep does with each issue in scope. It reads NexKit's hidden markers and changes nothing. It judges with the `.nexkit/config.json` on the default branch, as the pipeline does, and warns when the checkout's differs; `--local-config` previews the checkout's. |
 
 The commands use the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`.
 

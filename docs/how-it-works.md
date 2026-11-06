@@ -140,7 +140,10 @@ replaces ⏸️ once a later run carries the command on.
 `report` decides from the run's outcome and the agents' structured output whether a
 person is needed. It records the reason in the run comment's hidden marker, and with
 `notify` set it mentions those people in a new comment (see
-[Mentions](configuration.md#mentions)):
+[Mentions](configuration.md#mentions)). The reason says what to do, why NexKit does not do
+it itself, and where to look, such as the question to answer or, for a refused merge, the
+rule and the files a code owner reviews (see [What a mention
+says](troubleshooting.md#what-a-mention-says)):
 
 | Run result | A person is needed |
 |---|---|
@@ -153,7 +156,7 @@ person is needed. It records the reason in the run comment's hidden marker, and 
 | Checks or review still fail after a fix round found nothing to change for a cause outside the code and ran them again | yes |
 | Ready, with `merge.auto` off | yes |
 | Ready, with an acceptance criterion the review could not verify | yes, also with `merge.auto` on |
-| GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](#failure-handling) |
+| GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](#failure-handling). The person's part, such as a code owner's approval, is enough: NexKit merges after an approval, or with autopilot once GitHub reports the pull request as mergeable (see [Automatic merge](configuration.md#automatic-merge)) |
 | Merged, or an automatic fix or conflict round started | no |
 | The round's commit conflicts with the base branch, and no conflict round is left to start (`conflicting`) | yes |
 | Paused at the usage limit, resuming by itself | no |
@@ -828,6 +831,14 @@ A merge by a person closes the issue through GitHub, and the `issues: closed` ev
 the check. When NexKit closes the issue itself after an automatic merge, `report` runs the
 same check in that run, for its comment, and the event's run finds nothing left.
 
+**Merging after an approval** (`merge.auto`). A writer's approval of a NexKit pull request
+whose latest round ended as `merge_refused`, or as `ready` for criteria the review could not
+verify, merges it on the head its checks and review passed, with the guards of every merge;
+a head that moved gets `/nexkit review`. The run waits in the pull request's queue, and an
+approval while a round runs, or of a pull request whose round ended otherwise, starts
+nothing. With autopilot, each sweep also merges a `merge_refused` pull request that GitHub
+reports as mergeable (see [Automatic merge](configuration.md#automatic-merge)).
+
 **Resolving conflicts** (`conflicts.auto_resolve`). When the base branch moves, NexKit
 checks its open pull requests into it. GitHub's own mergeability check decides, so no
 code is checked out. A pull request that conflicts gets an automatic fix round, shown as
@@ -1100,7 +1111,9 @@ the `null` scope, since it may have replaced a sweep that waited.
   in scope, titled by the failure in plain words, for example 'Test "pages through more
   than twenty orders" in OrderHistory.test.tsx fails at times on main' (see [the title
   forms](configuration.md#autopilot)), starts with its own marker that names the workflow and a key for
-  the failure, and is planned right after the `bug` issues for a failing default branch.
+  the failure, labelled `nexkit:flaky`, and is planned right after the `bug` issues for a
+  failing default branch, labelled `nexkit:ci` (see *Labels* under
+  [Autopilot](configuration.md#autopilot)).
   Each record names the commit, the run, and the job, file and line, and message where
   the failure showed in each failed attempt. A later record of the same failure is a
   comment on its issue while that is open; once closed, a new issue opens that links it.
@@ -1281,7 +1294,7 @@ last. Nothing else is stored, so there is nothing to migrate or repair.
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
 status (running, success, failure, paused, continued), the outcome (for example `planned`,
 `ready`, `merged`, `merge_refused`, `agent_blocked`, `paused`, `ci_waiting` with the `bug`
-issue it waits for), the agents that ran each
+issue it waits for, `held` with what it kept back), the agents that ran each
 stage, the reason a person is needed when one is, the resume record of a paused run, and
 after an automatic merge each started `merge.after_workflows` run. A round's marker also
 holds its commit, whether its checks passed, and which of them passed on that commit,

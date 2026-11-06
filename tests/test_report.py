@@ -317,7 +317,11 @@ class ReportTests(ReportCase):
         self.gh.close_errors[5] = GitHubError(403, "Forbidden")
         outcome = self.no_change()
         self.assertEqual(outcome["outcome"], "close_failed")
-        self.assertIn("could not close the issue; close it yourself", outcome["attention"])
+        self.assertEqual(
+            outcome["attention"],
+            "close the issue yourself. No change is needed, but GitHub refused NexKit's close: "
+            "`GitHub API 403: Forbidden`",
+        )
         self.assertEqual(self.gh.run_comments(5)[-1]["run"]["status"], "failure")
         self.assertIn("could not close #5", outcome["summary"])
 
@@ -325,7 +329,12 @@ class ReportTests(ReportCase):
         # The try after a job that failed as a whole: a person decides.
         outcome = self.run_report(d=decision(retry=True), published=False)
         self.assertEqual(outcome["outcome"], "retry_failed")
-        self.assertEqual(outcome["attention"], "the run stopped on a transient error twice")
+        self.assertEqual(
+            outcome["attention"],
+            "post the command again once the cause has passed. The run stopped on a transient "
+            "error twice, and NexKit tries a command only once more: `the agent job ended "
+            "without a result`",
+        )
         self.assertTrue(self.gh.comments_matching(5, "could not run"))
         self.write(
             "nexkit-agent",
@@ -585,7 +594,8 @@ class ReportTests(ReportCase):
         self.assertEqual(outcome["outcome"], "merge_issue_closed")
         self.assertEqual(
             outcome["attention"],
-            "the issue closed before NexKit merged its pull request; merge or close it yourself",
+            "merge the pull request or close it. Its issue closed before NexKit merged it, and "
+            "NexKit leaves the pull request of a closed issue to a person",
         )
         self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
         self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
@@ -887,7 +897,9 @@ class ReportTests(ReportCase):
         self.assertIn("Confirm them before merging:\n\n- passes five runs in a row", row["body"])
         self.assertIn("could not verify", row["run"]["attention"])
         [mention] = [c["body"] for c in self.gh.comments(6) if c["body"].startswith("@owner")]
-        self.assertIn("confirm them before merging", mention)
+        self.assertIn(
+            "could not verify, then approve the pull request, which NexKit then merges", mention
+        )
         body = self.gh.created_reviews[0]["body"]
         self.assertIn("- ❔ passes five runs in a row (no test)", body)
         self.assertEqual(self.gh.issues[5]["state"], "open")

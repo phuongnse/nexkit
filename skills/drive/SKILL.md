@@ -67,6 +67,7 @@ Where the instructions say nothing, the driver does not act and notifies instead
 
 - Keep every issue and NexKit pull request in scope moving until it is merged or closed.
   Act only where NexKit waits for a person: what it carries on by itself needs nothing.
+  An issue a label holds (state `held`) is a person's choice: leave the label alone.
 - Never guess a cause. A cause counts only when a run log, a trace or a result file shows
   it.
 - NexKit stops on purpose where a cause is missing: a diagnosis round that found none, a
@@ -129,7 +130,8 @@ bounds:
 - **[A refused merge](../../docs/troubleshooting.md#the-automatic-merge-was-refused):**
   only what NexKit leaves to a person. When the checks neither passed nor failed within
   six hours, act on what their runs show, or notify. For a rule on the default branch, or
-  an issue that left the scope, notify. Never merge.
+  an issue that left the scope, notify with the step the reason names, such as a code
+  owner's approval, after which NexKit merges by itself. Never merge or approve.
 - **[A diagnosis round with no cause](../../docs/troubleshooting.md#a-diagnosis-round-stopped-as-blocked):**
   act only on a cause that the evidence shows; otherwise notify.
 - **[A `no_change` closing](../../docs/troubleshooting.md#an-issue-closed-as-no_change-that-still-needs-a-change):**

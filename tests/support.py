@@ -164,6 +164,12 @@ class FakeGitHub:
         self.strict = False  # whether the base branch's rules want pull requests up to date
         self.cancelled = []  # each workflow run cancelled
         self.cancel_error = None
+        self.rules = []  # the base branch's ruleset rules, each {type, parameters}
+        self.review_states = {}  # pull request number -> {draft, decision, unresolved}
+        self.files = {}  # path -> its text on the base branch
+        self.pr_files = {}  # pull request number -> the files it changes
+        self.repo_settings = {"default_branch": "main", "allow_squash_merge": True}
+        self.labeled = []  # (number, labels) for each add_labels
         self._next = 1000
 
     def _id(self):
@@ -283,6 +289,21 @@ class FakeGitHub:
             and not issue.get("milestone")
             and label in [item["name"] for item in issue.get("labels") or []]
         ]
+
+    def labeled_issues(self, label):
+        return [
+            issue
+            for issue in sorted(self.issues.values(), key=lambda i: i["number"])
+            if issue["state"] == "open"
+            and "pull_request" not in issue
+            and label in [item["name"] for item in issue.get("labels") or []]
+        ]
+
+    def add_labels(self, number, labels):
+        issue = self.issues[number]
+        names = [item["name"] for item in issue.get("labels") or []]
+        issue["labels"] = [{"name": n} for n in dict.fromkeys([*names, *labels])]
+        self.labeled.append((number, list(labels)))
 
     def add_blocked_by(self, number, blocker_id):
         self.blockers[number].append(blocker_id - 90000)
@@ -512,6 +533,26 @@ class FakeGitHub:
 
     def deletes_merged_branches(self):
         return self.delete_on_merge
+
+    def settings(self):
+        return dict(self.repo_settings)
+
+    def file_text(self, path, ref):
+        return self.files.get(path)
+
+    def branch_rules(self, branch):
+        return list(self.rules)
+
+    def review_state(self, number):
+        return {
+            "draft": False,
+            "decision": None,
+            "unresolved": 0,
+            **self.review_states.get(number, {}),
+        }
+
+    def pull_files(self, number):
+        return list(self.pr_files.get(number, []))
 
     def delete_branch(self, branch):
         if self.delete_error:

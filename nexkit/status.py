@@ -12,7 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import autopilot
 from .config import DEFAULTS
+from .report import READY
 from .route import issue_from_branch
+from .snapshot import Snapshot
 from .state import (
     CONTINUED,
     FAILURE,
@@ -73,7 +75,7 @@ def issue_item(issue, comments, open_pulls):
         item["resume_at"] = (run.get("resume") or {}).get("at")
     elif status != SUCCESS:
         item["state"] = "failed"
-        item.setdefault("attention", "the last run failed")
+        item.setdefault("attention", autopilot.failed_reason(command))
     elif command == "plan":
         item.update(state="planned", link=(item.get("plan") or {}).get("url") or item["link"])
     elif number in open_pulls:
@@ -111,6 +113,8 @@ def pull_state(run, conflicting):
         return "ready"
     if outcome == autopilot.CI_WAITING:
         return "waiting"
+    if outcome == autopilot.HELD:
+        return "held"
     if outcome is None:
         # Rounds from releases before outcomes were recorded.
         passed = run.get("checks") == "passed" and run.get("verdict") == "approve"
@@ -150,16 +154,23 @@ def pull_item(pull, comments, cfg):
         item.update(waits_for=wait.get("bug"), reason=ci_wait_reason(wait))
     attention = (meaningful if run.get("status") == SUCCESS else run).get("attention")
     used = conflict_rounds_used([r for _, r in rounds]) >= cfg["conflicts"]["max_rounds"]
+    base = pull["base"]["ref"]
+    fix = "comment `/nexkit fix` on it, with any rule the conflict needs"
     if state == "conflicting" and not cfg["conflicts"]["auto_resolve"]:
-        attention = f"conflicts with `{pull['base']['ref']}`; comment `/nexkit fix`"
+        why = "with `conflicts.auto_resolve` off, NexKit starts no round to resolve conflicts"
+        attention = autopilot.person(fix, f"it conflicts with `{base}`, and {why}")
     elif state == "conflicting" and used:
-        attention = f"conflicts with `{pull['base']['ref']}`, and its conflict rounds are used up"
+        why = f"it conflicts with `{base}`, and its automatic conflict rounds are used up"
+        attention = autopilot.person(fix, why)
     elif state in ("running", "conflicting"):
         attention = None
     elif not attention and state in ("failed", "blocked"):
-        attention = "the last round failed"
+        attention = autopilot.person(
+            "read the last round's comment for why, then post its command again",
+            "the last round failed",
+        )
     elif not attention and state == "ready" and not cfg["merge"]["auto"]:
-        attention = "the pull request is ready for a human decision"
+        attention = READY
     if attention:
         item["attention"] = attention
     return item
@@ -222,10 +233,15 @@ def _nexkit_pull(gh, pull):
     return issue_from_branch(head.get("ref")) is not None and repo == gh.repository
 
 
-def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
-    """Everything `nexkit status` shows, as a JSON-serialisable dict."""
+def collect(gh, cfg=None, merges=MERGES, workers=WORKERS, progress=None, batch=True):
+    """Everything `nexkit status` shows, as a JSON-serialisable dict. It reads GitHub once
+    through a `Snapshot`, the open issues and pull requests in batches, saying how far it
+    got through `progress(text)`; `batch=False` reads it all as sweeps do, item by item."""
     # Without a valid configuration, the defaults: status reads only what NexKit does itself.
     cfg = cfg or copy.deepcopy(DEFAULTS)
+    if batch and not isinstance(gh, Snapshot):
+        gh = Snapshot(gh).load(progress)
+    say = progress or (lambda text: None)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         listed = list(gh.open_issues())
         pulls = [p for p in gh.list_pulls("open") if _nexkit_pull(gh, p)]
@@ -254,6 +270,8 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
             issue_item(i, c, open_pulls) for i, c in zip(issues, issue_comments, strict=True)
         ]
         candidates = closed[: merges * 2]
+        if isinstance(gh, Snapshot):
+            gh.read_comments(p["number"] for p in [*candidates, *unmerged])
         merge_details = pool.map(lambda p: {**p, **gh.pull(p["number"])}, candidates)
         merge_comments = pool.map(lambda p: gh.comments(p["number"]), candidates)
         merge_items = [
@@ -261,6 +279,7 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
         ]
         closed_comments = pool.map(lambda p: gh.comments(p["number"]), unmerged)
         closed_items = [closed_item(p, c) for p, c in zip(unmerged, closed_comments, strict=True)]
+        say(f"read {len(candidates) + len(unmerged)} closed pull requests")
     issue_items = sorted((i for i in issue_items if i), key=lambda i: i["number"])
     pull_items.sort(key=lambda p: p["number"])
     needs = [
@@ -278,6 +297,7 @@ def collect(gh, cfg=None, merges=MERGES, workers=WORKERS):
         "needs_person": needs,
     }
     if cfg.get("autopilot", {}).get("enabled"):
+        say("looking at what the next autopilot sweep does")
         data["autopilot"] = autopilot_item(gh, cfg)
         _autopilot_needs(data)
         problem = data["autopilot"].get("dependabot")
@@ -340,6 +360,14 @@ def _short(text, width=50):
 def render(data):
     """The plain text form: one line per item, then what needs a person."""
     lines = [f"NexKit status for {data['repository']}"]
+    source = data.get("configuration")
+    if source:
+        where = (
+            f"on `{source['branch']}`"
+            if source["from"] == "default_branch"
+            else "in this checkout (--local-config)"
+        )
+        lines.append(f"Configuration: {source['path']} {where}")
     lines += ["", "Issues"]
     for item in data["issues"]:
         detail = ""

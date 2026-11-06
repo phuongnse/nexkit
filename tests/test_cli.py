@@ -309,37 +309,57 @@ class InitDoctorTests(unittest.TestCase):
         ):
             return scaffold.doctor(self.root)
 
-    def label_findings(self, label, answers):
+    def label_findings(self, autopilot, answers):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--force"])
         path = self.root / ".nexkit/config.json"
         raw = json.loads(path.read_text())
-        raw["autopilot"] = {"last_in_milestone_label": label}
+        raw["autopilot"] = autopilot
         path.write_text(json.dumps(raw))
         return [
-            (ok, message)
-            for ok, message in self.doctor_online(answers)
-            if "last_in_milestone_label" in message
+            (ok, message) for ok, message in self.doctor_online(answers) if "autopilot." in message
         ]
 
-    def test_doctor_warns_of_a_label_to_run_last_that_the_repository_lacks(self):
-        [(ok, found)] = self.label_findings("run last", {})
-        self.assertFalse(ok)
-        self.assertIn("names `run last`, which acme/app does not have", found)
-        self.assertIn("gh label create 'run last' --repo acme/app", found)
-
-    def test_doctor_accepts_a_label_to_run_last_that_the_repository_has(self):
-        [(ok, found)] = self.label_findings("last", {"labels/last": "last\n"})
-        self.assertTrue(ok, found)
+    def test_doctor_warns_of_a_label_that_the_repository_lacks(self):
+        settings = {"labels": {"run last": {"wave": 1}}, "priority": ["bug", "nexkit:ci"]}
+        found = self.label_findings(settings, {"labels/bug": "bug\n"})
+        self.assertEqual(
+            found,
+            [
+                (True, "autopilot.priority: acme/app has the label `bug`"),
+                (
+                    False,
+                    "autopilot.labels names `run last`, which acme/app does not have, so no "
+                    "issue can carry it: run 'gh label create 'run last' --repo acme/app'",
+                ),
+            ],
+        )
 
     def test_doctor_warns_of_a_label_that_differs_in_case_since_nexkit_compares_it_exactly(self):
-        [(ok, found)] = self.label_findings("last", {"labels/last": "Last\n"})
+        [(ok, found)] = self.label_findings(
+            {"labels": {"last": {"wave": 1}}}, {"labels/last": "Last\n"}
+        )
         self.assertFalse(ok)
         self.assertIn("spells the label `Last`", found)
+
+    def test_doctor_names_the_replacement_of_the_label_to_run_last(self):
+        found = self.label_findings({"last_in_milestone_label": "last"}, {"labels/last": "last\n"})
+        self.assertEqual(
+            found,
+            [
+                (
+                    True,
+                    "Deprecated: autopilot.last_in_milestone_label still works as a label of "
+                    'wave 1, but NexKit 7.0 removes it: in autopilot, replace it with "labels": '
+                    '{"last": {"wave": 1}}',
+                ),
+                (True, "autopilot.last_in_milestone_label: acme/app has the label `last`"),
+            ],
+        )
 
     def test_doctor_asks_about_no_label_without_the_setting(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         findings = self.doctor_online({})
-        self.assertFalse(any("last_in_milestone_label" in m for _, m in findings))
+        self.assertFalse(any("label" in m for _, m in findings))
 
     def init_with_label(self, label, answers):
         calls = []
@@ -362,7 +382,7 @@ class InitDoctorTests(unittest.TestCase):
                 code = cli.main(["init", "--repo", str(self.root), "--check", "t=true", *flags])
         self.assertEqual(code, 0)
         raw = json.loads((self.root / ".nexkit/config.json").read_text())
-        self.assertEqual(raw["autopilot"]["last_in_milestone_label"], label)
+        self.assertEqual(raw["autopilot"]["labels"], {label: {"wave": 1}})
         return calls, output.getvalue()
 
     def test_init_creates_the_label_to_run_last_when_it_is_missing(self):
@@ -372,8 +392,17 @@ class InitDoctorTests(unittest.TestCase):
 
     def test_init_keeps_a_label_to_run_last_that_exists(self):
         calls, output = self.init_with_label("last", {"labels/last": "last\n"})
-        self.assertFalse(any(args[0] == "label" for args in calls))
-        self.assertNotIn("the label", output)
+        self.assertFalse(any(args[:3] == ("label", "create", "last") for args in calls))
+        self.assertNotIn("the label `last`", output)
+
+    def test_init_creates_the_labels_of_nexkits_own_issues(self):
+        calls, output = self.init_with_label("last", {"labels/last": "last\n", "create": "ok"})
+        created = [args[2] for args in calls if args[:2] == ("label", "create")]
+        self.assertEqual(created, ["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"])
+        self.assertIn(
+            "Created the labels `nexkit:ci`, `nexkit:dependabot`, `nexkit:flaky` on acme/app.",
+            output,
+        )
 
     def test_init_says_how_to_create_a_label_it_could_not(self):
         _, output = self.init_with_label("last", {})
@@ -392,8 +421,10 @@ class InitDoctorTests(unittest.TestCase):
         group = (
             "concurrency:\n      group: nexkit-${{ (github.event_name == 'milestone' || "
             "(github.event_name == 'issues' && github.event.action != 'closed')) && "
-            "'autopilot' || github.event.issue.number || github.event.pull_request.number || "
-            "inputs.number || github.event_name }}\n"
+            "'autopilot' || (github.event_name == 'pull_request_review' && "
+            "github.event.review.state == 'approved') && format('approved-{0}', "
+            "github.event.pull_request.number) || github.event.issue.number || "
+            "github.event.pull_request.number || inputs.number || github.event_name }}\n"
         )
         self.assertIn("\n    " + group, text.split("\n  nexkit:\n", 1)[1])
         self.assertNotRegex(text, r"(?m)^concurrency:|cancel-in-progress")
@@ -443,6 +474,34 @@ class InitDoctorTests(unittest.TestCase):
         path.write_text(json.dumps(cfg))
         self.assertFalse(any("issues: closed" in m for _, m in scaffold.doctor(self.root)))
 
+    def test_doctor_checks_that_an_approval_reaches_nexkit_with_merge_auto(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["merge"] = {"auto": True}
+        path.write_text(json.dumps(cfg))
+        ok = (True, "An approval merges a pull request whose merge GitHub refused")
+        self.assertIn(ok, scaffold.doctor(self.root))
+        # The condition of NexKit 6.1 and earlier lets only *Request changes* through.
+        workflow = self.root / ".github/workflows/nexkit.yml"
+        text = workflow.read_text()
+        old = "github.event.review.state == 'changes_requested' &&"
+        new = (
+            'contains(fromJSON(\'["changes_requested","approved"]\'), github.event.review.state) &&'
+        )
+        self.assertIn(new, text)
+        workflow.write_text(text.replace(new, old))
+        findings = scaffold.doctor(self.root)
+        self.assertNotIn(ok, findings)
+        self.assertTrue(any("does not let an approval through" in m for k, m in findings if not k))
+        # Approvals in the pull request's own group would replace a command that waits.
+        workflow.write_text(text.replace("format('approved-{0}', ", "format('{0}', "))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(any("a group of its own" in m for k, m in findings if not k))
+        cfg["merge"] = {"auto": False}
+        path.write_text(json.dumps(cfg))
+        self.assertFalse(any("approval" in m for _, m in scaffold.doctor(self.root)))
+
     def test_doctor_checks_the_schedule_that_resumes_paused_runs(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         ok = (True, "A schedule resumes runs paused at the agent's usage limit")
@@ -468,16 +527,28 @@ class InitDoctorTests(unittest.TestCase):
         self.assertIn(ok, scaffold.doctor(self.root))
         workflow = self.root / ".github/workflows/nexkit.yml"
         text = workflow.read_text()
-        workflow.write_text(text.replace(", milestoned]", "]"))
+        workflow.write_text(text.replace(", milestoned,", ","))
         findings = scaffold.doctor(self.root)
         self.assertTrue(any("does not listen to 'milestoned'" in m for ok, m in findings if not ok))
+        # Label events count only for `priority` and `labels` of the repository's own.
+        old = text.replace(", labeled, unlabeled]", "]")
+        workflow.write_text(old)
+        self.assertIn(ok, scaffold.doctor(self.root))
+        cfg["autopilot"] = {"enabled": True, "labels": {"on-hold": {"hold": True}}}
+        path.write_text(json.dumps(cfg))
+        findings = scaffold.doctor(self.root)
+        self.assertTrue(
+            any("'labeled', 'unlabeled'" in m for ok, m in findings if not ok), findings
+        )
+        cfg["autopilot"] = {"enabled": True}
+        path.write_text(json.dumps(cfg))
         workflow.write_text(re.sub(r"  milestone:\n.*\n", "", text))
         findings = scaffold.doctor(self.root)
         self.assertTrue(any("'milestone: closed'" in m for ok, m in findings if not ok))
         # With null, milestones change nothing: only issues opening and closing count.
         cfg["autopilot"] = {"enabled": True, "scope": None}
         path.write_text(json.dumps(cfg))
-        no_milestones = re.sub(r"  milestone:\n.*\n", "", text).replace(", milestoned]", "]")
+        no_milestones = re.sub(r"  milestone:\n.*\n", "", text).replace(", milestoned,", ",")
         workflow.write_text(no_milestones)
         self.assertIn(ok, scaffold.doctor(self.root))
         for needed in ("opened", "reopened", "closed"):
@@ -2232,3 +2303,101 @@ class WorkflowSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepeatedChecksTests(unittest.TestCase):
+    """Doctor warns of a workflow that runs the commands of `checks` on a person's branch,
+    which `/nexkit review` checks too (#227)."""
+
+    CHECKS = [
+        {"name": "unit", "run": "python3 -m unittest discover -s tests"},
+        {"name": "lint", "run": "make lint\nmake typecheck"},
+    ]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / ".github/workflows").mkdir(parents=True)
+        branch = mock.patch.object(scaffold, "default_branch_of", return_value="main")
+        branch.start()
+        self.addCleanup(branch.stop)
+
+    def findings(self, triggers, steps="      - run: python3 -m unittest discover -s tests\n"):
+        job = "  test:\n    runs-on: ubuntu-latest\n    steps:\n"
+        text = f"name: CI\non:\n{triggers}jobs:\n{job}{steps}"
+        (self.root / ".github/workflows/ci.yml").write_text(text)
+        return scaffold._repeated_checks(self.root, {"checks": self.CHECKS})
+
+    def test_a_workflow_on_every_branch_runs_the_checks_twice(self):
+        [(ok, message)] = self.findings("  push:\n  pull_request:\n")
+        self.assertFalse(ok)
+        self.assertIn("ci.yml runs the commands of checks `unit`", message)
+        self.assertIn("through its 'push' trigger: it has no branch filter", message)
+        self.assertIn("with a 'paths' filter of .github/workflows/ci.yml", message)
+        self.assertIn("require `nexkit/checks` instead", message)
+
+    def test_each_trigger_that_reaches_a_persons_branch_counts(self):
+        cases = {
+            "  push:\n    branches-ignore: [main]\n": "its 'branches-ignore' does not cover",
+            "  push:\n    branches: ['release/*']\n": "its 'branches' include `release/",
+            "  pull_request:\n    branches: [main]\n": "'pull_request' trigger: a pull request",
+            "on_list": "'push' trigger",
+        }
+        for triggers, said in cases.items():
+            with self.subTest(triggers):
+                if triggers == "on_list":
+                    steps = "jobs:\n  t:\n    steps:\n      - run: make lint\n"
+                    text = f"on: [push, pull_request]\n{steps}"
+                    (self.root / ".github/workflows/ci.yml").write_text(text)
+                    found = scaffold._repeated_checks(self.root, {"checks": self.CHECKS})
+                else:
+                    found = self.findings(triggers)
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(said, found[0][1])
+
+    def test_a_workflow_on_the_default_branch_or_its_own_file_only_is_fine(self):
+        for triggers in (
+            "  push:\n    branches: [main]\n",
+            "  push:\n    branches: [main, 'nexkit/**']\n",
+            "  push:\n    branches: [main]\n"
+            "  pull_request:\n    paths: ['.github/workflows/ci.yml']\n",
+            "  push:\n    paths: [.github/workflows/ci.yml]\n",
+            "  pull_request:\n    branches: [develop]\n",
+            "  schedule:\n    - cron: '0 0 * * *'\n",
+        ):
+            with self.subTest(triggers):
+                self.assertEqual(self.findings(triggers), [])
+
+    def test_only_a_command_of_checks_counts_as_a_whole(self):
+        triggers = "  push:\n"
+        self.assertEqual(self.findings(triggers, "      - run: make lint-docs\n"), [])
+        block = "      - name: Test\n        run: |\n          cd app\n          make lint\n"
+        [(_, message)] = self.findings(triggers, block)
+        self.assertIn("`lint` (`make lint`)", message)
+        quoted = '      - run: "cd app && python3 -m unittest discover -s tests"\n'
+        self.assertEqual(len(self.findings(triggers, quoted)), 1)
+
+    def test_a_code_scan_that_builds_the_code_is_left_out(self):
+        steps = (
+            "      - uses: github/codeql-action/init@v3\n"
+            "      - run: python3 -m unittest discover -s tests\n"
+        )
+        self.assertEqual(self.findings("  pull_request:\n", steps), [])
+
+    def test_nexkits_own_workflow_and_a_repository_without_checks_are_left_out(self):
+        (self.root / ".github/workflows/nexkit.yml").write_text(
+            "on: [push]\njobs:\n  t:\n    steps:\n      - run: make lint\n"
+        )
+        self.assertEqual(scaffold._repeated_checks(self.root, {"checks": self.CHECKS}), [])
+        self.findings("  push:\n")
+        self.assertEqual(scaffold._repeated_checks(self.root, {"checks": []}), [])
+
+    def test_doctor_reports_it(self):
+        with mock.patch.object(scaffold, "github_app", return_value=(APP, [])):
+            cli.main(["init", "--repo", str(self.root), "--check", "test=make test", "--force"])
+        (self.root / ".github/workflows/ci.yml").write_text(
+            "on: [push]\njobs:\n  t:\n    steps:\n      - run: make test\n"
+        )
+        failed = [m for ok, m in scaffold.doctor(self.root) if not ok]
+        self.assertTrue(any("ci.yml runs the commands of checks `test`" in m for m in failed))

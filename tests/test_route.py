@@ -422,6 +422,49 @@ class RouteTests(unittest.TestCase):
         event["review"].update(state="changes_requested", user={"login": "bob"})
         self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
 
+    def test_a_label_added_or_removed_starts_a_sweep(self):
+        for action in ("labeled", "unlabeled"):
+            event = {"action": action, "issue": {"number": 5}, "label": {"name": "on-hold"}}
+            self.assertEqual(
+                route(self.gh, "issues", event),
+                {"action": "maintain", "task": "autopilot", "event": action},
+            )
+
+    def test_an_approval_of_a_nexkit_pull_request_starts_a_merge(self):
+        pull = self.gh.add_pull(9, 5)
+        event = {
+            "action": "submitted",
+            "review": {
+                "state": "approved",
+                "body": "",
+                "user": {"login": "olivia"},
+                "commit_id": "a" * 40,
+            },
+            "pull_request": {**pull, "base": {"ref": "main", "repo": {"full_name": "acme/app"}}},
+        }
+        self.assertEqual(
+            route(self.gh, "pull_request_review", event),
+            {
+                "action": "maintain",
+                "task": "approved",
+                "pr": 9,
+                "issue": 5,
+                "actor": "olivia",
+                "commit": "a" * 40,
+            },
+        )
+        # Not from a person with write access, a bot, or on a pull request NexKit did not open.
+        for review in ({"login": "bob"}, {"login": "ci[bot]", "type": "Bot"}):
+            event["review"]["user"] = review
+            self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        event["review"]["user"] = {"login": "olivia"}
+        event["pull_request"]["head"] = {"ref": "feature", "repo": {"full_name": "acme/app"}}
+        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        event["pull_request"]["head"] = {"ref": "nexkit/issue-5", "repo": {"full_name": "x/app"}}
+        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        event["review"]["state"] = "commented"
+        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+
     def test_dispatch(self):
         self.gh.add_pull(9, 5)
         event = {"sender": {"login": BOT_LOGIN}}

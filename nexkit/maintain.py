@@ -62,6 +62,8 @@ TASKS = {
     "on_base": (),
     # A writer's `/nexkit trust` on an issue.
     "trust": ("autopilot.enabled",),
+    # A writer's approval of a NexKit pull request whose merge GitHub refused.
+    "approved": ("merge.auto",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
@@ -90,14 +92,17 @@ UPDATE_TRIES = 6
 # of one whose next round then did not start.
 SUPERSEDED = "superseded"
 STOP_FAILED = "stop_failed"
-STOP_FAILED_REASON = (
+STOP_FAILED_REASON = autopilot.person(
+    "comment `/nexkit fix` on the pull request when it conflicts with its base branch, "
+    "otherwise merge the base branch into it and comment `/nexkit review`",
     "NexKit stopped the round's checks after the base branch moved, but could not start the "
-    "next round; comment `/nexkit fix` or `/nexkit review` on the pull request"
+    "next round",
 )
-ON_BASE_FAILED = (
-    "the base branch already holds this change, but NexKit could not close the pull "
-    "request or its issue; close them yourself"
+ON_BASE_FAILED_NEED = (
+    "close the pull request and its issue yourself",
+    "the base branch already holds this change, but GitHub refused NexKit's close",
 )
+ON_BASE_FAILED = autopilot.person(*ON_BASE_FAILED_NEED)
 # The most branches of closed work a sweep deletes, so that the first sweep after a backlog
 # stays short, and what marks its comment about a branch it could not delete.
 STALE_BRANCHES = 3
@@ -799,12 +804,15 @@ def _give_back(gh, number, comments, run):
         progress.save_state(gh, number, state_id, state)
 
 
-def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5, settle=False):
+def resolve_conflicts(
+    gh, base, workflow, ref, max_rounds, skip=(), delay=5, settle=False, cfg=None
+):
     """Start a conflict round for each open NexKit pull request into `base` that conflicts
-    with it. A round that runs only its checks on a head that can no longer merge stops
-    first (see `stop_superseded`). With `settle`, a latest round whose run ended without a
-    report holds nothing up (see `start_conflict_round`). Returns lines for a log or
-    comment."""
+    with it, unless a label holds its issue (see `autopilot.held`; `cfg` is the
+    configuration). A round that runs only its checks on a head that can no longer merge
+    stops first (see `stop_superseded`). With `settle`, a latest round whose run ended
+    without a report holds nothing up (see `start_conflict_round`). Returns lines for a log
+    or comment."""
     lines, rules = [], []
 
     def strict():
@@ -819,10 +827,14 @@ def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5, set
 
     for pull in gh.pulls_into(base):
         number = pull["number"]
-        nexkit = issue_from_branch(pull["head"]["ref"]) is not None
-        if number in skip or not nexkit or pull["head"]["repo"]["full_name"] != gh.repository:
+        issue = issue_from_branch(pull["head"]["ref"])
+        if number in skip or issue is None or pull["head"]["repo"]["full_name"] != gh.repository:
             continue
         try:
+            label = cfg and autopilot.held(gh, cfg, issue)
+            if label:
+                lines.append(f"#{number}: #{issue} is on hold (`{label}`); no conflict round.")
+                continue
             conflicting = is_conflicting(gh, number, delay=delay)
             stopped = stop_superseded(
                 gh, pull, base, conflicting, strict, workflow, ref, max_rounds
@@ -858,12 +870,57 @@ def answer_trust(gh, cfg, decision, workflow, ref):
     return [f"@{actor} vouched for #{number}.", *autopilot.request_safely(gh, cfg, workflow, ref)]
 
 
+# The outcomes of a round after which a person's approval may let the merge through: one
+# that GitHub refused, and a ready one that NexKit left to a person, such as for criteria
+# the review could not verify, which the approval confirms.
+APPROVABLE = ("merge_refused", "ready")
+
+
+def merge_approved(gh, cfg, decision, workflow, ref):
+    """Merge a NexKit pull request that a writer approved, when its latest round ended as
+    `merge_refused`, or `ready`, on the head that its checks and review passed, with the
+    guards of every merge (see `report.merge_pull`): a head that moved since gets a review
+    instead. A label that holds its issue, a round on its way, any other outcome, or, for a
+    `ready` round, an approval of another commit than its head starts nothing. Returns
+    lines for the log."""
+    # `report` imports this module.
+    from .report import merge_waiting
+
+    pr, issue, actor = decision["pr"], decision["issue"], decision.get("actor") or "someone"
+    rounds = _rounds(gh, pr)
+    found = [(c, run) for c, run in rounds if run.get("outcome") != "up_to_date"]
+    if not found:
+        return [f"#{pr} has no round to merge after the approval."]
+    comment, run = found[-1]
+    if run.get("status") != SUCCESS or run.get("outcome") not in APPROVABLE:
+        state = run.get("outcome") or run.get("status")
+        return [f"#{pr}: its latest round is `{state}`, so the approval starts nothing."]
+    commit = decision.get("commit")
+    if run.get("outcome") == "ready" and commit and commit != run.get("head"):
+        # A person confirms the criteria of the commit they approved, and no other.
+        return [
+            f"#{pr}: the approval is of `{commit[:7]}`, not of `{str(run.get('head'))[:7]}`, "
+            "whose criteria wait for a person; it starts nothing."
+        ]
+    if implementing(gh, issue):
+        return [f"#{pr}: the implement round on #{issue} still runs; it merges by itself."]
+    label = autopilot.held(gh, cfg, issue)
+    if label:
+        return [f"#{pr}: #{issue} is on hold (`{label}`), so NexKit does not merge it."]
+    base = (gh.pull(pr).get("base") or {}).get("ref") or ref
+    intro = f"@{actor} approved the pull request."
+    step = {"pull": pr, "number": issue, "round_comment": comment["id"], "base": base}
+    return [merge_waiting(gh, cfg, {**step, "intro": intro}, workflow, ref)]
+
+
 def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
     """Run the decision's task. Returns lines for the job log. `alerts` is the client whose
     token may read Dependabot alerts, or None: see `autopilot.check_dependabot`."""
     task = decision["task"]
     if task == "trust":
         return answer_trust(gh, cfg, decision, workflow, ref)
+    if task == "approved":
+        return merge_approved(gh, cfg, decision, workflow, ref)
     if task == "parents":
         lines = close_parents_safely(gh, decision["issue"]) if cfg["close_parent_issues"] else []
         return lines + autopilot.request_safely(gh, cfg, workflow, ref, decision["issue"])
@@ -883,7 +940,9 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
             max_rounds = cfg["conflicts"]["max_rounds"]
             # Without autopilot, nothing else ends a round whose report did not finish.
             settle = not autopilot.takes(cfg)
-            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, skip=busy, settle=settle)
+            lines += resolve_conflicts(
+                gh, ref, workflow, ref, max_rounds, skip=busy, settle=settle, cfg=cfg
+            )
         lines += delete_stale_branches(gh)
         return lines or ["Nothing to start."]
     if task == "ci":
@@ -901,6 +960,7 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
             ref,
             cfg["conflicts"]["max_rounds"],
             settle=not autopilot.takes(cfg),
+            cfg=cfg,
         )
     wait = cfg["usage_limit"]["wait_minutes"]
     if task == "resume":
@@ -916,7 +976,7 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
             # Also catches base branch moves whose push started no run.
             settle = not autopilot.takes(cfg)
             max_rounds = cfg["conflicts"]["max_rounds"]
-            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, settle=settle)
+            lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, settle=settle, cfg=cfg)
         # Also catches events that started no run, or a run that was lost.
         return lines + autopilot.request_safely(gh, cfg, workflow, ref)
     raise ValueError(f"Unknown maintenance task: {task}")

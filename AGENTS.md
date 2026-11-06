@@ -19,9 +19,10 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py`, `cache.py` | Setup and checks with `NEXKIT_BASE_SHA`/`NEXKIT_VERIFIED_SHA`; the keys of cache restore and of the `cache/` action |
 | `report.py`, `state.py`, `progress.py` | Statuses, review, run and state comments and their markers |
+| `refusal.py` | Why GitHub refused a merge, and what unblocks it |
 | `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; resuming runs paused at a usage limit; autopilot sweeps |
 | `config.py`, `globs.py`, `scaffold.py`, `app.py`, `templates/` | Config schema and defaults, path globs; `nexkit init` and `doctor`; the GitHub App |
-| `status.py`, `github.py`, `gitutil.py` | `nexkit status`; REST and git helpers |
+| `status.py`, `snapshot.py`, `github.py`, `gitutil.py` | `nexkit status` and the batched reads it makes; REST, GraphQL and git helpers |
 | `scripts/` | Live smoke test, pin updates, release notes |
 
 ## Rules

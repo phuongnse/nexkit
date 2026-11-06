@@ -11,10 +11,11 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import quote
 
-from . import __version__, app
+from . import __version__, app, autopilot
 from . import config as configuration
 from .github import alerts_off
 from .globs import branch_matches
+from .route import BRANCH_PREFIX
 from .runtimes import DECLARED_SECRETS, PROVIDERS
 
 KIT_REPOSITORY = "phuongnse/nexkit"
@@ -256,7 +257,7 @@ def init(
     if watch_workflows:
         raw["autopilot"] = {"watch_workflows": watch_workflows}
     if last_label:
-        raw.setdefault("autopilot", {})["last_in_milestone_label"] = last_label
+        raw.setdefault("autopilot", {})["labels"] = {last_label: {"wave": 1}}
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")
@@ -339,8 +340,8 @@ def _label_command(label, repo=None):
 
 
 def ensure_label(root, label):
-    """Create `label`, which `nexkit init` set as `autopilot.last_in_milestone_label`, when
-    the repository lacks it. Returns a line for the person, or "" with nothing to say."""
+    """Create `label`, which `nexkit init` named in `autopilot.labels`, when the repository
+    lacks it. Returns a line for the person, or "" with nothing to say."""
     repo = repository_of(root)
     if not repo:
         return f"Create the label in the repository: '{_label_command(label)}'"
@@ -352,6 +353,41 @@ def ensure_label(root, label):
     if _gh("label", "create", label, "--repo", repo) is None:
         return f"Could not create the label `{label}`: run '{_label_command(label, repo)}'"
     return f"Created the label `{label}` on {repo}."
+
+
+DEFAULT_PRIORITY = configuration.DEFAULTS["autopilot"]["priority"]
+# The labels of the issues NexKit opens, which `autopilot.priority` puts first by default:
+# (name, description, colour).
+OWN_LABELS = (
+    (autopilot.CI_LABEL, "NexKit: a CI failure on the default branch", "d73a4a"),
+    (autopilot.DEPENDABOT_LABEL, "NexKit: a Dependabot advisory", "0e8a16"),
+    (autopilot.FLAKY_LABEL, "NexKit: a failure of flaky runs on the default branch", "fbca04"),
+)
+
+
+def ensure_own_labels(root):
+    """Create the labels of the issues NexKit opens, with their descriptions, when the
+    repository lacks them. Without them, GitHub creates each one plain when NexKit first
+    uses it. Returns lines for the person."""
+    repo = repository_of(root)
+    if not repo:
+        return []
+    created, failed = [], []
+    for name, description, colour in OWN_LABELS:
+        if repository_label(repo, name):
+            continue
+        args = ("label", "create", name, "--description", description, "--color", colour)
+        if _gh(*args, "--repo", repo) is None:
+            failed.append(name)
+        else:
+            created.append(name)
+    lines = []
+    if created:
+        lines.append(f"Created the labels {', '.join(f'`{n}`' for n in created)} on {repo}.")
+    if failed:
+        names = ", ".join(f"`{n}`" for n in failed)
+        lines.append(f"Could not create {names}; GitHub creates each when NexKit first uses it.")
+    return lines
 
 
 def _uncommented(text):
@@ -383,7 +419,12 @@ def _indent(line):
 
 
 def push_filters(workflow):
-    """The filters of a workflow's `push` trigger, such as {"branches": ["main"]}, or None
+    """The filters of a workflow's `push` trigger (see `trigger_filters`)."""
+    return trigger_filters(workflow, "push")
+
+
+def trigger_filters(workflow, event="push"):
+    """The filters of a workflow's trigger `event`, such as {"branches": ["main"]}, or None
     without that trigger. Reads `on: push`, a list of events, a `{mapping}` on one line and
     the block form. What only a YAML parser reads, such as a list over several lines inside
     brackets or a `push: *alias`, counts as no filter, or as no trigger."""
@@ -400,9 +441,9 @@ def push_filters(workflow):
         return None
     start, inline = found
     if inline.startswith("{"):
-        return _flow_push(inline)
+        return _flow_push(inline, event)
     if inline:
-        return {} if "push" in _items(inline) else None
+        return {} if event in _items(inline) else None
     block = []
     for line in lines[start + 1 :]:
         if line.strip() and not line[0].isspace() and not line.startswith("-"):
@@ -414,20 +455,22 @@ def push_filters(workflow):
         text = line.strip()
         if _indent(line) != events:
             continue
-        if text.startswith("-") and _items(text[1:]) == ["push"]:
+        if text.startswith("-") and _items(text[1:]) == [event]:
             return {}
-        match = re.fullmatch(r"""['"]?push['"]?:(.*)""", text)
+        match = re.fullmatch(rf"""['"]?{event}['"]?:(.*)""", text)
         if match:
             inline = match.group(1).strip()
             if inline.startswith(("*", "&")):
                 return None
-            return _flow_push(f"push: {inline}") if inline else _filters(block[at + 1 :], events)
+            if inline:
+                return _flow_push(f"{event}: {inline}", event)
+            return _filters(block[at + 1 :], events)
     return None
 
 
-def _flow_push(text):
-    """The filters of `push` in a `{mapping}` on one line, or None without it."""
-    match = re.search(r"\bpush\b['\"]?\s*:\s*(\{.*?\})?", text)
+def _flow_push(text, event="push"):
+    """The filters of `event` in a `{mapping}` on one line, or None without it."""
+    match = re.search(rf"\b{event}\b['\"]?\s*:\s*(\{{.*?\}})?", text)
     if not match:
         return None
     found = re.findall(r"([a-z-]+)\s*:\s*(\[[^\]]*\]|[^,{}\s]+)", match.group(1) or "")
@@ -488,6 +531,120 @@ def _after_merge_push(root, name, branch):
             "merge.after_workflows",
         )
     ]
+
+
+# Branches a person may push to, which a workflow's `push` filters are tried on, besides the
+# branches those filters name.
+PERSON_BRANCHES = ("feature/x", "fix-1", "dev", "release/1")
+# Events whose runs test a pull request, which a person's pull request into the default
+# branch starts whatever its own branch is.
+PULL_EVENTS = ("pull_request", "pull_request_target")
+BLOCK_SCALAR = re.compile(r"[|>][+-]?\d*")
+CODE_SCAN = re.compile(r"^\s*(-\s*)?uses:\s*['\"]?github/codeql-action/", re.M)
+
+
+def run_lines(workflow):
+    """The lines of every `run` step of a workflow, each on one line: a `run: cmd`, and each
+    line of a `run: |` block."""
+    lines, found = _uncommented(workflow).splitlines(), []
+    for at, line in enumerate(lines):
+        match = re.match(r"^(\s*)(?:-\s+)?(run:)\s*(.*)$", line)
+        if not match:
+            continue
+        value = match.group(3).strip()
+        if value and not BLOCK_SCALAR.fullmatch(value):
+            found.append(value.strip("'\""))
+            continue
+        key = line.index("run:")
+        for text in lines[at + 1 :]:
+            if text.strip() and _indent(text) <= key:
+                break
+            if text.strip():
+                found.append(text.strip())
+    return [" ".join(line.split()) for line in found]
+
+
+def _repeats(check, lines):
+    """Whether one of a workflow's `run` lines calls the command of `check`, as a whole."""
+    from .autopilot import command_line
+
+    command = command_line(check["run"])
+    pattern = re.compile(rf"(?<!\S){re.escape(command)}(?!\S)")
+    return bool(command) and any(pattern.search(line) for line in lines)
+
+
+def _own_paths(filters, path):
+    """Whether a trigger's `paths` filter names only the workflow's own file."""
+    paths = filters.get("paths")
+    return bool(paths) and all(item.strip("'\"") == path for item in paths)
+
+
+def _person_trigger(workflow, path, branch):
+    """(trigger, how) of the first trigger of a workflow that runs it for a person's
+    branch: a push to a branch other than `branch` and NexKit's, or a pull request into
+    `branch`. None when every trigger stays on `branch`, or runs only for a change of the
+    workflow's own file."""
+    filters = trigger_filters(workflow, "push")
+    if filters is not None and not _own_paths(filters, path):
+        named = [
+            re.sub(r"[*?]+", "x", p) for p in filters.get("branches", []) if not p.startswith("!")
+        ]
+        for name in [*PERSON_BRANCHES, *named]:
+            # NexKit's own branches, `nexkit/issue-<n>`, which `verify` checks.
+            if name == branch or name.startswith(BRANCH_PREFIX.split("/")[0] + "/"):
+                continue
+            how = _pushes_to(filters, name)
+            if how and "branches-ignore" in how:
+                return "push", f"its 'branches-ignore' does not cover `{name}`"
+            if how:
+                return "push", how.replace(f" {name}", f" `{name}`")
+    for event in PULL_EVENTS:
+        filters = trigger_filters(workflow, event)
+        if filters is None or _own_paths(filters, path):
+            continue
+        how = _pushes_to(filters, branch)
+        if how:
+            return event, f"a pull request into `{branch}` starts it ({how})"
+    return None
+
+
+def _repeated_checks(root, cfg):
+    """Findings: a workflow of the repository that runs a command of `checks` on a person's
+    branch, which `/nexkit review` checks too, so each push there runs it twice."""
+    folder = root / ".github/workflows"
+    if not cfg["checks"] or not folder.is_dir():
+        return []
+    findings, branch = [], None
+    for file in sorted(folder.glob("*.y*ml")):
+        path = f".github/workflows/{file.name}"
+        if path == WORKFLOW_PATH:
+            continue
+        text = file.read_text(errors="replace")
+        if CODE_SCAN.search(_uncommented(text)):
+            # A code scan builds the code for its analysis, which checks do not replace.
+            continue
+        repeated = [check for check in cfg["checks"] if _repeats(check, run_lines(text))]
+        if not repeated:
+            continue
+        branch = branch or default_branch_of(root)
+        found = _person_trigger(text, path, branch)
+        if not found:
+            continue
+        event, how = found
+        names = ", ".join(
+            f"`{check['name']}` (`{check['run'].splitlines()[0]}`)" for check in repeated
+        )
+        findings.append(
+            (
+                False,
+                f"{file.name} runs the commands of checks {names} on a person's branch, "
+                f"through its '{event}' trigger: {how}. `/nexkit review` runs them there too, "
+                f"so they run twice. Let {file.name} run on pushes to `{branch}` only, and "
+                f"on pull requests with a 'paths' filter of {path}; if `{branch}`'s rules "
+                "require its jobs, require `nexkit/checks` instead",
+            )
+        )
+    return findings
 
 
 def _watched_workflow(root, name):
@@ -750,6 +907,8 @@ def _triggers(root, cfg, workflow):
             )
         else:
             findings.append((True, "Pushes to the default branch start the conflict check"))
+    if cfg["merge"]["auto"]:
+        findings.append(_approval_trigger(workflow))
     if cfg["autopilot"]["enabled"]:
         findings.append(_autopilot_triggers(cfg, workflow))
         findings += _ci_trigger(root, cfg, workflow)
@@ -768,6 +927,30 @@ def _triggers(root, cfg, workflow):
     return findings
 
 
+def _approval_trigger(workflow):
+    """A finding: with `merge.auto`, an approval of a refused pull request merges it, which
+    needs the `pull_request_review` trigger and the job's condition to let it through."""
+    review = trigger(workflow, "pull_request_review")
+    # The job's condition, up to the next key of the job.
+    condition = re.search(r"(?ms)^    if:(.*?)(?=^    [a-z-]+:)", _uncommented(workflow))
+    approved = condition and re.search(r"['\"]approved['\"]", condition.group(1))
+    if review is None or ("types" in review and "submitted" not in review) or not approved:
+        return (
+            False,
+            f"merge.auto is on, but {WORKFLOW_PATH} does not let an approval through, so "
+            "a pull request whose merge GitHub refused is merged only by hand; use the "
+            "'pull_request_review' trigger and the job's 'if' as 'nexkit init' writes them",
+        )
+    if "approved-" not in _uncommented(workflow):
+        return (
+            False,
+            f"merge.auto is on, but the concurrency group in {WORKFLOW_PATH} does not give "
+            "an approval a group of its own, so it can replace a command that waits on the "
+            "pull request; use the group 'nexkit init' writes",
+        )
+    return (True, "An approval merges a pull request whose merge GitHub refused")
+
+
 def _autopilot_triggers(cfg, workflow):
     """A finding: autopilot needs the events that bring issues into scope, and its own
     concurrency group so those events never replace a command that waits."""
@@ -775,6 +958,9 @@ def _autopilot_triggers(cfg, workflow):
     # that `nexkit init` writes still start a sweep, as every event in the group does.
     by_milestone = cfg["autopilot"]["scope"] == "milestone"
     needed = ["opened", "reopened", "closed", *(["milestoned"] if by_milestone else [])]
+    if cfg["autopilot"]["labels"] or cfg["autopilot"]["priority"] != DEFAULT_PRIORITY:
+        # A label that a person adds or removes, such as a hold, takes effect at once.
+        needed += ["labeled", "unlabeled"]
     issues = trigger(workflow, "issues")
     # Whole words: `reopened` holds `opened`.
     missing = [
@@ -845,31 +1031,59 @@ def _unheard(cfg):
     ]
 
 
-def _last_label(cfg, repo):
-    """Findings: the repository has the label that marks an issue to run last. NexKit
-    compares it exactly, so another spelling carries nothing either."""
+def _deprecated_label(cfg):
+    """Findings: `autopilot.last_in_milestone_label` works through 6.x, as a label of wave
+    1, and 7.0 removes it."""
     label = cfg["autopilot"]["last_in_milestone_label"]
     if not label:
         return []
-    setting = "autopilot.last_in_milestone_label"
-    found = repository_label(repo, label)
-    if found == label:
-        return [(True, f"{setting}: {repo} has the label `{label}`")]
-    if found:
-        return [
-            (
-                False,
-                f"{setting} is `{label}`, but {repo} spells the label `{found}`, and NexKit "
-                "compares it exactly; change one of them",
-            )
-        ]
+    replacement = json.dumps({"labels": {label: {"wave": 1}}})
     return [
         (
-            False,
-            f"{setting} names `{label}`, which {repo} does not have, so no issue can carry it "
-            f"and nothing runs last: run '{_label_command(label, repo)}'",
+            True,
+            "Deprecated: autopilot.last_in_milestone_label still works as a label of wave 1, "
+            f"but NexKit 7.0 removes it: in autopilot, replace it with {replacement[1:-1]}",
         )
     ]
+
+
+def _labels(cfg, repo):
+    """Findings: the repository has each label that autopilot's settings name. NexKit
+    compares labels exactly, so another spelling carries nothing either. NexKit's own
+    labels need no check: GitHub creates each when NexKit first uses it."""
+    own = {name for name, _, _ in OWN_LABELS}
+    named = {}
+    for label in cfg["autopilot"]["priority"]:
+        named.setdefault(label, "autopilot.priority")
+    for label in cfg["autopilot"]["labels"]:
+        named.setdefault(label, "autopilot.labels")
+    last = cfg["autopilot"]["last_in_milestone_label"]
+    if last:
+        named.setdefault(last, "autopilot.last_in_milestone_label")
+    findings = []
+    for label, setting in named.items():
+        if label in own:
+            continue
+        found = repository_label(repo, label)
+        if found == label:
+            findings.append((True, f"{setting}: {repo} has the label `{label}`"))
+        elif found:
+            findings.append(
+                (
+                    False,
+                    f"{setting} names `{label}`, but {repo} spells the label `{found}`, and "
+                    "NexKit compares it exactly; change one of them",
+                )
+            )
+        else:
+            findings.append(
+                (
+                    False,
+                    f"{setting} names `{label}`, which {repo} does not have, so no issue can "
+                    f"carry it: run '{_label_command(label, repo)}'",
+                )
+            )
+    return findings
 
 
 def _dependabot(cfg, repo, branch):
@@ -1016,10 +1230,12 @@ def doctor(root, key_file=None, app_id=None):
             findings += _after_merge_push(root, name, branch)
         findings += [_watched_workflow(root, n) for n in cfg["autopilot"]["watch_workflows"]]
         findings += [_trusted_workflow(root, n) for n in cfg["autopilot"]["trusted_workflows"]]
+        findings += _repeated_checks(root, cfg)
         problem = configuration.app_problem(cfg)
         if problem:
             findings.append((False, problem))
         findings += _unheard(cfg)
+        findings += _deprecated_label(cfg)
     except configuration.ConfigError as exc:
         findings.append((False, str(exc)))
 
@@ -1055,7 +1271,7 @@ def doctor(root, key_file=None, app_id=None):
     names = secret_names(repo) or set()
     if cfg:
         findings += _secrets_set(cfg, names, repo)
-        findings += _last_label(cfg, repo)
+        findings += _labels(cfg, repo)
     if cfg and not configuration.app_problem(cfg):
         findings += _app_secrets(cfg, names, repo)
         findings += _app_on_github(cfg, repo, key_file, app_id)

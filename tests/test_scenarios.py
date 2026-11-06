@@ -408,8 +408,10 @@ class Pipeline:
             if quiet:
                 # Or it waits for an issue that waits for a person, who hears about that one.
                 awaited = {int(n) for n in re.findall(r"#(\d+)", step["reason"])}
+                # A label that holds an issue is a person's own choice.
                 self.test.assertTrue(
-                    step["state"] == "waits" and (step.get("person") or awaited & people),
+                    step["state"] == "held"
+                    or (step["state"] == "waits" and (step.get("person") or awaited & people)),
                     f"stuck with nothing running: {where}",
                 )
         for pull in self.gh.pulls.values():
@@ -568,7 +570,7 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5, body="<!-- nexkit:part 4 -->\nThe part.", user=ACTIONS_BOT)
         self.assertEqual(pipe.play(), [])
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
-        self.assertIn("comments `/nexkit trust`", mention["body"])
+        self.assertIn("comment `/nexkit trust` on it", mention["body"])
         # Someone without write access changes nothing, and nobody is mentioned again.
         pipe.gh.human_comment(5, "/nexkit trust", "bob", "NONE")
         self.assertEqual(pipe.play(), [])
@@ -595,7 +597,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "open")
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
-        self.assertIn("@bob edited it without write access", mention["body"])
+        # It names who edited it in a code span, which mentions nobody.
+        self.assertIn("`@bob` edited it without write access", mention["body"])
 
     def test_an_advisory_is_planned_fixed_and_merged_once(self):
         def script(pipe, inputs):
@@ -801,8 +804,141 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5, labels=("last",))
         pipe.issue(6, labels=("last",))
         played = pipe.play()
-        self.assertEqual(played[-2:], [("plan", 6), ("go", 6)])
-        self.assertEqual(pipe.gh.issues[6]["state"], "closed")
+        # One wave runs side by side: #5 splits into #7, which runs beside #6.
+        self.assertEqual(
+            sorted(played), [("go", 6), ("go", 7), ("plan", 5), ("plan", 6), ("plan", 7)]
+        )
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7)))
+
+    def test_a_persons_bug_issue_runs_before_a_ready_milestone_issue(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        priority = ["nexkit:ci", "nexkit:dependabot", "bug", "nexkit:flaky"]
+        pipe = Pipeline(self, config(autopilot={"priority": priority, "max_parallel": 1}), script)
+        pipe.issue(5)
+        # A red dependency scan that the owner opened, in no milestone.
+        pipe.gh.add_issue(6, title="Scan fails", labels=("bug",))
+        self.assertEqual(pipe.play(), [("plan", 6), ("go", 6), ("plan", 5), ("go", 5)])
+        # Without `bug` in the list, the milestone scope never reaches it.
+        pipe = Pipeline(self, config(autopilot={"max_parallel": 1}), script)
+        pipe.issue(5)
+        pipe.gh.add_issue(6, title="Scan fails", labels=("bug",))
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+
+    def test_waves_run_in_order_whatever_the_age_of_their_issues(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["number"] == "7":
+                pipe.issue(9)  # opened while the milestone runs, with no label
+            return done()
+
+        labels = {"journey": {"wave": 1}, "docs": {"wave": 2}}
+        pipe = Pipeline(self, config(autopilot={"labels": labels}), script)
+        pipe.issue(5, labels=("docs",))
+        pipe.issue(6, labels=("journey",))
+        pipe.issue(7)
+        pipe.issue(8, labels=("journey",))
+        played = pipe.play()
+        index = played.index
+        self.assertLess(index(("go", 9)), index(("plan", 6)))
+        self.assertLess(index(("go", 7)), index(("plan", 8)))
+        self.assertLess(max(index(("go", 6)), index(("go", 8))), index(("plan", 5)))
+        self.assertEqual(played[-2:], [("plan", 5), ("go", 5)])
+
+    def test_a_wave_never_waits_in_a_circle_with_blocked_by_marks(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        labels = {"journey": {"wave": 1}, "docs": {"wave": 2}}
+        pipe = Pipeline(self, config(autopilot={"labels": labels}), script)
+        pipe.issue(5, labels=("journey",))
+        pipe.issue(6)  # a follow-up that a person marked blocked by the docs sweep
+        pipe.issue(7, labels=("docs",))
+        pipe.gh.blockers[6] = [7]
+        played = pipe.play()
+        self.assertEqual([n for c, n in played if c == "go"], [5, 7, 6])
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7)))
+
+    def test_a_held_issue_starts_nothing_until_its_label_is_removed(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go" and inputs["number"] == "6":
+                # A person holds it while its round runs: the round finishes, and starts
+                # neither its fix round nor, later, its merge.
+                pipe.gh.issues[6]["labels"] = [{"name": "on-hold"}]
+                return done(checks=False)
+            return done()
+
+        settings = {"labels": {"on-hold": {"hold": True}}}
+        pipe = Pipeline(self, config(autopilot=settings), script)
+        pipe.issue(5, labels=("on-hold",))
+        pipe.issue(6)
+        self.assertEqual(pipe.play(), [("plan", 6), ("go", 6)])
+        self.assertEqual(pipe.played[-1][2], "held")
+        steps = {s["number"]: s for s in autopilot.preview(pipe.gh, pipe.cfg)[1]}
+        self.assertEqual((steps[5]["state"], steps[6]["state"]), ("held", "held"))
+        data = collect(pipe.gh, pipe.cfg, workers=1)
+        self.assertEqual(data["needs_person"], [])
+        [pull] = data["pull_requests"]
+        self.assertEqual(pull["state"], "held")
+        # Without the label, the next sweep starts what it held back, and #5 runs.
+        pipe.gh.issues[5]["labels"] = pipe.gh.issues[6]["labels"] = []
+        self.assertEqual(pipe.play(), [("plan", 6), ("go", 6), ("plan", 5), ("fix", 7), ("go", 5)])
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6)))
+        self.assertEqual(read_state(pipe.gh.comments(7))[1]["auto_fixes"], 1)
+
+    def test_a_merge_waiting_for_a_code_owner_merges_after_the_approval(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.review_states[6] = {"decision": "REVIEW_REQUIRED"}
+        pipe.gh.files["CODEOWNERS"] = "* @olivia\n"
+        pipe.gh.pr_files[6] = [{"filename": "app.py", "additions": 3, "deletions": 1}]
+        pipe.gh.merge_error = GitHubError(405, "Waiting on code owner review from olivia.")
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "merge_refused")
+        [mention] = pipe.gh.comments_matching(6, "a person is needed")
+        self.assertIn("approve the pull request as a code owner (`@olivia`)", mention["body"])
+        # The owner approves; nothing else is needed.
+        pipe.gh.merge_error = None
+        event = {
+            "action": "submitted",
+            "review": {"state": "approved", "user": {"login": "olivia"}},
+            "pull_request": {
+                **pipe.gh.pulls[6],
+                "base": {"ref": "main", "repo": {"full_name": "acme/app"}},
+            },
+        }
+        decision = route(pipe.gh, "pull_request_review", event)
+        self.assertEqual(
+            maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main"),
+            ["#6: merged."],
+        )
+        pipe.play()
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
+
+    def test_a_held_merge_merges_once_the_label_is_removed(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            pipe.gh.issues[5]["labels"] = [{"name": "on-hold"}]
+            return done()
+
+        settings = {"labels": {"on-hold": {"hold": True}}}
+        pipe = Pipeline(self, config(autopilot=settings), script)
+        pipe.issue(5)
+        pipe.play()
+        self.assertEqual((pipe.gh.merged, pipe.played[-1][2]), ([], "held"))
+        pipe.gh.issues[5]["labels"] = []
+        pipe.play()
+        self.assertEqual(len(pipe.gh.merged), 1)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):
@@ -1609,7 +1745,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         self.assertEqual(pipe.played[-1][2], "recheck_failed")
         [mention] = pipe.gh.comments_matching(6, "a person is needed")
-        self.assertIn(cause.rstrip("."), mention["body"])
+        self.assertIn(cause.rstrip(".").replace("`", "'"), mention["body"])
 
     def test_an_answer_that_only_closes_the_issue_closes_it(self):
         finding = "8b9cb87 already fixed it: the last 20 runs of `e2e` on `main` passed."
@@ -1675,7 +1811,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertIn("#the-plans-change-is-in-protected-paths", plan_comment["body"])
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
         self.assertIn(
-            "its change needs protected paths (`.github/workflows/ci.yml`)", mention["body"]
+            "make the change in the protected paths (`.github/workflows/ci.yml`)", mention["body"]
         )
 
     def test_a_blocked_round_whose_change_is_in_protected_paths_gets_no_answer(self):
@@ -1692,7 +1828,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertFalse(pipe.gh.comments_matching(5, "answers for the owner"))
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
-        self.assertIn("its change needs protected paths", mention["body"])
+        self.assertIn("make the change in the protected paths", mention["body"])
 
     def test_a_plan_that_finds_an_outside_failure_passed_since_closes_the_issue(self):
         finding = "The .NET download host answered 409 in every job of run 50."
@@ -1739,7 +1875,7 @@ class ScenarioTests(unittest.TestCase):
         pipe.gh.issues[5]["state"] = "open"
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
-        self.assertIn("it closed while `/nexkit go` ran and was reopened", mention["body"])
+        self.assertIn("It closed while `/nexkit go` ran and was reopened", mention["body"])
 
     def test_a_plan_whose_no_change_is_only_quotes_goes_on_to_its_change(self):
         # An agent wrote the empty string as `""`: the plan's change is still made.
@@ -1824,7 +1960,7 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         pipe.play()
         self.assertEqual(pipe.gh.issues[5]["state"], "open")
-        self.assertTrue(pipe.gh.comments_matching(5, "every sub-issue of this parent issue"))
+        self.assertTrue(pipe.gh.comments_matching(5, "Every sub-issue of this parent issue"))
 
     def test_a_plan_too_large_without_parts_plans_once_more_then_waits(self):
         def script(pipe, inputs):

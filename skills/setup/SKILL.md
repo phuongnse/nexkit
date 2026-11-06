@@ -139,7 +139,11 @@ files or repository settings, and wait for confirmation.
    `merge.after_workflows` (for example `["ci.yml"]`, or
    `nexkit init --after-workflow ci.yml`) so NexKit starts them after each merge; each one
    needs a `workflow_dispatch` trigger, which is a change the user makes to that workflow
-   file.
+   file. When a CI workflow runs the commands of `checks` on every branch, `/nexkit review`
+   runs them again on a person's pull request, and `nexkit doctor` says so: offer to let
+   that workflow run on the default branch only, with a `paths` filter of its own file for
+   pull requests, and to require `nexkit/checks` instead of its jobs (see *Reviewing your
+   own pull requests* in the configuration docs).
 
    If the repository's agent instructions hold rules that every pull request must meet,
    such as docs that change with the code, offer `"review": {"checklist": ["<rule>"]}`:
@@ -193,8 +197,12 @@ files or repository settings, and wait for confirmation.
    started that run, and never while one is queued or in progress. It needs the
    `workflow_dispatch` trigger like every entry there.
    When an issue such as a docs sweep must run after the rest of its milestone, offer
-   `nexkit init --last-in-milestone-label LABEL`, which sets
-   `autopilot.last_in_milestone_label` and creates the label.
+   `nexkit init --last-in-milestone-label LABEL`, which gives that label wave 1 in
+   `autopilot.labels` and creates it; for more steps, such as a journey before the docs
+   sweep, offer labels of waves 1 and 2. When a person's `bug` issues must not wait behind
+   the milestone, offer `"priority": ["nexkit:ci", "nexkit:dependabot", "bug",
+   "nexkit:flaky"]`, and a label with `"hold": true` to hold an issue back. On a repository
+   that sets `autopilot.last_in_milestone_label`, replace it as `nexkit doctor` says.
    When the repository relays Dependabot alerts to issues by a script of its own, or wants
    them worked on, offer `"autopilot": {"dependabot": "high"}` instead: each sweep opens one
    issue per advisory at or above that severity. Say that the App then needs the *Dependabot

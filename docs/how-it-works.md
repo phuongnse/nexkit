@@ -668,7 +668,8 @@ against its base branch, as its *Files changed* tab shows. When it does not:
 
 - No round runs and nothing merges. NexKit closes the pull request without merging, and
   its issue as completed, as a merge would, with its parents under `close_parent_issues`.
-  The outcome is `already_on_base`; nobody is mentioned.
+  It deletes the branch as after a merge (see *Branches of closed work* below). The outcome
+  is `already_on_base`; nobody is mentioned.
 - The pull request's round comment and a comment on the issue say that the base branch
   already holds the change. They name the commit that brought it when NexKit can tell
   one: outside a fix round, the only commit of the base branch, merged into the pull
@@ -697,6 +698,20 @@ only a `nexkit/issue-<number>` branch of this repository, never the base branch,
 one that an open pull request targets, since deleting it would close that pull request.
 When the delete fails, the round's comment says why and that the branch stays; the merge
 and the issue's close stay. With the setting off, every branch stays.
+
+**Branches of closed work.** The same setting and the same guards apply when NexKit closes
+its own pull request without merging it: `already_on_base`, a pull request that a split
+superseded, and one whose issue autopilot closed because the plan after a round found that
+no change is needed. A person who closes a NexKit pull request leaves its branch, and so
+does an issue that closes while its pull request stays open, as `merge_issue_closed` does
+for a person to decide.
+
+Each sweep then picks up what is left: it deletes up to three `nexkit/issue-<number>`
+branches whose issue is closed and whose pull requests are all closed or merged. It keeps a
+branch that an open pull request targets. It also keeps one with no pull request, and one
+that moved after its pull request ended, since nothing else holds those commits; GitHub can
+restore any other from its pull request. A branch it could not delete gets one comment on
+its issue that says why, and stays until a person acts.
 
 **An issue closed while its round runs.** `route` checks that the issue is open when a
 command starts, and NexKit checks again before it acts on it. When a person closed the
@@ -888,6 +903,8 @@ dispatch of the workflow. A *sweep* decides which:
    pull request that conflicts with its base branch, as described in *Resolving
    conflicts* under [Work without a command](#work-without-a-command). With
    `conflicts.auto_resolve` and autopilot off, sweeps do only this.
+5. It deletes the branches of closed work (see *Branches of closed work* under
+   [Stages](#stages)).
 
 Only the *blocked by* relationships make one issue wait for another, so a relationship
 belongs only where an issue really needs another first; a needless one only slows the

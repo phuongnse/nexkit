@@ -506,6 +506,13 @@ class FakeGitHub:
         if self.delete_error:
             raise self.delete_error
         self.deleted.append(branch)
+        self.branches.pop(branch, None)
+
+    def branches_like(self, prefix):
+        return [(n, sha) for n, sha in sorted(self.branches.items()) if n.startswith(prefix)]
+
+    def head_pulls(self, branch):
+        return [p for p in self.pulls.values() if p["head"]["ref"] == branch]
 
     def create_pull(self, title, head, base, body):
         number = max([*self.issues, *self.pulls, 0]) + 1

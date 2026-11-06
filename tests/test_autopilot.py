@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import autopilot, state
+from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.report import report
 from nexkit.route import route
@@ -1162,6 +1163,52 @@ class SplitTests(AnswerAndSplitCase):
         self.assertEqual(self.gh.pulls[9]["state"], "closed")
         self.assertTrue(self.gh.comments_matching(9, "Superseded by #10, #11"))
         self.assertEqual(self.started(), [("plan", 5), ("plan", 10)])
+        self.assertEqual(self.gh.deleted, [])  # the repository keeps head branches
+
+    def timed_out_pull(self):
+        """An issue whose pull request's round ran out of time, and the plan it asked for."""
+        self.issue(5)
+        self.posted_plan(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(9, 5)
+        round_ = {
+            "round": 2,
+            "trigger": "fix",
+            "status": "failure",
+            "url": "u",
+            "outcome": "agent_error",
+            "timed_out": True,
+        }
+        self.gh.comment(9, render_run(round_))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+
+    def test_a_split_that_supersedes_a_pull_request_deletes_its_branch(self):
+        self.gh.delete_on_merge = True
+        self.timed_out_pull()
+        self.posted_plan(5, too_large=True, split=self.PARTS)
+        self.sweep()
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+        self.assertTrue(self.gh.comments_matching(9, "Deleted branch `nexkit/issue-5`."))
+
+    def test_a_split_names_the_branch_it_could_not_delete(self):
+        self.gh.delete_on_merge = True
+        self.gh.delete_error = GitHubError(403, "Resource not accessible by integration")
+        self.timed_out_pull()
+        self.posted_plan(5, too_large=True, split=self.PARTS)
+        self.sweep()
+        self.assertEqual(self.gh.pulls[9]["state"], "closed")
+        self.assertTrue(self.gh.comments_matching(9, "Could not delete branch `nexkit/issue-5`"))
+
+    def test_an_issue_that_autopilot_closes_takes_its_pull_request_and_branch_along(self):
+        self.gh.delete_on_merge = True
+        self.timed_out_pull()
+        self.posted_plan(5, no_change="main has the fix already.")
+        self.sweep()
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+        self.assertEqual(self.gh.pulls[9]["state"], "closed")
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+        self.assertTrue(self.gh.comments_matching(9, "#5 closed"))
 
     def test_a_too_large_plan_that_a_person_implemented_anyway_is_not_split(self):
         self.issue(5)
@@ -2624,8 +2671,6 @@ class CIWaitTests(AutopilotCase):
         self.assertEqual(len(self.fixes()), 2)
 
     def test_a_failed_dispatch_of_the_round_waited_for_takes_its_count_back(self):
-        from nexkit.github import GitHubError
-
         pull = self.open_pull(5, 10)
         self.assertEqual(self.report_round(5, pull)["outcome"], "ci_waiting")
         self.ci_run("success", 52)
@@ -2743,7 +2788,6 @@ class CIWaitTests(AutopilotCase):
 
     def test_a_required_check_failing_as_main_does_while_a_merge_waits_waits_too(self):
         from nexkit.context import _after_failed_checks
-        from nexkit.github import GitHubError
 
         # Issue 5's and issue 7's approved pull requests wait for the required check
         # `Unit tests`, a job of `ci.yml`, which then fails in `make test`: for #10 in the

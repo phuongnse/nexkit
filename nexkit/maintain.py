@@ -20,7 +20,7 @@ from . import autopilot, progress
 from .autopilot import in_repository
 from .config import setting
 from .github import GitHubError
-from .route import RUN_ID, implementing, issue_from_branch
+from .route import BRANCH_PREFIX, RUN_ID, implementing, issue_from_branch
 from .state import (
     CONTINUED,
     FAILURE,
@@ -96,6 +96,10 @@ ON_BASE_FAILED = (
     "the base branch already holds this change, but NexKit could not close the pull "
     "request or its issue; close them yourself"
 )
+# The most branches of closed work a sweep deletes, so that the first sweep after a backlog
+# stays short, and what marks its comment about a branch it could not delete.
+STALE_BRANCHES = 3
+BRANCH_KEPT = "<!-- nexkit:branch-kept -->"
 
 
 def enabled(task, cfg):
@@ -158,6 +162,94 @@ def close_parents_safely(gh, number):
         return [f"Could not check the parent issue of #{number}: {exc}"]
 
 
+def delete_head_branch(gh, pr):
+    """Delete the head branch of a pull request that NexKit merged or closed, when the
+    repository deletes head branches on merge, in case GitHub has not done it by itself.
+    Only a NexKit branch of this repository goes, never the base branch, nor one that open
+    pull requests target, which its deletion would close. Returns lines for the round's
+    comment. A failure leaves the merge or the close as it is."""
+    branch = ""
+    try:
+        if not gh.deletes_merged_branches():
+            return []
+        pull = gh.pull(pr)
+        head = pull.get("head") or {}
+        branch = head.get("ref") or ""
+        own = (head.get("repo") or {}).get("full_name") == gh.repository
+        base = (pull.get("base") or {}).get("ref")
+        if not own or not branch.startswith(BRANCH_PREFIX) or branch == base:
+            return []
+        targeting = ", ".join(f"#{found['number']}" for found in gh.pulls_into(branch))
+        if targeting:
+            return [f"Kept branch `{branch}`, the base branch of {targeting}."]
+        gh.delete_branch(branch)
+    except GitHubError as exc:
+        name = f"branch `{branch}`" if branch else "the branch"
+        return [f"Could not delete {name}: {exc}. It stays; delete it yourself."]
+    return [f"Deleted branch `{branch}`."]
+
+
+def _stale(gh, name, sha, number):
+    """Whether the NexKit branch `name` at `sha` is left over from closed work: issue
+    `number` is closed, each of its pull requests is closed or merged and one of them ended
+    at `sha`, and no open pull request targets it. A closed pull request keeps its commits,
+    so a person can restore such a branch from it; a branch without one, or that moved
+    since, may hold work that nothing else keeps."""
+    issue = gh.issue(number)
+    if issue.get("state") != "closed" or "pull_request" in issue:
+        return False
+    pulls = [
+        pull
+        for pull in gh.head_pulls(name)
+        if ((pull.get("head") or {}).get("repo") or {}).get("full_name") == gh.repository
+    ]
+    if any(pull.get("state") == "open" for pull in pulls):
+        return False
+    return sha in {pull["head"].get("sha") for pull in pulls} and not gh.pulls_into(name)
+
+
+def _reported(gh, number, name):
+    """Whether NexKit said on issue `number` that it could not delete the branch `name`."""
+    return any(
+        by_bot(c) and BRANCH_KEPT in (c.get("body") or "") and f"`{name}`" in c["body"]
+        for c in gh.comments(number)
+    )
+
+
+def delete_stale_branches(gh, limit=STALE_BRANCHES):
+    """Delete up to `limit` NexKit branches left over from closed work (see `_stale`), when
+    the repository deletes head branches on merge. A branch NexKit could not delete gets a
+    comment on its issue, once, and stays until a person acts. Returns lines for the log."""
+    try:
+        if not gh.deletes_merged_branches():
+            return []
+        branches = gh.branches_like(BRANCH_PREFIX)
+    except GitHubError as exc:
+        return [f"Could not list NexKit's branches: {exc}"]
+    lines, tried = [], 0
+    for name, sha in branches:
+        number = issue_from_branch(name)
+        if number is None or tried >= limit:
+            continue
+        try:
+            if not _stale(gh, name, sha, number) or _reported(gh, number, name):
+                continue
+            tried += 1
+            try:
+                gh.delete_branch(name)
+                lines.append(f"Deleted branch `{name}` of closed #{number}.")
+            except GitHubError as exc:
+                text = (
+                    f"NexKit could not delete branch `{name}`: {exc}. It stays; delete it yourself."
+                )
+                gh.comment(number, f"{BRANCH_KEPT}\n{text}")
+                lines.append(text)
+        except GitHubError as exc:
+            if exc.status != 404:
+                lines.append(f"Could not check branch `{name}`: {exc}")
+    return lines
+
+
 def holding_commit(gh, pr, merge_base):
     """The commit of the base branch that brought the change of pull request `pr`, which
     changes nothing since it merged `merge_base`, or None when NexKit cannot tell one: the
@@ -195,6 +287,7 @@ def close_on_base(gh, cfg, target, commit=None):
     except GitHubError as exc:
         return "on_base_failed", f"{held}, but NexKit could not close it: {exc}", commit
     lines = [f"{held}, so it changes no file against `{base}`. NexKit closed it without merging."]
+    lines += delete_head_branch(gh, pr)
     try:
         if gh.issue(issue).get("state") == "open":
             closed = f"NexKit closed #{pr} without merging: `{base}` already holds its change"
@@ -763,6 +856,7 @@ def maintain(gh, decision, cfg, *, workflow="", ref=""):
             # Without autopilot, nothing else ends a round whose report did not finish.
             settle = not autopilot.takes(cfg)
             lines += resolve_conflicts(gh, ref, workflow, ref, max_rounds, skip=busy, settle=settle)
+        lines += delete_stale_branches(gh)
         return lines or ["Nothing to start."]
     if task == "ci":
         return autopilot.after_ci_run(gh, cfg, decision, workflow, ref)

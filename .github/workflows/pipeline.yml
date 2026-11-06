@@ -32,8 +32,8 @@
 #          also end the comments and statuses of runs that ended without a report and
 #          merge pull requests whose required checks passed since, the sweep after
 #          a command NexKit started that route refused, and, instead of a command, the
-#          closing of a pull request whose base branch already holds its change; no
-#          agent and no repository checkout
+#          closing of a pull request whose base branch already holds its change, and
+#          deleting the branches of closed work; no agent and no repository checkout
 # finish   when report did not finish, such as after a lost runner or a cancelled run:
 #          start a sweep that waits for this run to end, handles its run comment and
 #          starts the conflict round held back while it ran; no agent and no repository
@@ -443,7 +443,7 @@ jobs:
           private-key: ${{ secrets[fromJSON(needs.route.outputs.config).github_app.private_key_secret] }}
           permission-actions: write # resume paused commands, start conflict rounds and autopilot's commands
           permission-checks: read # failures of flaky runs; the failed required checks of a merge that waits
-          permission-contents: write # merge a pull request whose required checks passed since; no checkout
+          permission-contents: write # merge a pull request whose required checks passed since, delete branches of closed work; no checkout
           permission-issues: write # close parent issues; mark paused runs as resumed; autopilot's issues
           permission-pull-requests: write # paused runs on pull requests; close a pull request a split supersedes
           permission-statuses: write # the pending statuses of a round that ended without a report

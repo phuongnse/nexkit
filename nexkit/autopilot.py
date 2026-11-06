@@ -1390,6 +1390,16 @@ def start(gh, step, workflow, ref, now=None):
     return f"Started /nexkit {command} on #{target}: {step['reason']}."
 
 
+def close_pull(gh, pull, text):
+    """Close NexKit's pull request `pull` without merging it, delete its branch when the
+    repository deletes head branches on merge, and say so in a comment."""
+    # `maintain` imports this module.
+    from .maintain import delete_head_branch
+
+    gh.close_pull(pull)
+    gh.comment(pull, "\n\n".join([text, *delete_head_branch(gh, pull)]))
+
+
 def close(gh, cfg, step, workflow, ref):
     """Close an issue as completed with the finding of its last round, which found no
     change is needed and recommended closing it. Returns lines for the log."""
@@ -1405,6 +1415,13 @@ def close(gh, cfg, step, workflow, ref):
     gh.comment(number, f"{intro}: no change is needed.\n\n{step['finding']}")
     gh.close_issue(number, "completed")
     lines = [f"Closed #{number}: {step['reason']}."]
+    if step.get("pull"):
+        # The plan after a round that ran out of time found no change is needed.
+        try:
+            close_pull(gh, step["pull"], f"#{number} closed: its plan found no change is needed.")
+            lines.append(f"Closed #{step['pull']} with it.")
+        except GitHubError as exc:
+            lines.append(f"Could not close #{step['pull']}: {exc}")
     if cfg["close_parent_issues"]:
         # `maintain` imports this module. Here it runs at once; the `issues: closed` run
         # that follows finds nothing left.
@@ -1439,8 +1456,7 @@ def split(gh, step, now=None):
                 gh.add_blocked_by(issue["number"], created[earlier - 1]["id"])
     listing = ", ".join(f"#{issue['number']}" for issue in created)
     if step.get("pull"):
-        gh.comment(step["pull"], f"Superseded by {listing}, the parts of #{number}.")
-        gh.close_pull(step["pull"])
+        close_pull(gh, step["pull"], f"Superseded by {listing}, the parts of #{number}.")
     text = f"NexKit autopilot split this issue as its plan suggests: {listing}."
     parts = [issue["number"] for issue in created]
     _save_record(gh, step, {"command": "split", "target": number, "parts": parts}, text, now)

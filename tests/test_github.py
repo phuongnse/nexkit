@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from nexkit.github import GitHub
+from nexkit.github import GitHub, GitHubError
 
 
 def editors(nodes, more=False, events=()):
@@ -36,3 +36,33 @@ class IssueEditorsTests(unittest.TestCase):
             {"event": "labeled", "actor": {"login": "carol"}},
         ]
         self.assertEqual(editors([], events=events), ["bob"])
+
+
+class BranchTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = GitHub(repository="acme/app", token="t")
+
+    def test_a_branch_that_is_gone_already_is_no_failure(self):
+        for error in (GitHubError(404, "Not Found"), GitHubError(422, "Reference does not exist")):
+            with mock.patch.object(self.gh, "request", side_effect=error):
+                self.gh.delete_branch("nexkit/issue-5")
+
+    def test_a_branch_that_a_rule_keeps_is_a_failure(self):
+        error = GitHubError(422, "Repository rule violations found")
+        with mock.patch.object(self.gh, "request", side_effect=error):
+            with self.assertRaises(GitHubError):
+                self.gh.delete_branch("nexkit/issue-5")
+
+    def test_it_lists_branches_by_prefix_with_their_heads(self):
+        refs = [{"ref": "refs/heads/nexkit/issue-5", "object": {"sha": "a" * 40}}]
+        with mock.patch.object(self.gh, "paginate", return_value=refs) as paginate:
+            found = self.gh.branches_like("nexkit/issue-")
+        self.assertEqual(found, [("nexkit/issue-5", "a" * 40)])
+        self.assertIn("/git/matching-refs/heads/nexkit/issue-", paginate.call_args.args[0])
+
+    def test_it_lists_the_pull_requests_of_a_branch_in_any_state(self):
+        with mock.patch.object(self.gh, "paginate", return_value=[]) as paginate:
+            self.gh.head_pulls("nexkit/issue-5")
+        self.assertEqual(
+            paginate.call_args.args[1], {"state": "all", "head": "acme:nexkit/issue-5"}
+        )

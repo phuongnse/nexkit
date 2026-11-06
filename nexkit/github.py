@@ -520,12 +520,23 @@ class GitHub:
 
     def delete_branch(self, branch):
         """Delete a branch. One that is gone already, which GitHub may have deleted by
-        itself after a merge, is no failure: GitHub answers 422 for it."""
+        itself after a merge, is no failure: GitHub answers 422 for it, and also, with other
+        words, for one that a rule keeps."""
         try:
             return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")
         except GitHubError as exc:
-            if exc.status not in (404, 422):
+            if exc.status != 404 and not (exc.status == 422 and "does not exist" in str(exc)):
                 raise
+
+    def branches_like(self, prefix):
+        """(name, head) of each branch whose name starts with `prefix`."""
+        found = self.paginate(f"{self._repo}/git/matching-refs/heads/{quote(prefix)}")
+        return [(ref["ref"].removeprefix("refs/heads/"), ref["object"]["sha"]) for ref in found]
+
+    def head_pulls(self, branch):
+        """The pull requests from `branch` of this repository's owner, in any state."""
+        owner = self.repository.split("/")[0]
+        return self.paginate(f"{self._repo}/pulls", {"state": "all", "head": f"{owner}:{branch}"})
 
     def close_pull(self, number):
         return self.request("PATCH", f"{self._repo}/pulls/{number}", {"state": "closed"})

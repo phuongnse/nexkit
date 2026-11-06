@@ -442,6 +442,37 @@ class ContextTests(unittest.TestCase):
         self.assertIn("No findings.", gather(self.gh, decision, "review")["previous_round"])
 
 
+class VouchedIssueTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5, user="bob", body="Harmless.")
+        self.gh.human_comment(5, "/nexkit trust", "alice")
+        self.gh.edits[5] = [("bob", "2026-01-02T00:00:00Z")]
+
+    def gather(self, **decision):
+        return gather(self.gh, {"action": "implement", "issue": 5, "head": None, **decision})
+
+    def test_a_round_nexkit_started_is_told_of_the_edit(self):
+        for fields in ({"autopilot": True}, {"auto": True}):
+            self.assertIn("@bob edited it", self.gather(**fields)["untrusted"])
+
+    def test_a_round_a_person_started_goes_on(self):
+        self.assertNotIn("untrusted", self.gather())
+
+    def test_the_review_reads_on_since_it_changes_nothing(self):
+        decision = {"action": "review", "issue": 5, "pr": None, "autopilot": True}
+        self.assertNotIn("untrusted", gather(self.gh, decision))
+
+    def test_an_edit_it_reads_is_always_one_it_checks(self):
+        # The text is read first, so an edit that the check misses is not in the text.
+        order = []
+        issue, edits = self.gh.issue, self.gh.issue_edits
+        self.gh.issue = lambda n: order.append("text") or issue(n)
+        self.gh.issue_edits = lambda n: order.append("edits") or edits(n)
+        self.gather(autopilot=True)
+        self.assertLess(order.index("text"), order.index("edits"))
+
+
 class PersonsPullRequestTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()

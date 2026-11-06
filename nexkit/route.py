@@ -157,7 +157,7 @@ def route(gh, event_name, event, inputs=None):
             return _none(f"@{actor} needs write access to run NexKit commands", number)
         on_pull = "pull_request" in event["issue"]
         if command == TRUST and not on_pull:
-            decision = _trust(event["issue"])
+            decision = _trust(event["issue"], note)
         else:
             decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
         decision.update(actor=actor, comment_id=event["comment"]["id"])
@@ -265,12 +265,16 @@ def route(gh, event_name, event, inputs=None):
     return _none(f"Event '{event_name}' is not handled")
 
 
-def _trust(issue):
+def _trust(issue, note):
     """A writer's `/nexkit trust` on `issue`: the `maintain` job answers it and starts a
-    sweep, which reads the comment."""
+    sweep, which reads the comment. With a note it vouches for nothing, since words after
+    the command can say the opposite."""
     number = issue["number"]
     if issue.get("state", "open") != "open":
         return _none("The issue is closed", number)
+    if note:
+        reason = "`/nexkit trust` takes no note. Comment it alone once you read the issue."
+        return _none(reason, number)
     return {"action": "maintain", "task": "trust", "issue": number, "reply_to": number}
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .autopilot import edited_after_vouch
 from .checks import RESULTS_DIR, failing_signatures
 from .config import NAME
 from .evidence import collect, named_runs, summary_lines
@@ -341,6 +342,14 @@ def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg
         "outside_plan": "None.",
     }
     stage = stage or decision["action"]
+    if stage in ("plan", "implement", "fix") and (
+        decision.get("auto") or decision.get("autopilot")
+    ):
+        # After the issue's text was read, so this round acts on no edit it does not see. A
+        # person who starts a round answers for the text themselves.
+        edited = edited_after_vouch(gh, issue)
+        if edited:
+            context["untrusted"] = edited
     if stage in ("plan", "implement", "fix") and ci and cfg:
         context["ci_evidence"] = ci_evidence(gh, cfg, issue, comments, ci, workflow)
     if stage == "plan":

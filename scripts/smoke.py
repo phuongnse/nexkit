@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 
 from nexkit.agent import run_stage, run_triage  # noqa: E402
 from nexkit.config import validate  # noqa: E402
-from nexkit.context import previous_review  # noqa: E402
+from nexkit.context import PERSON_PLAN, previous_review  # noqa: E402
 from nexkit.publish import pull_body, render_plan  # noqa: E402
 from nexkit.report import review_body  # noqa: E402
 from nexkit.runtimes import RUNTIMES  # noqa: E402
@@ -431,6 +431,16 @@ def main():
             raise SystemExit(f"second review: bad resolution in {previous}")
         if {item["severity"] for item in previous} != {"blocking", "suggestion"}:
             raise SystemExit(f"second review: severities not kept in {previous}")
+        # A person's pull request: no plan, so no criteria, and no limit on protected paths.
+        context = {**CONTEXT, "pr": 3, "issue": 3, "person": True, "plan": PERSON_PLAN}
+        person = stage(
+            "review", work, root / "person", args.program, context, checks=checks, base="main"
+        )
+        if person["output"]["verdict"] not in ("approve", "request_changes"):
+            raise SystemExit("person's review: no verdict")
+        if person["output"]["criteria"]:
+            raise SystemExit(f"person's review: criteria without a plan: {person['output']}")
+        print(review_body(person, checks, person=True), flush=True)
         conflicts(root, args.program)
         moved_base(root, args.program)
     print("Smoke test passed.")

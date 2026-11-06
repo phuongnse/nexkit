@@ -700,8 +700,10 @@ configuration on the default branch says, without secrets, and the `review` job 
 Both statuses are set on that head.
 
 - It pushes nothing, starts no fix or conflict round and never merges, also with `merge.auto`
-  on. The outcome is `person_reviewed`, whatever the checks and the review found, and nobody
-  is mentioned; the review says that a person makes any change.
+  on. A round whose review gave a verdict ends as `person_reviewed`, whatever the checks and
+  the review found, and nobody is mentioned; the review says that a person makes any change.
+  A review that gave none ends as on any pull request: it runs once more after a transient
+  error, and otherwise `notify` hears of it.
 - The reviewer gets no plan. It judges the change against the pull request's title and
   description, and it reviews `.github/`, `.nexkit/` and every other protected path like any
   other code, since a person wrote them.
@@ -710,22 +712,25 @@ Both statuses are set on that head.
   and a pull request from a fork runs nothing, since its checks would run code that nobody
   with write access pushed. Each reply says why.
 - Autopilot and `nexkit status` leave such a pull request out. Each review takes a new comment,
-  so a new commit needs `/nexkit review` again, and a run lost on the way shows no outcome
-  until then.
+  so a new commit needs `/nexkit review` again. No sweep looks after a run lost on the way: its
+  comment says running and both statuses stay `pending`, also where the rules require them,
+  until a writer comments the command again.
 
 **After an automatic merge.** NexKit closes the issue the pull request implements, unless
 GitHub closed it first through the pull request's `Closes` line. When the repository's
 *Automatically delete head branches* setting (`delete_branch_on_merge`) is on, NexKit
 deletes the pull request's head branch, if GitHub has not. It deletes
 only a `nexkit/issue-<number>` branch of this repository, never the base branch, and keeps
-one that an open pull request targets, since deleting it would close that pull request.
+one that an open pull request targets or another comes from, since deleting it would close
+that pull request.
 When the delete fails, the round's comment says why and that the branch stays; the merge
 and the issue's close stay. With the setting off, every branch stays.
 
 **Branches of closed work.** The same setting and the same guards apply when NexKit closes
 its own pull request without merging it: `already_on_base`, a pull request that a split
 superseded, and one whose issue autopilot closed because the plan after a round found that
-no change is needed. A person who closes a NexKit pull request leaves its branch, and so
+no change is needed. It keeps a branch that another open pull request comes from, as it does
+after a merge. A person who closes a NexKit pull request leaves its branch, and so
 does an issue that closes while its pull request stays open, as `merge_issue_closed` does
 for a person to decide.
 
@@ -1309,6 +1314,8 @@ Names a person meets in run comments and in that output:
 | `already_on_base` | The base branch already holds the pull request's change, so it changes no file against it. NexKit closed the pull request without merging and its issue as completed; the round's marker names the commit that brought the change when NexKit can tell one. See *A pull request brought up to date that changes nothing* under [Stages](#stages). |
 | `issue_closed` | The issue closed while its plan or `/nexkit go` ran, so NexKit published nothing. |
 | `merge_issue_closed` | Checks and review approved the pull request, but its issue is closed, so NexKit did not merge it; a person merges or closes it. |
+| `agent_untrusted` | Someone without write access edited a vouched issue, so a round NexKit started ran no agent. A new `/nexkit trust` starts it again; it counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. See [Vouching for an issue](configuration.md#vouching-for-an-issue). |
+| `merge_untrusted` | The same edit stopped a merge. A new `/nexkit trust` starts `/nexkit review`, which merges as usual. |
 | `person_reviewed` | `/nexkit review` checked and reviewed a person's pull request. NexKit changes nothing on it, whatever the round found. See *A person's pull request* under [Stages](#stages). |
 | `no_change` | An implement round found that no change is needed. The issue closes with its finding, at once or through autopilot's answer (see [Stages](#stages)). A plan's finding closes it through autopilot. |
 | `attention` | The reason a person is needed, when one is. |
@@ -1453,5 +1460,7 @@ once the limit has reset.
   controls, and a run that was running when the issue was opened (see [Issues from a
   workflow](configuration.md#issues-from-a-workflow)). A writer can vouch for any other
   issue with [`/nexkit trust`](configuration.md#vouching-for-an-issue). Autopilot reads that
-  comment itself, so nothing an agent wrote into a comment of NexKit's can stand in for it,
-  and an edit by anyone else after it ends the trust.
+  comment itself, so nothing an agent wrote into a comment of NexKit's can stand in for it.
+  The issue's author may still edit such an issue, so an edit by anyone else after it ends
+  the trust, and each round NexKit starts looks for one right after it read the text, before
+  any agent or setup, and so does a merge.

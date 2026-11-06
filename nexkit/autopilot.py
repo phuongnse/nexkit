@@ -174,6 +174,12 @@ ISSUES_LIMIT = 1000
 # advisory's id and the numbers of the alerts the issue covers.
 DEPENDABOT_PREFIX = "<!-- nexkit:dependabot "
 DEPENDABOT = re.compile(r"\A<!-- nexkit:dependabot (GHSA[a-z0-9-]+) ([0-9,]+) -->")
+# A part of a split of such an issue: on the line after its part marker, so that it stays in
+# scope without a milestone, as the issue does. No text of an agent comes before it.
+DEPENDABOT_PART_PREFIX = "<!-- nexkit:dependabot-part "
+DEPENDABOT_PART = re.compile(
+    r"\A<!-- nexkit:part \d+ -->\n<!-- nexkit:dependabot-part (GHSA[a-z0-9-]+) -->"
+)
 GHSA_ID = re.compile(r"GHSA(?:-[a-z0-9]{4}){3}")
 # The most issues for advisories that a sweep opens, so that the first sweep on a repository
 # with old alerts stays short: the next sweeps open the rest.
@@ -191,6 +197,10 @@ FAILED = {"failure", "timed_out"}
 # Events whose runs test a pull request rather than the branch they name.
 PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
 # Outcomes after which a run already started the next one by itself.
+# A round NexKit started, or a merge, stopped because someone without write access edited a
+# vouched issue. A new vouch starts it again.
+UNTRUSTED_ROUND = "agent_untrusted"
+UNTRUSTED_MERGE = "merge_untrusted"
 CHAINED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved", "superseded"}
 # The outcome of a round whose checks fail as the default branch does while a bug issue
 # for that failure is open: no fix round starts until the default branch passes again.
@@ -334,7 +344,7 @@ def scope(gh, cfg):
         issues += [
             issue
             for issue in nexkit_issues(gh, "open")
-            if dependabot_advisory(issue) and issue["number"] not in known
+            if advisory_work(issue) and issue["number"] not in known
         ]
     # A bug issue for a CI failure on the default branch goes before everything else, then
     # an issue for a Dependabot advisory, then one for flaky runs. An issue whose milestone
@@ -358,12 +368,12 @@ def taken(gh, cfg, issue):
 def in_scope(where, issue):
     """Whether an issue, open or closed, belongs to the scope. With `null` every issue of
     this repository does; a blocker can be in another repository. The issues for advisories
-    are in every scope, since they have no milestone."""
+    and their parts are in every scope, since they have no milestone."""
     url = issue.get("repository_url")
     here = not url or url.lower().endswith(f"/repos/{where['repository']}".lower())
     if where["every"]:
         return here
-    if where["dependabot"] and here and dependabot_advisory(issue):
+    if where["dependabot"] and here and advisory_work(issue):
         return True
     milestone = issue.get("milestone") or {}
     return where["milestone"] is not None and milestone.get("number") == where["milestone"]
@@ -397,7 +407,7 @@ def vouch(gh, issue):
         login = user.get("login") or ""
         if not login or user.get("type") == "Bot" or by_bot(comment):
             continue
-        if parse_command(comment.get("body"))[0] == TRUST and gh.can_write(login):
+        if parse_command(comment.get("body")) == (TRUST, "") and gh.can_write(login):
             return comment
     return None
 
@@ -408,8 +418,26 @@ def _vouch_problem(gh, issue, problem):
     is what they vouched for, so an earlier edit counts for nothing, and only writers and
     NexKit's App may change it after: a bot here is any workflow of the repository."""
     comment = vouch(gh, issue)
-    if comment is None:
-        return problem
+    return _edit_since(gh, issue, comment) if comment else problem
+
+
+def edited_after_vouch(gh, issue):
+    """Who changed an issue after a writer vouched for it who may not, or None, also without
+    a vouch. A sweep decides only when a command starts, and the author of a vouched issue
+    can still edit it, so what acts on its text later asks again: a round started by NexKit
+    just after it read the text (`context.gather`), and a merge."""
+    comment = vouch(gh, issue)
+    return _edit_since(gh, issue, comment) if comment else None
+
+
+def _vouched_again(gh, issue, comment):
+    """Whether a writer vouched for `issue` after the comment of the round that stopped."""
+    latest = vouch(gh, issue)
+    return latest is not None and latest["id"] > comment["id"]
+
+
+def _edit_since(gh, issue, comment):
+    """Who changed the issue since the vouch `comment` who may not, or None."""
     since = parse_iso(comment.get("created_at"))
     writer = comment["user"]["login"]
     for login, at in gh.issue_edits(issue["number"]):
@@ -767,6 +795,7 @@ UNCHANGED = {"retry", "lost", "up_to_date"}
 NEEDED = "a person is needed: "
 # What ends the wait of an issue that autopilot leaves alone.
 TRUST_HINT = f"a writer who read it comments `/nexkit {TRUST}`"
+UNTRUSTED_REASON = f"someone without write access edited the issue; {TRUST_HINT}"
 REPEATED = (
     "the round after autopilot's answers asked again, and nobody commented since; a person decides"
 )
@@ -1087,6 +1116,15 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
             reason = f"the round that pull request #{pull} started next did not run"
             return _step(issue, "waits", reason)
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
+    if latest.get("outcome") in (UNTRUSTED_ROUND, UNTRUSTED_MERGE):
+        if not _vouched_again(gh, issue, comment):
+            return _step(issue, "waits", latest.get("attention") or UNTRUSTED_REASON)
+        # A round that stopped gave its automatic round back; a merge needs a new review.
+        again = {"command": "fix", "count": True}
+        if latest["outcome"] == UNTRUSTED_MERGE:
+            again = {"command": "review"}
+        fields = {**start, "target": pull, "auto": "true", **again}
+        return _step(issue, "start", "a writer vouched for it again", **fields)
     if latest.get("outcome") == "merge_waiting":
         return _merge_step(gh, cfg, issue, pull, comment, latest, start, now)
     if latest.get("outcome") == CI_WAITING:
@@ -1249,6 +1287,10 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     blocked = waits_for(gh, issue, where) or rest_of_milestone(gh, cfg, issue)
     if blocked:
         return _step(issue, "waits", blocked[0], person=blocked[1])
+    if last and last.get("outcome") == UNTRUSTED_ROUND:
+        if _vouched_again(gh, issue, found[-1][0]):
+            return _step(issue, "start", "a writer vouched for it again", command="plan", **start)
+        return _step(issue, "waits", last.get("attention") or UNTRUSTED_REASON)
     if last is None or plan is None:
         return _step(issue, "start", "no plan yet", command="plan", **start)
     if last["command"] == "go":
@@ -1514,10 +1556,12 @@ def split(gh, step, now=None):
     milestone = (parent.get("milestone") or {}).get("number")
     labels = [label["name"] for label in parent.get("labels") or [] if label.get("name")]
     plan = f" from [its plan]({step['plan_url']})" if step.get("plan_url") else ""
+    ghsa = advisory_work(parent)
+    mark = f"{DEPENDABOT_PART_PREFIX}{ghsa} -->\n" if ghsa else ""
     created = []
     for index, part in enumerate(step["parts"], 1):
         body = (
-            f"<!-- nexkit:part {number} -->\n{part['body'].strip()}\n\n"
+            f"<!-- nexkit:part {number} -->\n{mark}{part['body'].strip()}\n\n"
             f"Part {index} of #{number}{plan}, which was too large for one session."
         )
         issue = gh.create_issue(part["title"].strip(), body, milestone, labels)
@@ -1597,6 +1641,14 @@ def dependabot_advisory(issue):
     """The id of the Dependabot advisory an issue that autopilot opened is about, or None."""
     match = DEPENDABOT.match(issue.get("body") or "")
     return match.group(1) if match and is_bot(author(issue)) else None
+
+
+def advisory_work(issue):
+    """The id of the advisory that an issue autopilot opened, or a part of it, is about, or
+    None."""
+    match = DEPENDABOT_PART.match(issue.get("body") or "")
+    part = match.group(1) if match and is_bot(author(issue)) else None
+    return dependabot_advisory(issue) or part
 
 
 # The rank of every issue that NexKit did not open for a failure or an advisory.
@@ -2258,7 +2310,8 @@ def _read_alerts(alerts, wanted):
     except GitHubError as exc:
         if alerts_off(exc):
             return None, ALERTS_TURNED_OFF
-        return None, NO_ALERTS_PERMISSION if exc.status in (401, 403, 404) else None
+        limited = "rate limit" in str(exc).lower()
+        return None, NO_ALERTS_PERMISSION if exc.status in (401, 403, 404) and not limited else None
 
 
 def _show_problem(gh, branch, problem):
@@ -2307,6 +2360,12 @@ def _covered(issue):
     return {int(number) for number in match.group(2).split(",") if number} if match else set()
 
 
+def _inert(text):
+    """`text` from an advisory or a manifest, for an issue that drives an agent without a
+    person's approval: on one line, and with nothing that closes a tag or a comment."""
+    return _plain(text).replace("<", "‹").replace(">", "›")
+
+
 def _package(alert):
     return ((alert.get("dependency") or {}).get("package") or {}).get("name") or "a package"
 
@@ -2318,8 +2377,8 @@ def _alert_line(alert):
     vulnerability = alert.get("security_vulnerability") or {}
     number = alert["number"]
     link = f"[#{number}]({alert['html_url']})" if alert.get("html_url") else f"#{number}"
-    line = f"- {link}: `{_plain(package.get('name'))}` ({_plain(package.get('ecosystem'))})"
-    line += f" in `{_plain(dependency.get('manifest_path'))}`"
+    line = f"- {link}: `{_inert(package.get('name'))}` ({_inert(package.get('ecosystem'))})"
+    line += f" in `{_inert(dependency.get('manifest_path'))}`"
     versions = _plain(vulnerability.get("vulnerable_version_range"))
     patched = _plain((vulnerability.get("first_patched_version") or {}).get("identifier"))
     if versions:
@@ -2328,28 +2387,29 @@ def _alert_line(alert):
 
 
 def _advisory_title(ghsa, found):
-    advisory = found["advisory"]
-    names = list(dict.fromkeys(_plain(_package(alert)) for alert in found["alerts"]))
+    """The title: prompts hold it outside their untrusted text, so it holds no words of the
+    advisory, only what names the packages and the advisory."""
+    names = list(dict.fromkeys(_inert(_package(alert)) for alert in found["alerts"]))
     packages = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
-    severity = _plain(advisory.get("severity"))
-    return _fit(f"Dependabot: {_plain(advisory.get('summary'))} in {packages} ({ghsa}, {severity})")
+    return _fit(f"Dependabot: {packages} ({ghsa}, {_inert(found['advisory'].get('severity'))})")
 
 
 def _open_advisory(gh, cfg, ghsa, found, earlier):
     """Open the issue of an advisory. Its text holds only what GitHub's advisory database
-    and the repository's manifests say, each on one line, since it drives an agent."""
+    and the repository's manifests say, each on one line, in a code span where it can
+    mention nobody, since it drives an agent."""
     advisory, alerts = found["advisory"], found["alerts"]
     numbers = ",".join(str(alert["number"]) for alert in alerts)
     people = "".join(f"@{login} " for login in cfg["notify"])
-    cve = _plain(advisory.get("cve_id"))
+    cve = _inert(advisory.get("cve_id"))
     named = f"[{ghsa}](https://github.com/advisories/{ghsa})" + (f", {cve}" if cve else "")
     closed = f"\n\n#{earlier['number']}, now closed, was about it too." if earlier else ""
     body = (
         f"{DEPENDABOT_PREFIX}{ghsa} {numbers} -->\n{people}Dependabot reports {named} "
-        f"({_plain(advisory.get('severity'))}): {_plain(advisory.get('summary'))}\n\n"
+        f"({_inert(advisory.get('severity'))}): `{_inert(advisory.get('summary'))}`\n\n"
         + "\n".join(_alert_line(alert) for alert in alerts)
-        + "\n\nUpdate each package to a patched version. Without one, stop using what the "
-        f"advisory names.{closed}"
+        + "\n\nUpdate each package to a patched version. For a package without one, ask a "
+        f"person how to go on.{closed}"
     )
     return gh.create_issue(_advisory_title(ghsa, found), body, None, ["bug"])
 

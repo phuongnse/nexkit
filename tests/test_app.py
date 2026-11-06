@@ -289,6 +289,27 @@ class SetupTests(unittest.TestCase):
         )
         self.assertIn("organization secrets", str(found.exception))
 
+    def test_an_organization_whose_secrets_cannot_be_read_goes_on(self):
+        with self.answers("", None, "Organization"):
+            self.assertEqual(scaffold.github_app(self.root, slug="nexkit-acme"), (APP, []))
+
+    def test_a_personal_repository_refused_that_list_and_still_lacks_the_secrets(self):
+        # GitHub answers 422 there, which says nothing about the repository's own secrets.
+        with self.answers("", None), self.assertRaises(app.AppError):
+            scaffold.github_app(self.root, slug="nexkit-acme")
+
+    def test_the_link_follows_who_owns_a_public_app(self):
+        def fake_gh(*args):
+            if args[0] == "secret":
+                return ""
+            return "olivia User\n" if "apps/nexkit-acme" in args[1] else "Organization\n"
+
+        with mock.patch.object(scaffold, "_gh", side_effect=fake_gh):
+            with self.assertRaises(app.AppError) as found:
+                scaffold.github_app(self.root, slug="nexkit-acme")
+        self.assertIn("https://github.com/settings/apps/nexkit-acme,", str(found.exception))
+        self.assertIn("organization secrets", str(found.exception))
+
     def test_a_named_app_goes_on_when_github_cannot_list_the_secrets(self):
         with mock.patch.object(scaffold, "_gh", return_value=None):
             self.assertEqual(scaffold.github_app(self.root, slug="nexkit-acme"), (APP, []))

@@ -21,7 +21,7 @@ from nexkit.report import (
     workflow_file,
 )
 from nexkit.route import route
-from nexkit.state import check_fingerprint, read_state, render_run, render_state
+from nexkit.state import check_fingerprint, empty_state, read_state, render_run, render_state
 from tests.support import FakeGitHub, make_config
 
 HEAD = "c" * 40
@@ -135,6 +135,36 @@ class ReportCase(unittest.TestCase):
 
     def statuses(self):
         return {(s["context"], s["state"]) for s in self.gh.statuses}
+
+
+class EditedIssueTests(ReportCase):
+    def setUp(self):
+        super().setUp()
+        self.gh.issues[5]["user"] = {"login": "bob"}
+        self.gh.human_comment(5, "/nexkit trust", "alice")
+        self.gh.edits[5] = [("bob", "2026-01-02T00:00:00Z")]
+        self.auto = make_config(merge={"auto": True})
+
+    def test_an_approved_pull_request_of_an_edited_issue_is_not_merged(self):
+        self.candidate()
+        outcome = self.run_report(cfg=self.auto)
+        self.assertEqual(outcome["outcome"], "merge_untrusted")
+        self.assertEqual(self.gh.merged, [])
+        self.assertIn("comment `/nexkit trust`", self.gh.run_comments(6)[-1]["body"])
+        self.assertIn("/nexkit trust", outcome["attention"])
+
+    def test_a_round_that_stopped_on_the_edit_gives_its_automatic_round_back(self):
+        state = {**empty_state(5), "auto_fixes": 1}
+        self.gh.comment(6, render_state(state))
+        self.write(
+            "nexkit-agent", "result.json", {"status": "untrusted", "error": "@bob edited it"}
+        )
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
+        outcome = self.run_report(d, published=False)
+        self.assertEqual(outcome["outcome"], "agent_untrusted")
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
+        self.assertIn("/nexkit trust", outcome["attention"])
 
 
 class PersonsPullRequestTests(ReportCase):

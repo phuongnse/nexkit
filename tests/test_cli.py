@@ -242,6 +242,8 @@ class InitDoctorTests(unittest.TestCase):
             ("'branches' include main", "on: {push: {branches: [main]}, pull_request: {}}\n"),
             ("'branches' include main", "on:\n  push: {branches: [main]}\n"),
             ("no branch filter", "on: {push: {}, workflow_dispatch: {}}\n"),
+            ("no branch filter", "on:\n- push\n- workflow_dispatch\n"),
+            ("'branches' include main", "on:\n  push:\n    'branches': [main]\n"),
             ("no branch filter", "on:\n  push: null\n"),
             (
                 "'branches-ignore' leaves main out",
@@ -264,6 +266,9 @@ class InitDoctorTests(unittest.TestCase):
             "on:\n  push:\n    tags: ['v*']\n",
             "on: {pull_request: {}, workflow_dispatch: {}}\n",
             "on: {push: {branches-ignore: [main]}}\n",
+            "on: { pull_request: { branches: [push] } }\n",
+            "on:\n  push: *filters\n",
+            "on:\n  push:\n    'branches': [develop]\n",
             # A comment is no trigger.
             "on:\n  # push:\n  workflow_dispatch:\n",
         ):
@@ -832,7 +837,8 @@ class InitDoctorTests(unittest.TestCase):
 
     def test_doctor_checks_the_secrets_of_the_app(self):
         cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
-        found = scaffold._app_secrets(cfg, {"NEXKIT_APP_ID"}, "acme/app")
+        with mock.patch.object(scaffold, "_gh", return_value="User\n"):
+            found = scaffold._app_secrets(cfg, {"NEXKIT_APP_ID"}, "acme/app")
         self.assertEqual(found[0], (True, "github_app.app_id_secret: NEXKIT_APP_ID is set"))
         self.assertFalse(found[1][0])
         self.assertIn("gh secret set NEXKIT_APP_PRIVATE_KEY --repo acme/app", found[1][1])
@@ -1456,6 +1462,25 @@ class PipelineCommandTests(unittest.TestCase):
             # Setup never sees the agent's credential.
             self.assertIn("key ***, agent []", text)
         self.assertIn("### NexKit implement: error", summary.read_text())
+
+    def test_a_round_on_an_edited_issue_runs_no_setup_and_no_agent(self):
+        out = self.root / "out"
+        out.mkdir()
+        (out / "context.json").write_text(json.dumps({"untrusted": "@bob edited it"}))
+        env = {"NEXKIT_DECISION": json.dumps({"action": "implement", "base": "main"})}
+        env["NEXKIT_CONFIG"] = (self.root / "repo/.nexkit/config.json").read_text()
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch("nexkit.checks.setup") as setup,
+            mock.patch("nexkit.agent.run_stage") as run_stage,
+            mock.patch("builtins.print"),
+        ):
+            code = cli.main(["agent", "--repo", str(self.root / "repo"), "--out", str(out)])
+        self.assertEqual(code, 0)
+        setup.assert_not_called()
+        run_stage.assert_not_called()
+        result = json.loads((out / "result.json").read_text())
+        self.assertEqual((result["status"], result["error"]), ("untrusted", "@bob edited it"))
 
     def test_agent_that_raises_leaves_a_redacted_error(self):
         out = self.root / "out"

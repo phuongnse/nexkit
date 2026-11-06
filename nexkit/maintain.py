@@ -167,9 +167,9 @@ def close_parents_safely(gh, number):
 def delete_head_branch(gh, pr):
     """Delete the head branch of a pull request that NexKit merged or closed, when the
     repository deletes head branches on merge, in case GitHub has not done it by itself.
-    Only a NexKit branch of this repository goes, never the base branch, nor one that open
-    pull requests target, which its deletion would close. Returns lines for the round's
-    comment. A failure leaves the merge or the close as it is."""
+    Only a NexKit branch of this repository goes, never the base branch, nor one that another
+    open pull request targets or comes from, which its deletion would close. Returns lines
+    for the round's comment. A failure leaves the merge or the close as it is."""
     branch = ""
     try:
         if not gh.deletes_merged_branches():
@@ -184,6 +184,10 @@ def delete_head_branch(gh, pr):
         targeting = ", ".join(f"#{found['number']}" for found in gh.pulls_into(branch))
         if targeting:
             return [f"Kept branch `{branch}`, the base branch of {targeting}."]
+        others = [found["number"] for found in gh.open_pulls(branch) if found["number"] != pr]
+        if others:
+            listed = ", ".join(f"#{number}" for number in others)
+            return [f"Kept branch `{branch}`, the head of {listed}."]
         gh.delete_branch(branch)
     except GitHubError as exc:
         name = f"branch `{branch}`" if branch else "the branch"

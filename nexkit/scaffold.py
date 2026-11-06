@@ -176,19 +176,21 @@ def _refuse_without_secrets(root, slug):
     anything, with where they come from. A repository that GitHub cannot be asked about
     goes on: `nexkit doctor` checks the secrets later."""
     repo = repository_of(root)
-    names = secret_names(repo) if repo else None
+    if not repo:
+        return
+    kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
+    names = secret_names(repo, kind == "Organization")
     lacking = [name for name in configuration.APP_SECRETS.values() if name not in (names or ())]
     if names is None or not lacking:
         return
-    kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
-    organization = kind == "Organization"
+    owner, organization = _app_owner(slug, repo)
     held = (
         "; or set them once as organization secrets"
-        if organization
+        if kind == "Organization"
         else ". A personal account holds no shared secrets, and no one can read a secret back, "
         "so each of its repositories needs a new key"
     )
-    steps = app.key_steps(slug, repo.split("/")[0], organization)
+    steps = app.key_steps(slug, owner, organization)
     raise app.AppError(
         f"{repo} has no secret {' or '.join(lacking)} for the App {slug}. {steps}{held} "
         f"(see {configuration.APP_DOCS})"
@@ -289,15 +291,28 @@ def gh_token():
     return (_gh("auth", "token") or "").strip() or None
 
 
-def secret_names(repo):
+def secret_names(repo, organization=False):
     """The names of the secrets that `repo` can read: its own and, since an organization
     can hold secrets once for all its repositories, its owner's. None when GitHub cannot
-    be asked."""
+    be asked: with `organization`, also about those. GitHub answers 422 for a personal
+    account's repository, which has none."""
     own = _gh("secret", "list", "--repo", repo, "--json", "name", "-q", ".[].name")
     if own is None:
         return None
     shared = _gh("api", f"repos/{repo}/actions/organization-secrets", "-q", ".secrets[].name")
+    if shared is None and organization:
+        return None
     return {*own.split(), *(shared or "").split()}
+
+
+def _app_owner(slug, repo):
+    """(login, whether it is an organization) of who owns the App. GitHub shows a public App
+    to anyone; a private one is installed only by its owner, so it is the repository's."""
+    found = (_gh("api", f"apps/{slug}", "-q", '.owner.login + " " + .owner.type') or "").split()
+    if len(found) == 2 and found[1] in ("User", "Organization"):
+        return found[0], found[1] == "Organization"
+    kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
+    return repo.split("/")[0], kind == "Organization"
 
 
 def repository_of(root):
@@ -370,7 +385,8 @@ def _indent(line):
 def push_filters(workflow):
     """The filters of a workflow's `push` trigger, such as {"branches": ["main"]}, or None
     without that trigger. Reads `on: push`, a list of events, a `{mapping}` on one line and
-    the usual block form, at any indent."""
+    the block form. What only a YAML parser reads, such as a list over several lines inside
+    brackets or a `push: *alias`, counts as no filter, or as no trigger."""
     lines = _uncommented(workflow).splitlines()
     found = next(
         (
@@ -389,7 +405,7 @@ def push_filters(workflow):
         return {} if "push" in _items(inline) else None
     block = []
     for line in lines[start + 1 :]:
-        if line.strip() and not line[0].isspace():
+        if line.strip() and not line[0].isspace() and not line.startswith("-"):
             break
         if line.strip():
             block.append(line)
@@ -403,13 +419,15 @@ def push_filters(workflow):
         match = re.fullmatch(r"""['"]?push['"]?:(.*)""", text)
         if match:
             inline = match.group(1).strip()
+            if inline.startswith(("*", "&")):
+                return None
             return _flow_push(f"push: {inline}") if inline else _filters(block[at + 1 :], events)
     return None
 
 
 def _flow_push(text):
     """The filters of `push` in a `{mapping}` on one line, or None without it."""
-    match = re.search(r"\bpush\b\s*:?\s*(\{.*?\})?", text)
+    match = re.search(r"\bpush\b['\"]?\s*:\s*(\{.*?\})?", text)
     if not match:
         return None
     found = re.findall(r"([a-z-]+)\s*:\s*(\[[^\]]*\]|[^,{}\s]+)", match.group(1) or "")
@@ -423,7 +441,7 @@ def _filters(lines, events):
         if _indent(line) <= events:
             break
         text = line.strip()
-        match = re.fullmatch(r"([a-z-]+):(.*)", text)
+        match = re.fullmatch(r"""['"]?([a-z-]+)['"]?:(.*)""", text)
         if match:
             key = match.group(1)
             filters[key] = _items(match.group(2))
@@ -896,14 +914,14 @@ def _secrets_set(cfg, names, repo):
 def _app_secrets(cfg, names, repo):
     """Findings: the secrets of `github_app` are set, for the repository or its owner."""
     findings = []
-    kind = None
+    where = None
     for key in configuration.APP_SECRETS:
         name = cfg["github_app"][key]
         if name in names:
             findings.append((True, f"github_app.{key}: {name} is set"))
             continue
-        kind = kind or (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
-        where = app.app_url(cfg["github_app"]["slug"], repo.split("/")[0], kind == "Organization")
+        slug = cfg["github_app"]["slug"]
+        where = where or app.app_url(slug, *_app_owner(slug, repo))
         findings.append(
             (
                 False,

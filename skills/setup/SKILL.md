@@ -127,7 +127,8 @@ files or repository settings, and wait for confirmation.
    which checks the installation and sets both secrets. The id and a new key are on the
    App's settings page, `https://github.com/settings/apps/<slug>` (for an organization
    `https://github.com/organizations/<org>/settings/apps/<slug>`), not on its installation's
-   page. With an organization's secrets, `--app-slug SLUG` is enough. Run `nexkit doctor`;
+   page. With an organization's secrets, `--app-slug SLUG` is enough; it stops and says what
+   to do when the repository cannot read them. Run `nexkit doctor`;
    only with the key file can it check the installation.
 
 7. **Automatic merges.** The repository's own CI runs on NexKit's pull requests and on its
@@ -191,6 +192,9 @@ files or repository settings, and wait for confirmation.
    that many commits reached the default branch since its latest run there, whatever
    started that run, and never while one is queued or in progress. It needs the
    `workflow_dispatch` trigger like every entry there.
+   When an issue such as a docs sweep must run after the rest of its milestone, offer
+   `nexkit init --last-in-milestone-label LABEL`, which sets
+   `autopilot.last_in_milestone_label` and creates the label.
    When the repository relays Dependabot alerts to issues by a script of its own, or wants
    them worked on, offer `"autopilot": {"dependabot": "high"}` instead: each sweep opens one
    issue per advisory at or above that severity. Say that the App then needs the *Dependabot

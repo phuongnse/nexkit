@@ -630,6 +630,50 @@ class ScenarioTests(unittest.TestCase):
         pipe.play()
         self.assertEqual(len(pipe.gh.comments_matching(1, autopilot.DEPENDABOT_STILL_OPEN)), 1)
 
+    def test_the_parts_of_an_advisory_run_in_the_milestone_scope(self):
+        parts = [{"title": "First part", "body": "A."}, {"title": "Second part", "body": "B."}]
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan" and int(inputs["number"]) == 1:
+                return plan(too_large=True, split=parts)
+            return plan() if inputs["command"] == "plan" else done()
+
+        cfg = config(autopilot={"dependabot": "high"}, close_parent_issues=True)
+        pipe = Pipeline(self, cfg, script)
+        pipe.alerts = pipe.gh
+        pipe.gh.alerts = [alert()]
+        played = pipe.play()
+        self.assertIn(("go", 2), played)
+        self.assertIn(("go", 3), played)
+        self.assertEqual(pipe.gh.issues[1]["state"], "closed")
+
+    def test_an_edit_while_a_round_runs_stops_it_until_a_writer_vouches_again(self):
+        def at(days):
+            return (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if not pipe.gh.edits.get(5):
+                # The author edits the issue just after this `/nexkit go` started.
+                pipe.gh.edits[5] = [("bob", at(1))]
+            if autopilot.edited_after_vouch(pipe.gh, pipe.gh.issues[5]):
+                # What `context.gather` and the agent job make of it.
+                return {"agent": {"status": "untrusted", "error": "@bob edited it"}}
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5, user="bob")
+        pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "agent_untrusted")
+        self.assertEqual(pipe.gh.pulls, {})
+        comment = pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        comment["created_at"] = at(2)
+        played = pipe.play()
+        self.assertEqual(played[2:], [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
     def test_an_app_that_may_not_read_alerts_opens_nothing_and_the_other_work_goes_on(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done()

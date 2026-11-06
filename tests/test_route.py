@@ -166,6 +166,12 @@ class TrustCommandTests(unittest.TestCase):
         decision = route(self.gh, "issue_comment", event)
         self.assertEqual((decision["action"], decision["reason"]), ("none", "The issue is closed"))
 
+    def test_a_note_is_refused(self):
+        event = comment_event(5, "/nexkit trust once I have read it")
+        decision = route(self.gh, "issue_comment", event)
+        self.assertEqual(decision["action"], "none")
+        self.assertIn("takes no note", decision["reason"])
+
     def test_only_a_comment_vouches_never_a_dispatch(self):
         inputs = {"command": "trust", "number": "5"}
         decision = route(self.gh, "workflow_dispatch", {"sender": {"login": "alice"}}, inputs)

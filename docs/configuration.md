@@ -1044,10 +1044,19 @@ release.
 - The comment itself is the record, read at each sweep. It counts only from someone who has
   write access at that sweep, never from a bot, and only on the issue itself. The same comment
   from anyone else changes nothing, and NexKit says why.
-- It covers the issue as the writer read it. An edit of its title or text by anyone but a
-  writer or NexKit's App after the comment makes autopilot leave the issue alone again, and
-  `nexkit status` names who edited it. Commenting the command again vouches for the new text.
-  A bot's edit counts too, since any workflow of the repository can write as one.
+- The command takes no note, since words after it could say the opposite: NexKit refuses it,
+  and such a comment vouches for nothing.
+- It covers the issue as the writer read it, and its author can still edit it. An edit of its
+  title or text by anyone but a writer or NexKit's App after the comment makes autopilot leave
+  the issue alone again, and `nexkit status` names who edited it. Commenting the command again
+  vouches for the new text. A bot's edit counts too, since any workflow of the repository can
+  write as one.
+- A sweep is not the only check. Each plan, implement or fix round that NexKit started looks
+  for such an edit right after it read the text, so its agent never acts on it: the round ends
+  as `agent_untrusted` before setup and any agent, and gives its automatic round back. A merge
+  looks too, and ends as `merge_untrusted`. Commenting the command again starts the same work:
+  a plan, the fix round, or `/nexkit review` before the merge. A round that a person started
+  with a command goes on, since that person answers for the text.
 - Parts that autopilot creates from a split of the issue inherit the trust, and lose it with
   the issue. An issue that is a part but was not opened by NexKit's App inherits nothing, so
   it needs the comment itself.
@@ -1071,6 +1080,10 @@ default branch and before the issues for flaky runs.
 - An advisory that an open issue marks gets no other issue, whatever its alerts.
 - A sweep opens at most five, so that the first one on a repository with old alerts stays
   short; the next sweeps open the rest. It reads the oldest 100 alerts of those severities.
+- A split of such an issue keeps its parts in scope in the same way, without a milestone.
+- The issue holds the advisory's summary as quoted text, and its title holds only the packages
+  and the advisory's id. It asks the agent to ask a person about a package with no patched
+  version, so such a plan waits for one.
 - A closed issue does not lead to another for the same alerts, so a fix that an alert
   outlives is not repeated: a day after the issue closed, one comment on it mentions `notify`.
   Reopen the issue or dismiss the alerts. An alert that no issue covered, such as in another
@@ -1086,7 +1099,8 @@ opens nothing and the rest of its work goes on. It leaves what is missing as a
 `nexkit/dependabot` commit status on the default branch's tip, since nothing else can tell the
 two apart: `nexkit status` shows it under *Needs a person* and `nexkit doctor` reports it.
 Doctor also asks GitHub whether alerts are on, and with `--app-id ID --app-private-key FILE`
-checks the permission itself. The status turns green once a sweep can read them.
+checks the permission itself. The status turns green once a sweep can read them. It belongs to one commit, so on a new tip
+nothing shows until the next sweep looks.
 
 ## Mentions
 
@@ -1475,8 +1489,9 @@ instead.
    other repositories as they are.
 
 An organization can set both as organization secrets once, then run `nexkit init --app-slug
-SLUG` in each repository. Without the secrets, that command stops before it writes anything
-and prints the two links and the command above.
+SLUG` in each repository. When the repository can read neither, that command stops before it
+writes anything, also for an organization, and prints the two links and the command above.
+When GitHub cannot say, it goes on, and `nexkit doctor` checks the secrets later.
 
 **Permissions.** NexKit needs these repository permissions, and each job asks for only what
 it uses:

@@ -390,6 +390,12 @@ def _agent(args, decision, stage, out):
     cfg = _config()
     base = decision["base"]
     context = json.loads((out / "context.json").read_text())
+    if context.get("untrusted"):
+        # Before setup and any agent: a person reads the new text first.
+        result = {"stage": stage, "status": "untrusted", "error": context["untrusted"]}
+        (out / "result.json").write_text(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2))
+        return 0
     commits = None
     # The base branch already holds the change, such as one another pull request landed
     # since the round was started, so its merge would leave nothing to fix or review.

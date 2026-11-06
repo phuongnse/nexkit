@@ -148,6 +148,13 @@ class StaleBranchTests(unittest.TestCase):
         self.assertIn("Could not delete branch `nexkit/issue-5`", text)
         self.assertIn("Resource not accessible", text)
 
+    def test_a_branch_another_open_pull_request_comes_from_stays(self):
+        self.gh.add_pull(7, 5, HEAD)
+        self.gh.pulls[7]["base"] = {"ref": "release/1"}
+        _, text, _ = self.on_base()
+        self.assertEqual(self.gh.deleted, [])
+        self.assertIn("Kept branch `nexkit/issue-5`, the head of #7.", text)
+
     def test_a_branch_an_open_pull_request_targets_stays_there_too(self):
         self.gh.add_pull(7, 8)
         self.gh.pulls[7]["base"] = {"ref": "nexkit/issue-5"}

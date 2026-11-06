@@ -80,6 +80,7 @@ COMPLETED = {
     "merge_issue_closed",
     "conflicting",
     "person_reviewed",
+    autopilot.UNTRUSTED_MERGE,
     autopilot.CI_WAITING,
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
@@ -97,6 +98,8 @@ NEEDS_PERSON = {
         "the issue closed before NexKit merged its pull request; merge or close it yourself"
     ),
     "retry_failed": "the run stopped on a transient error twice",
+    autopilot.UNTRUSTED_ROUND: autopilot.UNTRUSTED_REASON,
+    autopilot.UNTRUSTED_MERGE: autopilot.UNTRUSTED_REASON,
     "close_failed": "no change is needed, but NexKit could not close the issue; close it yourself",
     "recheck_failed": (
         "the checks or review still fail after the fix agent found nothing to change and "
@@ -824,7 +827,9 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     (see `maintain.close_on_base`)."""
     pr, head = target["pr"], target["head"]
     try:
-        closed = gh.issue(target["issue"]).get("state") != "open"
+        issue = gh.issue(target["issue"])
+        closed = issue.get("state") != "open"
+        edited = autopilot.edited_after_vouch(gh, issue)
     except GitHubError as exc:
         message += f" NexKit did not merge it: it could not read #{target['issue']}: {exc}"
         return "merge_refused", message.strip()
@@ -835,6 +840,12 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
             "or close it yourself."
         )
         return "merge_issue_closed", message.strip()
+    if edited:
+        message += (
+            f" NexKit did not merge it: {edited}. Read #{target['issue']}, and comment "
+            f"`/nexkit trust` there if you trust it; NexKit then reviews this pull request again."
+        )
+        return autopilot.UNTRUSTED_MERGE, message.strip()
     merge_base = on_base(gh, target["base"], head)
     if merge_base:
         outcome, text, commit = close_on_base(gh, cfg, {**target, "merge_base": merge_base})

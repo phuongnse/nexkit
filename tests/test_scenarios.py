@@ -568,7 +568,7 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5, body="<!-- nexkit:part 4 -->\nThe part.", user=ACTIONS_BOT)
         self.assertEqual(pipe.play(), [])
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
-        self.assertIn("comments `/nexkit trust`", mention["body"])
+        self.assertIn("comment `/nexkit trust` on it", mention["body"])
         # Someone without write access changes nothing, and nobody is mentioned again.
         pipe.gh.human_comment(5, "/nexkit trust", "bob", "NONE")
         self.assertEqual(pipe.play(), [])
@@ -1609,7 +1609,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         self.assertEqual(pipe.played[-1][2], "recheck_failed")
         [mention] = pipe.gh.comments_matching(6, "a person is needed")
-        self.assertIn(cause.rstrip("."), mention["body"])
+        self.assertIn(cause.rstrip(".").replace("`", "'"), mention["body"])
 
     def test_an_answer_that_only_closes_the_issue_closes_it(self):
         finding = "8b9cb87 already fixed it: the last 20 runs of `e2e` on `main` passed."
@@ -1675,7 +1675,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertIn("#the-plans-change-is-in-protected-paths", plan_comment["body"])
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
         self.assertIn(
-            "its change needs protected paths (`.github/workflows/ci.yml`)", mention["body"]
+            "make the change in the protected paths (`.github/workflows/ci.yml`)", mention["body"]
         )
 
     def test_a_blocked_round_whose_change_is_in_protected_paths_gets_no_answer(self):
@@ -1692,7 +1692,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertFalse(pipe.gh.comments_matching(5, "answers for the owner"))
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
-        self.assertIn("its change needs protected paths", mention["body"])
+        self.assertIn("make the change in the protected paths", mention["body"])
 
     def test_a_plan_that_finds_an_outside_failure_passed_since_closes_the_issue(self):
         finding = "The .NET download host answered 409 in every job of run 50."
@@ -1739,7 +1739,7 @@ class ScenarioTests(unittest.TestCase):
         pipe.gh.issues[5]["state"] = "open"
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
-        self.assertIn("it closed while `/nexkit go` ran and was reopened", mention["body"])
+        self.assertIn("It closed while `/nexkit go` ran and was reopened", mention["body"])
 
     def test_a_plan_whose_no_change_is_only_quotes_goes_on_to_its_change(self):
         # An agent wrote the empty string as `""`: the plan's change is still made.
@@ -1824,7 +1824,7 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         pipe.play()
         self.assertEqual(pipe.gh.issues[5]["state"], "open")
-        self.assertTrue(pipe.gh.comments_matching(5, "every sub-issue of this parent issue"))
+        self.assertTrue(pipe.gh.comments_matching(5, "Every sub-issue of this parent issue"))
 
     def test_a_plan_too_large_without_parts_plans_once_more_then_waits(self):
         def script(pipe, inputs):

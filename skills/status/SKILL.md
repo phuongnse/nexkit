@@ -40,7 +40,9 @@ gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: appli
    - `recent_closed`: pull requests NexKit closed without merging, newest first, with the
      `outcome` (`already_on_base`: the base branch already held their change, so their
      issue closed as completed) and the `commit` that brought the change, when known.
-   - `needs_person`: only the items that need a person, with the reason.
+   - `needs_person`: only the items that need a person, with the reason: what to do, why
+     NexKit does not do it itself, and what to look at, such as the question to answer,
+     the failing checks or the files a code owner reviews.
    - `autopilot`, only with `autopilot.enabled`: the scope, `max_parallel`, and for each
      open issue in scope what the next sweep does with it, a `state` (`start` with its
      `command`, `active`, `waits`) and the `reason`.
@@ -58,7 +60,8 @@ gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: appli
    (`gh run download <id> -n nexkit-agent`) has the whole conversation. An *Artifact not
    found* annotation on `report` means that stage ran but stopped before uploading.
 
-3. **Next actions.** Start with `needs_person`. For each item, find its stop in
+3. **Next actions.** Start with `needs_person`. Each reason starts with what to do; for
+   the details, find its stop in
    Troubleshooting, [When NexKit waits for a
    person](../../docs/troubleshooting.md#when-nexkit-waits-for-a-person), and suggest what
    it says, for example the answers to a plan's questions, `/nexkit fix <instructions>`

@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 from nexkit import cli
+from nexkit.report import READY
 from nexkit.state import PLAN_MARKER, profile_record, render_run
 from nexkit.status import collect, render
 from tests.support import FakeGitHub, make_config
@@ -117,9 +118,14 @@ class StatusTests(unittest.TestCase):
                 (2, "the plan has questions"),
                 (4, "the run stopped on an error"),
                 (6, "the pull request is ready for a human decision"),
-                (8, "conflicts with `main`; comment `/nexkit fix`"),
-                (14, "the pull request is ready for a human decision"),
-                (16, "the pull request is ready for a human decision"),
+                (
+                    8,
+                    "comment `/nexkit fix` on it, with any rule the conflict needs. It conflicts "
+                    "with `main`, and with `conflicts.auto_resolve` off, NexKit starts no round "
+                    "to resolve conflicts",
+                ),
+                (14, READY),
+                (16, READY),
             ],
         )
         text = render(data)
@@ -127,9 +133,7 @@ class StatusTests(unittest.TestCase):
         self.assertIn("#10    running", text)
         self.assertIn("round 2 (fix)", text)
         self.assertIn("[ci.yml: success]", text)
-        self.assertTrue(
-            text.rstrip().endswith("#16    the pull request is ready for a human decision")
-        )
+        self.assertTrue(text.rstrip().endswith(f"#16    {READY}"))
 
     def test_conflicts_wait_for_nexkit_with_auto_resolve_conflicts(self):
         self.gh.add_pull(8, 9)

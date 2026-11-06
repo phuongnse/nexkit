@@ -10,12 +10,12 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import autopilot, progress
+from . import autopilot, progress, refusal
 from .checks import failing_signatures, skipped_line, skipped_names, with_skipped
 from .config import after_workflows
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
-    ON_BASE_FAILED,
+    ON_BASE_FAILED_NEED,
     close_on_base,
     close_parents_safely,
     delete_head_branch,
@@ -83,36 +83,97 @@ COMPLETED = {
     autopilot.UNTRUSTED_MERGE,
     autopilot.CI_WAITING,
 }
-# Why a person is needed after a run with this outcome. The other outcomes need nobody:
-# NexKit continues by itself (`auto_fix`, `conflict_fix`, a resumed pause, a sweep after
-# `ci_waiting`) or is done.
+# What a person does after a run with this outcome, and why NexKit does not, without what
+# the run found (see `needs_person`). The other outcomes need nobody: NexKit continues by
+# itself (`auto_fix`, `conflict_fix`, a resumed pause, a sweep after `ci_waiting`) or is
+# done.
 NEEDS_PERSON = {
-    "agent_blocked": "the agent is blocked and needs a decision",
-    "agent_error": "the run stopped on an error",
-    "agent_failed": "the agent could not run",
-    "publish_failed": "NexKit could not publish the result",
-    "review_failed": "the AI review did not complete",
-    "needs_human": "checks or review still need attention and no automatic fix rounds remain",
-    "merge_refused": "GitHub refused the automatic merge",
+    "agent_blocked": (
+        "answer the questions in the run's comment with `/nexkit plan <answers>`, or "
+        "`/nexkit go <answers>` when they leave the plan as it is",
+        "the agent stopped at a decision that is the owner's to make",
+    ),
+    "agent_error": (
+        "read the error in the run's comment and log, remove its cause, then post the "
+        "command again",
+        "the run stopped on an error, and NexKit runs a command again by itself only after "
+        "an error of the service, the network or the runner",
+    ),
+    "agent_failed": (
+        "read the agent job's log for why it ended, then post the command again",
+        "the agent job ended without a result, so NexKit had nothing to go on",
+    ),
+    "publish_failed": (
+        "read the publish job's log, remove the cause, then post the command again",
+        "NexKit could not publish the result",
+    ),
+    "review_failed": (
+        "comment `/nexkit review` to run the review again",
+        "the AI review did not complete, and NexKit runs it again by itself only after an "
+        "error of the service, the network or the runner",
+    ),
+    "needs_human": (
+        "comment `/nexkit fix <instructions>` for what still fails, push a commit yourself, "
+        "or close the pull request",
+        "checks or review still need attention, and no automatic fix rounds remain",
+    ),
+    "merge_refused": (
+        "read GitHub's answer in the round's comment, then merge the pull request yourself or "
+        "change the rule",
+        "GitHub refused the automatic merge",
+    ),
     "merge_issue_closed": (
-        "the issue closed before NexKit merged its pull request; merge or close it yourself"
+        "merge the pull request or close it",
+        "its issue closed before NexKit merged it, and NexKit leaves the pull request of a "
+        "closed issue to a person",
     ),
-    "retry_failed": "the run stopped on a transient error twice",
-    autopilot.UNTRUSTED_ROUND: autopilot.UNTRUSTED_REASON,
-    autopilot.UNTRUSTED_MERGE: autopilot.UNTRUSTED_REASON,
-    "close_failed": "no change is needed, but NexKit could not close the issue; close it yourself",
+    "retry_failed": (
+        "post the command again once the cause has passed",
+        "the run stopped on a transient error twice, and NexKit tries a command only once more",
+    ),
+    autopilot.UNTRUSTED_ROUND: (
+        autopilot.TRUST_DO,
+        "someone without write access edited it after a writer vouched for it, so NexKit does "
+        "not act on its text",
+    ),
+    autopilot.UNTRUSTED_MERGE: (
+        autopilot.TRUST_DO,
+        "someone without write access edited it after a writer vouched for it, so NexKit does "
+        "not merge its pull request",
+    ),
+    "close_failed": (
+        "close the issue yourself",
+        "no change is needed, but GitHub refused NexKit's close",
+    ),
     "recheck_failed": (
-        "the checks or review still fail after the fix agent found nothing to change and "
-        "NexKit ran them again"
+        "check what the fix agent found outside the code, then comment `/nexkit review` once "
+        "it works again, or `/nexkit fix` with evidence that the code is the cause",
+        "the checks or review still fail on the same commit after the fix agent found a cause "
+        "outside the code",
     ),
-    "on_base_failed": ON_BASE_FAILED,
+    "on_base_failed": ON_BASE_FAILED_NEED,
     "conflicting": (
-        "the pull request conflicts with its base branch, and NexKit started no round to "
-        "resolve it; comment `/nexkit fix` on it"
+        "comment `/nexkit fix` on the pull request, with any rule the conflict needs",
+        "its commit conflicts with the base branch, and NexKit started no round to resolve it",
     ),
 }
-NO_CHANGE_PLAN = "the plan finds that no change is needed; a person closes the issue"
-UNVERIFIED = "the review could not verify every acceptance criterion; confirm them before merging"
+NO_CHANGE_PLAN = autopilot.person(
+    "check the plan's finding, then close the issue, or comment `/nexkit plan <what still "
+    "needs changing>`",
+    "the plan finds that no change is needed, and NexKit closes an issue by itself only with "
+    "autopilot",
+)
+TOO_LARGE = autopilot.person(
+    autopilot.SPLIT_DO, "the plan says the issue is too large for one session"
+)
+READY = autopilot.person(
+    "review the pull request, then merge it or close it",
+    "checks and the AI review passed, and with `merge.auto` off a person decides the merge",
+)
+PAUSED_REASON = autopilot.person(
+    "post the command again once the usage limit has reset",
+    "the agent hit its usage limit, and NexKit does not resume this run",
+)
 # Bounds for what the state comment keeps for the next review.
 MAX_FINDINGS = 30
 MAX_FIXES = 5
@@ -463,7 +524,7 @@ def _no_change(gh, cfg, decision, agent):
         return {
             "outcome": "close_failed",
             "summary": f"{message}\n\n{finding}",
-            "attention": needs_person("close_failed", cfg),
+            "attention": needs_person("close_failed", cfg, found={"error": str(exc)}),
             "agents": agents_ran(agent),
         }
     lines = [f"No change is needed, so NexKit closed #{issue} as completed.", "", finding]
@@ -508,6 +569,13 @@ def _stage_failure(decision, agent, publish):
     return None
 
 
+def _failure_error(agent, publish):
+    """The error of the agent or publish stage that stopped, or ""."""
+    if agent and agent.get("status") not in ("done", "blocked"):
+        return str(agent.get("error") or "")
+    return str(publish.get("error") or "") if agent else ""
+
+
 def _with_finding(reason, agent):
     """`reason` with what the fix agent found when it changed nothing, so that a person
     sees it in the mention and in `nexkit status`."""
@@ -515,36 +583,92 @@ def _with_finding(reason, agent):
     found = str(output.get("cause") or output.get("summary") or "").strip()
     if not reason or not found:
         return reason
-    return f"{reason}; the agent found: {clip(one_line(found), 300)}"
+    return f"{reason.rstrip('.')}; the agent found: {autopilot.quoted(found, 300)}"
 
 
-def needs_person(outcome, cfg, plan=None, resume=None, confirm=()):
-    """The reason a person is needed after a run, or None. It follows only the outcome and
-    the run's structured output, never a judgment by the agent. `confirm` holds the
-    criteria a ready round's review could not verify."""
+def _listed(items, size=100):
+    """The first of `items` in code spans, then how many more there are."""
+    first = autopilot.quoted(items[0], size)
+    return first + (f" and {len(items) - 1} more" if len(items) > 1 else "")
+
+
+def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), found=None):
+    """The reason a person is needed after a run, or None: what to do, then why NexKit does
+    not, with what the run found that shows where to look (see `autopilot.person`). It
+    follows only the outcome and the run's structured output, never a judgment by the
+    agent. `confirm` holds the criteria a ready round's review could not verify. `found`
+    may name `questions` (a blocked round's), `pull` (the run is a pull request's round),
+    `error`, `failing` (the names of checks that still fail), `findings` (the review's
+    blocking findings), `refused` (`refusal.explain` for a refused merge) and
+    `timed_out`."""
+    found = found or {}
     if outcome == "planned":
         plan = plan or {}
         if plan.get("too_large"):
-            return "the plan says the issue is too large for one session"
+            return TOO_LARGE
         if filled(plan.get("no_change")):
             return NO_CHANGE_PLAN
         if plan.get("protected_paths"):
             return autopilot.protected_reason(plan["protected_paths"])
-        return "the plan has questions" if plan.get("questions") else None
+        if not plan.get("questions"):
+            return None
+        asked = questions(plan["questions"])
+        why = "the plan asks for decisions that are the owner's to make"
+        if asked:
+            why += ": " + _listed([item["question"] for item in asked])
+        return autopilot.person("answer the plan's questions with `/nexkit plan <answers>`", why)
     if outcome == "merge_waiting":
         # Only a round whose issue autopilot's sweeps look at waits like this.
         return None
     if outcome == "ready":
         if confirm:
-            return UNVERIFIED
-        return None if cfg["merge"]["auto"] else "the pull request is ready for a human decision"
+            return autopilot.person(
+                "confirm from the diff and the checks the acceptance criteria that the review "
+                "could not verify, then merge the pull request",
+                "the review could not verify " + _listed(list(confirm)),
+            )
+        return None if cfg["merge"]["auto"] else READY
     if outcome == "paused":
-        return (
-            None
-            if resume
-            else "The agent hit its usage limit; run the command again after the reset"
+        return None if resume else PAUSED_REASON
+    if outcome not in NEEDS_PERSON:
+        return None
+    do, why = NEEDS_PERSON[outcome]
+    if outcome == "agent_blocked" and found.get("pull"):
+        do = "answer the questions in the round's comment with `/nexkit fix <answers>`"
+    if outcome == "agent_blocked" and found.get("questions"):
+        why += ": " + _listed([item["question"] for item in questions(found["questions"])])
+    if outcome == "agent_error" and found.get("timed_out"):
+        do = (
+            "comment `/nexkit plan` to split the issue into parts that each fit one session, "
+            "or raise the stage's `timeout_minutes`"
         )
-    return NEEDS_PERSON.get(outcome)
+        why = "the agent ran out of time before it finished"
+    elif outcome in ("agent_error", "publish_failed", "close_failed", "retry_failed"):
+        if found.get("error"):
+            why += ": " + autopilot.quoted(found["error"], 200)
+    if outcome == "review_failed" and found.get("error"):
+        if ACCESS_ERROR.search(found["error"]):
+            do = "fix the review agent's secret, then comment `/nexkit review`"
+            why = "the AI review could not sign in, and another try stops the same way"
+        why += ": " + autopilot.quoted(found["error"], 200)
+    if outcome == "needs_human":
+        failing = [autopilot.quoted(name, 60) for name in found.get("failing") or []]
+        what = []
+        if failing:
+            what.append(f"check{'s' if len(failing) > 1 else ''} {', '.join(failing[:5])} fail")
+        findings = found.get("findings") or []
+        if findings:
+            plural = "s" if len(findings) > 1 else ""
+            first = findings[0]
+            where = first.get("file") or ""
+            where += f":{first['line']}" if where and first.get("line") else ""
+            at = f", the first at {autopilot.quoted(where, 120)}" if where else ""
+            what.append(f"the review has {len(findings)} blocking finding{plural}{at}")
+        if what:
+            why = " and ".join(what) + ", and no automatic fix rounds remain"
+    if outcome == "merge_refused" and found.get("refused"):
+        do, why = found["refused"]
+    return autopilot.person(do, why)
 
 
 def notify(gh, cfg, number, reason):
@@ -832,6 +956,12 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
         edited = autopilot.edited_after_vouch(gh, issue)
     except GitHubError as exc:
         message += f" NexKit did not merge it: it could not read #{target['issue']}: {exc}"
+        target["found"] = {
+            "refused": (
+                "comment `/nexkit review` on the pull request to try the merge again",
+                f"NexKit could not read #{target['issue']}: {autopilot.quoted(str(exc), 200)}",
+            )
+        }
         return "merge_refused", message.strip()
     if closed:
         # A person closed the issue while the pull request waited: they decide its fate.
@@ -903,6 +1033,13 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
         started = start_conflict_round(gh, pr, base, workflow, default_branch, limit, row=row)
         if started.startswith("Started"):
             return "conflict_fix", f"{message}\n\nIt conflicts with `{base}`. {started}"
+        target["found"] = {
+            "refused": (
+                "comment `/nexkit fix` on the pull request, with any rule the conflict needs",
+                f"it conflicts with `{base}`, and NexKit started no round to resolve it"
+                + (f": {started.rstrip('.')}" if started else ""),
+            )
+        }
         return "merge_refused", f"{message}\n\n{started}" if started else message
     if exc.status == 409 or _head(gh, pr) not in (None, head):
         # GitHub answers 409 when the head is no longer the commit the round checked.
@@ -919,6 +1056,14 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     if pending or unreported:
         if not _swept(gh, cfg, target["issue"]):
             line = "Required checks have not passed yet. Merge it once they pass."
+            names = ", ".join(autopilot.quoted(name, 60) for name in pending[:5])
+            target["found"] = {
+                "refused": (
+                    "merge the pull request once its required checks pass",
+                    f"its required checks{f' ({names})' if names else ''} had not passed "
+                    "yet, and autopilot's sweeps, which merge it then, do not look at its issue",
+                )
+            }
             return "merge_refused", f"{message}\n\n{line}"
         row.setdefault("waiting_since", iso(datetime.now(UTC)))
         line = (
@@ -926,7 +1071,9 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
             "they pass."
         )
         return "merge_waiting", f"{message}\n\n{line}"
-    return "merge_refused", message
+    do, why = refusal.explain_safely(gh, target, exc)
+    target["found"] = {"refused": (do, why)}
+    return "merge_refused", f"{message}\n\n**What unblocks it:** {autopilot.person(do, why)}."
 
 
 def required_checks(gh, base, pr, head):
@@ -1028,6 +1175,7 @@ def _required_failed(gh, cfg, target, row, message, names, workflow, default_bra
     limit = cfg["fix"]["max_auto_rounds"]
     if state["auto_fixes"] >= limit:
         save()
+        target["found"] = {"failing": [item["name"] for item in failed]}
         line = (
             "No automatic fix rounds remain. Comment `/nexkit fix <instructions>`, push a "
             "commit yourself, or close the PR."
@@ -1071,6 +1219,13 @@ def _head_moved(gh, target, message, workflow, default_branch):
             {"command": "review", "number": str(target["pr"]), "note": "", "auto": "true"},
         )
     except GitHubError as error:
+        target["found"] = {
+            "refused": (
+                "comment `/nexkit review` on the pull request",
+                "its branch moved after the round checked it, and NexKit could not start a "
+                f"review: {autopilot.quoted(str(error), 200)}",
+            )
+        }
         return "merge_refused", f"{message}\n\nNexKit could not start a review: {error}"
     line = (
         f"The branch moved to `{head[:7]}` after this round checked it, so NexKit started "
@@ -1103,6 +1258,13 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
 
     why = update_branch(gh, target, row, limit, workflow, default_branch, before_review=save)
     if why:
+        target["found"] = {
+            "refused": (
+                f"merge `{base}` into the pull request's branch, then comment `/nexkit review`",
+                f"`{base}` wants pull requests up to date, and NexKit did not update it: "
+                + why.rstrip("."),
+            )
+        }
         return "merge_refused", f"{message}\n\n{why}"
     line = (
         f"It is behind `{base}`, which branch protection does not allow: NexKit merged `{base}` "
@@ -1180,7 +1342,7 @@ def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
         if outcome == "merge_waiting":
             return f"#{pr} still waits for its required checks."
         run.update(outcome=outcome, status=run_status(outcome))
-        reason = needs_person(outcome, cfg)
+        reason = needs_person(outcome, cfg, found={"pull": True, **target.get("found", {})})
         if reason:
             run["attention"] = reason
         else:
@@ -1370,7 +1532,13 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 fields["transient_error"] = clip(one_line(error), 500)
             elif error and decision.get("retry"):
                 outcome, message = "retry_failed", _retried(gh, decision, error, message)
-            reason = needs_person(outcome, cfg)
+            found = {
+                "pull": bool(decision.get("pr")),
+                "questions": round_questions(agent),
+                "timed_out": bool((agent or {}).get("timed_out")),
+                "error": error if outcome == "retry_failed" else _failure_error(agent, publish),
+            }
+            reason = needs_person(outcome, cfg, found=found)
             if agent and agent.get("unchanged"):
                 reason = _with_finding(reason, agent)
             protected = protected_paths(agent)
@@ -1492,6 +1660,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         # The run whose `nexkit-checks` artifact holds the failing checks' result files.
         state["feedback"]["run_id"] = int(run_id)
 
+    found = {}
     if conflicting:
         outcome, message = _skipped_conflicting(
             gh, cfg, decision, pr, head, publish["conflicts"], row, workflow_ref, default_branch
@@ -1532,15 +1701,17 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 gh, cfg, target, row, message, workflow_file(workflow_ref), default_branch
             )
             comment_id = target["state_comment"]
+            found = target.get("found", {})
     elif verdict is None:
         outcome = "review_failed"
-        message = review_failure(reviewed)[1]
+        found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
         if error and _retry(gh, decision, "review", pr, workflow_ref, default_branch):
             outcome, message = "retry", f"{message}\n\n{RETRY_LINE}"
             row["transient_error"] = clip(one_line(error), 500)
         elif error and decision.get("retry"):
             outcome, message = "retry_failed", _retried(gh, decision, error, message)
+            found["error"] = error
     elif recheck:
         # The fix agent found nothing to change for a cause outside the code, and the
         # checks and the review ran once more: what still fails waits for a person.
@@ -1602,7 +1773,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             gh, cfg, decision, pr, row, workflow_file(workflow_ref), default_branch
         )
     row.update(status=run_status(outcome), outcome=outcome)
-    reason = needs_person(outcome, cfg, resume=resume, confirm=confirm)
+    failing = [c["name"] for c in checks or [] if not c.get("passed")]
+    blocking = [f for f in (review or {}).get("findings") or [] if f.get("severity") == "blocking"]
+    found = {"pull": True, "failing": failing, "findings": blocking, **found}
+    reason = needs_person(outcome, cfg, resume=resume, confirm=confirm, found=found)
     if outcome == "recheck_failed":
         reason = _with_finding(reason, agent)
     if reason:

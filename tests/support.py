@@ -164,6 +164,11 @@ class FakeGitHub:
         self.strict = False  # whether the base branch's rules want pull requests up to date
         self.cancelled = []  # each workflow run cancelled
         self.cancel_error = None
+        self.rules = []  # the base branch's ruleset rules, each {type, parameters}
+        self.review_states = {}  # pull request number -> {draft, decision, unresolved}
+        self.files = {}  # path -> its text on the base branch
+        self.pr_files = {}  # pull request number -> the files it changes
+        self.repo_settings = {"default_branch": "main", "allow_squash_merge": True}
         self._next = 1000
 
     def _id(self):
@@ -512,6 +517,26 @@ class FakeGitHub:
 
     def deletes_merged_branches(self):
         return self.delete_on_merge
+
+    def settings(self):
+        return dict(self.repo_settings)
+
+    def file_text(self, path, ref):
+        return self.files.get(path)
+
+    def branch_rules(self, branch):
+        return list(self.rules)
+
+    def review_state(self, number):
+        return {
+            "draft": False,
+            "decision": None,
+            "unresolved": 0,
+            **self.review_states.get(number, {}),
+        }
+
+    def pull_files(self, number):
+        return list(self.pr_files.get(number, []))
 
     def delete_branch(self, branch):
         if self.delete_error:

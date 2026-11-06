@@ -101,3 +101,33 @@ class BranchTests(unittest.TestCase):
         self.assertEqual(
             paginate.call_args.args[1], {"state": "all", "head": "acme:nexkit/issue-5"}
         )
+
+
+class RefusalReadsTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = GitHub(repository="acme/app", token="t")
+
+    def test_review_state_counts_unresolved_conversations(self):
+        threads = {"nodes": [{"isResolved": True}, {"isResolved": False}, None]}
+        pull = {"isDraft": False, "reviewDecision": "REVIEW_REQUIRED", "reviewThreads": threads}
+        data = {"repository": {"pullRequest": pull}}
+        with mock.patch.object(self.gh, "graphql", return_value=data):
+            self.assertEqual(
+                self.gh.review_state(6),
+                {"draft": False, "decision": "REVIEW_REQUIRED", "unresolved": 1},
+            )
+
+    def test_file_text_reads_a_file_and_none_for_a_missing_or_large_one(self):
+        found = {"encoding": "base64", "content": "KiBAb2xpdmlh\n"}
+        with mock.patch.object(self.gh, "request", return_value=found) as request:
+            self.assertEqual(self.gh.file_text("CODEOWNERS", "main"), "* @olivia")
+        request.assert_called_once_with(
+            "GET", "/repos/acme/app/contents/CODEOWNERS", params={"ref": "main"}
+        )
+        with mock.patch.object(self.gh, "request", return_value={"encoding": "none"}):
+            self.assertIsNone(self.gh.file_text("CODEOWNERS", "main"))
+        with mock.patch.object(self.gh, "request", side_effect=GitHubError(404, "Not Found")):
+            self.assertIsNone(self.gh.file_text("CODEOWNERS", "main"))
+        with mock.patch.object(self.gh, "request", side_effect=GitHubError(500, "x")):
+            with self.assertRaises(GitHubError):
+                self.gh.file_text("CODEOWNERS", "main")

@@ -2,8 +2,9 @@
 
 import unittest
 
+from nexkit.autopilot import mention_text, person
 from nexkit.config import ConfigError, validate
-from nexkit.report import needs_person, report
+from nexkit.report import NEEDS_PERSON, READY, needs_person, report
 from tests.support import CLAUDE, make_config
 from tests.test_report import HEAD, LIMIT, ReportCase, decision, review_result
 
@@ -11,42 +12,112 @@ WITH_CLAUDE = {"agents": CLAUDE}
 
 
 class RuleTests(unittest.TestCase):
-    """One case per row of the table in docs/how-it-works.md."""
+    """One case per row of the table in docs/how-it-works.md. Each reason says what a
+    person does, then why NexKit does not (`autopilot.person`)."""
 
     def setUp(self):
         self.cfg = make_config()
 
+    def assertReason(self, reason, do, why):
+        self.assertTrue(reason.startswith(do), reason)
+        self.assertIn(why, reason)
+
     def test_planned_with_questions_or_too_large(self):
         self.assertEqual(
             needs_person("planned", self.cfg, plan={"questions": ["Which?"]}),
-            "the plan has questions",
+            "answer the plan's questions with `/nexkit plan <answers>`. The plan asks for "
+            "decisions that are the owner's to make: `Which?`",
         )
-        self.assertIn("too large", needs_person("planned", self.cfg, plan={"too_large": True}))
+        self.assertReason(
+            needs_person("planned", self.cfg, plan={"too_large": True}),
+            "split the issue by hand",
+            "The plan says the issue is too large for one session",
+        )
 
     def test_planned_without_either(self):
         self.assertIsNone(needs_person("planned", self.cfg, plan={"questions": []}))
 
-    def test_agent_blocked(self):
-        self.assertIn("blocked", needs_person("agent_blocked", self.cfg))
+    def test_agent_blocked_names_the_decision_and_the_command(self):
+        found = {"questions": [{"question": "Keep @alice's API?"}, {"question": "Rename it?"}]}
+        self.assertEqual(
+            needs_person("agent_blocked", self.cfg, found=found),
+            "answer the questions in the run's comment with `/nexkit plan <answers>`, or "
+            "`/nexkit go <answers>` when they leave the plan as it is. The agent stopped at a "
+            "decision that is the owner's to make: `Keep @alice's API?` and 1 more",
+        )
+        self.assertTrue(
+            needs_person("agent_blocked", self.cfg, found={"pull": True}).startswith(
+                "answer the questions in the round's comment with `/nexkit fix <answers>`."
+            )
+        )
 
-    def test_agent_and_publish_and_review_failures(self):
-        for outcome in ("agent_error", "agent_failed", "publish_failed", "review_failed"):
-            self.assertTrue(needs_person(outcome, self.cfg), outcome)
+    def test_every_outcome_that_needs_a_person_says_what_to_do_and_why(self):
+        for outcome, (do, why) in NEEDS_PERSON.items():
+            with self.subTest(outcome):
+                reason = needs_person(outcome, self.cfg)
+                self.assertEqual(reason, person(do, why))
+                text = mention_text(make_config(notify=["owner"]), reason)
+                self.assertTrue(text.startswith(f"@owner a person is needed: {do}. "), text)
+                self.assertTrue(text.endswith(f"{why[1:]}."), text)
 
-    def test_needs_human(self):
-        self.assertIn("no automatic fix rounds remain", needs_person("needs_human", self.cfg))
+    def test_errors_are_named_in_code_spans(self):
+        for outcome in ("agent_error", "publish_failed", "close_failed", "retry_failed"):
+            reason = needs_person(outcome, self.cfg, found={"error": "boom\n@bob <!-- x -->"})
+            self.assertTrue(reason.endswith(": `boom @bob ‹!-- x --›`"), reason)
+
+    def test_an_agent_that_ran_out_of_time(self):
+        self.assertReason(
+            needs_person("agent_error", self.cfg, found={"timed_out": True}),
+            "comment `/nexkit plan` to split the issue",
+            "The agent ran out of time before it finished",
+        )
+
+    def test_a_review_that_cannot_sign_in_says_another_try_stops_the_same_way(self):
+        self.assertReason(
+            needs_person("review_failed", self.cfg, found={"error": "401 Unauthorized"}),
+            "fix the review agent's secret, then comment `/nexkit review`",
+            "another try stops the same way: `401 Unauthorized`",
+        )
+        self.assertReason(
+            needs_person("review_failed", self.cfg, found={"error": "no verdict"}),
+            "comment `/nexkit review` to run the review again",
+            "after an error of the service, the network or the runner: `no verdict`",
+        )
+
+    def test_needs_human_names_what_still_fails(self):
+        finding = {"severity": "blocking", "file": "app.py", "line": 3, "body": "x"}
+        found = {"failing": ["unit", "lint"], "findings": [finding, finding]}
+        self.assertEqual(
+            needs_person("needs_human", self.cfg, found=found),
+            "comment `/nexkit fix <instructions>` for what still fails, push a commit "
+            "yourself, or close the pull request. Checks `unit`, `lint` fail and the review "
+            "has 2 blocking findings, the first at `app.py:3`, and no automatic fix rounds "
+            "remain",
+        )
 
     def test_ready_only_without_auto_merge(self):
-        self.assertIn("ready", needs_person("ready", self.cfg))
+        self.assertReason(
+            needs_person("ready", self.cfg),
+            "review the pull request, then merge it or close it",
+            "with `merge.auto` off a person decides the merge",
+        )
         self.assertIsNone(needs_person("ready", make_config(merge={"auto": True})))
 
     def test_ready_with_criteria_to_confirm(self):
         for cfg in (self.cfg, make_config(merge={"auto": True})):
-            reason = needs_person("ready", cfg, confirm=["passes five runs"])
-            self.assertIn("could not verify every acceptance criterion", reason)
+            reason = needs_person("ready", cfg, confirm=["passes five runs", "is fast"])
+            self.assertReason(
+                reason,
+                "confirm from the diff and the checks the acceptance criteria",
+                "The review could not verify `passes five runs` and 1 more",
+            )
 
-    def test_merge_refused(self):
-        self.assertIn("refused", needs_person("merge_refused", self.cfg))
+    def test_merge_refused_says_what_unblocks_it(self):
+        found = {"refused": ("approve it", "GitHub wants a review")}
+        self.assertEqual(
+            needs_person("merge_refused", self.cfg, found=found),
+            "approve it. GitHub wants a review",
+        )
 
     def test_merged_and_automatic_rounds(self):
         for outcome in ("merged", "auto_fix", "conflict_fix", "up_to_date"):
@@ -82,13 +153,10 @@ class MentionTests(ReportCase):
     def test_a_ready_pull_request_mentions_the_listed_people_once(self):
         self.candidate()
         self.run_report(cfg=make_config(notify=["owner", "lead"]))
-        self.assertEqual(
-            self.mentions(6),
-            ["@owner @lead a person is needed: the pull request is ready for a human decision."],
-        )
+        self.assertEqual(self.mentions(6), [f"@owner @lead a person is needed: {READY}."])
         self.assertEqual(self.mentions(5), [])
         [row] = self.gh.run_comments(6)
-        self.assertEqual(row["run"]["attention"], "the pull request is ready for a human decision")
+        self.assertEqual(row["run"]["attention"], READY)
 
     def test_nobody_is_mentioned_without_notify(self):
         self.candidate()
@@ -112,9 +180,13 @@ class MentionTests(ReportCase):
             workflow_ref="x/nexkit.yml@main",
             default_branch="main",
         )
-        self.assertEqual(self.mentions(5), ["@owner a person is needed: the plan has questions."])
+        reason = (
+            "answer the plan's questions with `/nexkit plan <answers>`. The plan asks for "
+            "decisions that are the owner's to make: `?`"
+        )
+        self.assertEqual(self.mentions(5), [f"@owner a person is needed: {reason}."])
         [run] = self.gh.run_comments(5)
-        self.assertEqual(run["run"]["attention"], "the plan has questions")
+        self.assertEqual(run["run"]["attention"], reason)
 
     def test_automatic_rounds_and_resumed_pauses_mention_nobody(self):
         finding = {"severity": "blocking", "file": "a", "line": 1, "body": "x"}
@@ -131,7 +203,11 @@ class MentionTests(ReportCase):
         self.run_report(d=d, cfg=make_config(notify=["owner"]), published=False)
         self.assertEqual(
             self.mentions(6),
-            ["@owner a person is needed: the agent is blocked and needs a decision."],
+            [
+                "@owner a person is needed: answer the questions in the round's comment with "
+                "`/nexkit fix <answers>`. The agent stopped at a decision that is the owner's "
+                "to make."
+            ],
         )
 
 

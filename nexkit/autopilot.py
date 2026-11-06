@@ -110,7 +110,7 @@ PART = re.compile(r"\A<!-- nexkit:part (\d+) -->")
 # How deep parts go: the issue first split is at depth 0, its parts at 1, their parts at 2.
 # An issue at this depth is not split again; a person decides.
 MAX_DEPTH = 3
-DEPTH_REASON = f"a part {MAX_DEPTH} levels deep, which autopilot does not split; a person decides"
+DEPTH_REASON = f"it is a part {MAX_DEPTH} levels deep, which autopilot splits no further"
 # The most parent issues that a sweep walks up from an issue: GitHub's own nesting limit.
 LINEAGE = 8
 # A bug issue that autopilot opened because a workflow failed twice on the default branch,
@@ -600,7 +600,10 @@ def waits_for(gh, issue, where=None):
     outside = [b for b in blockers if where is not None and not in_scope(where, b)]
     if outside:
         listed = ", ".join(f"#{b['number']}" for b in outside)
-        return f"{reason}; {listed} {'is' if len(outside) == 1 else 'are'} not in scope", True
+        it, verb = ("it", "is") if len(outside) == 1 else ("them", "are")
+        why = f"it {reason}, and {listed} {verb} outside autopilot's scope, where it does no work"
+        do = f"finish {listed}, bring {it} into the scope, or remove the *blocked by* mark"
+        return person(do, why), True
     return reason, False
 
 
@@ -609,7 +612,10 @@ def _labeled(issue, label):
 
 
 def _no_milestone(label):
-    return f"it runs last in its milestone (`{label}`), but has no milestone"
+    return person(
+        f"give it a milestone, or take the label `{label}` off",
+        f"it runs last in its milestone (`{label}`), but has no milestone",
+    )
 
 
 def _ancestors(gh, number):
@@ -793,12 +799,56 @@ REPLANNED_NOTE = (
 UNCHANGED = {"retry", "lost", "up_to_date"}
 # What every comment that mentions the people in `notify` says before its reason.
 NEEDED = "a person is needed: "
+
+
+def person(do, why):
+    """Why a person is needed, as a mention and `nexkit status` say it: what to do, then
+    why NexKit does not do it itself, each in plain words."""
+    do, why = do.strip().rstrip("."), why.strip().rstrip(".")
+    return f"{do}. {why[:1].upper()}{why[1:]}"
+
+
+def quoted(text, size=150):
+    """Text that an agent, GitHub or a person wrote, for a reason: in a code span on one
+    line, where it can mention nobody and close no comment."""
+    return f"`{_inert(_plain(text, size))}`"
+
+
 # What ends the wait of an issue that autopilot leaves alone.
-TRUST_HINT = f"a writer who read it comments `/nexkit {TRUST}`"
-UNTRUSTED_REASON = f"someone without write access edited the issue; {TRUST_HINT}"
-REPEATED = (
-    "the round after autopilot's answers asked again, and nobody commented since; a person decides"
+TRUST_DO = f"read the issue, and comment `/nexkit {TRUST}` on it if you trust it"
+UNTRUSTED_REASON = person(
+    TRUST_DO,
+    "someone without write access edited it after a writer vouched for it, so NexKit does "
+    "not act on its text",
 )
+REPEATED = person(
+    "answer the questions in a comment, with what is new in them rather than the same option",
+    "the round after autopilot's answers asked again, and nobody commented since",
+)
+# Why an issue waits after its pull request's round stopped without a report, or after the
+# run it continues or the round it started next did not run.
+LOST_DO = "read the workflow run in the Actions tab for why, then post the command once more"
+SPLIT_DO = (
+    "split the issue by hand into parts that each fit one session, with the `request` skill, "
+    "or make it smaller and comment the change on it"
+)
+TIMED_OUT_DO = (
+    "read the plan, the run log and the result files for why the round did not finish, then "
+    "comment `/nexkit plan <the cause, with the evidence, and the smallest change that "
+    "removes it>`"
+)
+QUESTIONS_REASON = person(
+    "answer the plan's questions with `/nexkit plan <answers>`",
+    "the plan asks for decisions that are the owner's to make",
+)
+
+
+def failed_reason(command):
+    """Why an issue waits after its `/nexkit <command>` failed, when the run said no more."""
+    return person(
+        f"read the run's comment and log for why `/nexkit {command}` failed, then post it again",
+        f"the last `/nexkit {command}` failed",
+    )
 
 
 def protected_reason(paths):
@@ -806,7 +856,10 @@ def protected_reason(paths):
     changes."""
     listed = ", ".join(f"`{path}`" for path in paths[:5])
     more = f" and {len(paths) - 5} more" if len(paths) > 5 else ""
-    return f"its change needs protected paths ({listed}{more}); a person makes it by hand"
+    return person(
+        f"make the change in the protected paths ({listed}{more}) by hand, as the plan says",
+        "only a person changes protected paths",
+    )
 
 
 def _by_person(comment):
@@ -857,8 +910,9 @@ def split_refused(gh, issue):
     for parent in above:
         if find_record(gh.comments(parent["number"]))[1].get("split_asked"):
             number = parent["number"]
-            return f"a part of a split ran out of time again, after #{number} asked for a split"
-    return DEPTH_REASON if depth(issue, above) >= MAX_DEPTH else None
+            why = f"a part of a split ran out of time again, after #{number} asked for a split"
+            return person(TIMED_OUT_DO, why)
+    return person(TIMED_OUT_DO, DEPTH_REASON) if depth(issue, above) >= MAX_DEPTH else None
 
 
 def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
@@ -923,16 +977,19 @@ def _split(gh, issue, plan, data, record, start, pull=None):
     if not (data or {}).get("too_large"):
         return None
     if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
-        return _step(issue, "waits", DEPTH_REASON)
+        do = "make the issue smaller and comment the change on it, or implement it by hand"
+        return _step(issue, "waits", person(do, DEPTH_REASON))
     if not data.get("split") and record.get("parts_asked"):
-        return _step(issue, "waits", "its plan is too large and suggests no parts again")
+        why = "its plan is too large for one session and suggests no parts again"
+        return _step(issue, "waits", person(SPLIT_DO, why))
     if not data.get("split"):
         start = {**start, "note": PARTS_NOTE, "remember": {"parts_asked": True}}
         reason = "the plan is too large and suggests no parts, so autopilot plans again"
         return _step(issue, "start", reason, command="plan", **start)
     repeated = repeated_titles(issue, data["split"])
     if repeated and record.get("titles_asked"):
-        return _step(issue, "waits", "the parts of its plan are titled like the issue again")
+        why = "the parts of its plan are titled like the issue again"
+        return _step(issue, "waits", person(SPLIT_DO, why))
     if repeated:
         titles = ", ".join(f'"{title}"' for title in repeated)
         start = {
@@ -966,7 +1023,7 @@ def _planned(gh, cfg, issue, plan, last, record, start, comments):
     if data.get("questions"):
         found = answers(cfg, data["questions"])
         if not found:
-            return _step(issue, "waits", last.get("attention") or "the plan has questions")
+            return _step(issue, "waits", last.get("attention") or QUESTIONS_REASON)
         if asked_again(comments):
             return _step(issue, "waits", REPEATED)
         reason = "autopilot answers the plan's questions"
@@ -1017,11 +1074,14 @@ def _auto_input(run):
 def _not_resumed(comment, run, now):
     """Why a run paused at the usage limit waits for a person, or None while NexKit
     resumes it by itself."""
+    do = "post the command again once the usage limit has reset"
     if not isinstance(run.get("resume"), dict):
-        return run.get("attention") or "paused at the usage limit, and NexKit does not resume it"
+        return run.get("attention") or person(
+            do, "the agent hit its usage limit, and NexKit does not resume this run"
+        )
     at = parse_iso(comment.get("created_at"))
     if at and now - at > PAUSE_WINDOW:
-        return "paused at the usage limit longer than NexKit resumes runs"
+        return person(do, "it paused at the usage limit longer ago than NexKit resumes runs")
     return None
 
 
@@ -1036,7 +1096,8 @@ def _stalled(gh, issue, comment, run, record, start, target, now):
     if status == CONTINUED:
         at = parse_iso(comment.get("updated_at"))
         lost = at is not None and now - at > LOST
-        return _step(issue, "waits", "the run that continues it did not start") if lost else None
+        why = "the run that continues it did not start within six hours"
+        return _step(issue, "waits", person(LOST_DO, why)) if lost else None
     if status != RUNNING or not _ended(gh, run):
         return None
     command = run.get("command") or ("fix" if run_action(run) == "fix" else "review")
@@ -1046,7 +1107,8 @@ def _stalled(gh, issue, comment, run, record, start, target, now):
         target,
     )
     if not _automatic(run) or again:
-        return _step(issue, "waits", REPORTLESS, stale=stale)
+        why = REPORTLESS + (", after autopilot started it once more" if again else "")
+        return _step(issue, "waits", person(LOST_DO, why), stale=stale)
     fields = {**start, "target": target, "remember": {"retried": True}}
     auto = _auto_input(run)
     if auto:
@@ -1093,10 +1155,13 @@ def _conflict_wait(gh, cfg, pull, rounds):
     if details.get("mergeable") is not False:
         return None
     base = (details.get("base") or {}).get("ref") or "its base branch"
+    do = f"comment `/nexkit fix` on pull request #{pull}, with any rule the conflict needs"
     if not cfg["conflicts"]["auto_resolve"]:
-        return f"pull request #{pull} conflicts with `{base}`; comment `/nexkit fix` on it"
+        why = "with `conflicts.auto_resolve` off, NexKit starts no round to resolve conflicts"
+        return person(do, f"it conflicts with `{base}`, and {why}")
     if conflict_rounds_used(rounds) >= cfg["conflicts"]["max_rounds"]:
-        return f"pull request #{pull} conflicts with `{base}`, and its conflict rounds are used up"
+        why = f"it conflicts with `{base}`, and its automatic conflict rounds are used up"
+        return person(do, why)
     return None
 
 
@@ -1113,8 +1178,8 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
     if latest.get("outcome") in CHAINED:
         at = parse_iso(comment.get("updated_at") or comment.get("created_at"))
         if at is not None and now - at > LOST:
-            reason = f"the round that pull request #{pull} started next did not run"
-            return _step(issue, "waits", reason)
+            why = f"the round that pull request #{pull} started next did not run within six hours"
+            return _step(issue, "waits", person(LOST_DO, why))
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") in (UNTRUSTED_ROUND, UNTRUSTED_MERGE):
         if not _vouched_again(gh, issue, comment):
@@ -1132,9 +1197,11 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
     if latest.get("status") == FAILURE:
         found = (pull_comments, comments)
         step = _stopped(gh, cfg, issue, latest, record, start, "fix", pull, found)
-        return step or _step(
-            issue, "waits", latest.get("attention") or f"the last round of #{pull} failed"
+        failed = person(
+            f"read the last round's comment on #{pull} for why, then post its command again",
+            f"the last round of #{pull} failed",
         )
+        return step or _step(issue, "waits", latest.get("attention") or failed)
     if latest.get("attention"):
         return _step(issue, "waits", latest["attention"])
     conflict = _conflict_wait(gh, cfg, pull, [run for _, run in rounds])
@@ -1162,8 +1229,12 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
     since = parse_iso(run.get("waiting_since"))
     behind = cfg["conflicts"]["auto_resolve"] and details.get("mergeable_state") == "behind"
     if since and now - since > LOST and not behind:
-        reason = f"the required checks of pull request #{pull} have not passed for hours"
-        return _step(issue, "waits", reason)
+        do = (
+            "find out from their runs why the checks neither passed nor failed, start them "
+            f"again, and comment `/nexkit review` on #{pull} once they can pass"
+        )
+        why = f"the required checks of pull request #{pull} have not passed for six hours"
+        return _step(issue, "waits", person(do, why))
     base = (details.get("base") or {}).get("ref") or ""
     reason = f"pull request #{pull} waits for its required checks"
     return _step(issue, "merge", reason, round_comment=comment["id"], base=base)
@@ -1174,7 +1245,7 @@ def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
     of time: split the issue as the plan suggests, answer its questions, or, when it needs
     nobody, a fix round on the pull request that follows the revised plan."""
     if last.get("status") != SUCCESS:
-        return _step(issue, "waits", last.get("attention") or "the last `/nexkit plan` failed")
+        return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
     data = plan_data(plan) if plan else None
     split = _split(gh, issue, plan, data, record, start, pull) if data else None
     if split:
@@ -1220,22 +1291,27 @@ def mentioned(*groups):
 
 
 def mention_text(cfg, reason):
-    """The comment that mentions the people in `notify`, or None without any."""
+    """The comment that mentions the people in `notify`, or None without any: what to do,
+    why NexKit does not, and where to look (see `person`)."""
     if not cfg["notify"]:
         return None
     people = " ".join(f"@{login}" for login in cfg["notify"])
-    return f"{people} {NEEDED}{reason}."
+    return f"{people} {NEEDED}{reason.rstrip('.')}."
 
 
 def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     number = issue["number"]
     left_alone = distrust(gh, issue, cfg)
     if left_alone:
-        return _step(issue, "waits", f"{left_alone}; {TRUST_HINT}")
+        return _step(issue, "waits", person(TRUST_DO, f"autopilot leaves it alone: {left_alone}"))
     parts = gh.sub_issues(number)
     if parts and all(part.get("state") == "closed" for part in parts):
         # `close_parent_issues` closes it by itself; without it, a person does.
-        reason = "every sub-issue of this parent issue is closed; a person closes it"
+        reason = person(
+            "close it, or open new parts for what is left",
+            "every sub-issue of this parent issue is closed, and NexKit closes a parent only "
+            "with `close_parent_issues` on and a part completed",
+        )
         return _step(issue, "waits", reason)
     if parts:
         reason = "a parent issue: autopilot works on its sub-issues"
@@ -1252,7 +1328,8 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
             return _step(issue, "active", f"waits for the {command} that autopilot started")
         reason = f"the {command} that autopilot started did not run"
         if record.get("retried"):
-            return _step(issue, "waits", f"{reason}, again")
+            do = f"read the dispatched run for why {command} did not run, then post it yourself"
+            return _step(issue, "waits", person(do, f"{reason}, twice"))
         return _step(
             issue,
             "start",
@@ -1296,19 +1373,27 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     if last["command"] == "go":
         if last.get("outcome") == "issue_closed":
             # Reopened after it closed while the round ran: nothing changed for the plan.
-            reason = "it closed while `/nexkit go` ran and was reopened; a person decides"
+            reason = person(
+                "comment `/nexkit go` to implement the plan again, or `/nexkit plan` to plan anew",
+                "it closed while `/nexkit go` ran and was reopened, which changes nothing for "
+                "its plan",
+            )
             return _step(issue, "waits", reason)
         if last.get("status") == SUCCESS:
-            return _step(issue, "waits", "its pull request was closed; a person decides")
+            reason = person(
+                "comment `/nexkit go` for a new pull request, or close the issue",
+                "its pull request was closed, and autopilot opens no other by itself",
+            )
+            return _step(issue, "waits", reason)
         step = _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,))
         if step:
             return step
         changed = None if last.get("timed_out") else _since_stop(gh, issue, comments, found[-1][0])
         if changed:
             return _step(issue, "start", changed, command="plan", **start)
-        return _step(issue, "waits", last.get("attention") or "the last `/nexkit go` failed")
+        return _step(issue, "waits", last.get("attention") or failed_reason("go"))
     if last.get("status") != SUCCESS:
-        return _step(issue, "waits", last.get("attention") or "the last `/nexkit plan` failed")
+        return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
     if _commented_after(comments, plan):
         return _step(
             issue, "start", "collaborators commented after the plan", command="plan", **start
@@ -2668,7 +2753,8 @@ def _ci_step(gh, cfg, issue, pull, run, pull_comments, start):
         return _step(issue, "waits", reason, person=False, ci_bug=wait["bug"])
     _, state = read_state(pull_comments)
     if (state or {}).get("auto_fixes", 0) >= cfg["fix"]["max_auto_rounds"]:
-        reason = f"{over}, but pull request #{pull} has no automatic fix rounds left"
+        do = f"comment `/nexkit fix` on pull request #{pull} for its failing checks"
+        reason = person(do, f"{over}, but it has no automatic fix rounds left")
         return _step(issue, "waits", reason)
     reason = f"{over}, so pull request #{pull} gets the automatic fix round it waited for"
     fields = {**start, "target": pull, "auto": "true", "count": True}

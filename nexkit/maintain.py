@@ -90,14 +90,17 @@ UPDATE_TRIES = 6
 # of one whose next round then did not start.
 SUPERSEDED = "superseded"
 STOP_FAILED = "stop_failed"
-STOP_FAILED_REASON = (
+STOP_FAILED_REASON = autopilot.person(
+    "comment `/nexkit fix` on the pull request when it conflicts with its base branch, "
+    "otherwise merge the base branch into it and comment `/nexkit review`",
     "NexKit stopped the round's checks after the base branch moved, but could not start the "
-    "next round; comment `/nexkit fix` or `/nexkit review` on the pull request"
+    "next round",
 )
-ON_BASE_FAILED = (
-    "the base branch already holds this change, but NexKit could not close the pull "
-    "request or its issue; close them yourself"
+ON_BASE_FAILED_NEED = (
+    "close the pull request and its issue yourself",
+    "the base branch already holds this change, but GitHub refused NexKit's close",
 )
+ON_BASE_FAILED = autopilot.person(*ON_BASE_FAILED_NEED)
 # The most branches of closed work a sweep deletes, so that the first sweep after a backlog
 # stays short, and what marks its comment about a branch it could not delete.
 STALE_BRANCHES = 3

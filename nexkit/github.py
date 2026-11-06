@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -70,6 +71,21 @@ query($owner: String!, $name: String!, $number: Int!) {
         pageInfo { hasNextPage }
         nodes { editedAt editor { __typename login } }
       }
+    }
+  }
+}
+"""
+
+
+# What GitHub says about the reviews of a pull request: whether it is a draft, whether its
+# reviews let it merge, and its review conversations (see `review_state`).
+REVIEW_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      isDraft
+      reviewDecision
+      reviewThreads(first: 100) { nodes { isResolved } }
     }
   }
 }
@@ -200,6 +216,23 @@ class GitHub:
 
     def default_branch(self):
         return self.request("GET", self._repo)["default_branch"]
+
+    def settings(self):
+        """The repository, as REST gives it: its default branch and merge settings."""
+        return self.request("GET", self._repo) or {}
+
+    def file_text(self, path, ref):
+        """The text of a file at `ref`, or None when there is no such file. GitHub gives a
+        file's content only up to 1 MB: a larger one counts as none."""
+        try:
+            found = self.request("GET", f"{self._repo}/contents/{quote(path)}", params={"ref": ref})
+        except GitHubError as exc:
+            if exc.status != 404:
+                raise
+            return None
+        if not isinstance(found, dict) or found.get("encoding") != "base64":
+            return None
+        return base64.b64decode(found.get("content") or "").decode("utf-8", errors="replace")
 
     def deletes_merged_branches(self):
         """Whether the repository deletes a pull request's head branch once it merges."""
@@ -465,12 +498,16 @@ class GitHub:
     def branch_sha(self, branch):
         return self.request("GET", f"{self._repo}/git/ref/heads/{quote(branch)}")["object"]["sha"]
 
+    def branch_rules(self, branch):
+        """The rules of the rulesets that apply to `branch`, each {type, parameters}."""
+        return self.paginate(f"{self._repo}/rules/branches/{quote(branch)}")
+
     def wants_up_to_date(self, branch):
         """Whether pull requests into `branch` must contain its tip before they merge: a
         ruleset's required status checks with `strict_required_status_checks_policy`, or
         classic branch protection's `required_status_checks.strict`. Classic protection
         that the token may not read counts as not wanting it."""
-        for rule in self.paginate(f"{self._repo}/rules/branches/{quote(branch)}"):
+        for rule in self.branch_rules(branch):
             parameters = rule.get("parameters") or {}
             if rule.get("type") == "required_status_checks" and parameters.get(
                 "strict_required_status_checks_policy"
@@ -492,7 +529,7 @@ class GitHub:
         (403), which takes the Administration permission: then only the rulesets' names are
         known."""
         names = set()
-        for rule in self.paginate(f"{self._repo}/rules/branches/{quote(branch)}"):
+        for rule in self.branch_rules(branch):
             if rule.get("type") == "required_status_checks":
                 found = (rule.get("parameters") or {}).get("required_status_checks") or []
                 names |= {item.get("context") for item in found if isinstance(item, dict)}
@@ -543,6 +580,22 @@ class GitHub:
                         )
         return found
 
+    def review_state(self, number):
+        """{draft, decision, unresolved} of a pull request: whether it is a draft, GitHub's
+        review decision ("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", or None when
+        no review is required), and how many of its review conversations are unresolved."""
+        owner, name = self.repository.split("/", 1)
+        data = self.graphql(REVIEW_QUERY, {"owner": owner, "name": name, "number": number})
+        pull = (data.get("repository") or {}).get("pullRequest") or {}
+        threads = (pull.get("reviewThreads") or {}).get("nodes") or []
+        return {
+            "draft": bool(pull.get("isDraft")),
+            "decision": pull.get("reviewDecision"),
+            "unresolved": sum(
+                1 for t in threads if isinstance(t, dict) and not t.get("isResolved")
+            ),
+        }
+
     def delete_branch(self, branch):
         """Delete a branch. One that is gone already, which GitHub may have deleted by
         itself after a merge, is no failure: GitHub answers 422 for it, and also, with other
@@ -571,6 +624,11 @@ class GitHub:
         request's *Files changed* shows it: its `files`, `commits` (the first 250) and
         `merge_base_commit`."""
         return self.request("GET", f"{self._repo}/compare/{quote(base)}...{quote(head)}")
+
+    def pull_files(self, number):
+        """The files a pull request changes, each with its `additions` and `deletions`: the
+        first 300."""
+        return self.paginate(f"{self._repo}/pulls/{number}/files", limit=300)
 
     def pull_commits(self, number):
         """The commits of a pull request, oldest first: the first 250."""

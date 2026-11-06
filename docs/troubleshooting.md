@@ -312,6 +312,41 @@ says what the person who decides, or a session working for them, does (see [Who 
 what](how-it-works.md#who-does-what)). Never guess a cause: a cause counts only when a run
 log, a trace or a result file shows it.
 
+### What a mention says
+
+Every mention, and every reason under *Needs a person* in `nexkit status`, says three
+things: what to do, why NexKit does not do it itself, and where to look. The mention for
+each outcome of a run is:
+
+| Outcome | `@owner a person is needed: …` | It also names |
+|---|---|---|
+| plan with questions | answer the plan's questions with `/nexkit plan <answers>`. The plan asks for decisions that are the owner's to make | the first question |
+| plan too large | split the issue by hand into parts that each fit one session, with the `request` skill, or make it smaller and comment the change on it. The plan says the issue is too large for one session | |
+| plan finds no change | check the plan's finding, then close the issue, or comment `/nexkit plan <what still needs changing>`. The plan finds that no change is needed, and NexKit closes an issue by itself only with autopilot | |
+| plan or round needs protected paths | make the change in the protected paths (…) by hand, as the plan says. Only a person changes protected paths | the paths |
+| `agent_blocked` | answer the questions in the run's comment with `/nexkit plan <answers>`, or `/nexkit go <answers>` when they leave the plan as it is (on a pull request: with `/nexkit fix <answers>`). The agent stopped at a decision that is the owner's to make | the first question |
+| `agent_error` | read the error in the run's comment and log, remove its cause, then post the command again. The run stopped on an error, and NexKit runs a command again by itself only after an error of the service, the network or the runner | the error |
+| `agent_error`, out of time | comment `/nexkit plan` to split the issue into parts that each fit one session, or raise the stage's `timeout_minutes`. The agent ran out of time before it finished | |
+| `agent_failed` | read the agent job's log for why it ended, then post the command again. The agent job ended without a result, so NexKit had nothing to go on | |
+| `publish_failed` | read the publish job's log, remove the cause, then post the command again. NexKit could not publish the result | the error |
+| `review_failed` | comment `/nexkit review` to run the review again. The AI review did not complete, and NexKit runs it again by itself only after an error of the service, the network or the runner; after an authentication error: fix the review agent's secret first, since another try stops the same way | the error |
+| `needs_human` | comment `/nexkit fix <instructions>` for what still fails, push a commit yourself, or close the pull request. Checks or review still need attention, and no automatic fix rounds remain | the failing checks, the number of blocking findings and where the first one is |
+| `recheck_failed` | check what the fix agent found outside the code, then comment `/nexkit review` once it works again, or `/nexkit fix` with evidence that the code is the cause. The checks or review still fail on the same commit after the fix agent found a cause outside the code | what the agent found |
+| `retry_failed` | post the command again once the cause has passed. The run stopped on a transient error twice, and NexKit tries a command only once more | the error |
+| `conflicting` | comment `/nexkit fix` on the pull request, with any rule the conflict needs. Its commit conflicts with the base branch, and NexKit started no round to resolve it | |
+| `ready`, with `merge.auto` off | review the pull request, then merge it or close it. Checks and the AI review passed, and with `merge.auto` off a person decides the merge | |
+| `ready`, with criteria the review could not verify | confirm from the diff and the checks the acceptance criteria that the review could not verify, then merge the pull request | the first criterion |
+| `merge_refused` | what unblocks the merge, and the rule that refused it: see [The automatic merge was refused](#the-automatic-merge-was-refused) | the rule, the files and their owners |
+| `merge_issue_closed` | merge the pull request or close it. Its issue closed before NexKit merged it, and NexKit leaves the pull request of a closed issue to a person | |
+| `agent_untrusted`, `merge_untrusted` | read the issue, and comment `/nexkit trust` on it if you trust it. Someone without write access edited it after a writer vouched for it, so NexKit does not act on its text (or merge its pull request) | |
+| `close_failed`, `on_base_failed` | close the issue (and the pull request) yourself. No change is needed, or the base branch already holds this change, but GitHub refused NexKit's close | the error |
+| `paused`, not resumed | post the command again once the usage limit has reset. The agent hit its usage limit, and NexKit does not resume this run | |
+
+Text that an agent, GitHub or a person wrote, such as a question or an error, is quoted in
+a code span on one line, so that it mentions nobody. Autopilot's own reasons follow the
+same form, such as `read the issue, and comment /nexkit trust on it if you trust it.
+Autopilot leaves it alone: opened by @someone, who cannot write to the repository`.
+
 ### Publishing failed after `/nexkit go`
 
 Read the run's comment and the `publish` job's log. When the base branch was
@@ -521,8 +556,23 @@ either. It waits for a person only:
 - when its issue left autopilot's scope, since only sweeps try the merge again: merge it
   yourself, or bring the issue back into the scope.
 
-For any other rule, such as a required approval, merge the pull request yourself or
-change the rule.
+For any other rule, the round's comment and the mention say what unblocks the merge, under
+**What unblocks it**. NexKit reads the base branch's rules, the pull request's reviews,
+files and conversations, and the repository's merge settings, and names:
+
+- **a code owner's review**: the files that need it, each with its lines added and removed
+  and its owners from the base branch's `CODEOWNERS`, leaving out a file whose owner
+  approved; a code owner approves the pull request. NexKit's App cannot review its own
+  pull request. A team counts as not approved, since NexKit cannot tell who is in it;
+- **required approvals**: how many the rule wants and how many there are;
+- **a review that requests changes**: its reviewer approves or dismisses it;
+- **open review conversations**: resolve them;
+- **a draft, a merge queue, signed commits, a required deployment, or squash merges turned
+  off**: the step each needs.
+
+Classic branch protection, which NexKit's token may not read, is named from GitHub's
+review decision and its words. Any other refusal quotes GitHub's answer: merge the pull
+request yourself or change the rule.
 
 ### An approved pull request has criteria the review could not verify
 

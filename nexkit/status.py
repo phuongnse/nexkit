@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import autopilot
 from .config import DEFAULTS
+from .report import READY
 from .route import issue_from_branch
 from .state import (
     CONTINUED,
@@ -73,7 +74,7 @@ def issue_item(issue, comments, open_pulls):
         item["resume_at"] = (run.get("resume") or {}).get("at")
     elif status != SUCCESS:
         item["state"] = "failed"
-        item.setdefault("attention", "the last run failed")
+        item.setdefault("attention", autopilot.failed_reason(command))
     elif command == "plan":
         item.update(state="planned", link=(item.get("plan") or {}).get("url") or item["link"])
     elif number in open_pulls:
@@ -150,16 +151,23 @@ def pull_item(pull, comments, cfg):
         item.update(waits_for=wait.get("bug"), reason=ci_wait_reason(wait))
     attention = (meaningful if run.get("status") == SUCCESS else run).get("attention")
     used = conflict_rounds_used([r for _, r in rounds]) >= cfg["conflicts"]["max_rounds"]
+    base = pull["base"]["ref"]
+    fix = "comment `/nexkit fix` on it, with any rule the conflict needs"
     if state == "conflicting" and not cfg["conflicts"]["auto_resolve"]:
-        attention = f"conflicts with `{pull['base']['ref']}`; comment `/nexkit fix`"
+        why = "with `conflicts.auto_resolve` off, NexKit starts no round to resolve conflicts"
+        attention = autopilot.person(fix, f"it conflicts with `{base}`, and {why}")
     elif state == "conflicting" and used:
-        attention = f"conflicts with `{pull['base']['ref']}`, and its conflict rounds are used up"
+        why = f"it conflicts with `{base}`, and its automatic conflict rounds are used up"
+        attention = autopilot.person(fix, why)
     elif state in ("running", "conflicting"):
         attention = None
     elif not attention and state in ("failed", "blocked"):
-        attention = "the last round failed"
+        attention = autopilot.person(
+            "read the last round's comment for why, then post its command again",
+            "the last round failed",
+        )
     elif not attention and state == "ready" and not cfg["merge"]["auto"]:
-        attention = "the pull request is ready for a human decision"
+        attention = READY
     if attention:
         item["attention"] = attention
     return item

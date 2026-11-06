@@ -1080,7 +1080,7 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual(step["state"], "merge")
         step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
         self.assertEqual((step["state"], step["person"]), ("waits", True))
-        self.assertIn("have not passed for hours", step["reason"])
+        self.assertIn("have not passed for six hours", step["reason"])
 
     def test_a_new_commit_on_a_merge_waiting_pull_request_is_reviewed(self):
         from nexkit import autopilot

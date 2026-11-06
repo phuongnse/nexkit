@@ -140,7 +140,10 @@ replaces ⏸️ once a later run carries the command on.
 `report` decides from the run's outcome and the agents' structured output whether a
 person is needed. It records the reason in the run comment's hidden marker, and with
 `notify` set it mentions those people in a new comment (see
-[Mentions](configuration.md#mentions)):
+[Mentions](configuration.md#mentions)). The reason says what to do, why NexKit does not do
+it itself, and where to look, such as the question to answer or, for a refused merge, the
+rule and the files a code owner reviews (see [What a mention
+says](troubleshooting.md#what-a-mention-says)):
 
 | Run result | A person is needed |
 |---|---|

@@ -326,7 +326,7 @@ class SweepTests(AutopilotCase):
         much_later = later + timedelta(hours=7)
         step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=much_later)
         self.assertEqual((step["state"], step["person"]), ("waits", True))
-        self.assertIn("did not run, again", step["reason"])
+        self.assertIn("did not run, twice", step["reason"])
         # A later start of another command can be started once more again.
         self.run_comment(5, "plan", status="running")
         self.gh.issue_comments[5].pop()
@@ -360,7 +360,7 @@ class SweepTests(AutopilotCase):
         # Started once more, and only once: the second start that never runs waits.
         again = step(2)
         self.assertEqual((again["state"], again["person"]), ("waits", True))
-        self.assertIn("did not run, again", again["reason"])
+        self.assertIn("did not run, twice", again["reason"])
 
     def test_a_lost_command_whose_run_is_unknown_starts_after_lost_after_minutes(self):
         self.gh.dispatch_runs["nexkit.yml"] = "https://github.com/acme/app/actions/runs/77"
@@ -420,14 +420,18 @@ class SweepTests(AutopilotCase):
         self.run_comment(5, "go", status="running", autopilot=True)
         self.gh.runs[self.runs] = {"status": "completed", "conclusion": "cancelled"}
         _, [step] = autopilot.preview(self.gh, self.cfg)
-        self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.REPORTLESS))
+        reason = autopilot.person(
+            autopilot.LOST_DO, f"{autopilot.REPORTLESS}, after autopilot started it once more"
+        )
+        self.assertEqual((step["state"], step["reason"]), ("waits", reason))
         # A person's command is never started again by autopilot.
         self.issue(6)
         self.planned(6)
         self.run_comment(6, "go", status="running")
         self.gh.runs[self.runs] = {"status": "completed"}
         steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
-        self.assertEqual((steps[6]["state"], steps[6]["reason"]), ("waits", autopilot.REPORTLESS))
+        reason = autopilot.person(autopilot.LOST_DO, autopilot.REPORTLESS)
+        self.assertEqual((steps[6]["state"], steps[6]["reason"]), ("waits", reason))
 
     def test_a_go_whose_review_continues_on_its_pull_request_follows_the_pull_request(self):
         self.issue(5)
@@ -505,7 +509,7 @@ class SweepTests(AutopilotCase):
         late = datetime(2026, 1, 20, tzinfo=UTC)
         step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {}, now=late)
         self.assertEqual(step["state"], "waits")
-        self.assertIn("longer than NexKit resumes runs", step["reason"])
+        self.assertIn("longer ago than NexKit resumes runs", step["reason"])
 
     def test_a_continued_run_whose_new_run_never_started_waits(self):
         self.issue(5)
@@ -542,7 +546,11 @@ class SweepTests(AutopilotCase):
         _, steps = autopilot.preview(self.gh, self.cfg)
         self.assertEqual(
             [s["reason"] for s in steps],
-            ["the run stopped", "its pull request was closed; a person decides"],
+            [
+                "the run stopped",
+                "comment `/nexkit go` for a new pull request, or close the issue. Its pull "
+                "request was closed, and autopilot opens no other by itself",
+            ],
         )
 
     def test_max_parallel_limits_the_issues_in_progress(self):
@@ -974,7 +982,7 @@ class AnswerTests(AnswerAndSplitCase):
         again = {**QUESTION, "question": "Which host?", "options": ["a", "b"]}
         self.run_comment(5, "plan", status="running")  # as `route` posts it
         result = self.report_plan(cfg, plan_output(questions=[again]))
-        self.assertEqual(result["attention"], "the plan has questions")
+        self.assertTrue(result["attention"].startswith("answer the plan's questions with "))
         self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
         self.sweep(cfg)
         self.assertEqual(self.started(), [("plan", 5)])
@@ -1253,7 +1261,10 @@ class SplitTests(AnswerAndSplitCase):
         self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "agent_error", agent))
         self.sweep()
         self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
-        reason = "a part of a split ran out of time again, after #5 asked for a split"
+        reason = autopilot.person(
+            autopilot.TIMED_OUT_DO,
+            "a part of a split ran out of time again, after #5 asked for a split",
+        )
         steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
         self.assertEqual((steps[6]["state"], steps[6]["reason"]), ("waits", reason))
         self.assertIn(reason, render(collect(self.gh, self.cfg, workers=1)))
@@ -1291,7 +1302,9 @@ class SplitTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual((self.started(), sorted(self.gh.issues)), ([("plan", 5)], [5]))
         _, [step] = autopilot.preview(self.gh, self.cfg)
-        reason = "the parts of its plan are titled like the issue again"
+        reason = autopilot.person(
+            autopilot.SPLIT_DO, "the parts of its plan are titled like the issue again"
+        )
         self.assertEqual((step["state"], step["reason"]), ("waits", reason))
         # A plan with parts titled by their own behaviour splits.
         self.posted_plan(5, too_large=True, split=self.PARTS)
@@ -1315,7 +1328,9 @@ class SplitTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual(self.started(), [("plan", 5)])
         _, [step] = autopilot.preview(self.gh, self.cfg)
-        reason = "its plan is too large and suggests no parts again"
+        reason = autopilot.person(
+            autopilot.SPLIT_DO, "its plan is too large for one session and suggests no parts again"
+        )
         self.assertEqual((step["state"], step["reason"], step["person"]), ("waits", reason, True))
         # A plan with parts splits.
         self.posted_plan(5, too_large=True, split=self.PARTS)
@@ -1345,10 +1360,14 @@ class SplitTests(AnswerAndSplitCase):
         self.assertEqual(self.started(), [])
         self.assertEqual(sorted(self.gh.issues), [5, 6, 7, 8, 9, 10])
         steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
+        starts = {8: "make the issue smaller", 9: "read the plan, the run log"}
         for number in (8, 9):
             step = steps[number]
-            self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.DEPTH_REASON))
-        self.assertIn("3 levels deep", autopilot.DEPTH_REASON)
+            self.assertEqual(step["state"], "waits")
+            self.assertTrue(step["reason"].startswith(starts[number]), step["reason"])
+            self.assertTrue(
+                step["reason"].endswith("3 levels deep, which autopilot splits no further")
+            )
 
 
 class StoppedGoTests(AnswerAndSplitCase):
@@ -1481,7 +1500,10 @@ class WaitTests(AnswerAndSplitCase):
         self.assertEqual(reasons[1], ("waits", attention))
         self.assertEqual(reasons[2], ("waits", "no review"))
         self.assertEqual(reasons[3], ("waits", "GitHub refused the merge"))
-        used = "pull request #14 conflicts with `main`, and its conflict rounds are used up"
+        used = (
+            "comment `/nexkit fix` on pull request #14, with any rule the conflict needs. It "
+            "conflicts with `main`, and its automatic conflict rounds are used up"
+        )
         self.assertEqual(reasons[4], ("waits", used))
         # None of them takes the one place, so the ready issue starts.
         self.assertEqual(reasons[5][0], "start")
@@ -1524,7 +1546,11 @@ class WaitTests(AnswerAndSplitCase):
             self.assertEqual(
                 (steps[number]["state"], needs[number]), ("waits", steps[number]["reason"])
             )
-        self.assertEqual(needs[3], "waits for #9; #9 is not in scope")
+        self.assertEqual(
+            needs[3],
+            "finish #9, bring it into the scope, or remove the *blocked by* mark. It waits for "
+            "#9, and #9 is outside autopilot's scope, where it does no work",
+        )
         self.assertNotIn(4, needs)
         self.assertNotIn("Needs a person\n  nothing", render(data))
 
@@ -3006,8 +3032,8 @@ class TrustedWorkflowTests(unittest.TestCase):
         self.assertTrue(steps[0]["person"])
         self.assertEqual(
             steps[0]["reason"],
-            "its marker names run 900, which does not exist; a writer who read it comments "
-            "`/nexkit trust`",
+            "read the issue, and comment `/nexkit trust` on it if you trust it. Autopilot leaves "
+            "it alone: its marker names run 900, which does not exist",
         )
 
 
@@ -3076,7 +3102,7 @@ class TrustTests(unittest.TestCase):
         self.assertEqual(
             self.problem(), "@bob edited it without write access after @alice vouched for it"
         )
-        self.assertIn("comments `/nexkit trust`", self.step()["reason"])
+        self.assertIn("comment `/nexkit trust` on it", self.step()["reason"])
 
     def test_an_edit_by_a_writer_or_nexkit_keeps_the_trust(self):
         self.vouch()
@@ -3169,7 +3195,7 @@ class TrustTests(unittest.TestCase):
         [item] = data["needs_person"]
         self.assertEqual(item["number"], 5)
         self.assertIn("opened by @bob", item["reason"])
-        self.assertIn("a writer who read it comments `/nexkit trust`", item["reason"])
+        self.assertIn("comment `/nexkit trust` on it if you trust it", item["reason"])
 
     def test_a_part_of_an_earlier_release_with_a_pull_request_is_carried_on(self):
         self.gh.add_issue(8, body="<!-- nexkit:part 7 -->\nA part.", user=ACTIONS_BOT, milestone=1)
@@ -3546,9 +3572,11 @@ class LastInMilestoneTests(unittest.TestCase):
 
     def test_without_a_milestone_it_waits_for_a_person_and_says_why(self):
         self.gh.issues[5]["milestone"] = None
-        self.assertEqual(
-            self.wait(), ("it runs last in its milestone (`last`), but has no milestone", True)
+        reason = (
+            "give it a milestone, or take the label `last` off. It runs last in its milestone "
+            "(`last`), but has no milestone"
         )
+        self.assertEqual(self.wait(), (reason, True))
 
     def test_status_says_why_the_milestone_scope_leaves_one_without_a_milestone(self):
         self.gh.issues[5]["milestone"] = None

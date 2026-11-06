@@ -71,11 +71,17 @@ def missing(granted):
     ]
 
 
-def manifest(owner, redirect_url):
+def default_name(owner):
+    """A name for the owner's App. Names are unique across GitHub, so a plain "NexKit" is
+    taken; the person can change it on GitHub's page, or with `nexkit init --app-name`."""
+    return f"NexKit {owner}"
+
+
+def manifest(owner, redirect_url, name=None):
     """The App that the manifest flow creates: private, so only its owner can install it,
     with exactly NexKit's permissions and no webhook."""
     return {
-        "name": f"NexKit {owner}"[:NAME_LIMIT],
+        "name": (name or default_name(owner))[:NAME_LIMIT],
         "url": HOME,
         "description": "Acts for NexKit in the repositories of this account.",
         "hook_attributes": {"url": HOME, "active": False},
@@ -86,11 +92,11 @@ def manifest(owner, redirect_url):
     }
 
 
-def form(owner, organization, state, redirect_url):
+def form(owner, organization, state, redirect_url, name=None):
     """The page that posts the manifest to GitHub, which accepts it only from a form."""
     where = f"organizations/{owner}/settings" if organization else "settings"
     action = f"https://github.com/{where}/apps/new?state={state}"
-    value = html.escape(json.dumps(manifest(owner, redirect_url)), quote=True)
+    value = html.escape(json.dumps(manifest(owner, redirect_url, name)), quote=True)
     return (
         "<!doctype html><title>NexKit</title><body onload='document.forms[0].submit()'>"
         f"<form action='{html.escape(action, quote=True)}' method='post'>"
@@ -123,7 +129,7 @@ class _Flow(BaseHTTPRequestHandler):
         pass
 
 
-def receive_code(owner, organization, opener=webbrowser.open, seconds=FLOW_SECONDS):
+def receive_code(owner, organization, opener=webbrowser.open, seconds=FLOW_SECONDS, name=None):
     """Send the person through GitHub's page that creates the App, with a page on this
     machine that posts the manifest and takes the code GitHub answers with. The state
     keeps out an answer that did not come from this flow."""
@@ -132,9 +138,14 @@ def receive_code(owner, organization, opener=webbrowser.open, seconds=FLOW_SECON
         address = f"http://127.0.0.1:{server.server_port}"
         server.state = secrets.token_urlsafe(16)
         server.code = None
-        server.page = form(owner, organization, server.state, f"{address}/done")
+        server.page = form(owner, organization, server.state, f"{address}/done", name)
         server.timeout = 1
-        print(f"Create the GitHub App in your browser: {address}/")
+        print(f"Create the GitHub App in your browser: {address}/", flush=True)
+        print(
+            "GitHub's page lets you change its name, which must be unique across GitHub. "
+            f"This waits {seconds // 60} minutes.",
+            flush=True,
+        )
         opener(f"{address}/")
         deadline = time.monotonic() + seconds
         while server.code is None and time.monotonic() < deadline:
@@ -167,11 +178,11 @@ def set_secrets(repository, app_id, key):
     set_secret(repository, APP_SECRETS["private_key_secret"], key)
 
 
-def create(repository, organization, token, flow=receive_code):
+def create(repository, organization, token, flow=receive_code, name=None):
     """Create an App with the manifest flow and set its secrets. GitHub shows the private
     key only here, so it goes straight into the secret and nowhere else."""
     owner = repository.split("/")[0]
-    code = flow(owner, organization)
+    code = flow(owner, organization, name=name) if name else flow(owner, organization)
     try:
         found = GitHub(repository=repository, token=token).request(
             "POST", f"/app-manifests/{code}/conversions"
@@ -214,21 +225,24 @@ def jwt(app_id, key_file, now=time.time):
 
 
 def inspect(repository, app_id, key_file, client=GitHub):
-    """What GitHub says about the App with this key: {slug, installed, permissions}, where
-    `permissions` are those of its installation on `repository`. Only the App itself may
-    ask whether it is installed: GitHub refuses the GitHub CLI's token."""
+    """What GitHub says about the App with this key: {slug, granted, installed,
+    permissions}, where `granted` are the App's own permissions and `permissions` those of
+    its installation on `repository`, which lag until the owner accepts new ones. Only the
+    App itself may read a private App or ask where it is installed: GitHub refuses the
+    GitHub CLI's token."""
     gh = client(repository=repository, token=jwt(app_id, key_file))
     try:
-        slug = gh.request("GET", "/app")["slug"]
+        found = gh.request("GET", "/app")
     except GitHubError as exc:
         raise AppError(f"GitHub does not accept this App id and key: {exc}") from None
+    state = {"slug": found["slug"], "granted": found.get("permissions") or {}}
     try:
-        found = gh.request("GET", f"/repos/{repository}/installation")
+        installed = gh.request("GET", f"/repos/{repository}/installation")
     except GitHubError as exc:
         if exc.status != 404:
             raise AppError(f"Could not read the App's installation: {exc}") from None
-        return {"slug": slug, "installed": False, "permissions": {}}
-    return {"slug": slug, "installed": True, "permissions": found.get("permissions") or {}}
+        return {**state, "installed": False, "permissions": {}}
+    return {**state, "installed": True, "permissions": installed.get("permissions") or {}}
 
 
 def use_existing(repository, app_id, key_file, client=GitHub):

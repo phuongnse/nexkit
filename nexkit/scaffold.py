@@ -134,7 +134,7 @@ def configured_app(root):
     return found if isinstance(found, dict) and found.get("slug") else None
 
 
-def github_app(root, *, slug=None, app_id=None, key_file=None):
+def github_app(root, *, slug=None, app_id=None, key_file=None, name=None):
     """(the configuration's `github_app`, lines for the person). `slug` names an App whose
     secrets are set already, as an organization's can be; `app_id` and `key_file` an App
     that exists, which must be installed here, and set its secrets; otherwise a repository
@@ -159,7 +159,7 @@ def github_app(root, *, slug=None, app_id=None, key_file=None):
             lines.append(f"It lacks {', '.join(lacking)}; 'nexkit doctor' says how to grant it.")
         return app.settings(slug), lines
     kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
-    slug = app.create(repo, kind == "Organization", gh_token())
+    slug = app.create(repo, kind == "Organization", gh_token(), name=name)
     return app.settings(slug), [
         f"Created the App {slug} and set its secrets. Install it on {repo}, and on every other "
         f"repository of this owner that uses NexKit: {app.install_url(slug)}"
@@ -664,63 +664,73 @@ def _app_secrets(cfg, names, repo):
     return findings
 
 
-def _app_on_github(cfg, repo, key_file):
-    """Findings: the App has NexKit's permissions and is installed on `repo`. Anyone signed
-    in may read an App they own, but only the App itself may ask where it is installed, so
-    that takes its private key. What doctor cannot tell is no failure."""
+def _app_on_github(cfg, repo, key_file=None, app_id=None):
+    """Findings: the App has NexKit's permissions and is installed on `repo`. GitHub shows a
+    private App, which `nexkit init` creates, only to the App itself, and only the App may
+    ask where it is installed, so both take its id and private key. What doctor cannot tell
+    is no failure."""
     slug = cfg["github_app"]["slug"]
     owner = repo.split("/")[0]
     kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
-    organization = kind == "Organization"
-    found = _gh("api", f"apps/{slug}")
-    if found is None:
-        return [
-            (
-                True,
-                f"Could not read the App {slug}: GitHub shows a private App only to its owner. "
-                f"Check its permissions at {app.settings_url(slug, owner, organization)}",
-            )
-        ]
-    data = json.loads(found)
-    lacking = app.missing(data.get("permissions"))
-    findings = [
-        (
-            not lacking,
-            f"The App {slug} lacks {', '.join(lacking)}: grant it at "
-            f"{app.settings_url(slug, owner, organization)}, then accept the change on the "
-            "installation"
-            if lacking
-            else f"The App {slug} has the permissions NexKit needs",
-        )
-    ]
-    if not key_file:
-        hint = "pass --app-private-key FILE to check it"
+    where = app.settings_url(slug, owner, kind == "Organization")
+    if not (key_file and app_id):
+        found = _gh("api", f"apps/{slug}")
+        hint = "pass --app-id ID --app-private-key FILE to check"
+        if found is None:
+            return [
+                (
+                    True,
+                    f"Could not read the App {slug}: GitHub shows a private App to no person's "
+                    f"token; {hint} it and its installation on {repo}",
+                )
+            ]
+        findings = [_granted(slug, json.loads(found).get("permissions"), where)]
         findings.append((True, f"Could not tell whether {slug} is installed on {repo}; {hint}"))
         return findings
     try:
-        state = app.inspect(repo, data["id"], key_file)
+        state = app.inspect(repo, app_id, key_file)
     except app.AppError as exc:
-        return [*findings, (False, str(exc))]
+        return [(False, str(exc))]
+    if state["slug"] != slug:
+        return [
+            (
+                False,
+                f"The key and id belong to the App {state['slug']}, but github_app.slug is "
+                f"{slug}; correct one of them",
+            )
+        ]
+    findings = [_granted(slug, state["granted"], where)]
     if not state["installed"]:
         how = f"install it at {app.install_url(slug)}"
         return [*findings, (False, f"The App {slug} is not installed on {repo}: {how}")]
     findings.append((True, f"The App {slug} is installed on {repo}"))
     lacking = app.missing(state["permissions"])
     if lacking:
-        where = f"https://github.com/{owner}/{repo.split('/')[1]}/settings/installations"
+        accept = f"https://github.com/{owner}/{repo.split('/')[1]}/settings/installations"
         findings.append(
             (
                 False,
                 f"The App's installation on {repo} lacks {', '.join(lacking)}: accept the "
-                f"App's new permissions at {where}",
+                f"App's new permissions at {accept}",
             )
         )
     return findings
 
 
-def doctor(root, key_file=None):
-    """Return a list of (ok, message) findings. With `key_file`, the App's private key, it
-    also asks GitHub whether the App is installed on the repository."""
+def _granted(slug, granted, where):
+    lacking = app.missing(granted)
+    if lacking:
+        return (
+            False,
+            f"The App {slug} lacks {', '.join(lacking)}: grant it at {where}, then accept "
+            "the change on the installation",
+        )
+    return (True, f"The App {slug} has the permissions NexKit needs")
+
+
+def doctor(root, key_file=None, app_id=None):
+    """Return a list of (ok, message) findings. With `key_file` and `app_id`, the App's
+    private key and id, it also asks GitHub as the App about it and its installation."""
     root = Path(root)
     findings = []
     cfg = None
@@ -783,7 +793,7 @@ def doctor(root, key_file=None):
         findings += _secrets_set(cfg, names, repo)
     if cfg and not configuration.app_problem(cfg):
         findings += _app_secrets(cfg, names, repo)
-        findings += _app_on_github(cfg, repo, key_file)
+        findings += _app_on_github(cfg, repo, key_file, app_id)
     for login in (cfg or {}).get("notify", []):
         role = (
             _gh("api", f"repos/{repo}/collaborators/{login}/permission", "-q", ".permission") or ""

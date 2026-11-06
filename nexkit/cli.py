@@ -67,7 +67,11 @@ def cmd_init(args):
         scaffold.refuse_existing(args.repo)
     try:
         github_app, app_lines = scaffold.github_app(
-            args.repo, slug=args.app_slug, app_id=args.app_id, key_file=args.app_private_key
+            args.repo,
+            slug=args.app_slug,
+            app_id=args.app_id,
+            key_file=args.app_private_key,
+            name=args.app_name,
         )
     except AppError as exc:
         print(f"nexkit: {exc}", file=sys.stderr)
@@ -105,7 +109,10 @@ def cmd_init(args):
 
 
 def cmd_doctor(args):
-    findings = scaffold.doctor(args.repo, args.app_private_key)
+    if bool(args.app_id) != bool(args.app_private_key):
+        print("nexkit: --app-id and --app-private-key go together", file=sys.stderr)
+        return 2
+    findings = scaffold.doctor(args.repo, args.app_private_key, args.app_id)
     for ok, message in findings:
         print(f"{'✓' if ok else '✗'} {message}")
     return 0 if all(ok for ok, _ in findings) else 1
@@ -613,6 +620,11 @@ def build_parser():
         "--app-private-key", metavar="FILE", help="The private key of the App in --app-id"
     )
     p.add_argument(
+        "--app-name",
+        metavar="NAME",
+        help="The name of the App that init creates, unique across GitHub (default: NexKit OWNER)",
+    )
+    p.add_argument(
         "--app-slug",
         metavar="SLUG",
         help="Use this App, whose secrets are set already, such as an organization's",
@@ -701,10 +713,11 @@ def build_parser():
 
     p = sub.add_parser("doctor", help="Check a repository's NexKit setup")
     p.add_argument("--repo", default=".")
+    p.add_argument("--app-id", metavar="ID", help="The App's id, with --app-private-key")
     p.add_argument(
         "--app-private-key",
         metavar="FILE",
-        help="The App's private key, to check that the App is installed on this repository",
+        help="The App's private key, to check the App and its installation on this repository",
     )
     p.set_defaults(func=cmd_doctor)
 

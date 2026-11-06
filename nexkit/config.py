@@ -133,7 +133,7 @@ APP_DOCS = "https://github.com/phuongnse/nexkit/blob/main/docs/configuration.md#
 NO_TOKEN = (
     "NexKit could not get a token from its GitHub App: check that the App is installed on this "
     "repository and has NexKit's permissions, and that the secrets in github_app are set. Run "
-    "'nexkit doctor --app-private-key FILE', or see "
+    "'nexkit doctor --app-id ID --app-private-key FILE', or see "
     "https://github.com/phuongnse/nexkit/blob/main/docs/troubleshooting.md#the-github-app"
 )
 # The most merges an entry of `merge.after_workflows` may wait for.

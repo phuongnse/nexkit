@@ -39,7 +39,7 @@ and follow [Moving to the GitHub App](configuration.md#moving-to-the-github-app)
 **"NexKit could not get a token from its GitHub App".** One of these:
 
 - **The App is not installed on the repository.** Install it at
-  `https://github.com/apps/<slug>/installations/new`. `nexkit doctor --app-private-key FILE`
+  `https://github.com/apps/<slug>/installations/new`. `nexkit doctor --app-id ID --app-private-key FILE`
   checks this.
 - **A secret is missing or wrong.** Set the secrets that `github_app` names, with
   `nexkit init --force --app-id ID --app-private-key FILE`. A workflow that lists secrets one
@@ -53,13 +53,15 @@ and follow [Moving to the GitHub App](configuration.md#moving-to-the-github-app)
 App than the secrets. NexKit would not recognise its own comments, so the run stops. Correct
 `github_app.slug`.
 
-**`nexkit doctor`: "Could not tell whether … is installed".** Only the App itself may ask,
-which takes its key. Pass `--app-private-key FILE`. It needs `openssl`. This is not a problem,
-and doctor still passes.
+**`nexkit doctor`: "Could not read the App" or "Could not tell whether … is installed".**
+GitHub shows a private App, such as the one `nexkit init` creates, to no person's token, and
+only the App may ask where it is installed. Pass `--app-id ID --app-private-key FILE`, with
+the id from the App's settings page and a private key you generate there; it needs
+`openssl`. This is not a problem, and doctor still passes.
 
-**`nexkit doctor`: "Could not read the App".** GitHub shows a private App only to its owner.
-Check the permissions on the App's page instead. This is not a problem, and doctor still
-passes.
+**A skipped `nexkit` check on a NexKit pull request.** NexKit's review is a review by its
+App, which sends `pull_request_review` like anyone's, and the NexKit workflow skips it. The
+check shows that run; it never fails and needs nothing.
 
 **`nexkit doctor`: "NexKit vX.Y.Z is available".** A newer release exists. This is not a
 problem, and doctor still passes: upgrade when you choose to, with the steps in that

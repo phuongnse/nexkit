@@ -495,32 +495,31 @@ nexkit-<runner.os>-<name>-<hashFiles(key_files)>
 and, when that key has no cache, the newest cache whose key starts with
 `nexkit-<runner.os>-<name>-`. With an older cache, `setup` installs what changed since.
 
-**Who saves.** A workflow of your repository that runs on the base branch saves each entry
-under the same key, for example the CI that runs on pushes to the default branch, which
-NexKit also starts after its merges with `merge.after_workflows`. Add one `actions/cache`
-step per entry, after the checkout and before your setup:
+**Who saves.** A workflow of your repository that runs on the base branch saves the caches,
+for example the CI that runs on pushes to the default branch. It uses NexKit's action, which
+reads the entries from `.nexkit/config.json`, so you state your caches once. Add one step,
+after the checkout and before your setup, at the tag your NexKit workflow uses:
 
 ```yaml
-- uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-  with:
-    path: |
-      ~/.gradle/caches
-      ~/.gradle/wrapper
-    key: nexkit-${{ runner.os }}-gradle-${{ hashFiles('android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
-    restore-keys: nexkit-${{ runner.os }}-gradle-
+- uses: actions/checkout@v4
+- uses: phuongnse/nexkit/cache@vX.Y.Z
 - run: scripts/setup.sh
 ```
 
-`actions/cache` restores the entry and saves it at the end of a successful job when the
-key had no cache. For NexKit to find what it saves:
+The action restores each entry and saves it at the end of a successful job when its key had
+no cache, under the key NexKit restores. It saves only on the base branch, since caches
+saved on other branches are not visible to NexKit; on any other branch or pull request it
+only restores, so your CI starts warm there too. For NexKit to find what it saves:
 
-- `path` lists exactly the `paths` of the entry, in the same order. The list is part of
-  the cache's version, and a cache saved with another list is not found.
-- `hashFiles` gets exactly the `key_files`, in the same order.
 - The step comes before your setup, so the key files are hashed as committed, as NexKit
   hashes them.
 - The job runs on `ubuntu-24.04` or `ubuntu-latest`, like NexKit.
-- It runs on the base branch. Caches saved on other branches are not visible to NexKit.
+- With the checkout in a folder, name it with `repo:`. A run on a schedule may not say which
+  branch is the default one; give it with `base: main`, or it only restores.
+
+`nexkit doctor` warns when `cache` is set and no workflow uses the action. Hand-written
+`actions/cache` steps from an earlier release still work while they repeat every entry
+exactly, and can go once the action replaces them.
 
 **A miss is not a failure.** A missing cache, or a restore that fails, never fails a run.
 The *Restore caches* step in the job log lists each entry as restored, restored from an

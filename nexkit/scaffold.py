@@ -14,6 +14,8 @@ from . import config as configuration
 from .runtimes import DECLARED_SECRETS, PROVIDERS
 
 KIT_REPOSITORY = "phuongnse/nexkit"
+# How the key of an `actions/cache` step that saves an entry by hand starts.
+HAND_WRITTEN_KEY = "nexkit-${{ runner.os }}-"
 WORKFLOW_PATH = ".github/workflows/nexkit.yml"
 
 
@@ -309,6 +311,30 @@ def workflow_name(root, name):
     if not match:
         return f".github/workflows/{name}"
     return match.group(1).strip("'\"")
+
+
+def _cache_action(root, cfg, kit_repo):
+    """Findings: with `cache` set, a workflow of the default branch saves the caches, since
+    NexKit only restores them. Hand-written steps that hold NexKit's key can work, so they
+    are information; with neither, every run starts cold."""
+    if not cfg["cache"]:
+        return []
+    folder = root / ".github/workflows"
+    paths = sorted(folder.glob("*.y*ml")) if folder.is_dir() else []
+    texts = [_uncommented(path.read_text(errors="replace")) for path in paths]
+    action = f"{kit_repo}/cache@"
+    if any(re.search(rf"^\s*(-\s*)?uses:\s*{re.escape(action)}", t, re.M) for t in texts):
+        return [(True, "A workflow saves the caches with NexKit's cache action")]
+    use = f"use '{action}<ref>' in a workflow of the default branch (docs/configuration.md#caches)"
+    if any(HAND_WRITTEN_KEY in text for text in texts):
+        return [
+            (
+                True,
+                "A workflow saves the caches with steps of its own, which must stay in step "
+                f"with `cache` by hand; to state them once, {use}",
+            )
+        ]
+    return [(False, f"cache is set, but no workflow saves the caches, so runs start cold: {use}")]
 
 
 def _ci_trigger(root, cfg, workflow):
@@ -732,6 +758,7 @@ def doctor(root, key_file=None):
         if cfg:
             findings += _triggers(root, cfg, text)
             findings += _passed_secrets(cfg, text)
+            findings += _cache_action(root, cfg, pinned[0] if pinned else KIT_REPOSITORY)
 
     repo = repository_of(root)
     if not repo:

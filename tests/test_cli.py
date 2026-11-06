@@ -607,6 +607,32 @@ class InitDoctorTests(unittest.TestCase):
         ok = (True, "autopilot.trusted_workflows: autopilot takes the issues audit.yml opens")
         self.assertIn(ok, scaffold.doctor(self.root))
 
+    def test_doctor_says_whether_a_workflow_saves_the_caches(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        raw = json.loads(path.read_text())
+
+        def found():
+            return [(ok, m) for ok, m in scaffold.doctor(self.root) if "saves the caches" in m]
+
+        self.assertEqual(found(), [])  # no `cache`, nothing to save
+        entry = {"name": "npm", "paths": ["~/.npm"], "key_files": ["package-lock.json"]}
+        path.write_text(json.dumps({**raw, "cache": [entry]}))
+        [(ok, message)] = [(ok, m) for ok, m in scaffold.doctor(self.root) if "cache is set" in m]
+        self.assertFalse(ok)
+        self.assertIn("no workflow saves the caches, so runs start cold", message)
+        ci = self.root / ".github/workflows/ci.yml"
+        ci.write_text("# - uses: phuongnse/nexkit/cache@v1\non: push\n")
+        self.assertFalse(any(ok for ok, _ in found()), "a comment saves nothing")
+        ci.write_text("key: nexkit-${{ runner.os }}-npm-${{ hashFiles('x') }}\n")
+        [(ok, message)] = found()
+        self.assertTrue(ok)
+        self.assertIn("in step with `cache` by hand", message)
+        ci.write_text("jobs:\n  t:\n    steps:\n      - uses: phuongnse/nexkit/cache@v1.2.3\n")
+        self.assertEqual(
+            found(), [(True, "A workflow saves the caches with NexKit's cache action")]
+        )
+
     def test_doctor_refuses_a_configuration_without_the_app(self):
         self.github_app.return_value = (None, [])
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])

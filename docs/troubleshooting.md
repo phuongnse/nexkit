@@ -483,10 +483,11 @@ again after the reset.
 
 ### Every run misses a cache
 
-The *Restore caches* step lists each entry as missed. Compare the `cache` entries with
-the CI workflow's `actions/cache` steps: the same paths in the same order, and the same
-key files in the same order (see [Caches](configuration.md#caches)). Check that CI on the
-default branch succeeds: `actions/cache` saves only at the end of a successful job.
+The *Restore caches* step lists each entry as missed. Check that a workflow on the default
+branch uses [NexKit's cache action](configuration.md#caches), which `nexkit doctor` says,
+and that it succeeds: it saves only at the end of a successful job. Its log says whether a
+run saves or only restores. Hand-written `actions/cache` steps must repeat each entry's paths
+and key files in the same order; the action needs none of that.
 
 ### A review gave no answer for a checklist item
 

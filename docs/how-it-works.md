@@ -55,9 +55,8 @@ NexKit merged one with `merge.auto`, opening an issue for anything wrong. Check 
 - Nothing in a protected path changed. NexKit rejects such a change from its agents, so
   this matters when someone pushed to the branch by hand.
 - When the change alters what `setup` downloads, such as a new toolchain or a lock file in
-  a new place, the [`cache`](configuration.md#caches) entries and the CI workflow's
-  `actions/cache` steps change with it. Both are in protected paths, so a person makes
-  that change by hand.
+  a new place, the [`cache`](configuration.md#caches) entries change with it. They are in a
+  protected path, so a person makes that change by hand.
 - An approved pull request whose review marked a criterion ❔ unverifiable does not merge
   by itself (see [Review](#stages)). Check each listed criterion against the diff and the
   check results before merging. When a test could show a criterion, `/nexkit fix Add tests

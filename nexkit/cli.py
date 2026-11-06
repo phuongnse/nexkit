@@ -492,8 +492,20 @@ def cmd_combine_checks(args):
 
 
 def cmd_cache(args):
-    from .cache import plan, report
+    from .cache import plan, report, saves
 
+    if args.save:
+        # In a workflow of the repository, which has the configuration in its checkout.
+        cfg = configuration.load(args.repo)
+        event, ref = os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_REF_NAME")
+        save = saves(event, ref, args.base)
+        print(f"Caches: {', '.join(e['name'] for e in cfg['cache']) or 'none'}")
+        print(f"Saves them at the end of the job: {'yes' if save else 'no, it only restores'}")
+        _output(
+            **plan(cfg, args.repo, os.environ.get("RUNNER_OS", "Linux")),
+            save="true" if save else "false",
+        )
+        return 0
     cfg = _config()
     if args.report:
         for line in report(cfg, json.loads(os.environ.get("NEXKIT_CACHE_STEPS") or "{}")):
@@ -759,6 +771,8 @@ def build_parser():
     p = sub.add_parser("cache", help="(pipeline) Name the caches to restore, or log the result")
     p.add_argument("--repo", default="repo", help="Checkout, relative to the workspace")
     p.add_argument("--report", action="store_true", help="Log what the restore steps found")
+    p.add_argument("--save", action="store_true", help="Plan the steps of the cache action")
+    p.add_argument("--base", default="", help="With --save, the branch that saves the caches")
     p.set_defaults(func=cmd_cache)
 
     p = sub.add_parser("publish", help="(pipeline) Commit, push and open pull requests")

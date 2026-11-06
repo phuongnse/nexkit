@@ -1,7 +1,7 @@
 # Restore the caches in `cache` of .nexkit/config.json. The agent and verify jobs use it
 # before setup. It never saves: those jobs run code the agent wrote, and a cache saved in
-# a NexKit run would reach every later run on the base branch. The repository's own
-# workflow on the base branch saves the caches (docs/configuration.md#caches).
+# a NexKit run would reach every later run on the base branch. A workflow of the repository
+# on the base branch saves them with the action in cache/ (docs/configuration.md#caches).
 #
 # A workflow cannot loop over steps, so there is one restore step per possible entry:
 # MAX_CACHES in nexkit/config.py.

@@ -3004,7 +3004,165 @@ class TrustedWorkflowTests(unittest.TestCase):
         _, steps = autopilot.preview(self.gh, self.cfg)
         self.assertEqual(steps[0]["state"], "waits")
         self.assertTrue(steps[0]["person"])
-        self.assertEqual(steps[0]["reason"], "its marker names run 900, which does not exist")
+        self.assertEqual(
+            steps[0]["reason"],
+            "its marker names run 900, which does not exist; a writer who read it comments "
+            "`/nexkit trust`",
+        )
+
+
+class TrustTests(unittest.TestCase):
+    """A writer's `/nexkit trust`. Comments of `FakeGitHub.human_comment` date from
+    2026-01-01."""
+
+    BEFORE, AFTER = "2025-12-31T00:00:00Z", "2026-01-02T00:00:00Z"
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_milestone(1)
+        self.cfg = make_config(autopilot={"enabled": True})
+        self.gh.add_issue(5, body="Please run this.", user="bob", milestone=1)
+
+    def problem(self, number=5):
+        return autopilot.distrust(self.gh, self.gh.issues[number], self.cfg)
+
+    def vouch(self, number=5, login="alice", body="/nexkit trust"):
+        return self.gh.human_comment(number, body, login)
+
+    def step(self, number=5):
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        return next(step for step in steps if step["number"] == number)
+
+    def test_a_writers_comment_makes_autopilot_take_the_issue(self):
+        self.assertEqual(self.problem(), "opened by @bob, who cannot write to the repository")
+        self.vouch()
+        self.assertIsNone(self.problem())
+        self.assertTrue(autopilot.taken(self.gh, self.cfg, self.gh.issues[5]))
+        self.assertEqual(self.step()["command"], "plan")
+
+    def test_an_issue_a_workflow_opened_takes_the_same_comment(self):
+        self.gh.add_issue(6, body="Stale docs.", user=ACTIONS_BOT, milestone=1)
+        self.vouch(6)
+        self.assertIsNone(self.problem(6))
+
+    def test_only_someone_who_can_write_now_vouches(self):
+        self.vouch(login="bob")
+        self.assertIsNotNone(self.problem())
+        self.vouch()
+        self.assertIsNone(self.problem())
+        self.gh.roles["alice"] = "read"
+        self.assertIsNotNone(self.problem())
+
+    def test_nothing_but_the_comment_of_a_person_vouches(self):
+        # Neither the Actions bot, which CI on an agent's code can write as, nor NexKit's App,
+        # whose comments can end with what an agent wrote, nor a quote of the command.
+        comment = self.vouch(login="github-actions[bot]")
+        comment["user"]["type"] = "Bot"
+        self.gh.roles["github-actions[bot]"] = "write"
+        self.gh.comment(5, "/nexkit trust")
+        self.vouch(body="Do not run\n/nexkit trust yet")
+        self.vouch(body="> /nexkit trust")
+        self.assertIsNotNone(self.problem())
+
+    def test_an_edit_before_the_comment_is_what_the_writer_read(self):
+        self.gh.edits[5] = [("bob", self.BEFORE)]
+        self.vouch()
+        self.assertIsNone(self.problem())
+
+    def test_an_edit_by_someone_without_write_access_ends_the_trust(self):
+        self.vouch()
+        self.gh.edits[5] = [("bob", self.BEFORE), ("bob", self.AFTER)]
+        self.assertEqual(
+            self.problem(), "@bob edited it without write access after @alice vouched for it"
+        )
+        self.assertIn("comments `/nexkit trust`", self.step()["reason"])
+
+    def test_an_edit_by_a_writer_or_nexkit_keeps_the_trust(self):
+        self.vouch()
+        self.gh.edits[5] = [("olivia", self.AFTER), (BOT_LOGIN, self.AFTER)]
+        self.assertIsNone(self.problem())
+
+    def test_an_edit_by_a_bot_or_someone_github_cannot_name_ends_it_too(self):
+        self.vouch()
+        self.gh.edits[5] = [(ACTIONS_BOT, self.AFTER)]
+        self.assertIn(f"@{ACTIONS_BOT} edited it", self.problem())
+        self.gh.edits[5] = [("", self.AFTER)]
+        self.assertIn("someone GitHub cannot name", self.problem())
+        # Edits past the most GitHub lists: nobody can say when.
+        self.gh.edits[5] = [("", None)]
+        self.assertIn("someone GitHub cannot name", self.problem())
+
+    def test_a_later_comment_vouches_for_the_new_text(self):
+        self.vouch()
+        self.gh.edits[5] = [("bob", self.AFTER)]
+        self.assertIsNotNone(self.problem())
+        self.vouch()["created_at"] = "2026-01-03T00:00:00Z"
+        self.assertIsNone(self.problem())
+
+    def part(self, number, parent, user=BOT_LOGIN):
+        self.gh.add_issue(number, body=f"<!-- nexkit:part {parent} -->\nA part.", user=user)
+        self.gh.parents[number] = parent
+
+    def test_the_parts_of_a_split_inherit_the_trust_and_lose_it_with_it(self):
+        self.part(6, 5)
+        self.part(7, 6)
+        self.assertIsNotNone(self.problem(7))
+        self.vouch()
+        self.assertIsNone(self.problem(6))
+        self.assertIsNone(self.problem(7))
+        self.gh.edits[5] = [("bob", self.AFTER)]
+        self.assertIsNotNone(self.problem(6))
+        self.assertIsNotNone(self.problem(7))
+
+    def test_a_part_that_nexkits_app_did_not_open_inherits_nothing(self):
+        # Any workflow can open an issue as the Actions bot, with a marker of its choice.
+        self.part(6, 5, user=ACTIONS_BOT)
+        self.vouch()
+        self.assertIsNotNone(self.problem(6))
+        self.vouch(6)
+        self.assertIsNone(self.problem(6))
+
+    def test_status_lists_an_issue_it_leaves_alone_with_the_command(self):
+        data = collect(self.gh, self.cfg, workers=1)
+        [item] = data["needs_person"]
+        self.assertEqual(item["number"], 5)
+        self.assertIn("opened by @bob", item["reason"])
+        self.assertIn("a writer who read it comments `/nexkit trust`", item["reason"])
+
+    def test_a_part_of_an_earlier_release_with_a_pull_request_is_carried_on(self):
+        self.gh.add_issue(8, body="<!-- nexkit:part 7 -->\nA part.", user=ACTIONS_BOT, milestone=1)
+        self.gh.add_pull(9, 8)
+        self.assertEqual(self.step(8)["state"], "waits")
+        self.vouch(8)
+        self.assertEqual(self.step(8)["state"], "active")
+        self.assertEqual(self.step(8)["pull"], 9)
+
+    def answer(self, actor="alice", **fields):
+        decision = {"task": "trust", "issue": 5, "actor": actor, "comment_id": 77, **fields}
+        return maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+
+    def test_nexkit_answers_the_command_and_starts_a_sweep(self):
+        self.vouch()
+        lines = self.answer()
+        self.assertEqual(lines, ["@alice vouched for #5.", "Started an autopilot sweep."])
+        self.assertIn((77, "rocket"), self.gh.reactions)
+        [reply] = self.gh.comments_matching(5, "@alice vouched for this issue")
+        self.assertIn("without write access ends that", reply["body"])
+        self.assertEqual(self.gh.dispatches[-1]["inputs"]["command"], "autopilot")
+
+    def test_a_comment_that_an_edit_overtook_says_so_and_starts_nothing(self):
+        self.vouch()
+        self.gh.edits[5] = [("bob", self.AFTER)]
+        self.answer()
+        [reply] = self.gh.comments_matching(5, "still leaves this issue alone")
+        self.assertIn("@bob edited it", reply["body"])
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_the_command_is_no_comment_that_makes_autopilot_plan_again(self):
+        self.gh.issues[5]["user"]["login"] = "alice"
+        plan = self.gh.comment(5, f"{PLAN_MARKER}\n## Plan")
+        self.vouch()
+        self.assertEqual(autopilot._commented_after(self.gh.comments(5), plan), [])
 
 
 class LastInMilestoneTests(unittest.TestCase):

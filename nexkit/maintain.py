@@ -60,6 +60,8 @@ TASKS = {
     "lost": ("autopilot.enabled",),
     # A round on a pull request whose base branch already holds its change.
     "on_base": (),
+    # A writer's `/nexkit trust` on an issue.
+    "trust": ("autopilot.enabled",),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
@@ -834,9 +836,29 @@ def resolve_conflicts(gh, base, workflow, ref, max_rounds, skip=(), delay=5, set
     return [line for line in lines if line]
 
 
+def answer_trust(gh, cfg, decision, workflow, ref):
+    """Answer a writer's `/nexkit trust`, which `route` let through, and start a sweep, which
+    reads that comment (see `autopilot.vouch`). Returns lines for the log."""
+    number, actor = decision["issue"], decision["actor"]
+    gh.react(decision["comment_id"], "rocket")
+    problem = autopilot.distrust(gh, gh.issue(number), cfg)
+    if problem:
+        gh.comment(number, f"NexKit autopilot still leaves this issue alone: {problem}.")
+        return [f"#{number} stays alone: {problem}."]
+    gh.comment(
+        number,
+        f"@{actor} vouched for this issue, so NexKit autopilot takes it like a writer's when it "
+        "is in scope, with the parts of its split. An edit of its title or text by someone "
+        "without write access ends that, until a writer comments the command again.",
+    )
+    return [f"@{actor} vouched for #{number}.", *autopilot.request_safely(gh, cfg, workflow, ref)]
+
+
 def maintain(gh, decision, cfg, *, workflow="", ref=""):
     """Run the decision's task. Returns lines for the job log."""
     task = decision["task"]
+    if task == "trust":
+        return answer_trust(gh, cfg, decision, workflow, ref)
     if task == "parents":
         lines = close_parents_safely(gh, decision["issue"]) if cfg["close_parent_issues"] else []
         return lines + autopilot.request_safely(gh, cfg, workflow, ref, decision["issue"])

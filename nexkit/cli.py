@@ -229,7 +229,8 @@ def cmd_route(args):
             decision = skip_unaffected(gh, decision, cfg)
     if decision["action"] == "maintain" and not enabled(decision["task"], cfg):
         keys = " and ".join(TASKS[decision["task"]])
-        decision = {"action": "none", "reason": f"Nothing to do: {keys} off"}
+        reply = decision.get("reply_to")
+        decision = {"action": "none", "reason": f"Nothing to do: {keys} off", "reply_to": reply}
     print(json.dumps(decision, indent=2))
     if decision["action"] == "none" and decision.get("reply_to"):
         try:

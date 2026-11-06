@@ -38,6 +38,41 @@ class IssueEditorsTests(unittest.TestCase):
         self.assertEqual(editors([], events=events), ["bob"])
 
 
+class IssueEditsTests(unittest.TestCase):
+    def edits(self, nodes, more=False, events=()):
+        gh = GitHub(repository="acme/app", token="t")
+        data = {
+            "repository": {
+                "issue": {"userContentEdits": {"nodes": nodes, "pageInfo": {"hasNextPage": more}}}
+            }
+        }
+        with (
+            mock.patch.object(gh, "graphql", return_value=data),
+            mock.patch.object(gh, "paginate", return_value=list(events)),
+        ):
+            return gh.issue_edits(5)
+
+    def test_each_edit_has_its_time(self):
+        nodes = [
+            {"editedAt": "2026-01-02T00:00:00Z", "editor": {"__typename": "User", "login": "bob"}},
+            {"editedAt": "2026-01-01T00:00:00Z", "editor": {"__typename": "Bot", "login": "ci"}},
+        ]
+        self.assertEqual(
+            self.edits(nodes),
+            [("bob", "2026-01-02T00:00:00Z"), ("ci[bot]", "2026-01-01T00:00:00Z")],
+        )
+
+    def test_a_new_title_has_its_time(self):
+        events = [
+            {"event": "renamed", "actor": {"login": "bob"}, "created_at": "2026-01-03T00:00:00Z"},
+            {"event": "labeled", "actor": {"login": "carol"}, "created_at": "2026-01-04T00:00:00Z"},
+        ]
+        self.assertEqual(self.edits([], events=events), [("bob", "2026-01-03T00:00:00Z")])
+
+    def test_edits_past_what_github_lists_have_no_time(self):
+        self.assertEqual(self.edits([], more=True), [("", None)])
+
+
 class BranchTests(unittest.TestCase):
     def setUp(self):
         self.gh = GitHub(repository="acme/app", token="t")

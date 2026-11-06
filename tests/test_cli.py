@@ -1195,6 +1195,17 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual({s["state"] for s in self.gh.statuses}, {"pending"})
         self.assertTrue(self.gh.comments_matching(6, "actions/runs/9"))
 
+    def test_a_vouch_with_autopilot_off_says_so(self):
+        self.gh.add_issue(7, user="bob")
+        event = {
+            "action": "created",
+            "issue": {"number": 7},
+            "comment": {"id": 9, "body": "/nexkit trust", "user": {"login": "alice"}},
+        }
+        self.assertEqual(self.run_route("issue_comment", event)["action"], "none")
+        [reply] = self.gh.comments(7)
+        self.assertIn("autopilot.enabled off", reply["body"])
+
     def test_route_hands_closed_issues_to_maintain_only_when_enabled(self):
         event = {"action": "closed", "issue": {"number": 5}}
         out = self.run_route("issues", event)

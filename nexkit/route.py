@@ -29,11 +29,15 @@ BRANCH_PREFIX = "nexkit/issue-"
 COMMAND = re.compile(r"^\s*/nexkit\s+([a-z]+)\b[ \t]*(.*)$", re.DOTALL)
 ISSUE_COMMANDS = {"plan": "plan", "go": "implement"}
 PR_COMMANDS = {"fix": "fix", "review": "review"}
+# A writer's word for an issue that autopilot leaves alone (see `autopilot.distrust`). Its
+# comment is the record, so only a comment counts, never a dispatch.
+TRUST = "trust"
 
 USAGE = (
-    "NexKit commands: on an issue, `/nexkit plan` drafts a plan and `/nexkit go` implements it; "
-    "on a NexKit pull request, `/nexkit fix <instructions>` starts a repair round and "
-    "`/nexkit review` re-checks the current commit."
+    "NexKit commands: on an issue, `/nexkit plan` drafts a plan, `/nexkit go` implements it and "
+    "`/nexkit trust` vouches for it, so that autopilot takes it; on a NexKit pull request, "
+    "`/nexkit fix <instructions>` starts a repair round and `/nexkit review` re-checks the "
+    "current commit."
 )
 
 
@@ -152,7 +156,10 @@ def route(gh, event_name, event, inputs=None):
         if not gh.can_write(actor):
             return _none(f"@{actor} needs write access to run NexKit commands", number)
         on_pull = "pull_request" in event["issue"]
-        decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
+        if command == TRUST and not on_pull:
+            decision = _trust(event["issue"])
+        else:
+            decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
         decision.update(actor=actor, comment_id=event["comment"]["id"])
         return decision
 
@@ -256,6 +263,15 @@ def route(gh, event_name, event, inputs=None):
         return decision
 
     return _none(f"Event '{event_name}' is not handled")
+
+
+def _trust(issue):
+    """A writer's `/nexkit trust` on `issue`: the `maintain` job answers it and starts a
+    sweep, which reads the comment."""
+    number = issue["number"]
+    if issue.get("state", "open") != "open":
+        return _none("The issue is closed", number)
+    return {"action": "maintain", "task": "trust", "issue": number, "reply_to": number}
 
 
 def _conflicts_tried(gh, decision):

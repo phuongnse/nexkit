@@ -529,6 +529,43 @@ class ScenarioTests(unittest.TestCase):
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
         self.assertIn("its marker names run 404, which does not exist", mention["body"])
 
+    def test_a_part_of_an_earlier_release_runs_once_a_writer_vouches_for_it(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5, body="<!-- nexkit:part 4 -->\nThe part.", user=ACTIONS_BOT)
+        self.assertEqual(pipe.play(), [])
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("comments `/nexkit trust`", mention["body"])
+        # Someone without write access changes nothing, and nobody is mentioned again.
+        pipe.gh.human_comment(5, "/nexkit trust", "bob", "NONE")
+        self.assertEqual(pipe.play(), [])
+        self.assertEqual(len(pipe.gh.comments_matching(5, "@olivia a person is needed")), 1)
+        comment = pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        comment["created_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        decision = {"task": "trust", "issue": 5, "actor": "olivia", "comment_id": comment["id"]}
+        maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_an_edit_after_the_vouch_stops_the_issue_until_a_writer_vouches_again(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                # While the plan runs, someone without write access edits the issue.
+                edited = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                pipe.gh.edits[5] = [("bob", edited)]
+                return plan()
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5, user="bob")
+        pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        self.assertEqual(pipe.play(), [("plan", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("@bob edited it without write access", mention["body"])
+
     def test_an_issue_marked_to_run_last_runs_after_the_rest_of_its_milestone(self):
         def script(pipe, inputs):
             if inputs["command"] == "plan":

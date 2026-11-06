@@ -1023,6 +1023,33 @@ it: at the hourly schedule, or sooner when the workflow dispatches one with
 `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`. Parts of a split of
 such an issue are trusted like the issue.
 
+### Vouching for an issue
+
+An issue that autopilot leaves alone waits for a person, and `nexkit status` lists it under
+*Needs a person* with the reason and the command. A person with write access who has read the
+issue comments on it:
+
+```text
+/nexkit trust
+```
+
+Autopilot then takes the issue at the next sweep, like one a writer opened, which the command
+starts. That goes for any issue it left alone: one that someone without write access opened,
+or a workflow that `autopilot.trusted_workflows` does not list, or a part of an earlier
+release.
+
+- The comment itself is the record, read at each sweep. It counts only from someone who has
+  write access at that sweep, never from a bot, and only on the issue itself. The same comment
+  from anyone else changes nothing, and NexKit says why.
+- It covers the issue as the writer read it. An edit of its title or text by anyone but a
+  writer or NexKit's App after the comment makes autopilot leave the issue alone again, and
+  `nexkit status` names who edited it. Commenting the command again vouches for the new text.
+  A bot's edit counts too, since any workflow of the repository can write as one.
+- Parts that autopilot creates from a split of the issue inherit the trust, and lose it with
+  the issue. An issue that is a part but was not opened by NexKit's App inherits nothing, so
+  it needs the comment itself.
+- With autopilot off, the command says so and does nothing.
+
 ## Mentions
 
 ```json
@@ -1501,6 +1528,13 @@ Do this between rounds. NexKit no longer reads the comments of earlier releases,
 with a plan is planned again, a pull request starts its automatic rounds afresh, and a run
 that is under way when you upgrade is not picked up. Bug issues that autopilot opened as the
 Actions bot are left alone: close them, and the next failure opens a new one.
+
+Parts that an earlier release created were opened as the Actions bot too, and autopilot leaves
+them alone. They hold planned work, and an open pull request is tied to each by its
+`nexkit/issue-<n>` branch, so do not close them: `nexkit status` lists each one under *Needs a
+person* with the command, and [`/nexkit trust`](#vouching-for-an-issue) on it makes autopilot
+carry it on, with its pull request. Each part needs its own comment, also when a writer opened
+its parent.
 
 1. Create the App once per owner. Run `nexkit init --force` in a clone and let it create
    the App, then restore your `.nexkit/config.json` and workflow file and keep only the new

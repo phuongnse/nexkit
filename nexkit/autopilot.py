@@ -29,7 +29,7 @@ from .config import after_workflow_names, watched_workflows
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
-from .route import AFTER_RUN, RUN_ID, issue_from_branch, parse_command
+from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command
 from .schema import filled
 from .state import (
     ACTIONS_BOT,
@@ -344,13 +344,56 @@ def trusted(gh, issue, cfg=None):
     return distrust(gh, issue, cfg) is None
 
 
-def distrust(gh, issue, cfg=None):
+def distrust(gh, issue, cfg=None, level=0):
     """Why autopilot leaves an issue alone, or None. It skips a person's approval of the
     plan, so issue text drives an implement session. It takes issues opened by someone with
     write access, since only they and other writers can edit them, the issues NexKit opened
-    as its App, and those a trusted workflow opened as the App or the Actions bot."""
+    as its App, those a trusted workflow opened as the App or the Actions bot, and any other
+    that a writer vouched for. `level` counts the parents that `_trusted_part` walked up."""
+    problem = _source_problem(gh, issue, cfg, level)
+    return problem and _vouch_problem(gh, issue, problem)
+
+
+def vouch(gh, issue):
+    """The latest `/nexkit trust` comment on an issue by someone who can write now, or None.
+    The comment itself is the record: only its author and writers can change it, and no
+    workflow can post it as a person, so what the Actions bot or text inside another
+    comment says counts for nothing."""
+    for comment in reversed(gh.comments(issue["number"])):
+        user = comment.get("user") or {}
+        login = user.get("login") or ""
+        if not login or user.get("type") == "Bot" or by_bot(comment):
+            continue
+        if parse_command(comment.get("body"))[0] == TRUST and gh.can_write(login):
+            return comment
+    return None
+
+
+def _vouch_problem(gh, issue, problem):
+    """`problem`, why autopilot leaves an issue alone, without a writer's vouch; with one,
+    who changed the issue's title or text since who may not, or None. What the writer read
+    is what they vouched for, so an earlier edit counts for nothing, and only writers and
+    NexKit's App may change it after: a bot here is any workflow of the repository."""
+    comment = vouch(gh, issue)
+    if comment is None:
+        return problem
+    since = parse_iso(comment.get("created_at"))
+    writer = comment["user"]["login"]
+    for login, at in gh.issue_edits(issue["number"]):
+        edited = parse_iso(at)
+        if edited is not None and since is not None and edited < since:
+            continue
+        if is_bot(login) or (login and gh.can_write(login)):
+            continue
+        who = f"@{login}" if login else "someone GitHub cannot name"
+        return f"{who} edited it without write access after @{writer} vouched for it"
+    return None
+
+
+def _source_problem(gh, issue, cfg, level):
+    """Why who opened an issue does not make autopilot take it, or None."""
     login = author(issue)
-    if is_bot(login) and (_rank(issue) < 2 or _trusted_part(gh, issue, cfg)):
+    if is_bot(login) and (_rank(issue) < 2 or _trusted_part(gh, issue, cfg, level)):
         return None
     if is_bot(login) or login == ACTIONS_BOT:
         return workflow_problem(gh, issue, cfg)
@@ -425,21 +468,17 @@ def _edit_problem(gh, issue):
     return None
 
 
-def _trusted_part(gh, issue, cfg=None, depth=0):
+def _trusted_part(gh, issue, cfg=None, level=0):
     """A part that autopilot created: it starts with the part marker, and the issue it
-    names is its parent and is trusted itself, as a part, an issue for a CI failure or
-    flaky runs that NexKit opened, or an issue of a trusted workflow."""
+    names is its parent, which autopilot takes itself. So a part inherits a writer's vouch
+    for its parent, and loses it with its parent."""
     match = PART.match(issue.get("body") or "")
-    if not match or depth > 5:
+    if not match or level > 5:
         return False
     parent = gh.parent_issue(issue["number"])
     if not parent or parent["number"] != int(match.group(1)) or not in_repository(gh, parent):
         return False
-    if is_bot(author(parent)) and (_rank(parent) < 2 or _trusted_part(gh, parent, cfg, depth + 1)):
-        return True
-    if is_bot(author(parent)) or author(parent) == ACTIONS_BOT:
-        return workflow_problem(gh, parent, cfg) is None
-    return gh.can_write(author(parent))
+    return distrust(gh, parent, cfg, level + 1) is None
 
 
 def in_repository(gh, issue):
@@ -693,6 +732,8 @@ REPLANNED_NOTE = (
 UNCHANGED = {"retry", "lost", "up_to_date"}
 # What every comment that mentions the people in `notify` says before its reason.
 NEEDED = "a person is needed: "
+# What ends the wait of an issue that autopilot leaves alone.
+TRUST_HINT = f"a writer who read it comments `/nexkit {TRUST}`"
 REPEATED = (
     "the round after autopilot's answers asked again, and nobody commented since; a person decides"
 )
@@ -1119,7 +1160,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     number = issue["number"]
     left_alone = distrust(gh, issue, cfg)
     if left_alone:
-        return _step(issue, "waits", left_alone)
+        return _step(issue, "waits", f"{left_alone}; {TRUST_HINT}")
     parts = gh.sub_issues(number)
     if parts and all(part.get("state") == "closed" for part in parts):
         # `close_parent_issues` closes it by itself; without it, a person does.

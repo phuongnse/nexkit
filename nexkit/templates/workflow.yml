@@ -1,4 +1,4 @@
-# Installed by `nexkit init`. Commands: /nexkit plan, /nexkit go (issues);
+# Installed by `nexkit init`. Commands: /nexkit plan, /nexkit go, /nexkit trust (issues);
 # /nexkit fix, /nexkit review (NexKit pull requests). Settings: .nexkit/config.json
 name: NexKit
 

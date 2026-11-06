@@ -111,6 +111,7 @@ class FakeGitHub:
         self.repository = repository
         self.roles = {"alice": "write", "olivia": "admin", "bob": "read"}
         self.editors = {}
+        self.edits = {}  # issue number -> (login, time) of each change to its text or title
         self.issues = {}
         self.issue_comments = defaultdict(list)
         self.pulls = {}
@@ -405,6 +406,9 @@ class FakeGitHub:
 
     def issue_editors(self, number):
         return self.editors.get(number, [])
+
+    def issue_edits(self, number):
+        return list(self.edits.get(number, []))
 
     def workflow_run(self, run_id):
         if run_id not in self.runs:

@@ -45,6 +45,55 @@ class ParseCommandTests(unittest.TestCase):
         self.assertEqual(parse_command("/nexkitgo"), (None, ""))
 
 
+class TrustCommandTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5, user="bob")
+        self.gh.add_pull(6, 5)
+
+    def test_a_writers_comment_goes_to_the_maintain_job(self):
+        decision = route(self.gh, "issue_comment", comment_event(5, "/nexkit trust"))
+        self.assertEqual(
+            decision,
+            {
+                "action": "maintain",
+                "task": "trust",
+                "issue": 5,
+                "reply_to": 5,
+                "actor": "alice",
+                "comment_id": 7,
+            },
+        )
+
+    def test_someone_without_write_access_is_told_why(self):
+        event = comment_event(5, "/nexkit trust", login="bob")
+        decision = route(self.gh, "issue_comment", event)
+        self.assertEqual(decision["action"], "none")
+        self.assertEqual(decision["reply_to"], 5)
+        self.assertIn("@bob needs write access", decision["reason"])
+
+    def test_it_is_a_command_of_issues_only(self):
+        event = comment_event(6, "/nexkit trust", on_pull=True)
+        decision = route(self.gh, "issue_comment", event)
+        self.assertEqual(decision["action"], "none")
+        self.assertIn("not a pull request command", decision["reason"])
+
+    def test_a_closed_issue_gets_no_vouch(self):
+        event = comment_event(5, "/nexkit trust")
+        event["issue"]["state"] = "closed"
+        decision = route(self.gh, "issue_comment", event)
+        self.assertEqual((decision["action"], decision["reason"]), ("none", "The issue is closed"))
+
+    def test_only_a_comment_vouches_never_a_dispatch(self):
+        inputs = {"command": "trust", "number": "5"}
+        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": "alice"}}, inputs)
+        self.assertEqual(decision["action"], "none")
+
+    def test_the_usage_names_it(self):
+        decision = route(self.gh, "issue_comment", comment_event(5, "/nexkit help"))
+        self.assertIn("`/nexkit trust`", decision["reason"])
+
+
 class RouteTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()

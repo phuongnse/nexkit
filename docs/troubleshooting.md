@@ -568,15 +568,19 @@ downloading or attaching a run's files. Read the round's *Collect issue context*
 
 Run `nexkit status`, which gives the reason (see ["Autopilot does not start an
 issue"](#agents)). Autopilot never takes an issue opened by someone without write
-access, because its text would drive an implement session. A person with write access
-reads it as untrusted text, and opens a new issue with what they trust.
+access by itself, because its text would drive an implement session. A person with write
+access reads it as untrusted text, and comments
+[`/nexkit trust`](configuration.md#vouching-for-an-issue) on it when they trust it.
 
 An issue that a workflow opened needs its workflow in `autopilot.trusted_workflows` and a
 marker that checks out. The reason names what failed: a workflow that is not listed, a run
 that does not exist, ran on another branch, was started by a pull request or was not running
 when the issue was opened, or an edit by someone without write access. Fix the workflow or
-the setting for the issues it opens next, and open a new issue for this one: see [Issues from
-a workflow](configuration.md#issues-from-a-workflow).
+the setting for the issues it opens next, and comment `/nexkit trust` on this one once you
+have read it: see [Issues from a workflow](configuration.md#issues-from-a-workflow).
+
+An issue that a writer vouched for is left alone again after an edit by someone without write
+access. Read what changed, and comment `/nexkit trust` again if you trust it.
 
 ### An issue marked to run last does not start
 

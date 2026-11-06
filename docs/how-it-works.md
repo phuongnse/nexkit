@@ -1296,7 +1296,7 @@ state, leaves it as it is and saves the state in a new state comment.
 
 | What happened | NexKit does |
 |---|---|
-| Comment author lacks write access, unknown command, closed issue, PR not opened by NexKit | Replies with the reason; no agent runs. |
+| Comment author lacks write access, unknown command, closed issue, PR not opened by NexKit | Replies with the reason; no agent runs. `/nexkit trust` from someone without write access changes nothing. |
 | `/nexkit go` while a NexKit PR for the issue is open | Replies: use `/nexkit fix` there or close it. |
 | The issue closes while its plan or `/nexkit go` runs | Publishes nothing: no branch, pull request or plan (`issue_closed`). No later automatic round starts for it. |
 | The issue closes before its approved pull request is merged | Does not merge it, and leaves it open for a person (`merge_issue_closed`). |
@@ -1424,4 +1424,7 @@ once the limit has reset.
   `autopilot.trusted_workflows` is trusted only when GitHub's record of the run its marker
   names confirms it: the listed file, the default branch, an event a writer or a schedule
   controls, and a run that was running when the issue was opened (see [Issues from a
-  workflow](configuration.md#issues-from-a-workflow)).
+  workflow](configuration.md#issues-from-a-workflow)). A writer can vouch for any other
+  issue with [`/nexkit trust`](configuration.md#vouching-for-an-issue). Autopilot reads that
+  comment itself, so nothing an agent wrote into a comment of NexKit's can stand in for it,
+  and an edit by anyone else after it ends the trust.

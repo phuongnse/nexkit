@@ -168,7 +168,8 @@ bounds:
   post `/nexkit go` again only for a force-pushed base branch; otherwise notify with what
   the log shows.
 - **[An issue opened without write access](../../docs/troubleshooting.md#autopilot-leaves-an-issue-alone):**
-  notify. The driver never opens an issue from untrusted text.
+  notify. The driver never opens an issue from untrusted text, and never comments
+  `/nexkit trust`: that says a person read the issue and trusts it.
 - **[A missing relationship](../../docs/troubleshooting.md#agents):** "Depends on" text
   does not count. When an issue's text has a `Depends on #N: …` line, #N is open, and the
   issue lacks that *blocked by* relationship, add it as the [`request`

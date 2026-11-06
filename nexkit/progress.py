@@ -28,8 +28,8 @@ STATUS_CONTEXTS = ("nexkit/checks", "nexkit/review")
 
 
 def kinds(decision):
-    """The kinds of a round, in order: `auto`, `diagnosis`, `conflicts`, `resumed`, `retry`
-    and `autopilot`, each when it applies."""
+    """The kinds of a round, in order: `auto`, `diagnosis`, `conflicts`, `resumed`, `retry`,
+    `autopilot` and `person`, for a person's pull request, each when it applies."""
     return [
         label
         for label, on in (
@@ -39,6 +39,7 @@ def kinds(decision):
             ("resumed", decision.get("resumed")),
             ("retry", decision.get("retry")),
             ("autopilot", decision.get("autopilot")),
+            ("person", decision.get("person")),
         )
         if on
     ]

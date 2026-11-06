@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 from importlib import resources
 from pathlib import Path
+from urllib.parse import quote
 
 from . import __version__, app
 from . import config as configuration
+from .github import alerts_off
+from .globs import branch_matches
 from .runtimes import DECLARED_SECRETS, PROVIDERS
 
 KIT_REPOSITORY = "phuongnse/nexkit"
@@ -141,7 +145,8 @@ def github_app(root, *, slug=None, app_id=None, key_file=None, name=None):
     with an App keeps it, and any other creates one with the manifest flow."""
     if bool(app_id) != bool(key_file):
         raise app.AppError("--app-id and --app-private-key go together")
-    if slug:
+    if slug and not app_id:
+        _refuse_without_secrets(root, slug)
         return app.settings(slug), []
     known = configured_app(root)
     if known and not app_id:
@@ -166,6 +171,32 @@ def github_app(root, *, slug=None, app_id=None, key_file=None, name=None):
     ]
 
 
+def _refuse_without_secrets(root, slug):
+    """Stop `nexkit init --app-slug` when the App's secrets are missing, before it writes
+    anything, with where they come from. A repository that GitHub cannot be asked about
+    goes on: `nexkit doctor` checks the secrets later."""
+    repo = repository_of(root)
+    if not repo:
+        return
+    kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
+    names = secret_names(repo, kind == "Organization")
+    lacking = [name for name in configuration.APP_SECRETS.values() if name not in (names or ())]
+    if names is None or not lacking:
+        return
+    owner, organization = _app_owner(slug, repo)
+    held = (
+        "; or set them once as organization secrets"
+        if kind == "Organization"
+        else ". A personal account holds no shared secrets, and no one can read a secret back, "
+        "so each of its repositories needs a new key"
+    )
+    steps = app.key_steps(slug, owner, organization)
+    raise app.AppError(
+        f"{repo} has no secret {' or '.join(lacking)} for the App {slug}. {steps}{held} "
+        f"(see {configuration.APP_DOCS})"
+    )
+
+
 def init(
     root,
     *,
@@ -185,6 +216,7 @@ def init(
     evidence=(),
     after_workflows=(),
     watch_workflows=(),
+    last_label=None,
     github_app=None,
 ):
     root = Path(root)
@@ -223,6 +255,8 @@ def init(
     watch_workflows = list(dict.fromkeys(watch_workflows))
     if watch_workflows:
         raw["autopilot"] = {"watch_workflows": watch_workflows}
+    if last_label:
+        raw.setdefault("autopilot", {})["last_in_milestone_label"] = last_label
     configuration.validate(raw)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(raw, indent=2) + "\n")
@@ -244,17 +278,80 @@ def _gh(*args):
     return proc.stdout if proc.returncode == 0 else None
 
 
+def _gh_answer(*args):
+    """(whether `gh` succeeded, what it said), for a failure whose words matter."""
+    if not shutil.which("gh"):
+        return False, ""
+    proc = subprocess.run(["gh", *args], capture_output=True, text=True)
+    return proc.returncode == 0, f"{proc.stdout}{proc.stderr}"
+
+
 def gh_token():
     """The GitHub CLI's token, or None."""
     return (_gh("auth", "token") or "").strip() or None
 
 
+def secret_names(repo, organization=False):
+    """The names of the secrets that `repo` can read: its own and, since an organization
+    can hold secrets once for all its repositories, its owner's. None when GitHub cannot
+    be asked: with `organization`, also about those. GitHub answers 422 for a personal
+    account's repository, which has none."""
+    own = _gh("secret", "list", "--repo", repo, "--json", "name", "-q", ".[].name")
+    if own is None:
+        return None
+    shared = _gh("api", f"repos/{repo}/actions/organization-secrets", "-q", ".secrets[].name")
+    if shared is None and organization:
+        return None
+    return {*own.split(), *(shared or "").split()}
+
+
+def _app_owner(slug, repo):
+    """(login, whether it is an organization) of who owns the App. GitHub shows a public App
+    to anyone; a private one is installed only by its owner, so it is the repository's."""
+    found = (_gh("api", f"apps/{slug}", "-q", '.owner.login + " " + .owner.type') or "").split()
+    if len(found) == 2 and found[1] in ("User", "Organization"):
+        return found[0], found[1] == "Organization"
+    kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
+    return repo.split("/")[0], kind == "Organization"
+
+
 def repository_of(root):
+    """`owner/name` of the `origin` remote in `root`, or None, also for a folder that
+    `nexkit init` has yet to create."""
+    if not Path(root).is_dir():
+        return None
     proc = subprocess.run(
         ["git", "remote", "get-url", "origin"], cwd=root, capture_output=True, text=True
     )
     match = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$", proc.stdout.strip())
     return match.group(1) if match else None
+
+
+def repository_label(repo, label):
+    """The name of the label `label` of `repo`, as GitHub, which ignores case, finds it, or
+    None."""
+    found = _gh("api", f"repos/{repo}/labels/{quote(label, safe='')}", "-q", ".name")
+    return found.strip() if found else None
+
+
+def _label_command(label, repo=None):
+    return f"gh label create {shlex.quote(label)}" + (f" --repo {repo}" if repo else "")
+
+
+def ensure_label(root, label):
+    """Create `label`, which `nexkit init` set as `autopilot.last_in_milestone_label`, when
+    the repository lacks it. Returns a line for the person, or "" with nothing to say."""
+    repo = repository_of(root)
+    if not repo:
+        return f"Create the label in the repository: '{_label_command(label)}'"
+    found = repository_label(repo, label)
+    if found == label:
+        return ""
+    if found:
+        return f"{repo} spells the label `{found}`; NexKit compares `{label}` exactly."
+    if _gh("label", "create", label, "--repo", repo) is None:
+        return f"Could not create the label `{label}`: run '{_label_command(label, repo)}'"
+    return f"Created the label `{label}` on {repo}."
 
 
 def _uncommented(text):
@@ -274,6 +371,123 @@ def _after_merge_workflow(root, name):
             "so NexKit cannot start it after a merge",
         )
     return (True, f"merge.after_workflows: {name} can be started after a merge")
+
+
+def _items(text):
+    """The items of a YAML value on one line: a word, or a `[list]` of them."""
+    return [item.strip(" \t'\"") for item in text.strip(" \t[]").split(",") if item.strip(" \t")]
+
+
+def _indent(line):
+    return len(line) - len(line.lstrip())
+
+
+def push_filters(workflow):
+    """The filters of a workflow's `push` trigger, such as {"branches": ["main"]}, or None
+    without that trigger. Reads `on: push`, a list of events, a `{mapping}` on one line and
+    the block form. What only a YAML parser reads, such as a list over several lines inside
+    brackets or a `push: *alias`, counts as no filter, or as no trigger."""
+    lines = _uncommented(workflow).splitlines()
+    found = next(
+        (
+            (at, match.group(1).strip())
+            for at, line in enumerate(lines)
+            if (match := re.fullmatch(r"""['"]?on['"]?:(.*)""", line))
+        ),
+        None,
+    )
+    if found is None:
+        return None
+    start, inline = found
+    if inline.startswith("{"):
+        return _flow_push(inline)
+    if inline:
+        return {} if "push" in _items(inline) else None
+    block = []
+    for line in lines[start + 1 :]:
+        if line.strip() and not line[0].isspace() and not line.startswith("-"):
+            break
+        if line.strip():
+            block.append(line)
+    events = _indent(block[0]) if block else 0
+    for at, line in enumerate(block):
+        text = line.strip()
+        if _indent(line) != events:
+            continue
+        if text.startswith("-") and _items(text[1:]) == ["push"]:
+            return {}
+        match = re.fullmatch(r"""['"]?push['"]?:(.*)""", text)
+        if match:
+            inline = match.group(1).strip()
+            if inline.startswith(("*", "&")):
+                return None
+            return _flow_push(f"push: {inline}") if inline else _filters(block[at + 1 :], events)
+    return None
+
+
+def _flow_push(text):
+    """The filters of `push` in a `{mapping}` on one line, or None without it."""
+    match = re.search(r"\bpush\b['\"]?\s*:\s*(\{.*?\})?", text)
+    if not match:
+        return None
+    found = re.findall(r"([a-z-]+)\s*:\s*(\[[^\]]*\]|[^,{}\s]+)", match.group(1) or "")
+    return {key: _items(value) for key, value in found}
+
+
+def _filters(lines, events):
+    """The filters in `lines`, which follow the `push:` of an event at the indent `events`."""
+    filters, key = {}, None
+    for line in lines:
+        if _indent(line) <= events:
+            break
+        text = line.strip()
+        match = re.fullmatch(r"""['"]?([a-z-]+)['"]?:(.*)""", text)
+        if match:
+            key = match.group(1)
+            filters[key] = _items(match.group(2))
+        elif key and text.startswith("-"):
+            filters[key] += _items(text[1:])
+    return filters
+
+
+def _pushes_to(filters, branch):
+    """How the filters of a `push` trigger let a push to `branch` through, or None, as
+    GitHub reads them: `branches` with its `!` patterns, the last match deciding, or
+    `branches-ignore`. With neither, `tags` means that only tags start the workflow."""
+    if "branches" in filters:
+        listed = False
+        for pattern in filters["branches"]:
+            negated = pattern.startswith("!")
+            if branch_matches(pattern.removeprefix("!"), branch):
+                listed = not negated
+        return f"its 'branches' include {branch}" if listed else None
+    if "branches-ignore" in filters:
+        if any(branch_matches(pattern, branch) for pattern in filters["branches-ignore"]):
+            return None
+        return f"its 'branches-ignore' leaves {branch} out"
+    if "tags" in filters or "tags-ignore" in filters:
+        return None
+    return "it has no branch filter"
+
+
+def _after_merge_push(root, name, branch):
+    """Findings: a workflow of merge.after_workflows that a push to the default branch also
+    starts. NexKit's merge is such a push, so it runs after every merge and again at its
+    count."""
+    path = root / ".github/workflows" / name
+    filters = push_filters(path.read_text(errors="replace")) if path.is_file() else None
+    how = None if filters is None else _pushes_to(filters, branch)
+    if not how:
+        return []
+    return [
+        (
+            False,
+            f"merge.after_workflows: a merge also starts {name} through its 'push' trigger: "
+            f"{how}. It runs after every merge and again when NexKit starts it; change that "
+            f"trigger so that it leaves {branch} out, or take {name} out of "
+            "merge.after_workflows",
+        )
+    ]
 
 
 def _watched_workflow(root, name):
@@ -631,6 +845,58 @@ def _unheard(cfg):
     ]
 
 
+def _last_label(cfg, repo):
+    """Findings: the repository has the label that marks an issue to run last. NexKit
+    compares it exactly, so another spelling carries nothing either."""
+    label = cfg["autopilot"]["last_in_milestone_label"]
+    if not label:
+        return []
+    setting = "autopilot.last_in_milestone_label"
+    found = repository_label(repo, label)
+    if found == label:
+        return [(True, f"{setting}: {repo} has the label `{label}`")]
+    if found:
+        return [
+            (
+                False,
+                f"{setting} is `{label}`, but {repo} spells the label `{found}`, and NexKit "
+                "compares it exactly; change one of them",
+            )
+        ]
+    return [
+        (
+            False,
+            f"{setting} names `{label}`, which {repo} does not have, so no issue can carry it "
+            f"and nothing runs last: run '{_label_command(label, repo)}'",
+        )
+    ]
+
+
+def _dependabot(cfg, repo, branch):
+    """Findings: autopilot.dependabot can read alerts. Only the App can tell about its own
+    permission, so this says what the last sweep left on the default branch's tip; `nexkit
+    doctor --app-id ID --app-private-key FILE` checks the permission too."""
+    if not cfg["autopilot"]["dependabot"]:
+        return []
+    setting = "autopilot.dependabot"
+    findings = []
+    ok, said = _gh_answer("api", f"repos/{repo}/dependabot/alerts?per_page=1")
+    if ok:
+        findings.append((True, f"{setting}: Dependabot alerts are on"))
+    elif alerts_off(said):
+        where = f"https://github.com/{repo}/settings/security_analysis"
+        findings.append(
+            (False, f"{setting} is on, but alerts are off for {repo}: turn them on at {where}")
+        )
+    else:
+        findings.append((True, f"{setting}: could not tell whether alerts are on"))
+    query = '.statuses[] | select(.context == "nexkit/dependabot" and .state == "error")'
+    found = _gh("api", f"repos/{repo}/commits/{branch}/status", "-q", f"{query} | .description")
+    if found and found.strip():
+        findings.append((False, f"{setting}: the last sweep says: {found.strip()}"))
+    return findings
+
+
 def _secrets_set(cfg, names, repo):
     """Findings: a secret of each agent that a stage uses is set in the repository."""
     findings = []
@@ -648,19 +914,23 @@ def _secrets_set(cfg, names, repo):
 def _app_secrets(cfg, names, repo):
     """Findings: the secrets of `github_app` are set, for the repository or its owner."""
     findings = []
+    where = None
     for key in configuration.APP_SECRETS:
         name = cfg["github_app"][key]
         if name in names:
             findings.append((True, f"github_app.{key}: {name} is set"))
-        else:
-            findings.append(
-                (
-                    False,
-                    f"github_app.{key} names {name}, which is not set: run 'gh secret set "
-                    f"{name} --repo {repo}', or 'nexkit init --force --app-id ID "
-                    "--app-private-key FILE', which sets both",
-                )
+            continue
+        slug = cfg["github_app"]["slug"]
+        where = where or app.app_url(slug, *_app_owner(slug, repo))
+        findings.append(
+            (
+                False,
+                f"github_app.{key} names {name}, which is not set: run 'gh secret set "
+                f"{name} --repo {repo}', or 'nexkit init --force --app-id ID "
+                f"--app-private-key FILE', which sets both. The App's id and a new key are "
+                f"at {where}",
             )
+        )
     return findings
 
 
@@ -684,7 +954,7 @@ def _app_on_github(cfg, repo, key_file=None, app_id=None):
                     f"token; {hint} it and its installation on {repo}",
                 )
             ]
-        findings = [_granted(slug, json.loads(found).get("permissions"), where)]
+        findings = [_granted(slug, json.loads(found).get("permissions"), where, cfg)]
         findings.append((True, f"Could not tell whether {slug} is installed on {repo}; {hint}"))
         return findings
     try:
@@ -699,12 +969,12 @@ def _app_on_github(cfg, repo, key_file=None, app_id=None):
                 f"{slug}; correct one of them",
             )
         ]
-    findings = [_granted(slug, state["granted"], where)]
+    findings = [_granted(slug, state["granted"], where, cfg)]
     if not state["installed"]:
         how = f"install it at {app.install_url(slug)}"
         return [*findings, (False, f"The App {slug} is not installed on {repo}: {how}")]
     findings.append((True, f"The App {slug} is installed on {repo}"))
-    lacking = app.missing(state["permissions"])
+    lacking = app.missing(state["permissions"], cfg)
     if lacking:
         accept = f"https://github.com/{owner}/{repo.split('/')[1]}/settings/installations"
         findings.append(
@@ -717,8 +987,8 @@ def _app_on_github(cfg, repo, key_file=None, app_id=None):
     return findings
 
 
-def _granted(slug, granted, where):
-    lacking = app.missing(granted)
+def _granted(slug, granted, where, cfg=None):
+    lacking = app.missing(granted, cfg)
     if lacking:
         return (
             False,
@@ -739,9 +1009,11 @@ def doctor(root, key_file=None, app_id=None):
         findings.append((True, f"{configuration.CONFIG_PATH} is valid"))
         if not cfg["checks"]:
             findings.append((False, "No checks configured; NexKit cannot verify changes"))
-        findings += [
-            _after_merge_workflow(root, name) for name in configuration.after_workflow_names(cfg)
-        ]
+        after = configuration.after_workflow_names(cfg)
+        findings += [_after_merge_workflow(root, name) for name in after]
+        branch = default_branch_of(root) if after else None
+        for name in after:
+            findings += _after_merge_push(root, name, branch)
         findings += [_watched_workflow(root, n) for n in cfg["autopilot"]["watch_workflows"]]
         findings += [_trusted_workflow(root, n) for n in cfg["autopilot"]["trusted_workflows"]]
         problem = configuration.app_problem(cfg)
@@ -780,17 +1052,10 @@ def doctor(root, key_file=None, app_id=None):
 
     if pinned:
         findings += _newer_release(*pinned)
-    names = set(
-        (_gh("secret", "list", "--repo", repo, "--json", "name", "-q", ".[].name") or "").split()
-    )
-    # An organization can hold secrets once for all its repositories.
-    names |= set(
-        (
-            _gh("api", f"repos/{repo}/actions/organization-secrets", "-q", ".secrets[].name") or ""
-        ).split()
-    )
+    names = secret_names(repo) or set()
     if cfg:
         findings += _secrets_set(cfg, names, repo)
+        findings += _last_label(cfg, repo)
     if cfg and not configuration.app_problem(cfg):
         findings += _app_secrets(cfg, names, repo)
         findings += _app_on_github(cfg, repo, key_file, app_id)
@@ -809,6 +1074,8 @@ def doctor(root, key_file=None, app_id=None):
                 )
             )
     branch = (_gh("api", f"repos/{repo}", "-q", ".default_branch") or "").strip()
+    if cfg and branch:
+        findings += _dependabot(cfg, repo, branch)
     if branch and workflow.is_file():
         push = trigger(workflow.read_text(), "push")
         if push is not None and not re.search(rf"[\[\s,'\"]{re.escape(branch)}[\]\s,'\"]", push):

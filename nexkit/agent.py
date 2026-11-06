@@ -697,12 +697,17 @@ def _template(name):
 
 def build_prompt(stage, context, cfg, extra=None):
     template = _template(stage)
+    protected = ", ".join(f"`{p}`" for p in cfg["protected_paths"])
+    person = bool(context.get("person"))
+    limits = Template(_template("review_limits_person" if person else "review_limits"))
     values = {
         **context,
         "checks": _checks_text(cfg),
         "round_checks": _round_checks_text(cfg),
         "writing": _template("writing"),
-        "protected": ", ".join(f"`{p}`" for p in cfg["protected_paths"]),
+        "protected": protected,
+        "limits": limits.safe_substitute(protected=protected).rstrip(),
+        "person": _template("review_person") if person else "",
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
         "checklist": checklist_text(stage, cfg),
         **(extra or {}),

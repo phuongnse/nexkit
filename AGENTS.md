@@ -57,7 +57,8 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   agent to its end or published. `tests/test_scenarios.py` plays this over many rounds;
   a new automatic rule comes with a scenario there.
 - Prompts judge code behaviour, never things an agent cannot change (PR text, approvals,
-  workflows).
+  workflows). A person's pull request has no such limit on workflows, since a person wrote
+  them; `/nexkit review` there never pushes, starts a round or merges.
 - A config key, command or prompt contract changes together with its tests, docs and skills.
 - Pins live only in `nexkit/__init__.py`. The pipeline installs exactly those versions;
   test only them, without matrices. `update-agents.yml` proposes runtime updates, and each

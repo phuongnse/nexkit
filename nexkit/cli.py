@@ -94,12 +94,17 @@ def cmd_init(args):
         evidence=args.evidence_artifact,
         after_workflows=args.after_workflow,
         watch_workflows=args.watch_workflow,
+        last_label=args.last_in_milestone_label,
         github_app=github_app,
     )
     for path in written:
         print(f"wrote {path}")
     for line in app_lines:
         print(line)
+    if args.last_in_milestone_label:
+        line = scaffold.ensure_label(args.repo, args.last_in_milestone_label)
+        if line:
+            print(line)
     print(
         "Next: review the files, set the secret each agent in .nexkit/config.json names "
         "(gh secret set CLAUDE_CODE_OAUTH_TOKEN), commit both files to the default branch, "
@@ -224,7 +229,8 @@ def cmd_route(args):
             decision = skip_unaffected(gh, decision, cfg)
     if decision["action"] == "maintain" and not enabled(decision["task"], cfg):
         keys = " and ".join(TASKS[decision["task"]])
-        decision = {"action": "none", "reason": f"Nothing to do: {keys} off"}
+        reply = decision.get("reply_to")
+        decision = {"action": "none", "reason": f"Nothing to do: {keys} off", "reply_to": reply}
     print(json.dumps(decision, indent=2))
     if decision["action"] == "none" and decision.get("reply_to"):
         try:
@@ -384,6 +390,12 @@ def _agent(args, decision, stage, out):
     cfg = _config()
     base = decision["base"]
     context = json.loads((out / "context.json").read_text())
+    if context.get("untrusted"):
+        # Before setup and any agent: a person reads the new text first.
+        result = {"stage": stage, "status": "untrusted", "error": context["untrusted"]}
+        (out / "result.json").write_text(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2))
+        return 0
     commits = None
     # The base branch already holds the change, such as one another pull request landed
     # since the round was started, so its merge would leave nothing to fix or review.
@@ -568,6 +580,7 @@ def cmd_report(args):
 
 
 def cmd_maintain(args):
+    from .github import GitHub
     from .maintain import maintain, wait_for_paused
     from .report import workflow_file
 
@@ -575,12 +588,15 @@ def cmd_maintain(args):
     if args.wait:
         wait_for_paused(gh, _config()["usage_limit"]["wait_minutes"])
         return 0
+    # Apart from the job's token: an App without the permission gets no such token.
+    token = os.environ.get("NEXKIT_ALERTS_TOKEN")
     lines = maintain(
         gh,
         _decision(),
         _config(),
         workflow=workflow_file(os.environ.get("GITHUB_WORKFLOW_REF", "")),
         ref=os.environ.get("NEXKIT_DEFAULT_BRANCH") or gh.default_branch(),
+        alerts=GitHub(token=token) if token else None,
     )
     for line in lines:
         print(line)
@@ -700,6 +716,12 @@ def build_parser():
         metavar="FILE",
         help="A workflow file, such as nightly.yml, whose runs on the default branch autopilot "
         "watches but NexKit does not start (autopilot.watch_workflows); repeat for more",
+    )
+    p.add_argument(
+        "--last-in-milestone-label",
+        metavar="LABEL",
+        help="The label of an issue that runs after the rest of its milestone "
+        "(autopilot.last_in_milestone_label); init creates it when it is missing",
     )
     p.add_argument(
         "--model",

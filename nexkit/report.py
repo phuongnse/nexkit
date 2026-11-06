@@ -18,13 +18,14 @@ from .maintain import (
     ON_BASE_FAILED,
     close_on_base,
     close_parents_safely,
+    delete_head_branch,
     is_conflicting,
     resolve_conflicts,
     start_conflict_round,
     start_waiting,
     update_branch,
 )
-from .route import BRANCH_PREFIX, auto_input, on_base
+from .route import auto_input, on_base
 from .runlog import add_tokens, one_line
 from .schema import filled
 from .state import (
@@ -78,6 +79,8 @@ COMPLETED = {
     "issue_closed",
     "merge_issue_closed",
     "conflicting",
+    "person_reviewed",
+    autopilot.UNTRUSTED_MERGE,
     autopilot.CI_WAITING,
 }
 # Why a person is needed after a run with this outcome. The other outcomes need nobody:
@@ -95,6 +98,8 @@ NEEDS_PERSON = {
         "the issue closed before NexKit merged its pull request; merge or close it yourself"
     ),
     "retry_failed": "the run stopped on a transient error twice",
+    autopilot.UNTRUSTED_ROUND: autopilot.UNTRUSTED_REASON,
+    autopilot.UNTRUSTED_MERGE: autopilot.UNTRUSTED_REASON,
     "close_failed": "no change is needed, but NexKit could not close the issue; close it yourself",
     "recheck_failed": (
         "the checks or review still fail after the fix agent found nothing to change and "
@@ -214,8 +219,15 @@ def unverified(review):
     return [c["criterion"] for c in _criteria(review, "unverifiable")]
 
 
-def review_body(review, checks):
-    """What a person acts on comes first: verdict, findings, criteria. Evidence is collapsed."""
+PERSON_LINE = (
+    "NexKit changes nothing on this pull request: a person makes any change, then comments "
+    "`/nexkit review` again."
+)
+
+
+def review_body(review, checks, person=False):
+    """What a person acts on comes first: verdict, findings, criteria. Evidence is collapsed.
+    With `person`, it says who makes any change."""
     given = review["output"]
     output = apply_criteria(given)
     approved = output["verdict"] == "approve"
@@ -251,6 +263,8 @@ def review_body(review, checks):
         "",
         output["summary"].strip(),
     ]
+    if person:
+        lines += ["", PERSON_LINE]
     if given["verdict"] == "approve" and not approved:
         what = "an acceptance criterion" if _criteria(given, "unmet") else "a checklist item"
         lines += ["", f"NexKit requests changes because {what} is not met."]
@@ -813,7 +827,9 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     (see `maintain.close_on_base`)."""
     pr, head = target["pr"], target["head"]
     try:
-        closed = gh.issue(target["issue"]).get("state") != "open"
+        issue = gh.issue(target["issue"])
+        closed = issue.get("state") != "open"
+        edited = autopilot.edited_after_vouch(gh, issue)
     except GitHubError as exc:
         message += f" NexKit did not merge it: it could not read #{target['issue']}: {exc}"
         return "merge_refused", message.strip()
@@ -824,6 +840,12 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
             "or close it yourself."
         )
         return "merge_issue_closed", message.strip()
+    if edited:
+        message += (
+            f" NexKit did not merge it: {edited}. Read #{target['issue']}, and comment "
+            f"`/nexkit trust` there if you trust it; NexKit then reviews this pull request again."
+        )
+        return autopilot.UNTRUSTED_MERGE, message.strip()
     merge_base = on_base(gh, target["base"], head)
     if merge_base:
         outcome, text, commit = close_on_base(gh, cfg, {**target, "merge_base": merge_base})
@@ -849,7 +871,7 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     if closed and cfg["close_parent_issues"]:
         # At once, for this round's comment; the `issues: closed` run finds nothing left.
         lines += close_parents_safely(gh, target["issue"])
-    lines += delete_merged_branch(gh, pr, target["base"])
+    lines += delete_head_branch(gh, pr)
     runs = []
     started = after_merge(gh, after_workflows(cfg), target["base"], runs)
     if runs:
@@ -1186,31 +1208,6 @@ def close_merged_issue(gh, issue, pr, sha):
     return True, [f"Closed #{issue} as completed."]
 
 
-def delete_merged_branch(gh, pr, base):
-    """Delete the head branch of a pull request NexKit merged, when the repository deletes
-    head branches on merge, in case GitHub has not done it by itself. Only a NexKit branch
-    of this repository goes, never the base branch, nor one that open pull requests target,
-    which its deletion would close. Returns lines for the round's comment. A failure leaves
-    the merge as it is."""
-    branch = ""
-    try:
-        if not gh.deletes_merged_branches():
-            return []
-        head = gh.pull(pr).get("head") or {}
-        branch = head.get("ref") or ""
-        own = (head.get("repo") or {}).get("full_name") == gh.repository
-        if not own or not branch.startswith(BRANCH_PREFIX) or branch == base:
-            return []
-        targeting = ", ".join(f"#{pull['number']}" for pull in gh.pulls_into(branch))
-        if targeting:
-            return [f"Kept branch `{branch}`, the base branch of {targeting}."]
-        gh.delete_branch(branch)
-    except GitHubError as exc:
-        name = f"branch `{branch}`" if branch else "the branch"
-        return [f"Could not delete {name}: {exc}. It stays; delete it yourself."]
-    return [f"Deleted branch `{branch}`."]
-
-
 def _record(state, decision, row, agent, review, checks):
     """Keep what the next review and the next fix rounds need: the last review's findings
     and the recent fix rounds, each with the checks that still failed after it."""
@@ -1426,6 +1423,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     comments = gh.comments(pr)
     comment_id, state = read_state(comments)
     state = state or empty_state(decision["issue"])
+    person = bool(decision.get("person"))
+    if person:
+        state["person"] = True
     # Only the review this round's decision named carries over.
     carried = (
         bool(reviewed)
@@ -1456,7 +1456,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         failed = "" if review else review_failure(reviewed)[0]
         checks_ok, verdict = _set_statuses(gh, head, checks, review, url, failed)
     if given:
-        gh.create_review(pr, head, review_body({"output": given}, checks))
+        gh.create_review(pr, head, review_body({"output": given}, checks, person))
 
     row.update(
         head=head,
@@ -1501,6 +1501,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         row["verdict"] = "paused"
         if resume:
             row["resume"] = resume
+    elif person and verdict:
+        # A person's pull request: nothing here pushes, starts a fix round or merges.
+        outcome = "person_reviewed"
+        if checks_ok and verdict == "approve":
+            message = f"✅ Checks passed and the AI review approved `{head[:7]}`."
+        else:
+            message = f"Checks or review need attention on `{head[:7]}`."
+        message += f" {PERSON_LINE}"
     elif checks_ok and verdict == "approve":
         outcome = "ready"
         approved = f"the AI review approved `{head[:7]}`"

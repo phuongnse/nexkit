@@ -3,16 +3,164 @@ from unittest import mock
 
 from nexkit.github import GitHubError
 from nexkit.maintain import (
+    BRANCH_KEPT,
     ON_BASE_FAILED,
+    STALE_BRANCHES,
     UNDECIDED,
+    close_on_base,
     close_parents,
     close_parents_safely,
+    delete_stale_branches,
     enabled,
     holding_commit,
     maintain,
 )
 from nexkit.state import render_run
 from tests.support import FakeGitHub, make_config
+
+HEAD = "a" * 40
+
+
+class StaleBranchTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.delete_on_merge = True
+
+    def closed_work(self, number, pull=None, head=HEAD, pull_state="closed", issue_state="closed"):
+        """Issue `number`, its branch at `head`, and its pull request."""
+        self.gh.add_issue(number, state=issue_state)
+        self.gh.branches[f"nexkit/issue-{number}"] = head
+        self.gh.add_pull(pull or number + 100, number, HEAD, state=pull_state)
+
+    def test_a_sweep_deletes_the_branch_of_closed_work(self):
+        self.closed_work(5)
+        lines = delete_stale_branches(self.gh)
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+        self.assertEqual(lines, ["Deleted branch `nexkit/issue-5` of closed #5."])
+
+    def test_it_deletes_a_few_per_sweep_and_the_next_sweep_goes_on(self):
+        for number in range(1, STALE_BRANCHES + 3):
+            self.closed_work(number)
+        delete_stale_branches(self.gh)
+        self.assertEqual(len(self.gh.deleted), STALE_BRANCHES)
+        delete_stale_branches(self.gh)
+        self.assertEqual(len(self.gh.deleted), STALE_BRANCHES + 2)
+
+    def test_it_keeps_the_branch_of_work_that_goes_on(self):
+        self.closed_work(5, issue_state="open")
+        self.closed_work(6, pull_state="open")
+        self.assertEqual(delete_stale_branches(self.gh), [])
+        self.assertEqual(self.gh.deleted, [])
+
+    def test_any_open_pull_request_of_the_branch_keeps_it(self):
+        self.closed_work(5)
+        self.gh.add_pull(106, 5, HEAD, state="open")
+        self.assertEqual(delete_stale_branches(self.gh), [])
+
+    def test_it_keeps_a_branch_that_an_open_pull_request_targets(self):
+        self.closed_work(5)
+        self.gh.add_pull(7, 8)
+        self.gh.pulls[7]["base"] = {"ref": "nexkit/issue-5"}
+        self.assertEqual(delete_stale_branches(self.gh), [])
+        self.assertEqual(self.gh.deleted, [])
+
+    def test_it_keeps_a_branch_that_nothing_else_holds(self):
+        # It moved after its pull request ended, or it never had one.
+        self.closed_work(5, head="b" * 40)
+        self.gh.add_issue(6, state="closed")
+        self.gh.branches["nexkit/issue-6"] = HEAD
+        self.assertEqual(delete_stale_branches(self.gh), [])
+        self.assertEqual(self.gh.deleted, [])
+
+    def test_a_pull_request_from_a_fork_holds_nothing(self):
+        self.closed_work(5)
+        self.gh.pulls[105]["head"]["repo"] = {"full_name": "fork/app"}
+        self.assertEqual(delete_stale_branches(self.gh), [])
+
+    def test_it_leaves_other_branches_and_every_branch_with_the_setting_off(self):
+        self.gh.branches["nexkit/issue-5-notes"] = HEAD
+        self.assertEqual(delete_stale_branches(self.gh), [])
+        self.closed_work(6)
+        self.gh.delete_on_merge = False
+        self.assertEqual(delete_stale_branches(self.gh), [])
+        self.assertEqual(self.gh.deleted, [])
+
+    def test_a_branch_it_could_not_delete_gets_one_comment_on_its_issue(self):
+        self.closed_work(5)
+        self.gh.delete_error = GitHubError(422, "Cannot delete this protected branch")
+        lines = delete_stale_branches(self.gh)
+        self.assertIn("could not delete branch `nexkit/issue-5`", lines[0])
+        [comment] = self.gh.comments_matching(5, BRANCH_KEPT)
+        self.assertIn("Cannot delete this protected branch", comment["body"])
+        # It waits for a person, and holds no place of a later branch.
+        self.closed_work(6)
+        self.gh.delete_error = None
+        self.assertEqual(
+            delete_stale_branches(self.gh), ["Deleted branch `nexkit/issue-6` of closed #6."]
+        )
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-6"])
+        self.assertEqual(len(self.gh.comments_matching(5, BRANCH_KEPT)), 1)
+
+    def test_a_person_cannot_stop_a_delete_with_the_marker_in_a_comment(self):
+        self.closed_work(5)
+        self.gh.human_comment(5, f"{BRANCH_KEPT} `nexkit/issue-5`")
+        delete_stale_branches(self.gh)
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+
+    def test_an_issue_that_is_gone_or_a_listing_that_fails_stops_nothing(self):
+        self.gh.branches["nexkit/issue-9"] = HEAD  # no such issue
+        self.closed_work(10)
+        with mock.patch.object(self.gh, "issue", wraps=self.gh.issue) as issue:
+            issue.side_effect = lambda n: (_ for _ in ()).throw(GitHubError(404, "gone"))
+            self.assertEqual(delete_stale_branches(self.gh), [])
+        with mock.patch.object(self.gh, "branches_like", side_effect=GitHubError(500, "down")):
+            self.assertIn("Could not list", delete_stale_branches(self.gh)[0])
+
+    def test_every_sweep_cleans_up_also_without_autopilot(self):
+        self.closed_work(5)
+        cfg = make_config(conflicts={"auto_resolve": True})
+        lines = maintain(self.gh, {"task": "sweep"}, cfg, workflow="nexkit.yml", ref="main")
+        self.assertIn("Deleted branch `nexkit/issue-5` of closed #5.", lines)
+
+    def on_base(self):
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5, HEAD)
+        target = {"pr": 6, "issue": 5, "base": "main", "merge_base": "c" * 40}
+        return close_on_base(self.gh, make_config(), target, commit="d" * 40)
+
+    def test_closing_a_pull_request_the_base_branch_holds_deletes_its_branch(self):
+        outcome, text, _ = self.on_base()
+        self.assertEqual(outcome, "already_on_base")
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+        self.assertIn("Deleted branch `nexkit/issue-5`.", text)
+
+    def test_with_the_setting_off_that_branch_stays(self):
+        self.gh.delete_on_merge = False
+        _, text, _ = self.on_base()
+        self.assertEqual(self.gh.deleted, [])
+        self.assertNotIn("branch `", text)
+
+    def test_the_round_names_a_branch_it_could_not_delete_and_the_close_stays(self):
+        self.gh.delete_error = GitHubError(403, "Resource not accessible by integration")
+        outcome, text, _ = self.on_base()
+        self.assertEqual(outcome, "already_on_base")
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+        self.assertIn("Could not delete branch `nexkit/issue-5`", text)
+        self.assertIn("Resource not accessible", text)
+
+    def test_a_branch_another_open_pull_request_comes_from_stays(self):
+        self.gh.add_pull(7, 5, HEAD)
+        self.gh.pulls[7]["base"] = {"ref": "release/1"}
+        _, text, _ = self.on_base()
+        self.assertEqual(self.gh.deleted, [])
+        self.assertIn("Kept branch `nexkit/issue-5`, the head of #7.", text)
+
+    def test_a_branch_an_open_pull_request_targets_stays_there_too(self):
+        self.gh.add_pull(7, 8)
+        self.gh.pulls[7]["base"] = {"ref": "nexkit/issue-5"}
+        _, text, _ = self.on_base()
+        self.assertEqual(self.gh.deleted, [])
+        self.assertIn("Kept branch `nexkit/issue-5`, the base branch of #7.", text)
 
 
 class CloseParentTests(unittest.TestCase):

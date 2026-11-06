@@ -37,7 +37,8 @@ A complete configuration with every key at its default, except `agents`, `setup`
     "scope": "milestone",
     "max_parallel": null,
     "answer": "never",
-    "watch_workflows": []
+    "watch_workflows": [],
+    "dependabot": null
   },
   "notify": [],
   "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -92,6 +93,7 @@ their defaults.
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
 | `autopilot.last_in_milestone_label` | `null` | The label that marks an issue to run only once every other issue of its milestone is closed, such as `"last-in-milestone"`. See *Running an issue last* under [Autopilot](#autopilot). |
 | `autopilot.trusted_workflows` | `[]` | Workflow files, such as `["docs-audit.yml"]`, whose issues autopilot takes when their marker names a run that checks out. See [Issues from a workflow](#issues-from-a-workflow). |
+| `autopilot.dependabot` | `null` | The lowest severity of Dependabot alert that gets an issue: `"low"`, `"medium"`, `"high"` or `"critical"`. `null` opens none. It needs an extra permission of the App. See *Dependabot advisories* under [Autopilot](#autopilot). |
 | `autopilot.watch_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, whose runs on the default branch autopilot watches as it watches `merge.after_workflows`, whatever started them, but which NexKit does not start after its merges. File names only, each listed once, none also in `merge.after_workflows`. See *Watching CI that NexKit does not start* under [Autopilot](#autopilot). |
 | `notify` | `[]` | GitHub logins to mention when a run ends in a state that needs a person, such as `["owner"]`, each listed once. See [Mentions](#mentions). |
 
@@ -619,7 +621,9 @@ starts every listed workflow that is due on the base branch with `workflow_dispa
 - Each workflow needs a `workflow_dispatch` trigger without required inputs, for example
   `on: {pull_request: {}, workflow_dispatch: {}}`.
   `nexkit init --after-workflow FILE`, repeated for each file, sets the list.
-  `nexkit doctor` warns when a listed file is missing or has no such trigger.
+  `nexkit doctor` warns when a listed file is missing or has no such trigger, and when a
+  `push` trigger also runs it on the default branch: by `branches`, by a `branches-ignore`
+  that leaves that branch out, or by no filter.
 - With autopilot, a finished run starts a sweep, so a failure is noticed within minutes;
   see *When a finished run is noticed* under [Autopilot](#autopilot).
 - The run uses the base branch's newest commit when it starts, normally the merge commit.
@@ -690,7 +694,8 @@ at once.
   "answer": "never",
   "lost_after_minutes": 30,
   "trusted_workflows": [],
-  "last_in_milestone_label": null
+  "last_in_milestone_label": null,
+  "dependabot": null
 }
 ```
 
@@ -754,7 +759,10 @@ every open issue in scope, in order, and starts the one command that moves it on
   skill](../skills/request/SKILL.md) has the rules.
 - **Running an issue last.** An issue such as a docs sweep that checks what a milestone
   changed must run after everything else in it. Name a label in
-  `autopilot.last_in_milestone_label` and put it on the issue. Autopilot then plans it only
+  `autopilot.last_in_milestone_label` and put it on the issue. `nexkit init
+  --last-in-milestone-label LABEL` sets it and creates the label when it is missing, and
+  `nexkit doctor` reports a label the repository does not have, since no issue can carry it,
+  and one spelled otherwise, since NexKit compares it exactly. Autopilot then plans it only
   when every other issue of the same milestone is closed, read at each sweep, so an issue
   opened after it and the parts of a split count without any *blocked by* mark. Issues of
   other milestones do not hold it back. `nexkit status` shows it as waiting and names the
@@ -1017,6 +1025,82 @@ GitHub starts no workflow for an issue opened with `github.token`, so the next s
 it: at the hourly schedule, or sooner when the workflow dispatches one with
 `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`. Parts of a split of
 such an issue are trusted like the issue.
+
+### Vouching for an issue
+
+An issue that autopilot leaves alone waits for a person, and `nexkit status` lists it under
+*Needs a person* with the reason and the command. A person with write access who has read the
+issue comments on it:
+
+```text
+/nexkit trust
+```
+
+Autopilot then takes the issue at the next sweep, like one a writer opened, which the command
+starts. That goes for any issue it left alone: one that someone without write access opened,
+or a workflow that `autopilot.trusted_workflows` does not list, or a part of an earlier
+release.
+
+- The comment itself is the record, read at each sweep. It counts only from someone who has
+  write access at that sweep, never from a bot, and only on the issue itself. The same comment
+  from anyone else changes nothing, and NexKit says why.
+- The command takes no note, since words after it could say the opposite: NexKit refuses it,
+  and such a comment vouches for nothing.
+- It covers the issue as the writer read it, and its author can still edit it. An edit of its
+  title or text by anyone but a writer or NexKit's App after the comment makes autopilot leave
+  the issue alone again, and `nexkit status` names who edited it. Commenting the command again
+  vouches for the new text. A bot's edit counts too, since any workflow of the repository can
+  write as one.
+- A sweep is not the only check. Each plan, implement or fix round that NexKit started looks
+  for such an edit right after it read the text, so its agent never acts on it: the round ends
+  as `agent_untrusted` before setup and any agent, and gives its automatic round back. A merge
+  looks too, and ends as `merge_untrusted`. Commenting the command again starts the same work:
+  a plan, the fix round, or `/nexkit review` before the merge. A round that a person started
+  with a command goes on, since that person answers for the text.
+- Parts that autopilot creates from a split of the issue inherit the trust, and lose it with
+  the issue. An issue that is a part but was not opened by NexKit's App inherits nothing, so
+  it needs the comment itself.
+- With autopilot off, the command says so and does nothing.
+
+### Dependabot advisories
+
+Autopilot can turn Dependabot alerts into issues, as it does for a failure of CI on the
+default branch, without a relay of your own:
+
+```json
+"autopilot": {"enabled": true, "dependabot": "high"}
+```
+
+Each sweep then opens one issue for each advisory of an open alert at or above that severity,
+as NexKit's App, in no milestone, with a marker of the advisory id. Its text names the
+advisory, the packages, their manifests and the patched versions, and mentions `notify`.
+Autopilot takes it in either scope, and plans it right after the `bug` issues for CI on the
+default branch and before the issues for flaky runs.
+
+- An advisory that an open issue marks gets no other issue, whatever its alerts.
+- A sweep opens at most five, so that the first one on a repository with old alerts stays
+  short; the next sweeps open the rest. It reads the oldest 100 alerts of those severities.
+- A split of such an issue keeps its parts in scope in the same way, without a milestone.
+- The issue holds the advisory's summary as quoted text, and its title holds only the packages
+  and the advisory's id. It asks the agent to ask a person about a package with no patched
+  version, so such a plan waits for one.
+- A closed issue does not lead to another for the same alerts, so a fix that an alert
+  outlives is not repeated: a day after the issue closed, one comment on it mentions `notify`.
+  Reopen the issue or dismiss the alerts. An alert that no issue covered, such as in another
+  manifest, opens a new issue that links the closed one.
+
+This takes the App's *Dependabot alerts: read* permission, which NexKit asks for only in a
+sweep with this setting, and in a token of its own. `nexkit init` does not grant it: add it on
+the App's settings page and accept it on the installation (see [The GitHub
+App](#the-github-app)).
+
+Without the permission, or with Dependabot alerts turned off for the repository, the sweep
+opens nothing and the rest of its work goes on. It leaves what is missing as a
+`nexkit/dependabot` commit status on the default branch's tip, since nothing else can tell the
+two apart: `nexkit status` shows it under *Needs a person* and `nexkit doctor` reports it.
+Doctor also asks GitHub whether alerts are on, and with `--app-id ID --app-private-key FILE`
+checks the permission itself. The status turns green once a sweep can read them. It belongs to one commit, so on a new tip
+nothing shows until the next sweep looks.
 
 ## Mentions
 
@@ -1387,14 +1471,27 @@ App on the repository at the link it prints. A name is unique across GitHub, and
 taken: the page proposes "NexKit <owner>", which you can change there, or choose one with
 `nexkit init --app-name NAME`. Its comments then show as `<slug>[bot]`.
 
-**Every other repository.**
+**Every other repository.** The first repository needed no key by hand, because the manifest
+flow hands the key to `nexkit init` once, and it goes straight into that repository's
+secrets. GitHub shows a key only then, and no one can read a secret back, so each later
+repository of a personal account needs a new key. An organization can hold the secrets once
+instead.
 
-1. Install the App on it, under the App's *Install App* page.
-2. Set its two secrets, which `nexkit init --app-id ID --app-private-key FILE` does after it
-   checked that the App is installed. A key GitHub showed once is gone, so generate a new
-   one on the App's settings page when you did not keep it. An organization can hold both
-   as organization secrets once instead, and run `nexkit init --app-slug SLUG`.
-3. Run `nexkit init` as usual, if the options above did not.
+1. Install the App on the repository, at `https://github.com/apps/<slug>/installations/new`.
+2. Open the App's settings page: `https://github.com/settings/apps/<slug>`, or for an
+   organization `https://github.com/organizations/<org>/settings/apps/<slug>`. The App ID is
+   under *About*, and *Generate a private key* is under *Private keys*, near the bottom.
+   This is not the page of the App's installation
+   (`https://github.com/settings/installations/<id>`), which GitHub links from the repository
+   and from the list of Apps and which shows neither.
+3. Run `nexkit init --app-id ID --app-private-key FILE`, which checks that the App is
+   installed and sets both secrets. An App can have several keys, so a new one leaves the
+   other repositories as they are.
+
+An organization can set both as organization secrets once, then run `nexkit init --app-slug
+SLUG` in each repository. When the repository can read neither, that command stops before it
+writes anything, also for an organization, and prints the two links and the command above.
+When GitHub cannot say, it goes on, and `nexkit doctor` checks the secrets later.
 
 **Permissions.** NexKit needs these repository permissions, and each job asks for only what
 it uses:
@@ -1408,6 +1505,7 @@ it uses:
 | Pull requests | write | Opening, updating and reviewing pull requests |
 | Commit statuses | write | `nexkit/checks` and `nexkit/review` |
 | Workflows | write | Pushing and merging changes to `.github/workflows/` |
+| Dependabot alerts | read | Only with [`autopilot.dependabot`](#dependabot-advisories): reading open alerts. `nexkit init` leaves it out, so add it by hand. |
 
 **Who holds what.** Each job that writes, `route`, `publish`, `report`, `maintain` and
 `finish`, mints an installation token for this repository in a step of its own, with
@@ -1433,6 +1531,25 @@ in its file. Without that option doctor says that it could not tell. A run witho
 as the Actions bot, also on code an agent wrote, so what that bot wrote proves nothing, and
 that includes the plans and rounds of earlier releases.
 
+## Reviewing your own pull requests
+
+NexKit's agents may not change `protected_paths`, so a change to `.github/` or `.nexkit/`,
+such as a NexKit upgrade, is a person's pull request. Comment `/nexkit review` on it, from an
+account with write access. NexKit runs its checks and its review on the head and sets
+`nexkit/checks` and `nexkit/review`, as for a NexKit pull request, and reviews the protected
+paths like any other code. See *A person's pull request* under [How it
+works](how-it-works.md#stages).
+
+So a repository whose rules on the default branch require those two statuses needs no admin
+bypass for these changes: comment the command, read the review, and merge. A new commit needs
+the command again.
+
+It works for a pull request from a branch of this repository. It never pushes, starts a fix
+round or merges, also with `merge.auto` on, so a person makes any change and the merge. The
+checks and `setup` come from `.nexkit/config.json` on the default branch, so a change to them
+counts from its merge on. The workflow file that `nexkit init` writes lets the command
+through, as it does every `/nexkit` comment.
+
 ## Workflow file
 
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls
@@ -1455,7 +1572,8 @@ failing: staying on a release is your choice.
 
 NexKit's pull requests come from branches named `nexkit/issue-<number>`. The job's `if:`
 in the workflow file lets a *Request changes* review start a run only on a branch that
-starts with `nexkit/`.
+starts with `nexkit/`. A `/nexkit` comment gets through on any pull request, and `route`
+says what it does there.
 
 ## Upgrading from earlier releases
 
@@ -1470,6 +1588,8 @@ pull request:
    names of its own CI workflows or artifacts.
 4. Check that the workflow file grants every permission the release asks for.
 5. Run `nexkit doctor` at the new release, and fix every ✗ line.
+6. Comment [`/nexkit review`](#reviewing-your-own-pull-requests) on the pull request, which
+   checks and reviews it and sets the statuses your rules may require.
 
 A configuration from an earlier release that no longer fits is rejected with what to
 change.
@@ -1484,6 +1604,13 @@ Do this between rounds. NexKit no longer reads the comments of earlier releases,
 with a plan is planned again, a pull request starts its automatic rounds afresh, and a run
 that is under way when you upgrade is not picked up. Bug issues that autopilot opened as the
 Actions bot are left alone: close them, and the next failure opens a new one.
+
+Parts that an earlier release created were opened as the Actions bot too, and autopilot leaves
+them alone. They hold planned work, and an open pull request is tied to each by its
+`nexkit/issue-<n>` branch, so do not close them: `nexkit status` lists each one under *Needs a
+person* with the command, and [`/nexkit trust`](#vouching-for-an-issue) on it makes autopilot
+carry it on, with its pull request. Each part needs its own comment, also when a writer opened
+its parent.
 
 1. Create the App once per owner. Run `nexkit init --force` in a clone and let it create
    the App, then restore your `.nexkit/config.json` and workflow file and keep only the new
@@ -1514,7 +1641,9 @@ Actions bot are left alone: close them, and the next failure opens a new one.
    and check the rules that restrict who may push.
 8. Expect more of your own CI: pushes and pull requests by NexKit now start it. Workflows
    you listed in `merge.after_workflows` also start from a merge when they have a `push`
-   trigger for the default branch, so remove one of the two.
+   trigger for the default branch, so remove one of the two. `nexkit doctor` names each such
+   workflow, whether by `branches`, by a `branches-ignore` that leaves the default branch
+   out, or by no filter.
 
 ### Label scope removed in 5.0
 

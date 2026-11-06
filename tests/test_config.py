@@ -204,6 +204,14 @@ class ConfigTests(unittest.TestCase):
             ):
                 validate(raw)
 
+    def test_autopilot_dependabot_names_a_severity_or_nothing(self):
+        for level in (None, "low", "medium", "high", "critical"):
+            found = validate({"autopilot": {"dependabot": level}})
+            self.assertEqual(found["autopilot"]["dependabot"], level)
+        for level in ("severe", True, 3):
+            with self.assertRaisesRegex(ConfigError, "autopilot.dependabot must be null or one"):
+                validate({"autopilot": {"dependabot": level}})
+
     def test_autopilot_defaults(self):
         self.assertEqual(
             validate({})["autopilot"],
@@ -216,6 +224,7 @@ class ConfigTests(unittest.TestCase):
                 "watch_workflows": [],
                 "trusted_workflows": [],
                 "last_in_milestone_label": None,
+                "dependabot": None,
             },
         )
         # An explicit null replaces the default: every open issue.

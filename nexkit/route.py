@@ -29,11 +29,15 @@ BRANCH_PREFIX = "nexkit/issue-"
 COMMAND = re.compile(r"^\s*/nexkit\s+([a-z]+)\b[ \t]*(.*)$", re.DOTALL)
 ISSUE_COMMANDS = {"plan": "plan", "go": "implement"}
 PR_COMMANDS = {"fix": "fix", "review": "review"}
+# A writer's word for an issue that autopilot leaves alone (see `autopilot.distrust`). Its
+# comment is the record, so only a comment counts, never a dispatch.
+TRUST = "trust"
 
 USAGE = (
-    "NexKit commands: on an issue, `/nexkit plan` drafts a plan and `/nexkit go` implements it; "
-    "on a NexKit pull request, `/nexkit fix <instructions>` starts a repair round and "
-    "`/nexkit review` re-checks the current commit."
+    "NexKit commands: on an issue, `/nexkit plan` drafts a plan, `/nexkit go` implements it and "
+    "`/nexkit trust` vouches for it, so that autopilot takes it; on a NexKit pull request, "
+    "`/nexkit fix <instructions>` starts a repair round; on any pull request of this "
+    "repository's branches, `/nexkit review` checks and reviews the current commit."
 )
 
 
@@ -152,7 +156,10 @@ def route(gh, event_name, event, inputs=None):
         if not gh.can_write(actor):
             return _none(f"@{actor} needs write access to run NexKit commands", number)
         on_pull = "pull_request" in event["issue"]
-        decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
+        if command == TRUST and not on_pull:
+            decision = _trust(event["issue"], note)
+        else:
+            decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
         decision.update(actor=actor, comment_id=event["comment"]["id"])
         return decision
 
@@ -258,6 +265,19 @@ def route(gh, event_name, event, inputs=None):
     return _none(f"Event '{event_name}' is not handled")
 
 
+def _trust(issue, note):
+    """A writer's `/nexkit trust` on `issue`: the `maintain` job answers it and starts a
+    sweep, which reads the comment. With a note it vouches for nothing, since words after
+    the command can say the opposite."""
+    number = issue["number"]
+    if issue.get("state", "open") != "open":
+        return _none("The issue is closed", number)
+    if note:
+        reason = "`/nexkit trust` takes no note. Comment it alone once you read the issue."
+        return _none(reason, number)
+    return {"action": "maintain", "task": "trust", "issue": number, "reply_to": number}
+
+
 def _conflicts_tried(gh, decision):
     """Whether this conflict round repeats the pull request's latest round: a conflict
     round on the same base commit that ended. Two starters that looked at the same time,
@@ -296,12 +316,30 @@ def _decide(gh, command, number, on_pull, note, *, auto):
         if command not in PR_COMMANDS:
             return _none(f"`/nexkit {command}` is not a pull request command. {USAGE}", number)
         pull = gh.pull(number)
+        if (pull["head"].get("repo") or {}).get("full_name") != gh.repository:
+            return _none(
+                "This pull request comes from a fork, so NexKit runs nothing on it: its checks "
+                "would run code that nobody with write access pushed.",
+                number,
+            )
         issue = issue_from_branch(pull["head"]["ref"])
-        if issue is None or pull["head"]["repo"]["full_name"] != gh.repository:
-            return _none("This pull request was not opened by NexKit", number)
+        # A person's pull request: NexKit checks and reviews it on request, and no more.
+        person = issue is None
+        if person and command != "review":
+            return _none(
+                f"`/nexkit {command}` acts only on NexKit's pull requests, and a person makes "
+                "any change here. `/nexkit review` checks and reviews this one.",
+                number,
+            )
         if pull["state"] != "open":
             return _none("The pull request is closed", number)
         merged = on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
+        if merged and person:
+            return _none(
+                f"This pull request changes no file against `{pull['base']['ref']}`, so there "
+                "is nothing to review.",
+                number,
+            )
         if merged:
             # Its base branch already holds its change: no round, review or merge would
             # change anything, so the `maintain` job closes it and its issue.
@@ -316,7 +354,8 @@ def _decide(gh, command, number, on_pull, note, *, auto):
             }
         decision = {
             "action": PR_COMMANDS[command],
-            "issue": issue,
+            # GitHub keeps a pull request's text and comments as an issue's.
+            "issue": number if person else issue,
             "pr": number,
             "target": number,
             "branch": pull["head"]["ref"],
@@ -325,6 +364,8 @@ def _decide(gh, command, number, on_pull, note, *, auto):
             "note": note,
             "auto": auto,
         }
+        if person:
+            decision["person"] = True
         comments = gh.comments(number)
         # The last commit whose checks passed, for NEXKIT_VERIFIED_SHA.
         verified = verified_head(comments)

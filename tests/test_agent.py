@@ -193,6 +193,32 @@ class PromptTests(unittest.TestCase):
         )
         self.assertIn("cannot be shown by a test or a check, say so in `risks`", prompt)
 
+    def test_a_persons_pull_request_is_reviewed_in_its_protected_paths_too(self):
+        context = {**CONTEXT, "person": True}
+        prompt = " ".join(agent.build_prompt("review", context, make_config()).split())
+        self.assertIn("## A person's pull request", prompt)
+        self.assertIn("a person makes any change", prompt)
+        self.assertIn("return no `criteria`", prompt)
+        self.assertIn(
+            "Review a change to CI configuration, workflows or the protected paths "
+            "`.github/`, `.nexkit/` like any other code",
+            prompt,
+        )
+        self.assertNotIn("cannot change: the pull request description", prompt)
+        self.assertNotIn("$person", prompt)
+        self.assertNotIn("$limits", prompt)
+        self.assertNotIn("$protected", prompt)
+
+    def test_the_review_of_a_nexkit_pull_request_leaves_protected_paths_out(self):
+        prompt = " ".join(agent.build_prompt("review", CONTEXT, make_config()).split())
+        self.assertNotIn("A person's pull request", prompt)
+        self.assertNotIn("$person", prompt)
+        self.assertIn(
+            "things the implementation agent cannot change: the pull request description, "
+            "approvals, CI configuration or the protected paths `.github/`, `.nexkit/`.",
+            prompt,
+        )
+
     def test_review_judges_each_criterion_and_unmet_ones_request_changes(self):
         prompt = " ".join(agent.build_prompt("review", CONTEXT, make_config()).split())
         self.assertIn("no criterion is `unmet` and every check passed", prompt)

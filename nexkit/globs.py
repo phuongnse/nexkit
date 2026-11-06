@@ -1,4 +1,5 @@
-"""Path globs for a check's `unaffected_by`: the paths it never reads.
+"""Path globs for a check's `unaffected_by`, the paths it never reads, and GitHub's branch
+filters.
 
 `*` matches any characters but `/`, `?` one of them, `[abc]` and `[!abc]` one of a set, and
 `**`, only as a whole segment, any number of folders. A pattern that starts with `!` takes
@@ -104,3 +105,24 @@ def unaffected(paths, patterns):
         return found
 
     return all(listed(path) for path in paths)
+
+
+def branch_matches(pattern, branch):
+    """Whether a pattern of a workflow's branch filter matches `branch`, as GitHub reads it:
+    `*` matches any characters but `/`, `**` any characters, `?` and `+` repeat the character
+    before them, and `[]` holds a set. One that is no valid pattern matches nothing."""
+    parts = re.findall(r"\*\*|\*|\[[^\]]*\]|.", pattern)
+    regex = "".join(
+        ".*"
+        if part == "**"
+        else "[^/]*"
+        if part == "*"
+        else part
+        if part in ("?", "+") or part.startswith("[")
+        else re.escape(part)
+        for part in parts
+    )
+    try:
+        return re.fullmatch(regex, branch) is not None
+    except re.error:
+        return False

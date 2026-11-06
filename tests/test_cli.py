@@ -12,6 +12,7 @@ from unittest import mock
 import nexkit
 import nexkit.config
 from nexkit import app, cli, maintain, scaffold
+from nexkit.globs import branch_matches
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
 from nexkit.state import (
     ACTIONS_BOT,
@@ -212,6 +213,177 @@ class InitDoctorTests(unittest.TestCase):
             (False, "merge.after_workflows[1].every must be an integer from 1 to 1000"),
             scaffold.doctor(self.root),
         )
+
+    def after_merge_findings(self, text, branch="main"):
+        """What doctor says about ci.yml with `text`, in merge.after_workflows, about a
+        merge also starting it."""
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--force"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["merge"]["after_workflows"] = ["ci.yml"]
+        path.write_text(json.dumps(cfg))
+        (self.root / ".github/workflows/ci.yml").write_text(text)
+        with mock.patch.object(scaffold, "default_branch_of", return_value=branch):
+            findings = scaffold.doctor(self.root)
+        return [m for ok, m in findings if not ok and "a merge also starts" in m]
+
+    def test_doctor_warns_of_an_after_merge_workflow_that_a_push_also_starts(self):
+        dispatch = "  workflow_dispatch:\n"
+        for how, text in (
+            ("no branch filter", f"on:\n  push:\n{dispatch}"),
+            ("no branch filter", "on: push\n"),
+            ("no branch filter", "on: [push, workflow_dispatch]\n"),
+            ("no branch filter", "on:\n  - push\n  - workflow_dispatch\n"),
+            ("no branch filter", "'on':\n    push:\n        paths: ['src/**']\n"),
+            ("'branches' include main", "on:\n  push:\n    branches: [main]\n"),
+            ("'branches' include main", "on:\n  push:\n    branches:\n      - 'ma*'\n"),
+            ("'branches' include main", "on:\n  push:\n    branches:\n    - main\n"),
+            ("'branches' include main", "on:\n  push:\n    branches: ['**', '!dev']\n"),
+            ("'branches' include main", "on: {push: {branches: [main]}, pull_request: {}}\n"),
+            ("'branches' include main", "on:\n  push: {branches: [main]}\n"),
+            ("no branch filter", "on: {push: {}, workflow_dispatch: {}}\n"),
+            ("no branch filter", "on:\n- push\n- workflow_dispatch\n"),
+            ("'branches' include main", "on:\n  push:\n    'branches': [main]\n"),
+            ("no branch filter", "on:\n  push: null\n"),
+            (
+                "'branches-ignore' leaves main out",
+                "on:\n  push:\n    branches-ignore: ['nexkit/**', 'design/**']\n",
+            ),
+        ):
+            [found] = self.after_merge_findings(text)
+            self.assertIn(how, found)
+            self.assertIn("'push' trigger", found)
+            self.assertIn("leaves main out", found)
+
+    def test_doctor_says_nothing_of_an_after_merge_workflow_a_merge_does_not_start(self):
+        for text in (
+            "on:\n  workflow_dispatch:\n  pull_request:\n    branches: [main]\n",
+            "on: workflow_dispatch\n",
+            "on:\n  push:\n    branches: [develop, 'release/*']\n",
+            "on:\n  push:\n    branches: ['**', '!main']\n",
+            "on:\n  push:\n    branches-ignore: [main]\n",
+            "on:\n  push:\n    branches-ignore:\n      - 'ma*'\n",
+            "on:\n  push:\n    tags: ['v*']\n",
+            "on: {pull_request: {}, workflow_dispatch: {}}\n",
+            "on: {push: {branches-ignore: [main]}}\n",
+            "on: { pull_request: { branches: [push] } }\n",
+            "on:\n  push: *filters\n",
+            "on:\n  push:\n    'branches': [develop]\n",
+            # A comment is no trigger.
+            "on:\n  # push:\n  workflow_dispatch:\n",
+        ):
+            self.assertEqual(self.after_merge_findings(text), [], text)
+
+    def test_the_default_branch_decides_whether_a_merge_starts_it(self):
+        text = "on:\n  push:\n    branches: [main]\n"
+        self.assertEqual(self.after_merge_findings(text, "trunk"), [])
+
+    def test_a_branch_filter_reads_as_github_reads_it(self):
+        for pattern, branch, found in (
+            ("main", "main", True),
+            ("main", "maintenance", False),
+            ("re*", "release", True),
+            ("re*", "release/1", False),
+            ("re**", "release/1", True),
+            ("v[12]", "v2", True),
+            ("v[12]", "v3", False),
+            ("a.b", "axb", False),
+            ("[", "main", False),
+        ):
+            self.assertEqual(branch_matches(pattern, branch), found, pattern)
+
+    def doctor_online(self, answers):
+        """`doctor` with `gh` answering as `answers` says, by part of an argument."""
+
+        def fake_gh(*args):
+            if args[:2] == ("auth", "status"):
+                return "Logged in"
+            for key, value in answers.items():
+                if any(key in arg for arg in args):
+                    return value
+            return None
+
+        with (
+            mock.patch.object(scaffold, "repository_of", return_value="acme/app"),
+            mock.patch.object(scaffold, "_gh", side_effect=fake_gh),
+        ):
+            return scaffold.doctor(self.root)
+
+    def label_findings(self, label, answers):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--force"])
+        path = self.root / ".nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw["autopilot"] = {"last_in_milestone_label": label}
+        path.write_text(json.dumps(raw))
+        return [
+            (ok, message)
+            for ok, message in self.doctor_online(answers)
+            if "last_in_milestone_label" in message
+        ]
+
+    def test_doctor_warns_of_a_label_to_run_last_that_the_repository_lacks(self):
+        [(ok, found)] = self.label_findings("run last", {})
+        self.assertFalse(ok)
+        self.assertIn("names `run last`, which acme/app does not have", found)
+        self.assertIn("gh label create 'run last' --repo acme/app", found)
+
+    def test_doctor_accepts_a_label_to_run_last_that_the_repository_has(self):
+        [(ok, found)] = self.label_findings("last", {"labels/last": "last\n"})
+        self.assertTrue(ok, found)
+
+    def test_doctor_warns_of_a_label_that_differs_in_case_since_nexkit_compares_it_exactly(self):
+        [(ok, found)] = self.label_findings("last", {"labels/last": "Last\n"})
+        self.assertFalse(ok)
+        self.assertIn("spells the label `Last`", found)
+
+    def test_doctor_asks_about_no_label_without_the_setting(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        findings = self.doctor_online({})
+        self.assertFalse(any("last_in_milestone_label" in m for _, m in findings))
+
+    def init_with_label(self, label, answers):
+        calls = []
+
+        def fake_gh(*args):
+            calls.append(args)
+            for key, value in answers.items():
+                if any(key in arg for arg in args):
+                    return value
+            return None
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(scaffold, "repository_of", return_value="acme/app"),
+            mock.patch.object(scaffold, "_gh", side_effect=fake_gh),
+            contextlib.redirect_stdout(output),
+        ):
+            flags = ["--last-in-milestone-label", label, "--app-slug", APP["slug"], "--force"]
+            with mock.patch.object(scaffold, "_refuse_without_secrets"):
+                code = cli.main(["init", "--repo", str(self.root), "--check", "t=true", *flags])
+        self.assertEqual(code, 0)
+        raw = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(raw["autopilot"]["last_in_milestone_label"], label)
+        return calls, output.getvalue()
+
+    def test_init_creates_the_label_to_run_last_when_it_is_missing(self):
+        calls, output = self.init_with_label("run last", {"create": "ok"})
+        self.assertIn(("label", "create", "run last", "--repo", "acme/app"), calls)
+        self.assertIn("Created the label `run last` on acme/app.", output)
+
+    def test_init_keeps_a_label_to_run_last_that_exists(self):
+        calls, output = self.init_with_label("last", {"labels/last": "last\n"})
+        self.assertFalse(any(args[0] == "label" for args in calls))
+        self.assertNotIn("the label", output)
+
+    def test_init_says_how_to_create_a_label_it_could_not(self):
+        _, output = self.init_with_label("last", {})
+        self.assertIn("Could not create the label `last`", output)
+        self.assertIn("gh label create last --repo acme/app", output)
+
+    def test_init_says_how_to_create_the_label_without_a_github_remote(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "t=true", "--force"])
+        line = scaffold.ensure_label(self.root, "last")
+        self.assertIn("gh label create last", line)
 
     def test_concurrency_group_is_on_the_job(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
@@ -649,8 +821,8 @@ class InitDoctorTests(unittest.TestCase):
             any("publish.push_token_secret is gone" in m for _, m in scaffold.doctor(self.root))
         )
 
-    def app_findings(self, answers=None, key_file=None, inspected=None, app_id=None):
-        cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
+    def app_findings(self, answers=None, key_file=None, inspected=None, app_id=None, cfg=None):
+        cfg = cfg or nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
         answers = answers if answers is not None else {}
 
         def fake_gh(*args):
@@ -665,10 +837,68 @@ class InitDoctorTests(unittest.TestCase):
 
     def test_doctor_checks_the_secrets_of_the_app(self):
         cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
-        found = scaffold._app_secrets(cfg, {"NEXKIT_APP_ID"}, "acme/app")
+        with mock.patch.object(scaffold, "_gh", return_value="User\n"):
+            found = scaffold._app_secrets(cfg, {"NEXKIT_APP_ID"}, "acme/app")
         self.assertEqual(found[0], (True, "github_app.app_id_secret: NEXKIT_APP_ID is set"))
         self.assertFalse(found[1][0])
         self.assertIn("gh secret set NEXKIT_APP_PRIVATE_KEY --repo acme/app", found[1][1])
+        self.assertIn("https://github.com/settings/apps/nexkit-acme", found[1][1])
+
+    def dependabot_findings(self, answer, status=None):
+        cfg = nexkit.config.validate(
+            {"agents": CLAUDE, "github_app": APP, "autopilot": {"dependabot": "high"}}
+        )
+        with (
+            mock.patch.object(scaffold, "_gh_answer", return_value=answer),
+            mock.patch.object(scaffold, "_gh", return_value=status),
+        ):
+            return scaffold._dependabot(cfg, "acme/app", "main")
+
+    def test_doctor_says_when_alerts_are_turned_off(self):
+        said = '{"message":"Dependabot alerts are disabled for this repository."}'
+        [(ok, found)] = self.dependabot_findings((False, said))
+        self.assertFalse(ok)
+        self.assertIn("alerts are off for acme/app", found)
+        self.assertIn("https://github.com/acme/app/settings/security_analysis", found)
+
+    def test_doctor_says_what_the_last_sweep_found_missing(self):
+        problem = "The App may not read alerts: grant it Dependabot alerts: read"
+        on, missing = self.dependabot_findings((True, "[]"), f"{problem}\n")
+        self.assertEqual(on, (True, "autopilot.dependabot: Dependabot alerts are on"))
+        self.assertFalse(missing[0])
+        self.assertIn(problem, missing[1])
+
+    def test_doctor_cannot_always_tell_and_that_is_no_failure(self):
+        [(ok, found)] = self.dependabot_findings((False, "HTTP 403: Must have admin rights"))
+        self.assertTrue(ok)
+        self.assertIn("could not tell", found)
+
+    def test_doctor_asks_nothing_about_alerts_without_the_setting(self):
+        cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
+        self.assertEqual(scaffold._dependabot(cfg, "acme/app", "main"), [])
+
+    def test_only_the_setting_needs_the_permission_for_alerts(self):
+        cfg = nexkit.config.validate(
+            {"agents": CLAUDE, "github_app": APP, "autopilot": {"dependabot": "high"}}
+        )
+        self.assertEqual(app.missing(app.PERMISSIONS), [])
+        self.assertEqual(app.missing(app.PERMISSIONS, cfg), ["vulnerability_alerts: read"])
+        self.assertEqual(app.missing({**app.PERMISSIONS, **app.ALERTS_PERMISSION}, cfg), [])
+        # An App that `nexkit init` creates does without it.
+        self.assertNotIn("vulnerability_alerts", app.PERMISSIONS)
+
+    def test_with_its_key_doctor_checks_the_permission_for_alerts(self):
+        cfg = nexkit.config.validate(
+            {"agents": CLAUDE, "github_app": APP, "autopilot": {"dependabot": "high"}}
+        )
+        state = {
+            "slug": "nexkit-acme",
+            "granted": app.PERMISSIONS,
+            "installed": True,
+            "permissions": app.PERMISSIONS,
+        }
+        found = self.app_findings({}, "key.pem", {"return_value": state}, app_id="7", cfg=cfg)
+        self.assertTrue(any(not ok and "vulnerability_alerts" in m for ok, m in found))
 
     def test_doctor_says_which_permissions_a_public_app_lacks(self):
         granted = {**app.PERMISSIONS, "workflows": "read"}
@@ -1027,6 +1257,17 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual({s["state"] for s in self.gh.statuses}, {"pending"})
         self.assertTrue(self.gh.comments_matching(6, "actions/runs/9"))
 
+    def test_a_vouch_with_autopilot_off_says_so(self):
+        self.gh.add_issue(7, user="bob")
+        event = {
+            "action": "created",
+            "issue": {"number": 7},
+            "comment": {"id": 9, "body": "/nexkit trust", "user": {"login": "alice"}},
+        }
+        self.assertEqual(self.run_route("issue_comment", event)["action"], "none")
+        [reply] = self.gh.comments(7)
+        self.assertIn("autopilot.enabled off", reply["body"])
+
     def test_route_hands_closed_issues_to_maintain_only_when_enabled(self):
         event = {"action": "closed", "issue": {"number": 5}}
         out = self.run_route("issues", event)
@@ -1221,6 +1462,25 @@ class PipelineCommandTests(unittest.TestCase):
             # Setup never sees the agent's credential.
             self.assertIn("key ***, agent []", text)
         self.assertIn("### NexKit implement: error", summary.read_text())
+
+    def test_a_round_on_an_edited_issue_runs_no_setup_and_no_agent(self):
+        out = self.root / "out"
+        out.mkdir()
+        (out / "context.json").write_text(json.dumps({"untrusted": "@bob edited it"}))
+        env = {"NEXKIT_DECISION": json.dumps({"action": "implement", "base": "main"})}
+        env["NEXKIT_CONFIG"] = (self.root / "repo/.nexkit/config.json").read_text()
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch("nexkit.checks.setup") as setup,
+            mock.patch("nexkit.agent.run_stage") as run_stage,
+            mock.patch("builtins.print"),
+        ):
+            code = cli.main(["agent", "--repo", str(self.root / "repo"), "--out", str(out)])
+        self.assertEqual(code, 0)
+        setup.assert_not_called()
+        run_stage.assert_not_called()
+        result = json.loads((out / "result.json").read_text())
+        self.assertEqual((result["status"], result["error"]), ("untrusted", "@bob edited it"))
 
     def test_agent_that_raises_leaves_a_redacted_error(self):
         out = self.root / "out"
@@ -1705,12 +1965,11 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_each_job_that_writes_mints_its_token_with_only_what_it_needs(self):
         for name in ("route", "publish", "report", "maintain", "finish"):
-            [step] = [s for s in self.jobs[name].split("\n      - ") if "app-token@" in s]
+            step = self.token_step(name)
             asked = dict(re.findall(r"permission-([a-z-]+): (read|write)", step))
             for permission, level in asked.items():
                 needed = app.PERMISSIONS[permission.replace("-", "_")]
                 self.assertGreaterEqual(app.LEVELS[needed], app.LEVELS[level], permission)
-            self.assertIn("id: token", step, name)
             # The key goes to the action, and only the token it mints to NexKit.
             uses = [s for s in self.jobs[name].split("\n      - ") if "nexkit " in s]
             for later in uses:
@@ -1719,9 +1978,33 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(self.minted("finish"), {"actions": "write"})
         self.assertEqual(self.minted("route")["contents"], "read")
 
+    def token_step(self, name):
+        """The step of job `name` that mints the token the job writes with."""
+        [step] = [
+            s
+            for s in self.jobs[name].split("\n      - ")
+            if "app-token@" in s and s.startswith("id: token")
+        ]
+        return step
+
     def minted(self, name):
-        [step] = [s for s in self.jobs[name].split("\n      - ") if "app-token@" in s]
-        return dict(re.findall(r"permission-([a-z-]+): (read|write)", step))
+        return dict(re.findall(r"permission-([a-z-]+): (read|write)", self.token_step(name)))
+
+    def test_only_a_sweep_with_the_setting_asks_for_alerts_and_it_may_fail(self):
+        # A token request for a permission the App lacks fails, which must not stop a sweep.
+        self.assertNotIn("vulnerability-alerts", self.token_step("maintain"))
+        [step] = [
+            s for s in self.jobs["maintain"].split("\n      - ") if s.startswith("id: alerts")
+        ]
+        self.assertIn("continue-on-error: true", step)
+        self.assertIn("decision).task == 'sweep'", step)
+        self.assertIn("config).autopilot.dependabot", step)
+        found = dict(re.findall(r"permission-([a-z-]+): (read|write)", step))
+        self.assertEqual(found, {"vulnerability-alerts": "read"})
+        self.assertEqual(app.ALERTS_PERMISSION, {"vulnerability_alerts": "read"})
+        self.assertIn(
+            "NEXKIT_ALERTS_TOKEN: ${{ steps.alerts.outputs.token }}", self.jobs["maintain"]
+        )
 
     def test_nothing_writes_with_the_actions_token(self):
         for name, job in self.jobs.items():

@@ -139,6 +139,8 @@ class Pipeline:
         # `publish` merges a base branch that moved while the agent worked, when the rules
         # want pull requests up to date (`publish.catch_up`); off, it publishes as before.
         self.catch_up = True
+        # What may read Dependabot alerts in a sweep, when the App may.
+        self.alerts = None
 
     def posted(self, number, body):
         """A comment, posted now: how recent a round's comment is tells whether the round
@@ -197,7 +199,14 @@ class Pipeline:
                     self.workflow(self, dispatch["workflow"])
             elif inputs["command"] == "autopilot":
                 decision = route(self.gh, "workflow_dispatch", {}, inputs)
-                maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+                maintain(
+                    self.gh,
+                    decision,
+                    self.cfg,
+                    workflow="nexkit.yml",
+                    ref="main",
+                    alerts=self.alerts,
+                )
                 self.gh.runs[dispatch["run_id"]] = {"status": "completed"}
                 self.check()
             else:
@@ -466,6 +475,28 @@ def red_main(gh):
     ]
 
 
+def alert(number=1, ghsa="GHSA-aaaa-bbbb-cccc", severity="high", package="lodash"):
+    """A Dependabot alert, as GitHub lists it."""
+    return {
+        "number": number,
+        "html_url": f"https://github.com/acme/app/security/dependabot/{number}",
+        "dependency": {
+            "package": {"ecosystem": "npm", "name": package},
+            "manifest_path": "web/package-lock.json",
+        },
+        "security_advisory": {
+            "ghsa_id": ghsa,
+            "cve_id": "CVE-2026-1",
+            "summary": "Prototype pollution",
+            "severity": severity,
+        },
+        "security_vulnerability": {
+            "vulnerable_version_range": "< 4.17.21",
+            "first_patched_version": {"identifier": "4.17.21"},
+        },
+    }
+
+
 def config(**kw):
     autopilot_settings = {"enabled": True, "answer": "recommended", **kw.pop("autopilot", {})}
     return make_config(
@@ -528,6 +559,165 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [])
         [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
         self.assertIn("its marker names run 404, which does not exist", mention["body"])
+
+    def test_a_part_of_an_earlier_release_runs_once_a_writer_vouches_for_it(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5, body="<!-- nexkit:part 4 -->\nThe part.", user=ACTIONS_BOT)
+        self.assertEqual(pipe.play(), [])
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("comments `/nexkit trust`", mention["body"])
+        # Someone without write access changes nothing, and nobody is mentioned again.
+        pipe.gh.human_comment(5, "/nexkit trust", "bob", "NONE")
+        self.assertEqual(pipe.play(), [])
+        self.assertEqual(len(pipe.gh.comments_matching(5, "@olivia a person is needed")), 1)
+        comment = pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        comment["created_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        decision = {"task": "trust", "issue": 5, "actor": "olivia", "comment_id": comment["id"]}
+        maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_an_edit_after_the_vouch_stops_the_issue_until_a_writer_vouches_again(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                # While the plan runs, someone without write access edits the issue.
+                edited = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                pipe.gh.edits[5] = [("bob", edited)]
+                return plan()
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5, user="bob")
+        pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        self.assertEqual(pipe.play(), [("plan", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("@bob edited it without write access", mention["body"])
+
+    def test_an_advisory_is_planned_fixed_and_merged_once(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(autopilot={"dependabot": "high"}), script)
+        pipe.alerts = pipe.gh
+        pipe.gh.alerts = [alert()]
+        pipe.issue(4)
+        played = pipe.play()
+        # In the milestone scope too, though it has no milestone, and before other issues.
+        self.assertEqual(played, [("plan", 5), ("plan", 4), ("go", 5), ("go", 4)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertIsNone(pipe.gh.issues[5]["milestone"])
+
+    def test_an_alert_that_outlives_its_issue_starts_no_more_work(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(autopilot={"dependabot": "high"}), script)
+        pipe.alerts = pipe.gh
+        pipe.gh.alerts = [alert()]
+        # The alert stays open after the merge: more sweeps open no second issue.
+        played = pipe.play()
+        self.assertEqual(played, [("plan", 1), ("go", 1)])
+        pipe.later(timedelta(days=2))
+        self.assertEqual(pipe.play(), played)
+        self.assertEqual(len(pipe.gh.issues), 2)  # the issue and its pull request
+        [word] = pipe.gh.comments_matching(1, autopilot.DEPENDABOT_STILL_OPEN)
+        self.assertIn("@olivia", word["body"])
+        pipe.later(timedelta(days=2))
+        pipe.play()
+        self.assertEqual(len(pipe.gh.comments_matching(1, autopilot.DEPENDABOT_STILL_OPEN)), 1)
+
+    def test_the_parts_of_an_advisory_run_in_the_milestone_scope(self):
+        parts = [{"title": "First part", "body": "A."}, {"title": "Second part", "body": "B."}]
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan" and int(inputs["number"]) == 1:
+                return plan(too_large=True, split=parts)
+            return plan() if inputs["command"] == "plan" else done()
+
+        cfg = config(autopilot={"dependabot": "high"}, close_parent_issues=True)
+        pipe = Pipeline(self, cfg, script)
+        pipe.alerts = pipe.gh
+        pipe.gh.alerts = [alert()]
+        played = pipe.play()
+        self.assertIn(("go", 2), played)
+        self.assertIn(("go", 3), played)
+        self.assertEqual(pipe.gh.issues[1]["state"], "closed")
+
+    def test_an_edit_while_a_round_runs_stops_it_until_a_writer_vouches_again(self):
+        def at(days):
+            return (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if not pipe.gh.edits.get(5):
+                # The author edits the issue just after this `/nexkit go` started.
+                pipe.gh.edits[5] = [("bob", at(1))]
+            if autopilot.edited_after_vouch(pipe.gh, pipe.gh.issues[5]):
+                # What `context.gather` and the agent job make of it.
+                return {"agent": {"status": "untrusted", "error": "@bob edited it"}}
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5, user="bob")
+        pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "agent_untrusted")
+        self.assertEqual(pipe.gh.pulls, {})
+        comment = pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        comment["created_at"] = at(2)
+        played = pipe.play()
+        self.assertEqual(played[2:], [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_an_app_that_may_not_read_alerts_opens_nothing_and_the_other_work_goes_on(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(autopilot={"dependabot": "high"}), script)
+        pipe.gh.alerts = [alert()]
+        pipe.issue(4)
+        self.assertEqual(pipe.play(), [("plan", 4), ("go", 4)])
+        self.assertEqual(sorted(pipe.gh.issues), [4, 5])  # the issue and its pull request
+
+    def persons_pull_request(self, pipe):
+        pull = pipe.gh.add_pull(9, 0, branch="upgrade/nexkit")
+        pipe.head(9)
+        inputs = {"command": "review", "number": "9", "note": "", "auto": "false"}
+        pipe.gh.dispatch("nexkit.yml", "main", inputs)
+        return pull
+
+    def test_a_writers_review_of_a_persons_pull_request_changes_nothing_on_it(self):
+        for checks, verdict in ((True, "approve"), (False, "request_changes")):
+            outcome = done(checks, verdict)
+            pipe = Pipeline(self, config(), lambda pipe, inputs, found=outcome: found)
+            pull = self.persons_pull_request(pipe)
+            head = pull["head"]["sha"]
+            pipe.play()
+            self.assertEqual(pipe.played, [("review", 9, "person_reviewed")])
+            self.assertEqual(pipe.reviews, 1)
+            self.assertEqual(pipe.gh.merged, [])
+            self.assertEqual((pull["state"], pull["head"]["sha"]), ("open", head))
+            states = {
+                s["context"]: s["state"]
+                for s in pipe.gh.statuses
+                if s["sha"] == head and s["context"].startswith("nexkit/")
+            }
+            good = "success" if checks else "failure"
+            self.assertEqual(states["nexkit/checks"], good)
+            self.assertEqual(states["nexkit/review"], good)
+
+    def test_a_base_branch_move_starts_no_round_on_a_persons_pull_request(self):
+        pipe = Pipeline(self, config(), lambda pipe, inputs: done())
+        pull = self.persons_pull_request(pipe)
+        pipe.play()
+        pull["mergeable"] = False
+        pipe.play()
+        self.assertEqual(pipe.played, [("review", 9, "person_reviewed")])
 
     def test_an_issue_marked_to_run_last_runs_after_the_rest_of_its_milestone(self):
         def script(pipe, inputs):

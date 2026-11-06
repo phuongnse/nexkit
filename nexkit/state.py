@@ -54,7 +54,14 @@ RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️", C
 # NexKit stopped in their checks because the base branch moved. They count against neither
 # `fix.max_auto_rounds` nor `conflicts.max_rounds`. `needs_merge`, of rounds whose token may
 # not change workflow files, is only in the comments of releases before the GitHub App.
-UNCOUNTED = {"needs_merge", "already_on_base", "on_base_failed", "superseded", "stop_failed"}
+UNCOUNTED = {
+    "needs_merge",
+    "already_on_base",
+    "on_base_failed",
+    "superseded",
+    "stop_failed",
+    "agent_untrusted",
+}
 
 
 def conflict_rounds_used(rounds):
@@ -576,6 +583,14 @@ def ci_wait_reason(wait):
 
 
 def render_state(state):
+    if state.get("person"):
+        lines = [
+            "### NexKit",
+            "",
+            "A person's pull request: NexKit changes nothing on it. Comment `/nexkit review` to "
+            "check and review the current commit.",
+        ]
+        return "\n".join(lines) + "\n\n" + _encode(STATE_PREFIX, state)
     lines = [
         "### NexKit",
         "",

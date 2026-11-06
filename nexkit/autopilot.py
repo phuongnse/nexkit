@@ -25,11 +25,11 @@ import string
 from datetime import UTC, datetime, timedelta
 
 from .checks import same_test, test_name
-from .config import after_workflow_names, watched_workflows
-from .github import TRUSTED_ASSOCIATIONS, GitHubError
+from .config import SEVERITIES, after_workflow_names, watched_workflows
+from .github import TRUSTED_ASSOCIATIONS, GitHubError, alerts_off
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
-from .route import AFTER_RUN, RUN_ID, issue_from_branch, parse_command
+from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command
 from .schema import filled
 from .state import (
     ACTIONS_BOT,
@@ -170,10 +170,37 @@ CI_LOOK_BACK = timedelta(days=1)
 # The most issues autopilot opened that a sweep reads at once: the open ones, and those
 # updated within `CI_LOOK_BACK`.
 ISSUES_LIMIT = 1000
+# An issue that autopilot opened for a Dependabot advisory: at the start of its text, the
+# advisory's id and the numbers of the alerts the issue covers.
+DEPENDABOT_PREFIX = "<!-- nexkit:dependabot "
+DEPENDABOT = re.compile(r"\A<!-- nexkit:dependabot (GHSA[a-z0-9-]+) ([0-9,]+) -->")
+# A part of a split of such an issue: on the line after its part marker, so that it stays in
+# scope without a milestone, as the issue does. No text of an agent comes before it.
+DEPENDABOT_PART_PREFIX = "<!-- nexkit:dependabot-part "
+DEPENDABOT_PART = re.compile(
+    r"\A<!-- nexkit:part \d+ -->\n<!-- nexkit:dependabot-part (GHSA[a-z0-9-]+) -->"
+)
+GHSA_ID = re.compile(r"GHSA(?:-[a-z0-9]{4}){3}")
+# The most issues for advisories that a sweep opens, so that the first sweep on a repository
+# with old alerts stays short: the next sweeps open the rest.
+DEPENDABOT_NEW_ISSUES = 5
+# What marks the comment on a closed issue whose advisory still has open alerts, and how long
+# after it closed that comment waits: an alert closes some time after the fix merges.
+DEPENDABOT_STILL_OPEN = "<!-- nexkit:dependabot-open -->"
+DEPENDABOT_SETTLE = timedelta(days=1)
+# Why a sweep could not read alerts stays on the default branch's tip, where `nexkit status`
+# and `nexkit doctor` read it: only the sweep's token can tell, and it holds nothing else.
+DEPENDABOT_CONTEXT = "nexkit/dependabot"
+NO_ALERTS_PERMISSION = "The App may not read alerts: grant it Dependabot alerts: read"
+ALERTS_TURNED_OFF = "Dependabot alerts are turned off for this repository"
 FAILED = {"failure", "timed_out"}
 # Events whose runs test a pull request rather than the branch they name.
 PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
 # Outcomes after which a run already started the next one by itself.
+# A round NexKit started, or a merge, stopped because someone without write access edited a
+# vouched issue. A new vouch starts it again.
+UNTRUSTED_ROUND = "agent_untrusted"
+UNTRUSTED_MERGE = "merge_untrusted"
 CHAINED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved", "superseded"}
 # The outcome of a round whose checks fail as the default branch does while a bug issue
 # for that failure is open: no fix round starts until the default branch passes again.
@@ -275,14 +302,19 @@ def current_milestone(gh):
 def locate(gh, cfg):
     """The scope's name for people and its milestone. `every` is the `null` scope, which
     holds every open issue of this repository, with `milestones` for its order. Without an
-    open milestone, the milestone scope holds nothing."""
+    open milestone, the milestone scope holds nothing but the issues for advisories, which
+    have no milestone: with `dependabot`, they are in scope anyway."""
+    alerts = bool(cfg["autopilot"]["dependabot"])
+    return {**_located(gh, cfg), "dependabot": alerts, "repository": gh.repository}
+
+
+def _located(gh, cfg):
     if cfg["autopilot"]["scope"] is None:
         return {
             "name": "every open issue",
             "every": True,
             "milestone": None,
             "milestones": milestones(gh),
-            "repository": gh.repository,
         }
     milestone = current_milestone(gh)
     if not milestone:
@@ -307,9 +339,16 @@ def scope(gh, cfg):
     else:
         items = []
     issues = [i for i in items if "pull_request" not in i]
-    # A bug issue for a CI failure on the default branch goes before everything else, and
-    # an issue for flaky runs right after. An issue whose milestone is closed goes with
-    # those without one.
+    if where["dependabot"] and not where["every"]:
+        known = {issue["number"] for issue in issues}
+        issues += [
+            issue
+            for issue in nexkit_issues(gh, "open")
+            if advisory_work(issue) and issue["number"] not in known
+        ]
+    # A bug issue for a CI failure on the default branch goes before everything else, then
+    # an issue for a Dependabot advisory, then one for flaky runs. An issue whose milestone
+    # is closed goes with those without one.
     order = {m["number"]: index for index, m in enumerate(where.get("milestones") or [])}
     issues.sort(
         key=lambda i: (
@@ -328,10 +367,14 @@ def taken(gh, cfg, issue):
 
 def in_scope(where, issue):
     """Whether an issue, open or closed, belongs to the scope. With `null` every issue of
-    this repository does; a blocker can be in another repository."""
+    this repository does; a blocker can be in another repository. The issues for advisories
+    and their parts are in every scope, since they have no milestone."""
+    url = issue.get("repository_url")
+    here = not url or url.lower().endswith(f"/repos/{where['repository']}".lower())
     if where["every"]:
-        url = issue.get("repository_url")
-        return not url or url.lower().endswith(f"/repos/{where['repository']}".lower())
+        return here
+    if where["dependabot"] and here and advisory_work(issue):
+        return True
     milestone = issue.get("milestone") or {}
     return where["milestone"] is not None and milestone.get("number") == where["milestone"]
 
@@ -344,13 +387,74 @@ def trusted(gh, issue, cfg=None):
     return distrust(gh, issue, cfg) is None
 
 
-def distrust(gh, issue, cfg=None):
+def distrust(gh, issue, cfg=None, level=0):
     """Why autopilot leaves an issue alone, or None. It skips a person's approval of the
     plan, so issue text drives an implement session. It takes issues opened by someone with
     write access, since only they and other writers can edit them, the issues NexKit opened
-    as its App, and those a trusted workflow opened as the App or the Actions bot."""
+    as its App, those a trusted workflow opened as the App or the Actions bot, and any other
+    that a writer vouched for. `level` counts the parents that `_trusted_part` walked up."""
+    problem = _source_problem(gh, issue, cfg, level)
+    return problem and _vouch_problem(gh, issue, problem)
+
+
+def vouch(gh, issue):
+    """The latest `/nexkit trust` comment on an issue by someone who can write now, or None.
+    The comment itself is the record: only its author and writers can change it, and no
+    workflow can post it as a person, so what the Actions bot or text inside another
+    comment says counts for nothing."""
+    for comment in reversed(gh.comments(issue["number"])):
+        user = comment.get("user") or {}
+        login = user.get("login") or ""
+        if not login or user.get("type") == "Bot" or by_bot(comment):
+            continue
+        if parse_command(comment.get("body")) == (TRUST, "") and gh.can_write(login):
+            return comment
+    return None
+
+
+def _vouch_problem(gh, issue, problem):
+    """`problem`, why autopilot leaves an issue alone, without a writer's vouch; with one,
+    who changed the issue's title or text since who may not, or None. What the writer read
+    is what they vouched for, so an earlier edit counts for nothing, and only writers and
+    NexKit's App may change it after: a bot here is any workflow of the repository."""
+    comment = vouch(gh, issue)
+    return _edit_since(gh, issue, comment) if comment else problem
+
+
+def edited_after_vouch(gh, issue):
+    """Who changed an issue after a writer vouched for it who may not, or None, also without
+    a vouch. A sweep decides only when a command starts, and the author of a vouched issue
+    can still edit it, so what acts on its text later asks again: a round started by NexKit
+    just after it read the text (`context.gather`), and a merge."""
+    comment = vouch(gh, issue)
+    return _edit_since(gh, issue, comment) if comment else None
+
+
+def _vouched_again(gh, issue, comment):
+    """Whether a writer vouched for `issue` after the comment of the round that stopped."""
+    latest = vouch(gh, issue)
+    return latest is not None and latest["id"] > comment["id"]
+
+
+def _edit_since(gh, issue, comment):
+    """Who changed the issue since the vouch `comment` who may not, or None."""
+    since = parse_iso(comment.get("created_at"))
+    writer = comment["user"]["login"]
+    for login, at in gh.issue_edits(issue["number"]):
+        edited = parse_iso(at)
+        if edited is not None and since is not None and edited < since:
+            continue
+        if is_bot(login) or (login and gh.can_write(login)):
+            continue
+        who = f"@{login}" if login else "someone GitHub cannot name"
+        return f"{who} edited it without write access after @{writer} vouched for it"
+    return None
+
+
+def _source_problem(gh, issue, cfg, level):
+    """Why who opened an issue does not make autopilot take it, or None."""
     login = author(issue)
-    if is_bot(login) and (_rank(issue) < 2 or _trusted_part(gh, issue, cfg)):
+    if is_bot(login) and (_rank(issue) < OTHER_RANK or _trusted_part(gh, issue, cfg, level)):
         return None
     if is_bot(login) or login == ACTIONS_BOT:
         return workflow_problem(gh, issue, cfg)
@@ -425,21 +529,17 @@ def _edit_problem(gh, issue):
     return None
 
 
-def _trusted_part(gh, issue, cfg=None, depth=0):
+def _trusted_part(gh, issue, cfg=None, level=0):
     """A part that autopilot created: it starts with the part marker, and the issue it
-    names is its parent and is trusted itself, as a part, an issue for a CI failure or
-    flaky runs that NexKit opened, or an issue of a trusted workflow."""
+    names is its parent, which autopilot takes itself. So a part inherits a writer's vouch
+    for its parent, and loses it with its parent."""
     match = PART.match(issue.get("body") or "")
-    if not match or depth > 5:
+    if not match or level > 5:
         return False
     parent = gh.parent_issue(issue["number"])
     if not parent or parent["number"] != int(match.group(1)) or not in_repository(gh, parent):
         return False
-    if is_bot(author(parent)) and (_rank(parent) < 2 or _trusted_part(gh, parent, cfg, depth + 1)):
-        return True
-    if is_bot(author(parent)) or author(parent) == ACTIONS_BOT:
-        return workflow_problem(gh, parent, cfg) is None
-    return gh.can_write(author(parent))
+    return distrust(gh, parent, cfg, level + 1) is None
 
 
 def in_repository(gh, issue):
@@ -693,6 +793,9 @@ REPLANNED_NOTE = (
 UNCHANGED = {"retry", "lost", "up_to_date"}
 # What every comment that mentions the people in `notify` says before its reason.
 NEEDED = "a person is needed: "
+# What ends the wait of an issue that autopilot leaves alone.
+TRUST_HINT = f"a writer who read it comments `/nexkit {TRUST}`"
+UNTRUSTED_REASON = f"someone without write access edited the issue; {TRUST_HINT}"
 REPEATED = (
     "the round after autopilot's answers asked again, and nobody commented since; a person decides"
 )
@@ -1013,6 +1116,15 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
             reason = f"the round that pull request #{pull} started next did not run"
             return _step(issue, "waits", reason)
         return _step(issue, "active", f"pull request #{pull} has a round on its way")
+    if latest.get("outcome") in (UNTRUSTED_ROUND, UNTRUSTED_MERGE):
+        if not _vouched_again(gh, issue, comment):
+            return _step(issue, "waits", latest.get("attention") or UNTRUSTED_REASON)
+        # A round that stopped gave its automatic round back; a merge needs a new review.
+        again = {"command": "fix", "count": True}
+        if latest["outcome"] == UNTRUSTED_MERGE:
+            again = {"command": "review"}
+        fields = {**start, "target": pull, "auto": "true", **again}
+        return _step(issue, "start", "a writer vouched for it again", **fields)
     if latest.get("outcome") == "merge_waiting":
         return _merge_step(gh, cfg, issue, pull, comment, latest, start, now)
     if latest.get("outcome") == CI_WAITING:
@@ -1119,7 +1231,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     number = issue["number"]
     left_alone = distrust(gh, issue, cfg)
     if left_alone:
-        return _step(issue, "waits", left_alone)
+        return _step(issue, "waits", f"{left_alone}; {TRUST_HINT}")
     parts = gh.sub_issues(number)
     if parts and all(part.get("state") == "closed" for part in parts):
         # `close_parent_issues` closes it by itself; without it, a person does.
@@ -1175,6 +1287,10 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     blocked = waits_for(gh, issue, where) or rest_of_milestone(gh, cfg, issue)
     if blocked:
         return _step(issue, "waits", blocked[0], person=blocked[1])
+    if last and last.get("outcome") == UNTRUSTED_ROUND:
+        if _vouched_again(gh, issue, found[-1][0]):
+            return _step(issue, "start", "a writer vouched for it again", command="plan", **start)
+        return _step(issue, "waits", last.get("attention") or UNTRUSTED_REASON)
     if last is None or plan is None:
         return _step(issue, "start", "no plan yet", command="plan", **start)
     if last["command"] == "go":
@@ -1390,6 +1506,16 @@ def start(gh, step, workflow, ref, now=None):
     return f"Started /nexkit {command} on #{target}: {step['reason']}."
 
 
+def close_pull(gh, pull, text):
+    """Close NexKit's pull request `pull` without merging it, delete its branch when the
+    repository deletes head branches on merge, and say so in a comment."""
+    # `maintain` imports this module.
+    from .maintain import delete_head_branch
+
+    gh.close_pull(pull)
+    gh.comment(pull, "\n\n".join([text, *delete_head_branch(gh, pull)]))
+
+
 def close(gh, cfg, step, workflow, ref):
     """Close an issue as completed with the finding of its last round, which found no
     change is needed and recommended closing it. Returns lines for the log."""
@@ -1405,6 +1531,13 @@ def close(gh, cfg, step, workflow, ref):
     gh.comment(number, f"{intro}: no change is needed.\n\n{step['finding']}")
     gh.close_issue(number, "completed")
     lines = [f"Closed #{number}: {step['reason']}."]
+    if step.get("pull"):
+        # The plan after a round that ran out of time found no change is needed.
+        try:
+            close_pull(gh, step["pull"], f"#{number} closed: its plan found no change is needed.")
+            lines.append(f"Closed #{step['pull']} with it.")
+        except GitHubError as exc:
+            lines.append(f"Could not close #{step['pull']}: {exc}")
     if cfg["close_parent_issues"]:
         # `maintain` imports this module. Here it runs at once; the `issues: closed` run
         # that follows finds nothing left.
@@ -1423,10 +1556,12 @@ def split(gh, step, now=None):
     milestone = (parent.get("milestone") or {}).get("number")
     labels = [label["name"] for label in parent.get("labels") or [] if label.get("name")]
     plan = f" from [its plan]({step['plan_url']})" if step.get("plan_url") else ""
+    ghsa = advisory_work(parent)
+    mark = f"{DEPENDABOT_PART_PREFIX}{ghsa} -->\n" if ghsa else ""
     created = []
     for index, part in enumerate(step["parts"], 1):
         body = (
-            f"<!-- nexkit:part {number} -->\n{part['body'].strip()}\n\n"
+            f"<!-- nexkit:part {number} -->\n{mark}{part['body'].strip()}\n\n"
             f"Part {index} of #{number}{plan}, which was too large for one session."
         )
         issue = gh.create_issue(part["title"].strip(), body, milestone, labels)
@@ -1439,8 +1574,7 @@ def split(gh, step, now=None):
                 gh.add_blocked_by(issue["number"], created[earlier - 1]["id"])
     listing = ", ".join(f"#{issue['number']}" for issue in created)
     if step.get("pull"):
-        gh.comment(step["pull"], f"Superseded by {listing}, the parts of #{number}.")
-        gh.close_pull(step["pull"])
+        close_pull(gh, step["pull"], f"Superseded by {listing}, the parts of #{number}.")
     text = f"NexKit autopilot split this issue as its plan suggests: {listing}."
     parts = [issue["number"] for issue in created]
     _save_record(gh, step, {"command": "split", "target": number, "parts": parts}, text, now)
@@ -1503,11 +1637,32 @@ def flaky_failure(issue):
     return match.group(2) if match and is_bot(author(issue)) else None
 
 
+def dependabot_advisory(issue):
+    """The id of the Dependabot advisory an issue that autopilot opened is about, or None."""
+    match = DEPENDABOT.match(issue.get("body") or "")
+    return match.group(1) if match and is_bot(author(issue)) else None
+
+
+def advisory_work(issue):
+    """The id of the advisory that an issue autopilot opened, or a part of it, is about, or
+    None."""
+    match = DEPENDABOT_PART.match(issue.get("body") or "")
+    part = match.group(1) if match and is_bot(author(issue)) else None
+    return dependabot_advisory(issue) or part
+
+
+# The rank of every issue that NexKit did not open for a failure or an advisory.
+OTHER_RANK = 3
+
+
 def _rank(issue):
-    """0 for a bug issue for a CI failure, 1 for an issue for flaky runs, else 2."""
+    """0 for a bug issue for a CI failure, 1 for an issue for a Dependabot advisory, 2 for
+    an issue for flaky runs, else `OTHER_RANK`."""
     if ci_workflow(issue) is not None:
         return 0
-    return 1 if flaky_workflow(issue) is not None else 2
+    if dependabot_advisory(issue) is not None:
+        return 1
+    return 2 if flaky_workflow(issue) is not None else OTHER_RANK
 
 
 def nexkit_issues(gh, state="all", since=None):
@@ -2141,6 +2296,183 @@ def check_ci(gh, cfg, where, branch, now=None):
     return lines
 
 
+# -- Dependabot alerts -----------------------------------------------------------------
+
+
+def _read_alerts(alerts, wanted):
+    """(the open alerts of the severities `wanted`, why they cannot be read), through
+    `alerts`, the client that holds the token for them, or None when the App gave none.
+    (None, None) when GitHub failed for a reason that passes."""
+    if alerts is None:
+        return None, NO_ALERTS_PERMISSION
+    try:
+        return alerts.dependabot_alerts(wanted), None
+    except GitHubError as exc:
+        if alerts_off(exc):
+            return None, ALERTS_TURNED_OFF
+        limited = "rate limit" in str(exc).lower()
+        return None, NO_ALERTS_PERMISSION if exc.status in (401, 403, 404) and not limited else None
+
+
+def _show_problem(gh, branch, problem):
+    """Keep why a sweep cannot read alerts on the tip of `branch`, as a status that says what
+    is missing, and take it back once it can. Only a change writes anything."""
+    tip = gh.branch_sha(branch)
+    found = next((s for s in gh.commit_statuses(tip) if s.get("context") == DEPENDABOT_CONTEXT), {})
+    if problem and (found.get("state") != "error" or found.get("description") != problem):
+        gh.set_status(tip, DEPENDABOT_CONTEXT, "error", problem)
+    elif not problem and found.get("state") == "error":
+        gh.set_status(tip, DEPENDABOT_CONTEXT, "success", "Autopilot reads Dependabot alerts")
+
+
+def alerts_problem(gh, branch):
+    """What the last sweep on the tip of `branch` said was missing, or None."""
+    statuses = gh.commit_statuses(gh.branch_sha(branch))
+    found = next((s for s in statuses if s.get("context") == DEPENDABOT_CONTEXT), {})
+    return found.get("description") if found.get("state") == "error" else None
+
+
+def _advisories(alerts):
+    """{advisory id: {"advisory", "alerts"}} for open alerts, in their order. An alert
+    without a well-formed id cannot be marked, so it gets no issue."""
+    found = {}
+    for alert in alerts:
+        advisory = alert.get("security_advisory") or {}
+        ghsa = str(advisory.get("ghsa_id") or "")
+        if GHSA_ID.fullmatch(ghsa) and isinstance(alert.get("number"), int):
+            found.setdefault(ghsa, {"advisory": advisory, "alerts": []})["alerts"].append(alert)
+    return found
+
+
+def _advisory_issues(gh):
+    """{advisory id: its issues that autopilot opened, newest first}."""
+    found = {}
+    for issue in nexkit_issues(gh):
+        ghsa = dependabot_advisory(issue)
+        if ghsa:
+            found.setdefault(ghsa, []).append(issue)
+    return found
+
+
+def _covered(issue):
+    """The numbers of the alerts that an advisory's issue covers."""
+    match = DEPENDABOT.match(issue.get("body") or "")
+    return {int(number) for number in match.group(2).split(",") if number} if match else set()
+
+
+def _inert(text):
+    """`text` from an advisory or a manifest, for an issue that drives an agent without a
+    person's approval: on one line, and with nothing that closes a tag or a comment."""
+    return _plain(text).replace("<", "‹").replace(">", "›")
+
+
+def _package(alert):
+    return ((alert.get("dependency") or {}).get("package") or {}).get("name") or "a package"
+
+
+def _alert_line(alert):
+    """One alert of an advisory's issue, in words that come from GitHub's own fields."""
+    dependency = alert.get("dependency") or {}
+    package = dependency.get("package") or {}
+    vulnerability = alert.get("security_vulnerability") or {}
+    number = alert["number"]
+    link = f"[#{number}]({alert['html_url']})" if alert.get("html_url") else f"#{number}"
+    line = f"- {link}: `{_inert(package.get('name'))}` ({_inert(package.get('ecosystem'))})"
+    line += f" in `{_inert(dependency.get('manifest_path'))}`"
+    versions = _plain(vulnerability.get("vulnerable_version_range"))
+    patched = _plain((vulnerability.get("first_patched_version") or {}).get("identifier"))
+    if versions:
+        line += f", affected: `{versions}`"
+    return line + (f", patched in `{patched}`" if patched else ", no patched version yet")
+
+
+def _advisory_title(ghsa, found):
+    """The title: prompts hold it outside their untrusted text, so it holds no words of the
+    advisory, only what names the packages and the advisory."""
+    names = list(dict.fromkeys(_inert(_package(alert)) for alert in found["alerts"]))
+    packages = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+    return _fit(f"Dependabot: {packages} ({ghsa}, {_inert(found['advisory'].get('severity'))})")
+
+
+def _open_advisory(gh, cfg, ghsa, found, earlier):
+    """Open the issue of an advisory. Its text holds only what GitHub's advisory database
+    and the repository's manifests say, each on one line, in a code span where it can
+    mention nobody, since it drives an agent."""
+    advisory, alerts = found["advisory"], found["alerts"]
+    numbers = ",".join(str(alert["number"]) for alert in alerts)
+    people = "".join(f"@{login} " for login in cfg["notify"])
+    cve = _inert(advisory.get("cve_id"))
+    named = f"[{ghsa}](https://github.com/advisories/{ghsa})" + (f", {cve}" if cve else "")
+    closed = f"\n\n#{earlier['number']}, now closed, was about it too." if earlier else ""
+    body = (
+        f"{DEPENDABOT_PREFIX}{ghsa} {numbers} -->\n{people}Dependabot reports {named} "
+        f"({_inert(advisory.get('severity'))}): `{_inert(advisory.get('summary'))}`\n\n"
+        + "\n".join(_alert_line(alert) for alert in alerts)
+        + "\n\nUpdate each package to a patched version. For a package without one, ask a "
+        f"person how to go on.{closed}"
+    )
+    return gh.create_issue(_advisory_title(ghsa, found), body, None, ["bug"])
+
+
+def _still_open(gh, cfg, ghsa, issue, now):
+    """Say once on the closed `issue` of an advisory that its alerts stayed open, a while
+    after it closed, so a person decides. Returns lines for the log."""
+    closed = parse_iso(issue.get("closed_at"))
+    if closed is None or now - closed < DEPENDABOT_SETTLE:
+        return []
+    number = issue["number"]
+    if any(
+        by_bot(c) and DEPENDABOT_STILL_OPEN in (c.get("body") or "") for c in gh.comments(number)
+    ):
+        return []
+    people = "".join(f"@{login} " for login in cfg["notify"])
+    gh.comment(
+        number,
+        f"{DEPENDABOT_STILL_OPEN}\n{people}Dependabot still reports {ghsa} after this issue "
+        "closed, and NexKit opens no second issue for the same alerts. Reopen this one, or "
+        "dismiss the alerts.",
+    )
+    return [f"{ghsa} is still open after #{number} closed; said so there."]
+
+
+def check_dependabot(gh, alerts, cfg, branch, now=None):
+    """With `autopilot.dependabot`, open one issue for each advisory of an open alert at or
+    above that severity, in no milestone, with a marker of the advisory. An open issue with
+    that marker is enough. So that a fix an alert outlives never repeats, an advisory whose
+    closed issue covers its alerts gets no second issue, only a word on that one; an alert
+    no issue covered does. `alerts` is the client that holds the token for reading alerts,
+    or None. Without it, or with alerts turned off, it opens nothing and leaves what is
+    missing on the tip of `branch`. Returns lines for the job log."""
+    level = cfg["autopilot"]["dependabot"]
+    if not level:
+        return []
+    now = now or datetime.now(UTC)
+    found, problem = _read_alerts(alerts, list(SEVERITIES[SEVERITIES.index(level) :]))
+    lines = []
+    try:
+        if found is not None or problem:
+            _show_problem(gh, branch, problem)
+        if found is None:
+            return [problem or "Could not read Dependabot alerts; the next sweep tries again."]
+        issues = _advisory_issues(gh) if found else {}
+        opened = 0
+        for ghsa, advisory in _advisories(found).items():
+            known = issues.get(ghsa, [])
+            if any(issue.get("state") == "open" for issue in known):
+                continue
+            covered = set().union(*(_covered(issue) for issue in known))
+            if known and {alert["number"] for alert in advisory["alerts"]} <= covered:
+                lines += _still_open(gh, cfg, ghsa, known[0], now)
+                continue
+            if opened < DEPENDABOT_NEW_ISSUES:
+                issue = _open_advisory(gh, cfg, ghsa, advisory, known[0] if known else None)
+                opened += 1
+                lines.append(f"{ghsa}: opened #{issue['number']}.")
+    except GitHubError as exc:
+        lines.append(f"Could not go through Dependabot alerts: {exc}")
+    return lines
+
+
 # -- pull requests that wait for the default branch -----------------------------------
 
 # The runs of a workflow on the default branch that show whether it passes again.
@@ -2357,15 +2689,17 @@ def _count_round(gh, pull):
     return lambda: save_state(gh, pull, comment_id, before)
 
 
-def sweep(gh, cfg, workflow, ref, closed=None, busy=None):
+def sweep(gh, cfg, workflow, ref, closed=None, busy=None, alerts=None):
     """Start what moves each issue in scope on. Returns lines for the job log. Parts that
     a split creates are in scope at once, so the sweep looks again after a split. A CI
-    failure on the default branch comes first, so its bug issue is planned first. Adds
-    each pull request it started a command on, or merged, to `busy`. `closed`, the issue
-    whose closing started the sweep, changes nothing: `done` reads what is done from
-    GitHub, so a sweep that replaced this one loses nothing."""
+    failure on the default branch comes first, so its bug issue is planned first, and then
+    each Dependabot advisory; `alerts` is the client that may read them (see
+    `check_dependabot`). Adds each pull request it started a command on, or merged, to
+    `busy`. `closed`, the issue whose closing started the sweep, changes nothing: `done`
+    reads what is done from GitHub, so a sweep that replaced this one loses nothing."""
     busy = set() if busy is None else busy
     lines = check_ci(gh, cfg, locate(gh, cfg), ref)
+    lines += check_dependabot(gh, alerts, cfg, ref)
     for _ in range(PASSES):
         where, steps = preview(gh, cfg)
         splits = [step for step in steps if step["state"] == "split"]

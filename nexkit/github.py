@@ -60,14 +60,15 @@ query($owner: String!, $name: String!, $number: Int!) {
 """
 
 
-# Who edited an issue's text: GitHub keeps each edit, and the first entry is its author.
+# Who edited an issue's text, and when: GitHub keeps each edit, and the first entry is its
+# author.
 EDITORS_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
       userContentEdits(first: 100) {
         pageInfo { hasNextPage }
-        nodes { editor { __typename login } }
+        nodes { editedAt editor { __typename login } }
       }
     }
   }
@@ -93,6 +94,12 @@ class GitHubError(RuntimeError):
     def __init__(self, status, message):
         super().__init__(f"GitHub API {status}: {message}")
         self.status = status
+
+
+def alerts_off(text):
+    """Whether GitHub's answer `text` says that a repository has Dependabot alerts turned
+    off, not that the caller may not read them. Both are a 403; only the words differ."""
+    return "alerts are disabled" in str(text).lower()
 
 
 class GitHub:
@@ -236,25 +243,31 @@ class GitHub:
     def sub_issues(self, number):
         return self.paginate(f"{self._repo}/issues/{number}/sub_issues")
 
-    def issue_editors(self, number):
-        """The logins of everyone who changed an issue's text or title, its author too, as
-        REST writes them. "" stands for someone GitHub cannot name: a deleted account, or
-        edits beyond the most it lists."""
+    def issue_edits(self, number):
+        """(login, time) of each change to an issue's text or title, its author's too, as
+        REST writes logins. "" stands for someone GitHub cannot name: a deleted account, or,
+        with the time None, edits beyond the most it lists."""
         owner, name = self.repository.split("/")
         found = self.graphql(EDITORS_QUERY, {"owner": owner, "name": name, "number": number})
         edits = ((found.get("repository") or {}).get("issue") or {}).get("userContentEdits") or {}
-        editors = set()
+        changes = []
         for node in edits.get("nodes") or []:
             editor = (node or {}).get("editor") or {}
             login = editor.get("login") or ""
             # GraphQL names a bot without the suffix that REST gives it.
-            editors.add(f"{login}[bot]" if editor.get("__typename") == "Bot" else login)
+            login = f"{login}[bot]" if editor.get("__typename") == "Bot" else login
+            changes.append((login, (node or {}).get("editedAt")))
         if (edits.get("pageInfo") or {}).get("hasNextPage"):
-            editors.add("")
+            changes.append(("", None))
         for event in self.paginate(f"{self._repo}/issues/{number}/events"):
             if event.get("event") == "renamed":
-                editors.add((event.get("actor") or {}).get("login") or "")
-        return sorted(editors)
+                login = (event.get("actor") or {}).get("login") or ""
+                changes.append((login, event.get("created_at")))
+        return changes
+
+    def issue_editors(self, number):
+        """The logins of everyone who changed an issue's text or title (see `issue_edits`)."""
+        return sorted({login for login, _ in self.issue_edits(number)})
 
     def blocked_by(self, number):
         """The issues that block this one (GitHub issue dependencies), or [] where the API
@@ -279,6 +292,18 @@ class GitHub:
         """Record that issue `number` is blocked by the issue with database id `blocker_id`."""
         path = f"{self._repo}/issues/{number}/dependencies/blocked_by"
         return self.request("POST", path, {"issue_id": blocker_id})
+
+    def dependabot_alerts(self, severities):
+        """The open Dependabot alerts of these severities, oldest first: the first 100. The
+        token needs the *Dependabot alerts* permission."""
+        params = {
+            "state": "open",
+            "severity": ",".join(severities),
+            "sort": "created",
+            "direction": "asc",
+            "per_page": 100,
+        }
+        return self.request("GET", f"{self._repo}/dependabot/alerts", params=params) or []
 
     def milestones(self):
         """Open milestones."""
@@ -520,12 +545,23 @@ class GitHub:
 
     def delete_branch(self, branch):
         """Delete a branch. One that is gone already, which GitHub may have deleted by
-        itself after a merge, is no failure: GitHub answers 422 for it."""
+        itself after a merge, is no failure: GitHub answers 422 for it, and also, with other
+        words, for one that a rule keeps."""
         try:
             return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")
         except GitHubError as exc:
-            if exc.status not in (404, 422):
+            if exc.status != 404 and not (exc.status == 422 and "does not exist" in str(exc)):
                 raise
+
+    def branches_like(self, prefix):
+        """(name, head) of each branch whose name starts with `prefix`."""
+        found = self.paginate(f"{self._repo}/git/matching-refs/heads/{quote(prefix)}")
+        return [(ref["ref"].removeprefix("refs/heads/"), ref["object"]["sha"]) for ref in found]
+
+    def head_pulls(self, branch):
+        """The pull requests from `branch` of this repository's owner, in any state."""
+        owner = self.repository.split("/")[0]
+        return self.paginate(f"{self._repo}/pulls", {"state": "all", "head": f"{owner}:{branch}"})
 
     def close_pull(self, number):
         return self.request("PATCH", f"{self._repo}/pulls/{number}", {"state": "closed"})

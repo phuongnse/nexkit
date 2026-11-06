@@ -7,7 +7,8 @@ description: Set up the NexKit pipeline in the current GitHub repository - choos
 
 NexKit adds one workflow (`.github/workflows/nexkit.yml`) and one config file
 (`.nexkit/config.json`). Collaborators then drive work with issue comments:
-`/nexkit plan`, `/nexkit go`, and on NexKit pull requests `/nexkit fix` and `/nexkit review`.
+`/nexkit plan`, `/nexkit go`, and on NexKit pull requests `/nexkit fix` and `/nexkit review`;
+`/nexkit review` also works on a person's own pull request.
 
 The NexKit CLI ships with this plugin. Run it as
 `python3 <base directory of this skill>/../../bin/nexkit` (Python 3.12 or newer; no
@@ -123,9 +124,12 @@ files or repository settings, and wait for confirmation.
    App id and the private key as secrets, so never ask for them in the chat. Then the user
    installs the App on the repository at the link it prints. With an App, the user installs
    it on this repository and runs `nexkit init --app-id ID --app-private-key FILE` themselves,
-   which checks the installation and sets both secrets; with an organization's secrets,
-   `--app-slug SLUG` is enough. Run `nexkit doctor`; only with the key file can it check the
-   installation.
+   which checks the installation and sets both secrets. The id and a new key are on the
+   App's settings page, `https://github.com/settings/apps/<slug>` (for an organization
+   `https://github.com/organizations/<org>/settings/apps/<slug>`), not on its installation's
+   page. With an organization's secrets, `--app-slug SLUG` is enough; it stops and says what
+   to do when the repository cannot read them. Run `nexkit doctor`;
+   only with the key file can it check the installation.
 
 7. **Automatic merges.** The repository's own CI runs on NexKit's pull requests and on its
    merges, as for a person's. If the user wants `"merge": {"auto": true}`, say that branch
@@ -188,6 +192,14 @@ files or repository settings, and wait for confirmation.
    that many commits reached the default branch since its latest run there, whatever
    started that run, and never while one is queued or in progress. It needs the
    `workflow_dispatch` trigger like every entry there.
+   When an issue such as a docs sweep must run after the rest of its milestone, offer
+   `nexkit init --last-in-milestone-label LABEL`, which sets
+   `autopilot.last_in_milestone_label` and creates the label.
+   When the repository relays Dependabot alerts to issues by a script of its own, or wants
+   them worked on, offer `"autopilot": {"dependabot": "high"}` instead: each sweep opens one
+   issue per advisory at or above that severity. Say that the App then needs the *Dependabot
+   alerts: read* permission, which the user adds on its settings page and accepts on the
+   installation, and that alerts must be on.
    A command that autopilot started and that never ran starts once more as soon as its
    workflow run ended, or after `"lost_after_minutes"` (30 by default) when that run
    cannot be read.

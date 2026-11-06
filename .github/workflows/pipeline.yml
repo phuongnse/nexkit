@@ -32,8 +32,8 @@
 #          also end the comments and statuses of runs that ended without a report and
 #          merge pull requests whose required checks passed since, the sweep after
 #          a command NexKit started that route refused, and, instead of a command, the
-#          closing of a pull request whose base branch already holds its change; no
-#          agent and no repository checkout
+#          closing of a pull request whose base branch already holds its change, and
+#          deleting the branches of closed work; no agent and no repository checkout
 # finish   when report did not finish, such as after a lost runner or a cancelled run:
 #          start a sweep that waits for this run to end, handles its run comment and
 #          starts the conflict round held back while it ran; no agent and no repository
@@ -443,15 +443,26 @@ jobs:
           private-key: ${{ secrets[fromJSON(needs.route.outputs.config).github_app.private_key_secret] }}
           permission-actions: write # resume paused commands, start conflict rounds and autopilot's commands
           permission-checks: read # failures of flaky runs; the failed required checks of a merge that waits
-          permission-contents: write # merge a pull request whose required checks passed since; no checkout
+          permission-contents: write # merge a pull request whose required checks passed since, delete branches of closed work; no checkout
           permission-issues: write # close parent issues; mark paused runs as resumed; autopilot's issues
           permission-pull-requests: write # paused runs on pull requests; close a pull request a split supersedes
           permission-statuses: write # the pending statuses of a round that ended without a report
           permission-workflows: write # a merge may change workflow files
+      # A token of its own, which may fail: an App without this permission gets no token at
+      # all, and that must not stop the sweep, which says what is missing.
+      - id: alerts
+        if: fromJSON(needs.route.outputs.decision).task == 'sweep' && fromJSON(needs.route.outputs.config).autopilot.dependabot
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets[fromJSON(needs.route.outputs.config).github_app.app_id_secret] }}
+          private-key: ${{ secrets[fromJSON(needs.route.outputs.config).github_app.private_key_secret] }}
+          permission-vulnerability-alerts: read # autopilot.dependabot
       - name: Maintain
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit maintain
         env:
           GITHUB_TOKEN: ${{ steps.token.outputs.token }}
+          NEXKIT_ALERTS_TOKEN: ${{ steps.alerts.outputs.token }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
           NEXKIT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

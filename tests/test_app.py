@@ -246,10 +246,84 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(found, APP)
         self.assertIn("It lacks x: write", lines[1])
 
+    def answers(self, secrets="", organization_secrets="", kind="User"):
+        """`gh` answering with the repository's secrets, its owner's and the owner's kind."""
+
+        def fake_gh(*args):
+            if args[0] == "secret":
+                return secrets
+            if "organization-secrets" in args[1]:
+                return organization_secrets
+            return f"{kind}\n"
+
+        return mock.patch.object(scaffold, "_gh", side_effect=fake_gh)
+
     def test_an_app_with_secrets_set_already_needs_only_its_slug(self):
-        with mock.patch.object(app, "create") as create:
-            self.assertEqual(scaffold.github_app(self.root, slug="nexkit-acme"), (APP, []))
+        with self.answers("NEXKIT_APP_ID\nNEXKIT_APP_PRIVATE_KEY\n"):
+            with mock.patch.object(app, "create") as create:
+                self.assertEqual(scaffold.github_app(self.root, slug="nexkit-acme"), (APP, []))
         create.assert_not_called()
+
+    def test_an_organization_can_hold_the_secrets_of_a_named_app(self):
+        with self.answers("", "NEXKIT_APP_ID\nNEXKIT_APP_PRIVATE_KEY\n", "Organization"):
+            self.assertEqual(scaffold.github_app(self.root, slug="nexkit-acme"), (APP, []))
+
+    def test_a_named_app_without_secrets_says_where_the_id_and_a_new_key_are(self):
+        with self.answers("NEXKIT_APP_ID\n"), self.assertRaises(app.AppError) as found:
+            scaffold.github_app(self.root, slug="nexkit-acme")
+        text = str(found.exception)
+        self.assertIn("NEXKIT_APP_PRIVATE_KEY", text)
+        self.assertNotIn("no secret NEXKIT_APP_ID", text)
+        self.assertIn("https://github.com/settings/apps/nexkit-acme,", text)
+        self.assertIn("https://github.com/apps/nexkit-acme/installations/new", text)
+        self.assertIn("--app-id ID --app-private-key FILE", text)
+        self.assertIn("*About*", text)
+        self.assertIn("*Private keys*", text)
+        self.assertIn("each of its repositories needs a new key", text)
+
+    def test_an_organization_gets_its_own_form_of_the_link(self):
+        with self.answers(kind="Organization"), self.assertRaises(app.AppError) as found:
+            scaffold.github_app(self.root, slug="nexkit-acme")
+        self.assertIn(
+            "https://github.com/organizations/acme/settings/apps/nexkit-acme", str(found.exception)
+        )
+        self.assertIn("organization secrets", str(found.exception))
+
+    def test_an_organization_whose_secrets_cannot_be_read_goes_on(self):
+        with self.answers("", None, "Organization"):
+            self.assertEqual(scaffold.github_app(self.root, slug="nexkit-acme"), (APP, []))
+
+    def test_a_personal_repository_refused_that_list_and_still_lacks_the_secrets(self):
+        # GitHub answers 422 there, which says nothing about the repository's own secrets.
+        with self.answers("", None), self.assertRaises(app.AppError):
+            scaffold.github_app(self.root, slug="nexkit-acme")
+
+    def test_the_link_follows_who_owns_a_public_app(self):
+        def fake_gh(*args):
+            if args[0] == "secret":
+                return ""
+            return "olivia User\n" if "apps/nexkit-acme" in args[1] else "Organization\n"
+
+        with mock.patch.object(scaffold, "_gh", side_effect=fake_gh):
+            with self.assertRaises(app.AppError) as found:
+                scaffold.github_app(self.root, slug="nexkit-acme")
+        self.assertIn("https://github.com/settings/apps/nexkit-acme,", str(found.exception))
+        self.assertIn("organization secrets", str(found.exception))
+
+    def test_a_named_app_goes_on_when_github_cannot_list_the_secrets(self):
+        with mock.patch.object(scaffold, "_gh", return_value=None):
+            self.assertEqual(scaffold.github_app(self.root, slug="nexkit-acme"), (APP, []))
+        self.repository.return_value = None
+        self.assertEqual(scaffold.github_app(self.root, slug="nexkit-acme"), (APP, []))
+
+    def test_a_folder_that_init_has_yet_to_create_has_no_repository(self):
+        mock.patch.stopall()
+        self.assertIsNone(scaffold.repository_of(self.root / "new"))
+
+    def test_an_id_and_key_set_the_secrets_also_beside_a_slug(self):
+        with mock.patch.object(app, "use_existing", return_value=("nexkit-acme", [])) as use:
+            scaffold.github_app(self.root, slug="other", app_id="7", key_file="k.pem")
+        use.assert_called_once_with("acme/app", "7", "k.pem")
 
     def test_a_repository_with_an_app_keeps_it(self):
         path = self.root / ".nexkit/config.json"

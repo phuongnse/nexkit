@@ -111,6 +111,9 @@ class FakeGitHub:
         self.repository = repository
         self.roles = {"alice": "write", "olivia": "admin", "bob": "read"}
         self.editors = {}
+        self.alerts = []  # the open Dependabot alerts
+        self.alerts_error = None
+        self.edits = {}  # issue number -> (login, time) of each change to its text or title
         self.issues = {}
         self.issue_comments = defaultdict(list)
         self.pulls = {}
@@ -406,6 +409,14 @@ class FakeGitHub:
     def issue_editors(self, number):
         return self.editors.get(number, [])
 
+    def dependabot_alerts(self, severities):
+        if self.alerts_error:
+            raise self.alerts_error
+        return [a for a in self.alerts if a["security_advisory"]["severity"] in severities]
+
+    def issue_edits(self, number):
+        return list(self.edits.get(number, []))
+
     def workflow_run(self, run_id):
         if run_id not in self.runs:
             raise GitHubError(404, "Not Found")
@@ -506,6 +517,13 @@ class FakeGitHub:
         if self.delete_error:
             raise self.delete_error
         self.deleted.append(branch)
+        self.branches.pop(branch, None)
+
+    def branches_like(self, prefix):
+        return [(n, sha) for n, sha in sorted(self.branches.items()) if n.startswith(prefix)]
+
+    def head_pulls(self, branch):
+        return [p for p in self.pulls.values() if p["head"]["ref"] == branch]
 
     def create_pull(self, title, head, base, body):
         number = max([*self.issues, *self.pulls, 0]) + 1

@@ -61,6 +61,8 @@ DEFAULTS = {
         "trusted_workflows": [],
         # The label of an issue that runs only once the rest of its milestone is closed.
         "last_in_milestone_label": None,
+        # The lowest severity of Dependabot alert that gets an issue, or None for none.
+        "dependabot": None,
     },
     "notify": [],
     "limits": {"setup_timeout_minutes": 30, "max_patch_mb": 5},
@@ -119,6 +121,8 @@ AUTOPILOT_SCOPE_CHOICES = (
     'null for every open issue, or "milestone" for the open issues of the earliest open milestone'
 )
 AUTOPILOT_ANSWERS = ("never", "recommended")
+# GitHub's severities of an advisory, lowest first.
+SEVERITIES = ("low", "medium", "high", "critical")
 AFTER_WORKFLOW_KEYS = {"workflow", "every"}
 # Each item costs every plan and review an answer, so a checklist stays short.
 MAX_CHECKLIST = 20
@@ -536,6 +540,8 @@ def _autopilot(settings):
         not isinstance(label, str) or not label.strip() or len(label) > MAX_LABEL
     ):
         _fail(f"autopilot.last_in_milestone_label must be null or a label of {MAX_LABEL} or fewer")
+    if settings["dependabot"] is not None and settings["dependabot"] not in SEVERITIES:
+        _fail(f"autopilot.dependabot must be null or one of {', '.join(SEVERITIES)}")
 
 
 def _workflow_files(workflows, where):

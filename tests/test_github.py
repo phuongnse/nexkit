@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from nexkit.github import GitHub
+from nexkit.github import GitHub, GitHubError
 
 
 def editors(nodes, more=False, events=()):
@@ -36,3 +36,68 @@ class IssueEditorsTests(unittest.TestCase):
             {"event": "labeled", "actor": {"login": "carol"}},
         ]
         self.assertEqual(editors([], events=events), ["bob"])
+
+
+class IssueEditsTests(unittest.TestCase):
+    def edits(self, nodes, more=False, events=()):
+        gh = GitHub(repository="acme/app", token="t")
+        data = {
+            "repository": {
+                "issue": {"userContentEdits": {"nodes": nodes, "pageInfo": {"hasNextPage": more}}}
+            }
+        }
+        with (
+            mock.patch.object(gh, "graphql", return_value=data),
+            mock.patch.object(gh, "paginate", return_value=list(events)),
+        ):
+            return gh.issue_edits(5)
+
+    def test_each_edit_has_its_time(self):
+        nodes = [
+            {"editedAt": "2026-01-02T00:00:00Z", "editor": {"__typename": "User", "login": "bob"}},
+            {"editedAt": "2026-01-01T00:00:00Z", "editor": {"__typename": "Bot", "login": "ci"}},
+        ]
+        self.assertEqual(
+            self.edits(nodes),
+            [("bob", "2026-01-02T00:00:00Z"), ("ci[bot]", "2026-01-01T00:00:00Z")],
+        )
+
+    def test_a_new_title_has_its_time(self):
+        events = [
+            {"event": "renamed", "actor": {"login": "bob"}, "created_at": "2026-01-03T00:00:00Z"},
+            {"event": "labeled", "actor": {"login": "carol"}, "created_at": "2026-01-04T00:00:00Z"},
+        ]
+        self.assertEqual(self.edits([], events=events), [("bob", "2026-01-03T00:00:00Z")])
+
+    def test_edits_past_what_github_lists_have_no_time(self):
+        self.assertEqual(self.edits([], more=True), [("", None)])
+
+
+class BranchTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = GitHub(repository="acme/app", token="t")
+
+    def test_a_branch_that_is_gone_already_is_no_failure(self):
+        for error in (GitHubError(404, "Not Found"), GitHubError(422, "Reference does not exist")):
+            with mock.patch.object(self.gh, "request", side_effect=error):
+                self.gh.delete_branch("nexkit/issue-5")
+
+    def test_a_branch_that_a_rule_keeps_is_a_failure(self):
+        error = GitHubError(422, "Repository rule violations found")
+        with mock.patch.object(self.gh, "request", side_effect=error):
+            with self.assertRaises(GitHubError):
+                self.gh.delete_branch("nexkit/issue-5")
+
+    def test_it_lists_branches_by_prefix_with_their_heads(self):
+        refs = [{"ref": "refs/heads/nexkit/issue-5", "object": {"sha": "a" * 40}}]
+        with mock.patch.object(self.gh, "paginate", return_value=refs) as paginate:
+            found = self.gh.branches_like("nexkit/issue-")
+        self.assertEqual(found, [("nexkit/issue-5", "a" * 40)])
+        self.assertIn("/git/matching-refs/heads/nexkit/issue-", paginate.call_args.args[0])
+
+    def test_it_lists_the_pull_requests_of_a_branch_in_any_state(self):
+        with mock.patch.object(self.gh, "paginate", return_value=[]) as paginate:
+            self.gh.head_pulls("nexkit/issue-5")
+        self.assertEqual(
+            paginate.call_args.args[1], {"state": "all", "head": "acme:nexkit/issue-5"}
+        )

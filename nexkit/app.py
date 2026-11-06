@@ -33,6 +33,8 @@ PERMISSIONS = {
     "statuses": "write",  # nexkit/checks and nexkit/review
     "workflows": "write",  # push and merge changes to .github/workflows/
 }
+# Only for `autopilot.dependabot`, so an App that does without the setting needs nothing new.
+ALERTS_PERMISSION = {"vulnerability_alerts": "read"}
 LEVELS = {"read": 1, "write": 2}
 # GitHub's limit on an App's name.
 NAME_LIMIT = 34
@@ -56,17 +58,37 @@ def install_url(slug):
     return f"https://github.com/apps/{slug}/installations/new"
 
 
+def app_url(slug, owner=None, organization=False):
+    """The App's settings page, with its id and its private keys. It is not the page of the
+    App's installation, which GitHub links from a repository and from the list of Apps."""
+    where = f"organizations/{owner}/settings" if organization else "settings"
+    return f"https://github.com/{where}/apps/{slug}"
+
+
 def settings_url(slug, owner=None, organization=False):
     """Where the owner changes the App's permissions."""
-    where = f"organizations/{owner}/settings" if organization else "settings"
-    return f"https://github.com/{where}/apps/{slug}/permissions"
+    return f"{app_url(slug, owner, organization)}/permissions"
 
 
-def missing(granted):
-    """The permissions NexKit needs that `granted` lacks, as `name: level`."""
+def key_steps(slug, owner, organization=False):
+    """Where a repository gets the App's id and a new private key, and the command that
+    sets them. GitHub shows a key once and no one can read a secret back."""
+    return (
+        f"The App ID is under *About* at {app_url(slug, owner, organization)}, and *Generate a "
+        "private key* is under *Private keys* near the bottom of that page, not on the "
+        f"installation's page. Install the App at {install_url(slug)}, then run 'nexkit init "
+        "--app-id ID --app-private-key FILE', which sets both secrets"
+    )
+
+
+def missing(granted, cfg=None):
+    """The permissions NexKit needs, with the configuration `cfg`, that `granted` lacks, as
+    `name: level`."""
+    alerts = cfg and cfg["autopilot"]["dependabot"]
+    needed = {**PERMISSIONS, **(ALERTS_PERMISSION if alerts else {})}
     return [
         f"{name}: {level}"
-        for name, level in PERMISSIONS.items()
+        for name, level in needed.items()
         if LEVELS.get((granted or {}).get(name), 0) < LEVELS[level]
     ]
 
@@ -192,7 +214,7 @@ def create(repository, organization, token, flow=receive_code, name=None):
     try:
         set_secrets(repository, found["id"], found["pem"])
     except AppError as exc:
-        where = settings_url(found["slug"], owner, organization).removesuffix("/permissions")
+        where = app_url(found["slug"], owner, organization)
         raise AppError(
             f"{exc}. The App {found['slug']} exists, but its key is lost: generate a new one at "
             f"{where}, then run 'nexkit init --app-id {found['id']} --app-private-key FILE'"

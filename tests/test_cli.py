@@ -649,7 +649,7 @@ class InitDoctorTests(unittest.TestCase):
             any("publish.push_token_secret is gone" in m for _, m in scaffold.doctor(self.root))
         )
 
-    def app_findings(self, answers=None, key_file=None, inspected=None):
+    def app_findings(self, answers=None, key_file=None, inspected=None, app_id=None):
         cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
         answers = answers if answers is not None else {}
 
@@ -661,7 +661,7 @@ class InitDoctorTests(unittest.TestCase):
             mock.patch.object(app, "inspect", **(inspected or {})) as inspect,
         ):
             self.inspect = inspect
-            return scaffold._app_on_github(cfg, "acme/app", key_file)
+            return scaffold._app_on_github(cfg, "acme/app", key_file, app_id)
 
     def test_doctor_checks_the_secrets_of_the_app(self):
         cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
@@ -670,7 +670,7 @@ class InitDoctorTests(unittest.TestCase):
         self.assertFalse(found[1][0])
         self.assertIn("gh secret set NEXKIT_APP_PRIVATE_KEY --repo acme/app", found[1][1])
 
-    def test_doctor_says_which_permissions_the_app_lacks(self):
+    def test_doctor_says_which_permissions_a_public_app_lacks(self):
         granted = {**app.PERMISSIONS, "workflows": "read"}
         del granted["statuses"]
         answers = {"apps/nexkit-acme": json.dumps({"id": 7, "permissions": granted})}
@@ -680,35 +680,55 @@ class InitDoctorTests(unittest.TestCase):
         self.assertIn("https://github.com/settings/apps/nexkit-acme/permissions", lacking[1])
         # Only the App may ask where it is installed, and that is no failure.
         self.assertTrue(unknown[0])
-        self.assertIn("pass --app-private-key FILE", unknown[1])
+        self.assertIn("pass --app-id ID --app-private-key FILE", unknown[1])
         answers[".owner.type"] = "Organization\n"
         self.assertIn("organizations/acme/settings", self.app_findings(answers)[0][1])
 
-    def test_doctor_cannot_read_a_private_app_of_someone_else(self):
+    def test_without_its_key_doctor_cannot_read_a_private_app(self):
         [found] = self.app_findings({})
         self.assertTrue(found[0])
-        self.assertIn("Could not read the App nexkit-acme", found[1])
+        self.assertIn("GitHub shows a private App to no person's token", found[1])
+        self.assertIn("--app-id ID --app-private-key FILE", found[1])
 
-    def test_doctor_checks_the_installation_with_the_key(self):
-        answers = {"apps/nexkit-acme": json.dumps({"id": 7, "permissions": app.PERMISSIONS})}
-        state = {"slug": "nexkit-acme", "installed": False, "permissions": {}}
-        found = self.app_findings(answers, "key.pem", {"return_value": state})
-        self.inspect.assert_called_once_with("acme/app", 7, "key.pem")
+    def test_with_its_key_doctor_reads_a_private_app_and_its_installation(self):
+        state = {
+            "slug": "nexkit-acme",
+            "granted": app.PERMISSIONS,
+            "installed": False,
+            "permissions": {},
+        }
+        found = self.app_findings({}, "key.pem", {"return_value": state}, app_id="7")
+        self.inspect.assert_called_once_with("acme/app", "7", "key.pem")
         self.assertEqual(found[0], (True, "The App nexkit-acme has the permissions NexKit needs"))
         self.assertFalse(found[1][0])
         self.assertIn("is not installed on acme/app", found[1][1])
         self.assertIn("github.com/apps/nexkit-acme/installations/new", found[1][1])
         state = {**state, "installed": True, "permissions": app.PERMISSIONS}
-        found = self.app_findings(answers, "key.pem", {"return_value": state})
+        found = self.app_findings({}, "key.pem", {"return_value": state}, app_id="7")
         self.assertEqual(found[1], (True, "The App nexkit-acme is installed on acme/app"))
         self.assertEqual(len(found), 2)
         state = {**state, "permissions": {**app.PERMISSIONS, "workflows": "read"}}
-        found = self.app_findings(answers, "key.pem", {"return_value": state})
+        found = self.app_findings({}, "key.pem", {"return_value": state}, app_id="7")
         self.assertFalse(found[2][0])
         self.assertIn("installation on acme/app lacks workflows: write", found[2][1])
+        lacking = {**state, "granted": {**app.PERMISSIONS, "checks": "none"}}
+        found = self.app_findings({}, "key.pem", {"return_value": lacking}, app_id="7")
+        self.assertFalse(found[0][0])
+        self.assertIn("lacks checks: read", found[0][1])
+        other = {**state, "slug": "someone-else"}
+        [found] = self.app_findings({}, "key.pem", {"return_value": other}, app_id="7")
+        self.assertFalse(found[0])
+        self.assertIn("belong to the App someone-else", found[1])
         wrong = {"side_effect": app.AppError("not an App's private key")}
-        found = self.app_findings(answers, "key.pem", wrong)
-        self.assertEqual(found[1], (False, "not an App's private key"))
+        found = self.app_findings({}, "key.pem", wrong, app_id="7")
+        self.assertEqual(found, [(False, "not an App's private key")])
+
+    def test_doctor_needs_the_id_and_the_key_together(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = cli.main(["doctor", "--repo", str(self.root), "--app-private-key", "k.pem"])
+        self.assertEqual(code, 2)
+        self.assertIn("go together", err.getvalue())
 
     def test_init_refuses_before_it_creates_an_app(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])

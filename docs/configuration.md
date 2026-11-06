@@ -1383,7 +1383,9 @@ private App under their account and installs it on every repository that uses Ne
 **Your first repository.** `nexkit init` creates the App with GitHub's App manifest flow: it
 opens your browser on a page that holds exactly the permissions below, you confirm the name,
 and it stores the App id and the private key as the repository's secrets. Then install the
-App on the repository at the link it prints.
+App on the repository at the link it prints. A name is unique across GitHub, and "NexKit" is
+taken: the page proposes "NexKit <owner>", which you can change there, or choose one with
+`nexkit init --app-name NAME`. Its comments then show as `<slug>[bot]`.
 
 **Every other repository.**
 
@@ -1422,8 +1424,9 @@ contributor's pull request. Their secrets are reachable from that code.
 
 **Checking it.** `nexkit doctor` checks that the settings and the secrets are there and that
 the App has the permissions. GitHub lets only the App itself ask where it is installed, so
-`nexkit doctor --app-private-key FILE` also checks the installation on this repository; the
-key stays in its file. Without that option doctor says that it could not tell. A run without
+`nexkit doctor --app-id ID --app-private-key FILE` also checks the App, which GitHub shows to
+no person's token when it is private, and its installation on this repository; the key stays
+in its file. Without that option doctor says that it could not tell. A run without
 `github_app` stops at its start with what to do, and so does one that gets no token.
 
 **Comments of earlier releases.** NexKit counts only what its App wrote. Your CI can write

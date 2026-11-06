@@ -54,6 +54,8 @@ class ManifestTests(unittest.TestCase):
             },
         )
         self.assertEqual(len(app.manifest("a" * 60, "x")["name"]), app.NAME_LIMIT)
+        self.assertEqual(app.manifest("acme", "x")["name"], "NexKit acme")
+        self.assertEqual(app.manifest("acme", "x", "NexKit Agent")["name"], "NexKit Agent")
 
     def test_the_form_goes_to_the_owner_of_the_repository(self):
         page = app.form("acme", False, "s1", "http://x/done")
@@ -119,6 +121,13 @@ class CreateTests(unittest.TestCase):
         ):
             app.create("acme/app", False, "t", flow=lambda owner, org: "c0de")
 
+    def test_the_name_goes_to_the_flow(self):
+        names = []
+        app.create(
+            "acme/app", False, "t", flow=lambda o, g, name: names.append(name) or "c", name="X"
+        )
+        self.assertEqual(names, ["X"])
+
     def test_github_refusing_the_code_is_said(self):
         self.request.side_effect = GitHubError(404, "Not Found")
         with self.assertRaisesRegex(app.AppError, "GitHub did not create the App"):
@@ -164,10 +173,11 @@ class ExistingAppTests(unittest.TestCase):
     def test_an_installed_app_gets_its_secrets(self):
         client = Client(
             {
-                "/app": {"slug": "nexkit-acme"},
+                "/app": {"slug": "nexkit-acme", "permissions": app.PERMISSIONS},
                 "/repos/acme/app/installation": {"permissions": app.PERMISSIONS},
             }
         )
+        self.assertEqual(app.inspect("acme/app", "7", self.key, client)["granted"], app.PERMISSIONS)
         with mock.patch.object(app, "set_secret") as secret:
             found = app.use_existing("acme/app", "7", self.key, client)
         self.assertEqual(found, ("nexkit-acme", []))
@@ -226,7 +236,7 @@ class SetupTests(unittest.TestCase):
     def test_no_app_yet_creates_one_and_says_to_install_it(self):
         with mock.patch.object(app, "create", return_value="nexkit-acme") as create:
             found, lines = scaffold.github_app(self.root)
-        create.assert_called_once_with("acme/app", False, "t")
+        create.assert_called_once_with("acme/app", False, "t", name=None)
         self.assertEqual(found, APP)
         self.assertIn("https://github.com/apps/nexkit-acme/installations/new", lines[0])
 

@@ -1,5 +1,49 @@
 # Changelog
 
+## 6.1.0
+
+A writer can vouch for an issue that autopilot leaves alone, `/nexkit review` checks and
+reviews your own pull requests, such as a NexKit upgrade, and autopilot can turn Dependabot
+advisories into issues. NexKit also cleans up the branches of its closed work.
+
+- `/nexkit trust`, commented by a writer on an issue that autopilot leaves alone, makes
+  autopilot take it, with the parts of its split (#213). An edit of its title or text by
+  someone without write access ends that: a round NexKit started stops before setup and any
+  agent (`agent_untrusted`), and a merge stops too (`merge_untrusted`), until a writer
+  comments the command again. `nexkit status` and the mention name the command. See
+  [Vouching for an issue](docs/configuration.md#vouching-for-an-issue).
+- `/nexkit review` from a writer works on any pull request from a branch of the repository,
+  and sets `nexkit/checks` and `nexkit/review` (#217). On a person's pull request it never
+  pushes, starts a round or merges; the reviewer gets no plan and reviews protected paths
+  like any other code. A pull request from a fork runs nothing. See [Reviewing your own pull
+  requests](docs/configuration.md#reviewing-your-own-pull-requests).
+- `autopilot.dependabot` names the lowest severity of Dependabot alert that gets an issue
+  (#215). Each sweep opens one issue per advisory, in no milestone, which autopilot plans
+  right after the bug issues for CI. It needs the App's *Dependabot alerts: read*
+  permission; without it, or with alerts off, the sweep opens nothing and `nexkit status`
+  and `nexkit doctor` say which is missing. See [Dependabot
+  advisories](docs/configuration.md#dependabot-advisories).
+- With *Automatically delete head branches* on, NexKit deletes the branch of a pull request
+  it closes without merging, and each sweep deletes up to three `nexkit/issue-<n>` branches
+  of closed work (#218). It keeps a branch whose commits nothing else holds.
+- `nexkit doctor` fails on a workflow in `merge.after_workflows` that a push to the default
+  branch also starts, and on an `autopilot.last_in_milestone_label` the repository lacks
+  (#214). `nexkit init --last-in-milestone-label LABEL` sets it and creates the label.
+- *Every other repository* in [The GitHub App](docs/configuration.md#the-github-app) links
+  the App's settings page, where the App ID and a new private key are (#216).
+  `nexkit init --app-slug` stops before it writes anything when the App's secrets are
+  missing, with those links and the command that sets them.
+
+### Upgrade
+
+- **Take the default branch out of the `push` trigger** of each workflow in
+  `merge.after_workflows`, or the workflow out of that list: it runs twice after each merge.
+  `nexkit doctor` now names each such workflow.
+- **Comment `/nexkit trust`** on each part that a release before 6.0.0 created, once you
+  have read it: autopilot leaves those alone, and `nexkit status` lists them.
+- **Optional:** to use `autopilot.dependabot`, add *Dependabot alerts: read* to the App's
+  permissions, accept it on the installation, and turn on Dependabot alerts.
+
 ## 6.0.0
 
 NexKit acts on GitHub as a GitHub App of your own, so its pushes, pull requests and merges

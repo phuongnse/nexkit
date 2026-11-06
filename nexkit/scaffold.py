@@ -9,7 +9,7 @@ import subprocess
 from importlib import resources
 from pathlib import Path
 
-from . import __version__
+from . import __version__, app
 from . import config as configuration
 from .runtimes import DECLARED_SECRETS, PROVIDERS
 
@@ -32,24 +32,6 @@ WORKFLOW_RUN = (
     "    types: [completed]\n"
     "    branches: [__DEFAULT_BRANCH__]\n"
 )
-# The job that each workflow of merge.after_workflows ends with: a dispatch of a sweep,
-# which the Actions token may send, unlike the `workflow_run` event of a run it started.
-SWEEP_JOB = "nexkit-sweep"
-SWEEP_JOB_TEXT = """\
-  nexkit-sweep:
-    # NexKit autopilot looks at this run as soon as it ends (docs/configuration.md).
-    needs: [{needs}]
-    if: always() && github.ref_name == github.event.repository.default_branch
-    runs-on: ubuntu-24.04
-    permissions:
-      actions: write
-    steps:
-      - run: >-
-          gh workflow run {workflow} --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
-          -f command=autopilot -f number=autopilot -f note="after run $GITHUB_RUN_ID"
-        env:
-          GH_TOKEN: ${{{{ github.token }}}}
-"""
 
 
 def workflow_text(kit_repo, kit_ref, default_branch="main", after_names=()):
@@ -131,6 +113,57 @@ def build_checks(checks, *, timeouts=(), slow=(), results=(), groups=(), unaffec
     return built
 
 
+def refuse_existing(root):
+    """Refuse to overwrite NexKit's files; `nexkit init` asks before it creates an App."""
+    root = Path(root)
+    paths = (root / configuration.CONFIG_PATH, root / WORKFLOW_PATH)
+    existing = [str(p.relative_to(root)) for p in paths if p.exists()]
+    if existing:
+        raise FileExistsError(f"Already exists: {', '.join(existing)} (use --force)")
+
+
+def configured_app(root):
+    """The `github_app` of the configuration in `root`, or None."""
+    try:
+        raw = json.loads((Path(root) / configuration.CONFIG_PATH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    found = raw.get("github_app") if isinstance(raw, dict) else None
+    return found if isinstance(found, dict) and found.get("slug") else None
+
+
+def github_app(root, *, slug=None, app_id=None, key_file=None):
+    """(the configuration's `github_app`, lines for the person). `slug` names an App whose
+    secrets are set already, as an organization's can be; `app_id` and `key_file` an App
+    that exists, which must be installed here, and set its secrets; otherwise a repository
+    with an App keeps it, and any other creates one with the manifest flow."""
+    if bool(app_id) != bool(key_file):
+        raise app.AppError("--app-id and --app-private-key go together")
+    if slug:
+        return app.settings(slug), []
+    known = configured_app(root)
+    if known and not app_id:
+        return known, []
+    repo = repository_of(root)
+    if not repo:
+        raise app.AppError(
+            "Cannot tell the GitHub repository from the 'origin' remote, which the App needs; "
+            "add it, or pass --app-slug SLUG for an App that exists"
+        )
+    if app_id:
+        slug, lacking = app.use_existing(repo, app_id, key_file)
+        lines = [f"Set the secrets of the App {slug}, which is installed on {repo}."]
+        if lacking:
+            lines.append(f"It lacks {', '.join(lacking)}; 'nexkit doctor' says how to grant it.")
+        return app.settings(slug), lines
+    kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
+    slug = app.create(repo, kind == "Organization", gh_token())
+    return app.settings(slug), [
+        f"Created the App {slug} and set its secrets. Install it on {repo}, and on every other "
+        f"repository of this owner that uses NexKit: {app.install_url(slug)}"
+    ]
+
+
 def init(
     root,
     *,
@@ -150,14 +183,13 @@ def init(
     evidence=(),
     after_workflows=(),
     watch_workflows=(),
+    github_app=None,
 ):
     root = Path(root)
     config_path = root / configuration.CONFIG_PATH
     workflow_path = root / WORKFLOW_PATH
     if not force:
-        existing = [str(p.relative_to(root)) for p in (config_path, workflow_path) if p.exists()]
-        if existing:
-            raise FileExistsError(f"Already exists: {', '.join(existing)} (use --force)")
+        refuse_existing(root)
     raw = {
         "version": 1,
         "agents": {"claude": dict(configuration.CLAUDE_AGENT)},
@@ -175,6 +207,8 @@ def init(
         "fix": dict(configuration.DEFAULTS["fix"]),
         "merge": {"auto": False},
     }
+    if github_app:
+        raw["github_app"] = github_app
     if parallel_checks:
         raw["parallel_checks"] = True
     if notify:
@@ -267,85 +301,6 @@ def workflow_name(root, name):
     if not match:
         return f".github/workflows/{name}"
     return match.group(1).strip("'\"")
-
-
-def workflow_jobs(text):
-    """{job id: its lines} of a workflow's `jobs:` block, comments removed."""
-    text = _uncommented(text)
-    body = text.split("\njobs:", 1)[1] if "\njobs:" in text else ""
-    return dict(re.findall(r"^  ([\w-]+):[ \t]*\n((?:    .*\n|[ \t]*\n)*)", body + "\n", re.M))
-
-
-def _needs(job):
-    """The jobs that a job's `needs` names."""
-    match = re.search(r"^    needs:[ \t]*(.*)$", job, re.M)
-    if not match:
-        return []
-    value = match.group(1).strip()
-    if value:
-        return [n.strip(" '\"") for n in value.strip("[]").split(",") if n.strip(" '\"")]
-    found = []
-    for line in job[match.end() :].split("\n")[1:]:
-        item = re.match(r"      - [ '\"]*([\w-]+)", line)
-        if not item:
-            break
-        found.append(item.group(1))
-    return found
-
-
-def sweep_job(root, name):
-    """The job that the workflow `name` of merge.after_workflows adds, needing its other
-    jobs, so it ends the run."""
-    path = root / ".github/workflows" / name
-    text = path.read_text(errors="replace") if path.is_file() else ""
-    others = [job for job in workflow_jobs(text) if job != SWEEP_JOB] or ["<each other job>"]
-    workflow = Path(WORKFLOW_PATH).name
-    return SWEEP_JOB_TEXT.format(needs=", ".join(others), workflow=workflow)
-
-
-def _sweep_job(root, name):
-    """A finding: the workflow `name` of merge.after_workflows ends with a job that starts
-    an autopilot sweep. A finding that is no failure when doctor cannot tell."""
-    path = root / ".github/workflows" / name
-    if not path.is_file():
-        return []
-    jobs = workflow_jobs(path.read_text(errors="replace"))
-    workflow = re.escape(Path(WORKFLOW_PATH).name)
-    starts = [
-        job
-        for job, lines in jobs.items()
-        if re.search(workflow, lines) and re.search(r"command\W{1,4}autopilot", lines)
-    ]
-    hint = f"see docs/configuration.md#autopilot or 'nexkit init --after-workflow {name}'"
-    if not starts:
-        if any(re.search(r"^    uses:", lines, re.M) for lines in jobs.values()):
-            return [
-                (
-                    True,
-                    f"merge.after_workflows: could not tell whether {name} starts an "
-                    f"autopilot sweep when it ends, since it calls another workflow; {hint}",
-                )
-            ]
-        return [
-            (
-                False,
-                f"merge.after_workflows: {name} has no job that starts an autopilot sweep when "
-                "it ends, so a failure in a run NexKit started after its merge waits for the "
-                f"end of the next NexKit run or the hourly schedule; {hint}",
-            )
-        ]
-    job = jobs[starts[0]]
-    missing = [other for other in jobs if other not in (*starts, *_needs(job))]
-    if "always()" not in job or missing:
-        why = f"does not need {', '.join(missing)}" if missing else "has no 'if: always()'"
-        return [
-            (
-                False,
-                f"merge.after_workflows: the job '{starts[0]}' of {name} {why}, so it does not "
-                f"start the sweep when the run ends; {hint}",
-            )
-        ]
-    return [(True, f"merge.after_workflows: {name} starts an autopilot sweep when it ends")]
 
 
 def _ci_trigger(root, cfg, workflow):
@@ -550,8 +505,6 @@ def _triggers(root, cfg, workflow):
     if cfg["autopilot"]["enabled"]:
         findings.append(_autopilot_triggers(cfg, workflow))
         findings += _ci_trigger(root, cfg, workflow)
-        for name in configuration.after_workflow_names(cfg):
-            findings += _sweep_job(root, name)
     if cfg["usage_limit"]["resume"]:
         if trigger(workflow, "schedule") is None:
             findings.append(
@@ -610,18 +563,15 @@ def _passed_secrets(cfg, workflow):
     if re.search(r"^\s+secrets:\s*inherit\s*$", text, re.M):
         return findings
     needed = list(configuration.credentials(cfg))
-    push = cfg["publish"]["push_token_secret"]
-    if push:
-        needed.append(("publish", (push,)))
+    for key in configuration.APP_SECRETS:
+        if cfg["github_app"][key]:
+            needed.append((f"github_app.{key}", (cfg["github_app"][key],)))
+    declared = {*DECLARED_SECRETS, *configuration.APP_SECRETS.values()}
     for name, secrets in needed:
         if any(re.search(rf"\bsecrets\.{secret}\b", text) for secret in secrets):
             continue
-        how = (
-            "add it under 'secrets:'"
-            if set(secrets) <= set(DECLARED_SECRETS)
-            else "write 'secrets: inherit'"
-        )
-        who = "publish.push_token_secret" if name == "publish" else f"The `{name}` agent"
+        how = "add it under 'secrets:'" if set(secrets) <= declared else "write 'secrets: inherit'"
+        who = name if name.startswith("github_app.") else f"The `{name}` agent"
         findings.append(
             (
                 False,
@@ -630,35 +580,6 @@ def _passed_secrets(cfg, workflow):
             )
         )
     return findings
-
-
-def _unattended_push(cfg):
-    """Findings: whether work that NexKit starts by itself can push every merge of the base
-    branch. The Actions token may not push changes to workflow files, so without a push
-    token a round that merges such changes from the base branch waits for a person. Running
-    without a push token is a choice, so this is information, never a problem."""
-    if cfg["publish"]["push_token_secret"]:
-        return []
-    on = [
-        key
-        for key, enabled in (
-            ("autopilot.enabled", cfg["autopilot"]["enabled"]),
-            ("conflicts.auto_resolve", cfg["conflicts"]["auto_resolve"]),
-        )
-        if enabled
-    ]
-    if not on:
-        return []
-    return [
-        (
-            True,
-            f"{' and '.join(on)} {'is' if len(on) == 1 else 'are'} on, but "
-            "publish.push_token_secret is not set: a round that merges changes to "
-            ".github/workflows/ from the base branch cannot push with the Actions token and "
-            "waits for a person. Name a fine-grained token with Contents, Pull requests and "
-            "Workflows write access (see the configuration reference, Secrets)",
-        )
-    ]
 
 
 def _unheard(cfg):
@@ -687,32 +608,85 @@ def _secrets_set(cfg, names, repo):
         agent = configuration.agent(cfg, name)
         hint = PROVIDERS[agent["provider"]].secret_hint(secrets, repo)
         findings.append((False, f"Set a secret for the `{name}` agent: {hint}"))
-    push = cfg["publish"]["push_token_secret"]
-    if push and push not in names:
-        findings.append(
-            (
-                False,
-                f"publish.push_token_secret names {push}, which is not set: run "
-                f"'gh secret set {push} --repo {repo}' with a fine-grained token, or remove it",
+    return findings
+
+
+def _app_secrets(cfg, names, repo):
+    """Findings: the secrets of `github_app` are set, for the repository or its owner."""
+    findings = []
+    for key in configuration.APP_SECRETS:
+        name = cfg["github_app"][key]
+        if name in names:
+            findings.append((True, f"github_app.{key}: {name} is set"))
+        else:
+            findings.append(
+                (
+                    False,
+                    f"github_app.{key} names {name}, which is not set: run 'gh secret set "
+                    f"{name} --repo {repo}', or 'nexkit init --force --app-id ID "
+                    "--app-private-key FILE', which sets both",
+                )
             )
+    return findings
+
+
+def _app_on_github(cfg, repo, key_file):
+    """Findings: the App has NexKit's permissions and is installed on `repo`. Anyone signed
+    in may read an App they own, but only the App itself may ask where it is installed, so
+    that takes its private key. What doctor cannot tell is no failure."""
+    slug = cfg["github_app"]["slug"]
+    owner = repo.split("/")[0]
+    kind = (_gh("api", f"repos/{repo}", "-q", ".owner.type") or "").strip()
+    organization = kind == "Organization"
+    found = _gh("api", f"apps/{slug}")
+    if found is None:
+        return [
+            (
+                True,
+                f"Could not read the App {slug}: GitHub shows a private App only to its owner. "
+                f"Check its permissions at {app.settings_url(slug, owner, organization)}",
+            )
+        ]
+    data = json.loads(found)
+    lacking = app.missing(data.get("permissions"))
+    findings = [
+        (
+            not lacking,
+            f"The App {slug} lacks {', '.join(lacking)}: grant it at "
+            f"{app.settings_url(slug, owner, organization)}, then accept the change on the "
+            "installation"
+            if lacking
+            else f"The App {slug} has the permissions NexKit needs",
         )
-    elif push:
-        findings.append((True, f"Pushes use the {push} secret"))
-    elif "NEXKIT_PUSH_TOKEN" in names:
+    ]
+    if not key_file:
+        hint = "pass --app-private-key FILE to check it"
+        findings.append((True, f"Could not tell whether {slug} is installed on {repo}; {hint}"))
+        return findings
+    try:
+        state = app.inspect(repo, data["id"], key_file)
+    except app.AppError as exc:
+        return [*findings, (False, str(exc))]
+    if not state["installed"]:
+        how = f"install it at {app.install_url(slug)}"
+        return [*findings, (False, f"The App {slug} is not installed on {repo}: {how}")]
+    findings.append((True, f"The App {slug} is installed on {repo}"))
+    lacking = app.missing(state["permissions"])
+    if lacking:
+        where = f"https://github.com/{owner}/{repo.split('/')[1]}/settings/installations"
         findings.append(
             (
                 False,
-                "The NEXKIT_PUSH_TOKEN secret is set, but publish.push_token_secret does not "
-                "name it, so NexKit pushes with the Actions token. To use it, add "
-                '"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"} to '
-                f"{configuration.CONFIG_PATH}",
+                f"The App's installation on {repo} lacks {', '.join(lacking)}: accept the "
+                f"App's new permissions at {where}",
             )
         )
     return findings
 
 
-def doctor(root):
-    """Return a list of (ok, message) findings."""
+def doctor(root, key_file=None):
+    """Return a list of (ok, message) findings. With `key_file`, the App's private key, it
+    also asks GitHub whether the App is installed on the repository."""
     root = Path(root)
     findings = []
     cfg = None
@@ -725,7 +699,9 @@ def doctor(root):
             _after_merge_workflow(root, name) for name in configuration.after_workflow_names(cfg)
         ]
         findings += [_watched_workflow(root, n) for n in cfg["autopilot"]["watch_workflows"]]
-        findings += _unattended_push(cfg)
+        problem = configuration.app_problem(cfg)
+        if problem:
+            findings.append((False, problem))
         findings += _unheard(cfg)
     except configuration.ConfigError as exc:
         findings.append((False, str(exc)))
@@ -761,22 +737,17 @@ def doctor(root):
     names = set(
         (_gh("secret", "list", "--repo", repo, "--json", "name", "-q", ".[].name") or "").split()
     )
+    # An organization can hold secrets once for all its repositories.
+    names |= set(
+        (
+            _gh("api", f"repos/{repo}/actions/organization-secrets", "-q", ".secrets[].name") or ""
+        ).split()
+    )
     if cfg:
         findings += _secrets_set(cfg, names, repo)
-    perms = _gh("api", f"repos/{repo}/actions/permissions/workflow")
-    if perms is not None:
-        if json.loads(perms).get("can_approve_pull_request_reviews"):
-            findings.append((True, "GitHub Actions may create pull requests"))
-        else:
-            findings.append(
-                (
-                    False,
-                    "Allow GitHub Actions to create pull requests: Settings > Actions > General > "
-                    "Workflow permissions, or run: gh api -X PUT "
-                    f"repos/{repo}/actions/permissions/workflow "
-                    "-F can_approve_pull_request_reviews=true",
-                )
-            )
+    if cfg and not configuration.app_problem(cfg):
+        findings += _app_secrets(cfg, names, repo)
+        findings += _app_on_github(cfg, repo, key_file)
     for login in (cfg or {}).get("notify", []):
         role = (
             _gh("api", f"repos/{repo}/collaborators/{login}/permission", "-q", ".permission") or ""

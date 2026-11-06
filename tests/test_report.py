@@ -824,49 +824,6 @@ class ReportTests(ReportCase):
             [(1, "implement"), (2, "fix (auto)")],
         )
 
-    def test_a_round_held_up_by_workflow_changes_gives_its_automatic_round_back(self):
-        cfg = make_config(fix={"max_auto_rounds": 1}, notify=["olivia"])
-        self.candidate(checks_pass=False)
-        self.assertEqual(self.run_report(cfg=cfg)["outcome"], "auto_fix")
-        fix = decision("fix", pr=6, target=6, head=HEAD, auto=True)
-        # Stopped before its agent: the merge it must make changes workflow files.
-        self.write(
-            "nexkit-agent",
-            "result.json",
-            {"status": "needs_merge", "error": "Merging `main` brings changes to `ci.yml`."},
-        )
-        outcome = self.run_report(d=fix, cfg=cfg, published=False)
-        self.assertEqual(outcome["outcome"], "needs_merge")
-        self.assertIn("merge it into the pull request yourself", outcome["attention"])
-        self.assertTrue(self.gh.comments_matching(6, "@olivia a person is needed"))
-        _, state = read_state(self.gh.comments(6))
-        self.assertEqual(state["auto_fixes"], 0)
-        # Refused at publish for the same reason: given back as well.
-        state_id, state = read_state(self.gh.comments(6))
-        self.gh.update_comment(state_id, render_state({**state, "auto_fixes": 1}))
-        self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
-        refused = {"published": False, "error": "Merging `main` brings…", "workflows": True}
-        needs = {"publish": {"outputs": {"result": json.dumps(refused)}}}
-        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
-        outcome = report(
-            self.gh, fix, cfg, needs, self.artifacts, workflow_ref=WORKFLOW, default_branch="main"
-        )
-        self.assertEqual(outcome["outcome"], "needs_merge")
-        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
-        # So the next failing round starts its automatic fix round.
-        self.candidate(checks_pass=False)
-        self.gh.dispatches.clear()
-        self.assertEqual(self.run_report(d=fix, cfg=cfg)["outcome"], "auto_fix")
-        self.assertEqual(len(self.gh.dispatches), 1)
-
-    def test_a_round_that_left_out_the_base_merge_says_so(self):
-        self.candidate()
-        agent = {"status": "done", "tokens": TOKENS, "merge_held": [".github/workflows/ci.yml"]}
-        self.write("nexkit-agent", "result.json", agent)
-        self.run_report(d=decision("fix", pr=6, target=6, head=HEAD, auto=True))
-        [row] = self.gh.run_comments(6)
-        self.assertIn("Did not merge `main`, which changed `.github/workflows/ci.yml`", row["body"])
-
     def report_published(self, published, d=None, cfg=None):
         """Report a round whose `publish` returned `published`, with no checks or review."""
         self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
@@ -952,15 +909,6 @@ class ReportTests(ReportCase):
             row["body"],
         )
         self.assertEqual(row["run"]["checks"], "passed")
-        held = {"published": True, "pr": 6, "head": HEAD, "held": [".github/workflows/ci.yml"]}
-        needs = {"publish": {"outputs": {"result": json.dumps(held)}}}
-        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
-        fix = decision("fix", pr=6, target=6, head=HEAD)
-        report(
-            self.gh, fix, cfg, needs, self.artifacts, workflow_ref=WORKFLOW, default_branch="main"
-        )
-        latest = self.gh.run_comments(6)[-1]["body"]
-        self.assertIn("it changed `.github/workflows/ci.yml`", latest)
 
     def test_the_round_records_each_check_that_passed_on_its_head(self):
         self.candidate(review=review_result("request_changes"))

@@ -40,9 +40,17 @@ def _decision():
     return json.loads(os.environ["NEXKIT_DECISION"])
 
 
+def _as_app(cfg):
+    """`cfg`, with what its GitHub App writes counted as NexKit's from now on."""
+    from .state import use_app
+
+    use_app(configuration.app_login(cfg))
+    return cfg
+
+
 def _config():
     # The configuration from `route`, with the run's profile already applied.
-    return configuration.validate(json.loads(os.environ["NEXKIT_CONFIG"]), layered=True)
+    return _as_app(configuration.validate(json.loads(os.environ["NEXKIT_CONFIG"]), layered=True))
 
 
 def _gh():
@@ -52,6 +60,18 @@ def _gh():
 
 
 def cmd_init(args):
+    from .app import AppError
+
+    # Before anything else: a new App should not come from a run that then stops.
+    if not args.force:
+        scaffold.refuse_existing(args.repo)
+    try:
+        github_app, app_lines = scaffold.github_app(
+            args.repo, slug=args.app_slug, app_id=args.app_id, key_file=args.app_private_key
+        )
+    except AppError as exc:
+        print(f"nexkit: {exc}", file=sys.stderr)
+        return 1
     written = scaffold.init(
         args.repo,
         checks=args.check,
@@ -70,16 +90,12 @@ def cmd_init(args):
         evidence=args.evidence_artifact,
         after_workflows=args.after_workflow,
         watch_workflows=args.watch_workflow,
+        github_app=github_app,
     )
     for path in written:
         print(f"wrote {path}")
-    for name in dict.fromkeys(args.after_workflow):
-        # NexKit never edits another workflow; it shows the job to add.
-        print(
-            f"With autopilot, add this job to .github/workflows/{name}, so a sweep looks at "
-            f"each of its runs on the default branch as soon as it ends:\n"
-        )
-        print(scaffold.sweep_job(Path(args.repo), name))
+    for line in app_lines:
+        print(line)
     print(
         "Next: review the files, set the secret each agent in .nexkit/config.json names "
         "(gh secret set CLAUDE_CODE_OAUTH_TOKEN), commit both files to the default branch, "
@@ -89,7 +105,7 @@ def cmd_init(args):
 
 
 def cmd_doctor(args):
-    findings = scaffold.doctor(args.repo)
+    findings = scaffold.doctor(args.repo, args.app_private_key)
     for ok, message in findings:
         print(f"{'✓' if ok else '✗'} {message}")
     return 0 if all(ok for ok, _ in findings) else 1
@@ -111,7 +127,7 @@ def cmd_status(args):
         print("nexkit: sign in with 'gh auth login' or set GITHUB_TOKEN", file=sys.stderr)
         return 2
     try:
-        cfg = configuration.load(args.repo)
+        cfg = _as_app(configuration.load(args.repo))
     except configuration.ConfigError:
         cfg = {}
     try:
@@ -148,6 +164,22 @@ def _refused_dispatch(args, decision, inputs):
     return {**found, "reason": decision["reason"]}, cfg
 
 
+def cmd_app(args):
+    """The names of the App's secrets, for the step that mints `route`'s token. A run that
+    has no App stops here: without a token it cannot even reply. `--no-token` says what to
+    do when GitHub gave no token."""
+    if args.no_token:
+        print(f"::error::{configuration.NO_TOKEN}")
+        return 1
+    try:
+        found = configuration.read_app(args.repo)
+    except configuration.ConfigError as exc:
+        print(f"::error::{exc}")
+        return 1
+    _output(**{key: found[key] for key in configuration.APP_SECRETS})
+    return 0
+
+
 def cmd_route(args):
     from . import progress
     from .checks import all_skipped, check_jobs, check_matrix
@@ -157,19 +189,31 @@ def cmd_route(args):
 
     gh = _gh()
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    # First, since `route` reads NexKit's comments, which its App wrote.
+    loaded, problem = None, None
+    try:
+        loaded = _as_app(configuration.load(args.repo))
+    except configuration.ConfigError as exc:
+        problem = exc
+    minted = os.environ.get("NEXKIT_APP_SLUG")
+    if loaded and minted and minted != loaded["github_app"]["slug"]:
+        # NexKit would not recognise its own comments, so no state would count.
+        print(
+            f"::error::github_app.slug is {loaded['github_app']['slug']}, but the App's key "
+            f"belongs to {minted}; correct {configuration.CONFIG_PATH}"
+        )
+        return 1
     decision = route(gh, os.environ["GITHUB_EVENT_NAME"], event, event.get("inputs") or {})
     cfg = None
     if decision["action"] != "none":
-        try:
-            cfg = configuration.load(args.repo)
-        except configuration.ConfigError as exc:
+        if problem:
             decision = {
                 "action": "none",
-                "reason": f"NexKit configuration error: {exc}",
+                "reason": f"NexKit configuration error: {problem}",
                 "reply_to": decision.get("target"),
             }
         else:
-            decision, cfg = with_profile(gh, decision, cfg)
+            decision, cfg = with_profile(gh, decision, loaded)
             decision = skip_unaffected(gh, decision, cfg)
     if decision["action"] == "maintain" and not enabled(decision["task"], cfg):
         keys = " and ".join(TASKS[decision["task"]])
@@ -278,7 +322,8 @@ def cmd_context(args):
     fix_result = None
     if args.fix_result and Path(args.fix_result).is_file():
         fix_result = json.loads(Path(args.fix_result).read_text())
-    cfg = _config() if args.evidence and os.environ.get("NEXKIT_CONFIG") else None
+    # Also without evidence: the configuration names the App whose comments this reads.
+    cfg = _config() if os.environ.get("NEXKIT_CONFIG") else None
     context = gather(
         _gh(),
         decision,
@@ -286,7 +331,7 @@ def cmd_context(args):
         fix_result=fix_result,
         results=args.results,
         ci=args.evidence,
-        cfg=cfg,
+        cfg=cfg if args.evidence else None,
         workflow=workflow_file(os.environ.get("GITHUB_WORKFLOW_REF", "")),
     )
     out = Path(args.out)
@@ -460,33 +505,18 @@ def cmd_cache(args):
 
 
 def cmd_publish(args):
-    from .github import GitHub, GitHubError
+    from .github import GitHubError
     from .gitutil import GitError
-    from .publish import BranchMovedError, PublishError, WorkflowMergeError, publish
+    from .publish import BranchMovedError, PublishError, publish
 
     decision = _decision()
     out = Path(args.artifacts)
     result = json.loads((out / "result.json").read_text())
     context = json.loads((out / "context.json").read_text())
-    bot = GitHub()
-    push_token = os.environ.get("NEXKIT_PUSH_TOKEN")
-    author = GitHub(token=push_token) if push_token else bot
     try:
-        outcome = publish(
-            bot,
-            decision,
-            result,
-            context,
-            _config(),
-            args.repo,
-            out,
-            author=author,
-            push_token=bool(push_token),
-        )
+        outcome = publish(_gh(), decision, result, context, _config(), args.repo, out)
     except (PublishError, GitError, GitHubError) as exc:
         outcome = {"published": False, "error": str(exc)}
-        if isinstance(exc, WorkflowMergeError):
-            outcome["workflows"] = True
         if isinstance(exc, BranchMovedError):
             outcome["moved"] = True
     print(json.dumps(outcome, indent=2))
@@ -519,10 +549,13 @@ def cmd_report(args):
 
 
 def cmd_maintain(args):
-    from .maintain import maintain
+    from .maintain import maintain, wait_for_paused
     from .report import workflow_file
 
     gh = _gh()
+    if args.wait:
+        wait_for_paused(gh, _config()["usage_limit"]["wait_minutes"])
+        return 0
     lines = maintain(
         gh,
         _decision(),
@@ -559,6 +592,19 @@ def build_parser():
 
     p = sub.add_parser("init", help="Install NexKit configuration and workflow in a repository")
     p.add_argument("--repo", default=".", help="Repository root (default: current directory)")
+    p.add_argument(
+        "--app-id",
+        metavar="ID",
+        help="Use this GitHub App instead of creating one; needs --app-private-key",
+    )
+    p.add_argument(
+        "--app-private-key", metavar="FILE", help="The private key of the App in --app-id"
+    )
+    p.add_argument(
+        "--app-slug",
+        metavar="SLUG",
+        help="Use this App, whose secrets are set already, such as an organization's",
+    )
     p.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND")
     p.add_argument(
         "--check-timeout",
@@ -643,6 +689,11 @@ def build_parser():
 
     p = sub.add_parser("doctor", help="Check a repository's NexKit setup")
     p.add_argument("--repo", default=".")
+    p.add_argument(
+        "--app-private-key",
+        metavar="FILE",
+        help="The App's private key, to check that the App is installed on this repository",
+    )
     p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("status", help="List open NexKit work and what each item waits for")
@@ -653,6 +704,11 @@ def build_parser():
         "--merges", type=int, default=MERGES, help=f"Recent merges to show (default {MERGES})"
     )
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("app", help="(pipeline) Name the secrets of the GitHub App")
+    p.add_argument("--repo", default="repo")
+    p.add_argument("--no-token", action="store_true", help="Say why a run got no token")
+    p.set_defaults(func=cmd_app)
 
     p = sub.add_parser("route", help="(pipeline) Decide the action for the current event")
     p.add_argument("--repo", required=True, help="Checkout of the default branch")
@@ -711,6 +767,7 @@ def build_parser():
     p.set_defaults(func=cmd_publish)
 
     p = sub.add_parser("maintain", help="(pipeline) Work that follows events, without an agent")
+    p.add_argument("--wait", action="store_true", help="Only wait for paused commands to come due")
     p.set_defaults(func=cmd_maintain)
 
     p = sub.add_parser("report", help="(pipeline) Report results and schedule the next round")

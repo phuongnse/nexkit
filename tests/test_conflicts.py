@@ -77,17 +77,11 @@ class SweepTests(unittest.TestCase):
         self.assertIn("automatic conflict rounds are used up", line)
         self.assertFalse(self.gh.dispatches)
 
-    def test_a_round_held_up_by_workflow_changes_is_not_counted(self):
+    def test_a_round_held_up_before_the_app_is_not_counted(self):
         for n in range(1, 3):
             self.round(6, n, conflicts=True, base_sha=str(n) * 40)
         self.round(6, 3, conflicts=True, base_sha="3" * 40, outcome="needs_merge")
-        # While it is the latest round, a person merges: each push to `main` would only
-        # stop the same way.
-        self.assertEqual(self.sweep(), ["#6 conflicts with `main`, which a person merges."])
-        self.assertFalse(self.gh.dispatches)
-        # Once a person merged and a round ran, conflict rounds start again, and the round
-        # held up does not count.
-        self.round(6, 4, trigger="review")
+        # Its token could not push workflow files; the App's can, so a round starts.
         self.assertEqual(self.sweep(), ["Started an automatic round on #6 to merge `main`."])
 
     def test_the_round_limit_is_configured(self):

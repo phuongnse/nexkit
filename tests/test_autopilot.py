@@ -1073,6 +1073,20 @@ class SplitTests(AnswerAndSplitCase):
         self.gh.issues[5]["user"] = {"login": "alice"}
         self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[6]))
 
+    def test_the_issues_of_the_app_count_like_those_of_the_actions_bot(self):
+        app = "nexkit-acme[bot]"
+        state.use_app(app)
+        self.addCleanup(state.BOT_LOGINS.discard, app)
+        self.issue(5, user=app, body="<!-- nexkit:ci ci.yml -->\nFailed")
+        self.issue(6, user=BOT_LOGIN, body="<!-- nexkit:ci lint.yml -->\nFailed")
+        self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[5]))
+        self.assertTrue(autopilot.trusted(self.gh, self.gh.issues[6]))
+        self.assertEqual(sorted(autopilot.open_bugs(self.gh)), ["ci.yml", "lint.yml"])
+        # Another App's issue is no more NexKit's than a stranger's.
+        self.issue(7, user="other[bot]", body="<!-- nexkit:ci x.yml -->\nFailed")
+        self.assertFalse(autopilot.trusted(self.gh, self.gh.issues[7]))
+        self.assertNotIn("x.yml", autopilot.open_bugs(self.gh))
+
     def test_parts_of_an_issue_nexkit_opened_for_a_ci_failure_are_trusted(self):
         bot = "github-actions[bot]"
         self.issue(5, user=bot, body="<!-- nexkit:ci ci.yml -->\n`ci.yml` fails on `main`.")

@@ -32,13 +32,21 @@ CLAUDE = {
 }
 
 
+# The App that `nexkit init` names.
+APP = {
+    "slug": "nexkit-acme",
+    "app_id_secret": "NEXKIT_APP_ID",
+    "private_key_secret": "NEXKIT_APP_PRIVATE_KEY",
+}
+
+
 def with_claude(raw):
     """`raw` with the Claude agent declared next to the agents it has."""
     return {**raw, "agents": {**CLAUDE, **raw.get("agents", {})}}
 
 
 def make_config(**overrides):
-    raw = {"checks": [{"name": "test", "run": "true"}], **overrides}
+    raw = {"checks": [{"name": "test", "run": "true"}], "github_app": APP, **overrides}
     return validate(with_claude(raw))
 
 
@@ -229,6 +237,9 @@ class FakeGitHub:
 
     def role(self, user):
         return self.roles.get(user, "none")
+
+    def user(self, login):
+        return {"login": login, "id": 4242}
 
     def can_write(self, user):
         return self.role(user) in {"admin", "maintain", "write"}

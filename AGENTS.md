@@ -20,7 +20,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `checks.py`, `cache.py` | Setup and checks with `NEXKIT_BASE_SHA`/`NEXKIT_VERIFIED_SHA`; cache restore |
 | `report.py`, `state.py`, `progress.py` | Statuses, review, run and state comments and their markers |
 | `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; resuming runs paused at a usage limit; autopilot sweeps |
-| `config.py`, `globs.py`, `scaffold.py`, `templates/` | Config schema and defaults, path globs; `nexkit init` and `doctor` |
+| `config.py`, `globs.py`, `scaffold.py`, `app.py`, `templates/` | Config schema and defaults, path globs; `nexkit init` and `doctor`; the GitHub App |
 | `status.py`, `github.py`, `gitutil.py` | `nexkit status`; REST and git helpers |
 | `scripts/` | Live smoke test, pin updates, release notes |
 
@@ -29,10 +29,14 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 - Jobs that run an agent or repository code have read-only tokens; jobs with write tokens
   never run repository code or receive an agent credential. `tests/test_cli.py` checks
   this; extend it for new jobs.
+- NexKit writes on GitHub only as the repository's GitHub App (`github_app`). Each job that
+  writes mints its own token with only what it needs; `github.token` only reads. A token
+  lasts an hour, so nothing holds one through a longer wait. What the App does starts
+  workflows, NexKit's own too, so each write must leave a following run nothing to do.
 - Agent output is untrusted: validate it before publishing, pass everything printed or
   stored from a session through `redact.py`, print tool output with workflow commands
-  stopped. Markers count only in Actions bot comments, and a run marker only where it ends
-  the comment.
+  stopped. Markers count only in comments of the App or, for earlier releases, the Actions
+  bot, and a run marker only where it ends the comment.
 - State lives only on GitHub (comments, pull requests, statuses).
 - Agent errors and `blocked` results never retry automatically; only check failures and
   review findings do, up to `fix.max_auto_rounds`. The one exception is a run that stopped
@@ -61,9 +65,9 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 - Everything specific to a CLI or provider lives in `runtimes/` behind `Runtime` and
   `Provider`; never branch on runtime names elsewhere. Settings that identify an account or
   resource (such as an endpoint) are secret fields.
-- NexKit reads only secrets the configuration names (`agents`, `publish.push_token_secret`).
+- NexKit reads only secrets the configuration names (`agents`, `github_app`).
   `pipeline.yml` reads the names `route` lists for a job into its `SECRET_SLOTS`. Agent
-  secret names may not start with `GITHUB_` or `NEXKIT_`, the push token not with `GITHUB_`.
+  secret names may not start with `GITHUB_` or `NEXKIT_`, the App's not with `GITHUB_`.
 
 ## Releases
 

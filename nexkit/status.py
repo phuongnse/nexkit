@@ -14,7 +14,6 @@ from . import autopilot
 from .config import DEFAULTS
 from .route import issue_from_branch
 from .state import (
-    BOT_LOGIN,
     CONTINUED,
     FAILURE,
     PAUSED,
@@ -22,6 +21,7 @@ from .state import (
     SUCCESS,
     ci_wait_reason,
     conflict_rounds_used,
+    is_bot,
     latest_plan,
     plan_profile,
     run_comments,
@@ -181,7 +181,7 @@ def merge_item(gh, pull, comments):
     """A pull request NexKit merged, with the state of each after-merge workflow."""
     rounds = [run for _, run in _runs(comments) if "round" in run]
     merged = next((run for run in reversed(rounds) if run.get("outcome") == "merged"), None)
-    by_nexkit = merged is not None or (pull.get("merged_by") or {}).get("login") == BOT_LOGIN
+    by_nexkit = merged is not None or is_bot((pull.get("merged_by") or {}).get("login"))
     if not by_nexkit:
         return None
     workflows = [

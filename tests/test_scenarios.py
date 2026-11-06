@@ -495,19 +495,6 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(pipe.gh.comments_matching(5, "answers for the owner")), 1)
         self.assertEqual(len(pipe.gh.comments_matching(5, "@olivia a person is needed")), 1)
 
-    def test_a_fix_round_held_up_by_workflow_changes_keeps_its_rounds(self):
-        def script(pipe, inputs):
-            if inputs["command"] == "plan":
-                return plan()
-            if inputs["command"] == "go":
-                return done(checks=False)
-            return {"agent": {"status": "needs_merge", "error": "Merging `main` brings changes."}}
-
-        pipe = Pipeline(self, config(), script)
-        pipe.issue(5)
-        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
-        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 0)
-
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done(checks=False)

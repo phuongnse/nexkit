@@ -195,6 +195,9 @@ class GitHub:
                 self._roles[user] = "none"
         return self._roles[user]
 
+    def user(self, login):
+        return self.request("GET", f"/users/{quote(login)}")
+
     def can_write(self, user):
         return self.role(user) in WRITE_ROLES
 
@@ -410,8 +413,9 @@ class GitHub:
     def required_checks(self, branch):
         """(names, complete): the names of the checks that pull requests into `branch` must
         pass, from its rulesets' required status checks and classic branch protection, and
-        whether those are all of them. The Actions token may not read classic protection
-        (403): then only the rulesets' names are known."""
+        whether those are all of them. NexKit's token may not read classic protection
+        (403), which takes the Administration permission: then only the rulesets' names are
+        known."""
         names = set()
         for rule in self.paginate(f"{self._repo}/rules/branches/{quote(branch)}"):
             if rule.get("type") == "required_status_checks":
@@ -465,7 +469,13 @@ class GitHub:
         return found
 
     def delete_branch(self, branch):
-        return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")
+        """Delete a branch. One that is gone already, which GitHub may have deleted by
+        itself after a merge, is no failure: GitHub answers 422 for it."""
+        try:
+            return self.request("DELETE", f"{self._repo}/git/refs/heads/{quote(branch)}")
+        except GitHubError as exc:
+            if exc.status not in (404, 422):
+                raise
 
     def close_pull(self, number):
         return self.request("PATCH", f"{self._repo}/pulls/{number}", {"state": "closed"})

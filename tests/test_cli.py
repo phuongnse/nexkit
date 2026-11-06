@@ -11,10 +11,17 @@ from unittest import mock
 
 import nexkit
 import nexkit.config
-from nexkit import cli, maintain, scaffold
+from nexkit import app, cli, maintain, scaffold
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
-from nexkit.state import check_fingerprint, empty_state, render_state, setup_fingerprint
-from tests.support import CLAUDE, PROFILES, FakeClaude, FakeGitHub, GitRepos, git
+from nexkit.state import (
+    BOT_LOGINS,
+    by_bot,
+    check_fingerprint,
+    empty_state,
+    render_state,
+    setup_fingerprint,
+)
+from tests.support import APP, CLAUDE, PROFILES, FakeClaude, FakeGitHub, GitRepos, git
 from tests.test_agent import CONTEXT, FIX_DONE
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +31,9 @@ class InitDoctorTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        patcher = mock.patch.object(scaffold, "github_app", return_value=(APP, []))
+        self.github_app = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -166,27 +176,6 @@ class InitDoctorTests(unittest.TestCase):
             scaffold.doctor(self.root),
         )
 
-    def test_doctor_says_when_unattended_rounds_have_no_push_token(self):
-        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
-        path = self.root / ".nexkit/config.json"
-        cfg = json.loads(path.read_text())
-
-        def warnings(**changes):
-            path.write_text(json.dumps({**cfg, **changes}))
-            found = [(ok, m) for ok, m in scaffold.doctor(self.root) if "push_token" in m]
-            # Running without a push token is a choice: doctor still passes.
-            self.assertTrue(all(ok for ok, _ in found))
-            return [m for _, m in found]
-
-        self.assertEqual(warnings(), [])
-        [found] = warnings(autopilot={"enabled": True})
-        self.assertTrue(found.startswith("autopilot.enabled is on, but publish.push_token_secret"))
-        self.assertIn("Workflows write access", found)
-        [found] = warnings(autopilot={"enabled": True}, conflicts={"auto_resolve": True})
-        self.assertTrue(found.startswith("autopilot.enabled and conflicts.auto_resolve are on"))
-        token = {"push_token_secret": "NEXKIT_PUSH_TOKEN"}
-        self.assertEqual(warnings(conflicts={"auto_resolve": True}, publish=token), [])
-
     def test_doctor_checks_the_workflows_to_start_after_a_merge(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
         path = self.root / ".nexkit/config.json"
@@ -259,9 +248,9 @@ class InitDoctorTests(unittest.TestCase):
         job = "    permissions: write-all\n    uses:"
         path.write_text(text.replace("  checks: read\n", "").replace("    uses:", job))
         self.assertIn(ok, scaffold.doctor(self.root))
+        # Reading is all it needs: NexKit writes as its App.
         path.write_text(text.replace("permissions:\n", "permissions: read-all\nunused:\n"))
-        findings = scaffold.doctor(self.root)
-        self.assertTrue(any("does not give the pipeline contents: write" in m for _, m in findings))
+        self.assertIn(ok, scaffold.doctor(self.root))
 
     def test_doctor_checks_the_trigger_for_parent_issues(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
@@ -373,66 +362,6 @@ class InitDoctorTests(unittest.TestCase):
         failed = [m for ok, m in scaffold.doctor(self.root) if not ok and "workflow_run" in m]
         self.assertIn("does not let 'workflow_run' events through its 'if'", failed[0])
 
-    def test_doctor_checks_that_each_workflow_after_a_merge_starts_a_sweep_when_it_ends(self):
-        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
-        path = self.root / ".nexkit/config.json"
-        cfg = json.loads(path.read_text())
-        cfg["merge"]["after_workflows"] = ["ci.yml", "e2e.yml"]
-        cfg["autopilot"] = {"enabled": True}
-        path.write_text(json.dumps(cfg))
-        workflows = self.root / ".github/workflows"
-        ci = (
-            "name: CI\non: [push, workflow_dispatch]\njobs:\n"
-            "  test:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make test\n"
-            "  lint:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make lint\n"
-        )
-        (workflows / "ci.yml").write_text(ci)
-        # One that calls another workflow may start the sweep there: doctor cannot tell.
-        e2e = "on: [workflow_dispatch]\njobs:\n  e2e:\n    uses: ./.github/workflows/x.yml\n"
-        (workflows / "e2e.yml").write_text(e2e)
-
-        def sweeps():
-            return [(ok, m) for ok, m in scaffold.doctor(self.root) if "sweep when" in m]
-
-        self.assertEqual(
-            sweeps(),
-            [
-                (
-                    False,
-                    "merge.after_workflows: ci.yml has no job that starts an autopilot sweep "
-                    "when it ends, so a failure in a run NexKit started after its merge waits "
-                    "for the end of the next NexKit run or the hourly schedule; see "
-                    "docs/configuration.md#autopilot or 'nexkit init --after-workflow ci.yml'",
-                ),
-                (
-                    True,
-                    "merge.after_workflows: could not tell whether e2e.yml starts an autopilot "
-                    "sweep when it ends, since it calls another workflow; see "
-                    "docs/configuration.md#autopilot or 'nexkit init --after-workflow e2e.yml'",
-                ),
-            ],
-        )
-        job = scaffold.sweep_job(self.root, "ci.yml")
-        self.assertIn("    needs: [test, lint]\n", job)
-        (workflows / "ci.yml").write_text(ci + job)
-        ok = (True, "merge.after_workflows: ci.yml starts an autopilot sweep when it ends")
-        self.assertIn(ok, sweeps())
-        # Needs as a list of lines count too.
-        listed = job.replace("needs: [test, lint]", "needs:\n      - test\n      - lint")
-        (workflows / "ci.yml").write_text(ci + listed)
-        self.assertIn(ok, sweeps())
-        # A job that does not wait for every other one starts the sweep too early.
-        (workflows / "ci.yml").write_text(ci + job.replace("[test, lint]", "[test]"))
-        [(found, message), _] = sweeps()
-        self.assertFalse(found)
-        self.assertIn("the job 'nexkit-sweep' of ci.yml does not need lint", message)
-        (workflows / "ci.yml").write_text(ci + job.replace("always() && ", ""))
-        self.assertIn("has no 'if: always()'", sweeps()[0][1])
-        # Without autopilot, nothing reads the sweep.
-        cfg["autopilot"] = {"enabled": False}
-        path.write_text(json.dumps(cfg))
-        self.assertEqual(sweeps(), [])
-
     def test_init_offers_the_trigger_and_the_job_for_workflows_after_a_merge(self):
         workflows = self.root / ".github/workflows"
         workflows.mkdir(parents=True)
@@ -446,18 +375,14 @@ class InitDoctorTests(unittest.TestCase):
         self.assertEqual(cfg["merge"]["after_workflows"], ["ci.yml"])
         workflow = (workflows / "nexkit.yml").read_text()
         self.assertIn('workflows: ["CI tests"]', scaffold.trigger(workflow, "workflow_run"))
-        job = scaffold.sweep_job(self.root, "ci.yml")
-        self.assertIn("add this job to .github/workflows/ci.yml, so a sweep", out.getvalue())
-        self.assertIn(job, out.getvalue())
-        (workflows / "ci.yml").write_text(ci + job)
+        # A finished run sends `workflow_run`, also one that NexKit's App started.
+        self.assertNotIn("nexkit-sweep", out.getvalue())
         cfg["autopilot"] = {"enabled": True}
         (self.root / ".nexkit/config.json").write_text(json.dumps(cfg))
-        findings = scaffold.doctor(self.root)
-        for ok in (
-            "Finished runs of merge.after_workflows on the default branch start sweeps",
-            "merge.after_workflows: ci.yml starts an autopilot sweep when it ends",
-        ):
-            self.assertIn((True, ok), findings)
+        self.assertIn(
+            (True, "Finished runs of merge.after_workflows on the default branch start sweeps"),
+            scaffold.doctor(self.root),
+        )
 
     def test_init_and_doctor_with_workflows_that_autopilot_only_watches(self):
         workflows = self.root / ".github/workflows"
@@ -638,7 +563,7 @@ class InitDoctorTests(unittest.TestCase):
         inherit = workflow.read_text()
         text = inherit.replace(
             "    secrets: inherit\n",
-            "    secrets:\n      NEXKIT_PUSH_TOKEN: ${{ secrets.NEXKIT_PUSH_TOKEN }}\n",
+            "    secrets:\n      NEXKIT_APP_ID: ${{ secrets.NEXKIT_APP_ID }}\n",
         )
         workflow.write_text(text + "# ${{ secrets.ANTHROPIC_API_KEY }} in a comment\n")
         self.assertIn(
@@ -667,26 +592,108 @@ class InitDoctorTests(unittest.TestCase):
         workflow.write_text(inherit)
         self.assertFalse(any("does not pass it" in m for _, m in scaffold.doctor(self.root)))
 
-    def test_doctor_checks_the_push_token(self):
-        cfg = nexkit.config.validate({"agents": CLAUDE})
-        names = {"CLAUDE_CODE_OAUTH_TOKEN", "NEXKIT_PUSH_TOKEN"}
-        unused = scaffold._secrets_set(cfg, names, "acme/app")[-1]
-        self.assertFalse(unused[0])
-        self.assertIn("publish.push_token_secret does not name it", unused[1])
-        cfg["publish"]["push_token_secret"] = "BOT_TOKEN"
-        self.assertIn(
-            "names BOT_TOKEN, which is not set",
-            scaffold._secrets_set(cfg, names, "acme/app")[-1][1],
+    def test_doctor_refuses_a_configuration_without_the_app(self):
+        self.github_app.return_value = (None, [])
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        [message] = [m for ok, m in scaffold.doctor(self.root) if "github_app" in m and not ok]
+        self.assertIn("github_app is not set: NexKit acts on GitHub as a GitHub App", message)
+
+    def test_doctor_refuses_a_push_token_with_the_way_to_the_app(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".nexkit/config.json"
+        raw = json.loads(path.read_text())
+        path.write_text(json.dumps({**raw, "publish": {"push_token_secret": "X"}}))
+        self.assertTrue(
+            any("publish.push_token_secret is gone" in m for _, m in scaffold.doctor(self.root))
         )
-        found = scaffold._secrets_set(cfg, {*names, "BOT_TOKEN"}, "acme/app")[-1]
-        self.assertEqual(found, (True, "Pushes use the BOT_TOKEN secret"))
-        listed = (
-            "    secrets:\n      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}\n"
+
+    def app_findings(self, answers=None, key_file=None, inspected=None):
+        cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
+        answers = answers if answers is not None else {}
+
+        def fake_gh(*args):
+            return next((v for k, v in answers.items() if any(k in a for a in args)), None)
+
+        with (
+            mock.patch.object(scaffold, "_gh", side_effect=fake_gh),
+            mock.patch.object(app, "inspect", **(inspected or {})) as inspect,
+        ):
+            self.inspect = inspect
+            return scaffold._app_on_github(cfg, "acme/app", key_file)
+
+    def test_doctor_checks_the_secrets_of_the_app(self):
+        cfg = nexkit.config.validate({"agents": CLAUDE, "github_app": APP})
+        found = scaffold._app_secrets(cfg, {"NEXKIT_APP_ID"}, "acme/app")
+        self.assertEqual(found[0], (True, "github_app.app_id_secret: NEXKIT_APP_ID is set"))
+        self.assertFalse(found[1][0])
+        self.assertIn("gh secret set NEXKIT_APP_PRIVATE_KEY --repo acme/app", found[1][1])
+
+    def test_doctor_says_which_permissions_the_app_lacks(self):
+        granted = {**app.PERMISSIONS, "workflows": "read"}
+        del granted["statuses"]
+        answers = {"apps/nexkit-acme": json.dumps({"id": 7, "permissions": granted})}
+        [lacking, unknown] = self.app_findings(answers)
+        self.assertFalse(lacking[0])
+        self.assertIn("lacks statuses: write, workflows: write", lacking[1])
+        self.assertIn("https://github.com/settings/apps/nexkit-acme/permissions", lacking[1])
+        # Only the App may ask where it is installed, and that is no failure.
+        self.assertTrue(unknown[0])
+        self.assertIn("pass --app-private-key FILE", unknown[1])
+        answers[".owner.type"] = "Organization\n"
+        self.assertIn("organizations/acme/settings", self.app_findings(answers)[0][1])
+
+    def test_doctor_cannot_read_a_private_app_of_someone_else(self):
+        [found] = self.app_findings({})
+        self.assertTrue(found[0])
+        self.assertIn("Could not read the App nexkit-acme", found[1])
+
+    def test_doctor_checks_the_installation_with_the_key(self):
+        answers = {"apps/nexkit-acme": json.dumps({"id": 7, "permissions": app.PERMISSIONS})}
+        state = {"slug": "nexkit-acme", "installed": False, "permissions": {}}
+        found = self.app_findings(answers, "key.pem", {"return_value": state})
+        self.inspect.assert_called_once_with("acme/app", 7, "key.pem")
+        self.assertEqual(found[0], (True, "The App nexkit-acme has the permissions NexKit needs"))
+        self.assertFalse(found[1][0])
+        self.assertIn("is not installed on acme/app", found[1][1])
+        self.assertIn("github.com/apps/nexkit-acme/installations/new", found[1][1])
+        state = {**state, "installed": True, "permissions": app.PERMISSIONS}
+        found = self.app_findings(answers, "key.pem", {"return_value": state})
+        self.assertEqual(found[1], (True, "The App nexkit-acme is installed on acme/app"))
+        self.assertEqual(len(found), 2)
+        state = {**state, "permissions": {**app.PERMISSIONS, "workflows": "read"}}
+        found = self.app_findings(answers, "key.pem", {"return_value": state})
+        self.assertFalse(found[2][0])
+        self.assertIn("installation on acme/app lacks workflows: write", found[2][1])
+        wrong = {"side_effect": app.AppError("not an App's private key")}
+        found = self.app_findings(answers, "key.pem", wrong)
+        self.assertEqual(found[1], (False, "not an App's private key"))
+
+    def test_init_refuses_before_it_creates_an_app(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        self.github_app.reset_mock()
+        self.assertEqual(cli.main(["init", "--repo", str(self.root)]), 2)
+        self.github_app.assert_not_called()
+
+    def test_init_says_what_stopped_the_app(self):
+        self.github_app.side_effect = app.AppError("not installed")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main(["init", "--repo", str(self.root)]), 1)
+        self.assertIn("not installed", err.getvalue())
+        self.assertFalse((self.root / ".nexkit/config.json").exists())
+
+    def test_init_writes_the_app_and_says_what_is_left(self):
+        self.github_app.return_value = (APP, ["Install it: https://x"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        self.assertEqual(
+            json.loads((self.root / ".nexkit/config.json").read_text())["github_app"], APP
         )
-        self.assertIn(
-            "publish.push_token_secret needs BOT_TOKEN",
-            scaffold._passed_secrets(cfg, listed)[0][1],
-        )
+        self.assertIn("Install it: https://x", out.getvalue())
+        workflow = (self.root / ".github/workflows/nexkit.yml").read_text()
+        self.assertEqual(scaffold.granted(workflow)["contents"], "read")
+        self.assertNotIn("write", scaffold.granted(workflow).values())
 
     def test_doctor_finds_the_secret_of_each_agent(self):
         cfg = nexkit.config.validate(
@@ -737,7 +744,8 @@ class PipelineCommandTests(unittest.TestCase):
         self.output = self.root / "output.txt"
         self.gh = FakeGitHub()
         self.gh.add_issue(5)
-        cli.main(["init", "--repo", str(self.root / "repo"), "--check", "test=true"])
+        repo = str(self.root / "repo")
+        cli.main(["init", "--repo", repo, "--check", "test=true", "--app-slug", APP["slug"]])
         patcher = mock.patch.object(cli, "_gh", return_value=self.gh)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -1053,6 +1061,60 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("workflow_dispatch", event)
         self.assertEqual(json.loads(out["decision"]), {"action": "maintain", "task": "resume"})
         self.assertEqual(out["maintain_timeout"], str(330 + 15))
+
+    def test_route_stops_when_the_key_belongs_to_another_app(self):
+        with mock.patch.dict(os.environ, {"NEXKIT_APP_SLUG": "someone-else"}):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                with self.assertRaises(AssertionError):
+                    self.run_route("schedule", {})
+        self.assertIn("::error::github_app.slug is nexkit-acme", out.getvalue())
+        self.assertIn("belongs to someone-else", out.getvalue())
+
+    def test_route_counts_the_comments_of_the_app_as_nexkits(self):
+        BOT_LOGINS.discard("nexkit-acme[bot]")
+        self.assertFalse(by_bot({"user": {"login": "nexkit-acme[bot]"}}))
+        self.run_route("schedule", {})
+        self.assertTrue(by_bot({"user": {"login": "nexkit-acme[bot]"}}))
+        self.assertFalse(by_bot({"user": {"login": "other[bot]"}}))
+
+    def test_a_run_without_the_app_stops_at_its_start_and_says_why(self):
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        del raw["github_app"]
+        path.write_text(json.dumps(raw))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli.main(["app", "--repo", str(self.root / "repo")])
+        self.assertEqual(code, 1)
+        self.assertIn("::error::github_app is not set", out.getvalue())
+
+    def test_a_run_names_the_secrets_of_the_app(self):
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(self.output)}):
+            self.assertEqual(cli.main(["app", "--repo", str(self.root / "repo")]), 0)
+        text = self.output.read_text()
+        self.assertIn("app_id_secret<<", text)
+        self.assertIn("NEXKIT_APP_PRIVATE_KEY", text)
+
+    def test_a_run_that_got_no_token_says_what_to_check(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["app", "--no-token"]), 1)
+        self.assertIn("::error::NexKit could not get a token", out.getvalue())
+
+    def test_the_wait_for_paused_commands_only_waits(self):
+        env = {
+            "NEXKIT_CONFIG": json.dumps({"agents": CLAUDE, "github_app": APP}),
+            "NEXKIT_DECISION": "{}",
+        }
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch.object(maintain, "wait_for_paused") as wait,
+            mock.patch.object(maintain, "maintain") as work,
+        ):
+            self.assertEqual(cli.main(["maintain", "--wait"]), 0)
+        wait.assert_called_once_with(self.gh, 330)
+        work.assert_not_called()
 
     def test_route_replies_with_configuration_errors(self):
         (self.root / "repo/.nexkit/config.json").write_text('{"model": 1}')
@@ -1416,7 +1478,9 @@ class WorkflowSafetyTests(unittest.TestCase):
         for name in ("agent", "verify", "combine", "review"):
             self.assertNotIn(": write", self.jobs[name], name)
             self.assertNotIn("persist-credentials: true", self.jobs[name], name)
-            self.assertNotIn("NEXKIT_PUSH_TOKEN", self.jobs[name], name)
+            self.assertNotIn("create-github-app-token", self.jobs[name], name)
+            self.assertNotIn("github_app", self.jobs[name], name)
+            self.assertNotIn("private-key", self.jobs[name], name)
 
     def permissions(self, name):
         block = re.search(r"^    permissions:\n((?:      .*\n)+)", self.jobs[name], re.M)
@@ -1532,9 +1596,13 @@ class WorkflowSafetyTests(unittest.TestCase):
         )
 
     def test_jobs_with_write_tokens_never_receive_model_credentials(self):
-        push = "secrets[fromJSON(needs.route.outputs.config).publish.push_token_secret]"
         for name in ("publish", "report", "route", "maintain", "finish"):
-            job = self.jobs[name].replace(push, "")
+            job = re.sub(
+                r"secrets\[(?:fromJSON\(needs\.route\.outputs\.config\)\.github_app|"
+                r"steps\.app\.outputs)\.(?:app_id|private_key)_secret\]",
+                "",
+                self.jobs[name],
+            )
             for text in (
                 "CLAUDE_CODE_OAUTH_TOKEN",
                 "ANTHROPIC_API_KEY",
@@ -1542,14 +1610,51 @@ class WorkflowSafetyTests(unittest.TestCase):
                 "NEXKIT_AGENT_SECRET",
             ):
                 self.assertNotIn(text, job, name)
-        # Publish reads only the push token, by the name the configuration gives it.
-        self.assertEqual(self.jobs["publish"].count(push), 2)
-        self.assertNotIn("secrets.", self.jobs["publish"])
+            self.assertNotIn("secrets.", job, name)
+
+    def test_each_job_that_writes_mints_its_token_with_only_what_it_needs(self):
+        for name in ("route", "publish", "report", "maintain", "finish"):
+            [step] = [s for s in self.jobs[name].split("\n      - ") if "app-token@" in s]
+            asked = dict(re.findall(r"permission-([a-z-]+): (read|write)", step))
+            for permission, level in asked.items():
+                needed = app.PERMISSIONS[permission.replace("-", "_")]
+                self.assertGreaterEqual(app.LEVELS[needed], app.LEVELS[level], permission)
+            self.assertIn("id: token", step, name)
+            # The key goes to the action, and only the token it mints to NexKit.
+            uses = [s for s in self.jobs[name].split("\n      - ") if "nexkit " in s]
+            for later in uses:
+                self.assertNotIn("private_key_secret\n", later, name)
+        self.assertEqual(self.minted("publish")["workflows"], "write")
+        self.assertEqual(self.minted("finish"), {"actions": "write"})
+        self.assertEqual(self.minted("route")["contents"], "read")
+
+    def minted(self, name):
+        [step] = [s for s in self.jobs[name].split("\n      - ") if "app-token@" in s]
+        return dict(re.findall(r"permission-([a-z-]+): (read|write)", step))
+
+    def test_nothing_writes_with_the_actions_token(self):
+        for name, job in self.jobs.items():
+            self.assertNotIn(
+                ": write", re.sub(r"permission-[a-z-]+: write", "", job), f"{name} permissions"
+            )
+        for name in ("route", "publish", "report", "finish"):
+            self.assertNotIn("github.token", self.jobs[name], name)
+        # The wait for paused commands reads with it, since the App's token lasts an hour.
+        [wait] = [
+            step for step in self.jobs["maintain"].split("\n      - ") if "github.token" in step
+        ]
+        self.assertIn("nexkit maintain --wait", wait)
+        steps = self.jobs["maintain"].split("\n      - ")
+        self.assertLess(
+            next(i for i, s in enumerate(steps) if "--wait" in s),
+            next(i for i, s in enumerate(steps) if "app-token@" in s),
+        )
+        self.assertIn("steps.token.outputs.token", self.jobs["publish"].split("repository: ")[-1])
 
     def test_the_pipeline_declares_the_secrets_a_workflow_may_pass_one_by_one(self):
         declared = self.text.split("    secrets:\n", 1)[1].split("\npermissions:", 1)[0]
         names = re.findall(r"^      (\w+):$", declared, re.M)
-        self.assertEqual(names, [*DECLARED_SECRETS, "NEXKIT_PUSH_TOKEN"])
+        self.assertEqual(names, [*DECLARED_SECRETS, *nexkit.config.APP_SECRETS.values()])
         # A new workflow passes every secret, so agents can use secrets of any name.
         template = (ROOT / "nexkit/templates/workflow.yml").read_text()
         self.assertIn("\n    secrets: inherit\n", template)
@@ -1593,12 +1698,11 @@ class WorkflowSafetyTests(unittest.TestCase):
     def test_report_merges_without_checking_out_the_repository(self):
         # `contents: write` lets report merge; it has nothing of the repository to run or push.
         report = self.jobs["report"]
-        self.assertIn("contents: write", report)
-        self.assertIn("actions: write", report)  # workflow_dispatch after the merge
+        self.assertIn("permission-contents: write", report)
+        self.assertIn("permission-actions: write", report)  # workflow_dispatch after the merge
         self.assertEqual(report.count("actions/checkout@"), 1)
         self.assertIn("path: kit", report)
         self.assertNotIn("persist-credentials: true", report)
-        self.assertNotIn("NEXKIT_PUSH_TOKEN", report)
 
     def test_maintain_never_checks_out_the_repository(self):
         maintain = self.jobs["maintain"]
@@ -1609,7 +1713,6 @@ class WorkflowSafetyTests(unittest.TestCase):
         # `contents: write` lets a sweep merge a pull request whose required checks passed
         # since; it has nothing of the repository to run or push.
         self.assertNotIn("persist-credentials: true", maintain)
-        self.assertNotIn("NEXKIT_PUSH_TOKEN", maintain)
         self.assertNotIn("secrets.", maintain)
         self.assertIn('["none","maintain"]', self.jobs["report"])
 
@@ -1620,11 +1723,10 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("always() && needs.route.result == 'success'", finish)
         self.assertIn('["plan","implement","fix","review"]', finish)
         self.assertIn("needs.report.result != 'success'", finish)
-        self.assertEqual(self.permissions("finish"), {"contents": "read", "actions": "write"})
+        self.assertEqual(self.permissions("finish"), {"contents": "read"})
         self.assertEqual(finish.count("actions/checkout@"), 1)
         self.assertIn("path: kit", finish)
         self.assertNotIn("persist-credentials: true", finish)
-        self.assertNotIn("secrets.", finish)
 
     def test_the_workflow_init_writes_gives_every_permission_a_job_asks_for(self):
         # GitHub starts no run of a workflow whose called jobs ask for more than it gives.
@@ -1636,15 +1738,15 @@ class WorkflowSafetyTests(unittest.TestCase):
                 self.assertGreaterEqual(
                     levels[given.get(permission, "none")], levels[level], f"{name}: {permission}"
                 )
-        self.assertIn("checks: read", self.jobs["maintain"])
+        self.assertIn("permission-checks: read", self.jobs["maintain"])
 
     def test_route_acknowledges_commands_without_repository_code(self):
         route = self.jobs["route"]
         for permission in (
-            "issues: write",
-            "pull-requests: write",
-            "statuses: write",
-            "actions: read",
+            "permission-issues: write",
+            "permission-pull-requests: write",
+            "permission-statuses: write",
+            "permission-actions: read",
         ):
             self.assertIn(permission, route)
         self.assertNotIn("contents: write", route)

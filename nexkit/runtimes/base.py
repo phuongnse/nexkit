@@ -24,7 +24,7 @@ ACCESS = {
 }
 SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 # A configuration names its agents' secrets freely, except names with these prefixes: they
-# belong to GitHub and to NexKit itself, such as NEXKIT_PUSH_TOKEN and the pipeline's slots.
+# belong to GitHub and to NexKit itself, such as NEXKIT_APP_ID and the pipeline's slots.
 RESERVED_PREFIXES = ("GITHUB_", "NEXKIT_")
 
 

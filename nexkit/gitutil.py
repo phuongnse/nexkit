@@ -5,9 +5,6 @@ from __future__ import annotations
 import re
 import subprocess
 
-BOT_NAME = "github-actions[bot]"
-BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
-
 
 class GitError(RuntimeError):
     pass

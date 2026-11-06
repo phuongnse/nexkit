@@ -5,7 +5,8 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import config
-from tests.support import CLAUDE, with_claude
+from nexkit.config import CONFIG_PATH, ConfigError, app_login, app_problem, read_app
+from tests.support import APP, CLAUDE, with_claude
 
 
 def validate(raw, **kw):
@@ -461,19 +462,61 @@ class ConfigTests(unittest.TestCase):
         where = [call.args[1] for call in checked.call_args_list]
         self.assertEqual(where, [f"stages.{name}" for name in again["stages"]])
 
-    def test_push_token_secret(self):
-        self.assertIsNone(validate({})["publish"]["push_token_secret"])
-        named = validate({"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}})
-        self.assertEqual(named["publish"]["push_token_secret"], "NEXKIT_PUSH_TOKEN")
-        for value, message in (
-            ("github_pat_0123456789abcdef", "the config holds only its name"),
-            ("GITHUB_TOKEN", "the config holds only its name"),
-            ("CLAUDE_CODE_OAUTH_TOKEN", "is an agent's secret"),
+    def test_github_app(self):
+        self.assertIsNone(validate({})["github_app"]["slug"])
+        self.assertEqual(validate({"github_app": APP})["github_app"], APP)
+        self.assertEqual(app_login(validate({"github_app": APP})), "nexkit-acme[bot]")
+        self.assertIsNone(app_login({}))
+        for change, message in (
+            ({"slug": "Not A Slug"}, "github_app.slug"),
+            ({"slug": None}, "github_app.slug"),
+            ({"app_id_secret": "lowercase"}, "github_app.app_id_secret must be the name"),
+            ({"private_key_secret": "GITHUB_KEY"}, "github_app.private_key_secret must be"),
+            ({"private_key_secret": None}, "github_app.private_key_secret must be"),
+            ({"private_key_secret": "NEXKIT_APP_ID"}, "must differ"),
         ):
-            with self.subTest(value=value), self.assertRaisesRegex(config.ConfigError, message):
-                validate({"publish": {"push_token_secret": value}})
-        with self.assertRaisesRegex(config.ConfigError, "Unknown keys in publish"):
-            validate({"publish": {"token": "X"}})
+            with self.assertRaisesRegex(ConfigError, message):
+                validate({"github_app": {**APP, **change}})
+        with self.assertRaisesRegex(ConfigError, "Unknown keys in github_app: app_id"):
+            validate({"github_app": {**APP, "app_id": 1}})
+        token = {"runtime": "claude-code", "provider": "anthropic", "api_key_secret": "APP_KEY"}
+        with self.assertRaisesRegex(ConfigError, "APP_KEY is an agent's secret"):
+            validate(
+                {
+                    "agents": {"claude": token},
+                    "github_app": {**APP, "private_key_secret": "APP_KEY"},
+                }
+            )
+
+    def test_a_push_token_is_refused_with_the_way_to_the_app(self):
+        with self.assertRaisesRegex(ConfigError, "publish.push_token_secret is gone.*github_app"):
+            validate({"publish": {"push_token_secret": "NEXKIT_PUSH_TOKEN"}})
+        with self.assertRaisesRegex(ConfigError, "publish.push_token_secret is gone"):
+            validate({"publish": {"push_token_secret": None}})
+
+    def test_a_run_needs_the_app(self):
+        self.assertIn("github_app is not set", app_problem(validate({})))
+        self.assertIsNone(app_problem(validate({"github_app": APP})))
+
+    def read_app(self, raw):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / CONFIG_PATH
+            path.parent.mkdir()
+            path.write_text(raw if isinstance(raw, str) else json.dumps(with_claude(raw)))
+            return read_app(root)
+
+    def test_a_run_gets_the_app_from_a_configuration_wrong_elsewhere(self):
+        self.assertEqual(self.read_app({"github_app": APP}), APP)
+        # So `route` gets a token, and can say on GitHub what is wrong.
+        self.assertEqual(self.read_app({"github_app": APP, "unknown": 1}), APP)
+        with self.assertRaisesRegex(ConfigError, "github_app is not set"):
+            self.read_app({})
+        with self.assertRaisesRegex(ConfigError, "Unknown configuration keys"):
+            self.read_app({"unknown": 1})
+        with self.assertRaisesRegex(ConfigError, "not valid JSON"):
+            self.read_app("{")
+        with self.assertRaisesRegex(ConfigError, "publish.push_token_secret is gone"):
+            self.read_app({"publish": {"push_token_secret": "X"}})
 
     def test_agents_are_declared(self):
         # A configuration from before agents were declared says what to add.

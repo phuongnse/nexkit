@@ -24,24 +24,46 @@ of the workflow at all. Workflows from NexKit 4.3.0 or earlier lack `checks: rea
 autopilot needs to read the annotations that name the failures of flaky runs. Add each
 permission named under `permissions:`, as `nexkit init` writes it.
 
-**`nexkit doctor`: "autopilot.enabled is on, but publish.push_token_secret is not set".**
-The same for `conflicts.auto_resolve`. Rounds that NexKit starts by itself push with the
-Actions token, which may not push changes to `.github/workflows/`. When a person merges
-such a change into the base branch, an automatic fix round leaves the merge out and fixes
-the pull request as it is, and a round that must merge it for a conflict stops before its
-agent and waits for a person (see below); neither uses up an automatic round. This is not
-a problem, and doctor still passes.
-To let those rounds go on by themselves, name a fine-grained token with Contents, Pull
-requests and Workflows write access in `publish.push_token_secret` (see
-[Secrets](configuration.md#secrets)).
+### The GitHub App
+
+NexKit [acts as a GitHub App](configuration.md#the-github-app). Without a working App a run
+cannot write anything on GitHub, not even a reply, so what went wrong shows only in the
+Actions tab, as an error on the `route` job.
+
+**"github_app is not set".** Run `nexkit init`, which creates the App, or follow
+[Moving to the GitHub App](configuration.md#moving-to-the-github-app).
+
+**"publish.push_token_secret is gone".** NexKit no longer uses a push token. Remove `publish`
+and follow [Moving to the GitHub App](configuration.md#moving-to-the-github-app).
+
+**"NexKit could not get a token from its GitHub App".** One of these:
+
+- **The App is not installed on the repository.** Install it at
+  `https://github.com/apps/<slug>/installations/new`. `nexkit doctor --app-private-key FILE`
+  checks this.
+- **A secret is missing or wrong.** Set the secrets that `github_app` names, with
+  `nexkit init --force --app-id ID --app-private-key FILE`. A workflow that lists secrets one
+  by one must pass them too.
+- **A permission is missing.** A job asks only for what it needs, but GitHub refuses a token
+  for more than the App has. Grant it on the App's *Permissions* page, then accept the change
+  on the installation, which GitHub asks for each time permissions grow. `nexkit doctor` names
+  what is missing.
+
+**"github_app.slug is …, but the App's key belongs to …".** The configuration names another
+App than the secrets. NexKit would not recognise its own comments, so the run stops. Correct
+`github_app.slug`.
+
+**`nexkit doctor`: "Could not tell whether … is installed".** Only the App itself may ask,
+which takes its key. Pass `--app-private-key FILE`. It needs `openssl`. This is not a problem,
+and doctor still passes.
+
+**`nexkit doctor`: "Could not read the App".** GitHub shows a private App only to its owner.
+Check the permissions on the App's page instead. This is not a problem, and doctor still
+passes.
 
 **`nexkit doctor`: "NexKit vX.Y.Z is available".** A newer release exists. This is not a
 problem, and doctor still passes: upgrade when you choose to, with the steps in that
 release's notes.
-
-**"GitHub Actions is not permitted to create or approve pull requests".** Enable it under
-Settings > Actions > General > Workflow permissions, or run the `gh api` command printed by
-`nexkit doctor`.
 
 **"NexKit configuration error: …".** NexKit replies with this on the command when
 `.nexkit/config.json` on the default branch is invalid; run `nexkit doctor` locally to see
@@ -61,8 +83,8 @@ the same message. Some of them:
   [Agents](configuration.md#agents) table lists the pairs NexKit supports.
 - **"names that start with GITHUB_ or NEXKIT_ are reserved".** An agent's secret has a
   name GitHub or NexKit uses. Store it under another name and change the `*_secret` key.
-- **"publish.push_token_secret: … is an agent's secret".** The push token must be a
-  secret of its own, because agents never hold a token that can write.
+- **"github_app.…: … is an agent's secret".** The App's secrets must be secrets of their
+  own, because agents never hold what can write.
 - **"… does not report usage limits, so a fallback would never run".** Remove `fallback`
   from that agent.
 - **"… must use the … runtime too".** A fallback agent runs the stage's `model` and
@@ -105,8 +127,8 @@ names as a repository secret: for `oauth_token_secret`, the token from
 `claude setup-token`; for `api_key_secret`, an Anthropic API key.
 `.github/workflows/nexkit.yml` must pass it to the pipeline with `secrets: inherit`, as
 `nexkit init` writes it; an older workflow that lists secrets one by one can pass only
-`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` and `NEXKIT_PUSH_TOKEN`. `nexkit doctor`
-checks this. A [fallback agent](configuration.md#fallback-agents) without its secret does
+`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `NEXKIT_APP_ID` and
+`NEXKIT_APP_PRIVATE_KEY`. `nexkit doctor` checks this. A [fallback agent](configuration.md#fallback-agents) without its secret does
 not fail the stage: it is skipped, and the run summary says so. Secrets are not available
 to runs triggered from forks.
 
@@ -189,20 +211,12 @@ stops the same way. The job's log has the traceback; please report it as a NexKi
 
 ## Pull requests and merges
 
-**My repository's CI does not run on NexKit pull requests.** GitHub does not start
-workflows for events created with the default Actions token. NexKit runs your configured
-checks itself. To also run your CI, store a push token as a secret and name it in
-`publish.push_token_secret` (see [Secrets](configuration.md#secrets)). A
-`NEXKIT_PUSH_TOKEN` secret that the configuration does not name is not used, and
-`nexkit doctor` warns about it.
-
-The same applies to a merge by NexKit with `merge.auto`: the push to the base branch
-starts no `push` CI, whichever token published the pull request. List those workflows in
-`merge.after_workflows` and give each a `workflow_dispatch` trigger; NexKit then starts
-them on the base branch after it merges (see
-[Automatic merge](configuration.md#automatic-merge)). To have autopilot watch a workflow
-that runs on a schedule instead, without NexKit starting it, list it in
-`autopilot.watch_workflows` (see [Autopilot](configuration.md#autopilot)).
+**My repository's CI runs too often on NexKit's work.** NexKit's pushes, pull requests and
+merges start your workflows, as a person's do. To save runners on the default branch, take
+a costly workflow's `push` trigger off for it and list it in `merge.after_workflows` with
+`every`, or give it a `schedule` and list it in `autopilot.watch_workflows` (see
+[Automatic merge](configuration.md#automatic-merge) and
+[Autopilot](configuration.md#autopilot)).
 
 **A check was skipped, or ran when it could have been skipped.** A round's comment says
 "`name` skipped: no path it reads changed since `abc1234`" for each check that its
@@ -284,13 +298,9 @@ decision, which you answer with `/nexkit fix`; `conflicts.max_rounds` (3 by defa
 rounds are used up; or the conflict needs a manual merge (below). The `maintain` job's
 log lists what each check did.
 
-**"conflicts with `main` in protected paths" or "brings changes to `.github/workflows/…`".**
-NexKit cannot publish this merge, and the round stopped before its agent ran, without using
-up an automatic round. Merge the base branch into the pull request yourself, push, and
-comment `/nexkit review`. **"Did not merge `main`, which changed `.github/workflows/…`"**
-means the round fixed the pull request without the merge; it stays behind `main` until
-you merge it. For workflow files, a push token with Workflows write
-access, named in `publish.push_token_secret`, also lets NexKit push the merge.
+**"conflicts with `main` in protected paths".** NexKit cannot publish this merge, and the
+round stopped before its agent ran. Merge the base branch into the pull request yourself,
+push, and comment `/nexkit review`.
 
 ## When NexKit waits for a person
 
@@ -393,11 +403,10 @@ comment says why, such as an update of the branch that GitHub refused. Comment `
 fix` when the pull request conflicts with its base branch, otherwise `/nexkit review`
 after merging the base branch into it.
 
-### A round needs a manual merge (`needs_merge`)
+### A round needs a manual merge
 
-The merge the round needs, for a conflict in a protected path or for a conflict whose
-merge brings workflow changes without a push token that may push them, is one NexKit
-cannot publish, so the round stopped before its agent (see [above](#pull-requests-and-merges)):
+The merge the round needs, for a conflict in a protected path, is one NexKit cannot publish,
+so the round stopped before its agent (see [above](#pull-requests-and-merges)):
 
 1. Merge the base branch into the pull request's branch yourself, in a separate worktree,
    and resolve the conflicts.

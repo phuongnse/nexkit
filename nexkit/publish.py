@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import config as configuration
 from .github import GitHubError
-from .gitutil import BOT_EMAIL, BOT_NAME, GitError, git, is_ancestor, merge_tree, names
+from .gitutil import git, is_ancestor, merge_tree, names
 from .runlog import stage_agent
 from .schema import filled
 from .state import (
@@ -33,11 +33,6 @@ class PublishError(RuntimeError):
 
 class BranchMovedError(PublishError):
     """The pull request branch moved while a fix round's agent worked."""
-
-
-class WorkflowMergeError(PublishError):
-    """A fix round's merge of the base branch brings workflow changes that the push token
-    may not make. The round does not count against the automatic rounds."""
 
 
 def _section(title, lines, level="###"):
@@ -246,28 +241,8 @@ def pull_body(decision, result, auto_merge=False):
     return "\n".join(parts)
 
 
-WORKFLOWS = ".github/workflows/"
-# What GitHub answers when a push changes workflow files without the permission to.
-WORKFLOW_REFUSAL = re.compile(r"refusing to allow .* to create or update workflow")
-
-
 def _changed(repo, *args):
     return names(git(repo, "diff", "--name-only", "--no-renames", "-z", *args))
-
-
-def workflow_message(base, files):
-    """Why a merge of the base branch cannot be pushed, and what a person can do."""
-    listed = ", ".join(f"`{name}`" for name in files) if files else "workflow files"
-    return (
-        f"Merging `{base}` brings changes to {listed}, and the token NexKit pushes with may not "
-        "change workflow files. Merge the base branch into the pull request yourself and "
-        "comment `/nexkit review`, or name a token that may update workflows in "
-        "`publish.push_token_secret`."
-    )
-
-
-def _workflow_error(base, files):
-    return WorkflowMergeError(workflow_message(base, files))
 
 
 def _on_base(repo, commit, base):
@@ -291,15 +266,6 @@ def _merged_base(repo, decision, result):
     return commit
 
 
-def _moved_workflows(base, files):
-    listed = ", ".join(f"`{name}`" for name in files) if files else "workflow files"
-    return (
-        f"`{base}` changed {listed} while the agent worked, and the token NexKit pushes with "
-        "may not change workflow files, so the change must start from the current "
-        f"`{base}`"
-    )
-
-
 def _implement_start(repo, decision, result):
     """The base commit the implement agent started from, checked. The pull request starts
     there, so the patch applies even when the base branch moved during the run."""
@@ -313,9 +279,18 @@ def _implement_start(repo, decision, result):
     return commit
 
 
-def apply_change(
-    repo, decision, result, title, patch_path, cfg, *, can_push_workflows=False, up_to_date=False
-):
+def identity(gh, cfg):
+    """The `git -c` options that make a commit the App's: its bot's name and noreply address,
+    which needs the bot's user id, so GitHub links the commit to the bot."""
+    login = configuration.app_login(cfg)
+    try:
+        email = f"{gh.user(login)['id']}+{login}@users.noreply.github.com"
+    except (GitHubError, KeyError):
+        email = f"{login}@users.noreply.github.com"
+    return ("-c", f"user.name={login}", "-c", f"user.email={email}")
+
+
+def apply_change(repo, decision, result, title, patch_path, cfg, bot, *, up_to_date=False):
     """Create the commit on the NexKit branch and push it. Return (the new head SHA, what
     the base branch's tip meant for it, see `catch_up`).
 
@@ -327,14 +302,8 @@ def apply_change(
     branch = decision["branch"]
     refs = [decision["base"]] + ([branch] if decision["action"] == "fix" else [])
     git(repo, "fetch", "--quiet", "origin", *refs)
-    moved = []
     if decision["action"] == "implement":
-        start = _implement_start(repo, decision, result)
-        if not can_push_workflows:
-            # A branch that starts behind the base would carry its old workflow files, and
-            # GitHub refuses such a push from a token that may not change workflows.
-            moved = _changed(repo, start, f"origin/{decision['base']}", "--", WORKFLOWS)
-        git(repo, "checkout", "-q", "-B", branch, f"origin/{decision['base']}" if moved else start)
+        git(repo, "checkout", "-q", "-B", branch, _implement_start(repo, decision, result))
     else:
         git(repo, "checkout", "-q", "-B", branch, f"origin/{branch}")
         current = git(repo, "rev-parse", "HEAD").strip()
@@ -345,16 +314,7 @@ def apply_change(
             )
     merged = _merged_base(repo, decision, result)
     if Path(patch_path).stat().st_size:
-        try:
-            git(repo, "apply", "--index", "--whitespace=nowarn", str(patch_path))
-        except GitError:
-            if not moved:
-                raise
-            raise PublishError(
-                f"{_moved_workflows(decision['base'], moved)}, where the change does not "
-                "apply. Comment `/nexkit go` to run again on the current base branch, or name "
-                "a token that may update workflows in `publish.push_token_secret`."
-            ) from None
+        git(repo, "apply", "--index", "--whitespace=nowarn", str(patch_path))
     files = _changed(repo, "--cached", "HEAD")
     edits = files
     if merged:
@@ -369,9 +329,6 @@ def apply_change(
         )
     if not files and not merged:
         raise PublishError("The agent's patch is empty after applying it to the branch.")
-    workflows = [name for name in files if name.startswith(WORKFLOWS)]
-    if merged and workflows and not can_push_workflows:
-        raise _workflow_error(decision["base"], workflows)
     if decision["action"] == "implement":
         message = f"{title} (#{decision['issue']})"
     elif merged:
@@ -382,7 +339,6 @@ def apply_change(
     cause = str((result.get("output") or {}).get("cause") or "").strip()
     if decision["action"] == "fix" and cause:
         message += f"\nCause: {cause}\n"
-    bot = ("-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}")
     if merged:
         tree = git(repo, "write-tree").strip()
         commit = git(
@@ -391,28 +347,16 @@ def apply_change(
         git(repo, "reset", "-q", "--soft", commit)
     else:
         git(repo, *bot, "commit", "-q", "--no-verify", "-F", "-", input=message)
-    found = catch_up(repo, decision, cfg, up_to_date, can_push_workflows)
+    found = catch_up(repo, decision, cfg, bot, up_to_date)
     push = ["push", "--quiet", "origin", f"HEAD:refs/heads/{branch}"]
     if decision["action"] == "implement":
         # No open PR uses this branch (checked when routing); replace any stale attempt.
         push.insert(1, "--force")
-    try:
-        git(repo, *push)
-    except GitError as exc:
-        if merged and WORKFLOW_REFUSAL.search(str(exc)):
-            raise _workflow_error(decision["base"], workflows) from None
-        if decision["action"] == "implement" and WORKFLOW_REFUSAL.search(str(exc)):
-            raise PublishError(
-                f"GitHub refused the push because it would change workflow files: `"
-                f"{decision['base']}` probably changed them again while NexKit published. "
-                "Comment `/nexkit go` to run again on the current base branch, or name a token "
-                "that may update workflows in `publish.push_token_secret`."
-            ) from None
-        raise
+    git(repo, *push)
     return git(repo, "rev-parse", "HEAD").strip(), found
 
 
-def catch_up(repo, decision, cfg, up_to_date, can_push_workflows):
+def catch_up(repo, decision, cfg, bot, up_to_date):
     """Compare the round's commit at HEAD with the base branch's tip as `publish` fetched
     it. Returns {} when HEAD contains the tip, or when it is behind and nothing needs it.
 
@@ -421,9 +365,7 @@ def catch_up(repo, decision, cfg, up_to_date, can_push_workflows):
       run, and the conflict round starts at once.
     - `updated`: the tip, which a merge commit on top of HEAD now brings in, when the rules
       want pull requests up to date (`up_to_date`), so the checks run on a head that can
-      merge.
-    - `held`: the workflow files that keep that merge out, because the token NexKit pushes
-      with may not change them. HEAD stays behind, as without the rule."""
+      merge."""
     base = decision["base"]
     tip = git(repo, "rev-parse", f"origin/{base}").strip()
     if is_ancestor(repo, tip, "HEAD"):
@@ -433,15 +375,10 @@ def catch_up(repo, decision, cfg, up_to_date, can_push_workflows):
         return {"conflicts": conflicts} if cfg["conflicts"]["auto_resolve"] else {}
     if not up_to_date:
         return {}
-    if not can_push_workflows:
-        held = _changed(repo, "HEAD", tree, "--", WORKFLOWS)
-        if held:
-            return {"held": held}
     message = (
         f"Merge {base} into {decision['branch']}\n\nThe rules of `{base}` want pull requests "
         "up to date, so the checks run on a head that contains it.\n"
     )
-    bot = ("-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}")
     commit = git(
         repo, *bot, "commit-tree", tree, "-p", "HEAD", "-p", tip, "-F", "-", input=message
     ).strip()
@@ -449,11 +386,9 @@ def catch_up(repo, decision, cfg, up_to_date, can_push_workflows):
     return {"updated": tip}
 
 
-def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, push_token=False):
-    """`gh` posts as the Actions bot. `author` opens pull requests; a personal or App token
-    there lets the repository's own CI run on NexKit pull requests. `push_token` says that
-    git pushes with such a token rather than the Actions token, which may never change
-    workflow files."""
+def publish(gh, decision, result, context, cfg, repo, out_dir):
+    """`gh` and the checkout's git both act as the repository's GitHub App, so what they do
+    starts the repository's own workflows, as a person's push would."""
     if result.get("status") != "done":
         return {"published": False}
     if decision["action"] in ("plan", "implement") and issue_closed(gh, decision["issue"]):
@@ -480,12 +415,12 @@ def publish(gh, decision, result, context, cfg, repo, out_dir, *, author=None, p
         context["title"],
         patch,
         cfg,
-        can_push_workflows=push_token,
+        identity(gh, cfg),
         up_to_date=wants_up_to_date(gh, decision["base"]),
     )
     pr = decision["pr"]
     if decision["action"] == "implement":
-        pull = (author or gh).create_pull(
+        pull = gh.create_pull(
             context["title"],
             decision["branch"],
             decision["base"],
@@ -513,9 +448,8 @@ def issue_closed(gh, issue):
 
 
 def copy_issue_fields(gh, issue, pr):
-    """Give a new pull request the labels and milestone of its issue. The Actions bot sets
-    them, so no workflow starts for it. The pull request exists by now, so a failure only
-    warns."""
+    """Give a new pull request the labels and milestone of its issue. The pull request
+    exists by now, so a failure only warns."""
     try:
         found = gh.issue(issue)
         milestone = (found.get("milestone") or {}).get("number")

@@ -6,12 +6,13 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 from nexkit import agent
 from nexkit.context import gather
 from nexkit.github import GitHubError
-from nexkit.gitutil import BOT_NAME, merge_tree
-from nexkit.publish import PublishError, WorkflowMergeError, publish, pull_body, render_plan
+from nexkit.gitutil import merge_tree
+from nexkit.publish import PublishError, identity, publish, pull_body, render_plan
 from nexkit.state import latest_plan, plan_data, plan_profile, plan_text
 from tests.support import (
     CALC,
@@ -106,7 +107,10 @@ class PublishTests(unittest.TestCase):
         self.assertTrue(outcome["published"])
         remote_head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
         self.assertEqual(outcome["head"], remote_head)
-        self.assertEqual(git(self.repos.origin, "log", "-1", "--format=%an", remote_head), BOT_NAME)
+        self.assertEqual(
+            git(self.repos.origin, "log", "-1", "--format=%an <%ae>", remote_head),
+            "nexkit-acme[bot] <4242+nexkit-acme[bot]@users.noreply.github.com>",
+        )
         self.assertEqual(
             git(self.repos.origin, "log", "-1", "--format=%s", remote_head), "Fix add (#5)"
         )
@@ -273,13 +277,24 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(self.parents(outcome["head"]), [start])
         self.assertEqual(set(outcome), {"published", "pr", "head"})
 
-    def test_workflow_changes_keep_the_merge_out_without_a_push_token(self):
+    def test_workflow_changes_merge_like_any_other_with_the_app(self):
         self.gh.strict = True
         files = {".github/workflows/ci.yml": "on: push\n"}
         outcome, start = self.fix_on_a_moved_base(files)
-        self.assertEqual(self.parents(outcome["head"]), [start])
-        self.assertEqual(outcome["held"], [".github/workflows/ci.yml"])
-        self.assertNotIn("updated", outcome)
+        self.assertEqual(len(self.parents(outcome["head"])), 2)
+        self.assertIn("updated", outcome)
+
+    def test_a_commit_without_the_bots_id_still_names_the_app(self):
+        self.gh.user = mock.Mock(side_effect=GitHubError(404, "Not Found"))
+        self.assertEqual(
+            identity(self.gh, self.cfg),
+            (
+                "-c",
+                "user.name=nexkit-acme[bot]",
+                "-c",
+                "user.email=nexkit-acme[bot]@users.noreply.github.com",
+            ),
+        )
 
     def publish_implement(self, start, name="publisher", **options):
         return publish(
@@ -293,58 +308,12 @@ class PublishTests(unittest.TestCase):
             **options,
         )
 
-    def test_implement_starts_on_the_current_base_when_it_changed_workflows(self):
-        # lyre#290: a CI change merged while the agent worked; the old ci.yml was refused.
-        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
-        later = self.repos.push_commit(
-            "dev", "main", {".github/workflows/ci.yml": "on: push\n"}, "Cache"
-        )
-        outcome = self.publish_implement(start)
-        self.assertTrue(outcome["published"])
-        head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
-        self.assertEqual(git(self.repos.origin, "rev-parse", f"{head}^"), later)
-        self.assertEqual(
-            git(self.repos.origin, "show", f"{head}:.github/workflows/ci.yml"), "on: push"
-        )
-        self.assertEqual(
-            git(self.repos.origin, "show", f"{head}:calc.py"), "def add(a, b):\n    return a + b"
-        )
-
-    def test_implement_that_does_not_apply_on_the_changed_base_says_why(self):
-        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
-        self.repos.push_commit(
-            "dev",
-            "main",
-            {
-                ".github/workflows/ci.yml": "on: push\n",
-                "calc.py": "def add(a, b):\n    return b - a\n",
-            },
-            "Cache and swap",
-        )
-        with self.assertRaisesRegex(
-            PublishError,
-            r"`main` changed `\.github/workflows/ci\.yml` while the agent worked.*`/nexkit go`",
-        ):
-            self.publish_implement(start)
-        self.assertEqual(git(self.repos.origin, "branch", "--list", "nexkit/*"), "")
-
-    def test_implement_with_a_workflow_token_starts_where_the_agent_started(self):
+    def test_implement_starts_where_the_agent_started_when_workflows_moved(self):
         start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
         self.repos.push_commit("dev", "main", {".github/workflows/ci.yml": "on: push\n"}, "Cache")
-        self.publish_implement(start, push_token=True)
+        self.publish_implement(start)
         head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
         self.assertEqual(git(self.repos.origin, "rev-parse", f"{head}^"), start)
-
-    def test_refused_implement_push_is_explained(self):
-        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
-        hook = self.repos.origin / "hooks" / "pre-receive"
-        hook.write_text(
-            "#!/bin/sh\necho 'refusing to allow a GitHub App to create or update workflow "
-            "`.github/workflows/ci.yml` without `workflows` permission' >&2\nexit 1\n"
-        )
-        hook.chmod(0o755)
-        with self.assertRaisesRegex(PublishError, "GitHub refused the push.*`/nexkit go`"):
-            self.publish_implement(start)
 
     def test_implement_start_must_be_on_the_base_branch(self):
         self.make_patch({"calc.py": "x\n"})
@@ -362,23 +331,6 @@ class PublishTests(unittest.TestCase):
                         self.out,
                     )
         self.assertEqual(git(self.repos.origin, "branch", "--list", "nexkit/*"), "")
-        self.assertFalse(self.gh.pulls)
-
-    def test_pull_request_author_can_differ_from_bot(self):
-        start = self.make_patch({"calc.py": "x\n"})
-        author = FakeGitHub()
-        author.add_issue(5)
-        outcome = publish(
-            self.gh,
-            decision("implement"),
-            self.result(start),
-            CONTEXT,
-            self.cfg,
-            self.repos.clone("publisher"),
-            self.out,
-            author=author,
-        )
-        self.assertIn(outcome["pr"], author.pulls)
         self.assertFalse(self.gh.pulls)
 
     def test_pull_request_gets_the_labels_and_milestone_of_its_issue(self):
@@ -860,34 +812,6 @@ class MergePublishTests(unittest.TestCase):
         with self.assertRaisesRegex(PublishError, r"protected paths.*`\.nexkit/config\.json`"):
             self.fix_round({"calc.py": CALC + SUB + MUL, ".nexkit/config.json": "[]\n"})
         self.assertNotIn("Merge", git(self.repos.origin, "log", "--format=%s", "nexkit/issue-5"))
-
-    def test_merged_workflow_changes_need_a_push_token(self):
-        head, _ = self.repos.diverge({".github/workflows/ci.yml": "on: push\n"})
-        # The agent stage stops such a round itself without a push token; publish checks
-        # again, for a token that turns out to be the Actions token.
-        self.cfg = make_config(publish={"push_token_secret": "PUSH_TOKEN"})
-        with self.assertRaisesRegex(
-            WorkflowMergeError, r"`\.github/workflows/ci\.yml`.*publish\.push_token_secret"
-        ):
-            self.fix_round({"calc.py": CALC + SUB + MUL})
-        self.assertEqual(git(self.repos.origin, "rev-parse", "nexkit/issue-5"), head)
-        outcome = self.fix_round({"calc.py": CALC + SUB + MUL}, push_token=True)
-        self.assertTrue(outcome["published"])
-
-    def test_refused_workflow_push_is_explained(self):
-        head, _ = self.repos.diverge({".github/workflows/ci.yml": "on: push\n"})
-        hook = self.repos.origin / "hooks" / "pre-receive"
-        hook.write_text(
-            "#!/bin/sh\necho 'refusing to allow a Personal Access Token to create or update "
-            "workflow `.github/workflows/ci.yml` without `workflow` scope' >&2\nexit 1\n"
-        )
-        hook.chmod(0o755)
-        self.cfg = make_config(publish={"push_token_secret": "PUSH_TOKEN"})
-        with self.assertRaisesRegex(
-            WorkflowMergeError, "Merge the base branch into the pull request"
-        ):
-            self.fix_round({"calc.py": CALC + SUB + MUL}, push_token=True)
-        self.assertEqual(git(self.repos.origin, "rev-parse", "nexkit/issue-5"), head)
 
     def test_merged_commit_must_be_on_the_base_branch(self):
         self.repos.diverge()

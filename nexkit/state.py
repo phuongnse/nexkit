@@ -1,4 +1,4 @@
-"""Pipeline state lives in GitHub comments written by the Actions bot.
+"""Pipeline state lives in GitHub comments written by the repository's GitHub App.
 
 Every run has its own run comment, posted where the run was started: on the issue for
 `plan` and `go`, on the pull request for a round. A hidden marker in it holds the run URL,
@@ -17,6 +17,10 @@ from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
 from .schema import filled
 
 BOT_LOGIN = "github-actions[bot]"
+# Who writes as NexKit: the App that `use_app` names, and the Actions bot, which wrote the
+# plans and rounds of runs from before the App and which only the repository's own
+# workflows can write as.
+BOT_LOGINS = {BOT_LOGIN}
 PLAN_MARKER = "<!-- nexkit:plan -->"
 STATE_PREFIX = "<!-- nexkit:state "
 STATE_PATTERN = re.compile(r"<!-- nexkit:state ([A-Za-z0-9+/=]+) -->")
@@ -48,7 +52,8 @@ CONTINUED = "continued"
 RUN_ICONS = {RUNNING: "⏳", SUCCESS: "✅", FAILURE: "❌", PAUSED: "⏸️", CONTINUED: "⏭️"}
 # Outcomes of rounds that published nothing for a reason outside the agent's work, or that
 # NexKit stopped in their checks because the base branch moved. They count against neither
-# `fix.max_auto_rounds` nor `conflicts.max_rounds`.
+# `fix.max_auto_rounds` nor `conflicts.max_rounds`. `needs_merge`, of rounds whose token may
+# not change workflow files, is only in the comments of releases before the GitHub App.
 UNCOUNTED = {"needs_merge", "already_on_base", "on_base_failed", "superseded", "stop_failed"}
 
 
@@ -77,8 +82,18 @@ PROTECTED_ENTRY = f"{TROUBLESHOOTING}#the-plans-change-is-in-protected-paths"
 MAX_QUESTIONS = 10
 
 
+def use_app(login):
+    """Count what the App's bot `login` writes as NexKit's. `None` means no App."""
+    if login:
+        BOT_LOGINS.add(login)
+
+
+def is_bot(login):
+    return login in BOT_LOGINS
+
+
 def by_bot(comment):
-    return (comment.get("user") or {}).get("login") == BOT_LOGIN
+    return is_bot((comment.get("user") or {}).get("login"))
 
 
 def clip(text, limit=4000):

@@ -19,7 +19,6 @@ from . import config as configuration
 from .checks import BASE_SHA, RESULTS_LIMIT, environment, known_base
 from .evidence import since_text
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
-from .publish import WORKFLOWS, workflow_message
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
@@ -470,19 +469,6 @@ def merge_base_branch(repo, base, moved=False):
     git(repo, *BOT, "merge", "--no-commit", "--no-ff", "-q", commit, ok=(0, 1))
     conflicts = names(git(repo, "diff", "--name-only", "--diff-filter=U", "-z"))
     return commit, list(dict.fromkeys(conflicts))
-
-
-def held_merge(repo, base, moved=False):
-    """The workflow files that the merge `merge_base_branch` would make changes, with
-    whether the branch conflicts with the base branch, or None when it makes no merge or
-    changes none. Call only when the push token may not change workflow files."""
-    commit = git(repo, "rev-parse", "--verify", f"origin/{base}^{{commit}}").strip()
-    tree, conflicts = merge_tree(repo, "HEAD", commit)
-    if not conflicts and not (moved and not is_ancestor(repo, commit, "HEAD")):
-        return None
-    diff = git(repo, "diff", "--name-only", "--no-renames", "-z", "HEAD", tree, "--", WORKFLOWS)
-    files = names(diff)
-    return {"files": files, "conflicts": bool(conflicts)} if files else None
 
 
 def conflicts_text(base, commit, files):
@@ -1096,7 +1082,7 @@ def run_stage(
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     extra = {}
-    start = base_commit = merged = held = None
+    start = base_commit = merged = None
     conflicts = []
     if stage in ("implement", "fix"):
         start, base_commit = baseline(repo)
@@ -1104,23 +1090,7 @@ def run_stage(
     if stage in ("plan", "implement", "fix"):
         extra["ci_evidence"] = ci_evidence_text(found)
     if stage == "fix":
-        moved = bool(context.get("merge_moved_base"))
-        if not cfg["publish"]["push_token_secret"]:
-            # The Actions token may not push a merge that changes workflow files.
-            held = held_merge(repo, base, moved)
-        if held and held["conflicts"]:
-            # The round must merge the base branch, and its push would be refused, so the
-            # agent does not run.
-            result = {
-                "stage": stage,
-                "status": "needs_merge",
-                "error": workflow_message(base, held["files"]),
-                "workflows": held["files"],
-            }
-            return _save(result, out, Redactor(), [], start=start, merged=None, conflicts=[])
-        # A merge that only brings a moved base branch is left out: the fix goes on the
-        # branch as it is, which stays behind the base branch until a person merges it.
-        merged, conflicts = merge_base_branch(repo, base, moved and not held)
+        merged, conflicts = merge_base_branch(repo, base, bool(context.get("merge_moved_base")))
         extra["conflicts"] = conflicts_text(base, merged, conflicts)
         extra["evidence"] = evidence_text(context.get("evidence"))
         extra["earlier_fixes"] = context.get("earlier_fixes") or NO_EARLIER_FIXES
@@ -1231,8 +1201,6 @@ def run_stage(
             result["passed_since"] = passed_runs(found)
     if triage:
         result.update(profile=triage["profile"], triage=triage)
-    if held:
-        result["merge_held"] = held["files"]
     return _save(result, out, redact, calls, start=start, merged=merged, conflicts=conflicts)
 
 

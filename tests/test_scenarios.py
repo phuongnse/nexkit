@@ -1962,6 +1962,36 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "open")
         self.assertTrue(pipe.gh.comments_matching(5, "Every sub-issue of this parent issue"))
 
+    def test_a_parent_that_was_not_closed_after_its_last_part_is_closed_by_a_sweep(self):
+        parts = [
+            {"title": "First part", "body": "A.", "depends_on": []},
+            {"title": "Second part", "body": "B.", "depends_on": [1]},
+        ]
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                number = int(inputs["number"])
+                return plan(too_large=True, split=parts) if number == 5 else plan()
+            return done()
+
+        pipe = Pipeline(self, config(close_parent_issues=True), script)
+        pipe.issue(5)
+        # GitHub refuses the close that follows the last part's merge, once.
+        real, refused = pipe.gh.close_issue, []
+
+        def close_issue(number, reason="completed"):
+            if number == 5 and not refused:
+                refused.append(number)
+                raise GitHubError(502, "Bad Gateway")
+            return real(number, reason)
+
+        pipe.gh.close_issue = close_issue
+        played = pipe.play()
+        self.assertEqual(refused, [5])
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7)), played)
+        self.assertEqual(len(pipe.gh.comments_matching(5, "<!-- nexkit:parent-closed -->")), 1)
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
     def test_a_plan_too_large_without_parts_plans_once_more_then_waits(self):
         def script(pipe, inputs):
             return plan(too_large=True)

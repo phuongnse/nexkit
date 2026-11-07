@@ -166,8 +166,9 @@ With autopilot on, its sweeps come to the same answers for the issues in scope, 
 what else waits for a person: an issue whose pull request needs one, an author without
 write access, a blocker outside the scope, a command that did not run after one more
 start. When an issue starts to wait for a person and nobody was mentioned since its latest
-run, the sweep mentions `notify` once, on the issue. `nexkit status` lists every such
-issue under *Needs a person* with the same reason.
+run, the sweep mentions `notify` once, on the issue, unless the issue closed while the
+sweep ran. `nexkit status` lists every such issue under *Needs a person* with the same
+reason.
 
 ### One run at a time
 
@@ -832,7 +833,11 @@ sub-issue, NexKit looks at its parent's sub-issues:
 
 A merge by a person closes the issue through GitHub, and the `issues: closed` event starts
 the check. When NexKit closes the issue itself after an automatic merge, `report` runs the
-same check in that run, for its comment, and the event's run finds nothing left.
+same check in that run, for its comment, and the event's run finds nothing left. With
+[autopilot](#autopilot), each sweep also closes an open parent in scope whose sub-issues
+are all closed, one of them completed, by the same rules, in case that check did not run or
+failed: it never asks a person to close it. Whichever comes first closes the parent, with
+one comment.
 
 **Merging after an approval** (`merge.auto`). A writer's approval of a NexKit pull request
 whose latest round ended as `merge_refused`, or as `ready` for criteria the review could not

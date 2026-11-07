@@ -132,33 +132,44 @@ def close_parents(gh, number):
             return lines
         number = parent["number"]
         seen.add(number)
-        subs = gh.sub_issues(number)
-        if not subs or any(sub.get("state") == "open" for sub in subs):
+        found, closed = close_parent(gh, number)
+        lines += found
+        if not closed:
             return lines
-        listing = "\n".join(f"- #{sub['number']}: {_closed_as(sub)}" for sub in subs)
-        if not any(sub.get("state_reason") == "completed" for sub in subs):
-            latest = gh.comments(number)[-1:]
-            if not (latest and by_bot(latest[0]) and UNDECIDED in latest[0]["body"]):
-                gh.comment(
-                    number,
-                    f"{UNDECIDED}\nEvery sub-issue of this issue is closed, but none was "
-                    f"completed:\n\n{listing}\n\nNexKit leaves this issue open. A person "
-                    "should decide whether to close it.",
-                )
-            lines.append(f"Left #{number} open: none of its sub-issues was completed.")
-            return lines
-        # Sub-issues closed together start one run each; only the first closes the parent.
-        if gh.issue(number).get("state") != "open":
-            return lines
+
+
+def close_parent(gh, number):
+    """Close the parent issue `number` when every sub-issue of it is closed and at least
+    one was completed, with one `parent-closed` comment, however many runs and sweeps try
+    it. Returns (lines, whether NexKit closed it now). Without a completed sub-issue, the
+    parent stays open with a note for a person."""
+    subs = gh.sub_issues(number)
+    if not subs or any(sub.get("state") == "open" for sub in subs):
+        return [], False
+    listing = "\n".join(f"- #{sub['number']}: {_closed_as(sub)}" for sub in subs)
+    if not any(sub.get("state_reason") == "completed" for sub in subs):
         latest = gh.comments(number)[-1:]
-        if not (latest and by_bot(latest[0]) and CLOSED in latest[0]["body"]):
+        if not (latest and by_bot(latest[0]) and UNDECIDED in latest[0]["body"]):
             gh.comment(
                 number,
-                f"{CLOSED}\nNexKit closed this issue because all its sub-issues are "
-                f"closed:\n\n{listing}",
+                f"{UNDECIDED}\nEvery sub-issue of this issue is closed, but none was "
+                f"completed:\n\n{listing}\n\nNexKit leaves this issue open. A person "
+                "should decide whether to close it.",
             )
-        gh.close_issue(number, "completed")
-        lines.append(f"Closed #{number} as completed: all its sub-issues are closed.")
+        return [f"Left #{number} open: none of its sub-issues was completed."], False
+    # Sub-issues closed together start one run each, and a sweep may try it too; only the
+    # first closes the parent.
+    if gh.issue(number).get("state") != "open":
+        return [], False
+    latest = gh.comments(number)[-1:]
+    if not (latest and by_bot(latest[0]) and CLOSED in latest[0]["body"]):
+        gh.comment(
+            number,
+            f"{CLOSED}\nNexKit closed this issue because all its sub-issues are "
+            f"closed:\n\n{listing}",
+        )
+    gh.close_issue(number, "completed")
+    return [f"Closed #{number} as completed: all its sub-issues are closed."], True
 
 
 def close_parents_safely(gh, number):

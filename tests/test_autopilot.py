@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import autopilot, state
+from nexkit import maintain as maintain_module
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.report import report
@@ -116,6 +117,84 @@ class AutopilotCase(unittest.TestCase):
             for d in self.gh.dispatches
             if d["inputs"]["command"] != "autopilot"
         ]
+
+
+class ParentTests(AutopilotCase):
+    """A parent issue whose sub-issues are all closed, one of them completed."""
+
+    def setUp(self):
+        super().setUp()
+        self.issue(5)
+        for number, reason in ((6, "completed"), (7, "not_planned")):
+            self.issue(number)
+            self.gh.parents[number] = 5
+            self.gh.close_issue(number, reason)
+
+    def closed_comments(self):
+        return self.gh.comments_matching(5, maintain_module.CLOSED)
+
+    def test_a_sweep_closes_it_with_close_parent_issues_and_mentions_nobody(self):
+        cfg = make_config(autopilot={"enabled": True}, notify=["olivia"], close_parent_issues=True)
+        [step] = autopilot.preview(self.gh, cfg)[1]
+        self.assertEqual((step["state"], step.get("person")), ("close", None))
+        lines = self.sweep(cfg)
+        self.assertIn("Closed #5 as completed: all its sub-issues are closed.", lines)
+        self.assertEqual(self.gh.issues[5]["state_reason"], "completed")
+        [comment] = self.closed_comments()
+        self.assertIn("- #6: completed\n- #7: not planned", comment["body"])
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+        # A later sweep, or `maintain` after the last part, finds nothing left to do.
+        self.sweep(cfg)
+        maintain_module.close_parents(self.gh, 6)
+        self.assertEqual(len(self.closed_comments()), 1)
+
+    def test_a_parent_that_close_parents_closed_during_the_sweep_gets_nothing_more(self):
+        cfg = make_config(autopilot={"enabled": True}, notify=["olivia"], close_parent_issues=True)
+        real = autopilot.preview
+
+        def preview(gh, cfg):
+            found = real(gh, cfg)
+            # The `maintain` job of the last part's merge closes the parent meanwhile.
+            maintain_module.close_parents(gh, 6)
+            return found
+
+        with mock.patch.object(autopilot, "preview", preview):
+            lines = self.sweep(cfg)
+        self.assertNotIn("Closed #5 as completed: all its sub-issues are closed.", lines)
+        self.assertEqual(len(self.closed_comments()), 1)
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+
+    def test_without_close_parent_issues_it_waits_for_a_person(self):
+        cfg = make_config(autopilot={"enabled": True}, notify=["olivia"])
+        [step] = autopilot.preview(self.gh, cfg)[1]
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
+        self.sweep(cfg)
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+        self.assertFalse(self.closed_comments())
+
+    def test_without_a_completed_part_it_waits_for_a_person(self):
+        self.gh.issues[6]["state_reason"] = "not_planned"
+        cfg = make_config(autopilot={"enabled": True}, notify=["olivia"], close_parent_issues=True)
+        [step] = autopilot.preview(self.gh, cfg)[1]
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
+        self.sweep(cfg)
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+
+    def test_a_mention_posts_nothing_on_an_issue_that_closed_meanwhile(self):
+        cfg = make_config(autopilot={"enabled": True}, notify=["olivia"])
+        real = autopilot.preview
+
+        def preview(gh, cfg):
+            found = real(gh, cfg)
+            gh.close_issue(5, "completed")  # a person closes it while the sweep runs
+            return found
+
+        with mock.patch.object(autopilot, "preview", preview):
+            lines = self.sweep(cfg)
+        self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+        self.assertFalse([line for line in lines if "waits for a person" in line])
 
 
 class SweepTests(AutopilotCase):

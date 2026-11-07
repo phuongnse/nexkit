@@ -79,7 +79,7 @@ COMPLETED = {
     "issue_closed",
     "merge_issue_closed",
     "conflicting",
-    "pull_closed",
+    autopilot.PULL_CLOSED,
     "person_reviewed",
     autopilot.UNTRUSTED_MERGE,
     autopilot.CI_WAITING,
@@ -1009,7 +1009,7 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     if ended:
         # A person merged or closed it first, which may also have closed its issue: there
         # is nothing left to merge, and nobody to ask.
-        return "pull_closed", f"✅ Checks and AI review passed on `{head[:7]}`. {ended}"
+        return autopilot.PULL_CLOSED, _passed_but(head, ended)
     if closed:
         # A person closed the issue while the pull request waited: they decide its fate.
         message += (
@@ -1082,6 +1082,10 @@ def _ended(pull):
     return "It was already closed, so NexKit did not merge it."
 
 
+def _passed_but(head, ended):
+    return f"✅ Checks and AI review passed on `{head[:7]}`. {ended}"
+
+
 def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     """(outcome, message) after GitHub refused the merge: a conflict round for a conflict,
     a review of a head that moved, an automatic fix round for required checks that failed,
@@ -1092,6 +1096,13 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     request, the base branch's required checks and the head's checks. The error's text
     counts only for required checks that have not reported, when the data cannot say."""
     pr, base, head = target["pr"], target["base"], target["head"]
+    try:
+        ended = _ended(gh.pull(pr))
+    except GitHubError:
+        ended = None
+    if ended:
+        # A person merged or closed it while NexKit tried, which GitHub then refused.
+        return autopilot.PULL_CLOSED, _passed_but(head, ended)
     message += f" Automatic merge was not possible: {exc}"
     auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]
     if auto_resolve and is_conflicting(gh, pr):
@@ -1473,7 +1484,7 @@ def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
         outcome, text = merge_pull(gh, cfg, target, run, intro, workflow, default_branch)
         if outcome == "merge_waiting" and waited:
             return f"#{pr} still waits for its required checks."
-        if outcome == "pull_closed":
+        if outcome == autopilot.PULL_CLOSED:
             # Its round stays as it was, as after any merge by a person, and NexKit's own
             # merge that got there first keeps its text.
             return f"#{pr}: pull_closed; its round stays as it was."

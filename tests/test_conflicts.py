@@ -775,7 +775,7 @@ class ConflictReportTests(ReportCase):
         self.candidate()
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertFalse(rounds_started(self.gh))  # off by default
-        self.gh.issues[5]["state"] = "open"  # the first merge closed it
+        self.gh.reopen(6, 5)  # the first merge closed it
         cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
         self.run_report(cfg=cfg)
         self.assertEqual([d["inputs"]["number"] for d in rounds_started(self.gh)], ["7"])
@@ -847,7 +847,7 @@ class MergeRefusalTests(ReportCase):
         self.assertIn("at try 3", outcome["summary"])
         self.assertEqual(self.gh.issues[5]["state"], "closed")
         # Three refusals in a row: a person decides.
-        self.gh.issues[5]["state"] = "open"
+        self.gh.reopen(6, 5)
         with mock.patch.object(self.gh, "merge", side_effect=refuse(3)):
             self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
         # The same words while the base branch stays where it was: no other try.

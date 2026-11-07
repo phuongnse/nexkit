@@ -957,6 +957,31 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
         self.assertEqual(collect(pipe.gh, pipe.cfg, workers=1)["needs_person"], [])
 
+    def test_a_pull_request_closed_while_its_round_ran_and_reopened_waits_for_a_person(self):
+        def close(pipe, pull):
+            # A person closes the pull request while its round checks and reviews it.
+            pipe.gh.pulls[pull]["state"] = "closed"
+
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else {**done(), "meanwhile": close}
+
+        pipe = Pipeline(self, config(merge={"auto": True}), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual((pipe.played[-1][2], pipe.gh.merged), ("pull_closed", []))
+        self.assertEqual(pipe.gh.comments_matching(6, "a person is needed"), [])
+        # Closed, it waits for a person, who is mentioned once since the round.
+        [mention] = pipe.gh.comments_matching(5, "a person is needed")
+        self.assertIn("Its pull request was closed", mention["body"])
+        # Reopened, it still waits for a person, with what to do now.
+        pipe.gh.pulls[6]["state"] = "open"
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])  # nothing more ran
+        self.assertEqual(pipe.gh.merged, [])
+        self.assertEqual(len(pipe.gh.comments_matching(5, "a person is needed")), 1)
+        reason = autopilot.person(*autopilot.REOPENED)
+        needs = collect(pipe.gh, pipe.cfg, workers=1)["needs_person"]
+        self.assertEqual(needs, [{"number": 6, "kind": "pull_request", "reason": reason}])
+
     def test_a_held_merge_merges_once_the_label_is_removed(self):
         def script(pipe, inputs):
             if inputs["command"] == "plan":

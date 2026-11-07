@@ -9,6 +9,7 @@ from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.refusal import codeowners, explain, owners_of
 from nexkit.state import render_run
+from nexkit.status import collect
 from tests.support import FakeGitHub, make_config
 from tests.test_report import HEAD, ReportCase
 
@@ -278,6 +279,40 @@ class ApprovedMergeTests(ReportCase):
         self.gh.issues[5]["state"] = "open"
         self.assertEqual(self.approve(), ["#6: pull_closed; its round stays as it was."])
         self.assertEqual(self.gh.comments(6), before)
+
+    def test_a_merge_a_person_or_a_sweep_made_while_nexkit_tried_mentions_nobody(self):
+        merge = self.gh.merge
+        for login in ("olivia", "nexkit-acme[bot]"):
+            with self.subTest(by=login):
+                self.gh.reopen(6, 5)
+                before = list(self.gh.comments(6))
+
+                def first(number, sha, method="squash", login=login):
+                    # The other merge lands just before NexKit's, which GitHub refuses.
+                    merge(number, sha, method)
+                    self.gh.pulls[number]["merged_by"] = {"login": login}
+                    raise GitHubError(405, "Pull Request is not mergeable")
+
+                with mock.patch.object(self.gh, "merge", side_effect=first):
+                    self.assertEqual(
+                        self.approve(), ["#6: pull_closed; its round stays as it was."]
+                    )
+                self.assertEqual(self.gh.comments(6), before)
+
+    def test_a_pull_request_reopened_after_its_round_found_it_closed_waits_for_a_person(self):
+        self.gh.round_comment(6, 2, HEAD, "passed", outcome="pull_closed")
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        reason = autopilot.person(*autopilot.REOPENED)
+        cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+        data = collect(self.gh, cfg, workers=1)
+        self.assertEqual(data["pull_requests"][0]["state"], "ready")
+        self.assertIn({"number": 6, "kind": "pull_request", "reason": reason}, data["needs_person"])
+        [step] = [s for s in autopilot.preview(self.gh, cfg)[1] if s["number"] == 5]
+        self.assertEqual((step["state"], step["reason"], step["person"]), ("waits", reason, True))
+        # An approval merges it.
+        self.assertEqual(self.approve(), ["#6: merged."])
+        self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
 
     def test_an_approval_merges_nothing_for_a_closed_issue_or_an_untrusted_edit(self):
         self.gh.issues[5]["state"] = "closed"

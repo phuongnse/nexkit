@@ -909,6 +909,15 @@ def person(do, why):
     return f"{do}. {why[:1].upper()}{why[1:]}"
 
 
+# The latest round of a pull request that is open again found it merged or closed by a
+# person when it was to merge it (`pull_closed`).
+PULL_CLOSED = "pull_closed"
+REOPENED = (
+    "approve the pull request, which NexKit then merges, or comment `/nexkit review` on it",
+    "it was closed when its round was to merge it, and reopening it starts nothing by itself",
+)
+
+
 def quoted(text, size=150):
     """Text that an agent, GitHub or a person wrote, for a reason: in a code span on one
     line, where it can mention nobody and close no comment."""
@@ -1296,6 +1305,8 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         return _released(gh, cfg, issue, pull, comment, latest, pull_comments, start, now)
     if latest.get("outcome") == "merge_waiting":
         return _merge_step(gh, cfg, issue, pull, comment, latest, start, now)
+    if latest.get("outcome") == PULL_CLOSED:
+        return _step(issue, "waits", person(*REOPENED))
     if latest.get("outcome") == "merge_refused":
         step = _refused_step(gh, issue, pull, comment, latest)
         if step:

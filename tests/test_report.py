@@ -672,7 +672,7 @@ class ReportTests(ReportCase):
         self.candidate()
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.issues[1]["state"], "open")  # the setting is off
-        self.gh.issues[5]["state"] = "open"
+        self.gh.reopen(6, 5)
         self.run_report(cfg=make_config(merge={"auto": True}, close_parent_issues=True))
         self.assertEqual(self.gh.issues[1]["state"], "closed")
         row = self.gh.run_comments(6)[-1]
@@ -745,7 +745,7 @@ class ReportTests(ReportCase):
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.deleted, [])  # the setting is off
         self.gh.delete_on_merge = True
-        self.gh.issues[5]["state"] = "open"
+        self.gh.reopen(6, 5)
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
         row = self.gh.run_comments(6)[-1]
@@ -757,7 +757,7 @@ class ReportTests(ReportCase):
         for head in ({"ref": "feature/add"}, {"repo": {"full_name": "fork/app"}}):
             self.candidate()
             self.gh.pulls[6]["head"] = {**own, **head}
-            self.gh.issues[5]["state"] = "open"
+            self.gh.reopen(6, 5)
             self.assertEqual(
                 self.run_report(cfg=make_config(merge={"auto": True}))["outcome"], "merged"
             )
@@ -768,7 +768,7 @@ class ReportTests(ReportCase):
         self.candidate()
         self.gh.add_pull(7, 8)
         self.gh.pulls[7]["base"] = {"ref": "nexkit/issue-5"}
-        self.gh.issues[5]["state"] = "open"
+        self.gh.reopen(6, 5)
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.deleted, [])
         row = self.gh.run_comments(6)[-1]

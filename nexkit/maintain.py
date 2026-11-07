@@ -884,16 +884,17 @@ def answer_trust(gh, cfg, decision, workflow, ref):
 # The outcomes of a round after which a person's approval may let the merge through: one
 # that GitHub refused, and a ready one that NexKit left to a person, such as for criteria
 # the review could not verify, which the approval confirms.
-APPROVABLE = ("merge_refused", "ready")
+# `pull_closed`: a pull request reopened after its round found it closed at the merge.
+APPROVABLE = ("merge_refused", "ready", autopilot.PULL_CLOSED)
 
 
 def merge_approved(gh, cfg, decision, workflow, ref):
     """Merge a NexKit pull request that a writer approved, when its latest round ended as
-    `merge_refused`, or `ready`, on the head that its checks and review passed, with the
-    guards of every merge (see `report.merge_pull`): a head that moved since gets a review
-    instead. A label that holds its issue, a round on its way, any other outcome, or, for a
-    `ready` round, an approval of another commit than its head starts nothing. Returns
-    lines for the log."""
+    `merge_refused`, `ready`, or `pull_closed` before it was reopened, on the head that its
+    checks and review passed, with the guards of every merge (see `report.merge_pull`): a
+    head that moved since gets a review instead. A label that holds its issue, a round on
+    its way, any other outcome, or, for a `ready` round, an approval of another commit than
+    its head starts nothing. Returns lines for the log."""
     # `report` imports this module.
     from .report import merge_waiting
 

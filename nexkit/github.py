@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+from datetime import UTC, datetime, timedelta
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -140,7 +141,9 @@ class GitHub:
 
     # -- transport -----------------------------------------------------------------
 
-    def request(self, method, path, body=None, params=None):
+    def request(self, method, path, body=None, params=None, waits=None):
+        """`waits`: the seconds to wait before each further try after a transient error,
+        `self.waits` unless given; `()` tries once."""
         url = path if path.startswith("http") else f"{self.api_url}{path}"
         if params:
             url += "?" + urlencode(params)
@@ -154,7 +157,7 @@ class GitHub:
             headers["Authorization"] = f"Bearer {self.token}"
         if data is not None:
             headers["Content-Type"] = "application/json"
-        for wait in (*self.waits, None):
+        for wait in (*(self.waits if waits is None else waits), None):
             try:
                 with urlopen(Request(url, data, headers, method=method), timeout=60) as resp:
                     raw = resp.read()
@@ -426,7 +429,26 @@ class GitHub:
         return self.paginate(f"{self._repo}/issues/comments", params, limit)
 
     def comment(self, number, body):
-        return self.request("POST", f"{self._repo}/issues/{number}/comments", {"body": body})
+        """Post a comment. GitHub may post it and still answer with a server error or a
+        dropped connection, so before each further try the comments since the first are read,
+        and one with the same text is the one."""
+        path = f"{self._repo}/issues/{number}/comments"
+        since = (datetime.now(UTC) - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for wait in (*self.waits, None):
+            try:
+                return self.request("POST", path, {"body": body}, waits=())
+            except GitHubError as exc:
+                if not exc.transient or wait is None:
+                    raise
+            time.sleep(wait)
+            try:
+                found = self.request("GET", path, params={"since": since, "per_page": 100})
+            except GitHubError:
+                found = []
+            posted = [c for c in found or [] if c.get("body") == body]
+            if posted:
+                return posted[-1]
+        raise AssertionError("unreachable")
 
     def update_comment(self, comment_id, body):
         return self.request("PATCH", f"{self._repo}/issues/comments/{comment_id}", {"body": body})

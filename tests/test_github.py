@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest import mock
 
@@ -204,3 +205,38 @@ class RetryTests(unittest.TestCase):
                 gh.request("POST", "/x", {})
             self.assertFalse(caught.exception.transient)
             sleep.assert_not_called()
+
+
+class CommentRetryTests(unittest.TestCase):
+    def answer(self, data):
+        answer = mock.MagicMock()
+        answer.__enter__.return_value.read.return_value = json.dumps(data).encode()
+        return answer
+
+    def post(self, *answers):
+        gh = GitHub(repository="acme/app", token="t")
+        with (
+            mock.patch("nexkit.github.urlopen", side_effect=list(answers)) as opened,
+            mock.patch("nexkit.github.time.sleep"),
+        ):
+            found = gh.comment(5, "## Plan")
+        return found, [call.args[0].get_method() for call in opened.call_args_list]
+
+    def test_a_comment_github_posted_on_a_failed_try_is_not_posted_again(self):
+        mine = {"id": 9, "body": "## Plan"}
+        listed = self.answer([{"id": 8, "body": "Other"}, mine])
+        found, methods = self.post(http_error(502, "Bad Gateway"), listed)
+        self.assertEqual(found, mine)
+        self.assertEqual(methods, ["POST", "GET"])
+
+    def test_a_comment_github_did_not_post_is_tried_again(self):
+        posted = {"id": 9, "body": "## Plan"}
+        found, methods = self.post(
+            http_error(503, "Unavailable"), self.answer([]), self.answer(posted)
+        )
+        self.assertEqual(found, posted)
+        self.assertEqual(methods, ["POST", "GET", "POST"])
+
+    def test_a_refused_comment_fails_at_once(self):
+        with self.assertRaises(GitHubError):
+            self.post(http_error(403, "Resource not accessible by integration"))

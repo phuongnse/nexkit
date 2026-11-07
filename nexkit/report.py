@@ -79,6 +79,7 @@ COMPLETED = {
     "issue_closed",
     "merge_issue_closed",
     "conflicting",
+    "pull_closed",
     "person_reviewed",
     autopilot.UNTRUSTED_MERGE,
     autopilot.CI_WAITING,
@@ -986,21 +987,29 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     text so far. A merge refused because the base branch was modified meanwhile is tried
     again a few times; other refusals that pass are handed on (see `_refused`). A pull
     request whose base branch already holds its change is closed instead, with its issue
-    (see `maintain.close_on_base`)."""
+    (see `maintain.close_on_base`). One that a person merged or closed first ends the round
+    as `pull_closed`, before its issue counts, since that merge closes the issue too."""
     pr, head = target["pr"], target["head"]
+    number = pr
     try:
-        issue = gh.issue(target["issue"])
+        ended = _ended(gh.pull(pr))
+        number = target["issue"]
+        issue = gh.issue(number)
         closed = issue.get("state") != "open"
         edited = autopilot.edited_after_vouch(gh, issue)
     except GitHubError as exc:
-        message += f" NexKit did not merge it: it could not read #{target['issue']}: {exc}"
+        message += f" NexKit did not merge it: it could not read #{number}: {exc}"
         target["found"] = {
             "refused": (
                 "comment `/nexkit review` on the pull request to try the merge again",
-                f"NexKit could not read #{target['issue']}: {autopilot.quoted(str(exc), 200)}",
+                f"NexKit could not read #{number}: {autopilot.quoted(str(exc), 200)}",
             )
         }
         return "merge_refused", message.strip()
+    if ended:
+        # A person merged or closed it first, which may also have closed its issue: there
+        # is nothing left to merge, and nobody to ask.
+        return "pull_closed", f"✅ Checks and AI review passed on `{head[:7]}`. {ended}"
     if closed:
         # A person closed the issue while the pull request waited: they decide its fate.
         message += (
@@ -1059,6 +1068,18 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
         started = "\n".join(filter(None, [started, *swept]))
     parts = ["\n".join(lines), started]
     return "merged", message + "".join(f"\n\n{part}" for part in parts if part)
+
+
+def _ended(pull):
+    """What happened to a pull request that is no longer open, as a sentence for its round,
+    or None for an open one."""
+    if pull.get("state", "open") == "open":
+        return None
+    login = (pull.get("merged_by") or {}).get("login")
+    by = f" by `{login}`" if login else ""
+    if pull.get("merged") or pull.get("merged_at"):
+        return f"It was already merged{by}, so NexKit had nothing to merge."
+    return "It was already closed, so NexKit did not merge it."
 
 
 def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
@@ -1439,8 +1460,8 @@ def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
     (`merge_waiting`), or once GitHub reports a refused one as mergeable (`clean`); or
     after a writer approved it (see `maintain.merge_approved`), whose `intro` then starts
     the text. A required check that failed meanwhile gets an automatic fix round (see
-    `_required_failed`). The round's comment shows what happened. Returns a line for the
-    log."""
+    `_required_failed`). The round's comment shows what happened, unless the pull request
+    was merged or closed first. Returns a line for the log."""
     pr = step["pull"]
     for comment, run in run_comments(gh.comments(pr)):
         if comment["id"] != step["round_comment"]:
@@ -1452,6 +1473,10 @@ def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
         outcome, text = merge_pull(gh, cfg, target, run, intro, workflow, default_branch)
         if outcome == "merge_waiting" and waited:
             return f"#{pr} still waits for its required checks."
+        if outcome == "pull_closed":
+            # Its round stays as it was, as after any merge by a person, and NexKit's own
+            # merge that got there first keeps its text.
+            return f"#{pr}: pull_closed; its round stays as it was."
         if outcome == "merge_refused" and step.get("clean"):
             # GitHub called it mergeable and still refused: sweeps leave this head alone.
             run["refused_clean"] = run["head"]

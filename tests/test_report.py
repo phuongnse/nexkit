@@ -678,6 +678,34 @@ class ReportTests(ReportCase):
         row = self.gh.run_comments(6)[-1]
         self.assertIn("Closed #5 as completed.\nClosed #1 as completed", row["body"])
 
+    def test_a_pull_request_a_person_merged_or_closed_first_mentions_nobody(self):
+        self.candidate()
+        cfg = make_config(merge={"auto": True}, notify=["owner"])
+        for merged, line in (
+            (True, "It was already merged by `olivia`, so NexKit had nothing to merge."),
+            (False, "It was already closed, so NexKit did not merge it."),
+        ):
+            with self.subTest(merged=merged):
+                self.gh = FakeGitHub()
+                self.gh.add_issue(5)
+                self.gh.add_pull(6, 5, head_sha=HEAD)
+                # GitHub closed the issue through the pull request's `Closes` line.
+                self.gh.issues[5].update(state="closed", state_reason="completed")
+                self.gh.pulls[6].update(state="closed", merged=merged)
+                if merged:
+                    self.gh.pulls[6]["merged_by"] = {"login": "olivia"}
+                outcome = self.run_report(cfg=cfg)
+                self.assertEqual(outcome["outcome"], "pull_closed")
+                self.assertIsNone(outcome["attention"])
+                self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
+                self.assertFalse(self.gh.comments_matching(6, "@owner"))
+                [row] = self.gh.run_comments(6)
+                self.assertEqual(row["run"]["status"], "success")
+                self.assertIn(line, row["body"])
+                self.assertIn(f"✅ Checks and AI review passed on `{HEAD[:7]}`.", row["body"])
+                self.assertNotIn("#5 is closed", row["body"])
+                self.assertNotIn("ready for a human decision", row["body"])
+
     def test_a_pull_request_whose_issue_closed_is_not_merged(self):
         self.candidate()
         self.gh.issues[5].update(state="closed", state_reason="not_planned")
@@ -692,6 +720,8 @@ class ReportTests(ReportCase):
         self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
         self.assertEqual(self.gh.issues[5]["state_reason"], "not_planned")
         self.assertEqual(self.gh.pulls[6]["state"], "open")
+        [mention] = self.gh.comments_matching(6, "@olivia")
+        self.assertIn("merge the pull request or close it", mention["body"])
         self.assertFalse(self.gh.comments_matching(5, "NexKit merged"))
         [row] = self.gh.run_comments(6)
         self.assertIn(

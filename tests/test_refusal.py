@@ -263,9 +263,30 @@ class ApprovedMergeTests(ReportCase):
         [review] = [d for d in self.gh.dispatches if d["inputs"]["command"] == "review"]
         self.assertEqual(review["inputs"]["number"], "6")
 
+    def test_an_approval_of_a_pull_request_a_person_merged_first_changes_nothing(self):
+        # The owner approved and merged in the same minute; the merge closed the issue.
+        self.gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        before = list(self.gh.comments(6))
+        self.assertEqual(self.approve(), ["#6: pull_closed; its round stays as it was."])
+        self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
+        # No mention, and the round's comment stays as it was.
+        self.assertEqual(self.gh.comments(6), before)
+        self.assertEqual(self.latest()["outcome"], "merge_refused")
+        # A pull request a person closed without merging is left alone too.
+        self.gh.pulls[6].update(merged=False, merged_by=None)
+        self.gh.issues[5]["state"] = "open"
+        self.assertEqual(self.approve(), ["#6: pull_closed; its round stays as it was."])
+        self.assertEqual(self.gh.comments(6), before)
+
     def test_an_approval_merges_nothing_for_a_closed_issue_or_an_untrusted_edit(self):
         self.gh.issues[5]["state"] = "closed"
+        mentions = len(self.gh.comments_matching(6, "@owner"))
         self.assertEqual(self.approve(), ["#6: merge_issue_closed."])
+        # The pull request is still open, so a person decides it.
+        mention = self.gh.comments_matching(6, "@owner")[mentions:]
+        self.assertEqual(len(mention), 1)
+        self.assertIn("merge the pull request or close it", mention[0]["body"])
         self.gh.issues[5]["state"] = "open"
         self.gh.round_comment(6, 2, HEAD, "passed", outcome="merge_refused")
         self.gh.human_comment(5, "/nexkit trust")

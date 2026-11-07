@@ -757,7 +757,9 @@ autopilot starts no further round for the issue. When it is reopened, it waits f
 person, since nothing changed since `/nexkit go` started. A pull request whose issue is
 closed is never merged automatically: the round's comment says so, the pull request stays
 open for a person to merge or close (outcome `merge_issue_closed`), and `notify` mentions
-its people.
+its people. Every merge first reads the pull request itself: one that a person merged or
+closed first, which may have closed its issue through its `Closes` line, ends the round as
+`pull_closed`, and nobody is mentioned.
 
 The pull request review starts with what a person must act on:
 
@@ -844,7 +846,9 @@ whose latest round ended as `merge_refused`, or as `ready` for criteria the revi
 verify, merges it on the head its checks and review passed, with the guards of every merge;
 a head that moved gets `/nexkit review`. The run waits in the pull request's queue, and an
 approval while a round runs, or of a pull request whose round ended otherwise, starts
-nothing. With autopilot, each sweep also merges a `merge_refused` pull request that GitHub
+nothing. Nor does one of a pull request that a person merged or closed first, as an owner
+who approves and merges in the same minute does: its round comment stays as it was, and
+nobody is mentioned. With autopilot, each sweep also merges a `merge_refused` pull request that GitHub
 reports as mergeable (see [Automatic merge](configuration.md#automatic-merge)).
 
 **Resolving conflicts** (`conflicts.auto_resolve`). When the base branch moves, NexKit
@@ -1352,6 +1356,7 @@ Names a person meets in run comments and in that output:
 | `already_on_base` | The base branch already holds the pull request's change, so it changes no file against it. NexKit closed the pull request without merging and its issue as completed; the round's marker names the commit that brought the change when NexKit can tell one. See *A pull request brought up to date that changes nothing* under [Stages](#stages). |
 | `issue_closed` | The issue closed while its plan or `/nexkit go` ran, so NexKit published nothing. |
 | `merge_issue_closed` | Checks and review approved the pull request, but its issue is closed, so NexKit did not merge it; a person merges or closes it. |
+| `pull_closed` | Checks and review approved the pull request, but a person had already merged or closed it, so NexKit did not merge it. Nobody is mentioned. |
 | `agent_untrusted` | Someone without write access edited a vouched issue, so a round NexKit started ran no agent. A new `/nexkit trust` starts it again; it counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. See [Vouching for an issue](configuration.md#vouching-for-an-issue). |
 | `merge_untrusted` | The same edit stopped a merge. A new `/nexkit trust` starts `/nexkit review`, which merges as usual. |
 | `person_reviewed` | `/nexkit review` checked and reviewed a person's pull request. NexKit changes nothing on it, whatever the round found. See *A person's pull request* under [Stages](#stages). |
@@ -1370,6 +1375,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | `/nexkit go` while a NexKit PR for the issue is open | Replies: use `/nexkit fix` there or close it. |
 | The issue closes while its plan or `/nexkit go` runs | Publishes nothing: no branch, pull request or plan (`issue_closed`). No later automatic round starts for it. |
 | The issue closes before its approved pull request is merged | Does not merge it, and leaves it open for a person (`merge_issue_closed`). |
+| A person merges or closes the approved pull request before NexKit's merge, such as an owner who approves and merges at once | Merges nothing and mentions nobody (`pull_closed`). After an approval, the round's comment stays as it was. |
 | Setup command fails before the agent | Reports the failing command and output on the issue or PR, and runs the command once more, in case a registry or mirror was down; a second failure waits for a person. |
 | The agent times out, hits its budget or errors | Reports it; publishes nothing; no automatic retry. |
 | The agent returns no result, or one that does not fit the stage's schema even with the empty values of the fields it left out | Asks the same session once for its result alone, with what was wrong, keeping its changed files; a result that fits then goes on as usual. When none comes, stops as after a transient error, below. See *A result that does not fit* under [Agents](#agents). |

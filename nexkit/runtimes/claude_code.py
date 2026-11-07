@@ -282,6 +282,9 @@ class ClaudeReader(Reader):
     def outcome(self, returncode, stderr):
         event = self.result or {}
         outcome = Outcome(tokens=tokens(event))
+        cost = event.get("total_cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            outcome.cost_usd = float(cost)
         if not self.result:
             outcome.error = (
                 f"exited with code {returncode} without a result. {stderr.strip()[-1500:]}"

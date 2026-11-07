@@ -114,6 +114,8 @@ class Outcome:
     # so NexKit asks the same session for the result alone (see `Runtime.resumes`).
     no_result: bool = False
     result_error: str = ""
+    # What the run cost in US dollars, as the CLI reported it, or None.
+    cost_usd: float | None = None
 
 
 @dataclass(frozen=True)

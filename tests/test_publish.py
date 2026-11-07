@@ -177,6 +177,19 @@ class PublishTests(unittest.TestCase):
         slept.assert_not_called()
         self.assertFalse(self.gh.pulls)
 
+    def test_git_errors_another_try_may_pass(self):
+        for stderr, transient in (
+            ("error: RPC failed; HTTP 502 curl 22\nfatal: the remote end hung up", True),
+            ("fatal: unable to access 'x': Could not resolve host: github.com", True),
+            (" ! [remote rejected] HEAD -> b (Internal Server Error)", True),
+            (" ! [remote rejected] HEAD -> b (protected branch hook declined)", False),
+            (" ! [rejected] HEAD -> b (non-fast-forward)", False),
+            ("error: RPC failed; HTTP 413 curl 22\nfatal: the remote end hung up", False),
+            ("remote: Permission to acme/app.git denied to x.\nHTTP 403", False),
+            ("error: pathspec 'x' did not match", False),
+        ):
+            self.assertEqual(gitutil.transient_failure(stderr), transient, stderr)
+
     def test_a_push_that_fails_on_a_server_error_every_time_is_transient(self):
         start = self.make_patch({"calc.py": "x\n"})
         error = (

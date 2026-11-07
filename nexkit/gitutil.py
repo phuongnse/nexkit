@@ -28,7 +28,7 @@ TRANSIENT = re.compile(
 REFUSED = re.compile(
     r"\[(?:remote )?rejected\]|protected branch|non-fast-forward|fetch first"
     r"|Permission to \S+ denied|permission denied|\bGH0\d\d\b"
-    r"|(?:HTTP|returned error:?)\s*40[0-4]\b",
+    r"|(?:HTTP|returned error:?)\s*4(?!29)\d\d\b",
     re.I,
 )
 

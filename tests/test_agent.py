@@ -652,6 +652,50 @@ class RunStageTests(StageCase):
         self.assertTrue(result["error"].endswith(agent.NO_RESULT_AGAIN))
         self.assertEqual(len(self.claude.calls()), 2)
 
+    def test_a_request_for_the_result_that_times_out_is_still_no_result(self):
+        self.claude.configure(
+            **self.NO_RESULT,
+            is_error=True,
+            write={"calc.py": "x\n"},
+            resumed={"result": DONE, "events": [], "sleep": 10},
+        )
+        real = agent.run_process
+
+        def run_process(prompt, argv, **kw):
+            if "--resume" in argv:
+                kw["timeout_seconds"] = 0.5  # the request runs out of its time
+            return real(prompt, argv, **kw)
+
+        with mock.patch.object(agent, "run_process", run_process):
+            result, _ = self.run_quietly("implement")
+        self.assertEqual((result["status"], result["transient"]), ("error", True))
+        self.assertNotIn("timed_out", result)
+        self.assertTrue(result["asked_again"])
+        self.assertIn("error_max_structured_output_retries", result["error"])
+        self.assertTrue(result["error"].endswith(agent.NO_RESULT_AGAIN))
+
+    def test_the_request_for_the_result_spends_only_what_the_budget_left(self):
+        cfg = make_config(stages={"implement": {"max_budget_usd": 2}})
+        self.claude.configure(
+            **self.NO_RESULT,
+            is_error=True,
+            write={"calc.py": "x\n"},
+            resumed={"result": DONE, "events": []},
+        )
+        result, _ = self.run_quietly("implement", cfg)
+        self.assertEqual(result["status"], "done")
+        first, second = self.claude.calls()
+        self.assertEqual(first["args"][first["args"].index("--max-budget-usd") + 1], "2")
+        # The fake reports a cost of 0.5 for each run.
+        self.assertEqual(second["args"][second["args"].index("--max-budget-usd") + 1], "1.5")
+        # A first run that used the whole budget is not asked again.
+        cfg = make_config(stages={"implement": {"max_budget_usd": 0.5}})
+        before = len(self.claude.calls())
+        result, _ = self.run_quietly("implement", cfg)
+        self.assertEqual((result["status"], result["transient"]), ("error", True))
+        self.assertNotIn("asked_again", result)
+        self.assertEqual(len(self.claude.calls()), before + 1)
+
     def test_a_runtime_that_cannot_resume_stops_as_transient_at_once(self):
         self.claude.configure(**self.NO_RESULT, is_error=True, write={"calc.py": "x\n"})
         with mock.patch.object(type(RUNTIMES["claude-code"]), "resumes", False):

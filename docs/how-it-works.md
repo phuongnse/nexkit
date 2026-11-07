@@ -1227,12 +1227,15 @@ empty value means the same as leaving it out, such as `questions`, `blocker`,
 `outside_plan`, `reviewer_notes`, `protected_paths` or `no_change`, takes that empty value
 instead. Otherwise NexKit asks the same session once for its result alone, with what was
 wrong, and leaves the working tree as the agent left it, so an implement or fix round
-keeps its change. That request gets at most 10 minutes of the time the stage has left; the
-log and `result-again/` in the agent's artifact show it. A result that fits then goes on as
-usual. When the session gives none either, or the runtime cannot continue a session, the
-stage stops as after a transient error: NexKit runs the command once more by itself, and a
-second such stop waits for a person (see [Failure handling](#failure-handling)). Claude
-Code keeps each session on the runner's disk for this, under an id NexKit gives it.
+keeps its change. That request gets at most 10 minutes of the time the stage has left, and
+of `max_budget_usd` what the first run left; the log and `result-again/` in the agent's
+artifact show it. A result that fits then goes on as usual. When the session gives none
+either, runs out of that time or budget, or the runtime cannot continue a session, the
+stage stops as after a transient error, never as work that ran out of time: NexKit runs the
+command once more by itself, and a second such stop waits for a person (see [Failure
+handling](#failure-handling)). Claude Code keeps each session for this, under an id NexKit
+gives it: on the runner's disk, or on a person's machine in Claude Code's own session store
+when NexKit runs there, such as the smoke test.
 
 **How secrets reach an agent.** The repository's workflow passes the pipeline
 `secrets: inherit`. `route` works out which agents each job may run and names their
@@ -1379,7 +1382,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | Patch touches a protected path | Rejects the whole change and says which paths. |
 | The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. When the base branch's rules want pull requests up to date and its tip merges cleanly, `publish` merges it after the round's commit, so the checks run on a head that can merge; a fix round does the same. |
 | The base branch moved while an implement or fix round was running, and its tip conflicts with the round's commit | With `conflicts.auto_resolve`, pushes the commit, skips its checks and review, and starts the conflict round at once, within `conflicts.max_rounds`; with those used up, a person decides (`conflicting`). |
-| GitHub answers `publish` with a server error (5xx), a rate limit (429, or a 403 that names a rate limit) or a dropped connection: a push, a fetch, opening the pull request, posting the plan | Tries again after 10, 30 and 60 seconds, four tries in all; a refusal that another try cannot change, such as a protected branch, a push that is not a fast-forward or a missing permission, fails at once. A pull request that GitHub opened on a try it answered with an error is used as it is. When every try fails, the round stops as after a transient error: NexKit runs the command once more, and a second such stop waits for a person. Every other GitHub API call that NexKit makes tries twice more on the same errors, after 2 and 4 seconds. |
+| GitHub answers `publish` with a server error (5xx), a rate limit (429, or a 403 that names a rate limit) or a dropped connection: a push, a fetch, opening the pull request, posting the plan | Tries again after 10, 30 and 60 seconds, four tries in all; a refusal that another try cannot change, such as a protected branch, a push that is not a fast-forward or a missing permission, fails at once. A pull request that GitHub opened on a try it answered with an error is used as it is. When every try fails, or the `publish` job ends without its outcome, the round stops as after a transient error: NexKit runs the command once more, and a second such stop waits for a person. Every other GitHub API call that NexKit makes tries twice more on the same errors, after 2 and 4 seconds. |
 | The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
 | The PR branch moved while a fix round was running | Refuses to publish. An automatic round runs once more on the new head; after a person's round, run `/nexkit fix` again, since the push was probably theirs. |
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `conflicts.auto_resolve`, NexKit starts that round itself, at most `conflicts.max_rounds` times per pull request. |

@@ -1018,7 +1018,7 @@ def _run_one(
             text, launch.argv, env={**env, **launch.env}, cwd=cwd, timeout_seconds=limit, log=log
         )
         outcome = log.reader.outcome(run["returncode"], run["stderr"])
-        return interpret(
+        found = interpret(
             stage,
             run,
             outcome,
@@ -1028,14 +1028,19 @@ def _run_one(
             # NexKit's own schema: triage names an unknown profile in its error, not here.
             schema=with_checklist(SCHEMAS[stage], stage, cfg),
         )
+        return found, outcome.cost_usd
 
     with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
         spec = stage_spec(stage, cfg, home, dirs, session=session)
-        result = launch_once(spec, prompt, log, seconds)
+        result, cost = launch_once(spec, prompt, log, seconds)
         calls = log.calls
         if unfit(result):
             left = min(RESULT_SECONDS, seconds - (result.get("seconds") or 0))
-            if runtime.resumes and left >= 60:
+            # The request runs within the stage's spending limit: what the first run left.
+            budget = spec.budget_usd
+            if budget and cost is not None:
+                budget = round(budget - cost, 2)
+            if runtime.resumes and left >= 60 and (budget is None or budget > 0):
                 print(
                     f"! {runtime.label} gave no result that fits the {stage} schema; asking the "
                     "same session for its result alone.",
@@ -1053,9 +1058,10 @@ def _run_one(
                     tool_output=cfg["log"]["tool_output"],
                     transcript_dir=folder if cfg["transcript"] else None,
                 )
-                result = asked_again(
-                    result, launch_once(replace(spec, resume=True), text, again, left)
+                second, _ = launch_once(
+                    replace(spec, resume=True, budget_usd=budget), text, again, left
                 )
+                result = asked_again(result, second)
                 calls = calls + again.calls
             if unfit(result):
                 # Another run may pass where this session did not: the stage's command runs
@@ -1078,7 +1084,13 @@ def result_prompt(stage, wrong):
 
 def asked_again(first, second):
     """The result of a session asked for its result alone: the second answer, with the time
-    and tokens of both runs. `asked_again` says it was asked."""
+    and tokens of both runs. `asked_again` says it was asked. A request that ran out of its
+    time or budget leaves the first result: no result that fits, not work that ran out of
+    time, which would lead autopilot to split work that was done."""
+    if second["status"] == "error" and not second.get("transient"):
+        # Timed out, over its budget, or still no result that fits.
+        unfit = second.get("unfit") or first["unfit"]
+        second = {**first, "unfit": unfit, **{k: second.get(k) for k in ("tokens", "seconds")}}
     second["seconds"] = round((first.get("seconds") or 0) + (second.get("seconds") or 0), 1)
     tokens = add_tokens(first.get("tokens"), second.get("tokens"))
     if tokens:
@@ -1107,7 +1119,7 @@ def interpret(
     """Map a run and the runtime's outcome to a stage result: done, blocked, paused or
     error. With `schema`, the structured result must fit it, once the optional fields it
     left out have their empty values. A run that ended without a result that fits has
-    `unfit`: what was wrong, for a request of the result alone (see `ask_result`)."""
+    `unfit`: what was wrong, for a request of the result alone (see `_run_one`)."""
     result = {
         "stage": stage,
         "seconds": run["seconds"],

@@ -17,6 +17,7 @@ from nexkit.report import (
     apply_criteria,
     criterion_status,
     report,
+    retry_line,
     review_body,
     workflow_file,
 )
@@ -402,6 +403,7 @@ class ReportTests(ReportCase):
             "session for its result alone, and it gave none that fits either."
         )
         result = {"status": "error", "error": error, "transient": True, "unfit": "no testing"}
+        result["asked_again"] = True
         self.write("nexkit-agent", "result.json", result)
         outcome = self.run_report(d=decision(note="Keep it small."), published=False)
         self.assertEqual(outcome["outcome"], "retry")
@@ -412,6 +414,8 @@ class ReportTests(ReportCase):
             dispatch["inputs"],
             {"command": "go", "number": "5", "note": "Keep it small.", "auto": "retry"},
         )
+        # A session that NexKit could not ask: only that there was none.
+        self.assertIn("gave no result that fits. Another run", retry_line({"unfit": "x"}))
         # A second such stop waits for a person.
         retry = decision(note="Keep it small.", retry=True)
         outcome = self.run_report(d=retry, published=False)
@@ -452,6 +456,20 @@ class ReportTests(ReportCase):
         )
         self.assertEqual(outcome["outcome"], "publish_failed")
         self.assertEqual(len(self.gh.dispatches), 1)
+        # A publish job that ended without its outcome, such as out of time, runs once more.
+        needs = {"publish": {"result": "failure", "outputs": {}}}
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        outcome = report(
+            self.gh,
+            decision(),
+            make_config(),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertEqual(outcome["outcome"], "retry")
+        self.assertEqual(len(self.gh.dispatches), 2)
 
     def test_errors_that_another_try_cannot_fix_run_nothing_again(self):
         for result in (

@@ -719,6 +719,10 @@ def _transient(decision, agent, publish, needs, stage="agent"):
         return agent.get("error") or "a transient error"
     if stage == "agent" and publish.get("moved") and _automatic(decision):
         return publish.get("error")
+    if stage == "agent" and not publish and (needs.get("publish") or {}).get("result") == "failure":
+        # The publish job ended without its outcome, as when it ran out of time while GitHub
+        # failed, or lost its runner.
+        return "the publish job ended without a result"
     if stage == "agent" and publish.get("transient"):
         # Every try of a push or a GitHub write failed on a server error, a rate limit or
         # a dropped connection (see `publish.WAITS`).
@@ -772,16 +776,21 @@ RETRY_LINE = (
     "The error looks transient, from the service, the network or the runner rather than the "
     "work, so NexKit runs the command once more."
 )
-# A session that gave no result that fits, even when asked for it alone (`agent.unfit`).
+# A session that gave no result that fits (`agent.unfit`), even when asked for it alone.
 UNFIT_RETRY_LINE = (
-    "The agent gave no result that fits, even when asked for it alone. Another run may "
-    "give one, so NexKit runs the command once more."
+    "The agent gave no result that fits{asked}. Another run may give one, so NexKit runs "
+    "the command once more."
 )
 
 
 def retry_line(result):
     """Why NexKit runs a stage's command once more after `result`."""
-    return UNFIT_RETRY_LINE if (result or {}).get("unfit") else RETRY_LINE
+    result = result or {}
+    if not result.get("unfit"):
+        return RETRY_LINE
+    return UNFIT_RETRY_LINE.format(
+        asked=", even when asked for it alone" * bool(result.get("asked_again"))
+    )
 
 
 def _retried(gh, decision, error, message):

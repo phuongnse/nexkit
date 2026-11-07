@@ -732,6 +732,9 @@ spec = json.loads(os.environ["FAKE_CLAUDE"])
 # A spec per credential, for agents with fallbacks: {"by_token": {token: spec}}.
 token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
 spec = spec.get("by_token", {}).get(token, spec)
+# What a session continued with `--resume` does: {"resumed": spec}.
+if "--resume" in args:
+    spec = spec.get("resumed", spec)
 call = {"args": args, "prompt": prompt, "cwd": os.getcwd(),
         "has_token": bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")), "token": token,
         "base_sha": os.environ.get("NEXKIT_BASE_SHA"),

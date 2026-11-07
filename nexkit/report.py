@@ -768,6 +768,16 @@ RETRY_LINE = (
     "The error looks transient, from the service, the network or the runner rather than the "
     "work, so NexKit runs the command once more."
 )
+# A session that gave no result that fits, even when asked for it alone (`agent.unfit`).
+UNFIT_RETRY_LINE = (
+    "The agent gave no result that fits, even when asked for it alone. Another run may "
+    "give one, so NexKit runs the command once more."
+)
+
+
+def retry_line(result):
+    """Why NexKit runs a stage's command once more after `result`."""
+    return UNFIT_RETRY_LINE if (result or {}).get("unfit") else RETRY_LINE
 
 
 def _retried(gh, decision, error, message):
@@ -1619,7 +1629,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             if error and _retry(
                 gh, decision, command, decision["target"], workflow_ref, default_branch
             ):
-                outcome, message = "retry", f"{message}\n\n{RETRY_LINE}"
+                outcome, message = "retry", f"{message}\n\n{retry_line(agent)}"
                 fields["transient_error"] = clip(one_line(error), 500)
             elif error and decision.get("retry"):
                 outcome, message = "retry_failed", _retried(gh, decision, error, message)
@@ -1801,7 +1811,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
         if error and _retry(gh, decision, "review", pr, workflow_ref, default_branch):
-            outcome, message = "retry", f"{message}\n\n{RETRY_LINE}"
+            outcome, message = "retry", f"{message}\n\n{retry_line(reviewed)}"
             row["transient_error"] = clip(one_line(error), 500)
         elif error and decision.get("retry"):
             outcome, message = "retry_failed", _retried(gh, decision, error, message)

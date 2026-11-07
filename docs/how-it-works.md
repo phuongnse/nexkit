@@ -1215,6 +1215,20 @@ turn, so Claude Code runs with background tasks turned off: a check started in t
 background would end the run without a result. When Claude Code accepted a result but does
 not repeat it at the end, NexKit uses the result it accepted.
 
+**A result that does not fit.** An agent may finish the work and still give no result
+that fits the stage's schema, such as one that leaves out a field or that Claude Code
+turned down as often as it allows (`error_max_structured_output_retries`). A field whose
+empty value means the same as leaving it out, such as `questions`, `blocker`,
+`outside_plan`, `reviewer_notes`, `protected_paths` or `no_change`, takes that empty value
+instead. Otherwise NexKit asks the same session once for its result alone, with what was
+wrong, and leaves the working tree as the agent left it, so an implement or fix round
+keeps its change. That request gets at most 10 minutes of the time the stage has left; the
+log and `result-again/` in the agent's artifact show it. A result that fits then goes on as
+usual. When the session gives none either, or the runtime cannot continue a session, the
+stage stops as after a transient error: NexKit runs the command once more by itself, and a
+second such stop waits for a person (see [Failure handling](#failure-handling)). Claude
+Code keeps each session on the runner's disk for this, under an id NexKit gives it.
+
 **How secrets reach an agent.** The repository's workflow passes the pipeline
 `secrets: inherit`. `route` works out which agents each job may run and names their
 secrets: for the `agent` job those of its stage's agent and its fallback agents (for a
@@ -1349,7 +1363,8 @@ state, leaves it as it is and saves the state in a new state comment.
 | The issue closes while its plan or `/nexkit go` runs | Publishes nothing: no branch, pull request or plan (`issue_closed`). No later automatic round starts for it. |
 | The issue closes before its approved pull request is merged | Does not merge it, and leaves it open for a person (`merge_issue_closed`). |
 | Setup command fails before the agent | Reports the failing command and output on the issue or PR, and runs the command once more, in case a registry or mirror was down; a second failure waits for a person. |
-| The agent times out, hits its budget, errors, or returns no result or one that does not fit the stage's schema | Reports it; publishes nothing; no automatic retry. |
+| The agent times out, hits its budget or errors | Reports it; publishes nothing; no automatic retry. |
+| The agent returns no result, or one that does not fit the stage's schema even with the empty values of the fields it left out | Asks the same session once for its result alone, with what was wrong, keeping its changed files; a result that fits then goes on as usual. When none comes, stops as after a transient error, below. See *A result that does not fit* under [Agents](#agents). |
 | The agent stops on a transient error: an overloaded or failing API, a rate limit that is not a usage limit, a lost connection, or a CLI that exited before the model answered; or the agent job fails as a whole, for example on a lost runner | Reports it, publishes nothing, and runs the same command once more with the same note, shown as `(retry)`; the comment shows ⏭️ until the new run starts. The retry counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. A second such stop waits for a person, and its comment shows both errors. A job a person cancelled is never run again. |
 | The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |

@@ -396,6 +396,28 @@ class ReportTests(ReportCase):
         self.assertEqual(len(self.gh.dispatches), 1)
         self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
 
+    def test_a_round_without_a_result_that_fits_runs_once_more(self):
+        error = (
+            "Claude stopped (error_max_structured_output_retries). NexKit asked the same "
+            "session for its result alone, and it gave none that fits either."
+        )
+        result = {"status": "error", "error": error, "transient": True, "unfit": "no testing"}
+        self.write("nexkit-agent", "result.json", result)
+        outcome = self.run_report(d=decision(note="Keep it small."), published=False)
+        self.assertEqual(outcome["outcome"], "retry")
+        self.assertIn("even when asked for it alone", outcome["summary"])
+        self.assertNotIn("from the service, the network", outcome["summary"])
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(
+            dispatch["inputs"],
+            {"command": "go", "number": "5", "note": "Keep it small.", "auto": "retry"},
+        )
+        # A second such stop waits for a person.
+        retry = decision(note="Keep it small.", retry=True)
+        outcome = self.run_report(d=retry, published=False)
+        self.assertEqual(outcome["outcome"], "retry_failed")
+        self.assertEqual(len(self.gh.dispatches), 1)
+
     def test_errors_that_another_try_cannot_fix_run_nothing_again(self):
         for result in (
             {"status": "error", "error": "Claude stopped (error_max_turns)."},

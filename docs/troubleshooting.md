@@ -139,10 +139,16 @@ not hold a working credential: a subscription token from `claude setup-token` th
 expired or was revoked, or an API key that was deleted or has no credit. Set the secret
 again and comment the command again.
 
-**"… returned a result that does not fit the … schema".** The agent finished, but its
-structured result lacks a field or has one of the wrong type. NexKit publishes nothing.
-Run the command again; if it keeps happening with one model, use a stronger one for that
-stage.
+**"… returned a result that does not fit the … schema" or
+"stopped (error_max_structured_output_retries)".** The agent finished, but its structured
+result lacks a field or has one of the wrong type. NexKit handles it by itself (see [A
+result that does not fit](how-it-works.md#agents)): a field whose empty value means the
+same as leaving it out takes that value, and otherwise NexKit asks the same session for its
+result alone, keeping its changes, and goes on when that result fits. When it does not,
+NexKit runs the command once more, as after a transient error. A person is needed only
+when that run stops the same way (see [A run stopped twice on a transient
+error](#a-run-stopped-twice-on-a-transient-error)): run the command again, and if it keeps
+happening with one model, use a stronger one for that stage.
 
 **The agent timed out or stopped on its budget.** The issue is probably too large. Without
 autopilot, ask for a new plan and use its suggested split; or raise `timeout_minutes` or
@@ -388,6 +394,9 @@ missing](#evidence-from-a-ci-run-is-missing).
 NexKit already ran the command once more, and the comment shows both errors. Read them
 and the run log. When the cause has passed, for example the service answers again, post
 the same command again. Otherwise wait until it has: another run now stops the same way.
+When both stops were results that did not fit the schema, the cause is the model, not a
+service: post the command again once, and if it stops the same way, use a stronger model
+for that stage.
 
 ### No automatic fix rounds left
 

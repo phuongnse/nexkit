@@ -22,10 +22,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from nexkit import agent  # noqa: E402
 from nexkit.agent import run_stage, run_triage  # noqa: E402
 from nexkit.config import validate  # noqa: E402
 from nexkit.context import PERSON_PLAN, previous_review  # noqa: E402
@@ -144,6 +146,42 @@ def triage(root, program):
         if result["chosen_by"] != "triage" or result["profile"] != want or not result["reason"]:
             raise SystemExit(f"triage: wanted {want}, got {result}")
         counted("triage", result)
+
+
+def result_again(root, program):
+    """A session without a result that fits is asked for its result alone and goes on where
+    it stopped: it still knows what the issue said. NexKit's own check turns the first
+    result down here, as it turns down one that leaves out a required field."""
+    cfg = validate(
+        {
+            **CONFIG["settings"],
+            "default_profile": "standard",
+            "profiles": {"standard": {"when": "Any change."}, "hard": {"when": "Never."}},
+        }
+    )
+    real, seen = agent.problems, []
+
+    def first_refused(value, schema, where="result"):
+        seen.append(value)
+        if len(seen) == 1:
+            return ["result.reason must quote the code word that the issue gives"]
+        return real(value, schema, where)
+
+    body = f"{CONTEXT['body']} The code word for this issue is PELICAN."
+    context = {**CONTEXT, "body": body, "requests": "No discussion."}
+    with mock.patch.object(agent, "problems", first_refused):
+        result = run_triage(context, cfg, None, root / "result-again", program=program)
+    keys = ("status", "profile", "reason", "asked_again", "error", "tokens")
+    print(f"result again: {json.dumps({k: result.get(k) for k in keys})}", flush=True)
+    if not RUNTIMES[CONFIG["runtime"]].resumes:
+        if not result.get("transient") or result.get("asked_again"):
+            raise SystemExit(f"result again: wanted a transient stop, got {result}")
+        return
+    if not result.get("asked_again") or result.get("chosen_by") != "triage":
+        raise SystemExit(f"result again: the session gave no result when asked: {result}")
+    if "PELICAN" not in result["reason"].upper():
+        raise SystemExit(f"result again: the session did not go on where it stopped: {result}")
+    counted("result again", result)
 
 
 def counted(name, result):
@@ -310,6 +348,7 @@ def main():
     runtime = RUNTIMES[args.runtime]
     args.program = args.program or runtime.program
     CONFIG["settings"] = SETTINGS[args.runtime]
+    CONFIG["runtime"] = args.runtime
     CONFIG["cfg"] = validate(
         {**CONFIG["settings"], "checks": CHECKS, "review": {"checklist": CHECKLIST}}
     )
@@ -327,6 +366,7 @@ def main():
         work = make_repo(root)
 
         triage(root, args.program)
+        result_again(root, args.program)
         plan = stage("plan", work, root / "plan", args.program)
         for field in ("changes", "acceptance_criteria", "implementation_notes"):
             if not plan["output"][field]:

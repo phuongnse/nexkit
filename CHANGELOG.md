@@ -1,5 +1,23 @@
 # Changelog
 
+## 6.3.1
+
+- A merge after an approval, at a sweep or at the end of a round no longer mentions anyone
+  when a person merged or closed the pull request first (#235). This happens when an owner
+  approves a pull request and merges it in the same minute. Before, NexKit found the issue
+  closed by that merge and mentioned `notify` to "merge the pull request or close it"
+  (`merge_issue_closed`), though there was nothing left to do. Now:
+  - Every merge reads the pull request before its issue. One that is already merged or
+    closed ends the round as `pull_closed`, with no mention. This includes a merge that
+    GitHub refused because another merge landed while NexKit tried.
+  - After an approval or at a sweep, the round's comment stays as it was.
+  - A pull request reopened after such a round waits for a person, who approves it (NexKit
+    then merges it) or comments `/nexkit review`.
+  - A pull request that is still open, whose issue a person closed, still waits for a
+    person as `merge_issue_closed`.
+
+  See [Failure handling](docs/how-it-works.md#failure-handling).
+
 ## 6.3.0
 
 NexKit keeps finished work: a round that did its work is published, asked again for its

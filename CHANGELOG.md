@@ -1,5 +1,37 @@
 # Changelog
 
+## 6.3.0
+
+NexKit keeps finished work: a round that did its work is published, asked again for its
+result, or run once more, instead of waiting for a person; and autopilot closes a parent
+issue whose parts are done instead of asking you to.
+
+- An implement round that changed files and returned `done` publishes its change even
+  when the agent also wrote a note in `no_change` (#229). The note goes to the pull
+  request's *Notes for the reviewer* and to the round's comment, and the issue stays open.
+  Only a round that changed no file closes the issue with its finding.
+- A session that did its work but gave no result that fits the stage's schema, such as one
+  that ended as `error_max_structured_output_retries`, is asked once for its result alone,
+  with what was wrong, and keeps its changes (#230). The request gets at most 10 minutes
+  and the `max_budget_usd` the first run left. When it gives none either, NexKit runs the
+  command once more, as after a transient error. Fields whose empty value means the same as
+  leaving them out, such as `questions`, `blocker`, `outside_plan` and `reviewer_notes`,
+  take that value instead of failing. See *A result that does not fit* under
+  [Agents](docs/how-it-works.md#agents).
+- A push, fetch or GitHub API call of `publish` that fails on a server error, a rate limit
+  or a dropped connection is tried again after 10, 30 and 60 seconds; a refusal, such as a
+  protected branch, fails at once (#231). When every try fails, or the `publish` job ends
+  without its outcome, NexKit runs the command once more. A pull request or comment that
+  GitHub created on a try it answered with an error is not created again. See [Failure
+  handling](docs/how-it-works.md#failure-handling).
+- With `close_parent_issues`, an autopilot sweep closes a parent issue whose sub-issues are
+  all closed, one of them completed, with the same comment as after the last part's merge,
+  instead of mentioning a person (#232). A sweep no longer mentions anyone on an issue that
+  closed while it ran.
+- Claude Code now keeps each session under an id NexKit gives it, so that it can be asked
+  again: on the runner, or in your own Claude Code session store when you run NexKit
+  locally.
+
 ## 6.2.0
 
 Each mention says what to do and why, autopilot follows labels you choose, an approval is

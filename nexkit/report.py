@@ -755,6 +755,15 @@ def _earlier_error(gh, decision):
     return ""
 
 
+# An implement round that changed files and also filled `no_change` (see
+# `agent.set_aside_finding`): the text is a note, and the issue stays open.
+NO_CHANGE_NOTE = "**Note from the implement agent:** "
+NO_CHANGE_KEPT = (
+    "The agent wrote this note as a finding that no change is needed, but it changed files, "
+    "so NexKit published the change and keeps the issue open."
+)
+
+
 RETRY_LINE = (
     "The error looks transient, from the service, the network or the runner rather than the "
     "work, so NexKit runs the command once more."
@@ -1843,6 +1852,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         )
     if action == "fix" and cause:
         message = f"**Cause found by the fix agent:** {clip(cause, 1500)}\n\n{message}"
+    note = str((agent or {}).get("no_change_note") or "").strip()
+    if action == "implement" and note:
+        message = f"{NO_CHANGE_NOTE}{clip(note, 1500)}\n\n{NO_CHANGE_KEPT}\n\n{message}"
     if action == "fix" and agent and agent.get("start_base"):
         files = ", ".join(f"`{name}`" for name in agent.get("conflicts") or [])
         merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"

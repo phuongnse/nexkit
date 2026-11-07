@@ -425,8 +425,11 @@ in that case, it returns `done`: NexKit opens no pull request, closes the issue 
 completed, and the run's comment shows the finding (outcome `no_change`). Otherwise it
 returns `blocked` with a question whose recommended option is to close the issue, and
 names that option in the question's `closes`, which [autopilot](#autopilot) answers by
-closing it. A round blocked for any other reason leaves `no_change` empty. A `no_change`
-result that changed files is an error and publishes nothing.
+closing it. A round blocked for any other reason leaves `no_change` empty. A round that
+changed files and returned `done` is a change, whatever `no_change` holds: NexKit
+publishes it as usual, adds the text to the pull request's *Notes for the reviewer*, shows
+it in the round's comment as a note from the implement agent, and keeps the issue open.
+Only a round that changed no file closes the issue with its finding.
 
 When the failing checks of the last round kept
 [result files](configuration.md#result-files-of-failing-checks), `route` puts the id of the

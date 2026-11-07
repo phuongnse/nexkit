@@ -147,10 +147,18 @@ SCHEMAS = {
             **_CHANGE_RESULT["properties"],
             **_PULL_FIELDS,
             "questions": _CLOSING_QUESTIONS,
-            # The finding and its evidence when no change is needed, or "". Done, NexKit
-            # closes the issue with it; blocked, its one question's `closes` names the
-            # option that closes the issue with it, and that option is the recommended one.
-            "no_change": {"type": "string"},
+            # The finding and its evidence when no change is needed, or "". Done without a
+            # changed file, NexKit closes the issue with it; blocked, its one question's
+            # `closes` names the option that closes the issue with it, and that option is
+            # the recommended one. A round that changed files is a change: the text becomes
+            # a note for the reviewer (see `set_aside_finding`).
+            "no_change": {
+                "type": "string",
+                "description": "Only when you changed no file because no change is needed: "
+                "the finding and its evidence. Otherwise an empty string, always in a round "
+                "that changes files; notes on what you did or skipped go in outside_plan or "
+                "reviewer_notes.",
+            },
         },
         "required": [*_CHANGE_RESULT["required"], *_PULL_FIELDS, "no_change"],
     },
@@ -611,6 +619,18 @@ def _cause(result):
 def no_change(result):
     """The finding of an implement result that says no change is needed, or ""."""
     return filled((result.get("output") or {}).get("no_change"))
+
+
+def set_aside_finding(result):
+    """An implement round that changed files and returned `done` is a change, whatever its
+    `no_change` holds: agents put notes there such as "every planned change was made". The
+    text becomes a note for the reviewer, in the pull request and the round's comment, and
+    never closes the issue."""
+    output = result["output"]
+    note = no_change(result)
+    output["no_change"] = ""
+    output["reviewer_notes"] = [*(output.get("reviewer_notes") or []), note]
+    result["no_change_note"] = note
 
 
 def needed_protected(result, cfg):
@@ -1239,12 +1259,7 @@ def run_stage(
             # checks show whether it did.
         elif stage == "implement" and no_change(result):
             if files:
-                result.update(
-                    status="error",
-                    error="The agent found that no change is needed but changed "
-                    + ", ".join(f"`{name}`" for name in files[:20])
-                    + ", so NexKit publishes nothing.",
-                )
+                set_aside_finding(result)
             else:
                 # The issue or its plan says to stop without a change here: NexKit closes
                 # the issue with the finding.

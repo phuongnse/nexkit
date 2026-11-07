@@ -595,17 +595,24 @@ class RunStageTests(StageCase):
         self.assertEqual(result["status"], "error")
         self.assertIn("without changing", result["error"])
 
-    def test_no_change_needed_closes_the_issue_and_a_change_with_it_is_an_error(self):
+    def test_no_change_needed_closes_the_issue_and_a_change_with_it_is_published(self):
         finding = "8b9cb87 already fixed it: test_add passes on main."
         self.claude.configure(result={**DONE, "no_change": finding})
         result = self.run_stage("implement")
         self.assertEqual((result["status"], result.get("no_change")), ("done", True))
         self.assertEqual(result["output"]["no_change"], finding)
         self.assertIn("`no_change`", self.claude.call()["prompt"])
-        self.claude.configure(result={**DONE, "no_change": finding}, write={"calc.py": "x\n"})
+        # A round that changed files is a change: the text is a note for the reviewer.
+        note = "Nothing skipped. Every planned change was made."
+        output = {**DONE, "no_change": note, "reviewer_notes": ["Check the rounding."]}
+        self.claude.configure(result=output, write={"calc.py": "x\n"})
         result = self.run_stage("implement")
-        self.assertEqual(result["status"], "error")
-        self.assertIn("found that no change is needed but changed `calc.py`", result["error"])
+        self.assertEqual((result["status"], result.get("no_change")), ("done", None))
+        self.assertEqual(result["changed_files"], ["calc.py"])
+        self.assertEqual(result["no_change_note"], note)
+        self.assertEqual(result["output"]["no_change"], "")
+        self.assertEqual(result["output"]["reviewer_notes"], ["Check the rounding.", note])
+        self.assertNotIn("passed_since", result)
 
     def test_a_no_change_of_only_quotes_is_no_finding(self):
         self.claude.configure(result={**DONE, "no_change": '""'})

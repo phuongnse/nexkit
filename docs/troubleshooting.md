@@ -208,6 +208,14 @@ or reports as usual when they pass. When they fail again, the round ends as
 the service, then comment `/nexkit review`, or `/nexkit fix <instructions>` if the
 failure does come from the code.
 
+**"Note from the implement agent" in a round's comment.** The implement agent changed
+files and also wrote text in `no_change`, which is only for a finding that the issue needs
+no change, in a round that changes nothing. A round that changed files is a change, so
+NexKit published it, put the text under *Notes for the reviewer* in the pull request, and
+kept the issue open. Read the note with the review: it is often a remark such as "every
+planned change was made". When it does say that the issue needs no change, close the pull
+request and the issue yourself.
+
 **"NexKit stopped on <exception>".** An error in NexKit itself, and another try usually
 stops the same way. The job's log has the traceback; please report it as a NexKit issue.
 

@@ -118,6 +118,25 @@ class PublishTests(unittest.TestCase):
         self.assertTrue(pull["body"].startswith("Closes #5"))
         self.assertEqual(pull["head"]["ref"], "nexkit/issue-5")
 
+    def test_a_changed_round_with_a_no_change_note_opens_its_pull_request(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        note = "Nothing skipped. Every planned change was made."
+        output = {"summary": "Fixed add.", "no_change": "", "reviewer_notes": [note]}
+        result = self.result(start, output=output, no_change_note=note)
+        outcome = publish(
+            self.gh,
+            decision("implement"),
+            result,
+            CONTEXT,
+            self.cfg,
+            self.repos.clone("publisher"),
+            self.out,
+        )
+        self.assertTrue(outcome["published"])
+        self.assertNotIn("no_change", outcome)
+        body = self.gh.pulls[outcome["pr"]]["body"]
+        self.assertIn(f"## Notes for the reviewer\n\n- {note}", body)
+
     def test_an_issue_closed_while_the_round_ran_gets_nothing_published(self):
         start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
         self.gh.close_issue(5, "not_planned")

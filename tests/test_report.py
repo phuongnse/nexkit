@@ -325,6 +325,23 @@ class ReportTests(ReportCase):
         self.assertEqual(self.gh.run_comments(5)[-1]["run"]["status"], "failure")
         self.assertIn("could not close #5", outcome["summary"])
 
+    def test_a_changed_round_with_a_no_change_note_publishes_and_keeps_the_issue_open(self):
+        self.candidate()
+        note = "Nothing skipped. Every planned change was made."
+        output = {"status": "done", "summary": "Fixed add.", "no_change": ""}
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {"status": "done", "tokens": TOKENS, "output": output, "no_change_note": note},
+        )
+        outcome = self.run_report()
+        self.assertEqual(outcome["outcome"], "ready")
+        body = self.gh.run_comments(6)[-1]["body"]
+        self.assertIn(f"**Note from the implement agent:** {note}", body)
+        self.assertIn("so NexKit published the change and keeps the issue open", body)
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+        self.assertFalse(self.gh.comments_matching(5, "No change is needed"))
+
     def test_agent_failures_are_explained_on_the_issue(self):
         # The try after a job that failed as a whole: a person decides.
         outcome = self.run_report(d=decision(retry=True), published=False)

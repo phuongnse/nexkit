@@ -107,7 +107,11 @@ bounds:
   round's question belongs to the diagnosis stop below.
 - **[A transient failure after NexKit's retry](../../docs/troubleshooting.md#a-run-stopped-twice-on-a-transient-error):**
   post the command once more only when the log shows the cause has passed; otherwise
-  notify.
+  notify. When both stops were results that did not fit the schema, post it once more, and
+  notify if it stops the same way: a stronger model is the person's choice.
+- **[A note from the implement agent](../../docs/troubleshooting.md#agents)** in a round's
+  comment: read it with the pull request. When it says the issue needs no change, notify
+  with the note; never close the pull request or the issue yourself.
 - **[`recheck_failed`](../../docs/troubleshooting.md#a-round-ended-as-recheck_failed):**
   comment `/nexkit review` once when the service works again, or `/nexkit fix` with the
   evidence when the failure comes from the code. When the service is still down, notify.

@@ -700,9 +700,9 @@ def run_status(outcome):
 
 def _transient(decision, agent, publish, needs, stage="agent"):
     """The error of a stage that stopped for a reason another try may pass, or None: a
-    transient error of the agent, a job that failed as a whole, or, in a round NexKit
-    started itself, a branch that moved while the agent worked. A job a person cancelled
-    is never one."""
+    transient error of the agent or of GitHub while `publish` wrote, a job that failed as a
+    whole, or, in a round NexKit started itself, a branch that moved while the agent
+    worked. A job a person cancelled is never one."""
     result = (needs.get(stage) or {}).get("result")
     if result == "cancelled":
         return None
@@ -719,6 +719,14 @@ def _transient(decision, agent, publish, needs, stage="agent"):
         return agent.get("error") or "a transient error"
     if stage == "agent" and publish.get("moved") and _automatic(decision):
         return publish.get("error")
+    if stage == "agent" and not publish and (needs.get("publish") or {}).get("result") == "failure":
+        # The publish job ended without its outcome, as when it ran out of time while GitHub
+        # failed, or lost its runner.
+        return "the publish job ended without a result"
+    if stage == "agent" and publish.get("transient"):
+        # Every try of a push or a GitHub write failed on a server error, a rate limit or
+        # a dropped connection (see `publish.WAITS`).
+        return publish.get("error") or "a transient error of GitHub"
     return None
 
 
@@ -755,10 +763,34 @@ def _earlier_error(gh, decision):
     return ""
 
 
+# An implement round that changed files and also filled `no_change` (see
+# `agent.set_aside_finding`): the text is a note, and the issue stays open.
+NO_CHANGE_NOTE = "**Note from the implement agent:** "
+NO_CHANGE_KEPT = (
+    "The agent wrote this note as a finding that no change is needed, but it changed files, "
+    "so NexKit published the change and keeps the issue open."
+)
+
+
 RETRY_LINE = (
     "The error looks transient, from the service, the network or the runner rather than the "
     "work, so NexKit runs the command once more."
 )
+# A session that gave no result that fits (`agent.unfit`), even when asked for it alone.
+UNFIT_RETRY_LINE = (
+    "The agent gave no result that fits{asked}. Another run may give one, so NexKit runs "
+    "the command once more."
+)
+
+
+def retry_line(result):
+    """Why NexKit runs a stage's command once more after `result`."""
+    result = result or {}
+    if not result.get("unfit"):
+        return RETRY_LINE
+    return UNFIT_RETRY_LINE.format(
+        asked=", even when asked for it alone" * bool(result.get("asked_again"))
+    )
 
 
 def _retried(gh, decision, error, message):
@@ -1610,7 +1642,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             if error and _retry(
                 gh, decision, command, decision["target"], workflow_ref, default_branch
             ):
-                outcome, message = "retry", f"{message}\n\n{RETRY_LINE}"
+                outcome, message = "retry", f"{message}\n\n{retry_line(agent)}"
                 fields["transient_error"] = clip(one_line(error), 500)
             elif error and decision.get("retry"):
                 outcome, message = "retry_failed", _retried(gh, decision, error, message)
@@ -1792,7 +1824,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
         if error and _retry(gh, decision, "review", pr, workflow_ref, default_branch):
-            outcome, message = "retry", f"{message}\n\n{RETRY_LINE}"
+            outcome, message = "retry", f"{message}\n\n{retry_line(reviewed)}"
             row["transient_error"] = clip(one_line(error), 500)
         elif error and decision.get("retry"):
             outcome, message = "retry_failed", _retried(gh, decision, error, message)
@@ -1843,6 +1875,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         )
     if action == "fix" and cause:
         message = f"**Cause found by the fix agent:** {clip(cause, 1500)}\n\n{message}"
+    note = str((agent or {}).get("no_change_note") or "").strip()
+    if action == "implement" and note:
+        message = f"{NO_CHANGE_NOTE}{clip(note, 1500)}\n\n{NO_CHANGE_KEPT}\n\n{message}"
     if action == "fix" and agent and agent.get("start_base"):
         files = ", ".join(f"`{name}`" for name in agent.get("conflicts") or [])
         merged = f"Merged `{decision['base']}` (`{agent['start_base'][:7]}`) into the branch"

@@ -296,8 +296,11 @@ class PromptTests(unittest.TestCase):
     def test_implement_schema_has_the_pull_request_sections(self):
         implement, fix = agent.SCHEMAS["implement"], agent.SCHEMAS["fix"]
         for field in ("summary", "changes", "testing", "outside_plan", "reviewer_notes"):
-            self.assertIn(field, implement["required"])
+            self.assertIn(field, implement["properties"])
             self.assertIn(f"`{field}`", agent._template("implement"))
+        # The notes are optional: an empty list means the same as none.
+        self.assertEqual(agent.OPTIONAL["implement"]["outside_plan"], [])
+        self.assertIn("testing", implement["required"])
         self.assertNotIn("changes", fix["required"])
         self.assertIn("status", fix["required"])
 
@@ -446,6 +449,47 @@ class InterpretTests(unittest.TestCase):
         unstructured = interpret_claude("review", {"subtype": "success"})
         self.assertIn("structured result", unstructured["error"])
 
+    def test_an_optional_field_left_out_takes_its_empty_value(self):
+        full = {"plan": PLAN, "implement": DONE, "fix": FIX_DONE}
+        for stage, fields in agent.OPTIONAL.items():
+            for field, empty in fields.items():
+                given = {k: v for k, v in full[stage].items() if k != field}
+                event = {"subtype": "success", "structured_output": given}
+                result = interpret_claude(stage, event, schema=agent.SCHEMAS[stage])
+                self.assertEqual(result["status"], "done", (stage, field, result["error"]))
+                self.assertEqual(result["output"][field], empty, (stage, field))
+                self.assertNotIn(field, agent.SCHEMAS[stage]["required"])
+        # Every other field is required, and the defaults cover only fields that exist.
+        for stage, fields in agent.OPTIONAL.items():
+            schema = agent.SCHEMAS[stage]
+            self.assertEqual(
+                set(schema["required"]) | set(fields), set(schema["properties"]), stage
+            )
+            self.assertFalse(set(schema["required"]) & set(fields), stage)
+
+    def test_a_cli_that_ran_out_of_result_tries_is_unfit_with_what_it_said(self):
+        call = {"type": "tool_use", "id": "s1", "name": "StructuredOutput", "input": {}}
+        said = "Output does not match required schema: root: must have property 'testing'"
+        refused = {"type": "tool_result", "tool_use_id": "s1", "is_error": True, "content": said}
+        stream = [
+            {"type": "assistant", "message": {"id": "m1", "content": [call]}},
+            {"type": "user", "message": {"content": [refused]}},
+        ]
+        event = {"subtype": "error_max_structured_output_retries", "is_error": True}
+        result = interpret_claude("implement", event, stream=stream)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("error_max_structured_output_retries", result["error"])
+        self.assertEqual(result["unfit"], said)
+        self.assertNotIn("transient", result)
+        # A result that does not fit NexKit's own check is unfit too, with its problems.
+        wrong = {k: v for k, v in DONE.items() if k != "testing"}
+        event = {"subtype": "success", "structured_output": wrong}
+        result = interpret_claude("implement", event, schema=agent.SCHEMAS["implement"])
+        self.assertEqual(result["unfit"], "result.testing is missing")
+        # Other errors are not.
+        budget = {"subtype": "error_max_budget_usd", "is_error": True}
+        self.assertNotIn("unfit", interpret_claude("implement", budget))
+
     def test_the_result_must_fit_the_schema(self):
         wrong = {**DONE, "checks_run": "make test"}
         del wrong["testing"]
@@ -557,6 +601,111 @@ class RunStageTests(StageCase):
         self.assertEqual(prompt, (self.out / "triage/prompt.md").read_text())
         self.assertTrue((self.out / "triage/transcript.md").exists())
 
+    NO_RESULT = {"result": None, "subtype": "error_max_structured_output_retries"}
+
+    def test_a_session_without_a_result_that_fits_is_asked_for_it_alone(self):
+        refused = {
+            "type": "tool_result",
+            "tool_use_id": "s1",
+            "is_error": True,
+            "content": "Output does not match required schema: must have property 'testing'",
+        }
+        call = {"type": "tool_use", "id": "s1", "name": "StructuredOutput", "input": {}}
+        events = [
+            {"type": "assistant", "message": {"id": "m1", "content": [call]}},
+            {"type": "user", "message": {"content": [refused]}},
+        ]
+        self.claude.configure(
+            **self.NO_RESULT,
+            is_error=True,
+            events=events,
+            write={"calc.py": "def add(a, b):\n    return a + b\n"},
+            resumed={"result": DONE, "events": []},
+        )
+        result, log = self.run_quietly("implement")
+        self.assertEqual(result["status"], "done")
+        self.assertTrue(result["asked_again"])
+        self.assertEqual(result["changed_files"], ["calc.py"])
+        self.assertIn("+    return a + b", (self.out / "changes.patch").read_text())
+        self.assertEqual(result["tokens"], {"input": 2000, "cached": 1700, "output": 240})
+        first, second = self.claude.calls()
+        session = first["args"][first["args"].index("--session-id") + 1]
+        self.assertEqual(second["args"][second["args"].index("--resume") + 1], session)
+        self.assertNotIn("--no-session-persistence", first["args"] + second["args"])
+        self.assertIn("must have property 'testing'", second["prompt"])
+        self.assertIn("Do not change, run or read anything more", second["prompt"])
+        self.assertEqual(second["prompt"], (self.out / "result-again/prompt.md").read_text())
+        self.assertTrue((self.out / "result-again/transcript.md").exists())
+        self.assertIn("asking the same session for its result alone", log)
+
+    def test_a_session_that_gives_no_result_again_stops_as_transient(self):
+        self.claude.configure(
+            **self.NO_RESULT,
+            is_error=True,
+            write={"calc.py": "x\n"},
+            resumed={**self.NO_RESULT, "is_error": True, "events": []},
+        )
+        result, _ = self.run_quietly("implement")
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(result["transient"])
+        self.assertTrue(result["asked_again"])
+        self.assertTrue(result["error"].endswith(agent.NO_RESULT_AGAIN))
+        self.assertEqual(len(self.claude.calls()), 2)
+
+    def test_a_request_for_the_result_that_times_out_is_still_no_result(self):
+        self.claude.configure(
+            **self.NO_RESULT,
+            is_error=True,
+            write={"calc.py": "x\n"},
+            resumed={"result": DONE, "events": [], "sleep": 10},
+        )
+        real = agent.run_process
+
+        def run_process(prompt, argv, **kw):
+            if "--resume" in argv:
+                kw["timeout_seconds"] = 0.5  # the request runs out of its time
+            return real(prompt, argv, **kw)
+
+        with mock.patch.object(agent, "run_process", run_process):
+            result, _ = self.run_quietly("implement")
+        self.assertEqual((result["status"], result["transient"]), ("error", True))
+        self.assertNotIn("timed_out", result)
+        self.assertTrue(result["asked_again"])
+        self.assertIn("error_max_structured_output_retries", result["error"])
+        self.assertTrue(result["error"].endswith(agent.NO_RESULT_AGAIN))
+
+    def test_the_request_for_the_result_spends_only_what_the_budget_left(self):
+        cfg = make_config(stages={"implement": {"max_budget_usd": 2}})
+        self.claude.configure(
+            **self.NO_RESULT,
+            is_error=True,
+            write={"calc.py": "x\n"},
+            resumed={"result": DONE, "events": []},
+        )
+        result, _ = self.run_quietly("implement", cfg)
+        self.assertEqual(result["status"], "done")
+        first, second = self.claude.calls()
+        self.assertEqual(first["args"][first["args"].index("--max-budget-usd") + 1], "2")
+        # The fake reports a cost of 0.5 for each run.
+        self.assertEqual(second["args"][second["args"].index("--max-budget-usd") + 1], "1.5")
+        # A first run that used the whole budget is not asked again.
+        cfg = make_config(stages={"implement": {"max_budget_usd": 0.5}})
+        before = len(self.claude.calls())
+        result, _ = self.run_quietly("implement", cfg)
+        self.assertEqual((result["status"], result["transient"]), ("error", True))
+        self.assertNotIn("asked_again", result)
+        self.assertEqual(len(self.claude.calls()), before + 1)
+
+    def test_a_runtime_that_cannot_resume_stops_as_transient_at_once(self):
+        self.claude.configure(**self.NO_RESULT, is_error=True, write={"calc.py": "x\n"})
+        with mock.patch.object(type(RUNTIMES["claude-code"]), "resumes", False):
+            result, _ = self.run_quietly("implement")
+        self.assertEqual((result["status"], result["transient"]), ("error", True))
+        self.assertNotIn("asked_again", result)
+        self.assertNotIn(agent.NO_RESULT_AGAIN, result["error"])
+        [call] = self.claude.calls()
+        self.assertIn("--no-session-persistence", call["args"])
+
     def test_triage_failure_falls_back_to_the_kept_or_default_profile(self):
         unknown = self.triage(result={"profile": "expert", "reason": "x"})
         self.assertEqual((unknown["status"], unknown["profile"]), ("error", "standard"))
@@ -595,17 +744,24 @@ class RunStageTests(StageCase):
         self.assertEqual(result["status"], "error")
         self.assertIn("without changing", result["error"])
 
-    def test_no_change_needed_closes_the_issue_and_a_change_with_it_is_an_error(self):
+    def test_no_change_needed_closes_the_issue_and_a_change_with_it_is_published(self):
         finding = "8b9cb87 already fixed it: test_add passes on main."
         self.claude.configure(result={**DONE, "no_change": finding})
         result = self.run_stage("implement")
         self.assertEqual((result["status"], result.get("no_change")), ("done", True))
         self.assertEqual(result["output"]["no_change"], finding)
         self.assertIn("`no_change`", self.claude.call()["prompt"])
-        self.claude.configure(result={**DONE, "no_change": finding}, write={"calc.py": "x\n"})
+        # A round that changed files is a change: the text is a note for the reviewer.
+        note = "Nothing skipped. Every planned change was made."
+        output = {**DONE, "no_change": note, "reviewer_notes": ["Check the rounding."]}
+        self.claude.configure(result=output, write={"calc.py": "x\n"})
         result = self.run_stage("implement")
-        self.assertEqual(result["status"], "error")
-        self.assertIn("found that no change is needed but changed `calc.py`", result["error"])
+        self.assertEqual((result["status"], result.get("no_change")), ("done", None))
+        self.assertEqual(result["changed_files"], ["calc.py"])
+        self.assertEqual(result["no_change_note"], note)
+        self.assertEqual(result["output"]["no_change"], "")
+        self.assertEqual(result["output"]["reviewer_notes"], ["Check the rounding.", note])
+        self.assertNotIn("passed_since", result)
 
     def test_a_no_change_of_only_quotes_is_no_finding(self):
         self.claude.configure(result={**DONE, "no_change": '""'})
@@ -963,7 +1119,7 @@ class ConflictTests(StageCase):
 
     def test_fix_schema_lists_open_conflicts(self):
         schema = agent.SCHEMAS["fix"]
-        self.assertIn("open_conflicts", schema["required"])
+        self.assertEqual(agent.OPTIONAL["fix"]["open_conflicts"], [])
         item = schema["properties"]["open_conflicts"]["items"]
         self.assertEqual(
             item["required"],

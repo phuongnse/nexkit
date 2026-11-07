@@ -166,8 +166,9 @@ With autopilot on, its sweeps come to the same answers for the issues in scope, 
 what else waits for a person: an issue whose pull request needs one, an author without
 write access, a blocker outside the scope, a command that did not run after one more
 start. When an issue starts to wait for a person and nobody was mentioned since its latest
-run, the sweep mentions `notify` once, on the issue. `nexkit status` lists every such
-issue under *Needs a person* with the same reason.
+run, the sweep mentions `notify` once, on the issue, unless the issue closed while the
+sweep ran. `nexkit status` lists every such issue under *Needs a person* with the same
+reason.
 
 ### One run at a time
 
@@ -425,8 +426,11 @@ in that case, it returns `done`: NexKit opens no pull request, closes the issue 
 completed, and the run's comment shows the finding (outcome `no_change`). Otherwise it
 returns `blocked` with a question whose recommended option is to close the issue, and
 names that option in the question's `closes`, which [autopilot](#autopilot) answers by
-closing it. A round blocked for any other reason leaves `no_change` empty. A `no_change`
-result that changed files is an error and publishes nothing.
+closing it. A round blocked for any other reason leaves `no_change` empty. A round that
+changed files and returned `done` is a change, whatever `no_change` holds: NexKit
+publishes it as usual, adds the text to the pull request's *Notes for the reviewer*, shows
+it in the round's comment as a note from the implement agent, and keeps the issue open.
+Only a round that changed no file closes the issue with its finding.
 
 When the failing checks of the last round kept
 [result files](configuration.md#result-files-of-failing-checks), `route` puts the id of the
@@ -829,7 +833,11 @@ sub-issue, NexKit looks at its parent's sub-issues:
 
 A merge by a person closes the issue through GitHub, and the `issues: closed` event starts
 the check. When NexKit closes the issue itself after an automatic merge, `report` runs the
-same check in that run, for its comment, and the event's run finds nothing left.
+same check in that run, for its comment, and the event's run finds nothing left. With
+[autopilot](#autopilot), each sweep also closes an open parent in scope whose sub-issues
+are all closed, one of them completed, by the same rules, in case that check did not run or
+failed: it never asks a person to close it. Whichever comes first closes the parent, with
+one comment.
 
 **Merging after an approval** (`merge.auto`). A writer's approval of a NexKit pull request
 whose latest round ended as `merge_refused`, or as `ready` for criteria the review could not
@@ -1212,6 +1220,23 @@ turn, so Claude Code runs with background tasks turned off: a check started in t
 background would end the run without a result. When Claude Code accepted a result but does
 not repeat it at the end, NexKit uses the result it accepted.
 
+**A result that does not fit.** An agent may finish the work and still give no result
+that fits the stage's schema, such as one that leaves out a field or that Claude Code
+turned down as often as it allows (`error_max_structured_output_retries`). A field whose
+empty value means the same as leaving it out, such as `questions`, `blocker`,
+`outside_plan`, `reviewer_notes`, `protected_paths` or `no_change`, takes that empty value
+instead. Otherwise NexKit asks the same session once for its result alone, with what was
+wrong, and leaves the working tree as the agent left it, so an implement or fix round
+keeps its change. That request gets at most 10 minutes of the time the stage has left, and
+of `max_budget_usd` what the first run left; the log and `result-again/` in the agent's
+artifact show it. A result that fits then goes on as usual. When the session gives none
+either, runs out of that time or budget, or the runtime cannot continue a session, the
+stage stops as after a transient error, never as work that ran out of time: NexKit runs the
+command once more by itself, and a second such stop waits for a person (see [Failure
+handling](#failure-handling)). Claude Code keeps each session for this, under an id NexKit
+gives it: on the runner's disk, or on a person's machine in Claude Code's own session store
+when NexKit runs there, such as the smoke test.
+
 **How secrets reach an agent.** The repository's workflow passes the pipeline
 `secrets: inherit`. `route` works out which agents each job may run and names their
 secrets: for the `agent` job those of its stage's agent and its fallback agents (for a
@@ -1346,7 +1371,8 @@ state, leaves it as it is and saves the state in a new state comment.
 | The issue closes while its plan or `/nexkit go` runs | Publishes nothing: no branch, pull request or plan (`issue_closed`). No later automatic round starts for it. |
 | The issue closes before its approved pull request is merged | Does not merge it, and leaves it open for a person (`merge_issue_closed`). |
 | Setup command fails before the agent | Reports the failing command and output on the issue or PR, and runs the command once more, in case a registry or mirror was down; a second failure waits for a person. |
-| The agent times out, hits its budget, errors, or returns no result or one that does not fit the stage's schema | Reports it; publishes nothing; no automatic retry. |
+| The agent times out, hits its budget or errors | Reports it; publishes nothing; no automatic retry. |
+| The agent returns no result, or one that does not fit the stage's schema even with the empty values of the fields it left out | Asks the same session once for its result alone, with what was wrong, keeping its changed files; a result that fits then goes on as usual. When none comes, stops as after a transient error, below. See *A result that does not fit* under [Agents](#agents). |
 | The agent stops on a transient error: an overloaded or failing API, a rate limit that is not a usage limit, a lost connection, or a CLI that exited before the model answered; or the agent job fails as a whole, for example on a lost runner | Reports it, publishes nothing, and runs the same command once more with the same note, shown as `(retry)`; the comment shows ⏭️ until the new run starts. The retry counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. A second such stop waits for a person, and its comment shows both errors. A job a person cancelled is never run again. |
 | The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |
@@ -1356,6 +1382,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | Patch touches a protected path | Rejects the whole change and says which paths. |
 | The base branch moved while an implement round was running | Opens the pull request on the commit the agent started from; `/nexkit fix` brings it up to date. When the base branch's rules want pull requests up to date and its tip merges cleanly, `publish` merges it after the round's commit, so the checks run on a head that can merge; a fix round does the same. |
 | The base branch moved while an implement or fix round was running, and its tip conflicts with the round's commit | With `conflicts.auto_resolve`, pushes the commit, skips its checks and review, and starts the conflict round at once, within `conflicts.max_rounds`; with those used up, a person decides (`conflicting`). |
+| GitHub answers `publish` with a server error (5xx), a rate limit (429, or a 403 that names a rate limit) or a dropped connection: a push, a fetch, opening the pull request, posting the plan | Tries again after 10, 30 and 60 seconds, four tries in all; a refusal that another try cannot change, such as a protected branch, a push that is not a fast-forward or a missing permission, fails at once. A pull request that GitHub opened, or a comment it posted, on a try it answered with an error is used as it is, so nothing is posted twice. When every try fails, or the `publish` job ends without its outcome, the round stops as after a transient error: NexKit runs the command once more, and a second such stop waits for a person. Every other GitHub API call that NexKit makes tries twice more on the same errors, after 2 and 4 seconds. |
 | The commit the implement agent started from is no longer on the base branch (force push) | Refuses to publish; run `/nexkit go` again. |
 | The PR branch moved while a fix round was running | Refuses to publish. An automatic round runs once more on the new head; after a person's round, run `/nexkit fix` again, since the push was probably theirs. |
 | The PR conflicts with its base branch | The next fix round merges the base branch and resolves the conflicts; a conflict that needs a choice ends the round as `blocked` with the questions. With `conflicts.auto_resolve`, NexKit starts that round itself, at most `conflicts.max_rounds` times per pull request. |

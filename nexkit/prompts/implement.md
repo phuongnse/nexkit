@@ -91,6 +91,9 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
   followed by the evidence that shows it, such as the commit, log or test output lines,
   and for an outside failure the run that passed since, with its link. Otherwise an empty
   string: when you are blocked for any other reason, such as work that is not merged yet,
-  leave it empty, and never use it to say why there is no finding.
+  leave it empty, and never use it to say why there is no finding. Leave it empty in any
+  round that changes files: what you did, skipped or left unchanged goes in
+  `outside_plan` or `reviewer_notes`. A round that changed files is published as a change
+  whatever `no_change` holds, and its text only becomes a note for the reviewer.
 - `protected_paths`: the protected paths that the change must modify and that you left
   unchanged, each as a path in the repository. Otherwise an empty list.

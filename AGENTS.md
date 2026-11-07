@@ -42,7 +42,8 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 - Agent errors and `blocked` results never retry automatically; only check failures and
   review findings do, up to `fix.max_auto_rounds`. The one exception is a run that stopped
   on a transient error before it published anything (the service, the network, a lost
-  runner, as `runtimes/` classifies it): it runs once more, and a second such stop waits
+  runner, as `runtimes/` classifies it, or no result that fits even when its session was
+  asked for the result alone): it runs once more, and a second such stop waits
   for a person. Autopilot may answer a `blocked` result
   whose questions all have a recommended option (`autopilot.answer: "recommended"`), once
   in a row: when the round its answers started asks again and no person commented since,

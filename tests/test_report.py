@@ -17,6 +17,7 @@ from nexkit.report import (
     apply_criteria,
     criterion_status,
     report,
+    retry_line,
     review_body,
     workflow_file,
 )
@@ -325,6 +326,23 @@ class ReportTests(ReportCase):
         self.assertEqual(self.gh.run_comments(5)[-1]["run"]["status"], "failure")
         self.assertIn("could not close #5", outcome["summary"])
 
+    def test_a_changed_round_with_a_no_change_note_publishes_and_keeps_the_issue_open(self):
+        self.candidate()
+        note = "Nothing skipped. Every planned change was made."
+        output = {"status": "done", "summary": "Fixed add.", "no_change": ""}
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {"status": "done", "tokens": TOKENS, "output": output, "no_change_note": note},
+        )
+        outcome = self.run_report()
+        self.assertEqual(outcome["outcome"], "ready")
+        body = self.gh.run_comments(6)[-1]["body"]
+        self.assertIn(f"**Note from the implement agent:** {note}", body)
+        self.assertIn("so NexKit published the change and keeps the issue open", body)
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+        self.assertFalse(self.gh.comments_matching(5, "No change is needed"))
+
     def test_agent_failures_are_explained_on_the_issue(self):
         # The try after a job that failed as a whole: a person decides.
         outcome = self.run_report(d=decision(retry=True), published=False)
@@ -378,6 +396,80 @@ class ReportTests(ReportCase):
         )
         self.assertEqual(len(self.gh.dispatches), 1)
         self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+
+    def test_a_round_without_a_result_that_fits_runs_once_more(self):
+        error = (
+            "Claude stopped (error_max_structured_output_retries). NexKit asked the same "
+            "session for its result alone, and it gave none that fits either."
+        )
+        result = {"status": "error", "error": error, "transient": True, "unfit": "no testing"}
+        result["asked_again"] = True
+        self.write("nexkit-agent", "result.json", result)
+        outcome = self.run_report(d=decision(note="Keep it small."), published=False)
+        self.assertEqual(outcome["outcome"], "retry")
+        self.assertIn("even when asked for it alone", outcome["summary"])
+        self.assertNotIn("from the service, the network", outcome["summary"])
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(
+            dispatch["inputs"],
+            {"command": "go", "number": "5", "note": "Keep it small.", "auto": "retry"},
+        )
+        # A session that NexKit could not ask: only that there was none.
+        self.assertIn("gave no result that fits. Another run", retry_line({"unfit": "x"}))
+        # A second such stop waits for a person.
+        retry = decision(note="Keep it small.", retry=True)
+        outcome = self.run_report(d=retry, published=False)
+        self.assertEqual(outcome["outcome"], "retry_failed")
+        self.assertEqual(len(self.gh.dispatches), 1)
+
+    def test_a_publish_that_failed_on_github_every_try_runs_once_more(self):
+        self.write("nexkit-agent", "result.json", {"status": "done", "output": {}})
+        error = "git push --quiet origin failed: The requested URL returned error: 500"
+        result = {"published": False, "error": error, "transient": True}
+        needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        outcome = report(
+            self.gh,
+            decision(),
+            make_config(),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertEqual(outcome["outcome"], "retry")
+        self.assertIn("NexKit could not publish the implement result", outcome["summary"])
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(dispatch["inputs"]["command"], "go")
+        # A refusal that another try cannot change waits for a person.
+        result = {"published": False, "error": "protected branch hook declined"}
+        needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        outcome = report(
+            self.gh,
+            decision(),
+            make_config(),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertEqual(outcome["outcome"], "publish_failed")
+        self.assertEqual(len(self.gh.dispatches), 1)
+        # A publish job that ended without its outcome, such as out of time, runs once more.
+        needs = {"publish": {"result": "failure", "outputs": {}}}
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        outcome = report(
+            self.gh,
+            decision(),
+            make_config(),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertEqual(outcome["outcome"], "retry")
+        self.assertEqual(len(self.gh.dispatches), 2)
 
     def test_errors_that_another_try_cannot_fix_run_nothing_again(self):
         for result in (

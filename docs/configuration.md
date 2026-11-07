@@ -700,7 +700,9 @@ split, turn this on. When the last open sub-issue closes, NexKit closes the pare
 completed if at least one sub-issue was completed, and comments a list of the sub-issues
 and how each closed. When all of them were closed as not planned, the parent stays open
 with a note for a person. NexKit then checks the parent's own parent. It works the same
-whether a person or NexKit merged the work. See
+whether a person or NexKit merged the work, and autopilot's sweeps close such a parent too,
+instead of asking a person to. Without the setting, autopilot lists a parent whose
+sub-issues are all closed under *Needs a person*. See
 [How it works](how-it-works.md#work-without-a-command).
 
 The workflow must listen to `issues: closed`, as `nexkit init` writes it; `nexkit doctor`

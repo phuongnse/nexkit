@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+from datetime import UTC, datetime, timedelta
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -110,6 +111,14 @@ class GitHubError(RuntimeError):
     def __init__(self, status, message):
         super().__init__(f"GitHub API {status}: {message}")
         self.status = status
+        # A server error, a rate limit, or a connection that failed (status 0): another try
+        # a little later may pass. A refusal, such as a missing permission, is not.
+        self.transient = (
+            status == 0
+            or status >= 500
+            or status == 429
+            or (status == 403 and "rate limit" in str(message).lower())
+        )
 
 
 def alerts_off(text):
@@ -119,6 +128,10 @@ def alerts_off(text):
 
 
 class GitHub:
+    # How long `request` waits before each further try after a transient error, in seconds.
+    # The `publish` job waits longer (see `publish.WAITS`): its writes carry a whole round.
+    waits = (2, 4)
+
     def __init__(self, repository=None, token=None, api_url=None):
         self.repository = repository or os.environ["GITHUB_REPOSITORY"]
         self.token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
@@ -128,7 +141,9 @@ class GitHub:
 
     # -- transport -----------------------------------------------------------------
 
-    def request(self, method, path, body=None, params=None):
+    def request(self, method, path, body=None, params=None, waits=None):
+        """`waits`: the seconds to wait before each further try after a transient error,
+        `self.waits` unless given; `()` tries once."""
         url = path if path.startswith("http") else f"{self.api_url}{path}"
         if params:
             url += "?" + urlencode(params)
@@ -142,23 +157,19 @@ class GitHub:
             headers["Authorization"] = f"Bearer {self.token}"
         if data is not None:
             headers["Content-Type"] = "application/json"
-        for attempt in range(3):
+        for wait in (*(self.waits if waits is None else waits), None):
             try:
                 with urlopen(Request(url, data, headers, method=method), timeout=60) as resp:
                     raw = resp.read()
                     return json.loads(raw) if raw else None
             except HTTPError as exc:
-                detail = exc.read().decode(errors="replace")[:500]
-                if exc.code >= 500 and attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                raise GitHubError(exc.code, detail) from None
+                error = GitHubError(exc.code, exc.read().decode(errors="replace")[:500])
             except (URLError, TimeoutError, ConnectionError) as exc:
                 # A read that timed out or a connection that dropped, like a network error.
-                if attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                raise GitHubError(0, str(getattr(exc, "reason", exc))) from None
+                error = GitHubError(0, str(getattr(exc, "reason", exc)))
+            if not error.transient or wait is None:
+                raise error
+            time.sleep(wait)
         raise AssertionError("unreachable")
 
     def download(self, path, limit=DOWNLOAD_LIMIT):
@@ -418,7 +429,26 @@ class GitHub:
         return self.paginate(f"{self._repo}/issues/comments", params, limit)
 
     def comment(self, number, body):
-        return self.request("POST", f"{self._repo}/issues/{number}/comments", {"body": body})
+        """Post a comment. GitHub may post it and still answer with a server error or a
+        dropped connection, so before each further try the comments since the first are read,
+        and one with the same text is the one."""
+        path = f"{self._repo}/issues/{number}/comments"
+        since = (datetime.now(UTC) - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for wait in (*self.waits, None):
+            try:
+                return self.request("POST", path, {"body": body}, waits=())
+            except GitHubError as exc:
+                if not exc.transient or wait is None:
+                    raise
+            time.sleep(wait)
+            try:
+                found = self.request("GET", path, params={"since": since, "per_page": 100})
+            except GitHubError:
+                found = []
+            posted = [c for c in found or [] if c.get("body") == body]
+            if posted:
+                return posted[-1]
+        raise AssertionError("unreachable")
 
     def update_comment(self, comment_id, body):
         return self.request("PATCH", f"{self._repo}/issues/comments/{comment_id}", {"body": body})

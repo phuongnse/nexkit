@@ -200,6 +200,9 @@ def _rejected_until(event):
 
 # The tool through which Claude Code takes the result that `--json-schema` asks for.
 RESULT_TOOL = "StructuredOutput"
+# How Claude Code ends a run whose model called that tool as often as it allows without a
+# result that fits the schema.
+NO_RESULT = "error_max_structured_output_retries"
 
 
 class ClaudeReader(Reader):
@@ -217,6 +220,8 @@ class ClaudeReader(Reader):
         self.background = 0
         # Whether the model wrote anything, rather than Claude Code alone.
         self.answered = False
+        # What Claude Code said when it last turned a `StructuredOutput` call down.
+        self.rejected = ""
 
     def events(self, raw):
         if raw.get("type") == "result":
@@ -262,6 +267,8 @@ class ClaudeReader(Reader):
                     data = self._submitting.pop(block.get("tool_use_id"), None)
                     if data is not None and not block.get("is_error"):
                         self.submitted = data
+                    elif data is not None:
+                        self.rejected = result_text(block.get("content"))[-2000:]
                     found.append(
                         Event(
                             "tool_result",
@@ -275,12 +282,17 @@ class ClaudeReader(Reader):
     def outcome(self, returncode, stderr):
         event = self.result or {}
         outcome = Outcome(tokens=tokens(event))
+        cost = event.get("total_cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            outcome.cost_usd = float(cost)
         if not self.result:
             outcome.error = (
                 f"exited with code {returncode} without a result. {stderr.strip()[-1500:]}"
             ).strip()
         elif event.get("is_error") or event.get("subtype") != "success":
             outcome.error = f"stopped ({event.get('subtype')}). {event.get('result') or ''}"
+            if event.get("subtype") == NO_RESULT:
+                outcome.no_result, outcome.result_error = True, self.rejected
         else:
             outcome.output = event.get("structured_output")
             if outcome.output is None:
@@ -312,6 +324,7 @@ class ClaudeCode(Runtime):
     efforts = ("low", "medium", "high", "xhigh", "max")
     supports_budget = True
     reports_limits = True
+    resumes = True
     providers = {"anthropic": anthropic}
 
     def install(self):
@@ -325,7 +338,7 @@ class ClaudeCode(Runtime):
             "--output-format",
             "stream-json",
             "--verbose",
-            "--no-session-persistence",
+            *self._session(spec),
             "--model",
             spec.model,
             "--json-schema",
@@ -350,6 +363,13 @@ class ClaudeCode(Runtime):
         # the background would end the run without a result: run everything in the foreground.
         env = {**connection.env, "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
         return Launch(cmd + connection.argv, env, connection.files)
+
+    @staticmethod
+    def _session(spec):
+        """A session NexKit may continue is kept on disk under its id; any other is not."""
+        if not spec.session:
+            return ["--no-session-persistence"]
+        return ["--resume" if spec.resume else "--session-id", spec.session]
 
     def reader(self):
         return ClaudeReader()

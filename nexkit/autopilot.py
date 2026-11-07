@@ -1504,8 +1504,18 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     if left_alone:
         return _step(issue, "waits", person(TRUST_DO, f"autopilot leaves it alone: {left_alone}"))
     parts = gh.sub_issues(number)
-    if parts and all(part.get("state") == "closed" for part in parts):
-        # `close_parent_issues` closes it by itself; without it, a person does.
+    done = parts and all(part.get("state") == "closed" for part in parts)
+    if (
+        done
+        and cfg["close_parent_issues"]
+        and any(part.get("state_reason") == "completed" for part in parts)
+    ):
+        # As `maintain.close_parents` does after the last part closed, which may not have
+        # run, or may close it while this sweep runs: whichever comes first closes it.
+        reason = "every sub-issue of this parent issue is closed, and one was completed"
+        return _step(issue, "close", reason, parent=True)
+    if done:
+        # Without `close_parent_issues`, or without a completed part, a person decides.
         reason = person(
             "close it, or open new parts for what is left",
             "every sub-issue of this parent issue is closed, and NexKit closes a parent only "
@@ -1727,9 +1737,13 @@ def _awaited_by(gh, issue, awaited):
 
 def mention(gh, cfg, step):
     """Mention the people in `notify` on an issue that started to wait for a person, once
-    for its latest run, whether or not that run's `report` did. Returns a line or None."""
+    for its latest run, whether or not that run's `report` did. Returns a line or None.
+    An issue that closed since the sweep read it, such as a parent that `close_parents`
+    closed meanwhile, gets nothing."""
     text = mention_text(cfg, step["reason"])
     if not text or not step.get("person") or step.get("mentioned"):
+        return None
+    if gh.issue(step["number"]).get("state") != "open":
         return None
     gh.comment(step["number"], text)
     step["mentioned"] = True
@@ -1807,8 +1821,20 @@ def close_pull(gh, pull, text):
 
 def close(gh, cfg, step, workflow, ref):
     """Close an issue as completed with the finding of its last round, which found no
-    change is needed and recommended closing it. Returns lines for the log."""
+    change is needed and recommended closing it, or a parent issue whose sub-issues are all
+    closed (`parent`). Returns lines for the log."""
     number = step["number"]
+    # `maintain` imports this module.
+    from .maintain import close_parent, close_parents_safely
+
+    if step.get("parent"):
+        lines, closed = close_parent(gh, number)
+        if not closed:
+            return lines
+        # Its own parent may be done now, issues it blocked may start, and the scope may
+        # be done.
+        lines += close_parents_safely(gh, number)
+        return lines + request_safely(gh, cfg, workflow, ref, number)
     if "plan_url" in step:
         url = step["plan_url"]
         plan = f"[its plan]({url})" if url else "its plan"
@@ -1828,10 +1854,7 @@ def close(gh, cfg, step, workflow, ref):
         except GitHubError as exc:
             lines.append(f"Could not close #{step['pull']}: {exc}")
     if cfg["close_parent_issues"]:
-        # `maintain` imports this module. Here it runs at once; the `issues: closed` run
-        # that follows finds nothing left.
-        from .maintain import close_parents_safely
-
+        # Here it runs at once; the `issues: closed` run that follows finds nothing left.
         lines += close_parents_safely(gh, number)
     # Issues it blocked may start now, and the scope may be done.
     return lines + request_safely(gh, cfg, workflow, ref, number)

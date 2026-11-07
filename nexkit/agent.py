@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
+from dataclasses import replace
 from importlib import resources
 from pathlib import Path
 from string import Template
@@ -20,13 +22,18 @@ from .checks import BASE_SHA, RESULTS_LIMIT, environment, known_base
 from .evidence import since_text
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
-from .runlog import RunLog, add_tokens, summary, write_summary
+from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import AgentConfigError, Spec
 from .schema import filled, problems
 from .usage import schedule
 
 MAX_DIFF = 80_000
+# The most time a session gets to give its result alone, after a run without one that fits.
+RESULT_SECONDS = 600
+NO_RESULT_AGAIN = (
+    "NexKit asked the same session for its result alone, and it gave none that fits either."
+)
 NO_EARLIER_FIXES = "None. This is the first fix round of this pull request."
 # A conflict marker at the start of a line: `<<<<<<< ours`, `>>>>>>> theirs`, `||||||| base`.
 CONFLICT_MARKER = re.compile(rb"^(<{7}|>{7}|\|{7})( |$)", re.M)
@@ -73,7 +80,7 @@ _CHANGE_RESULT = {
         # that change, so autopilot answers none of the round's questions.
         "protected_paths": _STRING_LIST,
     },
-    "required": ["status", "summary", "blocker", "questions", "checks_run", "protected_paths"],
+    "required": ["status", "summary", "checks_run"],
 }
 # The pull request description is built from these, in this order, after `summary`.
 _PULL_FIELDS = {
@@ -133,12 +140,7 @@ SCHEMAS = {
             "risks",
             "acceptance_criteria",
             "implementation_notes",
-            "questions",
-            "too_large",
-            "split",
             "revision",
-            "protected_paths",
-            "no_change",
         ],
     },
     "implement": {
@@ -147,12 +149,20 @@ SCHEMAS = {
             **_CHANGE_RESULT["properties"],
             **_PULL_FIELDS,
             "questions": _CLOSING_QUESTIONS,
-            # The finding and its evidence when no change is needed, or "". Done, NexKit
-            # closes the issue with it; blocked, its one question's `closes` names the
-            # option that closes the issue with it, and that option is the recommended one.
-            "no_change": {"type": "string"},
+            # The finding and its evidence when no change is needed, or "". Done without a
+            # changed file, NexKit closes the issue with it; blocked, its one question's
+            # `closes` names the option that closes the issue with it, and that option is
+            # the recommended one. A round that changed files is a change: the text becomes
+            # a note for the reviewer (see `set_aside_finding`).
+            "no_change": {
+                "type": "string",
+                "description": "Only when you changed no file because no change is needed: "
+                "the finding and its evidence. Otherwise an empty string, always in a round "
+                "that changes files; notes on what you did or skipped go in outside_plan or "
+                "reviewer_notes.",
+            },
         },
-        "required": [*_CHANGE_RESULT["required"], *_PULL_FIELDS, "no_change"],
+        "required": [*_CHANGE_RESULT["required"], "changes", "testing"],
     },
     "fix": {
         **_CHANGE_RESULT,
@@ -179,7 +189,7 @@ SCHEMAS = {
                 },
             },
         },
-        "required": [*_CHANGE_RESULT["required"], "cause", "cause_outside", "open_conflicts"],
+        "required": _CHANGE_RESULT["required"],
     },
     # NexKit adds the configured profile names as an enum when it runs triage.
     "triage": {
@@ -235,6 +245,44 @@ SCHEMAS = {
         "required": ["verdict", "summary", "criteria", "findings", "previous_findings"],
     },
 }
+
+# The fields of a result whose empty value means the same as leaving them out, as each
+# stage's prompt describes them: "only when …, otherwise empty". The schemas do not require
+# them, so an agent that leaves one out gets this value instead of a result that does not
+# fit. Every other field is required.
+OPTIONAL = {
+    "plan": {
+        "questions": [],
+        "too_large": False,
+        "split": [],
+        "protected_paths": [],
+        "no_change": "",
+    },
+    "implement": {
+        "blocker": "",
+        "questions": [],
+        "protected_paths": [],
+        "outside_plan": [],
+        "reviewer_notes": [],
+        "no_change": "",
+    },
+    "fix": {
+        "blocker": "",
+        "questions": [],
+        "protected_paths": [],
+        "cause": "",
+        "cause_outside": False,
+        "open_conflicts": [],
+    },
+}
+
+
+def with_defaults(output, stage):
+    """`output` with the empty value of each optional field it left out."""
+    if not isinstance(output, dict):
+        return output
+    missing = {key: value for key, value in OPTIONAL.get(stage, {}).items() if key not in output}
+    return {**output, **copy.deepcopy(missing)}
 
 
 # What a plan and a review return for `review.checklist`, only when it has items.
@@ -613,6 +661,18 @@ def no_change(result):
     return filled((result.get("output") or {}).get("no_change"))
 
 
+def set_aside_finding(result):
+    """An implement round that changed files and returned `done` is a change, whatever its
+    `no_change` holds: agents put notes there such as "every planned change was made". The
+    text becomes a note for the reviewer, in the pull request and the round's comment, and
+    never closes the issue."""
+    output = result["output"]
+    note = no_change(result)
+    output["no_change"] = ""
+    output["reviewer_notes"] = [*(output.get("reviewer_notes") or []), note]
+    result["no_change_note"] = note
+
+
 def needed_protected(result, cfg):
     """The protected paths that a result says its change needs: only those that are
     protected, each once. The agent's list alone decides nothing."""
@@ -724,11 +784,13 @@ def stage_schema(stage, cfg):
     return with_checklist(schema, stage, cfg)
 
 
-def stage_spec(stage, cfg, home, dirs=()):
+def stage_spec(stage, cfg, home, dirs=(), session=None):
     """What the runtime needs to run `stage`, with `home` for the CLI's own files and
-    `dirs`, folders outside the checkout that the agent reads, such as CI runs' evidence."""
+    `dirs`, folders outside the checkout that the agent reads, such as CI runs' evidence.
+    `session` names a session that NexKit may continue."""
     settings = configuration.stage(cfg, stage)
     return Spec(
+        session=session,
         stage=stage,
         model=settings["model"],
         effort=settings["effort"],
@@ -946,31 +1008,97 @@ def _run_one(
     )
     # Without any agent credential: the CLI gets only its own, through `launch.env`.
     env = environment(commits)
-    with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
-        spec = stage_spec(stage, cfg, home, dirs)
+    session = str(uuid.uuid4()) if runtime.resumes else None
+
+    def launch_once(spec, text, log, limit):
         launch = runtime.launch(agent, spec, secrets, program)
-        for path, text in launch.files.items():
-            Path(path).write_text(text, encoding="utf-8")
+        for path, content in launch.files.items():
+            Path(path).write_text(content, encoding="utf-8")
         run = run_process(
-            prompt,
-            launch.argv,
-            env={**env, **launch.env},
-            cwd=cwd,
-            timeout_seconds=seconds,
-            log=log,
+            text, launch.argv, env={**env, **launch.env}, cwd=cwd, timeout_seconds=limit, log=log
         )
-    outcome = log.reader.outcome(run["returncode"], run["stderr"])
-    result = interpret(
-        stage,
-        run,
-        outcome,
-        max(1, round(seconds / 60)),
-        cfg["usage_limit"]["retry_minutes"],
-        label=runtime.label,
-        # NexKit's own schema: triage names an unknown profile in its error, not here.
-        schema=with_checklist(SCHEMAS[stage], stage, cfg),
-    )
-    return result, log.calls
+        outcome = log.reader.outcome(run["returncode"], run["stderr"])
+        found = interpret(
+            stage,
+            run,
+            outcome,
+            max(1, round(limit / 60)),
+            cfg["usage_limit"]["retry_minutes"],
+            label=runtime.label,
+            # NexKit's own schema: triage names an unknown profile in its error, not here.
+            schema=with_checklist(SCHEMAS[stage], stage, cfg),
+        )
+        return found, outcome.cost_usd
+
+    with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
+        spec = stage_spec(stage, cfg, home, dirs, session=session)
+        result, cost = launch_once(spec, prompt, log, seconds)
+        calls = log.calls
+        if unfit(result):
+            left = min(RESULT_SECONDS, seconds - (result.get("seconds") or 0))
+            # The request runs within the stage's spending limit: what the first run left.
+            budget = spec.budget_usd
+            if budget and cost is not None:
+                budget = round(budget - cost, 2)
+            if runtime.resumes and left >= 60 and (budget is None or budget > 0):
+                print(
+                    f"! {runtime.label} gave no result that fits the {stage} schema; asking the "
+                    "same session for its result alone.",
+                    flush=True,
+                )
+                folder = out / "result-again"
+                folder.mkdir(exist_ok=True)
+                text = result_prompt(stage, redact(result["unfit"]))
+                (folder / "prompt.md").write_text(text, encoding="utf-8")
+                again = RunLog(
+                    redact,
+                    reader=runtime.reader(),
+                    title=f"{title} ({name}, asked for its result)",
+                    speaker=runtime.label,
+                    tool_output=cfg["log"]["tool_output"],
+                    transcript_dir=folder if cfg["transcript"] else None,
+                )
+                second, _ = launch_once(
+                    replace(spec, resume=True, budget_usd=budget), text, again, left
+                )
+                result = asked_again(result, second)
+                calls = calls + again.calls
+            if unfit(result):
+                # Another run may pass where this session did not: the stage's command runs
+                # once more, as after a transient error.
+                result["transient"] = True
+                if result.get("asked_again"):
+                    result["error"] = f"{result['error']} {NO_RESULT_AGAIN}".strip()
+    return result, calls
+
+
+def unfit(result):
+    """Whether a stage result is an error only because it gave no result that fits."""
+    return result["status"] == "error" and bool(result.get("unfit")) and not result.get("transient")
+
+
+def result_prompt(stage, wrong):
+    """The prompt that asks a session that did its work for its result alone."""
+    return Template(_template("result_again")).safe_substitute(stage=stage, wrong=wrong)
+
+
+def asked_again(first, second):
+    """The result of a session asked for its result alone: the second answer, with the time
+    and tokens of both runs. `asked_again` says it was asked. A request that ran out of its
+    time or budget leaves the first result: no result that fits, not work that ran out of
+    time, which would lead autopilot to split work that was done."""
+    if second["status"] == "error" and not second.get("transient"):
+        # Timed out, over its budget, or still no result that fits.
+        unfit = second.get("unfit") or first["unfit"]
+        second = {**first, "unfit": unfit, **{k: second.get(k) for k in ("tokens", "seconds")}}
+    second["seconds"] = round((first.get("seconds") or 0) + (second.get("seconds") or 0), 1)
+    tokens = add_tokens(first.get("tokens"), second.get("tokens"))
+    if tokens:
+        second["tokens"] = tokens
+    else:
+        second.pop("tokens", None)
+    second["asked_again"] = True
+    return second
 
 
 def paused(result, limit, label="The agent"):
@@ -989,7 +1117,9 @@ def interpret(
     stage, run, outcome, timeout_minutes, retry_minutes=60, *, label="The agent", schema=None
 ):
     """Map a run and the runtime's outcome to a stage result: done, blocked, paused or
-    error. With `schema`, the structured result must fit it."""
+    error. With `schema`, the structured result must fit it, once the optional fields it
+    left out have their empty values. A run that ended without a result that fits has
+    `unfit`: what was wrong, for a request of the result alone (see `_run_one`)."""
     result = {
         "stage": stage,
         "seconds": run["seconds"],
@@ -1000,21 +1130,27 @@ def interpret(
     }
     if outcome.tokens:
         result["tokens"] = outcome.tokens
-    found = problems(outcome.output, schema) if schema and outcome.output is not None else []
+    given = with_defaults(outcome.output, stage)
+    found = problems(given, schema) if schema and given is not None else []
     if run["timed_out"]:
         result["error"] = f"{label} did not finish within {timeout_minutes} minutes."
         result["timed_out"] = True
     elif outcome.error:
         result["error"] = f"{label} {outcome.error}"[:2000].strip()
-    elif not isinstance(outcome.output, dict):
+        if outcome.no_result:
+            said = one_line(outcome.result_error)[:1500]
+            result["unfit"] = said or f"The result did not fit the {stage} schema."
+    elif not isinstance(given, dict):
         result["error"] = f"{label} finished without the required structured result."
+        result["unfit"] = "There was no structured result."
     elif found:
         result["error"] = (
             f"{label} returned a result that does not fit the {stage} schema: "
             + "; ".join(found[:5])
         )
+        result["unfit"] = "; ".join(found[:20])
     else:
-        output = outcome.output
+        output = given
         result["output"] = output
         result["summary"] = output.get("summary", "")
         if stage in ("implement", "fix"):
@@ -1239,12 +1375,7 @@ def run_stage(
             # checks show whether it did.
         elif stage == "implement" and no_change(result):
             if files:
-                result.update(
-                    status="error",
-                    error="The agent found that no change is needed but changed "
-                    + ", ".join(f"`{name}`" for name in files[:20])
-                    + ", so NexKit publishes nothing.",
-                )
+                set_aside_finding(result)
             else:
                 # The issue or its plan says to stop without a change here: NexKit closes
                 # the issue with the finding.

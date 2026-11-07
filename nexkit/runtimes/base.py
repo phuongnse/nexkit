@@ -55,6 +55,10 @@ class Spec:
     # Folders outside the working directory that the agent reads, such as the evidence of
     # CI runs. A stage with read access reads them too.
     dirs: tuple = ()
+    # With a runtime that `resumes`: the id of the session, so that NexKit can ask it for
+    # more later, and whether this launch continues that session instead of starting it.
+    session: str | None = None
+    resume: bool = False
 
     @property
     def access(self):
@@ -105,6 +109,13 @@ class Outcome:
     # Whether `error` came from the service or the network rather than the work, so that
     # another try later may pass: NexKit then runs the stage's command once more.
     transient: bool = False
+    # Whether the CLI stopped because the agent gave no result that fits the schema after
+    # the CLI's own tries, and what the CLI said about the last one. The work may be done,
+    # so NexKit asks the same session for the result alone (see `Runtime.resumes`).
+    no_result: bool = False
+    result_error: str = ""
+    # What the run cost in US dollars, as the CLI reported it, or None.
+    cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -215,6 +226,10 @@ class Runtime:
     # Whether the reader can tell that the CLI stopped at a usage limit (`Outcome.limit`).
     # Only then can a run pause, or move to the agent's fallback.
     reports_limits = False
+    # Whether `launch` can continue a session it started (`Spec.session`, `Spec.resume`)
+    # with a further prompt. Only then can NexKit ask a session that gave no valid result
+    # for its result alone; otherwise such a run stops as a transient error.
+    resumes = False
     # Provider name -> function(agent, spec, secrets) returning the Launch parts for it.
     providers: dict = {}
 

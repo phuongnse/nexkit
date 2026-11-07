@@ -615,8 +615,9 @@ merge GitHub refused, on the head its checks and review passed:
 Each try has the guards of every merge: an issue that closed, an edit by someone without
 write access, a label that holds the issue, or a base branch that already holds the change
 merges nothing, and a head that moved gets `/nexkit review` instead. A refusal for another
-reason stays `merge_refused`, and the new mention says why. Rules that block every
-automatic merge:
+reason stays `merge_refused`, and the new mention says why. A pull request that you
+merged or closed yourself in the meantime, such as right after your approval, is left as it
+is, with no mention (`pull_closed`). Rules that block every automatic merge:
 
 - a required merge queue, or squash merging turned off for the repository.
 

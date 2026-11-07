@@ -108,7 +108,7 @@ def pull_state(run, conflicting):
         return "blocked" if outcome == "agent_blocked" else "failed"
     if outcome in ("ready", "merge_refused", "merge_waiting"):
         return outcome
-    if outcome in ("merge_issue_closed", autopilot.UNTRUSTED_MERGE):
+    if outcome in ("merge_issue_closed", autopilot.UNTRUSTED_MERGE, autopilot.PULL_CLOSED):
         # Checks and review passed, and a person decides the merge.
         return "ready"
     if outcome == autopilot.CI_WAITING:
@@ -164,6 +164,8 @@ def pull_item(pull, comments, cfg):
         attention = autopilot.person(fix, why)
     elif state in ("running", "conflicting"):
         attention = None
+    elif meaningful.get("outcome") == autopilot.PULL_CLOSED and run.get("status") == SUCCESS:
+        attention = autopilot.person(*autopilot.REOPENED)
     elif not attention and state in ("failed", "blocked"):
         attention = autopilot.person(
             "read the last round's comment for why, then post its command again",

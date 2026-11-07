@@ -591,11 +591,29 @@ class FakeGitHub:
                 raise self.merge_error.pop(0)
         elif self.merge_error:
             raise self.merge_error
+        pull = self.pulls.get(number)
+        if pull is not None and pull["state"] != "open":
+            raise GitHubError(405, "Pull Request is not mergeable")
         self.merged.append((number, sha, method))
+        if pull is not None:
+            # As GitHub does: the merge closes the pull request.
+            pull.update(
+                state="closed",
+                merged=True,
+                merged_at="2026-01-01T00:00:00Z",
+                merged_by={"login": BOT_LOGIN},
+            )
+            self.issues[number]["state"] = "closed"
         commits = self.history.get(self.pulls.get(number, {}).get("base", {}).get("ref"))
         if commits is not None:
             commits.append(f"{len(commits) + 1:040x}")
         return {"merged": True, "sha": "d" * 40}
+
+    def reopen(self, pr, issue):
+        """Undo a merge of pull request `pr` and the close of `issue`, to merge it again."""
+        self.pulls[pr].update(state="open", merged=False, merged_at=None, merged_by=None)
+        self.issues[pr]["state"] = "open"
+        self.issues[issue]["state"] = "open"
 
     def compare(self, base, head):
         if (base, head) in self.compares:

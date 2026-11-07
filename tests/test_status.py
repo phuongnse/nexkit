@@ -157,6 +157,11 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(
             data["needs_person"], [{"number": 8, "kind": "pull_request", "reason": reason}]
         )
+        # NexKit 6.3.0 gave this outcome to a pull request a person merged first.
+        self.merged(8, 9, "2026-11-07T07:45:41Z", by="olivia")
+        for cfg in (make_config(merge={"auto": True}), make_config(autopilot={"enabled": True})):
+            data = collect(self.gh, cfg, workers=1)
+            self.assertEqual((data["pull_requests"], data["needs_person"]), ([], []))
 
     def test_lists_pull_requests_closed_because_the_base_branch_holds_their_change(self):
         for number, issue, outcome in ((30, 27, "already_on_base"), (32, 7, "needs_human")):

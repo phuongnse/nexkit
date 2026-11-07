@@ -8,10 +8,10 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent
+from nexkit import agent, gitutil
 from nexkit.context import gather
 from nexkit.github import GitHubError
-from nexkit.gitutil import merge_tree
+from nexkit.gitutil import GitError, merge_tree
 from nexkit.publish import PublishError, identity, publish, pull_body, render_plan
 from nexkit.state import latest_plan, plan_data, plan_profile, plan_text
 from tests.support import (
@@ -136,6 +136,75 @@ class PublishTests(unittest.TestCase):
         self.assertNotIn("no_change", outcome)
         body = self.gh.pulls[outcome["pr"]]["body"]
         self.assertIn(f"## Notes for the reviewer\n\n- {note}", body)
+
+    def failing_push(self, *errors):
+        """Patch git so that its next pushes fail with `errors`, each git's error output,
+        and later ones run. Returns the patch and the sleep patch to enter."""
+        real, left = gitutil._run, list(errors)
+
+        def run(repo, args, binary=False, input=None):
+            if args and args[0] == "push" and left:
+                return subprocess.CompletedProcess(["git", *args], 1, "", left.pop(0))
+            return real(repo, args, binary, input)
+
+        return mock.patch.object(gitutil, "_run", run), mock.patch.object(gitutil.time, "sleep")
+
+    def test_a_push_that_fails_on_a_server_error_is_tried_again(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        error = (
+            "error: RPC failed; HTTP 500 curl 22 The requested URL returned error: 500\n"
+            "fatal: the remote end hung up unexpectedly\n"
+        )
+        run, sleep = self.failing_push(error)
+        with run, sleep as slept, redirect_stderr(io.StringIO()) as log:
+            outcome = self.publish_implement(start)
+        self.assertTrue(outcome["published"])
+        self.assertNotIn("error", outcome)
+        self.assertEqual(outcome["head"], git(self.repos.origin, "rev-parse", "nexkit/issue-5"))
+        self.assertEqual([c.args[0] for c in slept.call_args_list], [10])
+        self.assertIn("Trying again in 10 seconds", log.getvalue())
+
+    def test_a_refused_push_fails_at_once(self):
+        start = self.make_patch({"calc.py": "x\n"})
+        refused = (
+            "remote: error: GH006: Protected branch update failed for refs/heads/nexkit/issue-5.\n"
+            " ! [remote rejected] HEAD -> nexkit/issue-5 (protected branch hook declined)\n"
+        )
+        run, sleep = self.failing_push(refused)
+        with run, sleep as slept, self.assertRaises(GitError) as caught:
+            self.publish_implement(start)
+        self.assertFalse(caught.exception.transient)
+        slept.assert_not_called()
+        self.assertFalse(self.gh.pulls)
+
+    def test_a_push_that_fails_on_a_server_error_every_time_is_transient(self):
+        start = self.make_patch({"calc.py": "x\n"})
+        error = (
+            "fatal: unable to access 'https://github.com/acme/app/': "
+            "The requested URL returned error: 503\n"
+        )
+        run, sleep = self.failing_push(*[error] * 4)
+        with run, sleep as slept, redirect_stderr(io.StringIO()):
+            with self.assertRaises(GitError) as caught:
+                self.publish_implement(start)
+        self.assertTrue(caught.exception.transient)
+        self.assertEqual([c.args[0] for c in slept.call_args_list], [10, 30, 60])
+        self.assertFalse(self.gh.pulls)
+
+    def test_a_pull_request_that_github_opened_on_a_try_it_answered_with_an_error(self):
+        start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})
+        self.gh.add_pull(9, 5, branch="nexkit/issue-5")
+        error = GitHubError(422, "A pull request already exists for acme:nexkit/issue-5.")
+        with mock.patch.object(self.gh, "create_pull", side_effect=error):
+            outcome = self.publish_implement(start)
+        self.assertEqual((outcome["published"], outcome["pr"]), (True, 9))
+        # Without one, the refusal stands.
+        self.gh.pulls[9]["state"] = "closed"
+        with (
+            mock.patch.object(self.gh, "create_pull", side_effect=error),
+            self.assertRaises(GitHubError),
+        ):
+            self.publish_implement(start, name="again")
 
     def test_an_issue_closed_while_the_round_ran_gets_nothing_published(self):
         start = self.make_patch({"calc.py": "def add(a, b):\n    return a + b\n"})

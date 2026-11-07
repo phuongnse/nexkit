@@ -418,6 +418,41 @@ class ReportTests(ReportCase):
         self.assertEqual(outcome["outcome"], "retry_failed")
         self.assertEqual(len(self.gh.dispatches), 1)
 
+    def test_a_publish_that_failed_on_github_every_try_runs_once_more(self):
+        self.write("nexkit-agent", "result.json", {"status": "done", "output": {}})
+        error = "git push --quiet origin failed: The requested URL returned error: 500"
+        result = {"published": False, "error": error, "transient": True}
+        needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        outcome = report(
+            self.gh,
+            decision(),
+            make_config(),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertEqual(outcome["outcome"], "retry")
+        self.assertIn("NexKit could not publish the implement result", outcome["summary"])
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(dispatch["inputs"]["command"], "go")
+        # A refusal that another try cannot change waits for a person.
+        result = {"published": False, "error": "protected branch hook declined"}
+        needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        outcome = report(
+            self.gh,
+            decision(),
+            make_config(),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertEqual(outcome["outcome"], "publish_failed")
+        self.assertEqual(len(self.gh.dispatches), 1)
+
     def test_errors_that_another_try_cannot_fix_run_nothing_again(self):
         for result in (
             {"status": "error", "error": "Claude stopped (error_max_turns)."},

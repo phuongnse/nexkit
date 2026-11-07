@@ -1924,17 +1924,40 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(output.call_args.kwargs["conflicts"], "")
 
     def publish_outcome(self, outcome):
-        """Run `nexkit publish` with `publish` returning `outcome`."""
+        """Run `nexkit publish` with `publish` returning `outcome`, or raising it. Returns
+        the GitHub client that `publish` got."""
         with tempfile.TemporaryDirectory() as tmp:
             for name in ("result.json", "context.json"):
                 Path(tmp, name).write_text("{}")
             env = {"NEXKIT_DECISION": "{}", "GITHUB_REPOSITORY": "acme/app"}
+            given = {"side_effect": outcome} if isinstance(outcome, Exception) else {}
             with (
                 mock.patch.dict(os.environ, env),
                 mock.patch("nexkit.cli._config", return_value={}),
-                mock.patch("nexkit.publish.publish", return_value=outcome),
+                mock.patch("nexkit.publish.publish", return_value=outcome, **given) as run,
             ):
                 cli.main(["publish", "--repo", tmp, "--artifacts", tmp])
+        return run.call_args.args[0]
+
+    def test_publish_waits_longer_and_says_when_every_try_failed_on_a_server_error(self):
+        from nexkit.github import GitHubError
+        from nexkit.gitutil import GitError
+        from nexkit.publish import WAITS
+
+        failed = GitError("git push --quiet origin failed: HTTP 503")
+        failed.transient = True
+        for error, transient in (
+            (failed, True),
+            (GitHubError(502, "Bad Gateway"), True),
+            (GitError("git push failed: [rejected] (non-fast-forward)"), False),
+            (GitHubError(403, "Resource not accessible by integration"), False),
+        ):
+            with mock.patch("nexkit.cli._output") as output, mock.patch("builtins.print"):
+                gh = self.publish_outcome(error)
+            result = output.call_args.kwargs["result"]
+            self.assertEqual(gh.waits, WAITS)
+            self.assertFalse(result["published"])
+            self.assertEqual(result.get("transient", False), transient, error)
 
     def test_verify_holds_no_secrets(self):
         for name in ("verify", "combine"):

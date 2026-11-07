@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import config as configuration
 from .github import GitHubError
-from .gitutil import git, is_ancestor, merge_tree, names
+from .gitutil import git, git_retrying, is_ancestor, merge_tree, names
 from .runlog import stage_agent
 from .schema import filled
 from .state import (
@@ -25,6 +25,11 @@ from .state import (
     profile_text,
     questions,
 )
+
+# How long `publish` waits before each further try of a push, a fetch or a GitHub API call
+# that failed on a server error, a rate limit or a dropped connection, in seconds. When
+# every try fails, the round stops as transient, and NexKit runs its command once more.
+WAITS = (10, 30, 60)
 
 
 class PublishError(RuntimeError):
@@ -308,7 +313,7 @@ def apply_change(repo, decision, result, title, patch_path, cfg, bot, *, up_to_d
     tip follows the round's commit when it merges cleanly."""
     branch = decision["branch"]
     refs = [decision["base"]] + ([branch] if decision["action"] == "fix" else [])
-    git(repo, "fetch", "--quiet", "origin", *refs)
+    git_retrying(repo, "fetch", "--quiet", "origin", *refs, waits=WAITS)
     if decision["action"] == "implement":
         git(repo, "checkout", "-q", "-B", branch, _implement_start(repo, decision, result))
     else:
@@ -359,7 +364,7 @@ def apply_change(repo, decision, result, title, patch_path, cfg, bot, *, up_to_d
     if decision["action"] == "implement":
         # No open PR uses this branch (checked when routing); replace any stale attempt.
         push.insert(1, "--force")
-    git(repo, *push)
+    git_retrying(repo, *push, waits=WAITS)
     return git(repo, "rev-parse", "HEAD").strip(), found
 
 
@@ -427,7 +432,8 @@ def publish(gh, decision, result, context, cfg, repo, out_dir):
     )
     pr = decision["pr"]
     if decision["action"] == "implement":
-        pull = gh.create_pull(
+        pull = open_pull(
+            gh,
             context["title"],
             decision["branch"],
             decision["base"],
@@ -436,6 +442,19 @@ def publish(gh, decision, result, context, cfg, repo, out_dir):
         pr = pull["number"]
         copy_issue_fields(gh, decision["issue"], pr)
     return {"published": True, "pr": pr, "head": head, **found}
+
+
+def open_pull(gh, title, branch, base, body):
+    """Open the pull request of `branch`. GitHub may open it and still answer a try with a
+    server error, so the client's next try is refused as a duplicate (422): then the open
+    pull request of the branch is the one. `route` checked that none was open before."""
+    try:
+        return gh.create_pull(title, branch, base, body)
+    except GitHubError as exc:
+        found = gh.open_pulls(branch) if exc.status == 422 else []
+        if found:
+            return found[0]
+        raise
 
 
 def wants_up_to_date(gh, base):

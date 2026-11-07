@@ -700,9 +700,9 @@ def run_status(outcome):
 
 def _transient(decision, agent, publish, needs, stage="agent"):
     """The error of a stage that stopped for a reason another try may pass, or None: a
-    transient error of the agent, a job that failed as a whole, or, in a round NexKit
-    started itself, a branch that moved while the agent worked. A job a person cancelled
-    is never one."""
+    transient error of the agent or of GitHub while `publish` wrote, a job that failed as a
+    whole, or, in a round NexKit started itself, a branch that moved while the agent
+    worked. A job a person cancelled is never one."""
     result = (needs.get(stage) or {}).get("result")
     if result == "cancelled":
         return None
@@ -719,6 +719,10 @@ def _transient(decision, agent, publish, needs, stage="agent"):
         return agent.get("error") or "a transient error"
     if stage == "agent" and publish.get("moved") and _automatic(decision):
         return publish.get("error")
+    if stage == "agent" and publish.get("transient"):
+        # Every try of a push or a GitHub write failed on a server error, a rate limit or
+        # a dropped connection (see `publish.WAITS`).
+        return publish.get("error") or "a transient error of GitHub"
     return None
 
 

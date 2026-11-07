@@ -4,10 +4,33 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
+import time
 
 
 class GitError(RuntimeError):
-    pass
+    # Whether git failed for a reason another try later may pass (see `git_retrying`).
+    transient = False
+
+
+# What git says when GitHub or the network failed for a while rather than refused: a
+# server error or rate limit (`HTTP 503`, `The requested URL returned error: 502`), or a
+# connection that could not be made or dropped.
+TRANSIENT = re.compile(
+    r"(?:HTTP|returned error:?)\s*(?:5\d\d|429)\b|Internal Server Error|Bad Gateway"
+    r"|Service Unavailable|Gateway Time-?out|rate limit|Could not resolve host"
+    r"|Failed to connect|Connection (?:reset|refused|timed out)|Operation timed out"
+    r"|RPC failed|early EOF|unexpected disconnect|remote end hung up|SSL_ERROR|gnutls",
+    re.I,
+)
+# What git says when GitHub refused the command, which another try cannot change: a
+# protected branch, a push that is not a fast-forward, a missing permission.
+REFUSED = re.compile(
+    r"\[(?:remote )?rejected\]|protected branch|non-fast-forward|fetch first"
+    r"|Permission to \S+ denied|permission denied|\bGH0\d\d\b"
+    r"|(?:HTTP|returned error:?)\s*40[0-4]\b",
+    re.I,
+)
 
 
 def _run(repo, args, binary=False, input=None):
@@ -33,6 +56,35 @@ def git(repo, *args, binary=False, input=None, ok=(0,)):
     if proc.returncode not in ok:
         raise _error(args, proc, binary)
     return proc.stdout
+
+
+def transient_failure(stderr):
+    """Whether git's error output says GitHub or the network failed for a while, and
+    nothing says that GitHub refused the command. GitHub may turn a push down with a server
+    error as its reason: `! [remote rejected] HEAD -> x (Internal Server Error)`."""
+    lines = stderr.splitlines()
+    refusals = [
+        line for line in lines if not ("[remote rejected]" in line and TRANSIENT.search(line))
+    ]
+    return bool(TRANSIENT.search(stderr)) and not REFUSED.search("\n".join(refusals))
+
+
+def git_retrying(repo, *args, waits):
+    """`git` for a command that talks to GitHub, such as a push or a fetch. When it fails on
+    a server error, a rate limit or a dropped connection, it runs again after each of
+    `waits` seconds (see `publish.WAITS`). A refusal fails at once. When every try failed
+    for such a reason, the GitError is `transient`."""
+    for wait in (*waits, None):
+        proc = _run(repo, args)
+        if proc.returncode == 0:
+            return proc.stdout
+        error = _error(args, proc)
+        error.transient = transient_failure(proc.stderr)
+        if not error.transient or wait is None:
+            raise error
+        print(f"warning: {error} Trying again in {wait} seconds.", file=sys.stderr, flush=True)
+        time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def names(output):

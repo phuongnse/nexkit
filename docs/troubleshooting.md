@@ -364,10 +364,13 @@ Autopilot leaves it alone: opened by @someone, who cannot write to the repositor
 
 ### Publishing failed after `/nexkit go`
 
-Read the run's comment and the `publish` job's log. When the base branch was
-force-pushed, the same `/nexkit go` implements the plan again on it (see above). Otherwise
-find the cause before posting `/nexkit go` again: it runs the whole implement round again,
-and stops the same way while the cause stays.
+Read the run's comment and the `publish` job's log. A server error, a rate limit or a
+dropped connection is not the cause: `publish` already tried four times, and NexKit ran
+the command once more (see [Failure handling](how-it-works.md#failure-handling)). When the
+base branch was force-pushed, the same `/nexkit go` implements the plan again on it (see
+above). Otherwise find the cause, such as a branch rule or a missing App permission,
+before posting `/nexkit go` again: it runs the whole implement round again, and stops the
+same way while the cause stays.
 
 ### A question without a recommended option, or asked again
 

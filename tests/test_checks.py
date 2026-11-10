@@ -822,3 +822,138 @@ class SetupTimeoutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SHARDED = {
+    "name": "e2e",
+    "run": 'echo "shard $NEXKIT_SHARD"',
+    "shards": {"count": "cat count.txt", "max": 4},
+}
+
+
+class ShardTests(unittest.TestCase):
+    """A check that runs in as many shards as its `count` prints."""
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.cfg = make_config(
+            parallel_checks=True, checks=[{"name": "lint", "run": "true"}, SHARDED]
+        )
+
+    def count(self, text):
+        (self.root / "count.txt").write_text(text)
+        with contextlib.redirect_stdout(io.StringIO()):
+            return checks.count_shards(self.cfg, self.root)
+
+    def test_each_shard_is_a_check_of_its_own_with_its_shard(self):
+        counts = self.count("Measured 41 specs.\n3\n")
+        self.assertEqual(counts, {"e2e": 3})
+        expanded = checks.expand(self.cfg, counts)
+        self.assertEqual(
+            [(c["name"], c.get("shard")) for c in expanded["checks"]],
+            [("lint", None), ("e2e-1", "1/3"), ("e2e-2", "2/3"), ("e2e-3", "3/3")],
+        )
+        self.assertNotIn("shards", expanded["checks"][1])
+        # One job each, in the matrix the `shards` job gives verify.
+        matrix = checks.check_matrix(expanded)
+        self.assertEqual(
+            [entry["group"] for entry in matrix["include"]], ["lint", "e2e-1", "e2e-2", "e2e-3"]
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = checks.run_checks(expanded, self.root, group="e2e-2")
+        [result] = results
+        self.assertEqual((result["name"], result["shard"]), ("e2e-2", "2/3"))
+        self.assertIn("shard 2/3", result["output"])
+        self.assertTrue(result["passed"])
+        # A fix round's prompt shows how to run that shard alone.
+        self.assertEqual(
+            checks.shown_command(result), 'NEXKIT_SHARD=2/3 echo "shard $NEXKIT_SHARD"'
+        )
+
+    def test_a_count_that_fails_or_is_out_of_range_fails_the_check_and_runs_no_shard(self):
+        for text, why in (
+            ("7\n", "not a whole number from 1 to 4"),
+            ("0\n", "not a whole number from 1 to 4"),
+            ("three\n", "'three' last"),
+            ("", "''"),
+        ):
+            counts = self.count(text)
+            self.assertIn(why, counts["e2e"]["error"], text)
+        (self.root / "count.txt").unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            counts = checks.count_shards(self.cfg, self.root)
+        self.assertIn("failed with exit code 1", counts["e2e"]["error"])
+        self.assertIn("count.txt", counts["e2e"]["error"])
+        expanded = checks.expand(self.cfg, counts)
+        self.assertEqual([c["name"] for c in expanded["checks"]], ["lint", "e2e"])
+        (self.root / "ran.txt").unlink(missing_ok=True)
+        cfg = {**expanded, "setup": ["touch ran.txt"]}
+        with contextlib.redirect_stdout(io.StringIO()):
+            [result] = checks.run_checks(cfg, self.root, group="e2e")
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["run"], "cat count.txt")
+        self.assertIn("so no shard ran", result["output"])
+        # Nothing ran in its job, setup neither.
+        self.assertFalse((self.root / "ran.txt").exists())
+
+    def test_a_long_count_output_is_cut_and_a_count_out_of_range_runs_nothing(self):
+        counts = self.count("x" * 200_000)
+        self.assertLess(len(counts["e2e"]["error"]), checks.COUNT_TAIL + 500)
+        # Counts the `shards` job did not make, such as one a process it left behind wrote.
+        for number in (0, 5):
+            [check] = checks.expand(
+                make_config(parallel_checks=True, checks=[SHARDED]), {"e2e": number}
+            )["checks"]
+            self.assertIn("not 1 to its `max`", check["count_error"])
+
+    def test_count_cannot_set_the_jobs_outputs(self):
+        (self.root / "count.txt").write_text("2\n")
+        cfg = make_config(
+            parallel_checks=True,
+            checks=[
+                {**SHARDED, "shards": {"count": 'echo "${GITHUB_OUTPUT:-none}"; echo 2', "max": 4}}
+            ],
+        )
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": "/tmp/out"}):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                checks.count_shards(cfg, self.root)
+        self.assertIn("none", out.getvalue())
+        self.assertNotIn("/tmp/out", out.getvalue())
+
+    def test_a_skipped_shard_keeps_its_fingerprint(self):
+        check = {"name": "e2e-2", "run": "x", "shard": "2/3"}
+        result = checks.skipped_result(check, "a" * 40)
+        self.assertEqual(state_passed([result])["e2e-2"], check_fingerprint("x", "2/3"))
+
+    def test_a_shard_gets_its_verified_commit_only_with_the_same_count(self):
+        result = {"name": "e2e-1", "run": SHARDED["run"], "passed": True, "shard": "1/3"}
+        recorded = state_passed([result])
+        self.assertEqual(recorded["e2e-1"], check_fingerprint(SHARDED["run"], "1/3"))
+        self.assertNotEqual(recorded["e2e-1"], check_fingerprint(SHARDED["run"], "1/4"))
+        self.assertNotEqual(recorded["e2e-1"], check_fingerprint(SHARDED["run"]))
+
+    def test_an_automatic_review_skips_a_shard_whose_paths_did_not_change(self):
+        repos = GitRepos()
+        self.addCleanup(repos._tmp.cleanup)
+        work = repos.clone("work")
+        since = git(work, "rev-parse", "HEAD")
+        (work / "docs.md").write_text("words\n")
+        git(work, "add", "-A")
+        head = repos.commit(work, "docs")
+        check = {**SHARDED, "unaffected_by": ["*.md"]}
+        cfg = checks.expand(make_config(parallel_checks=True, checks=[check]), {"e2e": 2})
+        heads = {"e2e-1": {check_fingerprint(check["run"], "1/2"): since}}
+        decision = {"action": "review", "auto": True, "check_heads": heads}
+        self.assertEqual(
+            checks.skip_shards(cfg, decision, work, head), [{"name": "e2e-1", "since": since}]
+        )
+        # Not for a person's review, nor for another count.
+        self.assertEqual(checks.skip_shards(cfg, {**decision, "auto": False}, work, head), [])
+        other = checks.expand(make_config(parallel_checks=True, checks=[check]), {"e2e": 3})
+        self.assertEqual(checks.skip_shards(other, decision, work, head), [])
+
+
+def state_passed(results):
+    from nexkit.state import passed_checks
+
+    return passed_checks(results)

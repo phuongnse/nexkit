@@ -13,9 +13,11 @@ from .state import (
     RUNNING,
     SUCCESS,
     approved_head,
+    asked_last,
     by_bot,
     check_fingerprint,
     check_heads,
+    closing_answer,
     latest_plan,
     plan_profile,
     repeated_failures,
@@ -161,6 +163,7 @@ def route(gh, event_name, event, inputs=None):
             decision = _trust(event["issue"], note)
         else:
             decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
+            decision = _closing(gh, decision)
         decision.update(actor=actor, comment_id=event["comment"]["id"])
         return decision
 
@@ -271,9 +274,9 @@ def route(gh, event_name, event, inputs=None):
 
 def _approved(pull, actor, commit=None):
     """A writer's approval of the commit `commit` of a NexKit pull request: the `maintain`
-    job merges it when its latest round could not (see `maintain.merge_approved`). It
-    starts no agent, and runs in a concurrency group of its own, so it never replaces a
-    command that waits."""
+    job merges it when its latest round could not, and accepts the checklist items a
+    person decides (see `maintain.merge_approved`). It starts no agent, and runs in a
+    concurrency group of its own, so it never replaces a command that waits."""
     issue = issue_from_branch((pull.get("head") or {}).get("ref"))
     repo = ((pull.get("head") or {}).get("repo") or {}).get("full_name")
     base = (pull.get("base") or {}).get("repo") or {}
@@ -286,6 +289,27 @@ def _approved(pull, actor, commit=None):
         "issue": issue,
         "actor": actor,
         "commit": commit,
+    }
+
+
+def _closing(gh, decision):
+    """A person's `/nexkit plan` or `/nexkit go` whose note picks the option, of the
+    questions NexKit asked last on the issue, that only closes it: the `maintain` job
+    closes the issue as not planned, and no agent runs, since another round could only
+    stop at the same place. Any other note goes to its round as it is."""
+    if decision["action"] not in ("plan", "implement") or not decision.get("note"):
+        return decision
+    asked = asked_last(gh.comments(decision["issue"]))
+    option = closing_answer(decision["note"], asked[1]) if asked else None
+    if not option or gh.open_pulls(decision["branch"]):
+        # A pull request that is open stays with its issue: a person closes both.
+        return decision
+    return {
+        "action": "maintain",
+        "task": "close_answer",
+        "issue": decision["issue"],
+        "answer": option,
+        "asked": asked[0],
     }
 
 
@@ -511,7 +535,10 @@ def skip_unaffected(gh, decision, cfg):
     heads = check_heads(gh.comments(decision["pr"]), setup=setup)
     if heads:
         decision["check_heads"] = heads
-    listed = [check for check in cfg["checks"] if check.get("unaffected_by")]
+    # A sharded check runs as shards, which the `shards` job skips by their own heads.
+    listed = [
+        check for check in cfg["checks"] if check.get("unaffected_by") and not check.get("shards")
+    ]
     if decision["action"] != "review" or not decision.get("auto") or not listed:
         return decision
     changed, skipped = {}, []

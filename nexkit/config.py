@@ -113,7 +113,19 @@ STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes", "max_budget_usd"}
 AGENT_KEYS = {"runtime", "provider", "fallback"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
-CHECK_KEYS = {"name", "run", "timeout_minutes", "slow", "results", "group", "unaffected_by"}
+CHECK_KEYS = {
+    "name",
+    "run",
+    "timeout_minutes",
+    "slow",
+    "results",
+    "group",
+    "unaffected_by",
+    "shards",
+}
+# A check that runs in as many shards as its `count` command prints: at most this many.
+MAX_SHARDS = 20
+SHARD_KEYS = {"count", "max"}
 # The most result paths one check may name.
 MAX_RESULTS = 20
 # The most patterns one check's `unaffected_by` may list.
@@ -134,6 +146,8 @@ AFTER_WORKFLOW_KEYS = {"workflow", "every"}
 # Each item costs every plan and review an answer, so a checklist stays short.
 MAX_CHECKLIST = 20
 MAX_CHECKLIST_ITEM = 300
+# The keys of a checklist item that a person decides.
+CHECKLIST_KEYS = {"text", "person"}
 # GitHub's limit on a label's name.
 MAX_LABEL = 50
 # What a label in `autopilot.labels` may do, and its highest wave.
@@ -410,21 +424,74 @@ def _secret_slots(cfg):
             )
 
 
+def checklist_item(item):
+    """The text of a `review.checklist` item: a string, or {"text", "person"}."""
+    return item["text"] if isinstance(item, dict) else item
+
+
+def person_decides(item):
+    """Whether only a person decides a `review.checklist` item that is not met, such as one
+    that accepts a risk: NexKit starts no fix round for it, and merges on their approval."""
+    return isinstance(item, dict) and item.get("person") is True
+
+
 def _checklist(items):
-    """`review.checklist`: short items, one line each."""
+    """`review.checklist`: short items, one line each, as strings or as {"text", "person"}
+    for an item that a person decides."""
     where = "review.checklist"
     if not isinstance(items, list) or len(items) > MAX_CHECKLIST:
         _fail(f"{where} must be a list of at most {MAX_CHECKLIST} items")
     for item in items:
+        if isinstance(item, dict):
+            unknown = sorted(set(item) - CHECKLIST_KEYS)
+            if unknown or "text" not in item or not isinstance(item.get("person", False), bool):
+                _fail(
+                    f'{where} items are strings, or objects with "text" and "person" (true '
+                    "or false)"
+                )
+        text = checklist_item(item)
         if (
-            not isinstance(item, str)
-            or not item.strip()
-            or "\n" in item
-            or len(item) > MAX_CHECKLIST_ITEM
+            not isinstance(text, str)
+            or not text.strip()
+            or "\n" in text
+            or len(text) > MAX_CHECKLIST_ITEM
         ):
             _fail(f"{where} items must be one line of at most {MAX_CHECKLIST_ITEM} characters")
-    if len(set(items)) != len(items):
+    texts = [checklist_item(item) for item in items]
+    if len(set(texts)) != len(texts):
         _fail(f"{where} lists an item twice")
+
+
+def _shards(check, where, cfg):
+    """`checks[].shards`: {"count": a command that prints how many shards to run, "max"}.
+    Each shard is a check of its own, in a job of its own."""
+    shards = check["shards"]
+    if not isinstance(shards, dict) or set(shards) != SHARD_KEYS:
+        _fail(f'{where}.shards must be {{"count": "<command>", "max": <number>}}')
+    if not isinstance(shards["count"], str) or not shards["count"].strip():
+        _fail(f"{where}.shards.count must be a shell command that prints a number")
+    _positive_int(shards["max"], f"{where}.shards.max", MAX_SHARDS, minimum=2)
+    if "group" in check:
+        _fail(f"{where}.shards and {where}.group cannot be set together: each shard has a job")
+    if cfg["parallel_checks"] is not True:
+        _fail(f"{where}.shards needs parallel_checks: true")
+    if len(check["name"]) > 36:
+        _fail(f"{where}.name of a sharded check must be at most 36 characters")
+
+
+def shard_names(check):
+    """The names a sharded check's shards may take: `<name>-1` to `<name>-<max>`."""
+    shards = check.get("shards") or {}
+    return [f"{check['name']}-{k}" for k in range(1, shards.get("max", 0) + 1)]
+
+
+def _shard_names(checks):
+    """No shard may take the name of another check."""
+    names = {check["name"] for check in checks}
+    for check in checks:
+        taken = sorted(names & set(shard_names(check)))
+        if taken:
+            _fail(f"The shards of check '{check['name']}' would take the name '{taken[0]}'")
 
 
 def _github_app(cfg):
@@ -745,6 +812,9 @@ def validate(raw, *, layered=False):
                 _fail(f"{where}.group must be a short lowercase identifier")
             if cfg["parallel_checks"] is not True:
                 _fail(f"{where}.group needs parallel_checks: true")
+        if "shards" in check:
+            _shards(check, where, cfg)
+    _shard_names(cfg["checks"])
     _bool(cfg["parallel_checks"], "parallel_checks")
     _caches(cfg["cache"])
 

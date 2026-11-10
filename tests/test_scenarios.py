@@ -146,7 +146,9 @@ class Pipeline:
         """A comment, posted now: how recent a round's comment is tells whether the round
         it started is still on its way."""
         comment = self.post(number, body)
-        comment["created_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # As GitHub does, a new comment was last updated when it was posted.
+        comment["created_at"] = comment["updated_at"] = now
         return comment
 
     def merged(self, number, sha, method="squash"):
@@ -177,8 +179,8 @@ class Pipeline:
         brings, until nothing changes. Returns the commands that ran."""
         autopilot.request(self.gh, "nexkit.yml", "main")
         self.drain()
-        for _ in range(3):
-            # An hour, then seven: what only time moves on, such as a lost command.
+        for _ in range(6):
+            # Seven hours each time: what only time moves on, such as a lost command.
             self.later(timedelta(hours=7))
             before = len(self.gh.dispatches)
             autopilot.request(self.gh, "nexkit.yml", "main")
@@ -443,6 +445,11 @@ class Pipeline:
         )
         self.test.assertLessEqual(state["auto_fixes"], self.cfg["fix"]["max_auto_rounds"])
         self.test.assertEqual(state["auto_fixes"], len(ran) + waiting, f"#{pull}: {self.played}")
+
+
+def review_state(gh, head):
+    """The state of `nexkit/review` on `head`."""
+    return {s["context"]: s for s in gh.commit_statuses(head)}["nexkit/review"]["state"]
 
 
 def red_main(gh):
@@ -790,6 +797,87 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
 
+    def test_a_checklist_item_a_person_decides_waits_for_their_approval_then_merges(self):
+        accepted = "The change adds no exception to a check and loosens none"
+
+        def reviewed(*answers, verdict="request_changes"):
+            found = done()
+            found["review"]["output"]["verdict"] = verdict
+            found["review"]["output"]["checklist"] = [
+                {"number": number, "answer": answer, "evidence": "scan.json:3", "item": item}
+                | ({"person": True} if item == accepted else {})
+                for number, (item, answer) in enumerate(answers, 1)
+            ]
+            return found
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                # Another item fails too: the fix round is for that one alone.
+                return reviewed((accepted, "not_met"), ("Docs change with the code", "not_met"))
+            return reviewed((accepted, "not_met"), ("Docs change with the code", "met"))
+
+        checklist = [{"text": accepted, "person": True}, "Docs change with the code"]
+        pipe = Pipeline(self, config(review={"checklist": checklist}), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(pipe.played[-1][2], "ready")
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        self.assertEqual(pipe.gh.merged, [])
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
+        head = pipe.gh.pulls[6]["head"]["sha"]
+        self.assertEqual(review_state(pipe.gh, head), "failure")
+        [mention] = pipe.gh.comments_matching(6, "a person is needed")
+        self.assertIn("decide the checklist items", mention["body"])
+        self.assertNotIn("remove its cause", mention["body"])
+        [round_] = [run for _, run in run_comments(pipe.gh.comments(6)) if "round" in run][-1:]
+        self.assertEqual(round_["decide"], [accepted])
+
+        def approve(commit):
+            event = {
+                "action": "submitted",
+                "review": {"state": "approved", "user": {"login": "olivia"}, "commit_id": commit},
+                "pull_request": {
+                    **pipe.gh.pulls[6],
+                    "base": {"ref": "main", "repo": {"full_name": "acme/app"}},
+                },
+            }
+            decision = route(pipe.gh, "pull_request_review", event)
+            return maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
+
+        # An approval of an older head accepts nothing.
+        self.assertIn("it starts nothing", approve("0" * 40)[0])
+        self.assertEqual(pipe.gh.merged, [])
+        self.assertEqual(review_state(pipe.gh, head), "failure")
+        self.assertEqual(approve(head), ["#6: merged."])
+        self.assertEqual(review_state(pipe.gh, head), "success")
+        pipe.play()
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
+
+    def test_a_checklist_item_a_person_decides_alone_starts_no_fix_round(self):
+        accepted = "The change adds no exception to a check and loosens none"
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            found = done(verdict="request_changes")
+            found["review"]["output"]["findings"] = []
+            entry = {"number": 1, "answer": "not_met", "evidence": "x", "item": accepted}
+            found["review"]["output"]["checklist"] = [{**entry, "person": True}]
+            return found
+
+        checklist = [{"text": accepted, "person": True}]
+        pipe = Pipeline(self, config(review={"checklist": checklist}), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "ready")
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 0)
+        self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
+        needs = collect(pipe.gh, pipe.cfg, workers=1)["needs_person"]
+        self.assertTrue(any("Only a person decides" in item["reason"] for item in needs), needs)
+
     def test_two_issues_that_run_last_and_a_split_never_wait_in_a_circle(self):
         parts = [{"title": "One", "body": "Do one.", "depends_on": []}]
 
@@ -1028,13 +1116,78 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("go", 5)])
 
-    def test_a_command_that_never_runs_starts_once_more_then_waits(self):
+    def test_a_command_that_never_runs_starts_again_later_then_waits_naming_the_outage(self):
         def script(pipe, inputs):
             return "lost"
 
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
-        self.assertEqual(pipe.play(), [("plan", 5), ("plan", 5)])
+        self.assertEqual(pipe.play(), [("plan", 5)] * 5)
+        [mention] = pipe.gh.comments_matching(5, "a person is needed")
+        self.assertIn("did not run, 5 times: GitHub created no job for it", mention["body"])
+
+    def test_a_command_lost_in_an_outage_runs_once_github_starts_runs_again(self):
+        # GitHub creates no job for the first two runs, as on 2026-11-09; then it does.
+        lost = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return "lost" if next(lost) < 2 else plan()
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        for _ in range(2):
+            # The first sweep starts it; the next, such as the hourly one, finds its run
+            # ended without a comment and starts it once more, at once.
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+        # GitHub lost that one too: the next start waits 30 minutes after it.
+        self.assertEqual(pipe.played, [("plan", 5, "lost"), ("plan", 5, "lost")])
+        for minutes in (0, 20):
+            pipe.later(timedelta(minutes=minutes))
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual(len(pipe.played), 2, minutes)
+        pipe.later(timedelta(minutes=11))
+        self.assertEqual(pipe.play(), [("plan", 5), ("plan", 5), ("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
+    def test_a_retry_that_never_starts_is_started_once_more_after_lost_after_minutes(self):
+        # The review job leaves no result, as on 2026-11-09; the one more try it starts is
+        # lost, so the round shows a review on its way that never comes.
+        reviews = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                found = done()
+                del found["review"]
+                return found
+            return "lost" if next(reviews) < 1 else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual(
+            [(c, n, o) for c, n, o in pipe.played],
+            [("plan", 5, "planned"), ("go", 5, "retry"), ("review", 6, "lost")],
+        )
+        # Within `lost_after_minutes`, the review is still on its way.
+        pipe.later(timedelta(minutes=20))
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual(len(pipe.played), 3)
+        pipe.later(timedelta(minutes=11))
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual(pipe.played[-1], ("review", 6, "merged"))
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertFalse(pipe.gh.comments_matching(6, "a person is needed"))
+        pipe.check(quiet=True)
 
     def test_a_run_that_ends_without_a_report_starts_once_more(self):
         stalls = itertools.count()
@@ -1699,6 +1852,66 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual((review["checks"], review["outcome"]), ("passed", "merged"))
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
+    def test_a_sharded_check_runs_as_many_shards_as_each_round_counts(self):
+        from nexkit import checks
+
+        e2e = "scripts/e2e.sh"
+        sharded = {"name": "e2e", "run": e2e, "shards": {"count": "node count.mjs", "max": 6}}
+        cfg = config(checks=[sharded], parallel_checks=True)
+        # What `count` prints in each round: the go, then two automatic fix rounds.
+        counts = iter([3, 3, 4])
+        verdicts = iter(["request_changes", "request_changes", "approve"])
+
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done(verdict=next(verdicts))
+
+        pipe = Pipeline(self, cfg, script)
+        stages, seen = pipe.stages, []
+
+        def counted(decision, outcome, artifacts):
+            # The `shards` job counts; each shard is a check of its own, with its commit
+            # from the rounds that split the check the same way.
+            if "checks" not in outcome:
+                return stages(decision, outcome, artifacts)
+            n = next(counts)
+            expanded = checks.expand(pipe.cfg, {"e2e": n})
+            heads = decision.get("check_heads") or {}
+            seen.append(
+                {
+                    c["name"]: (heads.get(c["name"]) or {}).get(
+                        check_fingerprint(c["run"], c["shard"])
+                    )
+                    for c in expanded["checks"]
+                }
+            )
+            outcome["checks"] = [
+                {
+                    "name": c["name"],
+                    "run": e2e,
+                    "exit_code": 0,
+                    "passed": True,
+                    "output": "",
+                    "shard": c["shard"],
+                }
+                for c in expanded["checks"]
+            ]
+            return stages(decision, outcome, artifacts)
+
+        pipe.stages = counted
+        pipe.issue(5)
+        pipe.play()
+        self.assertEqual([len(found) for found in seen], [3, 3, 4])
+        first, second, third = seen
+        self.assertEqual(set(first.values()), {None})
+        # Three shards again: each gets the commit on which it passed.
+        self.assertTrue(all(second.values()), second)
+        # Four shards: none of them is the shard that passed before.
+        self.assertEqual(set(third.values()), {None})
+        [pull] = pipe.gh.pulls
+        rounds = [run for _, run in run_comments(pipe.gh.comments(pull)) if "round" in run]
+        self.assertEqual(sorted(rounds[-1]["passed"]), ["e2e-1", "e2e-2", "e2e-3", "e2e-4"])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
     def test_a_pull_request_whose_change_is_already_on_its_base_branch_closes(self):
         def play(on_base, refusals):
             def landed(pipe, pull):
@@ -1830,6 +2043,43 @@ class ScenarioTests(unittest.TestCase):
         self.assertIn(finding, closing["body"])
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
         self.assertFalse(pipe.gh.comments_matching(5, "answers for the owner"))
+
+    def test_a_persons_answer_that_only_closes_the_issue_closes_it_without_a_round(self):
+        # As in phuongnse/axis#3561: the agent cannot reproduce a flaky failure and asks.
+        close = "Close the issue as not reproduced, with no code change"
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            question = {
+                "question": "The failure does not reproduce. How should this go on?",
+                "options": ["Keep the issue open until someone attaches the logs", close],
+                "recommended": 0,
+                "closes": 2,
+            }
+            output = {"status": "blocked", "blocker": "No repro.", "questions": [question]}
+            return {"agent": {"status": "blocked", "error": "No repro.", "output": output}}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        [mention] = pipe.gh.comments_matching(5, "a person is needed")
+        [round_] = pipe.gh.comments_matching(5, "Decisions needed")
+        self.assertIn(f"- {close} (NexKit closes the issue as not planned)", round_["body"])
+        # The owner picks it, with the command; no agent runs.
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 99, "body": f"/nexkit go {close}", "user": {"login": "olivia"}},
+        }
+        decision = route(pipe.gh, "issue_comment", event)
+        maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(
+            (pipe.gh.issues[5]["state"], pipe.gh.issues[5]["state_reason"]),
+            ("closed", "not_planned"),
+        )
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])  # nothing more ran
+        self.assertEqual(len(pipe.gh.comments_matching(5, "a person is needed")), 1)
 
     def test_a_blocked_round_that_recommends_waiting_does_not_close_the_issue(self):
         # The agent says in `no_change` that it found none, and recommends waiting.

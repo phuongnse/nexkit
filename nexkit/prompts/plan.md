@@ -89,7 +89,12 @@ $writing
     Recommend only an option that a change to the plan or the code carries out. When
     an option needs a person to act outside the repository, such as downloading files,
     granting access or running something by hand, ask the question and set
-    `recommended` to 0.
+    `recommended` to 0. Never recommend closing the issue: a finding that no change is
+    needed goes in `no_change`.
+  - `closes`: the number of the option that only closes the issue, with no change, or 0
+    when no option does. NexKit closes the issue when a person picks that option, so
+    offer closing only that way: one option that closes the issue and does nothing else.
+    Never offer closing together with another step, which NexKit cannot carry out.
 - `too_large`: true when the work cannot be finished and tested well in one session.
 - `split`: when `too_large` is true, smaller issues that can each be done in one session,
   in order. Otherwise an empty list. Each has a `title`, a `body`, and `depends_on`: the

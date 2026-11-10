@@ -11,7 +11,7 @@ from nexkit.refusal import codeowners, explain, owners_of
 from nexkit.state import render_run
 from nexkit.status import collect
 from tests.support import FakeGitHub, make_config
-from tests.test_report import HEAD, ReportCase
+from tests.test_report import HEAD, ReportCase, review_result
 
 # What GitHub answers when a ruleset refuses a merge for a code owner review.
 OWNER_REFUSAL = GitHubError(
@@ -242,8 +242,8 @@ class ApprovedMergeTests(ReportCase):
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
         self.gh.merge_error = None
 
-    def approve(self, cfg=None):
-        return maintain(self.gh, APPROVED, cfg or self.cfg, workflow="nexkit.yml", ref="main")
+    def approve(self, cfg=None, approval=APPROVED):
+        return maintain(self.gh, approval, cfg or self.cfg, workflow="nexkit.yml", ref="main")
 
     def latest(self):
         return self.gh.run_comments(6)[-1]["run"]
@@ -255,6 +255,39 @@ class ApprovedMergeTests(ReportCase):
         run = self.latest()
         self.assertEqual((run["outcome"], run["status"]), ("merged", "success"))
         self.assertNotIn("attention", run)
+
+    def decided(self, merge_auto=True):
+        """A ready round whose review found an item not met that a person decides."""
+        cfg = make_config(
+            merge={"auto": merge_auto},
+            notify=["owner"],
+            review={"checklist": [{"text": "Rule 1", "person": True}]},
+        )
+        review = review_result()
+        review["output"]["checklist"] = [
+            {"number": 1, "item": "Rule 1", "answer": "not_met", "evidence": "x", "person": True}
+        ]
+        self.gh.statuses.clear()
+        self.candidate(review=review)
+        self.assertEqual(self.run_report(cfg=cfg)["outcome"], "ready")
+        return cfg
+
+    def review_status(self):
+        return {s["context"]: s for s in self.gh.commit_statuses(HEAD)}["nexkit/review"]["state"]
+
+    def test_an_approval_accepts_the_items_a_person_decides_with_merge_auto_off(self):
+        cfg = self.decided(merge_auto=False)
+        self.assertEqual(self.review_status(), "failure")
+        other = {**APPROVED, "commit": "f" * 40}
+        self.assertIn("it starts nothing", self.approve(cfg, other)[0])
+        self.assertEqual(self.review_status(), "failure")
+        lines = self.approve(cfg, {**APPROVED, "commit": HEAD})
+        self.assertEqual(lines, ["#6: @olivia accepted the checklist items a person decides."])
+        self.assertEqual(self.review_status(), "success")
+        self.assertEqual(self.gh.merged, [])
+        run = self.latest()
+        self.assertEqual((run["decided_by"], "decide" in run), ("olivia", False))
+        self.assertIn("merge it", run["attention"])
 
     def test_an_approval_after_the_head_moved_reviews_the_new_head(self):
         self.gh.pulls[6]["head"]["sha"] = "e" * 40

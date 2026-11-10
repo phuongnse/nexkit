@@ -38,7 +38,11 @@ from nexkit.runtimes.base import TOKENS  # noqa: E402
 from nexkit.state import ACTIONS_BOT, PLAN_MARKER, empty_state, render_state  # noqa: E402
 
 CHECKS = [{"name": "test", "run": "python3 -m unittest -v"}]
-CHECKLIST = ["A changed function has a test that calls it"]
+CHECKLIST = [
+    "A changed function has a test that calls it",
+    # One that a person decides, as `review.checklist` allows.
+    {"text": "The change adds no exception to a check and loosens none", "person": True},
+]
 CONFIG = {}  # set by main() for the runtime under test
 
 
@@ -423,7 +427,8 @@ def main():
         if not review["output"]["criteria"]:
             raise SystemExit("review: no acceptance criteria assessed")
         print(review_body(review, checks), flush=True)
-        if [entry["item"] for entry in review["output"]["checklist"]] != CHECKLIST:
+        texts = [item if isinstance(item, str) else item["text"] for item in CHECKLIST]
+        if [entry["item"] for entry in review["output"]["checklist"]] != texts:
             raise SystemExit(f"review: the checklist is not answered: {review['output']}")
 
         # A fix round, then a second review that gets the previous round as input.

@@ -81,7 +81,9 @@ $writing
   choose, counting from 1, or 0 when none is clearly better. Put the reason in `question`.
   Recommend only an option that a change to the plan or the code carries out. When an
   option needs a person to act outside the repository, such as downloading files,
-  granting access or running something by hand, set `recommended` to 0.
+  granting access or running something by hand, set `recommended` to 0. Never offer to
+  close the issue or the pull request: NexKit does not do that from a fix round, and a
+  person closes them on GitHub.
 - `checks_run`: the commands you ran and whether each passed.
 - `protected_paths`: the protected paths that the change must modify and that you left
   unchanged, each as a path in the repository. Otherwise an empty list.

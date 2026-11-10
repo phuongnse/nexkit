@@ -18,7 +18,7 @@ from pathlib import Path
 from string import Template
 
 from . import config as configuration
-from .checks import BASE_SHA, RESULTS_LIMIT, environment, known_base
+from .checks import BASE_SHA, RESULTS_LIMIT, SHARD, environment, known_base, shown_command
 from .evidence import since_text
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
@@ -55,9 +55,10 @@ _QUESTIONS = {
     "type": "array",
     "items": {"type": "object", "properties": _QUESTION, "required": list(_QUESTION)},
 }
-# An implement round's question also names the option that closes the issue with its
-# `no_change` finding (from 1), or 0 when none does. Autopilot closes the issue only when
-# that is the recommended option, never on the finding's text alone.
+# A plan's or an implement round's question also names the option that only closes the
+# issue, with no change (from 1), or 0 when none does. NexKit carries that option out when
+# a person picks it (`route.closing_answer`); autopilot picks it only for an implement
+# round whose `no_change` finding it is, never on the finding's text alone.
 _CLOSING_QUESTION = {**_QUESTION, "closes": {"type": "integer"}}
 _CLOSING_QUESTIONS = {
     "type": "array",
@@ -106,7 +107,7 @@ SCHEMAS = {
             "risks": _STRING_LIST,
             "acceptance_criteria": _STRING_LIST,
             "implementation_notes": _STRING_LIST,
-            "questions": _QUESTIONS,
+            "questions": _CLOSING_QUESTIONS,
             "too_large": {"type": "boolean"},
             "split": {
                 "type": "array",
@@ -296,6 +297,10 @@ CHECKLIST = {
 }
 
 
+# How the prompts mark a checklist item that a person decides.
+PERSON_MARK = "(a person decides)"
+
+
 def with_checklist(schema, stage, cfg):
     """`schema` with the checklist field, when this stage answers a checklist."""
     if stage not in CHECKLIST or not cfg["review"]["checklist"]:
@@ -315,8 +320,16 @@ def checklist_text(stage, cfg):
     items = cfg["review"]["checklist"]
     if stage not in CHECKLIST or not items:
         return ""
-    numbered = "\n".join(f"{number}. {item}" for number, item in enumerate(items, 1))
-    return Template(_template(f"{stage}_checklist")).safe_substitute(items=numbered).rstrip()
+    numbered = "\n".join(
+        f"{number}. {configuration.checklist_item(item)}"
+        + (f" {PERSON_MARK}" if configuration.person_decides(item) else "")
+        for number, item in enumerate(items, 1)
+    )
+    text = Template(_template(f"{stage}_checklist")).safe_substitute(items=numbered).rstrip()
+    if any(configuration.person_decides(item) for item in items):
+        person = Template(_template(f"{stage}_checklist_person")).safe_substitute(mark=PERSON_MARK)
+        text = f"{text}\n\n{person.rstrip()}"
+    return text
 
 
 def answer_checklist(result, stage, cfg):
@@ -339,12 +352,28 @@ def answer_checklist(result, stage, cfg):
         )
         return
     output["checklist"] = [
-        {**given[number], "item": item} for number, item in enumerate(items, 1) if number in given
+        {
+            # Only the fields the schema asks for: what a person decides comes from the
+            # configuration, never from the agent.
+            **{key: given[number][key] for key in CHECKLIST[stage] if key in given[number]},
+            "item": configuration.checklist_item(item),
+            **({"person": True} if configuration.person_decides(item) else {}),
+        }
+        for number, item in enumerate(items, 1)
+        if number in given
     ]
 
 
 def _check_lines(checks, indent="  "):
-    return [f"{indent}- `{c['name']}`: `{c['run']}`" for c in checks]
+    return [
+        f"{indent}- `{c['name']}`: `{c['run']}`"
+        + (
+            f" (NexKit runs it in up to {c['shards']['max']} shards, each with `{SHARD}=k/N`)"
+            if c.get("shards")
+            else ""
+        )
+        for c in checks
+    ]
 
 
 def _checks_text(cfg):
@@ -378,7 +407,7 @@ def check_results_text(results):
         if item["passed"] and item.get("skipped"):
             # NexKit did not run it: no path it reads changed since it passed there.
             state = f"passed on `{item['skipped'][:7]}`; no path it reads changed since"
-        lines.append(f"- `{item['name']}` (`{item['run']}`): {state}")
+        lines.append(f"- `{item['name']}` (`{shown_command(item)}`): {state}")
         if not item["passed"]:
             lines.append(f"  End of output:\n```\n{item['output'][-3000:]}\n```")
     return "\n".join(lines)
@@ -671,6 +700,19 @@ def set_aside_finding(result):
     output["no_change"] = ""
     output["reviewer_notes"] = [*(output.get("reviewer_notes") or []), note]
     result["no_change_note"] = note
+
+
+def check_closing(output):
+    """Keep `closes` only where it names one of its question's options: an option that only
+    closes the issue is one NexKit carries out when a person picks it, so it must be the
+    one the agent meant."""
+    for item in output.get("questions") or []:
+        if not isinstance(item, dict):
+            continue
+        closes, options = item.get("closes"), item.get("options") or []
+        number = isinstance(closes, int) and not isinstance(closes, bool)
+        if not number or not 0 <= closes <= len(options):
+            item["closes"] = 0
 
 
 def needed_protected(result, cfg):
@@ -1390,6 +1432,8 @@ def run_stage(
                 result["recheck"] = True
             else:
                 result.update(status="error", error=unchanged(result), unchanged=True)
+    if stage in ("plan", "implement") and result.get("output"):
+        check_closing(result["output"])
     if stage in ("plan", "implement", "fix") and result.get("output"):
         # Only paths that are protected count, so a person is asked only for those.
         result["output"]["protected_paths"] = needed_protected(result, cfg)

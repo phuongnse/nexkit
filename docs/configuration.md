@@ -89,7 +89,7 @@ their defaults.
 | `autopilot.enabled` | `false` | Work through the open issues in scope without commands: plan each ready issue, start `/nexkit go` on a plan that needs nobody, and move on when an issue closes. See [Autopilot](#autopilot). |
 | `autopilot.scope` | `"milestone"` | Which issues autopilot takes: `"milestone"`, the open issues of the earliest open milestone, or `null`, every open issue, whatever its milestone. |
 | `autopilot.max_parallel` | `null` | How many issues in scope may have a NexKit run or an open NexKit pull request at once (1 to 100); `null` for no limit. |
-| `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started once more when it has posted no run comment and its workflow run ended, at once, or when that run cannot be read, after this many minutes (5 to 1440). A second such command waits for a person. A sweep notices a lost command: the one that a run `route` refused starts when that run ends, and the end of the run that replaced a waiting one in its concurrency group usually starts one too. Nothing notices a dispatch that names no run, as on older GitHub Enterprise Servers, before the first sweep after this time, which in a quiet repository is the hourly schedule. |
+| `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started again when it has posted no run comment and its workflow run ended, at once, or when that run cannot be read, after this many minutes (5 to 1440); later starts wait 30, 60 and 120 minutes after the last, and a fifth start that does not run waits for a person. A continued run, or a round that a round started next, whose new run has not started after this many minutes starts once more. A sweep notices a lost command: the one that a run `route` refused starts when that run ends, and the end of the run that replaced a waiting one in its concurrency group usually starts one too. Nothing notices a dispatch that names no run, as on older GitHub Enterprise Servers, before the first sweep after this time, which in a quiet repository is the hourly schedule. |
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
 | `autopilot.priority` | `["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"]` | Labels, highest first, whose issues go before the others, and are in scope also without a milestone or outside the scope's milestone. See *Labels* under [Autopilot](#autopilot). |
 | `autopilot.labels` | `{}` | What a label does: `{"wave": N}` holds an issue until every issue of a lower wave in its milestone is closed; `{"hold": true}` makes autopilot start nothing for it. See *Labels* under [Autopilot](#autopilot). |
@@ -106,7 +106,7 @@ their defaults.
 | `limits.setup_timeout_minutes` | `30` | Time each `setup` command may take (1 to 120). The agent and verify jobs allow for it. |
 | `limits.max_patch_mb` | `5` | Largest change an implement or fix round may publish, in megabytes (1 to 50). |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
-| `review.checklist` | `[]` | Short rules, in your own words, that every plan and review answers one by one. See [Review checklist](#review-checklist). |
+| `review.checklist` | `[]` | Short rules, in your own words, that every plan and review answers one by one; `{"text": …, "person": true}` for one that a person decides. See [Review checklist](#review-checklist). |
 | `transcript` | `true` | Write the agent's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See [Logs and transcripts](#logs-and-transcripts). |
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. |
 | `github_app` | none, required | The GitHub App that NexKit acts as: its `slug`, as in `github.com/apps/<slug>`, and the names of the secrets that hold its id (`app_id_secret`) and its private key (`private_key_secret`). `nexkit init` sets it. The secrets cannot be an agent's or start with `GITHUB_`. See [The GitHub App](#the-github-app). |
@@ -217,6 +217,36 @@ in several jobs at once, and a round takes about as long as its slowest job plus
   files](#result-files-of-failing-checks): 25 MB each with two jobs.
 - With `parallel_checks` off, or when every check would run in the same job, the single
   `verify` job runs as before. `group` is refused without `parallel_checks`.
+
+**Shards.** A check that splits its own work, such as an end-to-end suite that its
+scripts split by measured durations, can run in as many shards as a command says when the
+round starts, instead of being listed once per shard:
+
+```json
+{"name": "e2e", "run": "scripts/e2e.sh", "timeout_minutes": 20,
+ "shards": {"count": "node scripts/lib/e2e-shard.mjs --count", "max": 6}}
+```
+
+- A `shards` job runs `count` on the head the checks run on, before `setup`, so it may use
+  only what the runner has and the repository's files. It has no secrets and a read-only
+  token, like the `verify` jobs, gets their environment (`NEXKIT_BASE_SHA` and
+  `NEXKIT_VERIFIED_SHA`), and may take 5 minutes per sharded check; the job may take 10
+  minutes more. A `shards` job that fails as a whole, such as on a lost runner, runs the
+  command once more, as a `verify` job does.
+- The last line `count` prints must be a whole number N from 1 to `max` (2 to 20).
+  NexKit then runs N checks, `e2e-1` to `e2e-N`, each in a `verify` job of its own, with
+  `NEXKIT_SHARD=k/N` in its environment: `k` from 1 to N. Each is a check of its own:
+  its status in the review and the round's comment, its result files under
+  `results/e2e-k/`, its time-out (`timeout_minutes`), its `unaffected_by` and its
+  `NEXKIT_CHECK_VERIFIED_SHA`, which a shard gets only from rounds that counted the same
+  N, since another N splits the work otherwise. A fix round's prompt names the shard that
+  failed with its `NEXKIT_SHARD`.
+- A `count` that fails, prints no number, or prints one outside 1 to `max` fails the
+  check `e2e` with the end of its output, as a failing check does, and no shard runs. NexKit never
+  guesses a number, so no test is left out silently.
+- `shards` needs `parallel_checks`, and a sharded check has no `group`. No other check may
+  take the name of one of its shards, `e2e-1` to `e2e-<max>`. A check with a fixed list of
+  shards, one entry each, works as before.
 
 Each job sets up the repository again, so parallel jobs use more runner minutes than one,
 and are worth it when a few slow checks dominate the round. `nexkit init` writes the
@@ -539,7 +569,8 @@ remembering them. `review.checklist` makes each one a question that needs an ans
 "review": {
   "checklist": [
     "The `Docs:` line names every doc section the change makes false, and each is fixed",
-    "A new setting has a default that keeps today's behaviour"
+    "A new setting has a default that keeps today's behaviour",
+    {"text": "The change adds no exception to a check and loosens none", "person": true}
   ]
 }
 ```
@@ -550,6 +581,16 @@ remembering them. `review.checklist` makes each one a question that needs an ans
   collapsed.
 - **An item not met** requests changes as a blocking finding does, whatever verdict the
   review returned, so an automatic fix round addresses it, within `fix.max_auto_rounds`.
+- **An item a person decides**, written `{"text": "...", "person": true}`, is one that a
+  fix cannot meet without undoing the change, such as one that accepts a risk. The review
+  answers it like any other, and NexKit marks it ⚖️ when it is not met, but it is no finding
+  and starts no fix round. When nothing else blocks, the round ends `ready`: NexKit does not
+  merge it, `nexkit/review` fails with "A person decides …", the round's comment lists the
+  items with their evidence, and `notify` hears of it once. A writer's approval of that
+  commit accepts them: `nexkit/review` turns green, and with `merge.auto` NexKit merges it;
+  an approval of an older commit does nothing, and a new commit needs a new review and a new
+  approval. Beside other blocking findings or failing checks, the fix round starts for
+  those as before.
 - **A review that leaves an item out** is incomplete: it gives no verdict, `nexkit/review`
   shows an error, nothing merges, and `/nexkit review` tries again. A plan that leaves one out
   is posted as it is, since the review decides.
@@ -860,17 +901,22 @@ every open issue in scope, in order, and starts the one command that moves it on
   command it started last, with its note, and for which run. It starts a command once for
   a state of the issue. A command that has posted no run comment after
   `lost_after_minutes`, while its workflow run is neither queued nor running, because
-  `route` refused it or GitHub dropped it from the queue, starts once more with the same
-  note; if that one does not run either, the issue waits for a person. The first sweep
-  after that time notices it, at the end of any NexKit run or on the hourly schedule. A
+  `route` refused it or GitHub dropped it from the queue, starts again with the same
+  note: at once, then 30, 60 and 120 minutes after its last start, so that an outage of
+  GitHub Actions, in which GitHub creates no job for a run, costs no person's time; when
+  the fifth start does not run either, the issue waits for a person, with a reason that
+  names the outage. The first sweep after each time notices it, at the end of any NexKit
+  run or on the hourly schedule. A
   run whose comment still says running after its workflow run ended, for example because
   the runner was lost, is marked as ended without a report and its pending statuses
   become errors, within minutes: the run's `finish` job starts a sweep that waits for the
   run to end. When NexKit
-  started that run itself, autopilot starts it once more; a person's command, or a second
-  such run, waits for a person. A run paused at the usage limit that NexKit will not
-  resume, and a continued run whose new run has not started after six hours, wait for a
-  person too.
+  started that run itself, autopilot starts it again in the same way, later each time, or
+  once more only when its agent or review job ran to its end; a person's command waits
+  for a person. A run paused at the usage limit that NexKit will
+  not resume waits for a person too. A continued run, or a round that started the next
+  one by itself, whose new run has not started after `lost_after_minutes` starts that run
+  once more, and waits for a person when that one does not start either.
 
 - **Answers.** Plans, and implement and fix rounds that stop as `blocked`, give each
   question its options and the one NexKit recommends, if any; the plan comment marks it
@@ -890,12 +936,20 @@ every open issue in scope, in order, and starts the one command that moves it on
   `closes`), autopilot starts no other round: it closes the issue
   as completed with a comment that holds the finding. A round whose recommended answer
   is to wait or do more is answered as any blocked round, whatever its `no_change` says.
+  A question's option that only closes the issue, which the comment marks, closes it as
+  not planned when a person picks it, with `/nexkit go`, `/nexkit plan` or a plain
+  comment, and no agent runs; autopilot never picks it without a round's finding.
 - **CI on the default branch.** With workflows in `merge.after_workflows` or
   `autopilot.watch_workflows`, each sweep also looks at the runs of each of them on the
   default branch, after NexKit's merges and people's alike, on a schedule or a dispatch,
   and at every attempt of each run; runs of pull requests, even from a
   fork's branch of the same name, do not count. When the latest run fails, its failed
-  jobs run once more, never more often. When it fails again, autopilot opens a `bug` issue
+  jobs run once more, never more often, with those GitHub never created. A run in which
+  no job failed, because GitHub never created some of its jobs or the run failed before
+  any job did, and that then passed, or that a newer run overtook, is not recorded,
+  unless another run of the workflow did the same within the day; then both are
+  recorded, with the jobs GitHub never created. NexKit never runs an overtaken run again,
+  which could deploy an old commit over a newer one. When it fails again, autopilot opens a `bug` issue
   in scope (in the current milestone, or without one with `null`), with the run link and the failed jobs and steps of every failed attempt,
   mentions `notify` in it, and plans it before every other issue. A later failure on a
   newer commit adds a comment to that issue while it is open; a commit is reported once.
@@ -1004,11 +1058,11 @@ every open issue in scope, in order, and starts the one command that moves it on
   | A job, or a step named like its job | Job "Integration tests" in ci.yml fails at times on main |
   | A step | Step "Unit tests" of job "Lint and unit tests" in ci.yml fails at times on main |
   | A step that failed the same way in several jobs | Step "Run actions/setup-dotnet@v5" in 3 jobs of ci.yml fails at times on main |
-  | A run that failed before any job | ci.yml does not start at times on main |
+  | Runs with no failed job, two within a day | ci.yml does not start at times on main |
   | A run with more than five new failures | Run 123 of ci.yml failed in 7 ways at once on main |
   | A red branch | Steps "Lint" and "Unit tests" in ci.yml fail on main |
   | A red branch, failures of several kinds or more than three | ci.yml fails in 4 ways on main |
-  | A red branch, before any job | ci.yml does not start on main |
+  | A red branch with no failed job, also when run again | ci.yml does not start on main |
 
   The marker, not the title, ties a failure to its issue, so an issue opened with an
   older title keeps getting its records.

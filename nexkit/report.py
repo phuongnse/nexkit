@@ -37,12 +37,11 @@ from .state import (
     UNCOUNTED,
     clip,
     empty_state,
-    options_of,
+    option_marks,
     passed_checks,
     passed_lines,
     questions,
     read_state,
-    recommended_option,
     round_questions,
     run_comments,
     with_run,
@@ -54,6 +53,8 @@ ICONS = {True: "✅", False: "❌"}
 SKIPPED_ICON = "⏭️"
 CRITERION_MARKS = {"met": "✅", "unmet": "❌", "unverifiable": "❔"}
 CHECKLIST_MARKS = {"met": "✅ met", "not_met": "❌ not met", "not_applicable": "➖ not applicable"}
+# An item not met that a person decides, which no fix round changes.
+PERSON_NOT_MET = "⚖️ not met, a person decides"
 # 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
 RESOLUTIONS = {
     "resolved": "✅ resolved",
@@ -250,15 +251,33 @@ def _criteria(review, status):
     return [c for c in (review or {}).get("criteria") or [] if criterion_status(c) == status]
 
 
-def _not_met(review):
-    return [c for c in (review or {}).get("checklist") or [] if c["answer"] == "not_met"]
+def _not_met(review, person=False):
+    """The checklist items the review found not met: those NexKit acts on, or with `person`
+    those that a person decides."""
+    return [
+        c
+        for c in (review or {}).get("checklist") or []
+        if c["answer"] == "not_met" and bool(c.get("person")) == person
+    ]
 
 
 def apply_criteria(review):
     """The review NexKit acts on. Each unmet criterion and each checklist item not met is a
-    blocking finding and requests changes, whatever verdict the reviewer returned."""
+    blocking finding and requests changes, whatever verdict the reviewer returned. An item
+    not met that a person decides is no finding: it goes to `decide`, and when nothing else
+    blocks, the review approves, so that no fix round starts and a person's approval
+    merges (see `to_decide`)."""
     unmet = _criteria(review, "unmet")
     not_met = _not_met(review)
+    decide = [clip(c["item"], 300) for c in _not_met(review, person=True)]
+    # Only the checklist decides which items wait for a person.
+    review = {key: value for key, value in review.items() if key != "decide"}
+    if decide:
+        review["decide"] = decide
+        blocking = any(f.get("severity") == "blocking" for f in review.get("findings") or [])
+        if not unmet and not not_met and not blocking:
+            # The reviewer may have requested changes for these items alone.
+            review["verdict"] = "approve"
     if not unmet and not not_met:
         return review
     findings = []
@@ -280,6 +299,47 @@ def unverified(review):
     if not review or review["verdict"] != "approve":
         return []
     return [c["criterion"] for c in _criteria(review, "unverifiable")]
+
+
+def to_decide(review):
+    """The checklist items, not met, that a person decides before an approving review's
+    pull request merges: their approval accepts them (see `maintain.merge_approved`)."""
+    if not review or review["verdict"] != "approve":
+        return []
+    return list(review.get("decide") or [])
+
+
+def _for_person(cfg, review, confirm, decide):
+    """What a ready round's comment says when a person must act before the merge: the
+    checklist items they decide, with the review's evidence, and the criteria the review
+    could not verify."""
+    text = " NexKit does not merge it by itself." if cfg["merge"]["auto"] else ""
+    if decide:
+        evidence = {
+            c["item"]: str(c.get("evidence") or "").strip()
+            for c in (review or {}).get("checklist") or []
+        }
+        items = "\n".join(
+            f"- {item}" + (f": {evidence[item]}" if evidence.get(item) else "") for item in decide
+        )
+        accept = (
+            "Approve the pull request to accept them, and NexKit merges it"
+            if cfg["merge"]["auto"]
+            else "Approve the pull request to accept them, which turns `nexkit/review` green, "
+            "then merge it"
+        )
+        text += (
+            "\n\nOnly a person decides these checklist items, which the review found not "
+            f"met:\n\n{items}\n\n{accept}. To change the code instead, comment `/nexkit fix "
+            "<what to change>`."
+        )
+    if confirm:
+        items = "\n".join(f"- {criterion}" for criterion in confirm)
+        text += (
+            "\n\nThe review could not verify these acceptance criteria. Confirm them before "
+            f"merging:\n\n{items}"
+        )
+    return text
 
 
 PERSON_LINE = (
@@ -317,6 +377,8 @@ def review_body(review, checks, person=False):
     checklist, checklist_evidence = [], []
     for item in output.get("checklist") or []:
         mark = CHECKLIST_MARKS[item["answer"]]
+        if item.get("person") and item["answer"] == "not_met":
+            mark = PERSON_NOT_MET
         checklist.append(f"- {mark}: {item['item']}")
         if item.get("evidence"):
             checklist_evidence.append(f"- {mark}: {item['item']}: {item['evidence'].strip()}")
@@ -331,6 +393,13 @@ def review_body(review, checks, person=False):
     if given["verdict"] == "approve" and not approved:
         what = "an acceptance criterion" if _criteria(given, "unmet") else "a checklist item"
         lines += ["", f"NexKit requests changes because {what} is not met."]
+    if output.get("decide") and not person:
+        lines += [
+            "",
+            "A person decides the checklist items that are not met here (⚖️), such as one "
+            "that accepts a risk. NexKit starts no fix round for them, and merges only once a "
+            "person with write access approves this commit.",
+        ]
     confirm = unverified(output)
     if confirm:
         lines += [
@@ -382,15 +451,19 @@ def _set_statuses(gh, head, checks, review, url, review_error=""):
     if verdict:
         if verdict != "approve":
             text = "AI review requested changes"
+        elif to_decide(review):
+            count = len(to_decide(review))
+            items = "item" if count == 1 else "items"
+            text = f"A person decides {count} checklist {items} that the review found not met"
         elif review.get("carried"):
             text = f"AI review of {review['carried'][:7]} carried over; the change is the same"
         elif unverified(review):
             text = "AI review approved; a person confirms the criteria it could not verify"
         else:
             text = "AI review approved"
-        gh.set_status(
-            head, "nexkit/review", "success" if verdict == "approve" else "failure", text, url
-        )
+        # Items a person decides hold the merge until their approval, which turns it green.
+        passed = verdict == "approve" and not to_decide(review)
+        gh.set_status(head, "nexkit/review", "success" if passed else "failure", text, url)
     else:
         text = "AI review did not complete"
         if review_error:
@@ -459,11 +532,11 @@ def open_conflicts(agent, base):
 
 
 def _options(item, indent="    "):
-    recommended = recommended_option(item)
-    return [
-        f"{indent}- {option}" + (" (recommended)" if option == recommended else "")
-        for option in options_of(item)
-    ]
+    """An agent's question's options, with their marks."""
+    found = questions([item])
+    if not found:
+        return []
+    return [f"{indent}- {option}{option_marks(found[0], option)}" for option in found[0]["options"]]
 
 
 def blocked_questions(agent):
@@ -594,11 +667,12 @@ def _listed(items, size=100):
     return first + (f" and {len(items) - 1} more" if len(items) > 1 else "")
 
 
-def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), found=None):
+def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), decide=(), found=None):
     """The reason a person is needed after a run, or None: what to do, then why NexKit does
     not, with what the run found that shows where to look (see `autopilot.person`). It
     follows only the outcome and the run's structured output, never a judgment by the
-    agent. `confirm` holds the criteria a ready round's review could not verify. `found`
+    agent. `confirm` holds the criteria a ready round's review could not verify, and
+    `decide` the checklist items not met that a person decides. `found`
     may name `questions` (a blocked round's), `pull` (the run is a pull request's round),
     `error`, `failing` (the names of checks that still fail), `findings` (the review's
     blocking findings), `refused` (`refusal.explain` for a refused merge) and
@@ -623,6 +697,19 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), found=None):
         # Only a round whose issue autopilot's sweeps look at waits like this.
         return None
     if outcome == "ready":
+        if decide:
+            accept = (
+                "approve the pull request to accept them, which NexKit then merges"
+                if cfg["merge"]["auto"]
+                else "approve the pull request to accept them, then merge it"
+            )
+            confirmed = " and confirm the criteria the review could not verify" * bool(confirm)
+            return autopilot.person(
+                f"decide the checklist items in the round's comment{confirmed}: {accept}, or "
+                "comment `/nexkit fix <what to change>`",
+                "only a person decides " + _listed(list(decide)) + ", which the review found "
+                "not met",
+            )
         if confirm:
             then = (
                 "approve the pull request, which NexKit then merges"
@@ -710,7 +797,7 @@ def _transient(decision, agent, publish, needs, stage="agent"):
     if result == "skipped":
         # The review runs only after the checks: when their job failed as a whole, that
         # job is what another try may pass.
-        for job in ("verify", "combine"):
+        for job in ("shards", "verify", "combine"):
             if (needs.get(job) or {}).get("result") == "failure":
                 return f"the {job} job ended without a result"
         return None
@@ -737,9 +824,10 @@ def _automatic(decision):
 
 def _retry(gh, decision, command, number, workflow_ref, default_branch):
     """Start `command` once more after a transient error, with the same note for the same
-    command. Returns whether it started: never for a run that was itself the retry."""
+    command. Returns its inputs once it started, for the run's `next` (see
+    `autopilot._handed_on`), or None: never for a run that was itself the retry."""
     if decision.get("retry"):
-        return False
+        return None
     same = command == progress.COMMANDS[decision["action"]]
     note = (decision.get("note") or "") if same else ""
     if same:
@@ -751,8 +839,8 @@ def _retry(gh, decision, command, number, workflow_ref, default_branch):
         gh.dispatch(workflow_file(workflow_ref), default_branch, inputs)
     except GitHubError as exc:
         print(f"warning: could not start the command once more: {exc}", file=sys.stderr)
-        return False
-    return True
+        return None
+    return inputs
 
 
 def _earlier_error(gh, decision):
@@ -1119,7 +1207,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
         return "merge_refused", f"{message}\n\n{started}" if started else message
     if exc.status == 409 or _head(gh, pr) not in (None, head):
         # GitHub answers 409 when the head is no longer the commit the round checked.
-        return _head_moved(gh, target, message, workflow, default_branch)
+        return _head_moved(gh, target, row, message, workflow, default_branch)
     failed, pending, complete = required_checks(gh, base, pr, head)
     if failed:
         return _required_failed(gh, cfg, target, row, message, failed, workflow, default_branch)
@@ -1290,6 +1378,7 @@ def _required_failed(gh, cfg, target, row, message, names, workflow, default_bra
     if reporting is None:
         inputs = {"command": "fix", "number": str(pr), "note": "", "auto": "true"}
         gh.dispatch(workflow, default_branch, inputs)
+        row["next"] = inputs
     state["auto_fixes"] += 1
     save()
     line = f"Starting automatic fix round {state['auto_fixes']} of {limit}."
@@ -1308,16 +1397,14 @@ def _failed_line(failed, head, waited):
     return f"Required checks {names} failed on `{head[:7]}`" + when.format("them")
 
 
-def _head_moved(gh, target, message, workflow, default_branch):
+def _head_moved(gh, target, row, message, workflow, default_branch):
     """Check and review the new head of a pull request whose branch moved after the round
     checked it: the round's approval is for a commit that is no longer its head."""
     try:
         head = gh.pull(target["pr"])["head"]["sha"]
-        gh.dispatch(
-            workflow,
-            default_branch,
-            {"command": "review", "number": str(target["pr"]), "note": "", "auto": "true"},
-        )
+        inputs = {"command": "review", "number": str(target["pr"]), "note": "", "auto": "true"}
+        gh.dispatch(workflow, default_branch, inputs)
+        row["next"] = inputs
     except GitHubError as error:
         target["found"] = {
             "refused": (
@@ -1563,6 +1650,8 @@ def _record(state, decision, row, agent, review, checks):
                 for f in review.get("findings", [])[:MAX_FINDINGS]
             ],
         }
+        if to_decide(review):
+            state["last_review"]["decide"] = [clip(i, 300) for i in to_decide(review)]
 
 
 def _ci_wait(gh, cfg, decision, checks, default_branch):
@@ -1588,6 +1677,7 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         "timed_out",
         "questions",
         "transient_error",
+        "next",
         "no_change",
         "protected_paths",
     )
@@ -1628,13 +1718,18 @@ def carried_over(state, reviewed):
     sha = reviewed["carried"]
     last = state.get("last_review") or {}
     findings = (last.get("findings") or []) if last.get("head") == sha else []
-    return {
+    carried = {
         "verdict": "approve",
         "summary": f"The review of `{sha[:7]}` carried over.",
         "criteria": [],
         "findings": findings,
         "carried": sha,
     }
+    decide = (last.get("decide") or []) if last.get("head") == sha else []
+    if decide:
+        # The items a person decides wait for their approval of the new head too.
+        carried["decide"] = decide
+    return carried
 
 
 def _carry_line(decision, base, carry):
@@ -1675,11 +1770,13 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             fields = {}
             error = _transient(decision, agent, publish, needs)
             command = progress.COMMANDS[action]
-            if error and _retry(
+            again = error and _retry(
                 gh, decision, command, decision["target"], workflow_ref, default_branch
-            ):
+            )
+            if again:
                 outcome, message = "retry", f"{message}\n\n{retry_line(agent)}"
                 fields["transient_error"] = clip(one_line(error), 500)
+                fields["next"] = again
             elif error and decision.get("retry"):
                 outcome, message = "retry_failed", _retried(gh, decision, error, message)
             found = {
@@ -1753,6 +1850,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     )
     if carried:
         review = carried_over(state, reviewed)
+    # Checklist items not met that a person decides: their approval merges.
+    decide = to_decide(review)
     carry = _load(artifacts / "nexkit-review" / "carry.json") or {}
     # A round that waited for the default branch is over once another round reports.
     state.pop("ci_wait", None)
@@ -1823,11 +1922,17 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     elif person and verdict:
         # A person's pull request: nothing here pushes, starts a fix round or merges.
         outcome = "person_reviewed"
-        if checks_ok and verdict == "approve":
+        if checks_ok and verdict == "approve" and not decide:
             message = f"✅ Checks passed and the AI review approved `{head[:7]}`."
         else:
             message = f"Checks or review need attention on `{head[:7]}`."
         message += f" {PERSON_LINE}"
+        if decide:
+            items = "\n".join(f"- {item}" for item in decide)
+            message += (
+                "\n\nOnly a person decides these checklist items, which the review found not "
+                f"met:\n\n{items}"
+            )
     elif checks_ok and verdict == "approve":
         outcome = "ready"
         approved = f"the AI review approved `{head[:7]}`"
@@ -1836,13 +1941,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         message = (
             f"✅ Checks passed and {approved}. This pull request is ready for a human decision."
         )
-        if confirm:
-            held = " NexKit does not merge it by itself." if cfg["merge"]["auto"] else ""
-            items = "\n".join(f"- {criterion}" for criterion in confirm)
-            message += (
-                f"{held}\n\nThe review could not verify these acceptance criteria. Confirm "
-                f"them before merging:\n\n{items}"
-            )
+        if confirm or decide:
+            message += _for_person(cfg, review, confirm, decide)
+            if decide:
+                # A person's approval of this head accepts them (`maintain.merge_approved`).
+                row["decide"] = decide
         elif cfg["merge"]["auto"] and (label := _held(gh, cfg, decision["issue"])):
             outcome, row["held_back"] = autopilot.HELD, "merge"
             message += " " + _held_line(decision["issue"], label, "does not merge it", "merges it")
@@ -1859,9 +1962,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         outcome = "review_failed"
         found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
-        if error and _retry(gh, decision, "review", pr, workflow_ref, default_branch):
+        again = error and _retry(gh, decision, "review", pr, workflow_ref, default_branch)
+        if again:
             outcome, message = "retry", f"{message}\n\n{retry_line(reviewed)}"
             row["transient_error"] = clip(one_line(error), 500)
+            row["next"] = again
         elif error and decision.get("retry"):
             outcome, message = "retry_failed", _retried(gh, decision, error, message)
             found["error"] = error
@@ -1939,19 +2044,19 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     failing = [c["name"] for c in checks or [] if not c.get("passed")]
     blocking = [f for f in (review or {}).get("findings") or [] if f.get("severity") == "blocking"]
     found = {"pull": True, "failing": failing, "findings": blocking, **found}
-    reason = needs_person(outcome, cfg, resume=resume, confirm=confirm, found=found)
+    reason = needs_person(outcome, cfg, resume=resume, confirm=confirm, decide=decide, found=found)
     if outcome == "recheck_failed":
         reason = _with_finding(reason, agent)
     if reason:
         row["attention"] = reason
+    fix = {"command": "fix", "number": str(pr), "note": "", "auto": "true"}
+    if outcome == "auto_fix":
+        # The round this one starts, so a sweep starts it once more when it never runs.
+        row["next"] = fix
     progress.save_state(gh, pr, comment_id, state)
     progress.save_round(gh, pr, round_id, row, message)
     if outcome == "auto_fix":
-        gh.dispatch(
-            workflow_file(workflow_ref),
-            default_branch,
-            {"command": "fix", "number": str(pr), "note": "", "auto": "true"},
-        )
+        gh.dispatch(workflow_file(workflow_ref), default_branch, fix)
     summary = f"Pull request #{pr}: {message}" if action == "implement" else message
     return {
         "outcome": outcome,

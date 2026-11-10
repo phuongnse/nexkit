@@ -237,7 +237,7 @@ class SupersededTests(unittest.TestCase):
 
     def in_job(self, run_id, stage):
         """Run `run_id` is in `stage`: the jobs before it ended, and it runs."""
-        order = ["route", "agent", "publish", "verify", "combine", "review", "report"]
+        order = ["route", "agent", "publish", "shards", "verify", "combine", "review", "report"]
         jobs = [{"name": f"nexkit / {job}", "status": "completed"} for job in order]
         jobs = jobs[: order.index(stage)]
         if stage == "verify":
@@ -294,6 +294,13 @@ class SupersededTests(unittest.TestCase):
         # Once: the next look finds no round in its checks.
         self.assertEqual(self.sweep(), [])
         self.assertEqual(len(rounds_started(self.gh)), 1)
+
+    def test_a_round_counting_its_shards_is_in_its_checks_too(self):
+        self.in_job(50, "shards")
+        self.behind()
+        [line] = self.sweep()
+        self.assertIn("NexKit stopped this round's checks", line)
+        self.assertEqual(self.gh.cancelled, [50])
 
     def part(self, artifact_id, name, results, head=CHECKED, run_id=50):
         """A check job's artifact of run `run_id`: its results and the commit it checked."""

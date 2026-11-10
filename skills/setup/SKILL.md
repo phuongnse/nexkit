@@ -57,6 +57,11 @@ files or repository settings, and wait for confirmation.
      own at once, so a round takes about as long as its slowest job. Group the quick checks
      (build, lint, unit tests) into one job, since every job runs `setup` again (see the
      configuration reference, Parallel checks).
+   - `shards` for a suite the repository already splits, such as one listed as `e2e-1`,
+     `e2e-2`, `e2e-3`, when a script of its own can print how many shards keep each under
+     a time budget: `{"name": "e2e", "run": "<command>", "shards": {"count": "<command
+     that prints N>", "max": <n>}}`. Each shard gets `NEXKIT_SHARD=k/N`; the script reads
+     it to pick its part (see the configuration reference, Parallel checks).
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the
@@ -148,7 +153,10 @@ files or repository settings, and wait for confirmation.
    If the repository's agent instructions hold rules that every pull request must meet,
    such as docs that change with the code, offer `"review": {"checklist": ["<rule>"]}`:
    every plan and review answers each item, and an item not met requests changes. Keep
-   each item to something an agent can check and change in the code.
+   each item to something an agent can check and change in the code. A rule that only a
+   person may waive, such as one about accepting a risk, is
+   `{"text": "<rule>", "person": true}`: NexKit starts no fix round for it and merges
+   once a person approves the pull request.
 
    Offer `"notify": ["<login>"]` so the user gets a GitHub notification when a run needs
    a person, for example a plan with questions or a pull request ready to merge.
@@ -208,9 +216,9 @@ files or repository settings, and wait for confirmation.
    issue per advisory at or above that severity. Say that the App then needs the *Dependabot
    alerts: read* permission, which the user adds on its settings page and accepts on the
    installation, and that alerts must be on.
-   A command that autopilot started and that never ran starts once more as soon as its
+   A command that autopilot started and that never ran starts again as soon as its
    workflow run ended, or after `"lost_after_minutes"` (30 by default) when that run
-   cannot be read.
+   cannot be read, then 30, 60 and 120 minutes after its last start.
    After the commit, start the first sweep with
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
    If the work should go on while nobody watches, mention the `drive` skill: a Claude Code

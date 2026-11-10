@@ -163,6 +163,45 @@ class StaleBranchTests(unittest.TestCase):
         self.assertIn("Kept branch `nexkit/issue-5`, the base branch of #7.", text)
 
 
+class CloseAnswerTests(unittest.TestCase):
+    def test_an_answer_that_only_closes_the_issue_closes_it_as_not_planned(self):
+        from nexkit.maintain import maintain
+
+        gh = FakeGitHub()
+        gh.add_issue(5)
+        decision = {
+            "action": "maintain",
+            "task": "close_answer",
+            "issue": 5,
+            "answer": "Close the issue as not reproduced",
+            "asked": "https://github.com/acme/app/actions/runs/9",
+            "actor": "olivia",
+            "comment_id": 7,
+        }
+        lines = maintain(gh, decision, make_config(), workflow="nexkit.yml", ref="main")
+        self.assertEqual(
+            lines,
+            ["Closed #5 as not planned: @olivia answered `Close the issue as not reproduced`."],
+        )
+        self.assertEqual(
+            (gh.issues[5]["state"], gh.issues[5]["state_reason"]), ("closed", "not_planned")
+        )
+        [comment] = gh.comments(5)
+        self.assertIn(
+            "@olivia answered [the questions NexKit asked]"
+            "(https://github.com/acme/app/actions/runs/9) with `Close the issue as not "
+            "reproduced`, which only closes this issue",
+            comment["body"],
+        )
+        self.assertIn((7, "rocket"), gh.reactions)
+        # Closed meanwhile: nothing more.
+        self.assertEqual(
+            maintain(gh, decision, make_config(), workflow="nexkit.yml", ref="main"),
+            ["#5 is closed already."],
+        )
+        self.assertEqual(len(gh.comments(5)), 1)
+
+
 class CloseParentTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()

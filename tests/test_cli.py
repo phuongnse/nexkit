@@ -1866,6 +1866,7 @@ class WorkflowSafetyTests(unittest.TestCase):
                 "route",
                 "agent",
                 "publish",
+                "shards",
                 "verify",
                 "combine",
                 "review",
@@ -1876,7 +1877,7 @@ class WorkflowSafetyTests(unittest.TestCase):
         )
 
     def test_jobs_that_run_agents_or_repository_code_cannot_write(self):
-        for name in ("agent", "verify", "combine", "review"):
+        for name in ("agent", "shards", "verify", "combine", "review"):
             self.assertNotIn(": write", self.jobs[name], name)
             self.assertNotIn("persist-credentials: true", self.jobs[name], name)
             self.assertNotIn("create-github-app-token", self.jobs[name], name)
@@ -1893,6 +1894,7 @@ class WorkflowSafetyTests(unittest.TestCase):
         # the evidence of the CI runs an issue names, `checks: read` their annotations.
         self.assertEqual(self.permissions("agent"), {"actions": "read", "checks": "read", **read})
         self.assertEqual(self.permissions("verify"), {"contents": "read"})
+        self.assertEqual(self.permissions("shards"), {"contents": "read"})
         self.assertEqual(self.permissions("combine"), {"contents": "read"})
         self.assertEqual(self.permissions("review"), read)
 
@@ -1967,7 +1969,11 @@ class WorkflowSafetyTests(unittest.TestCase):
     def test_parallel_checks_run_in_jobs_of_one_verify_matrix_on_the_published_commit(self):
         verify = self.jobs["verify"]
         # Every job of the matrix checks out the commit publish pushed, or the round's head.
-        self.assertIn("matrix: ${{ fromJSON(needs.route.outputs.check_matrix ||", verify)
+        self.assertIn(
+            "matrix: ${{ fromJSON(needs.shards.outputs.check_matrix || "
+            "needs.route.outputs.check_matrix ||",
+            verify,
+        )
         self.assertIn("fail-fast: false", verify)
         self.assertIn("timeout-minutes: ${{ matrix.timeout }}", verify)
         self.assertIn("ref: ${{ needs.publish.outputs.head || needs.route.outputs.head }}", verify)
@@ -1981,6 +1987,40 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn(
             "matrix.group && format('nexkit-checks-{0}', matrix.group) || 'nexkit-checks'", upload
         )
+
+    def test_sharded_checks_are_counted_on_the_head_without_secrets(self):
+        shards = self.jobs["shards"]
+        # Repository code: the head, with no token kept and no secret.
+        self.assertIn("ref: ${{ needs.publish.outputs.head || needs.route.outputs.head }}", shards)
+        self.assertIn("persist-credentials: false", shards)
+        self.assertNotIn("secrets", shards)
+        self.assertIn("needs.route.outputs.count_shards == 'true'", shards)
+        self.assertIn("kit/bin/nexkit shards --repo repo", shards)
+        self.assertIn("count_shards: ${{ steps.route.outputs.count_shards }}", self.jobs["route"])
+        # Every job after it reads the counts; verify runs on no guess when it failed.
+        for name in ("verify", "combine", "report"):
+            self.assertIn(
+                "NEXKIT_SHARDS: ${{ needs.shards.outputs.shards }}", self.jobs[name], name
+            )
+        self.assertIn("shards: ${{ needs.shards.outputs.shards }}", self.calls["review"])
+        self.assertIn(
+            "(needs.route.outputs.count_shards != 'true' || needs.shards.result == 'success')",
+            self.jobs["verify"],
+        )
+
+    def test_only_shards_are_skipped_by_what_the_shards_job_says(self):
+        from nexkit import cli
+
+        sharded = {"name": "e2e", "run": "x", "shards": {"count": "echo 2", "max": 3}}
+        cfg = {"parallel_checks": True, "checks": [{"name": "unit", "run": "y"}, sharded]}
+        skipped = [{"name": "e2e-2", "since": "a" * 40}, {"name": "unit", "since": "a" * 40}]
+        env = {
+            "NEXKIT_DECISION": json.dumps({"action": "review"}),
+            "NEXKIT_CONFIG": json.dumps(cfg),
+            "NEXKIT_SHARDS": json.dumps({"counts": {"e2e": 2}, "skipped": skipped}),
+        }
+        with mock.patch.dict(os.environ, env):
+            self.assertEqual(cli._decision()["skipped_checks"], skipped[:1])
 
     def test_no_verify_job_runs_when_route_skipped_every_check(self):
         self.assertIn("needs.route.outputs.skip_verify != 'true'", self.jobs["verify"])
@@ -1996,8 +2036,12 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_combine_joins_the_check_jobs_only_with_parallel_checks(self):
         combine = self.jobs["combine"]
-        self.assertIn("needs: [route, verify]", combine)
-        self.assertIn("needs.route.outputs.parallel_checks == 'true'", combine)
+        self.assertIn("needs: [route, shards, verify]", combine)
+        self.assertIn(
+            "(needs.shards.outputs.parallel_checks || "
+            "needs.route.outputs.parallel_checks) == 'true'",
+            combine,
+        )
         self.assertIn("always() && needs.verify.result != 'skipped'", combine)
         self.assertIn("pattern: nexkit-checks-*\n          path: parts\n", combine)
         self.assertIn("kit/bin/nexkit combine-checks --parts parts --out out", combine)
@@ -2011,13 +2055,13 @@ class WorkflowSafetyTests(unittest.TestCase):
                 run.startswith("${{ steps.python.outputs.python-path }} kit/bin/nexkit ")
             )
         # The review and report wait for it; the review only when it did not fail.
-        self.assertIn("needs: [route, publish, verify, combine]", self.calls["review"])
+        self.assertIn("needs: [route, publish, shards, verify, combine]", self.calls["review"])
         self.assertIn(
             'contains(fromJSON(\'["success","skipped"]\'), needs.combine.result)',
             self.calls["review"],
         )
         self.assertIn(
-            "needs: [route, agent, publish, verify, combine, review]", self.jobs["report"]
+            "needs: [route, agent, publish, shards, verify, combine, review]", self.jobs["report"]
         )
 
     def test_jobs_with_write_tokens_never_receive_model_credentials(self):

@@ -173,9 +173,10 @@ access, `max_parallel`, or a question without a recommended option. Every issue 
 waits for a person is also listed under *Needs a person*, and does not count toward
 `max_parallel`. With the default `autopilot.scope`, an issue outside the earliest open
 milestone is not in scope; `null` takes every open issue. A command that
-autopilot started but that never ran starts once more as soon as its workflow run ended,
-or after `autopilot.lost_after_minutes` (30 by default) when that run cannot be read; when
-that one does not run either, the issue waits for you (see [A command or round did not
+autopilot started but that never ran starts again: once more as soon as its workflow run
+ended, or after `autopilot.lost_after_minutes` (30 by default) when that run cannot be
+read, then 30, 60 and 120 minutes after its last start; when the fifth does not run
+either, the issue waits for you (see [A command or round did not
 start](#a-command-or-round-did-not-start)). To sweep again at once:
 `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 
@@ -338,6 +339,7 @@ each outcome of a run is:
 | plan too large | split the issue by hand into parts that each fit one session, with the `request` skill, or make it smaller and comment the change on it. The plan says the issue is too large for one session | |
 | plan finds no change | check the plan's finding, then close the issue, or comment `/nexkit plan <what still needs changing>`. The plan finds that no change is needed, and NexKit closes an issue by itself only with autopilot | |
 | plan or round needs protected paths | make the change in the protected paths (…) by hand, as the plan says. Only a person changes protected paths | the paths |
+| a recommended close | answer the questions: an answer that is the option to close the issue closes it as not planned. The agent recommends closing the issue, and NexKit closes it by itself only when that is a round's one recommendation, with its finding that no change is needed | |
 | `agent_blocked` | answer the questions in the run's comment with `/nexkit plan <answers>`, or `/nexkit go <answers>` when they leave the plan as it is (on a pull request: with `/nexkit fix <answers>`). The agent stopped at a decision that is the owner's to make | the first question |
 | `agent_error` | read the error in the run's comment and log, remove its cause, then post the command again. The run stopped on an error, and NexKit runs a command again by itself only after an error of the service, the network or the runner | the error |
 | `agent_error`, out of time | comment `/nexkit plan` to split the issue into parts that each fit one session, or raise the stage's `timeout_minutes`. The agent ran out of time before it finished | |
@@ -349,6 +351,7 @@ each outcome of a run is:
 | `retry_failed` | post the command again once the cause has passed. The run stopped on a transient error twice, and NexKit tries a command only once more | the error |
 | `conflicting` | comment `/nexkit fix` on the pull request, with any rule the conflict needs. Its commit conflicts with the base branch, and NexKit started no round to resolve it | |
 | `ready`, with `merge.auto` off | review the pull request, then merge it or close it. Checks and the AI review passed, and with `merge.auto` off a person decides the merge | |
+| `ready`, with checklist items a person decides | decide the checklist items in the round's comment: approve the pull request to accept them, which NexKit then merges (with `merge.auto` off, then merge it), or comment `/nexkit fix <what to change>`. Only a person decides them, and the review found them not met | the first item |
 | `ready`, with criteria the review could not verify | confirm from the diff and the checks the acceptance criteria that the review could not verify, then merge the pull request; with `merge.auto`, approve the pull request, which NexKit then merges | the first criterion |
 | `merge_refused` | what unblocks the merge, and the rule that refused it, such as `approve the pull request as a code owner (@owner), which NexKit then merges. GitHub requires a code owner's review for this file, and NexKit's App cannot review its own pull request: docs/reference/ui-glossary.json (+6 −0, owned by @owner)`: see [The automatic merge was refused](#the-automatic-merge-was-refused) | the rule, the files and their owners |
 | `merge_issue_closed` | merge the pull request or close it. Its issue closed before NexKit merged it, and NexKit leaves the pull request of a closed issue to a person | |
@@ -383,6 +386,17 @@ Answer every question in one comment, one short line each:
   autopilot, comment `/nexkit plan <answers>`, or for a blocked `/nexkit go` whose
   answers leave the plan as it is, `/nexkit go <answers>`.
 - A blocked round on a pull request: `/nexkit fix <answers>`.
+
+**To close the issue through an answer,** pick the option the comment marks *(NexKit
+closes the issue as not planned)*: comment `/nexkit go <that option>` or `/nexkit plan
+<that option>`, or with autopilot the option alone, in a comment of someone with write
+access. Write it as its text, give or take case, quotes and a final full stop, or as its
+number when NexKit asked one question, such as `/nexkit go 2`. NexKit closes the issue
+as not planned, with a comment that quotes your answer and links the run or plan that
+asked, and runs no agent. An answer that says more, such as the option and a condition,
+goes to the next round as a note. While a NexKit pull request for the issue is open,
+close both yourself. Agents offer closing only as such an option; a round on a pull
+request never offers it.
 
 When a question comes back after autopilot's answers, or after yours, the recommended
 option did not settle it. Read what is new in the question and why, and answer from the
@@ -548,6 +562,16 @@ and that it succeeds: it saves only at the end of a successful job. Its log says
 run saves or only restores. Hand-written `actions/cache` steps must repeat each entry's paths
 and key files in the same order; the action needs none of that.
 
+### A checklist item waits for a person's decision
+
+The review found a [checklist item that a person decides](configuration.md#review-checklist)
+not met, such as a change that accepts a risk. No fix round starts for it, since a fix
+cannot meet it without undoing the change. Read the item and the review's evidence in the
+round's comment. To accept it, approve the pull request: NexKit turns `nexkit/review` green
+on that commit and, with `merge.auto`, merges it; with it off, merge it yourself. Approve
+the commit the round reviewed; after a new commit, wait for its review and approve again.
+To reject it, comment `/nexkit fix <what to change>`, or close the pull request.
+
 ### A review gave no answer for a checklist item
 
 A review must answer every item of [`review.checklist`](configuration.md#review-checklist),
@@ -609,24 +633,33 @@ show it, comment `/nexkit fix Add tests that show these criteria, so the review 
 verify them: <criteria>`. When nothing can, the person who decides confirms it from the
 diff and the check results, then merges.
 
-### A run ended without a report twice
+### A run kept ending without a report
 
-A sweep marked the run as ended without a report and started it once more, and that run
-ended the same way; or it was a person's command (see [Runs that never
-end](how-it-works.md#autopilot)). Read the workflow run for why it ended, such as a
-cancelled run or a lost runner, then post the same command once more. When it ends
-without a report again, find the cause in the Actions run before you try again.
+A sweep marked the run as ended without a report and started it again, at once and then
+30, 60 and 120 minutes after the last start, or once more only when its agent had run to
+its end, and each run ended the same way; or it was
+a person's command, which NexKit never starts again (see [Runs that never
+end](how-it-works.md#autopilot)). Read the workflow runs for why they ended, such as
+cancelled runs, lost runners or jobs that GitHub never created, and check
+[githubstatus.com](https://www.githubstatus.com) for an outage of GitHub Actions. Once
+Actions works again, post the same command once more. When it ends without a report
+again, find the cause in the Actions run before you try again.
 
 ### A command or round did not start
 
-Autopilot starts a command that never ran once more once its workflow run ended, or after
-`autopilot.lost_after_minutes` when that run cannot be read, and waits for a person when that one does not run either (see ["Autopilot does not start
-an issue"](#agents)). A continued run whose new run has not started after six hours, and
-an automatic round that a round started but that has not run after six hours, wait too
-(see [Runs that never end](how-it-works.md#autopilot)). Read the dispatched run in the
-Actions tab, or the reply on the issue or pull request, for why it did not run, such as a
-refusal by `route` or a run cancelled in the queue. Once the cause is gone, post the
-command yourself, once.
+Autopilot starts a command that never ran again: at once when its workflow run ended, or
+after `autopilot.lost_after_minutes` when that run cannot be read, then 30, 60 and 120
+minutes after its last start. These starts cost no agent time when GitHub creates no job.
+When the fifth start does not run either, the issue waits for a person, with a reason
+that says GitHub created no job or ended the runs without a report, as in an outage of
+GitHub Actions (see ["Autopilot does not start an issue"](#agents)). A continued run, and
+an automatic round that a round started, whose run has not started after
+`lost_after_minutes`, start once more, and wait for a person when that one does not start
+either; a round from before NexKit recorded what it started waits six hours (see [Runs
+that never end](how-it-works.md#autopilot)). Read the dispatched run in the Actions tab,
+or the reply on the issue or pull request, for why it did not run, such as a refusal by
+`route`, a run cancelled in the queue, or [an outage](https://www.githubstatus.com). Once
+the cause is gone, post the command yourself, once.
 
 ### Evidence from a CI run is missing
 
@@ -684,6 +717,17 @@ blocker in another repository is outside the scope: finish it there. Or remove t
 NexKit leaves the parent open, since nothing it asked for was delivered (see [Parent
 issues](configuration.md#parent-issues)). Decide whether the parent is done: close it, or
 open new parts for what is left.
+
+### A CI issue says no job failed
+
+The run failed with no failed job: GitHub never created some of its jobs, which the record
+names, or the run failed before any job did. NexKit ran its jobs again once and it
+failed the same way, or another run did the same within the day. Check
+[githubstatus.com](https://www.githubstatus.com) for an outage of GitHub Actions at the
+run's time, and the run's page for GitHub's reason, such as a workflow file error, before
+you look for a cause in the repository. When it was an outage, close the issue as not
+planned. When the workflow file is the cause, a person fixes it, since `.github/` is
+protected.
 
 ### A CI issue holds records of several failures
 

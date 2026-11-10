@@ -36,8 +36,32 @@ def _output(**values):
         sys.stdout.writelines(lines)
 
 
+def _shards():
+    """What the `shards` job found for a round's sharded checks: {"counts", "skipped"}, or
+    {} when no check is sharded or the job did not run."""
+    try:
+        found = json.loads(os.environ.get("NEXKIT_SHARDS") or "{}")
+    except ValueError:
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
 def _decision():
-    return json.loads(os.environ["NEXKIT_DECISION"])
+    decision = json.loads(os.environ["NEXKIT_DECISION"])
+    skipped = _shards().get("skipped")
+    if skipped and isinstance(skipped, list) and os.environ.get("NEXKIT_CONFIG"):
+        # Shards that the `shards` job found unaffected, beside the checks route skipped:
+        # only shards, never another check.
+        cfg = json.loads(os.environ["NEXKIT_CONFIG"])
+        shards = {
+            name
+            for check in cfg.get("checks") or []
+            if isinstance(check, dict) and isinstance(check.get("shards"), dict)
+            for name in configuration.shard_names(check)
+        }
+        own = [s for s in skipped if isinstance(s, dict) and s.get("name") in shards]
+        decision["skipped_checks"] = [*(decision.get("skipped_checks") or []), *own]
+    return decision
 
 
 def _as_app(cfg):
@@ -49,8 +73,12 @@ def _as_app(cfg):
 
 
 def _config():
-    # The configuration from `route`, with the run's profile already applied.
-    return _as_app(configuration.validate(json.loads(os.environ["NEXKIT_CONFIG"]), layered=True))
+    # The configuration from `route`, with the run's profile already applied, and each
+    # sharded check as the shards that the `shards` job counted.
+    from .checks import expand
+
+    cfg = configuration.validate(json.loads(os.environ["NEXKIT_CONFIG"]), layered=True)
+    return _as_app(expand(cfg, _shards().get("counts")))
 
 
 def _gh():
@@ -264,7 +292,7 @@ def cmd_app(args):
 
 def cmd_route(args):
     from . import progress
-    from .checks import all_skipped, check_jobs, check_matrix
+    from .checks import all_skipped, check_jobs, check_matrix, sharded
     from .github import GitHubError
     from .maintain import TASKS, enabled
     from .route import route, skip_unaffected, with_profile
@@ -355,6 +383,10 @@ def cmd_route(args):
         check_matrix=check_matrix(cfg, decision.get("skipped_checks")),
         skip_verify="true" if all_skipped(cfg, decision.get("skipped_checks")) else "false",
         parallel_checks="true" if check_jobs(cfg) else "false",
+        # Sharded checks get their matrix from the `shards` job, which counts them.
+        count_shards="true" if sharded(cfg) else "false",
+        # Each `count` may take its five minutes, after a checkout of every commit.
+        shards_timeout=str(10 + 5 * len(sharded(cfg))),
         agent_secrets=configuration.secret_names(variants, stages),
         review_secrets=configuration.secret_names([cfg], ["review"]),
     )
@@ -567,6 +599,38 @@ def cmd_checks(args):
     )
     passed = all(r["passed"] for r in results)
     print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
+    return 0
+
+
+def cmd_shards(args):
+    """Count the shards of each sharded check on the round's head, in a job without
+    secrets, since `count` is repository code: the check matrix of the expanded checks,
+    and what the jobs after it read as NEXKIT_SHARDS."""
+    from .checks import (
+        all_skipped,
+        check_jobs,
+        check_matrix,
+        count_shards,
+        expand,
+        find_commits,
+        skip_shards,
+    )
+    from .gitutil import git
+
+    decision, cfg = _decision(), _config()
+    counts = count_shards(cfg, args.repo, find_commits(args.repo, decision))
+    expanded = expand(cfg, counts)
+    head = git(args.repo, "rev-parse", "HEAD").strip()
+    skipped = skip_shards(expanded, decision, args.repo, head)
+    every = [*(decision.get("skipped_checks") or []), *skipped]
+    for item in skipped:
+        print(f"`{item['name']}` skipped: no path it reads changed since `{item['since'][:7]}`.")
+    _output(
+        check_matrix=check_matrix(expanded, every),
+        skip_verify="true" if all_skipped(expanded, every) else "false",
+        parallel_checks="true" if check_jobs(expanded) else "false",
+        shards={"counts": counts, "skipped": skipped},
+    )
     return 0
 
 
@@ -878,6 +942,10 @@ def build_parser():
     p.add_argument("--out", required=True)
     p.add_argument("--group", default="", help="Only the checks of this parallel check job")
     p.set_defaults(func=cmd_checks)
+
+    p = sub.add_parser("shards", help="(pipeline) Count the shards of sharded checks")
+    p.add_argument("--repo", required=True)
+    p.set_defaults(func=cmd_shards)
 
     p = sub.add_parser("combine-checks", help="(pipeline) Join the results of parallel check jobs")
     p.add_argument("--parts", required=True, help="Each check job's artifact, in a folder")

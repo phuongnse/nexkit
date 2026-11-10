@@ -60,10 +60,14 @@ TASKS = {
     "lost": ("autopilot.enabled",),
     # A round on a pull request whose base branch already holds its change.
     "on_base": (),
+    # A writer's `/nexkit plan` or `/nexkit go` that picks the option that only closes
+    # the issue.
+    "close_answer": (),
     # A writer's `/nexkit trust` on an issue.
     "trust": ("autopilot.enabled",),
-    # A writer's approval of a NexKit pull request whose merge GitHub refused.
-    "approved": ("merge.auto",),
+    # A writer's approval of a NexKit pull request whose merge GitHub refused, or whose
+    # review found checklist items not met that a person decides.
+    "approved": ("merge.auto", "review.checklist"),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
@@ -84,7 +88,7 @@ OWN_COMMITS = 10
 OWN_FILES = 10
 # The jobs of a round that a move of the base branch can leave without a purpose: its
 # checks. A round in any other job goes on: its agent time, patch and review are worth more.
-CHECK_JOBS = {"verify", "combine"}
+CHECK_JOBS = {"shards", "verify", "combine"}
 # How long, and how often, an update of a branch waits for GitHub to move its head.
 UPDATE_WAIT = 5
 UPDATE_TRIES = 6
@@ -396,7 +400,8 @@ def resume_paused(gh, workflow, ref, now=None):
             lines.append(f"Could not resume /nexkit {inputs['command']} on #{number}: {exc}")
             continue
         del run["resume"]
-        run["status"] = CONTINUED
+        # The run that continues it, which a sweep starts once more when it never starts.
+        run.update(status=CONTINUED, next=inputs)
         link = f"[a new run]({started['html_url']})" if started.get("html_url") else "a new run"
         target = "" if inputs["number"] == str(number) else f" on #{inputs['number']}"
         note = f"Resumed `/nexkit {inputs['command']}`{target} in {link} after the usage limit."
@@ -564,11 +569,12 @@ def start_conflict_round(
             "conflict rounds are used up."
         )
     inputs = {"command": "fix", "number": str(number), "note": conflict_note(base)}
-    gh.dispatch(workflow, ref, {**inputs, "auto": "conflicts"})
+    inputs["auto"] = "conflicts"
+    gh.dispatch(workflow, ref, inputs)
     if ending:
-        row["conflicts_started"] = sha
+        row.update(conflicts_started=sha, next=inputs)
     elif comment.get("id"):
-        latest["conflicts_started"] = sha
+        latest.update(conflicts_started=sha, next=inputs)
         gh.update_comment(comment["id"], with_run(comment["body"], latest))
     return f"Started an automatic round on #{number} to merge `{base}`."
 
@@ -596,14 +602,11 @@ def update_branch(gh, target, row, limit, workflow, ref, before_review=None):
                 break
             time.sleep(UPDATE_WAIT)
         # The review carries an earlier approval over when the change is the same.
-        gh.dispatch(
-            workflow,
-            ref,
-            {"command": "review", "number": str(pr), "note": "", "auto": "true,carry"},
-        )
+        inputs = {"command": "review", "number": str(pr), "note": "", "auto": "true,carry"}
+        gh.dispatch(workflow, ref, inputs)
     except GitHubError as error:
         return f"NexKit could not update the branch: {error}"
-    row["updated_branch"] = True
+    row.update(updated_branch=True, next=inputs)
     return None
 
 
@@ -863,6 +866,30 @@ def resolve_conflicts(
     return [line for line in lines if line]
 
 
+def close_answered(gh, decision):
+    """Close an issue as not planned, as a writer's answer to NexKit's questions picked the
+    option that only closes it (see `route._closing`). The issues event that the close
+    starts closes parents and starts a sweep. Returns lines for the log."""
+    number, actor = decision["issue"], decision.get("actor") or "someone"
+    if decision.get("comment_id"):
+        gh.react(decision["comment_id"], "rocket")
+    if gh.issue(number).get("state") != "open":
+        return [f"#{number} is closed already."]
+    asked = (
+        f"[the questions NexKit asked]({decision['asked']})"
+        if decision.get("asked")
+        else ("the questions NexKit asked")
+    )
+    answer = autopilot.quoted(decision["answer"], 300)
+    gh.comment(
+        number,
+        f"@{actor} answered {asked} with {answer}, which only closes this issue, so NexKit "
+        "closes it as not planned, with no change and no other round.",
+    )
+    gh.close_issue(number, "not_planned")
+    return [f"Closed #{number} as not planned: @{actor} answered {answer}."]
+
+
 def answer_trust(gh, cfg, decision, workflow, ref):
     """Answer a writer's `/nexkit trust`, which `route` let through, and start a sweep, which
     reads that comment (see `autopilot.vouch`). Returns lines for the log."""
@@ -888,15 +915,35 @@ def answer_trust(gh, cfg, decision, workflow, ref):
 APPROVABLE = ("merge_refused", "ready", autopilot.PULL_CLOSED)
 
 
+def accept_decided(gh, comment, run, actor):
+    """Accept the checklist items that a person decides, which the review of the round
+    `run` found not met, with a writer's approval of its head: `nexkit/review` turns green
+    there, and the round's comment says who accepted them."""
+    items = run.pop("decide")
+    count = f"{len(items)} checklist item{'s' if len(items) > 1 else ''}"
+    gh.set_status(
+        run["head"],
+        "nexkit/review",
+        "success",
+        f"@{actor} approved this commit, which accepts the {count} a person decides",
+        run.get("url"),
+    )
+    run["decided_by"] = actor
+    line = f"@{actor} approved `{run['head'][:7]}`, which accepts the {count} a person decides."
+    gh.update_comment(comment["id"], with_run(comment["body"], run, line))
+
+
 def merge_approved(gh, cfg, decision, workflow, ref):
     """Merge a NexKit pull request that a writer approved, when its latest round ended as
     `merge_refused`, `ready`, or `pull_closed` before it was reopened, on the head that its
     checks and review passed, with the guards of every merge (see `report.merge_pull`): a
     head that moved since gets a review instead. A label that holds its issue, a round on
     its way, any other outcome, or, for a `ready` round, an approval of another commit than
-    its head starts nothing. Returns lines for the log."""
+    its head starts nothing. A round whose review found checklist items not met that a
+    person decides takes the approval as their decision, on its head only: `nexkit/review`
+    turns green, and the pull request merges with `merge.auto`. Returns lines for the log."""
     # `report` imports this module.
-    from .report import merge_waiting
+    from .report import READY, merge_waiting
 
     pr, issue, actor = decision["pr"], decision["issue"], decision.get("actor") or "someone"
     rounds = _rounds(gh, pr)
@@ -908,17 +955,27 @@ def merge_approved(gh, cfg, decision, workflow, ref):
         state = run.get("outcome") or run.get("status")
         return [f"#{pr}: its latest round is `{state}`, so the approval starts nothing."]
     commit = decision.get("commit")
-    if run.get("outcome") == "ready" and commit and commit != run.get("head"):
+    decided = bool(run.get("decide"))
+    if (run.get("outcome") == "ready" or decided) and commit and commit != run.get("head"):
         # A person confirms the criteria of the commit they approved, and no other.
         return [
             f"#{pr}: the approval is of `{commit[:7]}`, not of `{str(run.get('head'))[:7]}`, "
-            "whose criteria wait for a person; it starts nothing."
+            "whose review waits for a person; it starts nothing."
         ]
+    if not cfg["merge"]["auto"]:
+        if not decided:
+            return [f"#{pr}: nothing waits for an approval here, so it starts nothing."]
+        # With `merge.auto` off, a person merges it now.
+        run["attention"] = READY
+        accept_decided(gh, comment, run, actor)
+        return [f"#{pr}: @{actor} accepted the checklist items a person decides."]
     if implementing(gh, issue):
         return [f"#{pr}: the implement round on #{issue} still runs; it merges by itself."]
     label = autopilot.held(gh, cfg, issue)
     if label:
         return [f"#{pr}: #{issue} is on hold (`{label}`), so NexKit does not merge it."]
+    if decided:
+        accept_decided(gh, comment, run, actor)
     base = (gh.pull(pr).get("base") or {}).get("ref") or ref
     intro = f"@{actor} approved the pull request."
     step = {"pull": pr, "number": issue, "round_comment": comment["id"], "base": base}
@@ -931,6 +988,8 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
     task = decision["task"]
     if task == "trust":
         return answer_trust(gh, cfg, decision, workflow, ref)
+    if task == "close_answer":
+        return close_answered(gh, decision)
     if task == "approved":
         return merge_approved(gh, cfg, decision, workflow, ref)
     if task == "parents":

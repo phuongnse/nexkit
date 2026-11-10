@@ -43,6 +43,7 @@ from .state import (
     answers_text,
     by_bot,
     ci_wait_reason,
+    closing_answer,
     conflict_rounds_used,
     is_bot,
     latest_plan,
@@ -75,6 +76,16 @@ ACTIVE = {RUNNING, PAUSED, CONTINUED}
 LOST = timedelta(hours=6)
 # What the comment of a run that ended without a report says once a sweep finds it.
 REPORTLESS = "the run ended without a report"
+# How long after the last start autopilot starts a command again whose run GitHub never
+# started, or that ended without a report: at once, then later and later, so a few runs
+# lost to GitHub, or an outage of GitHub Actions, cost no person's time; then a person
+# decides. These tries run no agent unless the run gets that far.
+AGAIN = (
+    timedelta(0),
+    timedelta(minutes=30),
+    timedelta(minutes=60),
+    timedelta(minutes=120),
+)
 # What the record keeps from one start to the next.
 STICKY = ("split_asked", "titles_asked", "parts_asked")
 # A sweep looks again after splitting an issue, at most this often.
@@ -938,6 +949,10 @@ REPEATED = person(
 # Why an issue waits after its pull request's round stopped without a report, or after the
 # run it continues or the round it started next did not run.
 LOST_DO = "read the workflow run in the Actions tab for why, then post the command once more"
+OUTAGE_DO = (
+    "check githubstatus.com for an outage of GitHub Actions, and the dispatched runs for "
+    "why {command} did not run, then post it yourself once Actions works again"
+)
 SPLIT_DO = (
     "split the issue by hand into parts that each fit one session, with the `request` skill, "
     "or make it smaller and comment the change on it"
@@ -946,6 +961,12 @@ TIMED_OUT_DO = (
     "read the plan, the run log and the result files for why the round did not finish, then "
     "comment `/nexkit plan <the cause, with the evidence, and the smallest change that "
     "removes it>`"
+)
+CLOSE_UNFOUNDED = person(
+    "answer the questions: an answer that is the option to close the issue closes it as not "
+    "planned",
+    "the agent recommends closing the issue, and NexKit closes it by itself only when that "
+    "is a round's one recommendation, with its finding that no change is needed",
 )
 QUESTIONS_REASON = person(
     "answer the plan's questions with `/nexkit plan <answers>`",
@@ -1040,6 +1061,9 @@ def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
         # The recommended answer only closes the issue: another round would find the same.
         reason = "the last round found no change is needed and recommends closing the issue"
         return _step(issue, "close", reason, finding=run["no_change"], run_url=run.get("url"))
+    if found and any(item.get("closes") for item in questions(run.get("questions"))):
+        # Closing without a finding that no change is needed is a person's choice.
+        return _step(issue, "waits", CLOSE_UNFOUNDED)
     if found:
         start = {**start, "target": target, "note": answer_note(found)}
         reason = "autopilot answers the questions of the blocked round"
@@ -1058,6 +1082,25 @@ def _later(text, since):
     """Whether the time `text` is known and after `since`."""
     at = parse_iso(text)
     return at is not None and since is not None and at > since
+
+
+def _closing_comment(gh, comments, since, items, asked):
+    """A function that gives the step closing the issue, when the latest of collaborators'
+    comments after `since`, other than commands, answers the questions `items` with the
+    option that only closes it, as a person answers with autopilot (see
+    `state.closing_answer`); otherwise None. `asked` is the run or plan that asked."""
+    said = _commented_after(comments, since)
+    option = closing_answer(said[-1].get("body"), items) if said and items else None
+    by = ((said[-1].get("user") or {}).get("login") or "") if option else ""
+    if not by or not gh.can_write(by):
+        # Closing is a write: a collaborator who may only read changes the plan at most.
+        return None
+
+    def step(issue):
+        reason = f"@{by} answered with the option that only closes the issue"
+        return _step(issue, "close", reason, answer=option, by=by, asked=asked.get("url") or "")
+
+    return step
 
 
 def _since_stop(gh, issue, comments, stop):
@@ -1133,6 +1176,8 @@ def _planned(gh, cfg, issue, plan, last, record, start, comments):
         return _step(issue, "waits", protected_reason(data["protected_paths"]))
     if data.get("questions"):
         found = answers(cfg, data["questions"])
+        if found and any(item.get("closes") for item in questions(data["questions"])):
+            return _step(issue, "waits", CLOSE_UNFOUNDED)
         if not found:
             return _step(issue, "waits", last.get("attention") or QUESTIONS_REASON)
         if asked_again(comments):
@@ -1196,37 +1241,147 @@ def _not_resumed(comment, run, now):
     return None
 
 
-def _stalled(gh, issue, comment, run, record, start, target, now):
+def _tries(record):
+    """How many times autopilot started the command of `record` again after it did not
+    run. Records from before NexKit counted them hold `retried`."""
+    tries = record.get("tries")
+    if isinstance(tries, int) and not isinstance(tries, bool):
+        return tries
+    return 1 if record.get("retried") else 0
+
+
+def _again(issue, record, now, what, fields, extra=None):
+    """The step for a command whose run GitHub never started, or that ended without a
+    report (`what` says which): start it again, as `fields` says, `AGAIN[n]` after the
+    last start, for its n-th time; wait meanwhile, with the run on its way as far as
+    `max_parallel` goes; and once the tries are used up, wait for a person. `record` is
+    autopilot's record of the last start of the same command, or {} when there is none. A
+    start that `record` names `once` was the one more start of a round that started the
+    next by itself, which waits for a person when it does not run either."""
+    extra = extra or {}
+    tries, command = _tries(record), f"`/nexkit {fields['command']}`"
+    limit = 1 if record.get("once") else len(AGAIN)
+    if tries >= limit:
+        if record.get("once"):
+            why = f"{what}, after autopilot started it once more"
+            return _step(issue, "waits", person(LOST_DO, why), **extra)
+        why = (
+            f"{what}, {tries + 1} times: GitHub created no job for it, or ended its run "
+            "without a report, as it does while GitHub Actions has an outage"
+        )
+        return _step(issue, "waits", person(OUTAGE_DO.format(command=command), why), **extra)
+    due = (parse_iso(record.get("at")) or now) + AGAIN[tries] if tries else now
+    if now < due:
+        reason = (
+            f"{what}; autopilot starts {command} again after {due:%H:%M} UTC, since GitHub "
+            "may not start runs for a while"
+        )
+        return _step(issue, "active", reason, **extra)
+    remember = {
+        **fields.get("remember", {}),
+        "tries": tries + 1,
+        **({"once": True} if record.get("once") else {}),
+    }
+    again = "once more" if not tries else "again"
+    reason = f"{what}, so autopilot starts {command} {again}"
+    return _step(issue, "start", reason, **{**fields, "remember": remember}, **extra)
+
+
+def _stalled(gh, issue, comment, run, record, start, target, now, cfg=None):
     """The step for a run whose comment says it is running, paused or continued, when that
-    no longer carries the issue on, or None. A run that ended without a report starts once
-    more when NexKit started it by itself; anything else waits for a person."""
+    no longer carries the issue on, or None. A run that ended without a report starts
+    again when NexKit started it by itself (see `_reportless`); a continued run whose new
+    run has not started after `autopilot.lost_after_minutes` starts once more (see
+    `_handed_on`); anything else waits for a person."""
     status = run.get("status")
     if status == PAUSED:
         reason = _not_resumed(comment, run, now)
         return _step(issue, "waits", reason) if reason else None
     if status == CONTINUED:
-        at = parse_iso(comment.get("updated_at"))
-        lost = at is not None and now - at > LOST
-        why = "the run that continues it did not start within six hours"
-        return _step(issue, "waits", person(LOST_DO, why)) if lost else None
+        return _handed_on(issue, comment, run, start, now, cfg, "the run that continues it")
     if status != RUNNING or not _ended(gh, run):
         return None
-    command = run.get("command") or ("fix" if run_action(run) == "fix" else "review")
-    stale = {"number": target, "comment": comment["id"]}
-    again = record.get("retried") and (record.get("command"), record.get("target")) == (
-        command,
-        target,
+    return _reportless(gh, issue, comment, run, record, start, target, now, stale=True)
+
+
+# The jobs of a run whose agent session spends agent time.
+AGENT_JOBS = {"agent", "review"}
+
+
+def _agent_ran(gh, run):
+    """Whether the workflow run of a run comment ran its agent or review job to its end,
+    so that a start again spends agent time. True when that cannot be read."""
+    match = RUN_ID.search(run.get("url") or "")
+    if not match:
+        return True
+    try:
+        found = gh.workflow_run(int(match.group(1)))
+        jobs = gh.attempt_jobs(int(match.group(1)), found.get("run_attempt") or 1)
+    except GitHubError:
+        return True
+    return any(
+        AGENT_JOBS & set(str(job.get("name") or "").split(" / "))
+        and job.get("conclusion") == "success"
+        for job in jobs
     )
-    if not _automatic(run) or again:
-        why = REPORTLESS + (", after autopilot started it once more" if again else "")
-        return _step(issue, "waits", person(LOST_DO, why), stale=stale)
-    fields = {**start, "target": target, "remember": {"retried": True}}
+
+
+def _reportless(gh, issue, comment, run, record, start, target, now, stale=False):
+    """The step for a run that ended without a report: it starts again when NexKit started
+    it by itself, later each time (see `_again`), or once more only when its agent ran,
+    since those starts count toward no budget; a person's command waits for them. Tries
+    count from the last start of the same command within `LOST`, so an earlier outage
+    leaves none behind. With `stale`, its comment still says running, and the step shows
+    it as ended. Without, it shows so already, and a person's command gives None: what
+    follows a failed run."""
+    command = run.get("command") or ("fix" if run_action(run) == "fix" else "review")
+    extra = {"stale": {"number": target, "comment": comment["id"]}} if stale else {}
+    if not _automatic(run):
+        return _step(issue, "waits", person(LOST_DO, REPORTLESS), **extra) if stale else None
+    at = parse_iso(record.get("at"))
+    same = (record.get("command"), record.get("target")) == (command, target)
+    record = record if same and at is not None and now - at <= LOST else {}
+    if _agent_ran(gh, run):
+        record = {**record, "once": True}
+    fields = {**start, "target": target, "command": command}
     auto = _auto_input(run)
     if auto:
         # The same kind of round: one after failing checks merges the base branch first.
         fields["auto"] = auto
-    reason = f"{REPORTLESS}, so autopilot starts `/nexkit {command}` once more"
-    return _step(issue, "start", reason, command=command, stale=stale, **fields)
+    return _again(issue, record, now, REPORTLESS, fields, extra)
+
+
+def _handed_on(issue, comment, run, start, now, cfg, what):
+    """The step for a run that handed the work on to a run it started, when that run has
+    not started: a continued run, or a round that started the next one by itself. One
+    that recorded what it started (`next`) starts it once more after
+    `autopilot.lost_after_minutes`, and waits for a person when that one does not start
+    either; without the record, it waits for a person after `LOST`. None while the run
+    may still be on its way."""
+    at = parse_iso(comment.get("updated_at") or comment.get("created_at"))
+    found = run.get("next") if isinstance(run.get("next"), dict) else None
+    wait = timedelta(minutes=cfg["autopilot"]["lost_after_minutes"]) if cfg and found else LOST
+    if at is None or now - at <= wait:
+        return None
+    if not found:
+        why = f"{what} did not start within six hours"
+        return _step(issue, "waits", person(LOST_DO, why))
+    command = str(found.get("command") or "")
+    number = str(found.get("number") or "")
+    if not command or not number.isdigit():
+        return _step(issue, "waits", person(LOST_DO, f"{what} did not start"))
+    auto = [kind for kind in str(found.get("auto") or "").split(",") if kind]
+    auto += [AUTO] if AUTO not in auto else []
+    fields = {
+        **start,
+        "command": command,
+        "target": int(number),
+        "note": str(found.get("note") or ""),
+        "auto": ",".join(auto),
+    }
+    minutes = cfg["autopilot"]["lost_after_minutes"]
+    reason = f"{what} did not start within {minutes} minutes"
+    return _again(issue, {"once": True}, now, reason, fields)
 
 
 def settle_ended(gh, number, comment, run):
@@ -1284,14 +1439,16 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
     if latest is None:
         return _step(issue, "active", f"pull request #{pull} is open")
     if latest.get("status") in ACTIVE:
-        stalled = _stalled(gh, issue, comment, latest, record, start, pull, now)
+        stalled = _stalled(gh, issue, comment, latest, record, start, pull, now, cfg)
         return stalled or _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") in CHAINED:
-        at = parse_iso(comment.get("updated_at") or comment.get("created_at"))
-        if at is not None and now - at > LOST:
-            why = f"the round that pull request #{pull} started next did not run within six hours"
-            return _step(issue, "waits", person(LOST_DO, why))
-        return _step(issue, "active", f"pull request #{pull} has a round on its way")
+        what = f"the round that pull request #{pull} started next"
+        lost = _handed_on(issue, comment, latest, start, now, cfg, what)
+        return lost or _step(issue, "active", f"pull request #{pull} has a round on its way")
+    if latest.get("outcome") == "lost":
+        lost = _reportless(gh, issue, comment, latest, record, start, pull, now)
+        if lost:
+            return lost
     if latest.get("outcome") in (UNTRUSTED_ROUND, UNTRUSTED_MERGE):
         if not _vouched_again(gh, issue, comment):
             return _step(issue, "waits", latest.get("attention") or UNTRUSTED_REASON)
@@ -1546,28 +1703,27 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         command = f"`/nexkit {record['command']}`"
         if not _lost(gh, cfg, record, now):
             return _step(issue, "active", f"waits for the {command} that autopilot started")
-        reason = f"the {command} that autopilot started did not run"
-        if record.get("retried"):
-            do = f"read the dispatched run for why {command} did not run, then post it yourself"
-            return _step(issue, "waits", person(do, f"{reason}, twice"))
-        return _step(
-            issue,
-            "start",
-            f"{reason}, so autopilot starts it once more",
-            command=record["command"],
-            target=record.get("target") or number,
-            note=record.get("note") or "",
-            basis=current,
-            remember={"retried": True},
+        fields = {
+            "command": record["command"],
+            "target": record.get("target") or number,
+            "note": record.get("note") or "",
+            "basis": current,
             **({"auto": record["auto"]} if record.get("auto") else {}),
+        }
+        return _again(
+            issue, record, now, f"the {command} that autopilot started did not run", fields
         )
     start = {"basis": current, "target": number, "note": "", "remember": {}}
     found = [(c, run) for c, run in run_comments(comments) if "command" in run]
     last = found[-1][1] if found else None
     handed_on = pull and last and last.get("status") == CONTINUED
     if last and last.get("status") in ACTIVE and not handed_on:
-        stalled = _stalled(gh, issue, *found[-1], record, start, number, now)
+        stalled = _stalled(gh, issue, *found[-1], record, start, number, now, cfg)
         return stalled or _step(issue, "active", f"`/nexkit {last['command']}` is {last['status']}")
+    if last and last.get("outcome") == "lost" and not pull:
+        lost = _reportless(gh, issue, found[-1][0], last, record, start, number, now)
+        if lost:
+            return lost
     plan = latest_plan(comments)
     if pull:
         # The plan autopilot asked for after the pull request's agent ran out of time. A
@@ -1605,6 +1761,9 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
                 "its pull request was closed, and autopilot opens no other by itself",
             )
             return _step(issue, "waits", reason)
+        closing = _closing_comment(gh, comments, found[-1][0], last.get("questions"), last)
+        if closing:
+            return closing(issue)
         step = _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,))
         if step:
             return step
@@ -1614,6 +1773,11 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         return _step(issue, "waits", last.get("attention") or failed_reason("go"))
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
+    data = plan_data(plan) or {}
+    asked = {"url": plan.get("html_url")}
+    closing = _closing_comment(gh, comments, plan, data.get("questions"), asked)
+    if closing:
+        return closing(issue)
     if _commented_after(comments, plan):
         return _step(
             issue, "start", "collaborators commented after the plan", command="plan", **start
@@ -1846,6 +2010,23 @@ def close(gh, cfg, step, workflow, ref):
         # be done.
         lines += close_parents_safely(gh, number)
         return lines + request_safely(gh, cfg, workflow, ref, number)
+    if "answer" in step:
+        asked = (
+            f"[the questions NexKit asked]({step['asked']})"
+            if step.get("asked")
+            else ("the questions NexKit asked")
+        )
+        answer = quoted(step["answer"], 300)
+        gh.comment(
+            number,
+            f"@{step['by']} answered {asked} with {answer}, which only closes this issue, so "
+            "NexKit autopilot closes it as not planned, with no change and no other round.",
+        )
+        gh.close_issue(number, "not_planned")
+        # Issues it blocked may start now, and the scope may be done.
+        return [f"Closed #{number}: {step['reason']}."] + request_safely(
+            gh, cfg, workflow, ref, number
+        )
     if "plan_url" in step:
         url = step["plan_url"]
         plan = f"[its plan]({url})" if url else "its plan"
@@ -2052,7 +2233,7 @@ def _runs_marker(run, attempts):
     return f"{CI_RUNS_PREFIX}{items} -->"
 
 
-def _failed_jobs(gh, run, attempt, failed_jobs=None):
+def _failed_jobs(gh, run, attempt, failed_jobs=None, known=None):
     """Each failed job of an attempt, linked, with its failed steps, the failures its error
     annotations name and the end of its log, so the issue holds what an agent needs. With
     `failed_jobs`, each failed job's name, failed commands and the tests its error
@@ -2082,7 +2263,7 @@ def _failed_jobs(gh, run, attempt, failed_jobs=None):
         tail = _log_tail(log)
         if tail:
             lines += ["", "  The end of its log:", "", "  ```text", *tail, "  ```", ""]
-    return lines or ["- The attempt failed before any job did; open it for the reason."]
+    return lines or [_jobless_line(gh, known, run, attempt)]
 
 
 # The lines of a failed job's log that a CI bug issue shows, at most this many characters.
@@ -2143,14 +2324,15 @@ def _failed_attempts(gh, run, attempts):
     return failed
 
 
-def _failures(gh, run, failed, failed_jobs=None):
+def _failures(gh, run, failed, failed_jobs=None, known=None):
     """Each failed attempt, linked, with its failed jobs and steps. With `failed_jobs`, the
     failed jobs of the latest failed attempt and their failed commands are added to it."""
     lines = []
     for attempt in failed:
         url = f"{run.get('html_url')}/attempts/{attempt}"
         found = failed_jobs if attempt == failed[-1] else None
-        lines += ["", f"Attempt [{attempt}]({url}):", *_failed_jobs(gh, run, attempt, found)]
+        jobs = _failed_jobs(gh, run, attempt, found, known)
+        lines += ["", f"Attempt [{attempt}]({url}):", *jobs]
     return lines
 
 
@@ -2160,11 +2342,11 @@ def _failed_marker(run, failed_jobs):
     return f"{CI_FAILED_PREFIX}{data} -->"
 
 
-def _failure_text(gh, workflow, run, branch):
+def _failure_text(gh, workflow, run, branch, known=None):
     sha = run.get("head_sha") or ""
     attempts = range(1, (run.get("run_attempt") or 1) + 1)
     failed_jobs = []
-    lines = _failures(gh, run, _failed_attempts(gh, run, attempts), failed_jobs)
+    lines = _failures(gh, run, _failed_attempts(gh, run, attempts), failed_jobs, known)
     return "\n".join(
         [
             f"[`{workflow}` failed]({run.get('html_url')}) on `{branch}` at {sha}, also when "
@@ -2342,7 +2524,7 @@ def _merged(found, item, workflow):
     return failure
 
 
-def _attempt_failures(gh, workflow, run, attempt):
+def _attempt_failures(gh, workflow, run, attempt, known=None):
     """The failures of one failed attempt, in the order of its jobs. A step that failed the
     same way in several jobs is one failure, with a line for each job."""
     found = {}
@@ -2356,25 +2538,31 @@ def _attempt_failures(gh, workflow, run, attempt):
             failure = _merged(found, {**item, "lines": []}, workflow)
             if item["line"] not in failure["lines"]:
                 failure["lines"].append(item["line"])
-    return list(found.values()) or [
+    if found:
+        return list(found.values())
+    line = _jobless_line(gh, known, run, attempt)
+    return [
         {
             "key": _key("start"),
             "kind": "start",
             "name": workflow,
             "subject": workflow,
-            "about": "the run failed before any job did",
-            "line": "- The attempt failed before any job did; open it for the reason.",
-            "lines": ["- The attempt failed before any job did; open it for the reason."],
+            "about": (
+                "no job failed, because GitHub never created some of the jobs or the run "
+                "failed before any job did, also when NexKit ran it again"
+            ),
+            "line": line,
+            "lines": [line],
         }
     ]
 
 
-def _flaky_failures(gh, workflow, run, unseen):
+def _flaky_failures(gh, workflow, run, unseen, known=None):
     """The failures of the attempts among `unseen` that failed, each once, with its lines
     for each attempt it failed in; empty when none of them failed."""
     found = {}
     for attempt in _failed_attempts(gh, run, unseen):
-        for item in _attempt_failures(gh, workflow, run, attempt):
+        for item in _attempt_failures(gh, workflow, run, attempt, known):
             failure = _merged(found, {**item, "attempts": {}}, workflow)
             lines = failure["attempts"].setdefault(attempt, [])
             lines += [line for line in item["lines"] if line not in lines]
@@ -2457,7 +2645,7 @@ def _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen):
     """Record a run that passed only when run again, or that failed and a newer run
     overtook, on the issue of each failure in its attempts among `unseen`. Returns lines for
     the log, none when none of those attempts failed."""
-    failures = _flaky_failures(gh, workflow, run, unseen)
+    failures = _flaky_failures(gh, workflow, run, unseen, known)
     new = [failure for failure in failures if not _issue_of(known, failure, "open")]
     if len(new) > CI_NEW_ISSUES:
         failures = [f for f in failures if _issue_of(known, f, "open")]
@@ -2470,7 +2658,7 @@ def _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen):
 
 
 def _report_failure(gh, cfg, where, workflow, branch, known, run):
-    text = _failure_text(gh, workflow, run, branch)
+    text = _failure_text(gh, workflow, run, branch, known)
     issue = known["bug"]
     if issue:
         gh.comment(issue["number"], f"It fails again on a newer commit.\n\n{text}")
@@ -2478,7 +2666,7 @@ def _report_failure(gh, cfg, where, workflow, branch, known, run):
     else:
         people = "".join(f"@{login} " for login in cfg["notify"])
         body = f"{CI_BUG_PREFIX}{workflow} -->\n{people}{text}"
-        failures = _attempt_failures(gh, workflow, run, run.get("run_attempt") or 1)
+        failures = _attempt_failures(gh, workflow, run, run.get("run_attempt") or 1, known)
         title = red_title(workflow, failures, branch)
         labels = ["bug", CI_LABEL]
         issue = known["bug"] = gh.create_issue(title, body, where.get("milestone"), labels)
@@ -2499,26 +2687,92 @@ def _passed_later(gh, workflow, run, number, unseen):
     return f"`{workflow}` passed in attempt {attempt}; commented on #{number}."
 
 
+def _unseen(known, run):
+    """The attempts of a run that no record covers yet."""
+    seen = known["seen"].get(run["id"], set())
+    return [n for n in range(1, (run.get("run_attempt") or 1) + 1) if n not in seen]
+
+
+def jobless(gh, run, attempt):
+    """Whether a failed attempt of a run failed with no failed job: GitHub created none of
+    its jobs, or only some, none of which failed, as in an outage of GitHub Actions. No
+    code of the repository explains such a failure."""
+    return not any(job.get("conclusion") in FAILED for job in gh.attempt_jobs(run["id"], attempt))
+
+
+def missing_jobs(gh, known, run, attempt):
+    """The jobs of the newest run of the workflow that passed (`known["passing"]`) that an
+    attempt lacks: those GitHub never created. None when no run passed to compare with."""
+    passing = known.get("passing")
+    if not passing:
+        return None
+    if "passing_jobs" not in known:
+        jobs = gh.attempt_jobs(passing["id"], passing.get("run_attempt") or 1)
+        known["passing_jobs"] = list(dict.fromkeys(j.get("name") for j in jobs if j.get("name")))
+    have = {job.get("name") for job in gh.attempt_jobs(run["id"], attempt)}
+    return [name for name in known["passing_jobs"] if name not in have]
+
+
+def _jobless_line(gh, known, run, attempt):
+    """What a bug or flaky-run record says of an attempt that failed with no failed job."""
+    missing = missing_jobs(gh, known, run, attempt) if known else None
+    if missing:
+        listed = ", ".join(f"`{_plain(name, 100)}`" for name in missing[:10])
+        more = f" and {len(missing) - 10} more" if len(missing) > 10 else ""
+        what = f"GitHub never created {listed}{more}, which the last run that passed had"
+    else:
+        what = "GitHub created no job that failed, or the run failed before any job did"
+    return (
+        f"- No job failed: {what}. Look for an outage of GitHub Actions at that time "
+        "(githubstatus.com) before a cause in the repository; open the attempt for GitHub's "
+        "reason."
+    )
+
+
+def _only_jobless(gh, run, unseen):
+    """Whether each attempt among `unseen` that failed failed with no failed job, and one
+    did."""
+    failed = _failed_attempts(gh, run, unseen)
+    return bool(failed) and all(jobless(gh, run, attempt) for attempt in failed)
+
+
 def _check_run(gh, cfg, where, workflow, branch, known, run, latest):
-    """What one completed run on the default branch leads to: lines for the log."""
+    """What one completed run on the default branch leads to: lines for the log. The latest
+    run's failed jobs run once more, also those GitHub never created; a run that GitHub
+    refuses to run again is recorded at once. A run whose failures all came with no failed
+    job, which passed when run again or which a newer run overtook, is recorded only when
+    another run of the workflow did the same within `CI_LOOK_BACK` (`known["quiet"]`)."""
     attempt = run.get("run_attempt") or 1
     seen = known["seen"].get(run["id"], set())
     unseen = [n for n in range(1, attempt + 1) if n not in seen]
     lines = []
+    quiet = (
+        f"Run {run['id']} of `{workflow}` on `{branch}` failed with no failed job, and no other "
+        "run did so within a day; nothing is recorded."
+    )
     if run.get("conclusion") in FAILED:
         if latest and attempt < 2:
-            gh.rerun_failed_jobs(run["id"])
-            return [f"Running the failed jobs of `{workflow}` on `{branch}` again."]
+            # Failed or never created: GitHub runs again every job that did not pass.
+            try:
+                gh.rerun_failed_jobs(run["id"])
+                return [f"Running the failed jobs of `{workflow}` on `{branch}` again."]
+            except GitHubError as exc:
+                lines = [f"GitHub refused to run `{workflow}` on `{branch}` again: {exc}"]
         if not unseen or (run.get("head_sha") or "") in known["shas"]:
-            return []
+            return lines
+        if run["id"] in known.get("quiet", ()):
+            return [quiet]
         if latest:
-            lines = [_report_failure(gh, cfg, where, workflow, branch, known, run)]
+            lines += [_report_failure(gh, cfg, where, workflow, branch, known, run)]
         else:
-            lines = _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen)
+            lines += _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen)
     elif run.get("conclusion") == "success" and attempt > 1 and unseen:
         reporter = known["reporter"].get(run["id"])
         if reporter:
             lines = [_passed_later(gh, workflow, run, reporter, unseen)]
+        elif run["id"] in known.get("quiet", ()):
+            # GitHub created the missing jobs when run again, and this happened once.
+            return [quiet]
         else:
             lines = _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen)
     if lines:
@@ -2610,12 +2864,32 @@ def check_ci(gh, cfg, where, branch, now=None):
                 and (run.get("conclusion") in FAILED or (run.get("run_attempt") or 1) > 1)
             ]
             known = _ci_records(gh, workflow, ci_issues(gh, since)) if candidates else None
+            if known is not None:
+                # What a run that failed with no failed job is compared with.
+                known["passing"] = next((r for r in runs if r.get("conclusion") == "success"), None)
+
+            def recent(run, runs=runs):
+                created = parse_iso(run.get("created_at"))
+                return run is runs[0] or created is None or created >= since
+
+            if known is not None:
+                # Runs whose failures all came with no failed job, and that passed when run
+                # again or that a newer run overtook, which is never run again: one alone
+                # records nothing, two or more within the look-back do.
+                found = {
+                    run["id"]
+                    for run in candidates
+                    if recent(run)
+                    and (run is not runs[0] or run.get("conclusion") == "success")
+                    and run["id"] not in known["reporter"]
+                    and _unseen(known, run)
+                    and _only_jobless(gh, run, _unseen(known, run))
+                }
+                known["quiet"] = found if len(found) < 2 else set()
             # Oldest first, so records follow the order of the runs.
             for run in reversed(candidates):
                 latest = run is runs[0]
-                created = parse_iso(run.get("created_at"))
-                recent = latest or created is None or created >= since
-                if not recent and run["id"] not in known["reporter"]:
+                if not recent(run) and run["id"] not in known["reporter"]:
                     continue
                 lines += _check_run(gh, cfg, where, workflow, branch, known, run, latest)
         except GitHubError as exc:
@@ -3058,6 +3332,12 @@ def sweep(gh, cfg, workflow, ref, closed=None, busy=None, alerts=None):
         if not splits:
             break
     for step in steps:
+        if step["state"] == "active" and step.get("stale"):
+            # A run that ended without a report, which starts again later.
+            try:
+                settle(gh, step)
+            except GitHubError as exc:
+                lines.append(f"Could not show the run on #{step['number']} as ended: {exc}")
         if step["state"] != "waits":
             continue
         try:

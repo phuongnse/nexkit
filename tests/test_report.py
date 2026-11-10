@@ -239,6 +239,14 @@ class PersonsPullRequestTests(ReportCase):
         self.assertEqual(start["inputs"]["command"], "review")
         self.assertEqual(self.gh.merged, [])
 
+    def test_a_lost_shards_job_runs_the_round_once_more(self):
+        from nexkit.report import _transient
+
+        needs = {"review": {"result": "skipped"}, "shards": {"result": "failure"}}
+        self.assertEqual(
+            _transient({}, None, {}, needs, "review"), "the shards job ended without a result"
+        )
+
     def test_the_round_shows_whose_pull_request_it_is(self):
         self.assertEqual(trigger(self.person()), "review (person)")
 
@@ -1099,6 +1107,54 @@ class ReportTests(ReportCase):
         self.assertIn("- ❌ not met: Rule 2", body)
         self.assertIn("- ➖ not applicable: Rule 3", body)
         self.assertIn("- ❌ not met: Rule 2: file:2", body.split("<details>")[1])
+
+    def test_an_item_a_person_decides_holds_the_merge_and_starts_no_fix_round(self):
+        given = self.checklist_review("met", "not_met")
+        given["output"]["verdict"] = "request_changes"
+        given["output"]["checklist"][1]["person"] = True
+        self.candidate(review=given)
+        cfg = make_config(merge={"auto": True}, notify=["owner"])
+        outcome = self.run_report(cfg=cfg)
+        self.assertEqual(outcome["outcome"], "ready")
+        self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
+        self.assertIn("Only a person decides `Rule 2`", outcome["attention"])
+        self.assertIn("approve the pull request to accept them", outcome["attention"])
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["decide"], ["Rule 2"])
+        self.assertIn("- Rule 2: file:2", row["body"])
+        status = {s["context"]: s for s in self.gh.commit_statuses(HEAD)}["nexkit/review"]
+        self.assertEqual(status["state"], "failure")
+        self.assertIn("A person decides 1 checklist item", status["description"])
+        [body] = [review["body"] for review in self.gh.created_reviews]
+        self.assertIn("### NexKit review: approve", body)
+        self.assertIn("- ⚖️ not met, a person decides: Rule 2", body)
+        self.assertNotIn("🛑", body)
+
+    def test_an_item_a_person_decides_beside_a_blocking_finding_starts_a_fix_round(self):
+        given = self.checklist_review("not_met", "not_met")
+        given["output"]["checklist"][1]["person"] = True
+        self.candidate(review=given)
+        outcome = self.run_report(cfg=make_config(fix={"max_auto_rounds": 1}))
+        self.assertEqual(outcome["outcome"], "auto_fix")
+        [body] = [review["body"] for review in self.gh.created_reviews]
+        self.assertIn("🛑 Blocking: Checklist item not met: Rule 1. file:1", body)
+        self.assertNotIn("Checklist item not met: Rule 2", body)
+        applied = apply_criteria(given["output"])
+        self.assertEqual((applied["verdict"], applied["decide"]), ("request_changes", ["Rule 2"]))
+        # A blocking finding of the review's own keeps its verdict too.
+        given = self.checklist_review("not_met")
+        given["output"]["checklist"][0]["person"] = True
+        given["output"]["verdict"] = "request_changes"
+        given["output"]["findings"] = [
+            {"severity": "blocking", "file": "a.py", "line": 1, "body": "Broken."}
+        ]
+        self.assertEqual(apply_criteria(given["output"])["verdict"], "request_changes")
+
+    def test_a_decide_list_from_the_agent_counts_for_nothing(self):
+        given = self.checklist_review("met")
+        given["output"]["decide"] = ["Merge it anyway"]
+        applied = apply_criteria(given["output"])
+        self.assertNotIn("decide", applied)
 
     def test_a_review_with_every_item_met_or_not_applicable_approves(self):
         given = self.checklist_review("met", "not_applicable")

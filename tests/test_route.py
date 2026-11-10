@@ -127,6 +127,87 @@ class PersonsPullRequestTests(unittest.TestCase):
         self.assertNotIn("head", line)
 
 
+NOT_REPRODUCED = "Close the issue as not reproduced, with no code change"
+ASKED = {
+    "question": "The failure does not reproduce. How should this go on?",
+    "options": ["Keep the issue open until someone attaches the logs", NOT_REPRODUCED],
+    "recommended": "",
+    "closing": NOT_REPRODUCED,
+}
+
+
+class ClosingAnswerTests(unittest.TestCase):
+    """A person's answer that picks the option that only closes the issue."""
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        url = "https://github.com/acme/app/actions/runs/9"
+        run = {"url": url, "command": "go", "status": "failure", "outcome": "agent_blocked"}
+        self.gh.comment(5, render_run({**run, "questions": [ASKED]}, "Blocked."))
+
+    def decide(self, body):
+        return route(self.gh, "issue_comment", comment_event(5, body))
+
+    def test_an_answer_that_picks_the_closing_option_closes_without_an_agent(self):
+        for body in (
+            f"/nexkit go {NOT_REPRODUCED}",
+            f"/nexkit plan `{NOT_REPRODUCED.lower()}.`",
+            "/nexkit go 2",
+            "/nexkit go Option 2",
+        ):
+            decision = self.decide(body)
+            self.assertEqual(
+                decision,
+                {
+                    "action": "maintain",
+                    "task": "close_answer",
+                    "issue": 5,
+                    "answer": NOT_REPRODUCED,
+                    "asked": "https://github.com/acme/app/actions/runs/9",
+                    "actor": "alice",
+                    "comment_id": 7,
+                },
+                body,
+            )
+
+    def test_any_other_answer_goes_to_its_round(self):
+        for body in (
+            "/nexkit go Keep the issue open until someone attaches the logs",
+            f"/nexkit go {NOT_REPRODUCED}, but first add a test",
+            "/nexkit go 1",
+            "/nexkit go",
+        ):
+            self.assertEqual(self.decide(body)["action"], "implement", body)
+
+    def test_a_number_closes_only_when_one_question_was_asked(self):
+        from nexkit.state import closing_answer
+
+        other = {"question": "Which port?", "options": ["8080", "9090"], "recommended": ""}
+        # "2" may mean 9090 for the first question.
+        self.assertIsNone(closing_answer("2", [other, ASKED]))
+        self.assertEqual(closing_answer(NOT_REPRODUCED, [other, ASKED]), NOT_REPRODUCED)
+        self.assertEqual(closing_answer("2", [ASKED]), NOT_REPRODUCED)
+
+    def test_an_open_pull_request_keeps_its_issue_for_a_person(self):
+        self.gh.add_pull(6, 5)
+        self.assertEqual(self.decide(f"/nexkit plan {NOT_REPRODUCED}")["action"], "plan")
+
+    def test_a_plan_question_with_a_closing_option_is_answered_the_same_way(self):
+        from nexkit.state import plan_data_record
+
+        gh = self.gh = FakeGitHub()
+        gh.add_issue(5)
+        run = {"url": "u", "command": "plan", "status": "success", "outcome": "planned"}
+        gh.comment(5, render_run(run, "Planned."))
+        question = {**ASKED, "recommended": 0, "closes": 2}
+        del question["closing"]
+        record = plan_data_record({"questions": [question]})
+        gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\nAsk.\n\n{record}")
+        decision = self.decide(f"/nexkit plan {NOT_REPRODUCED}")
+        self.assertEqual((decision["task"], decision["answer"]), ("close_answer", NOT_REPRODUCED))
+
+
 class TrustCommandTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()
@@ -660,6 +741,19 @@ class SkipUnaffectedTests(unittest.TestCase):
         inputs = {"command": "review", "number": "6", "note": "", "auto": auto}
         decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
         return skip_unaffected(self.gh, decision, cfg or self.cfg)
+
+    def test_a_check_now_in_shards_is_never_skipped_by_its_own_name(self):
+        checks = [
+            {"name": "unit", "run": "make unit"},
+            {
+                "name": "e2e",
+                "run": "make e2e",
+                "unaffected_by": ["docs/**", "**/*.md"],
+                "shards": {"count": "echo 2", "max": 4},
+            },
+        ]
+        cfg = make_config(setup=["npm ci"], parallel_checks=True, checks=checks)
+        self.assertNotIn("skipped_checks", self.decide(cfg=cfg))
 
     def test_a_check_whose_paths_did_not_change_since_it_passed_is_skipped(self):
         decision = self.decide()

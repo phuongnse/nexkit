@@ -83,9 +83,13 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
   choose, counting from 1, or 0 when none is clearly better. Put the reason in `question`.
   Recommend only an option that a change to the plan or the code carries out. When an
   option needs a person to act outside the repository, such as downloading files,
-  granting access or running something by hand, set `recommended` to 0. Set `closes` to
-  the number of the option that closes the issue with the `no_change` finding, or 0 when
-  no option does.
+  granting access or running something by hand, set `recommended` to 0.
+  `closes`: the number of the option that only closes the issue, with no change, or 0
+  when no option does. NexKit closes the issue when a person picks that option, so offer
+  closing only that way: one option that closes the issue and does nothing else, such as
+  "Close the issue as not reproduced". Never offer closing together with another step,
+  such as closing once someone acts, which NexKit cannot carry out. Recommend that option
+  only with a `no_change` finding.
 - `checks_run`: a list of strings, one for each command you ran, with whether it passed.
 - `no_change`: only when you changed nothing because no change is needed: the finding,
   followed by the evidence that shows it, such as the commit, log or test output lines,

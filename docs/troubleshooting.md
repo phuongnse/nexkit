@@ -339,6 +339,7 @@ each outcome of a run is:
 | plan too large | split the issue by hand into parts that each fit one session, with the `request` skill, or make it smaller and comment the change on it. The plan says the issue is too large for one session | |
 | plan finds no change | check the plan's finding, then close the issue, or comment `/nexkit plan <what still needs changing>`. The plan finds that no change is needed, and NexKit closes an issue by itself only with autopilot | |
 | plan or round needs protected paths | make the change in the protected paths (…) by hand, as the plan says. Only a person changes protected paths | the paths |
+| a recommended close | answer the questions: an answer that is the option to close the issue closes it as not planned. The agent recommends closing the issue, and NexKit closes it by itself only when that is a round's one recommendation, with its finding that no change is needed | |
 | `agent_blocked` | answer the questions in the run's comment with `/nexkit plan <answers>`, or `/nexkit go <answers>` when they leave the plan as it is (on a pull request: with `/nexkit fix <answers>`). The agent stopped at a decision that is the owner's to make | the first question |
 | `agent_error` | read the error in the run's comment and log, remove its cause, then post the command again. The run stopped on an error, and NexKit runs a command again by itself only after an error of the service, the network or the runner | the error |
 | `agent_error`, out of time | comment `/nexkit plan` to split the issue into parts that each fit one session, or raise the stage's `timeout_minutes`. The agent ran out of time before it finished | |
@@ -385,6 +386,16 @@ Answer every question in one comment, one short line each:
   autopilot, comment `/nexkit plan <answers>`, or for a blocked `/nexkit go` whose
   answers leave the plan as it is, `/nexkit go <answers>`.
 - A blocked round on a pull request: `/nexkit fix <answers>`.
+
+**To close the issue through an answer,** pick the option the comment marks *(NexKit
+closes the issue as not planned)*: comment `/nexkit go <that option>` or `/nexkit plan
+<that option>`, or with autopilot the option alone, as its text, give or take case,
+quotes and a final full stop, or as its number when one question offers it, such as
+`/nexkit go 2`. NexKit closes the issue as not planned, with a comment that quotes your
+answer and links the run or plan that asked, and runs no agent. An answer that says more, such as the option and a
+condition, goes to the next round as a note. While a NexKit pull request for the issue
+is open, close both yourself. Agents offer closing only as such an option; a round on a
+pull request never offers it.
 
 When a question comes back after autopilot's answers, or after yours, the recommended
 option did not settle it. Read what is new in the question and why, and answer from the

@@ -905,6 +905,9 @@ every open issue in scope, in order, and starts the one command that moves it on
   `closes`), autopilot starts no other round: it closes the issue
   as completed with a comment that holds the finding. A round whose recommended answer
   is to wait or do more is answered as any blocked round, whatever its `no_change` says.
+  A question's option that only closes the issue, which the comment marks, closes it as
+  not planned when a person picks it, with `/nexkit go`, `/nexkit plan` or a plain
+  comment, and no agent runs; autopilot never picks it without a round's finding.
 - **CI on the default branch.** With workflows in `merge.after_workflows` or
   `autopilot.watch_workflows`, each sweep also looks at the runs of each of them on the
   default branch, after NexKit's merges and people's alike, on a schedule or a dispatch,

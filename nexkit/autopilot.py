@@ -43,6 +43,7 @@ from .state import (
     answers_text,
     by_bot,
     ci_wait_reason,
+    closing_answer,
     conflict_rounds_used,
     is_bot,
     latest_plan,
@@ -961,6 +962,12 @@ TIMED_OUT_DO = (
     "comment `/nexkit plan <the cause, with the evidence, and the smallest change that "
     "removes it>`"
 )
+CLOSE_UNFOUNDED = person(
+    "answer the questions: an answer that is the option to close the issue closes it as not "
+    "planned",
+    "the agent recommends closing the issue, and NexKit closes it by itself only when that "
+    "is a round's one recommendation, with its finding that no change is needed",
+)
 QUESTIONS_REASON = person(
     "answer the plan's questions with `/nexkit plan <answers>`",
     "the plan asks for decisions that are the owner's to make",
@@ -1054,6 +1061,9 @@ def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
         # The recommended answer only closes the issue: another round would find the same.
         reason = "the last round found no change is needed and recommends closing the issue"
         return _step(issue, "close", reason, finding=run["no_change"], run_url=run.get("url"))
+    if found and any(item.get("closes") for item in questions(run.get("questions"))):
+        # Closing without a finding that no change is needed is a person's choice.
+        return _step(issue, "waits", CLOSE_UNFOUNDED)
     if found:
         start = {**start, "target": target, "note": answer_note(found)}
         reason = "autopilot answers the questions of the blocked round"
@@ -1072,6 +1082,24 @@ def _later(text, since):
     """Whether the time `text` is known and after `since`."""
     at = parse_iso(text)
     return at is not None and since is not None and at > since
+
+
+def _closing_comment(comments, since, items, asked):
+    """A function that gives the step closing the issue, when the latest of collaborators'
+    comments after `since`, other than commands, answers the questions `items` with the
+    option that only closes it, as a person answers with autopilot (see
+    `state.closing_answer`); otherwise None. `asked` is the run or plan that asked."""
+    said = _commented_after(comments, since)
+    option = closing_answer(said[-1].get("body"), items) if said and items else None
+    if not option:
+        return None
+    by = (said[-1].get("user") or {}).get("login") or "someone"
+
+    def step(issue):
+        reason = f"@{by} answered with the option that only closes the issue"
+        return _step(issue, "close", reason, answer=option, by=by, asked=asked.get("url") or "")
+
+    return step
 
 
 def _since_stop(gh, issue, comments, stop):
@@ -1147,6 +1175,8 @@ def _planned(gh, cfg, issue, plan, last, record, start, comments):
         return _step(issue, "waits", protected_reason(data["protected_paths"]))
     if data.get("questions"):
         found = answers(cfg, data["questions"])
+        if found and any(item.get("closes") for item in questions(data["questions"])):
+            return _step(issue, "waits", CLOSE_UNFOUNDED)
         if not found:
             return _step(issue, "waits", last.get("attention") or QUESTIONS_REASON)
         if asked_again(comments):
@@ -1699,6 +1729,9 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
                 "its pull request was closed, and autopilot opens no other by itself",
             )
             return _step(issue, "waits", reason)
+        closing = _closing_comment(comments, found[-1][0], last.get("questions"), last)
+        if closing:
+            return closing(issue)
         step = _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,))
         if step:
             return step
@@ -1708,6 +1741,10 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         return _step(issue, "waits", last.get("attention") or failed_reason("go"))
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
+    data = plan_data(plan) or {}
+    closing = _closing_comment(comments, plan, data.get("questions"), {"url": plan.get("html_url")})
+    if closing:
+        return closing(issue)
     if _commented_after(comments, plan):
         return _step(
             issue, "start", "collaborators commented after the plan", command="plan", **start
@@ -1940,6 +1977,23 @@ def close(gh, cfg, step, workflow, ref):
         # be done.
         lines += close_parents_safely(gh, number)
         return lines + request_safely(gh, cfg, workflow, ref, number)
+    if "answer" in step:
+        asked = (
+            f"[the questions NexKit asked]({step['asked']})"
+            if step.get("asked")
+            else ("the questions NexKit asked")
+        )
+        answer = quoted(step["answer"], 300)
+        gh.comment(
+            number,
+            f"@{step['by']} answered {asked} with {answer}, which only closes this issue, so "
+            "NexKit autopilot closes it as not planned, with no change and no other round.",
+        )
+        gh.close_issue(number, "not_planned")
+        # Issues it blocked may start now, and the scope may be done.
+        return [f"Closed #{number}: {step['reason']}."] + request_safely(
+            gh, cfg, workflow, ref, number
+        )
     if "plan_url" in step:
         url = step["plan_url"]
         plan = f"[its plan]({url})" if url else "its plan"

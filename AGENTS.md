@@ -52,7 +52,8 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   in a row: when the round its answers started asks again and no person commented since,
   a person decides. A recommended option is one NexKit can carry out without a person;
   one that only closes the issue, after a round found no change is needed, closes it
-  without another round. Autopilot asks for one split plan after an implement or fix agent ran out of time; it
+  without another round. A person's answer that picks the option that only closes the
+  issue closes it as not planned, with no agent run; agents offer closing only so. Autopilot asks for one split plan after an implement or fix agent ran out of time; it
   never repeats a run unchanged.
 - Every issue in autopilot's scope is either carried on by a run that exists, started only
   when something changed since the same command last started (a commit, a person's

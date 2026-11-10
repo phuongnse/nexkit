@@ -336,15 +336,46 @@ class PromptTests(unittest.TestCase):
             self.assertIn("list", entry, name)
         self.assertNotIn("bullet", template)
 
-    def test_an_implement_question_names_the_option_that_closes_the_issue(self):
-        item = agent.SCHEMAS["implement"]["properties"]["questions"]["items"]
-        self.assertEqual(item["required"], ["question", "options", "recommended", "closes"])
-        for stage in ("plan", "fix"):
+    def test_a_closing_option_is_kept_only_where_it_names_an_option(self):
+        from nexkit import state
+
+        options = ["Keep the issue open until someone attaches the logs", "Close the issue"]
+        output = {
+            "questions": [
+                {"question": "A?", "options": options, "recommended": 0, "closes": 2},
+                {"question": "B?", "options": options, "recommended": 0, "closes": 3},
+                {"question": "C?", "options": options, "recommended": 0, "closes": True},
+            ]
+        }
+        agent.check_closing(output)
+        self.assertEqual([q["closes"] for q in output["questions"]], [2, 0, 0])
+        recorded = state.questions(output["questions"])
+        self.assertEqual([q.get("closing") for q in recorded], ["Close the issue", None, None])
+        # Only a recommended closing option is one autopilot carries out by itself.
+        self.assertNotIn("closes", recorded[0])
+        # The comments mark the option that NexKit carries out.
+        self.assertEqual(state.option_marks(recorded[0], "Close the issue"), state.CLOSING_MARK)
+        self.assertEqual(state.questions(recorded), recorded)
+
+    def test_a_plan_or_implement_question_names_the_option_that_closes_the_issue(self):
+        for stage in ("plan", "implement"):
             item = agent.SCHEMAS[stage]["properties"]["questions"]["items"]
-            self.assertNotIn("closes", item["properties"], stage)
+            self.assertEqual(
+                item["required"], ["question", "options", "recommended", "closes"], stage
+            )
+            template = " ".join(agent._template(stage).split())
+            self.assertIn(
+                "`closes`: the number of the option that only closes the issue, with no "
+                "change, or 0 when no option does. NexKit closes the issue when a person "
+                "picks that option",
+                template,
+            )
+            self.assertIn("Never offer closing together with another step", template)
+        item = agent.SCHEMAS["fix"]["properties"]["questions"]["items"]
+        self.assertNotIn("closes", item["properties"])
+        self.assertIn("Never offer to close the issue", " ".join(agent._template("fix").split()))
         template = " ".join(agent._template("implement").split())
         self.assertIn("and set its `closes` to that option's number", template)
-        self.assertIn("Set `closes` to the number of the option that closes the issue", template)
         self.assertIn(
             "when you are blocked for any other reason, such as work that is not merged yet, "
             "leave it empty, and never use it to say why there is no finding",

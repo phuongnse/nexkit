@@ -102,7 +102,9 @@ bounds:
 - **[Questions](../../docs/troubleshooting.md#a-question-without-a-recommended-option-or-asked-again):**
   answer with the recommended option, or from the plan, the issue and the repository's
   docs where the repository lets the driver take that choice, in the form the entry gives.
-  Answer the same question at most twice per issue, then notify. When the answer is to
+  Closing the issue is the person's choice: never pick the option that only closes it
+  unless the repository lets the driver close issues. Answer the same question at most
+  twice per issue, then notify. When the answer is to
   wait for another issue, mark the issue *blocked by* it with its reason line. A diagnosis
   round's question belongs to the diagnosis stop below.
 - **[A transient failure after NexKit's retry](../../docs/troubleshooting.md#a-run-stopped-twice-on-a-transient-error):**

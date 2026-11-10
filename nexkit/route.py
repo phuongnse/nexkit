@@ -13,9 +13,11 @@ from .state import (
     RUNNING,
     SUCCESS,
     approved_head,
+    asked_last,
     by_bot,
     check_fingerprint,
     check_heads,
+    closing_answer,
     latest_plan,
     plan_profile,
     repeated_failures,
@@ -161,6 +163,7 @@ def route(gh, event_name, event, inputs=None):
             decision = _trust(event["issue"], note)
         else:
             decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
+            decision = _closing(gh, decision)
         decision.update(actor=actor, comment_id=event["comment"]["id"])
         return decision
 
@@ -286,6 +289,27 @@ def _approved(pull, actor, commit=None):
         "issue": issue,
         "actor": actor,
         "commit": commit,
+    }
+
+
+def _closing(gh, decision):
+    """A person's `/nexkit plan` or `/nexkit go` whose note picks the option, of the
+    questions NexKit asked last on the issue, that only closes it: the `maintain` job
+    closes the issue as not planned, and no agent runs, since another round could only
+    stop at the same place. Any other note goes to its round as it is."""
+    if decision["action"] not in ("plan", "implement") or not decision.get("note"):
+        return decision
+    asked = asked_last(gh.comments(decision["issue"]))
+    option = closing_answer(decision["note"], asked[1]) if asked else None
+    if not option or gh.open_pulls(decision["branch"]):
+        # A pull request that is open stays with its issue: a person closes both.
+        return decision
+    return {
+        "action": "maintain",
+        "task": "close_answer",
+        "issue": decision["issue"],
+        "answer": option,
+        "asked": asked[0],
     }
 
 

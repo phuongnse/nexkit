@@ -206,20 +206,31 @@ def recommended_option(item):
     return chosen if chosen in options else ""
 
 
-def closes_issue(item):
-    """Whether a question's recommended option is the one that closes the issue with the
-    round's `no_change` finding. Agents name that option by its number in `closes`, from 1,
-    with 0 for none; records keep True."""
-    chosen, closes = item.get("recommended"), item.get("closes")
+def closing_option(item):
+    """The text of a question's option that only closes the issue, with no change, or "".
+    Agents name it by its number in `closes`, from 1, with 0 for none; records keep its
+    text in `closing`, and from before 6.4 only `closes: True` when it was recommended."""
+    if isinstance(item.get("closing"), str):
+        return item["closing"] if item["closing"] in options_of(item) else ""
+    closes = item.get("closes")
     if closes is True:
-        return isinstance(chosen, str) and bool(recommended_option(item))
+        # A record; an agent's `true` is no number.
+        return recommended_option(item) if isinstance(item.get("recommended"), str) else ""
+    options = options_of(item)
     number = isinstance(closes, int) and not isinstance(closes, bool)
-    return number and closes > 0 and closes == chosen and bool(recommended_option(item))
+    return options[closes - 1] if number and 0 < closes <= len(options) else ""
+
+
+def closes_issue(item):
+    """Whether a question's recommended option is the one that only closes the issue."""
+    recommended = recommended_option(item)
+    return bool(recommended) and closing_option(item) == recommended
 
 
 def questions(items):
     """Questions as {question, options, recommended}, with the recommended option's text
-    or "", and `closes` when that option closes the issue. Plans from before 4.1 hold plain
+    or "", `closing` with the text of the option that only closes the issue, if any, and
+    `closes` when that option is the recommended one. Plans from before 4.1 hold plain
     strings, without options."""
     found = []
     for item in items or []:
@@ -229,15 +240,74 @@ def questions(items):
             continue
         options = [clip(o, 500) for o in options_of(item)[:6]]
         recommended = recommended_option(item)
+        closing = closing_option(item)
         found.append(
             {
                 "question": clip(item["question"], 1500),
                 "options": options,
                 "recommended": clip(recommended, 500) if recommended else "",
+                **({"closing": clip(closing, 500)} if closing else {}),
                 **({"closes": True} if closes_issue(item) else {}),
             }
         )
     return found[:MAX_QUESTIONS]
+
+
+# How comments mark the option that only closes the issue, which NexKit carries out.
+CLOSING_MARK = " (NexKit closes the issue as not planned)"
+
+
+def option_marks(item, option):
+    """The marks after an option of a question: recommended, and the one that closes."""
+    marks = " (recommended)" if option == item.get("recommended") else ""
+    return marks + (CLOSING_MARK if option == item.get("closing") else "")
+
+
+# What an answer may differ by from the option it picks: case, runs of whitespace, quotes
+# or backticks around it, and punctuation at its end.
+_ANSWER_EDGES = " \t\n\"'`*.!"
+
+
+def _plain_answer(text):
+    return " ".join(str(text or "").split()).strip(_ANSWER_EDGES).casefold()
+
+
+def closing_answer(text, items):
+    """The option that only closes the issue, among those of the questions `items`, that a
+    person's answer `text` picks: its text as it is, give or take case, whitespace, quotes
+    and final punctuation, or its number ("2", "option 2") when one question offers such an
+    option. Otherwise None: anything more or else is a note for the next round."""
+    found = [(item, closing_option(item)) for item in questions(items)]
+    found = [(item, option) for item, option in found if option]
+    answer = _plain_answer(text)
+    if not answer:
+        return None
+    for _, option in found:
+        if answer == _plain_answer(option):
+            return option
+    number = re.fullmatch(r"(?:option\s*)?#?(\d+)", answer)
+    if number and len(found) == 1:
+        item, option = found[0]
+        if options_of(item).index(option) + 1 == int(number.group(1)):
+            return option
+    return None
+
+
+def asked_last(comments):
+    """(link, questions) of what NexKit asked last on an issue: the questions of its latest
+    run when that is a `/nexkit go` that stopped as blocked, or of the latest plan when its
+    latest run posted one; otherwise None."""
+    runs = [(comment, run) for comment, run in run_comments(comments) if "command" in run]
+    if not runs:
+        return None
+    _, run = runs[-1]
+    if run.get("command") == "go" and run.get("outcome") == "agent_blocked":
+        return (run.get("url") or "", run.get("questions") or [])
+    plan = latest_plan(comments) if run.get("command") == "plan" else None
+    data = plan_data(plan) if plan else None
+    if run.get("outcome") == "planned" and data:
+        return (plan.get("html_url") or "", data.get("questions") or [])
+    return None
 
 
 def round_questions(agent):

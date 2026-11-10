@@ -37,12 +37,11 @@ from .state import (
     UNCOUNTED,
     clip,
     empty_state,
-    options_of,
+    option_marks,
     passed_checks,
     passed_lines,
     questions,
     read_state,
-    recommended_option,
     round_questions,
     run_comments,
     with_run,
@@ -531,11 +530,11 @@ def open_conflicts(agent, base):
 
 
 def _options(item, indent="    "):
-    recommended = recommended_option(item)
-    return [
-        f"{indent}- {option}" + (" (recommended)" if option == recommended else "")
-        for option in options_of(item)
-    ]
+    """An agent's question's options, with their marks."""
+    found = questions([item])
+    if not found:
+        return []
+    return [f"{indent}- {option}{option_marks(found[0], option)}" for option in found[0]["options"]]
 
 
 def blocked_questions(agent):

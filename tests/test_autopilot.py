@@ -1016,8 +1016,8 @@ class AnswerTests(AnswerAndSplitCase):
         self.blocked(5, questions=[CLOSING], no_change=finding)
         _, steps = autopilot.preview(self.gh, pilot())
         self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "waits")])
-        # With a second question, closing may not be all the agent recommends: it is
-        # answered as any blocked round.
+        # With a second question, closing may not be all the agent recommends: a person
+        # decides, since autopilot closes an issue only on a round's one recommendation.
         self.run_comment(
             5,
             "go",
@@ -1027,7 +1027,8 @@ class AnswerTests(AnswerAndSplitCase):
             no_change=finding,
         )
         _, steps = autopilot.preview(self.gh, self.cfg)
-        self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "start")])
+        self.assertEqual([(s["number"], s["state"]) for s in steps], [(5, "waits")])
+        self.assertEqual(steps[0]["reason"], autopilot.CLOSE_UNFOUNDED)
 
     def test_a_finding_whose_recommended_answer_is_not_to_close_does_not_close(self):
         # The agent wrote in `no_change` that there is no finding, and recommends waiting.
@@ -1052,6 +1053,51 @@ class AnswerTests(AnswerAndSplitCase):
         self.assertTrue(
             all(s["answers"] == [{"question": question["question"], "answer": wait}] for s in steps)
         )
+
+    def test_a_persons_answer_that_only_closes_the_issue_closes_it_as_not_planned(self):
+        close = "Close the issue as not reproduced"
+        asked = {
+            "question": "It does not reproduce.",
+            "options": ["Keep it open for the logs", close],
+            "recommended": 0,
+            "closes": 2,
+        }
+        self.issue(4)
+        self.posted_plan(4)
+        self.blocked(4, questions=[asked])
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(step["state"], "waits")
+        # With autopilot, a person answers in a comment, without a command.
+        self.gh.human_comment(4, f"{close}.")
+        self.sweep()
+        self.assertEqual(self.started(), [])
+        self.assertEqual(
+            (self.gh.issues[4]["state"], self.gh.issues[4]["state_reason"]),
+            ("closed", "not_planned"),
+        )
+        [comment] = self.gh.comments_matching(4, "which only closes this issue")
+        self.assertIn("NexKit autopilot closes it as not planned", comment["body"])
+        # A comment that says more is a change for the next plan.
+        self.issue(5)
+        self.posted_plan(5)
+        self.blocked(5, questions=[asked])
+        self.gh.human_comment(5, f"{close}, once the logs show nothing.")
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+
+    def test_a_recommended_close_without_a_finding_waits_for_a_person(self):
+        asked = {
+            "question": "It does not reproduce.",
+            "options": ["Keep it open", "Close the issue"],
+            "recommended": 2,
+            "closes": 2,
+        }
+        self.issue(4)
+        self.posted_plan(4)
+        self.blocked(4, questions=[asked])
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.CLOSE_UNFOUNDED))
+        self.assertEqual(self.gh.issues[4]["state"], "open")
 
     def test_only_the_recommended_option_named_by_closes_closes_the_issue(self):
         for closes, recommended, expected in ((1, 1, True), (2, 1, False), (0, 0, False)):

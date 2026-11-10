@@ -19,6 +19,7 @@ from .state import (
     PLAN_MARKER,
     PROTECTED_ENTRY,
     depends_on,
+    option_marks,
     passed_lines,
     plan_data_record,
     profile_record,
@@ -118,8 +119,7 @@ def question_lines(items):
     for number, item in enumerate(questions(items), 1):
         lines.append(f"{number}. {item['question']}")
         for option in item["options"]:
-            mark = " (recommended)" if option == item["recommended"] else ""
-            lines.append(f"   - {option}{mark}")
+            lines.append(f"   - {option}{option_marks(item, option)}")
     return lines
 
 

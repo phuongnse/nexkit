@@ -55,9 +55,10 @@ _QUESTIONS = {
     "type": "array",
     "items": {"type": "object", "properties": _QUESTION, "required": list(_QUESTION)},
 }
-# An implement round's question also names the option that closes the issue with its
-# `no_change` finding (from 1), or 0 when none does. Autopilot closes the issue only when
-# that is the recommended option, never on the finding's text alone.
+# A plan's or an implement round's question also names the option that only closes the
+# issue, with no change (from 1), or 0 when none does. NexKit carries that option out when
+# a person picks it (`route.closing_answer`); autopilot picks it only for an implement
+# round whose `no_change` finding it is, never on the finding's text alone.
 _CLOSING_QUESTION = {**_QUESTION, "closes": {"type": "integer"}}
 _CLOSING_QUESTIONS = {
     "type": "array",
@@ -106,7 +107,7 @@ SCHEMAS = {
             "risks": _STRING_LIST,
             "acceptance_criteria": _STRING_LIST,
             "implementation_notes": _STRING_LIST,
-            "questions": _QUESTIONS,
+            "questions": _CLOSING_QUESTIONS,
             "too_large": {"type": "boolean"},
             "split": {
                 "type": "array",
@@ -689,6 +690,19 @@ def set_aside_finding(result):
     output["no_change"] = ""
     output["reviewer_notes"] = [*(output.get("reviewer_notes") or []), note]
     result["no_change_note"] = note
+
+
+def check_closing(output):
+    """Keep `closes` only where it names one of its question's options: an option that only
+    closes the issue is one NexKit carries out when a person picks it, so it must be the
+    one the agent meant."""
+    for item in output.get("questions") or []:
+        if not isinstance(item, dict):
+            continue
+        closes, options = item.get("closes"), item.get("options") or []
+        number = isinstance(closes, int) and not isinstance(closes, bool)
+        if not number or not 0 <= closes <= len(options):
+            item["closes"] = 0
 
 
 def needed_protected(result, cfg):
@@ -1408,6 +1422,8 @@ def run_stage(
                 result["recheck"] = True
             else:
                 result.update(status="error", error=unchanged(result), unchanged=True)
+    if stage in ("plan", "implement") and result.get("output"):
+        check_closing(result["output"])
     if stage in ("plan", "implement", "fix") and result.get("output"):
         # Only paths that are protected count, so a person is asked only for those.
         result["output"]["protected_paths"] = needed_protected(result, cfg)

@@ -1075,7 +1075,13 @@ the `null` scope, since it may have replaced a sweep that waited.
   is needed and asks one question, whose `closes` names its recommended option, that
   answer only closes the issue, so autopilot closes it as completed with the round's
   finding and starts no other round. Text in `no_change` alone never closes an issue: a
-  round that recommends waiting or more work is answered as any other. A recommended option is
+  round that recommends waiting or more work is answered as any other, and autopilot
+  answers no round or plan that recommends closing otherwise, which a person decides.
+  A question may offer one option that only closes the issue, named by its `closes`,
+  which the comment marks; a person who picks it, with `/nexkit go` or `/nexkit plan` or
+  with autopilot in a plain comment, has NexKit close the issue as not planned, with no
+  agent run (see
+  [Troubleshooting](troubleshooting.md#a-question-without-a-recommended-option-or-asked-again)). A recommended option is
   one NexKit can carry
   out itself, a change to the plan or the code; the prompts never recommend one that
   needs a person to act outside NexKit, such as downloading files or granting access. A plan that is too large becomes sub-issues, in
@@ -1410,7 +1416,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | GitHub creates no job for a run, or ends it without a report, as in an outage of GitHub Actions | With autopilot, a command autopilot started, or an automatic round, starts again at once, then 30, 60 and 120 minutes after its last start; these starts cost no agent time when no job runs, and the fifth that does not run waits for a person, with a reason that names the outage. A round or continued run whose next run never starts gets that run started once more after `autopilot.lost_after_minutes`. A person's command waits for them. |
 | The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |
-| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. When a blocked `/nexkit go` found that no change is needed, that answer closes the issue with the round's finding, without another round. After a blocked or failed `/nexkit go` that it does not answer, autopilot plans again once a collaborator commented or an issue that blocks it closed since the round started. |
+| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person's answer that picks the option that only closes the issue closes it as not planned, with no agent run. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. When a blocked `/nexkit go` found that no change is needed, that answer closes the issue with the round's finding, without another round. After a blocked or failed `/nexkit go` that it does not answer, autopilot plans again once a collaborator commented or an issue that blocks it closed since the round started. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |

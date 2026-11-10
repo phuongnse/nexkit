@@ -1984,6 +1984,43 @@ class ScenarioTests(unittest.TestCase):
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
         self.assertFalse(pipe.gh.comments_matching(5, "answers for the owner"))
 
+    def test_a_persons_answer_that_only_closes_the_issue_closes_it_without_a_round(self):
+        # As in phuongnse/axis#3561: the agent cannot reproduce a flaky failure and asks.
+        close = "Close the issue as not reproduced, with no code change"
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            question = {
+                "question": "The failure does not reproduce. How should this go on?",
+                "options": ["Keep the issue open until someone attaches the logs", close],
+                "recommended": 0,
+                "closes": 2,
+            }
+            output = {"status": "blocked", "blocker": "No repro.", "questions": [question]}
+            return {"agent": {"status": "blocked", "error": "No repro.", "output": output}}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        [mention] = pipe.gh.comments_matching(5, "a person is needed")
+        [round_] = pipe.gh.comments_matching(5, "Decisions needed")
+        self.assertIn(f"- {close} (NexKit closes the issue as not planned)", round_["body"])
+        # The owner picks it, with the command; no agent runs.
+        event = {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"id": 99, "body": f"/nexkit go {close}", "user": {"login": "olivia"}},
+        }
+        decision = route(pipe.gh, "issue_comment", event)
+        maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(
+            (pipe.gh.issues[5]["state"], pipe.gh.issues[5]["state_reason"]),
+            ("closed", "not_planned"),
+        )
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])  # nothing more ran
+        self.assertEqual(len(pipe.gh.comments_matching(5, "a person is needed")), 1)
+
     def test_a_blocked_round_that_recommends_waiting_does_not_close_the_issue(self):
         # The agent says in `no_change` that it found none, and recommends waiting.
         text = "Not a no-change finding: the issue is blocked on #1848, which is not merged."

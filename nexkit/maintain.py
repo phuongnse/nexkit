@@ -60,6 +60,9 @@ TASKS = {
     "lost": ("autopilot.enabled",),
     # A round on a pull request whose base branch already holds its change.
     "on_base": (),
+    # A writer's `/nexkit plan` or `/nexkit go` that picks the option that only closes
+    # the issue.
+    "close_answer": (),
     # A writer's `/nexkit trust` on an issue.
     "trust": ("autopilot.enabled",),
     # A writer's approval of a NexKit pull request whose merge GitHub refused, or whose
@@ -863,6 +866,30 @@ def resolve_conflicts(
     return [line for line in lines if line]
 
 
+def close_answered(gh, decision):
+    """Close an issue as not planned, as a writer's answer to NexKit's questions picked the
+    option that only closes it (see `route._closing`). The issues event that the close
+    starts closes parents and starts a sweep. Returns lines for the log."""
+    number, actor = decision["issue"], decision.get("actor") or "someone"
+    if decision.get("comment_id"):
+        gh.react(decision["comment_id"], "rocket")
+    if gh.issue(number).get("state") != "open":
+        return [f"#{number} is closed already."]
+    asked = (
+        f"[the questions NexKit asked]({decision['asked']})"
+        if decision.get("asked")
+        else ("the questions NexKit asked")
+    )
+    answer = autopilot.quoted(decision["answer"], 300)
+    gh.comment(
+        number,
+        f"@{actor} answered {asked} with {answer}, which only closes this issue, so NexKit "
+        "closes it as not planned, with no change and no other round.",
+    )
+    gh.close_issue(number, "not_planned")
+    return [f"Closed #{number} as not planned: @{actor} answered {answer}."]
+
+
 def answer_trust(gh, cfg, decision, workflow, ref):
     """Answer a writer's `/nexkit trust`, which `route` let through, and start a sweep, which
     reads that comment (see `autopilot.vouch`). Returns lines for the log."""
@@ -961,6 +988,8 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
     task = decision["task"]
     if task == "trust":
         return answer_trust(gh, cfg, decision, workflow, ref)
+    if task == "close_answer":
+        return close_answered(gh, decision)
     if task == "approved":
         return merge_approved(gh, cfg, decision, workflow, ref)
     if task == "parents":

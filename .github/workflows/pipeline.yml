@@ -87,6 +87,7 @@ jobs:
       skip_verify: ${{ steps.route.outputs.skip_verify }}
       parallel_checks: ${{ steps.route.outputs.parallel_checks }}
       count_shards: ${{ steps.route.outputs.count_shards }}
+      shards_timeout: ${{ steps.route.outputs.shards_timeout }}
       agent_secrets: ${{ steps.route.outputs.agent_secrets }}
       review_secrets: ${{ steps.route.outputs.review_secrets }}
       maintain_timeout: ${{ steps.route.outputs.maintain_timeout }}
@@ -223,7 +224,7 @@ jobs:
        (contains(fromJSON('["implement","fix"]'), needs.route.outputs.action) &&
         needs.publish.outputs.head != '' && needs.publish.outputs.conflicts != 'true'))
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: ${{ fromJSON(needs.route.outputs.shards_timeout || '15') }}
     permissions:
       contents: read
     outputs:

@@ -36,6 +36,11 @@ CHECK_VERIFIED_SHA = "NEXKIT_CHECK_VERIFIED_SHA"
 SHARD = "NEXKIT_SHARD"
 # The time a sharded check's `count` may take; it runs before setup, in a job of its own.
 COUNT_SECONDS = 300
+# The end of a failed `count`'s output that its check shows.
+COUNT_TAIL = 4000
+# What `count` may not inherit: the files through which a step sets its outputs and the
+# environment of later steps, which hold the counts that every later job trusts.
+STEP_FILES = ("GITHUB_OUTPUT", "GITHUB_ENV", "GITHUB_PATH", "GITHUB_STATE", "GITHUB_STEP_SUMMARY")
 # The commit that a `verify` job checked, next to its `checks.json`, so a round that NexKit
 # stops in its checks records only checks that passed on the pull request's head.
 CHECKED_FILE = "checked.json"
@@ -522,6 +527,8 @@ def skipped_result(check, since):
         "seconds": 0,
         "output": skipped_line(check["name"], since),
         "skipped": since,
+        # A shard's fingerprint holds its `k/N` (see `state.passed_checks`).
+        **({"shard": check["shard"]} if check.get("shard") else {}),
     }
 
 
@@ -647,9 +654,14 @@ def expand(cfg, counts):
     checks = []
     for check in cfg["checks"]:
         found = counts.get(check["name"]) if check.get("shards") else None
+        number = isinstance(found, int) and not isinstance(found, bool)
         if found is None:
             checks.append(check)
-        elif isinstance(found, int) and not isinstance(found, bool):
+        elif number and not 1 <= found <= check["shards"]["max"]:
+            # The `shards` job never gives this; a count it did not make runs no shard.
+            why = f"NexKit got {found} shards for `{check['name']}`, not 1 to its `max`."
+            checks.append({**check, "count_error": why})
+        elif number:
             own = {key: value for key, value in check.items() if key != "shards"}
             checks += [
                 {**own, "name": f"{check['name']}-{k}", "shard": f"{k}/{found}"}
@@ -666,7 +678,8 @@ def read_count(check, code, output):
     None, why)."""
     command, most = check["shards"]["count"], check["shards"]["max"]
     lines = [line.strip() for line in output.splitlines() if line.strip()]
-    tail = "\n".join(output.splitlines()[-40:])
+    # Every later job gets it in its environment, whose variables have a size limit.
+    tail = "\n".join(output.splitlines()[-40:])[-COUNT_TAIL:]
     if code != 0:
         return None, f"`{command}` failed with exit code {code}, so no shard ran:\n\n{tail}"
     last = lines[-1] if lines else ""
@@ -682,7 +695,7 @@ def count_shards(cfg, cwd, commits=None):
     number or one outside 1 to `max` fails its check; nothing guesses a number, so no test
     is left out silently."""
     counts = {}
-    env = environment(commits)
+    env = {k: v for k, v in environment(commits).items() if k not in STEP_FILES}
     for check in sharded(cfg):
         command = check["shards"]["count"]
         print(f"::group::count the shards of {check['name']}: {command}", flush=True)

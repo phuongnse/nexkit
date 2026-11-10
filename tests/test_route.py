@@ -742,6 +742,19 @@ class SkipUnaffectedTests(unittest.TestCase):
         decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
         return skip_unaffected(self.gh, decision, cfg or self.cfg)
 
+    def test_a_check_now_in_shards_is_never_skipped_by_its_own_name(self):
+        checks = [
+            {"name": "unit", "run": "make unit"},
+            {
+                "name": "e2e",
+                "run": "make e2e",
+                "unaffected_by": ["docs/**", "**/*.md"],
+                "shards": {"count": "echo 2", "max": 4},
+            },
+        ]
+        cfg = make_config(setup=["npm ci"], parallel_checks=True, checks=checks)
+        self.assertNotIn("skipped_checks", self.decide(cfg=cfg))
+
     def test_a_check_whose_paths_did_not_change_since_it_passed_is_skipped(self):
         decision = self.decide()
         self.assertEqual(decision["skipped_checks"], [{"name": "e2e", "since": self.PASSED}])

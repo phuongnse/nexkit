@@ -535,7 +535,10 @@ def skip_unaffected(gh, decision, cfg):
     heads = check_heads(gh.comments(decision["pr"]), setup=setup)
     if heads:
         decision["check_heads"] = heads
-    listed = [check for check in cfg["checks"] if check.get("unaffected_by")]
+    # A sharded check runs as shards, which the `shards` job skips by their own heads.
+    listed = [
+        check for check in cfg["checks"] if check.get("unaffected_by") and not check.get("shards")
+    ]
     if decision["action"] != "review" or not decision.get("auto") or not listed:
         return decision
     changed, skipped = {}, []

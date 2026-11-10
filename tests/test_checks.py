@@ -896,6 +896,35 @@ class ShardTests(unittest.TestCase):
         # Nothing ran in its job, setup neither.
         self.assertFalse((self.root / "ran.txt").exists())
 
+    def test_a_long_count_output_is_cut_and_a_count_out_of_range_runs_nothing(self):
+        counts = self.count("x" * 200_000)
+        self.assertLess(len(counts["e2e"]["error"]), checks.COUNT_TAIL + 500)
+        # Counts the `shards` job did not make, such as one a process it left behind wrote.
+        for number in (0, 5):
+            [check] = checks.expand(
+                make_config(parallel_checks=True, checks=[SHARDED]), {"e2e": number}
+            )["checks"]
+            self.assertIn("not 1 to its `max`", check["count_error"])
+
+    def test_count_cannot_set_the_jobs_outputs(self):
+        (self.root / "count.txt").write_text("2\n")
+        cfg = make_config(
+            parallel_checks=True,
+            checks=[
+                {**SHARDED, "shards": {"count": 'echo "${GITHUB_OUTPUT:-none}"; echo 2', "max": 4}}
+            ],
+        )
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": "/tmp/out"}):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                checks.count_shards(cfg, self.root)
+        self.assertIn("none", out.getvalue())
+        self.assertNotIn("/tmp/out", out.getvalue())
+
+    def test_a_skipped_shard_keeps_its_fingerprint(self):
+        check = {"name": "e2e-2", "run": "x", "shard": "2/3"}
+        result = checks.skipped_result(check, "a" * 40)
+        self.assertEqual(state_passed([result])["e2e-2"], check_fingerprint("x", "2/3"))
+
     def test_a_shard_gets_its_verified_commit_only_with_the_same_count(self):
         result = {"name": "e2e-1", "run": SHARDED["run"], "passed": True, "shard": "1/3"}
         recorded = state_passed([result])

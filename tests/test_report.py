@@ -239,6 +239,14 @@ class PersonsPullRequestTests(ReportCase):
         self.assertEqual(start["inputs"]["command"], "review")
         self.assertEqual(self.gh.merged, [])
 
+    def test_a_lost_shards_job_runs_the_round_once_more(self):
+        from nexkit.report import _transient
+
+        needs = {"review": {"result": "skipped"}, "shards": {"result": "failure"}}
+        self.assertEqual(
+            _transient({}, None, {}, needs, "review"), "the shards job ended without a result"
+        )
+
     def test_the_round_shows_whose_pull_request_it_is(self):
         self.assertEqual(trigger(self.person()), "review (person)")
 

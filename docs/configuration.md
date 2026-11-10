@@ -230,7 +230,9 @@ round starts, instead of being listed once per shard:
 - A `shards` job runs `count` on the head the checks run on, before `setup`, so it may use
   only what the runner has and the repository's files. It has no secrets and a read-only
   token, like the `verify` jobs, gets their environment (`NEXKIT_BASE_SHA` and
-  `NEXKIT_VERIFIED_SHA`), and may take 5 minutes per sharded check.
+  `NEXKIT_VERIFIED_SHA`), and may take 5 minutes per sharded check; the job may take 10
+  minutes more. A `shards` job that fails as a whole, such as on a lost runner, runs the
+  command once more, as a `verify` job does.
 - The last line `count` prints must be a whole number N from 1 to `max` (2 to 20).
   NexKit then runs N checks, `e2e-1` to `e2e-N`, each in a `verify` job of its own, with
   `NEXKIT_SHARD=k/N` in its environment: `k` from 1 to N. Each is a check of its own:
@@ -240,7 +242,7 @@ round starts, instead of being listed once per shard:
   N, since another N splits the work otherwise. A fix round's prompt names the shard that
   failed with its `NEXKIT_SHARD`.
 - A `count` that fails, prints no number, or prints one outside 1 to `max` fails the
-  check `e2e` with its output, as a failing check does, and no shard runs. NexKit never
+  check `e2e` with the end of its output, as a failing check does, and no shard runs. NexKit never
   guesses a number, so no test is left out silently.
 - `shards` needs `parallel_checks`, and a sharded check has no `group`. No other check may
   take the name of one of its shards, `e2e-1` to `e2e-<max>`. A check with a fixed list of

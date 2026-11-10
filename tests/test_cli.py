@@ -2008,6 +2008,20 @@ class WorkflowSafetyTests(unittest.TestCase):
             self.jobs["verify"],
         )
 
+    def test_only_shards_are_skipped_by_what_the_shards_job_says(self):
+        from nexkit import cli
+
+        sharded = {"name": "e2e", "run": "x", "shards": {"count": "echo 2", "max": 3}}
+        cfg = {"parallel_checks": True, "checks": [{"name": "unit", "run": "y"}, sharded]}
+        skipped = [{"name": "e2e-2", "since": "a" * 40}, {"name": "unit", "since": "a" * 40}]
+        env = {
+            "NEXKIT_DECISION": json.dumps({"action": "review"}),
+            "NEXKIT_CONFIG": json.dumps(cfg),
+            "NEXKIT_SHARDS": json.dumps({"counts": {"e2e": 2}, "skipped": skipped}),
+        }
+        with mock.patch.dict(os.environ, env):
+            self.assertEqual(cli._decision()["skipped_checks"], skipped[:1])
+
     def test_no_verify_job_runs_when_route_skipped_every_check(self):
         self.assertIn("needs.route.outputs.skip_verify != 'true'", self.jobs["verify"])
         self.assertIn("skip_verify: ${{ steps.route.outputs.skip_verify }}", self.jobs["route"])

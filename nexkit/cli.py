@@ -49,9 +49,18 @@ def _shards():
 def _decision():
     decision = json.loads(os.environ["NEXKIT_DECISION"])
     skipped = _shards().get("skipped")
-    if skipped:
-        # Shards that the `shards` job found unaffected, beside the checks route skipped.
-        decision["skipped_checks"] = [*(decision.get("skipped_checks") or []), *skipped]
+    if skipped and isinstance(skipped, list) and os.environ.get("NEXKIT_CONFIG"):
+        # Shards that the `shards` job found unaffected, beside the checks route skipped:
+        # only shards, never another check.
+        cfg = json.loads(os.environ["NEXKIT_CONFIG"])
+        shards = {
+            name
+            for check in cfg.get("checks") or []
+            if isinstance(check, dict) and isinstance(check.get("shards"), dict)
+            for name in configuration.shard_names(check)
+        }
+        own = [s for s in skipped if isinstance(s, dict) and s.get("name") in shards]
+        decision["skipped_checks"] = [*(decision.get("skipped_checks") or []), *own]
     return decision
 
 
@@ -376,6 +385,8 @@ def cmd_route(args):
         parallel_checks="true" if check_jobs(cfg) else "false",
         # Sharded checks get their matrix from the `shards` job, which counts them.
         count_shards="true" if sharded(cfg) else "false",
+        # Each `count` may take its five minutes, after a checkout of every commit.
+        shards_timeout=str(10 + 5 * len(sharded(cfg))),
         agent_secrets=configuration.secret_names(variants, stages),
         review_secrets=configuration.secret_names([cfg], ["review"]),
     )

@@ -146,7 +146,9 @@ class Pipeline:
         """A comment, posted now: how recent a round's comment is tells whether the round
         it started is still on its way."""
         comment = self.post(number, body)
-        comment["created_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # As GitHub does, a new comment was last updated when it was posted.
+        comment["created_at"] = comment["updated_at"] = now
         return comment
 
     def merged(self, number, sha, method="squash"):
@@ -177,8 +179,8 @@ class Pipeline:
         brings, until nothing changes. Returns the commands that ran."""
         autopilot.request(self.gh, "nexkit.yml", "main")
         self.drain()
-        for _ in range(3):
-            # An hour, then seven: what only time moves on, such as a lost command.
+        for _ in range(6):
+            # Seven hours each time: what only time moves on, such as a lost command.
             self.later(timedelta(hours=7))
             before = len(self.gh.dispatches)
             autopilot.request(self.gh, "nexkit.yml", "main")
@@ -1114,13 +1116,78 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("go", 5)])
 
-    def test_a_command_that_never_runs_starts_once_more_then_waits(self):
+    def test_a_command_that_never_runs_starts_again_later_then_waits_naming_the_outage(self):
         def script(pipe, inputs):
             return "lost"
 
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
-        self.assertEqual(pipe.play(), [("plan", 5), ("plan", 5)])
+        self.assertEqual(pipe.play(), [("plan", 5)] * 5)
+        [mention] = pipe.gh.comments_matching(5, "a person is needed")
+        self.assertIn("did not run, 5 times: GitHub created no job for it", mention["body"])
+
+    def test_a_command_lost_in_an_outage_runs_once_github_starts_runs_again(self):
+        # GitHub creates no job for the first two runs, as on 2026-11-09; then it does.
+        lost = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return "lost" if next(lost) < 2 else plan()
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        for _ in range(2):
+            # The first sweep starts it; the next, such as the hourly one, finds its run
+            # ended without a comment and starts it once more, at once.
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+        # GitHub lost that one too: the next start waits 30 minutes after it.
+        self.assertEqual(pipe.played, [("plan", 5, "lost"), ("plan", 5, "lost")])
+        for minutes in (0, 20):
+            pipe.later(timedelta(minutes=minutes))
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual(len(pipe.played), 2, minutes)
+        pipe.later(timedelta(minutes=11))
+        self.assertEqual(pipe.play(), [("plan", 5), ("plan", 5), ("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
+    def test_a_retry_that_never_starts_is_started_once_more_after_lost_after_minutes(self):
+        # The review job leaves no result, as on 2026-11-09; the one more try it starts is
+        # lost, so the round shows a review on its way that never comes.
+        reviews = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                found = done()
+                del found["review"]
+                return found
+            return "lost" if next(reviews) < 1 else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual(
+            [(c, n, o) for c, n, o in pipe.played],
+            [("plan", 5, "planned"), ("go", 5, "retry"), ("review", 6, "lost")],
+        )
+        # Within `lost_after_minutes`, the review is still on its way.
+        pipe.later(timedelta(minutes=20))
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual(len(pipe.played), 3)
+        pipe.later(timedelta(minutes=11))
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual(pipe.played[-1], ("review", 6, "merged"))
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertFalse(pipe.gh.comments_matching(6, "a person is needed"))
+        pipe.check(quiet=True)
 
     def test_a_run_that_ends_without_a_report_starts_once_more(self):
         stalls = itertools.count()

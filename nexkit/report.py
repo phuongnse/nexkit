@@ -823,9 +823,10 @@ def _automatic(decision):
 
 def _retry(gh, decision, command, number, workflow_ref, default_branch):
     """Start `command` once more after a transient error, with the same note for the same
-    command. Returns whether it started: never for a run that was itself the retry."""
+    command. Returns its inputs once it started, for the run's `next` (see
+    `state.handed_on`), or None: never for a run that was itself the retry."""
     if decision.get("retry"):
-        return False
+        return None
     same = command == progress.COMMANDS[decision["action"]]
     note = (decision.get("note") or "") if same else ""
     if same:
@@ -837,8 +838,8 @@ def _retry(gh, decision, command, number, workflow_ref, default_branch):
         gh.dispatch(workflow_file(workflow_ref), default_branch, inputs)
     except GitHubError as exc:
         print(f"warning: could not start the command once more: {exc}", file=sys.stderr)
-        return False
-    return True
+        return None
+    return inputs
 
 
 def _earlier_error(gh, decision):
@@ -1205,7 +1206,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
         return "merge_refused", f"{message}\n\n{started}" if started else message
     if exc.status == 409 or _head(gh, pr) not in (None, head):
         # GitHub answers 409 when the head is no longer the commit the round checked.
-        return _head_moved(gh, target, message, workflow, default_branch)
+        return _head_moved(gh, target, row, message, workflow, default_branch)
     failed, pending, complete = required_checks(gh, base, pr, head)
     if failed:
         return _required_failed(gh, cfg, target, row, message, failed, workflow, default_branch)
@@ -1376,6 +1377,7 @@ def _required_failed(gh, cfg, target, row, message, names, workflow, default_bra
     if reporting is None:
         inputs = {"command": "fix", "number": str(pr), "note": "", "auto": "true"}
         gh.dispatch(workflow, default_branch, inputs)
+        row["next"] = inputs
     state["auto_fixes"] += 1
     save()
     line = f"Starting automatic fix round {state['auto_fixes']} of {limit}."
@@ -1394,16 +1396,14 @@ def _failed_line(failed, head, waited):
     return f"Required checks {names} failed on `{head[:7]}`" + when.format("them")
 
 
-def _head_moved(gh, target, message, workflow, default_branch):
+def _head_moved(gh, target, row, message, workflow, default_branch):
     """Check and review the new head of a pull request whose branch moved after the round
     checked it: the round's approval is for a commit that is no longer its head."""
     try:
         head = gh.pull(target["pr"])["head"]["sha"]
-        gh.dispatch(
-            workflow,
-            default_branch,
-            {"command": "review", "number": str(target["pr"]), "note": "", "auto": "true"},
-        )
+        inputs = {"command": "review", "number": str(target["pr"]), "note": "", "auto": "true"}
+        gh.dispatch(workflow, default_branch, inputs)
+        row["next"] = inputs
     except GitHubError as error:
         target["found"] = {
             "refused": (
@@ -1676,6 +1676,7 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         "timed_out",
         "questions",
         "transient_error",
+        "next",
         "no_change",
         "protected_paths",
     )
@@ -1768,11 +1769,13 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             fields = {}
             error = _transient(decision, agent, publish, needs)
             command = progress.COMMANDS[action]
-            if error and _retry(
+            again = error and _retry(
                 gh, decision, command, decision["target"], workflow_ref, default_branch
-            ):
+            )
+            if again:
                 outcome, message = "retry", f"{message}\n\n{retry_line(agent)}"
                 fields["transient_error"] = clip(one_line(error), 500)
+                fields["next"] = again
             elif error and decision.get("retry"):
                 outcome, message = "retry_failed", _retried(gh, decision, error, message)
             found = {
@@ -1958,9 +1961,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         outcome = "review_failed"
         found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
-        if error and _retry(gh, decision, "review", pr, workflow_ref, default_branch):
+        again = error and _retry(gh, decision, "review", pr, workflow_ref, default_branch)
+        if again:
             outcome, message = "retry", f"{message}\n\n{retry_line(reviewed)}"
             row["transient_error"] = clip(one_line(error), 500)
+            row["next"] = again
         elif error and decision.get("retry"):
             outcome, message = "retry_failed", _retried(gh, decision, error, message)
             found["error"] = error
@@ -2043,14 +2048,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         reason = _with_finding(reason, agent)
     if reason:
         row["attention"] = reason
+    fix = {"command": "fix", "number": str(pr), "note": "", "auto": "true"}
+    if outcome == "auto_fix":
+        # The round this one starts, so a sweep starts it once more when it never runs.
+        row["next"] = fix
     progress.save_state(gh, pr, comment_id, state)
     progress.save_round(gh, pr, round_id, row, message)
     if outcome == "auto_fix":
-        gh.dispatch(
-            workflow_file(workflow_ref),
-            default_branch,
-            {"command": "fix", "number": str(pr), "note": "", "auto": "true"},
-        )
+        gh.dispatch(workflow_file(workflow_ref), default_branch, fix)
     summary = f"Pull request #{pr}: {message}" if action == "implement" else message
     return {
         "outcome": outcome,

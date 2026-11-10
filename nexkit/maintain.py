@@ -397,7 +397,8 @@ def resume_paused(gh, workflow, ref, now=None):
             lines.append(f"Could not resume /nexkit {inputs['command']} on #{number}: {exc}")
             continue
         del run["resume"]
-        run["status"] = CONTINUED
+        # The run that continues it, which a sweep starts once more when it never starts.
+        run.update(status=CONTINUED, next=inputs)
         link = f"[a new run]({started['html_url']})" if started.get("html_url") else "a new run"
         target = "" if inputs["number"] == str(number) else f" on #{inputs['number']}"
         note = f"Resumed `/nexkit {inputs['command']}`{target} in {link} after the usage limit."
@@ -565,11 +566,12 @@ def start_conflict_round(
             "conflict rounds are used up."
         )
     inputs = {"command": "fix", "number": str(number), "note": conflict_note(base)}
-    gh.dispatch(workflow, ref, {**inputs, "auto": "conflicts"})
+    inputs["auto"] = "conflicts"
+    gh.dispatch(workflow, ref, inputs)
     if ending:
-        row["conflicts_started"] = sha
+        row.update(conflicts_started=sha, next=inputs)
     elif comment.get("id"):
-        latest["conflicts_started"] = sha
+        latest.update(conflicts_started=sha, next=inputs)
         gh.update_comment(comment["id"], with_run(comment["body"], latest))
     return f"Started an automatic round on #{number} to merge `{base}`."
 
@@ -597,14 +599,11 @@ def update_branch(gh, target, row, limit, workflow, ref, before_review=None):
                 break
             time.sleep(UPDATE_WAIT)
         # The review carries an earlier approval over when the change is the same.
-        gh.dispatch(
-            workflow,
-            ref,
-            {"command": "review", "number": str(pr), "note": "", "auto": "true,carry"},
-        )
+        inputs = {"command": "review", "number": str(pr), "note": "", "auto": "true,carry"}
+        gh.dispatch(workflow, ref, inputs)
     except GitHubError as error:
         return f"NexKit could not update the branch: {error}"
-    row["updated_branch"] = True
+    row.update(updated_branch=True, next=inputs)
     return None
 
 

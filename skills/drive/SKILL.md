@@ -151,8 +151,9 @@ bounds:
 - **[A CI issue with records of several failures](../../docs/troubleshooting.md#a-ci-issue-holds-records-of-several-failures):**
   whenever it has a new plan, pull request or records, account for every record before it
   closes. Start a sweep after opening issues.
-- **[A run that ended without a report twice](../../docs/troubleshooting.md#a-run-ended-without-a-report-twice):**
-  post the command once more; when it ends so again, notify.
+- **[A run that kept ending without a report](../../docs/troubleshooting.md#a-run-kept-ending-without-a-report):**
+  post the command once more once the Actions runs or githubstatus.com show the cause
+  has passed; when it ends so again, notify.
 - **[A command or round that did not start](../../docs/troubleshooting.md#a-command-or-round-did-not-start):**
   post it once when the reason it did not run has passed; otherwise notify.
 - **[A usage-limit pause with an unknown reset time](../../docs/troubleshooting.md#a-usage-limit-pause-with-an-unknown-reset-time):**
@@ -205,7 +206,7 @@ Notify only for:
 - an issue opened by someone without write access;
 - a CI run's evidence that expired;
 - a command paused again at a usage limit with an unknown reset time;
-- a run that ended without a report twice, a command that did not start for a reason
+- a run that kept ending without a report, a command that did not start for a reason
   that has not passed, or a command or dispatch of the driver's that failed twice in a
   row;
 - any stop above that the repository does not let the driver handle, and the cases the

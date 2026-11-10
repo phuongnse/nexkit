@@ -211,9 +211,9 @@ files or repository settings, and wait for confirmation.
    issue per advisory at or above that severity. Say that the App then needs the *Dependabot
    alerts: read* permission, which the user adds on its settings page and accepts on the
    installation, and that alerts must be on.
-   A command that autopilot started and that never ran starts once more as soon as its
+   A command that autopilot started and that never ran starts again as soon as its
    workflow run ended, or after `"lost_after_minutes"` (30 by default) when that run
-   cannot be read.
+   cannot be read, then 30, 60 and 120 minutes after its last start.
    After the commit, start the first sweep with
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
    If the work should go on while nobody watches, mention the `drive` skill: a Claude Code

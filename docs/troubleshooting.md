@@ -173,9 +173,10 @@ access, `max_parallel`, or a question without a recommended option. Every issue 
 waits for a person is also listed under *Needs a person*, and does not count toward
 `max_parallel`. With the default `autopilot.scope`, an issue outside the earliest open
 milestone is not in scope; `null` takes every open issue. A command that
-autopilot started but that never ran starts once more as soon as its workflow run ended,
-or after `autopilot.lost_after_minutes` (30 by default) when that run cannot be read; when
-that one does not run either, the issue waits for you (see [A command or round did not
+autopilot started but that never ran starts again: once more as soon as its workflow run
+ended, or after `autopilot.lost_after_minutes` (30 by default) when that run cannot be
+read, then 30, 60 and 120 minutes after its last start; when the fifth does not run
+either, the issue waits for you (see [A command or round did not
 start](#a-command-or-round-did-not-start)). To sweep again at once:
 `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 
@@ -620,24 +621,32 @@ show it, comment `/nexkit fix Add tests that show these criteria, so the review 
 verify them: <criteria>`. When nothing can, the person who decides confirms it from the
 diff and the check results, then merges.
 
-### A run ended without a report twice
+### A run kept ending without a report
 
-A sweep marked the run as ended without a report and started it once more, and that run
-ended the same way; or it was a person's command (see [Runs that never
-end](how-it-works.md#autopilot)). Read the workflow run for why it ended, such as a
-cancelled run or a lost runner, then post the same command once more. When it ends
-without a report again, find the cause in the Actions run before you try again.
+A sweep marked the run as ended without a report and started it again, at once and then
+30, 60 and 120 minutes after the last start, and each run ended the same way; or it was
+a person's command, which NexKit never starts again (see [Runs that never
+end](how-it-works.md#autopilot)). Read the workflow runs for why they ended, such as
+cancelled runs, lost runners or jobs that GitHub never created, and check
+[githubstatus.com](https://www.githubstatus.com) for an outage of GitHub Actions. Once
+Actions works again, post the same command once more. When it ends without a report
+again, find the cause in the Actions run before you try again.
 
 ### A command or round did not start
 
-Autopilot starts a command that never ran once more once its workflow run ended, or after
-`autopilot.lost_after_minutes` when that run cannot be read, and waits for a person when that one does not run either (see ["Autopilot does not start
-an issue"](#agents)). A continued run whose new run has not started after six hours, and
-an automatic round that a round started but that has not run after six hours, wait too
-(see [Runs that never end](how-it-works.md#autopilot)). Read the dispatched run in the
-Actions tab, or the reply on the issue or pull request, for why it did not run, such as a
-refusal by `route` or a run cancelled in the queue. Once the cause is gone, post the
-command yourself, once.
+Autopilot starts a command that never ran again: at once when its workflow run ended, or
+after `autopilot.lost_after_minutes` when that run cannot be read, then 30, 60 and 120
+minutes after its last start. These starts cost no agent time when GitHub creates no job.
+When the fifth start does not run either, the issue waits for a person, with a reason
+that says GitHub created no job or ended the runs without a report, as in an outage of
+GitHub Actions (see ["Autopilot does not start an issue"](#agents)). A continued run, and
+an automatic round that a round started, whose run has not started after
+`lost_after_minutes`, start once more, and wait for a person when that one does not start
+either; a round from before NexKit recorded what it started waits six hours (see [Runs
+that never end](how-it-works.md#autopilot)). Read the dispatched run in the Actions tab,
+or the reply on the issue or pull request, for why it did not run, such as a refusal by
+`route`, a run cancelled in the queue, or [an outage](https://www.githubstatus.com). Once
+the cause is gone, post the command yourself, once.
 
 ### Evidence from a CI run is missing
 

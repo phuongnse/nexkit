@@ -89,7 +89,7 @@ their defaults.
 | `autopilot.enabled` | `false` | Work through the open issues in scope without commands: plan each ready issue, start `/nexkit go` on a plan that needs nobody, and move on when an issue closes. See [Autopilot](#autopilot). |
 | `autopilot.scope` | `"milestone"` | Which issues autopilot takes: `"milestone"`, the open issues of the earliest open milestone, or `null`, every open issue, whatever its milestone. |
 | `autopilot.max_parallel` | `null` | How many issues in scope may have a NexKit run or an open NexKit pull request at once (1 to 100); `null` for no limit. |
-| `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started once more when it has posted no run comment and its workflow run ended, at once, or when that run cannot be read, after this many minutes (5 to 1440). A second such command waits for a person. A sweep notices a lost command: the one that a run `route` refused starts when that run ends, and the end of the run that replaced a waiting one in its concurrency group usually starts one too. Nothing notices a dispatch that names no run, as on older GitHub Enterprise Servers, before the first sweep after this time, which in a quiet repository is the hourly schedule. |
+| `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started again when it has posted no run comment and its workflow run ended, at once, or when that run cannot be read, after this many minutes (5 to 1440); later starts wait 30, 60 and 120 minutes after the last, and a fifth start that does not run waits for a person. A continued run, or a round that a round started next, whose new run has not started after this many minutes starts once more. A sweep notices a lost command: the one that a run `route` refused starts when that run ends, and the end of the run that replaced a waiting one in its concurrency group usually starts one too. Nothing notices a dispatch that names no run, as on older GitHub Enterprise Servers, before the first sweep after this time, which in a quiet repository is the hourly schedule. |
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
 | `autopilot.priority` | `["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"]` | Labels, highest first, whose issues go before the others, and are in scope also without a milestone or outside the scope's milestone. See *Labels* under [Autopilot](#autopilot). |
 | `autopilot.labels` | `{}` | What a label does: `{"wave": N}` holds an issue until every issue of a lower wave in its milestone is closed; `{"hold": true}` makes autopilot start nothing for it. See *Labels* under [Autopilot](#autopilot). |
@@ -871,17 +871,21 @@ every open issue in scope, in order, and starts the one command that moves it on
   command it started last, with its note, and for which run. It starts a command once for
   a state of the issue. A command that has posted no run comment after
   `lost_after_minutes`, while its workflow run is neither queued nor running, because
-  `route` refused it or GitHub dropped it from the queue, starts once more with the same
-  note; if that one does not run either, the issue waits for a person. The first sweep
-  after that time notices it, at the end of any NexKit run or on the hourly schedule. A
+  `route` refused it or GitHub dropped it from the queue, starts again with the same
+  note: at once, then 30, 60 and 120 minutes after its last start, so that an outage of
+  GitHub Actions, in which GitHub creates no job for a run, costs no person's time; when
+  the fifth start does not run either, the issue waits for a person, with a reason that
+  names the outage. The first sweep after each time notices it, at the end of any NexKit
+  run or on the hourly schedule. A
   run whose comment still says running after its workflow run ended, for example because
   the runner was lost, is marked as ended without a report and its pending statuses
   become errors, within minutes: the run's `finish` job starts a sweep that waits for the
   run to end. When NexKit
-  started that run itself, autopilot starts it once more; a person's command, or a second
-  such run, waits for a person. A run paused at the usage limit that NexKit will not
-  resume, and a continued run whose new run has not started after six hours, wait for a
-  person too.
+  started that run itself, autopilot starts it again in the same way, later each time; a
+  person's command waits for a person. A run paused at the usage limit that NexKit will
+  not resume waits for a person too. A continued run, or a round that started the next
+  one by itself, whose new run has not started after `lost_after_minutes` starts that run
+  once more, and waits for a person when that one does not start either.
 
 - **Answers.** Plans, and implement and fix rounds that stop as `blocked`, give each
   question its options and the one NexKit recommends, if any; the plan comment marks it

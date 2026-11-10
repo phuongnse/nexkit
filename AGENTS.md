@@ -44,7 +44,10 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   on a transient error before it published anything (the service, the network, a lost
   runner, as `runtimes/` classifies it, or no result that fits even when its session was
   asked for the result alone): it runs once more, and a second such stop waits
-  for a person. Autopilot may answer a `blocked` result
+  for a person. A command that autopilot or a round started and whose run GitHub never
+  started, or that ended without a report, starts again later each time
+  (`autopilot.AGAIN`), since such a stop says nothing about the work; then a person
+  decides. Autopilot may answer a `blocked` result
   whose questions all have a recommended option (`autopilot.answer: "recommended"`), once
   in a row: when the round its answers started asks again and no person commented since,
   a person decides. A recommended option is one NexKit can carry out without a person;

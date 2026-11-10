@@ -31,8 +31,9 @@ Everything NexKit writes on GitHub, it writes as the repository's
 
 NexKit carries the work on by itself wherever these docs say it does: automatic fix and
 conflict rounds, one more try after a transient error, and with autopilot its plans,
-answers and splits, a new plan once a stopped `/nexkit go` has an answer, one more start
-of a command that never ran or a run that ended without a report, and the fix rounds and
+answers and splits, a new plan once a stopped `/nexkit go` has an answer, more starts,
+later each time, of a command that never ran or a run that ended without a report, one
+more start of a run that a run started but that never started, and the fix rounds and
 reviews of a pull request whose merge waits for required checks. So nobody needs to act
 until NexKit mentions `notify`, or `nexkit status` lists an item under *Needs a person*.
 
@@ -165,8 +166,8 @@ says](troubleshooting.md#what-a-mention-says)):
 
 With autopilot on, its sweeps come to the same answers for the issues in scope, and say
 what else waits for a person: an issue whose pull request needs one, an author without
-write access, a blocker outside the scope, a command that did not run after one more
-start. When an issue starts to wait for a person and nobody was mentioned since its latest
+write access, a blocker outside the scope, a command that did not run after its more
+starts. When an issue starts to wait for a person and nobody was mentioned since its latest
 run, the sweep mentions `notify` once, on the issue, unless the issue closed while the
 sweep ran. `nexkit status` lists every such issue under *Needs a person* with the same
 reason.
@@ -1014,9 +1015,12 @@ the `null` scope, since it may have replaced a sweep that waited.
   that starts posts a new run comment, so the next sweep sees that the command ran.
   Until then, the issue counts as in progress and nothing else starts on it. A command
   that has posted no run comment and whose workflow run, which the dispatch names, ended
-  did not run, for example because `route` refused it or a newer run in its concurrency
-  group replaced it in the queue. It starts once more with the same note, and the issue
-  waits for a person when that one does not run either. A sweep notices it at once: a
+  did not run, for example because `route` refused it, a newer run in its concurrency
+  group replaced it in the queue, or GitHub created no job for it. It starts again with
+  the same note: at once, then 30, 60 and 120 minutes after its last start, so an outage
+  of GitHub Actions costs no person's time and no agent time; when the fifth start does
+  not run either, the issue waits for a person, with a reason that names the outage. A
+  sweep notices it at once: a
   run whose `route` refuses a command that NexKit started by itself starts a sweep that
   waits for the run to end, and the run that replaced it starts one at its end, unless it
   waits for a usage limit or started the next round itself (see *What starts a sweep*). A
@@ -1030,15 +1034,18 @@ the `null` scope, since it may have replaced a sweep that waited.
   within minutes; any later sweep handles it too. The sweep marks the comment as ended
   without a report and sets the round's pending statuses to errors (the `maintain` job
   has `statuses: write` for this). A command autopilot started, or an automatic round,
-  starts once more, as the same kind of round, so one after failing checks merges a base
-  branch that moved first; a person's command, or a second run that ended so, waits for a
-  person. With autopilot off and `conflicts.auto_resolve` on, a sweep, the schedule or a
+  starts again, as the same kind of round, so one after failing checks merges a base
+  branch that moved first: at once, then 30, 60 and 120 minutes after its last start, as
+  for a command that did not run; a person's command waits for a person. With autopilot off and `conflicts.auto_resolve` on, a sweep, the schedule or a
   push to the default branch ends such a comment too when it is the latest round of a
   pull request that conflicts, and then starts its conflict round. A run paused at the
   usage limit that NexKit does not resume (`usage_limit.resume: false`, no known reset, or paused more than eight days ago)
-  waits for a person, and so does a continued run whose new run has not started after six
-  hours. A round that started the next one by itself, such as an automatic fix round,
-  whose next one has not run after six hours waits for a person too.
+  waits for a person. A continued run, or a round that started the next one by itself,
+  such as an automatic fix round or the one more try after a transient error, records
+  the command it started; when that command's run has posted nothing after
+  `autopilot.lost_after_minutes`, a sweep starts it once more, and the issue waits for a
+  person when that one does not start either. A round from before NexKit recorded this
+  waits for a person after six hours.
 - **People stay in charge.** A person's command, a plan's questions, a blocked or failed
   run and a `needs_human` pull request all stop autopilot on that issue, exactly where they
   stop NexKit without it. Such an issue waits for a person, with the reason that `nexkit
@@ -1391,6 +1398,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | The agent times out, hits its budget or errors | Reports it; publishes nothing; no automatic retry. |
 | The agent returns no result, or one that does not fit the stage's schema even with the empty values of the fields it left out | Asks the same session once for its result alone, with what was wrong, keeping its changed files; a result that fits then goes on as usual. When none comes, stops as after a transient error, below. See *A result that does not fit* under [Agents](#agents). |
 | The agent stops on a transient error: an overloaded or failing API, a rate limit that is not a usage limit, a lost connection, or a CLI that exited before the model answered; or the agent job fails as a whole, for example on a lost runner | Reports it, publishes nothing, and runs the same command once more with the same note, shown as `(retry)`; the comment shows ⏭️ until the new run starts. The retry counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. A second such stop waits for a person, and its comment shows both errors. A job a person cancelled is never run again. |
+| GitHub creates no job for a run, or ends it without a report, as in an outage of GitHub Actions | With autopilot, a command autopilot started, or an automatic round, starts again at once, then 30, 60 and 120 minutes after its last start; these starts cost no agent time when no job runs, and the fifth that does not run waits for a person, with a reason that names the outage. A round or continued run whose next run never starts gets that run started once more after `autopilot.lost_after_minutes`. A person's command waits for them. |
 | The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |
 | Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. When a blocked `/nexkit go` found that no change is needed, that answer closes the issue with the round's finding, without another round. After a blocked or failed `/nexkit go` that it does not answer, autopilot plans again once a collaborator commented or an issue that blocks it closed since the round started. |

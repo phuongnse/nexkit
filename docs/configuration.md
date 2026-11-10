@@ -583,7 +583,7 @@ remembering them. `review.checklist` makes each one a question that needs an ans
   review returned, so an automatic fix round addresses it, within `fix.max_auto_rounds`.
 - **An item a person decides**, written `{"text": "...", "person": true}`, is one that a
   fix cannot meet without undoing the change, such as one that accepts a risk. The review
-  answers it like any other, and NexKit marks it 🧑 when it is not met, but it is no finding
+  answers it like any other, and NexKit marks it ⚖️ when it is not met, but it is no finding
   and starts no fix round. When nothing else blocks, the round ends `ready`: NexKit does not
   merge it, `nexkit/review` fails with "A person decides …", the round's comment lists the
   items with their evidence, and `notify` hears of it once. A writer's approval of that

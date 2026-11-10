@@ -1127,7 +1127,7 @@ class ReportTests(ReportCase):
         self.assertIn("A person decides 1 checklist item", status["description"])
         [body] = [review["body"] for review in self.gh.created_reviews]
         self.assertIn("### NexKit review: approve", body)
-        self.assertIn("- 🧑 not met, a person decides: Rule 2", body)
+        self.assertIn("- ⚖️ not met, a person decides: Rule 2", body)
         self.assertNotIn("🛑", body)
 
     def test_an_item_a_person_decides_beside_a_blocking_finding_starts_a_fix_round(self):

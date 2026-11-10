@@ -54,7 +54,7 @@ SKIPPED_ICON = "⏭️"
 CRITERION_MARKS = {"met": "✅", "unmet": "❌", "unverifiable": "❔"}
 CHECKLIST_MARKS = {"met": "✅ met", "not_met": "❌ not met", "not_applicable": "➖ not applicable"}
 # An item not met that a person decides, which no fix round changes.
-PERSON_NOT_MET = "🧑 not met, a person decides"
+PERSON_NOT_MET = "⚖️ not met, a person decides"
 # 🛑 marks only blocking findings, so an open suggestion keeps its own mark.
 RESOLUTIONS = {
     "resolved": "✅ resolved",
@@ -396,7 +396,7 @@ def review_body(review, checks, person=False):
     if output.get("decide") and not person:
         lines += [
             "",
-            "A person decides the checklist items that are not met here (🧑), such as one "
+            "A person decides the checklist items that are not met here (⚖️), such as one "
             "that accepts a risk. NexKit starts no fix round for them, and merges only once a "
             "person with write access approves this commit.",
         ]

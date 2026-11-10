@@ -39,6 +39,11 @@ on:
       verify_result:
         type: string
         required: true
+      # What the `shards` job counted for sharded checks, or "".
+      shards:
+        type: string
+        required: false
+        default: ""
     secrets:
       AGENT_SECRET_1:
         required: false
@@ -105,6 +110,7 @@ jobs:
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit install-agents
         env:
           NEXKIT_CONFIG: ${{ inputs.config }}
+          NEXKIT_SHARDS: ${{ inputs.shards }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         if: inputs.action == 'fix'
         with:
@@ -119,6 +125,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           NEXKIT_DECISION: ${{ inputs.decision }}
           NEXKIT_CONFIG: ${{ inputs.config }}
+          NEXKIT_SHARDS: ${{ inputs.shards }}
           PR: ${{ inputs.pr }}
       - name: Run agent review
         if: steps.carry.outputs.carried != 'true'
@@ -126,6 +133,7 @@ jobs:
         env:
           NEXKIT_DECISION: ${{ inputs.decision }}
           NEXKIT_CONFIG: ${{ inputs.config }}
+          NEXKIT_SHARDS: ${{ inputs.shards }}
           # The agent secrets of this job's stages, which pipeline.yml put in these slots
           # (nexkit/runtimes/__init__.py); each CLI gets only its own.
           NEXKIT_AGENT_SECRETS: ${{ inputs.secret_names }}

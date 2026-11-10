@@ -218,6 +218,34 @@ in several jobs at once, and a round takes about as long as its slowest job plus
 - With `parallel_checks` off, or when every check would run in the same job, the single
   `verify` job runs as before. `group` is refused without `parallel_checks`.
 
+**Shards.** A check that splits its own work, such as an end-to-end suite that its
+scripts split by measured durations, can run in as many shards as a command says when the
+round starts, instead of being listed once per shard:
+
+```json
+{"name": "e2e", "run": "scripts/e2e.sh", "timeout_minutes": 20,
+ "shards": {"count": "node scripts/lib/e2e-shard.mjs --count", "max": 6}}
+```
+
+- A `shards` job runs `count` on the head the checks run on, before `setup`, so it may use
+  only what the runner has and the repository's files. It has no secrets and a read-only
+  token, like the `verify` jobs, gets their environment (`NEXKIT_BASE_SHA` and
+  `NEXKIT_VERIFIED_SHA`), and may take 5 minutes per sharded check.
+- The last line `count` prints must be a whole number N from 1 to `max` (2 to 20).
+  NexKit then runs N checks, `e2e-1` to `e2e-N`, each in a `verify` job of its own, with
+  `NEXKIT_SHARD=k/N` in its environment: `k` from 1 to N. Each is a check of its own:
+  its status in the review and the round's comment, its result files under
+  `results/e2e-k/`, its time-out (`timeout_minutes`), its `unaffected_by` and its
+  `NEXKIT_CHECK_VERIFIED_SHA`, which a shard gets only from rounds that counted the same
+  N, since another N splits the work otherwise. A fix round's prompt names the shard that
+  failed with its `NEXKIT_SHARD`.
+- A `count` that fails, prints no number, or prints one outside 1 to `max` fails the
+  check `e2e` with its output, as a failing check does, and no shard runs. NexKit never
+  guesses a number, so no test is left out silently.
+- `shards` needs `parallel_checks`, and a sharded check has no `group`. No other check may
+  take the name of one of its shards, `e2e-1` to `e2e-<max>`. A check with a fixed list of
+  shards, one entry each, works as before.
+
 Each job sets up the repository again, so parallel jobs use more runner minutes than one,
 and are worth it when a few slow checks dominate the round. `nexkit init` writes the
 setting from `--parallel-checks`, and each `group` from `--check-group NAME=GROUP`.

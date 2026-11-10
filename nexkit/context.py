@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 from .autopilot import edited_after_vouch
-from .checks import RESULTS_DIR, failing_signatures
+from .checks import RESULTS_DIR, failing_signatures, shown_command
 from .config import NAME
 from .evidence import collect, named_runs, summary_lines
 from .github import TRUSTED_ASSOCIATIONS
@@ -206,7 +206,7 @@ def _feedback(gh, decision, comments):
     for check in saved.get("checks") or []:
         if not check.get("passed"):
             parts.append(
-                f"### Failing check `{check['name']}` (`{check['run']}`)\n\n"
+                f"### Failing check `{check['name']}` (`{shown_command(check)}`)\n\n"
                 f"Exit code {check.get('exit_code')}. End of output:\n\n```\n"
                 f"{clip(check.get('output'), 6000)}\n```"
             )

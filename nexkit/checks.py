@@ -16,7 +16,9 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from .gitutil import GitError, git, has_commit
+from .gitutil import GitError, git, has_commit, is_ancestor
+from .gitutil import names as file_names
+from .globs import unaffected
 from .redact import Redactor
 from .runlog import fence, one_line, write_summary
 from .runtimes import NAMES_VAR, secret_names
@@ -30,6 +32,10 @@ BASE_SHA = "NEXKIT_BASE_SHA"
 VERIFIED_SHA = "NEXKIT_VERIFIED_SHA"
 # Set in each check's own environment: the last commit on which that check passed.
 CHECK_VERIFIED_SHA = "NEXKIT_CHECK_VERIFIED_SHA"
+# Which shard of a sharded check a job runs, as `k/N`.
+SHARD = "NEXKIT_SHARD"
+# The time a sharded check's `count` may take; it runs before setup, in a job of its own.
+COUNT_SECONDS = 300
 # The commit that a `verify` job checked, next to its `checks.json`, so a round that NexKit
 # stops in its checks records only checks that passed on the pull request's head.
 CHECKED_FILE = "checked.json"
@@ -130,7 +136,8 @@ def check_commit(repo, check, heads):
     `heads` is the decision's `check_heads`, which `route` read from NexKit's own round
     comments of rounds that ran this setup."""
     found = (heads or {}).get(check["name"])
-    sha = found.get(check_fingerprint(check["run"])) if isinstance(found, dict) else None
+    fingerprint = check_fingerprint(check["run"], check.get("shard"))
+    sha = found.get(fingerprint) if isinstance(found, dict) else None
     name = check["name"]
     if not (isinstance(sha, str) and COMMIT.fullmatch(sha)):
         print(
@@ -559,7 +566,10 @@ def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None, skipp
     jobs = len(check_jobs(cfg)) if group else 1
     cfg = _only(cfg, group)
     names = skipped_names(skipped)
-    failed_setup = setup(cfg, cwd, commits=commits)
+    uncounted = [check for check in cfg["checks"] if "count_error" in check]
+    # A sharded check whose `count` failed runs nothing: setup only for the other checks.
+    counted = len(uncounted) < len(cfg["checks"])
+    failed_setup = setup(cfg, cwd, commits=commits) if counted else None
     results = [failed_setup] if failed_setup else []
     env = environment(commits)
     for check in [] if failed_setup else cfg["checks"]:
@@ -567,9 +577,24 @@ def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None, skipp
             print(skipped_line(check["name"], names[check["name"]]), flush=True)
             results.append(skipped_result(check, names[check["name"]]))
             continue
+        if "count_error" in check:
+            print(f"{check['name']}: no shard ran. {check['count_error']}", flush=True)
+            results.append(
+                {
+                    "name": check["name"],
+                    "run": check["shards"]["count"],
+                    "exit_code": None,
+                    "passed": False,
+                    "seconds": 0,
+                    "output": check["count_error"][-OUTPUT_TAIL:],
+                }
+            )
+            continue
         print(f"::group::check {check['name']}: {check['run']}", flush=True)
         sha = check_commit(cwd, check, heads)
-        own = {**env, CHECK_VERIFIED_SHA: sha} if sha else env
+        own = {**env, CHECK_VERIFIED_SHA: sha} if sha else dict(env)
+        if check.get("shard"):
+            own[SHARD] = check["shard"]
         code, output, seconds = _run(check["run"], cwd, check["timeout_minutes"] * 60, own)
         print(output[-OUTPUT_TAIL:], flush=True)
         print("::endgroup::", flush=True)
@@ -581,6 +606,7 @@ def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None, skipp
                 "passed": code == 0,
                 "seconds": seconds,
                 "output": output[-OUTPUT_TAIL:],
+                **({"shard": check["shard"]} if check.get("shard") else {}),
             }
         )
         print(f"{check['name']}: {'passed' if code == 0 else f'failed (exit {code})'}")
@@ -597,6 +623,109 @@ def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None, skipp
             head = None
         (Path(out_dir) / CHECKED_FILE).write_text(json.dumps({"head": head}))
     return results
+
+
+def shown_command(check):
+    """A check's command as prompts show it: a shard's with its NEXKIT_SHARD, so an agent
+    runs that shard alone."""
+    return f"{SHARD}={check['shard']} {check['run']}" if check.get("shard") else check["run"]
+
+
+def sharded(cfg):
+    """The checks that run in as many shards as their `count` prints."""
+    return [check for check in cfg["checks"] if check.get("shards")]
+
+
+def expand(cfg, counts):
+    """`cfg` with each sharded check replaced by its shards, from `counts` ({name: N, or
+    {"error": why}}, see `count_shards`): `<name>-1` to `<name>-N`, each a check of its
+    own with `shard` `k/N`, which its command gets as NEXKIT_SHARD. A check whose count
+    failed stays one check, with `count_error`, which fails without running anything. A
+    sharded check without a count, as `route` sees it, stays as it is."""
+    if not counts:
+        return cfg
+    checks = []
+    for check in cfg["checks"]:
+        found = counts.get(check["name"]) if check.get("shards") else None
+        if found is None:
+            checks.append(check)
+        elif isinstance(found, int) and not isinstance(found, bool):
+            own = {key: value for key, value in check.items() if key != "shards"}
+            checks += [
+                {**own, "name": f"{check['name']}-{k}", "shard": f"{k}/{found}"}
+                for k in range(1, found + 1)
+            ]
+        else:
+            checks.append({**check, "count_error": str((found or {}).get("error") or "")})
+    return {**cfg, "checks": checks}
+
+
+def read_count(check, code, output):
+    """The number of shards that a sharded check's `count` printed: the last line of its
+    output, a whole number from 1 to `max`; or the reason there is none. Returns (N or
+    None, why)."""
+    command, most = check["shards"]["count"], check["shards"]["max"]
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    tail = "\n".join(output.splitlines()[-40:])
+    if code != 0:
+        return None, f"`{command}` failed with exit code {code}, so no shard ran:\n\n{tail}"
+    last = lines[-1] if lines else ""
+    if not re.fullmatch(r"\d+", last) or not 1 <= int(last) <= most:
+        why = f"`{command}` printed {last[:100]!r} last, not a whole number from 1 to {most}"
+        return None, f"{why}, so no shard ran:\n\n{tail}"
+    return int(last), ""
+
+
+def count_shards(cfg, cwd, commits=None):
+    """Run the `count` of each sharded check on the checkout, before setup, with the
+    checks' environment: {name: N, or {"error": why}}. A count that fails, prints no
+    number or one outside 1 to `max` fails its check; nothing guesses a number, so no test
+    is left out silently."""
+    counts = {}
+    env = environment(commits)
+    for check in sharded(cfg):
+        command = check["shards"]["count"]
+        print(f"::group::count the shards of {check['name']}: {command}", flush=True)
+        code, output, _ = _run(command, cwd, COUNT_SECONDS, env)
+        print(output[-OUTPUT_TAIL:], flush=True)
+        print("::endgroup::", flush=True)
+        number, why = read_count(check, code, output)
+        counts[check["name"]] = number if number is not None else {"error": why}
+        print(f"{check['name']}: {number} shards" if number else why.split(":\n")[0])
+    return counts
+
+
+def changed_since(repo, since, head):
+    """The paths that changed from `since` to `head` in the checkout, both names of a
+    renamed file, or None when git cannot say or `head` does not descend from `since`."""
+    try:
+        if not (has_commit(repo, since) and is_ancestor(repo, since, head)):
+            return None
+        return set(file_names(git(repo, "diff", "--name-only", "--no-renames", "-z", since, head)))
+    except GitError:
+        return None
+
+
+def skip_shards(cfg, decision, repo, head):
+    """[{name, since}] for each shard of `cfg`, expanded, that an automatic review needs
+    not run: as `route.skip_unaffected` does for other checks, its `unaffected_by` lists
+    every path that changed since the head on which it passed, with its command and its
+    shard `k/N`. `route` cannot do this itself, since it does not know N."""
+    if decision.get("action") != "review" or not decision.get("auto"):
+        return []
+    heads, found, changed = decision.get("check_heads") or {}, [], {}
+    for check in cfg["checks"]:
+        if not check.get("shard") or not check.get("unaffected_by"):
+            continue
+        fingerprint = check_fingerprint(check["run"], check["shard"])
+        since = (heads.get(check["name"]) or {}).get(fingerprint)
+        if not isinstance(since, str):
+            continue
+        if since not in changed:
+            changed[since] = changed_since(repo, since, head)
+        if changed[since] is not None and unaffected(changed[since], check["unaffected_by"]):
+            found.append({"name": check["name"], "since": since})
+    return found
 
 
 def artifact_name(group):

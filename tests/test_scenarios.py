@@ -1852,6 +1852,66 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual((review["checks"], review["outcome"]), ("passed", "merged"))
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
+    def test_a_sharded_check_runs_as_many_shards_as_each_round_counts(self):
+        from nexkit import checks
+
+        e2e = "scripts/e2e.sh"
+        sharded = {"name": "e2e", "run": e2e, "shards": {"count": "node count.mjs", "max": 6}}
+        cfg = config(checks=[sharded], parallel_checks=True)
+        # What `count` prints in each round: the go, then two automatic fix rounds.
+        counts = iter([3, 3, 4])
+        verdicts = iter(["request_changes", "request_changes", "approve"])
+
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done(verdict=next(verdicts))
+
+        pipe = Pipeline(self, cfg, script)
+        stages, seen = pipe.stages, []
+
+        def counted(decision, outcome, artifacts):
+            # The `shards` job counts; each shard is a check of its own, with its commit
+            # from the rounds that split the check the same way.
+            if "checks" not in outcome:
+                return stages(decision, outcome, artifacts)
+            n = next(counts)
+            expanded = checks.expand(pipe.cfg, {"e2e": n})
+            heads = decision.get("check_heads") or {}
+            seen.append(
+                {
+                    c["name"]: (heads.get(c["name"]) or {}).get(
+                        check_fingerprint(c["run"], c["shard"])
+                    )
+                    for c in expanded["checks"]
+                }
+            )
+            outcome["checks"] = [
+                {
+                    "name": c["name"],
+                    "run": e2e,
+                    "exit_code": 0,
+                    "passed": True,
+                    "output": "",
+                    "shard": c["shard"],
+                }
+                for c in expanded["checks"]
+            ]
+            return stages(decision, outcome, artifacts)
+
+        pipe.stages = counted
+        pipe.issue(5)
+        pipe.play()
+        self.assertEqual([len(found) for found in seen], [3, 3, 4])
+        first, second, third = seen
+        self.assertEqual(set(first.values()), {None})
+        # Three shards again: each gets the commit on which it passed.
+        self.assertTrue(all(second.values()), second)
+        # Four shards: none of them is the shard that passed before.
+        self.assertEqual(set(third.values()), {None})
+        [pull] = pipe.gh.pulls
+        rounds = [run for _, run in run_comments(pipe.gh.comments(pull)) if "round" in run]
+        self.assertEqual(sorted(rounds[-1]["passed"]), ["e2e-1", "e2e-2", "e2e-3", "e2e-4"])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
     def test_a_pull_request_whose_change_is_already_on_its_base_branch_closes(self):
         def play(on_base, refusals):
             def landed(pipe, pull):

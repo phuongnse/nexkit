@@ -57,6 +57,11 @@ files or repository settings, and wait for confirmation.
      own at once, so a round takes about as long as its slowest job. Group the quick checks
      (build, lint, unit tests) into one job, since every job runs `setup` again (see the
      configuration reference, Parallel checks).
+   - `shards` for a suite the repository already splits, such as one listed as `e2e-1`,
+     `e2e-2`, `e2e-3`, when a script of its own can print how many shards keep each under
+     a time budget: `{"name": "e2e", "run": "<command>", "shards": {"count": "<command
+     that prints N>", "max": <n>}}`. Each shard gets `NEXKIT_SHARD=k/N`; the script reads
+     it to pick its part (see the configuration reference, Parallel checks).
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the

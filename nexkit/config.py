@@ -113,7 +113,19 @@ STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes", "max_budget_usd"}
 AGENT_KEYS = {"runtime", "provider", "fallback"}
 PROFILE_KEYS = {"when", "stages"}
 TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
-CHECK_KEYS = {"name", "run", "timeout_minutes", "slow", "results", "group", "unaffected_by"}
+CHECK_KEYS = {
+    "name",
+    "run",
+    "timeout_minutes",
+    "slow",
+    "results",
+    "group",
+    "unaffected_by",
+    "shards",
+}
+# A check that runs in as many shards as its `count` command prints: at most this many.
+MAX_SHARDS = 20
+SHARD_KEYS = {"count", "max"}
 # The most result paths one check may name.
 MAX_RESULTS = 20
 # The most patterns one check's `unaffected_by` may list.
@@ -450,6 +462,38 @@ def _checklist(items):
         _fail(f"{where} lists an item twice")
 
 
+def _shards(check, where, cfg):
+    """`checks[].shards`: {"count": a command that prints how many shards to run, "max"}.
+    Each shard is a check of its own, in a job of its own."""
+    shards = check["shards"]
+    if not isinstance(shards, dict) or set(shards) != SHARD_KEYS:
+        _fail(f'{where}.shards must be {{"count": "<command>", "max": <number>}}')
+    if not isinstance(shards["count"], str) or not shards["count"].strip():
+        _fail(f"{where}.shards.count must be a shell command that prints a number")
+    _positive_int(shards["max"], f"{where}.shards.max", MAX_SHARDS, minimum=2)
+    if "group" in check:
+        _fail(f"{where}.shards and {where}.group cannot be set together: each shard has a job")
+    if cfg["parallel_checks"] is not True:
+        _fail(f"{where}.shards needs parallel_checks: true")
+    if len(check["name"]) > 36:
+        _fail(f"{where}.name of a sharded check must be at most 36 characters")
+
+
+def shard_names(check):
+    """The names a sharded check's shards may take: `<name>-1` to `<name>-<max>`."""
+    shards = check.get("shards") or {}
+    return [f"{check['name']}-{k}" for k in range(1, shards.get("max", 0) + 1)]
+
+
+def _shard_names(checks):
+    """No shard may take the name of another check."""
+    names = {check["name"] for check in checks}
+    for check in checks:
+        taken = sorted(names & set(shard_names(check)))
+        if taken:
+            _fail(f"The shards of check '{check['name']}' would take the name '{taken[0]}'")
+
+
 def _github_app(cfg):
     """`github_app`: unset, or a slug and two secrets that no agent uses, since an agent
     must never hold what mints a token that can write to the repository."""
@@ -768,6 +812,9 @@ def validate(raw, *, layered=False):
                 _fail(f"{where}.group must be a short lowercase identifier")
             if cfg["parallel_checks"] is not True:
                 _fail(f"{where}.group needs parallel_checks: true")
+        if "shards" in check:
+            _shards(check, where, cfg)
+    _shard_names(cfg["checks"])
     _bool(cfg["parallel_checks"], "parallel_checks")
     _caches(cfg["cache"])
 

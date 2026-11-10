@@ -18,7 +18,7 @@ from pathlib import Path
 from string import Template
 
 from . import config as configuration
-from .checks import BASE_SHA, RESULTS_LIMIT, environment, known_base
+from .checks import BASE_SHA, RESULTS_LIMIT, SHARD, environment, known_base, shown_command
 from .evidence import since_text
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
@@ -365,7 +365,15 @@ def answer_checklist(result, stage, cfg):
 
 
 def _check_lines(checks, indent="  "):
-    return [f"{indent}- `{c['name']}`: `{c['run']}`" for c in checks]
+    return [
+        f"{indent}- `{c['name']}`: `{c['run']}`"
+        + (
+            f" (NexKit runs it in up to {c['shards']['max']} shards, each with `{SHARD}=k/N`)"
+            if c.get("shards")
+            else ""
+        )
+        for c in checks
+    ]
 
 
 def _checks_text(cfg):
@@ -399,7 +407,7 @@ def check_results_text(results):
         if item["passed"] and item.get("skipped"):
             # NexKit did not run it: no path it reads changed since it passed there.
             state = f"passed on `{item['skipped'][:7]}`; no path it reads changed since"
-        lines.append(f"- `{item['name']}` (`{item['run']}`): {state}")
+        lines.append(f"- `{item['name']}` (`{shown_command(item)}`): {state}")
         if not item["passed"]:
             lines.append(f"  End of output:\n```\n{item['output'][-3000:]}\n```")
     return "\n".join(lines)

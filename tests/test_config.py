@@ -482,6 +482,24 @@ class ConfigTests(unittest.TestCase):
         where = [call.args[1] for call in checked.call_args_list]
         self.assertEqual(where, [f"stages.{name}" for name in again["stages"]])
 
+    def test_a_check_in_shards(self):
+        check = {"name": "e2e", "run": "x", "shards": {"count": "node count.mjs", "max": 6}}
+        found = validate({"parallel_checks": True, "checks": [check]})["checks"][0]
+        self.assertEqual(found["shards"], {"count": "node count.mjs", "max": 6})
+        for value, message in (
+            ({**check, "shards": {"count": "x"}}, "must be"),
+            ({**check, "shards": {"count": "", "max": 3}}, "shell command that prints"),
+            ({**check, "shards": {"count": "x", "max": 1}}, "integer from 2 to 20"),
+            ({**check, "shards": {"count": "x", "max": 21}}, "integer from 2 to 20"),
+            ({**check, "group": "e2e"}, "cannot be set together"),
+        ):
+            with self.assertRaisesRegex(ConfigError, message):
+                validate({"parallel_checks": True, "checks": [value]})
+        with self.assertRaisesRegex(ConfigError, "needs parallel_checks: true"):
+            validate({"checks": [check]})
+        with self.assertRaisesRegex(ConfigError, "would take the name 'e2e-2'"):
+            validate({"parallel_checks": True, "checks": [check, {"name": "e2e-2", "run": "y"}]})
+
     def test_review_checklist(self):
         self.assertEqual(validate({})["review"], {"checklist": []})
         items = ["Docs change with the code", "A setting has a safe default"]

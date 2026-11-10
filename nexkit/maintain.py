@@ -88,7 +88,7 @@ OWN_COMMITS = 10
 OWN_FILES = 10
 # The jobs of a round that a move of the base branch can leave without a purpose: its
 # checks. A round in any other job goes on: its agent time, patch and review are worth more.
-CHECK_JOBS = {"verify", "combine"}
+CHECK_JOBS = {"shards", "verify", "combine"}
 # How long, and how often, an update of a branch waits for GitHub to move its head.
 UPDATE_WAIT = 5
 UPDATE_TRIES = 6

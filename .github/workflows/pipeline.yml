@@ -86,6 +86,7 @@ jobs:
       check_matrix: ${{ steps.route.outputs.check_matrix }}
       skip_verify: ${{ steps.route.outputs.skip_verify }}
       parallel_checks: ${{ steps.route.outputs.parallel_checks }}
+      count_shards: ${{ steps.route.outputs.count_shards }}
       agent_secrets: ${{ steps.route.outputs.agent_secrets }}
       review_secrets: ${{ steps.route.outputs.review_secrets }}
       maintain_timeout: ${{ steps.route.outputs.maintain_timeout }}
@@ -211,22 +212,70 @@ jobs:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
 
-  verify:
+  # Count the shards of each sharded check on the head the checks run on: its `count` is
+  # repository code, so it runs here, without secrets and with a read-only token, never in
+  # route. Its outputs replace route's check matrix.
+  shards:
     needs: [route, publish]
-    # Not for a head that conflicts with the base branch's tip: it cannot merge, and report
-    # starts the conflict round at once. Not when route skipped every check: no path they
-    # read changed since they passed.
     if: >-
-      always() && needs.route.result == 'success' && needs.route.outputs.skip_verify != 'true' &&
+      always() && needs.route.result == 'success' && needs.route.outputs.count_shards == 'true' &&
       (needs.route.outputs.action == 'review' ||
        (contains(fromJSON('["implement","fix"]'), needs.route.outputs.action) &&
         needs.publish.outputs.head != '' && needs.publish.outputs.conflicts != 'true'))
-    # One job that runs every check, or with parallel_checks one per check job (route),
-    # without the jobs whose checks route skipped.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      check_matrix: ${{ steps.shards.outputs.check_matrix }}
+      skip_verify: ${{ steps.shards.outputs.skip_verify }}
+      parallel_checks: ${{ steps.shards.outputs.parallel_checks }}
+      shards: ${{ steps.shards.outputs.shards }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.nexkit_repository }}
+          ref: ${{ inputs.nexkit_ref }}
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false # repository commands keep their own Python
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.publish.outputs.head || needs.route.outputs.head }}
+          path: repo
+          # All history, for NEXKIT_BASE_SHA and for the paths changed since a shard passed.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: shards
+        name: Count the shards
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit shards --repo repo
+        env:
+          NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
+          NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+
+  verify:
+    needs: [route, publish, shards]
+    # Not for a head that conflicts with the base branch's tip: it cannot merge, and report
+    # starts the conflict round at once. Not when route, or shards, skipped every check: no
+    # path they read changed since they passed. Not when a configuration with sharded
+    # checks got no count of them: no check runs on a guess.
+    if: >-
+      always() && needs.route.result == 'success' && needs.route.outputs.skip_verify != 'true' &&
+      needs.shards.outputs.skip_verify != 'true' &&
+      (needs.route.outputs.count_shards != 'true' || needs.shards.result == 'success') &&
+      (needs.route.outputs.action == 'review' ||
+       (contains(fromJSON('["implement","fix"]'), needs.route.outputs.action) &&
+        needs.publish.outputs.head != '' && needs.publish.outputs.conflicts != 'true'))
+    # One job that runs every check, or with parallel_checks one per check job (route, or
+    # shards for sharded checks), without the jobs whose checks were skipped.
     name: ${{ matrix.group && format('verify ({0})', matrix.group) || 'verify' }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.route.outputs.check_matrix || '{"include":[{"group":"","timeout":10}]}') }}
+      matrix: ${{ fromJSON(needs.shards.outputs.check_matrix || needs.route.outputs.check_matrix || '{"include":[{"group":"","timeout":10}]}') }}
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout }}
     permissions:
@@ -264,6 +313,7 @@ jobs:
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+          NEXKIT_SHARDS: ${{ needs.shards.outputs.shards }}
           GROUP: ${{ matrix.group }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -275,9 +325,10 @@ jobs:
           retention-days: 14
 
   combine:
-    needs: [route, verify]
+    needs: [route, shards, verify]
     if: >-
-      always() && needs.verify.result != 'skipped' && needs.route.outputs.parallel_checks == 'true'
+      always() && needs.verify.result != 'skipped' &&
+      (needs.shards.outputs.parallel_checks || needs.route.outputs.parallel_checks) == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -304,6 +355,7 @@ jobs:
         env:
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+          NEXKIT_SHARDS: ${{ needs.shards.outputs.shards }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -312,12 +364,13 @@ jobs:
           retention-days: 14
 
   review:
-    needs: [route, publish, verify, combine]
-    # Also when route skipped every check, so no verify job ran.
+    needs: [route, publish, shards, verify, combine]
+    # Also when route, or shards, skipped every check, so no verify job ran.
     if: >-
       always() &&
       (needs.verify.result == 'success' ||
-       (needs.route.result == 'success' && needs.route.outputs.skip_verify == 'true')) &&
+       (needs.route.result == 'success' &&
+        (needs.route.outputs.skip_verify == 'true' || needs.shards.outputs.skip_verify == 'true'))) &&
       contains(fromJSON('["success","skipped"]'), needs.combine.result)
     permissions:
       contents: read
@@ -335,6 +388,7 @@ jobs:
       head: ${{ needs.publish.outputs.head || needs.route.outputs.head }}
       pr: ${{ needs.publish.outputs.pr }}
       verify_result: ${{ needs.verify.result }}
+      shards: ${{ needs.shards.outputs.shards }}
     # As for the agent job: read here, off the runner.
     secrets:
       AGENT_SECRET_1: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[0]] }}
@@ -347,7 +401,7 @@ jobs:
       AGENT_SECRET_8: ${{ secrets[fromJSON(needs.route.outputs.review_secrets)[7]] }}
 
   report:
-    needs: [route, agent, publish, verify, combine, review]
+    needs: [route, agent, publish, shards, verify, combine, review]
     if: >-
       always() && needs.route.result == 'success' &&
       !contains(fromJSON('["none","maintain"]'), needs.route.outputs.action)
@@ -404,6 +458,7 @@ jobs:
           GITHUB_TOKEN: ${{ steps.token.outputs.token }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
+          NEXKIT_SHARDS: ${{ needs.shards.outputs.shards }}
           NEXKIT_NEEDS: ${{ toJSON(needs) }}
           NEXKIT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 

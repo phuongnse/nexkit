@@ -23,7 +23,7 @@ Three parts are played around NexKit:
   [`drive` skill](../skills/drive/SKILL.md) and within limits the repository sets; it
   does not review plans or pull requests.
 - **NexKit's agents** plan, implement, fix and review inside the pipeline (see [One run,
-  nine jobs](#one-run-nine-jobs)). They read the repository's agent instructions, such
+  ten jobs](#one-run-ten-jobs)). They read the repository's agent instructions, such
   as CLAUDE.md or AGENTS.md, and never hold a token that can write to the repository.
 
 Everything NexKit writes on GitHub, it writes as the repository's
@@ -66,7 +66,7 @@ NexKit merged one with `merge.auto`, opening an issue for anything wrong. Check 
   verify it. When nothing can show it, note what the diff and the check results do show,
   and the person who decides confirms it.
 
-## One run, nine jobs
+## One run, ten jobs
 
 Every command starts one run of the reusable workflow
 [`pipeline.yml`](../.github/workflows/pipeline.yml). Jobs that do not apply are skipped.
@@ -78,6 +78,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `route` | every event | the App's: read; comments, reactions, statuses; workflow runs (`actions: read`) | the App's, for its token | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. In an automatic review, leaves out of the check matrix the checks whose [`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) lists every path changed since they passed, from GitHub's comparison. Never executes repository code. |
 | `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | the App's: write, also workflow files | the App's, for its token | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. When the base branch moved while the agent worked, it merges the base branch's tip after the round's commit if the base branch's rules want pull requests up to date, and finds with git whether that tip conflicts with the commit (see [Stages](#stages)). Never executes repository code. |
+| `shards` | go, fix, review, with [sharded checks](configuration.md#parallel-checks) | read only | none | Runs the `count` of each sharded check on the published commit, before `setup`, and gives `verify` the matrix of its shards, each a check of its own with `NEXKIT_SHARD=k/N`. In an automatic review, also leaves out the shards whose `unaffected_by` lists every path changed since they passed with the same N, from git. A `count` that fails or prints no number from 1 to `max` fails its check, and no shard of it runs. |
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. Skipped, with the review, for a published commit that conflicts with the base branch, and by itself when `route` skipped every check. |
 | `combine` | go, fix, review, with `parallel_checks` | read only | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read. Never checks out or executes repository code. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](#stages), and then runs no agent. |
@@ -910,7 +911,7 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
 **Stopping a round in its checks.** Each of these checks (the `push` trigger, the check
 after NexKit's own merge, a sweep) also looks at the round of each open NexKit pull
 request that is running, or at the implement round that opened it. When that round's run
-is in its checks, so that only `verify` or `combine` jobs still run, and the base branch
+is in its checks, so that only `shards`, `verify` or `combine` jobs still run, and the base branch
 moved so that those checks can no longer lead to a merge, NexKit stops it and starts the
 round that can, at once:
 

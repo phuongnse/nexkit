@@ -450,10 +450,12 @@ MAX_COMMANDS = 3
 FINGERPRINT = re.compile(r"[0-9a-f]{16}")
 
 
-def check_fingerprint(command):
+def check_fingerprint(command, shard=None):
     """A check's command as a round's marker records it, so a check whose command changed
-    gets no commit from rounds that ran another one."""
-    return hashlib.sha256(str(command).encode()).hexdigest()[:16]
+    gets no commit from rounds that ran another one. A shard's (`k/N`) counts too, so a
+    shard gets no commit from rounds that split the check into another number of shards."""
+    text = str(command) if not shard else f"{command}\nNEXKIT_SHARD={shard}"
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 def passed_checks(results):
@@ -465,7 +467,7 @@ def passed_checks(results):
             continue
         name, command = result.get("name"), result.get("run")
         if isinstance(name, str) and 0 < len(name) <= 100 and isinstance(command, str):
-            found[name] = check_fingerprint(command)
+            found[name] = check_fingerprint(command, result.get("shard"))
     return dict(list(found.items())[:MAX_PASSED])
 
 

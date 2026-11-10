@@ -389,13 +389,14 @@ Answer every question in one comment, one short line each:
 
 **To close the issue through an answer,** pick the option the comment marks *(NexKit
 closes the issue as not planned)*: comment `/nexkit go <that option>` or `/nexkit plan
-<that option>`, or with autopilot the option alone, as its text, give or take case,
-quotes and a final full stop, or as its number when one question offers it, such as
-`/nexkit go 2`. NexKit closes the issue as not planned, with a comment that quotes your
-answer and links the run or plan that asked, and runs no agent. An answer that says more, such as the option and a
-condition, goes to the next round as a note. While a NexKit pull request for the issue
-is open, close both yourself. Agents offer closing only as such an option; a round on a
-pull request never offers it.
+<that option>`, or with autopilot the option alone, in a comment of someone with write
+access. Write it as its text, give or take case, quotes and a final full stop, or as its
+number when NexKit asked one question, such as `/nexkit go 2`. NexKit closes the issue
+as not planned, with a comment that quotes your answer and links the run or plan that
+asked, and runs no agent. An answer that says more, such as the option and a condition,
+goes to the next round as a note. While a NexKit pull request for the issue is open,
+close both yourself. Agents offer closing only as such an option; a round on a pull
+request never offers it.
 
 When a question comes back after autopilot's answers, or after yours, the recommended
 option did not settle it. Read what is new in the question and why, and answer from the
@@ -635,7 +636,8 @@ diff and the check results, then merges.
 ### A run kept ending without a report
 
 A sweep marked the run as ended without a report and started it again, at once and then
-30, 60 and 120 minutes after the last start, and each run ended the same way; or it was
+30, 60 and 120 minutes after the last start, or once more only when its agent had run to
+its end, and each run ended the same way; or it was
 a person's command, which NexKit never starts again (see [Runs that never
 end](how-it-works.md#autopilot)). Read the workflow runs for why they ended, such as
 cancelled runs, lost runners or jobs that GitHub never created, and check
@@ -719,8 +721,8 @@ open new parts for what is left.
 ### A CI issue says no job failed
 
 The run failed with no failed job: GitHub never created some of its jobs, which the record
-names, or the run failed before any job did. NexKit ran it again once and it failed the
-same way, or another run did the same within the day. Check
+names, or the run failed before any job did. NexKit ran its jobs again once and it
+failed the same way, or another run did the same within the day. Check
 [githubstatus.com](https://www.githubstatus.com) for an outage of GitHub Actions at the
 run's time, and the run's page for GitHub's reason, such as a workflow file error, before
 you look for a cause in the repository. When it was an outage, close the issue as not

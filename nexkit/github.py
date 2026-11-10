@@ -523,10 +523,6 @@ class GitHub:
     def rerun_failed_jobs(self, run_id):
         return self.request("POST", f"{self._repo}/actions/runs/{run_id}/rerun-failed-jobs")
 
-    def rerun(self, run_id):
-        """Run every job of a run again, also those GitHub never created."""
-        return self.request("POST", f"{self._repo}/actions/runs/{run_id}/rerun")
-
     def issues_by(self, creator, limit=100, state="all", since=None):
         """Issues that `creator` opened, newest first, without pull requests: in `state`,
         and with `since`, an ISO 8601 time, only those updated since then. GitHub lists

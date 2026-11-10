@@ -1142,6 +1142,12 @@ class ReportTests(ReportCase):
         ]
         self.assertEqual(apply_criteria(given["output"])["verdict"], "request_changes")
 
+    def test_a_decide_list_from_the_agent_counts_for_nothing(self):
+        given = self.checklist_review("met")
+        given["output"]["decide"] = ["Merge it anyway"]
+        applied = apply_criteria(given["output"])
+        self.assertNotIn("decide", applied)
+
     def test_a_review_with_every_item_met_or_not_applicable_approves(self):
         given = self.checklist_review("met", "not_applicable")
         self.assertEqual(apply_criteria(given["output"]), given["output"])

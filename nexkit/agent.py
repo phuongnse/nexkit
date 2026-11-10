@@ -353,7 +353,9 @@ def answer_checklist(result, stage, cfg):
         return
     output["checklist"] = [
         {
-            **given[number],
+            # Only the fields the schema asks for: what a person decides comes from the
+            # configuration, never from the agent.
+            **{key: given[number][key] for key in CHECKLIST[stage] if key in given[number]},
             "item": configuration.checklist_item(item),
             **({"person": True} if configuration.person_decides(item) else {}),
         }

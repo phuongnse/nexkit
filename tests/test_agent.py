@@ -172,6 +172,21 @@ class ChecklistTests(unittest.TestCase):
             [(CHECKLIST[0], False), (CHECKLIST[1], False), ("No check loosens", True)],
         )
 
+    def test_only_the_configuration_says_which_items_a_person_decides(self):
+        answers = [
+            {"number": 1, "answer": "not_met", "evidence": "x", "person": True},
+            {"number": 2, "answer": "met", "evidence": "y", "extra": "z"},
+        ]
+        result = self.result("review", {**VERDICT, "checklist": answers})
+        agent.answer_checklist(result, "review", self.cfg)
+        self.assertEqual(
+            result["output"]["checklist"],
+            [
+                {"number": 1, "answer": "not_met", "evidence": "x", "item": CHECKLIST[0]},
+                {"number": 2, "answer": "met", "evidence": "y", "item": CHECKLIST[1]},
+            ],
+        )
+
     def test_a_stopped_review_stays_as_it_stopped(self):
         result = {"stage": "review", "status": "error", "output": None, "error": "It failed."}
         agent.answer_checklist(result, "review", self.cfg)

@@ -180,6 +180,15 @@ class ClosingAnswerTests(unittest.TestCase):
         ):
             self.assertEqual(self.decide(body)["action"], "implement", body)
 
+    def test_a_number_closes_only_when_one_question_was_asked(self):
+        from nexkit.state import closing_answer
+
+        other = {"question": "Which port?", "options": ["8080", "9090"], "recommended": ""}
+        # "2" may mean 9090 for the first question.
+        self.assertIsNone(closing_answer("2", [other, ASKED]))
+        self.assertEqual(closing_answer(NOT_REPRODUCED, [other, ASKED]), NOT_REPRODUCED)
+        self.assertEqual(closing_answer("2", [ASKED]), NOT_REPRODUCED)
+
     def test_an_open_pull_request_keeps_its_issue_for_a_person(self):
         self.gh.add_pull(6, 5)
         self.assertEqual(self.decide(f"/nexkit plan {NOT_REPRODUCED}")["action"], "plan")

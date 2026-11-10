@@ -275,9 +275,10 @@ def _plain_answer(text):
 def closing_answer(text, items):
     """The option that only closes the issue, among those of the questions `items`, that a
     person's answer `text` picks: its text as it is, give or take case, whitespace, quotes
-    and final punctuation, or its number ("2", "option 2") when one question offers such an
-    option. Otherwise None: anything more or else is a note for the next round."""
-    found = [(item, closing_option(item)) for item in questions(items)]
+    and final punctuation, or its number ("2", "option 2") when NexKit asked one question
+    only. Otherwise None: anything more or else is a note for the next round."""
+    asked = questions(items)
+    found = [(item, closing_option(item)) for item in asked]
     found = [(item, option) for item, option in found if option]
     answer = _plain_answer(text)
     if not answer:
@@ -286,7 +287,7 @@ def closing_answer(text, items):
         if answer == _plain_answer(option):
             return option
     number = re.fullmatch(r"(?:option\s*)?#?(\d+)", answer)
-    if number and len(found) == 1:
+    if number and len(asked) == 1 and found:
         item, option = found[0]
         if options_of(item).index(option) + 1 == int(number.group(1)):
             return option

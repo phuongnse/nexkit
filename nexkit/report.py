@@ -269,9 +269,11 @@ def apply_criteria(review):
     merges (see `to_decide`)."""
     unmet = _criteria(review, "unmet")
     not_met = _not_met(review)
-    decide = [c["item"] for c in _not_met(review, person=True)]
+    decide = [clip(c["item"], 300) for c in _not_met(review, person=True)]
+    # Only the checklist decides which items wait for a person.
+    review = {key: value for key, value in review.items() if key != "decide"}
     if decide:
-        review = {**review, "decide": decide}
+        review["decide"] = decide
         blocking = any(f.get("severity") == "blocking" for f in review.get("findings") or [])
         if not unmet and not not_met and not blocking:
             # The reviewer may have requested changes for these items alone.
@@ -823,7 +825,7 @@ def _automatic(decision):
 def _retry(gh, decision, command, number, workflow_ref, default_branch):
     """Start `command` once more after a transient error, with the same note for the same
     command. Returns its inputs once it started, for the run's `next` (see
-    `state.handed_on`), or None: never for a run that was itself the retry."""
+    `autopilot._handed_on`), or None: never for a run that was itself the retry."""
     if decision.get("retry"):
         return None
     same = command == progress.COMMANDS[decision["action"]]

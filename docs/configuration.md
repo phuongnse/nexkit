@@ -881,8 +881,9 @@ every open issue in scope, in order, and starts the one command that moves it on
   the runner was lost, is marked as ended without a report and its pending statuses
   become errors, within minutes: the run's `finish` job starts a sweep that waits for the
   run to end. When NexKit
-  started that run itself, autopilot starts it again in the same way, later each time; a
-  person's command waits for a person. A run paused at the usage limit that NexKit will
+  started that run itself, autopilot starts it again in the same way, later each time, or
+  once more only when its agent or review job ran to its end; a person's command waits
+  for a person. A run paused at the usage limit that NexKit will
   not resume waits for a person too. A continued run, or a round that started the next
   one by itself, whose new run has not started after `lost_after_minutes` starts that run
   once more, and waits for a person when that one does not start either.
@@ -913,11 +914,12 @@ every open issue in scope, in order, and starts the one command that moves it on
   default branch, after NexKit's merges and people's alike, on a schedule or a dispatch,
   and at every attempt of each run; runs of pull requests, even from a
   fork's branch of the same name, do not count. When the latest run fails, its failed
-  jobs run once more, never more often. A run in which no job failed, because GitHub never
-  created some of its jobs or the run failed before any job did, runs once more first, all
-  its jobs, also when a newer run overtook it: when it then passes, nothing is recorded,
-  unless another run of the workflow did the same within the day, and then both are
-  recorded, with the jobs GitHub never created. When it fails again, autopilot opens a `bug` issue
+  jobs run once more, never more often, with those GitHub never created. A run in which
+  no job failed, because GitHub never created some of its jobs or the run failed before
+  any job did, and that then passed, or that a newer run overtook, is not recorded,
+  unless another run of the workflow did the same within the day; then both are
+  recorded, with the jobs GitHub never created. NexKit never runs an overtaken run again,
+  which could deploy an old commit over a newer one. When it fails again, autopilot opens a `bug` issue
   in scope (in the current milestone, or without one with `null`), with the run link and the failed jobs and steps of every failed attempt,
   mentions `notify` in it, and plans it before every other issue. A later failure on a
   newer commit adds a comment to that issue while it is open; a commit is reported once.
@@ -1026,7 +1028,7 @@ every open issue in scope, in order, and starts the one command that moves it on
   | A job, or a step named like its job | Job "Integration tests" in ci.yml fails at times on main |
   | A step | Step "Unit tests" of job "Lint and unit tests" in ci.yml fails at times on main |
   | A step that failed the same way in several jobs | Step "Run actions/setup-dotnet@v5" in 3 jobs of ci.yml fails at times on main |
-  | A run with no failed job, run again, that did so again or that another run did so within the day | ci.yml does not start at times on main |
+  | Runs with no failed job, two within a day | ci.yml does not start at times on main |
   | A run with more than five new failures | Run 123 of ci.yml failed in 7 ways at once on main |
   | A red branch | Steps "Lint" and "Unit tests" in ci.yml fail on main |
   | A red branch, failures of several kinds or more than three | ci.yml fails in 4 ways on main |

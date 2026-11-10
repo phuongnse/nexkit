@@ -591,7 +591,39 @@ class SweepTests(AutopilotCase):
         later = late + timedelta(hours=1)
         step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
         self.assertEqual((step["state"], step["person"]), ("waits", True))
-        self.assertIn("twice", step["reason"])
+        self.assertIn("after autopilot started it once more", step["reason"])
+
+    def test_a_reportless_round_whose_agent_ran_starts_once_more_only(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        self.run_comment(6, "fix", status="running", round=2, trigger="fix (auto)")
+        self.gh.runs[self.runs] = {"status": "completed", "run_attempt": 1}
+        # The fix agent ran to its end; only `report` was lost.
+        self.gh.jobs[self.runs] = [{"name": "nexkit / agent / agent", "conclusion": "success"}]
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["command"]), ("start", "fix"))
+        autopilot.start(self.gh, step, "nexkit.yml", "main")
+        self.assertEqual(autopilot.find_record(self.gh.comments(5))[1]["once"], True)
+        # Its start ends so too: a person decides, rather than more uncounted agent runs.
+        self.run_comment(6, "fix", status="running", round=3, trigger="fix (auto)")
+        self.gh.runs[self.runs] = {"status": "completed", "run_attempt": 1}
+        self.gh.jobs[self.runs] = [{"name": "nexkit / agent / agent", "conclusion": "success"}]
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["person"]), ("waits", True))
+        self.assertIn("after autopilot started it once more", step["reason"])
+
+    def test_tries_of_an_earlier_outage_do_not_count_later(self):
+        self.issue(5)
+        self.planned(5)
+        old = autopilot.iso(datetime.now(UTC) - timedelta(days=1))
+        record = {"command": "go", "target": 5, "tries": 3, "basis": [0, 0], "at": old}
+        self.gh.comment(5, "Started.\n\n" + autopilot.record_marker(record))
+        self.run_comment(5, "go", status="running", autopilot=True)
+        self.gh.runs[self.runs] = {"status": "completed"}
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["remember"]["tries"]), ("start", 1))
 
     def test_a_continued_run_that_recorded_its_run_starts_it_once_more(self):
         self.issue(5)
@@ -1077,12 +1109,20 @@ class AnswerTests(AnswerAndSplitCase):
         )
         [comment] = self.gh.comments_matching(4, "which only closes this issue")
         self.assertIn("NexKit autopilot closes it as not planned", comment["body"])
+        # Someone who may only read: a change for the next plan at most, never a close.
+        self.issue(6)
+        self.posted_plan(6)
+        self.blocked(6, questions=[asked])
+        self.gh.roles["reader"] = "read"
+        self.gh.human_comment(6, close, login="reader")
+        steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
+        self.assertNotEqual(steps[6]["state"], "close")
         # A comment that says more is a change for the next plan.
         self.issue(5)
         self.posted_plan(5)
         self.blocked(5, questions=[asked])
         self.gh.human_comment(5, f"{close}, once the logs show nothing.")
-        _, [step] = autopilot.preview(self.gh, self.cfg)
+        step = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}[5]
         self.assertEqual((step["state"], step["command"]), ("start", "plan"))
 
     def test_a_recommended_close_without_a_finding_waits_for_a_person(self):
@@ -1925,24 +1965,40 @@ class CITests(AutopilotCase):
             {"id": run["id"] * 10 + 2, "name": "lint", "conclusion": "success", "steps": []}
         ]
 
-    def test_a_failure_with_no_failed_job_runs_again_and_records_nothing_when_it_passes(self):
+    def test_a_failure_with_no_failed_job_records_nothing_when_it_happens_once(self):
         self.ci_run("success", run_id=40)  # what the run is compared with
         self.gh.jobs[40] = [
             {"id": 401, "name": "test", "conclusion": "success"},
             {"id": 402, "name": "lint", "conclusion": "success"},
         ]
-        # A newer run overtook it: it is still run again, every job.
+        # The latest run runs its failed and missing jobs again, then passes.
+        run = self.ci_run(run_id=50)
+        self.jobless(run)
+        self.sweep()
+        self.assertEqual(self.gh.reruns, [50])
+        self.passed_again(run)
+        self.sweep()
+        self.sweep()
+        self.assertEqual(self.gh.reruns, [50])
+        self.assertEqual((self.flaky(), self.bugs()), ([], []))
+
+    def test_an_overtaken_run_with_no_failed_job_is_never_run_again(self):
+        # Running an old commit's jobs again could deploy it over a newer one.
         run = self.ci_run(run_id=48)
         self.ci_run("success", run_id=50)
         self.jobless(run)
         self.sweep()
-        self.assertEqual(self.gh.reruns, [("all", 48)])
+        self.assertEqual(self.gh.reruns, [])
         self.assertEqual((self.flaky(), self.bugs()), ([], []))
-        self.passed_again(run)
-        self.sweep()
-        self.sweep()
-        self.assertEqual(self.gh.reruns, [("all", 48)])
-        self.assertEqual((self.flaky(), self.bugs()), ([], []))
+
+    def test_a_run_that_github_refuses_to_run_again_is_recorded_at_once(self):
+        self.ci_run(run_id=50)
+        with mock.patch.object(
+            self.gh, "rerun_failed_jobs", side_effect=GitHubError(403, "It cannot be re-run")
+        ):
+            self.sweep()
+        [bug] = self.bugs()
+        self.assertIn("runs/50", bug["body"])
 
     def test_a_failure_with_no_failed_job_that_comes_back_is_recorded_naming_the_jobs(self):
         self.ci_run("success", run_id=40)
@@ -1979,12 +2035,12 @@ class CITests(AutopilotCase):
         run = self.ci_run(run_id=50)
         self.jobless(run)
         self.sweep()
-        self.assertEqual(self.gh.reruns, [("all", 50)])
+        self.assertEqual(self.gh.reruns, [50])
         run["run_attempt"] = 2
         self.gh.attempts[(50, 1)] = "failure"
         self.jobless(run, 2)
         self.sweep()
-        self.assertEqual(self.gh.reruns, [("all", 50)])
+        self.assertEqual(self.gh.reruns, [50])
         [bug] = self.bugs()
         self.assertEqual(bug["title"], "ci.yml does not start on main")
         self.assertIn("No job failed: GitHub never created `test`", bug["body"])

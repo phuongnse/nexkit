@@ -1036,7 +1036,9 @@ the `null` scope, since it may have replaced a sweep that waited.
   has `statuses: write` for this). A command autopilot started, or an automatic round,
   starts again, as the same kind of round, so one after failing checks merges a base
   branch that moved first: at once, then 30, 60 and 120 minutes after its last start, as
-  for a command that did not run; a person's command waits for a person. With autopilot off and `conflicts.auto_resolve` on, a sweep, the schedule or a
+  for a command that did not run. When its agent or review job ran to its end, so that
+  only the report was lost, it starts once more only, since these starts count toward no
+  budget. A person's command waits for a person. With autopilot off and `conflicts.auto_resolve` on, a sweep, the schedule or a
   push to the default branch ends such a comment too when it is the latest round of a
   pull request that conflicts, and then starts its conflict round. A run paused at the
   usage limit that NexKit does not resume (`usage_limit.resume: false`, no known reset, or paused more than eight days ago)
@@ -1115,14 +1117,15 @@ the `null` scope, since it may have replaced a sweep that waited.
   latest run, the runs of the last day and the runs a bug issue reports, among the newest
   100. Runs of pull requests do not count, nor runs from a fork, whose head branch can
   have the same name. When the latest run failed in its first attempt, its failed jobs run
-  once more; NexKit never runs them a third time, which would hide failures. A run whose
-  first attempt failed with no failed job, because GitHub never created some of its jobs
-  or the run failed before any job did, as in an outage of GitHub Actions, runs once more
-  first, every job, whether it is the latest run or one a newer run overtook: no code of
-  the repository explains such a failure, and a real failure fails again. When the new
-  attempt passes, nothing is recorded, unless another run of the workflow passed the same
-  way within the day, and the sweep's log says so; then each such run is recorded as a
-  flaky run. When a later
+  once more, with those GitHub never created; NexKit never runs them a third time, which
+  would hide failures, and never runs an overtaken run again, which could deploy an old
+  commit over a newer one. A run whose failures all came with no failed job, because
+  GitHub never created some of its jobs or the run failed before any job did, as in an
+  outage of GitHub Actions, and that passed when run again or that a newer run overtook,
+  is not recorded, and the sweep's log says so: no code of the repository explains such a
+  failure. When another run of the workflow did the same within the day, each such run is
+  recorded as a flaky run. A run that GitHub refuses to run again is recorded at once.
+  When a later
   attempt fails too, autopilot opens a `bug` issue in scope (without a milestone with
   `null`), starting with a marker that
   names the workflow, and that issue goes before all others. Its report lists the failed

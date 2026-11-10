@@ -296,6 +296,10 @@ CHECKLIST = {
 }
 
 
+# How the prompts mark a checklist item that a person decides.
+PERSON_MARK = "(a person decides)"
+
+
 def with_checklist(schema, stage, cfg):
     """`schema` with the checklist field, when this stage answers a checklist."""
     if stage not in CHECKLIST or not cfg["review"]["checklist"]:
@@ -315,8 +319,16 @@ def checklist_text(stage, cfg):
     items = cfg["review"]["checklist"]
     if stage not in CHECKLIST or not items:
         return ""
-    numbered = "\n".join(f"{number}. {item}" for number, item in enumerate(items, 1))
-    return Template(_template(f"{stage}_checklist")).safe_substitute(items=numbered).rstrip()
+    numbered = "\n".join(
+        f"{number}. {configuration.checklist_item(item)}"
+        + (f" {PERSON_MARK}" if configuration.person_decides(item) else "")
+        for number, item in enumerate(items, 1)
+    )
+    text = Template(_template(f"{stage}_checklist")).safe_substitute(items=numbered).rstrip()
+    if any(configuration.person_decides(item) for item in items):
+        person = Template(_template(f"{stage}_checklist_person")).safe_substitute(mark=PERSON_MARK)
+        text = f"{text}\n\n{person.rstrip()}"
+    return text
 
 
 def answer_checklist(result, stage, cfg):
@@ -339,7 +351,13 @@ def answer_checklist(result, stage, cfg):
         )
         return
     output["checklist"] = [
-        {**given[number], "item": item} for number, item in enumerate(items, 1) if number in given
+        {
+            **given[number],
+            "item": configuration.checklist_item(item),
+            **({"person": True} if configuration.person_decides(item) else {}),
+        }
+        for number, item in enumerate(items, 1)
+        if number in given
     ]
 
 

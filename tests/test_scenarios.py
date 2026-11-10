@@ -445,6 +445,11 @@ class Pipeline:
         self.test.assertEqual(state["auto_fixes"], len(ran) + waiting, f"#{pull}: {self.played}")
 
 
+def review_state(gh, head):
+    """The state of `nexkit/review` on `head`."""
+    return {s["context"]: s for s in gh.commit_statuses(head)}["nexkit/review"]["state"]
+
+
 def red_main(gh):
     """`ci.yml` failed on `main` twice, in the step that runs `make test`, where its test
     reporter names the failing test."""
@@ -789,6 +794,87 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
+
+    def test_a_checklist_item_a_person_decides_waits_for_their_approval_then_merges(self):
+        accepted = "The change adds no exception to a check and loosens none"
+
+        def reviewed(*answers, verdict="request_changes"):
+            found = done()
+            found["review"]["output"]["verdict"] = verdict
+            found["review"]["output"]["checklist"] = [
+                {"number": number, "answer": answer, "evidence": "scan.json:3", "item": item}
+                | ({"person": True} if item == accepted else {})
+                for number, (item, answer) in enumerate(answers, 1)
+            ]
+            return found
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                # Another item fails too: the fix round is for that one alone.
+                return reviewed((accepted, "not_met"), ("Docs change with the code", "not_met"))
+            return reviewed((accepted, "not_met"), ("Docs change with the code", "met"))
+
+        checklist = [{"text": accepted, "person": True}, "Docs change with the code"]
+        pipe = Pipeline(self, config(review={"checklist": checklist}), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(pipe.played[-1][2], "ready")
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        self.assertEqual(pipe.gh.merged, [])
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 1)
+        head = pipe.gh.pulls[6]["head"]["sha"]
+        self.assertEqual(review_state(pipe.gh, head), "failure")
+        [mention] = pipe.gh.comments_matching(6, "a person is needed")
+        self.assertIn("decide the checklist items", mention["body"])
+        self.assertNotIn("remove its cause", mention["body"])
+        [round_] = [run for _, run in run_comments(pipe.gh.comments(6)) if "round" in run][-1:]
+        self.assertEqual(round_["decide"], [accepted])
+
+        def approve(commit):
+            event = {
+                "action": "submitted",
+                "review": {"state": "approved", "user": {"login": "olivia"}, "commit_id": commit},
+                "pull_request": {
+                    **pipe.gh.pulls[6],
+                    "base": {"ref": "main", "repo": {"full_name": "acme/app"}},
+                },
+            }
+            decision = route(pipe.gh, "pull_request_review", event)
+            return maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
+
+        # An approval of an older head accepts nothing.
+        self.assertIn("it starts nothing", approve("0" * 40)[0])
+        self.assertEqual(pipe.gh.merged, [])
+        self.assertEqual(review_state(pipe.gh, head), "failure")
+        self.assertEqual(approve(head), ["#6: merged."])
+        self.assertEqual(review_state(pipe.gh, head), "success")
+        pipe.play()
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
+
+    def test_a_checklist_item_a_person_decides_alone_starts_no_fix_round(self):
+        accepted = "The change adds no exception to a check and loosens none"
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            found = done(verdict="request_changes")
+            found["review"]["output"]["findings"] = []
+            entry = {"number": 1, "answer": "not_met", "evidence": "x", "item": accepted}
+            found["review"]["output"]["checklist"] = [{**entry, "person": True}]
+            return found
+
+        checklist = [{"text": accepted, "person": True}]
+        pipe = Pipeline(self, config(review={"checklist": checklist}), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "ready")
+        self.assertEqual(read_state(pipe.gh.comments(6))[1]["auto_fixes"], 0)
+        self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
+        needs = collect(pipe.gh, pipe.cfg, workers=1)["needs_person"]
+        self.assertTrue(any("Only a person decides" in item["reason"] for item in needs), needs)
 
     def test_two_issues_that_run_last_and_a_split_never_wait_in_a_circle(self):
         parts = [{"title": "One", "body": "Do one.", "depends_on": []}]

@@ -271,9 +271,9 @@ def route(gh, event_name, event, inputs=None):
 
 def _approved(pull, actor, commit=None):
     """A writer's approval of the commit `commit` of a NexKit pull request: the `maintain`
-    job merges it when its latest round could not (see `maintain.merge_approved`). It
-    starts no agent, and runs in a concurrency group of its own, so it never replaces a
-    command that waits."""
+    job merges it when its latest round could not, and accepts the checklist items a
+    person decides (see `maintain.merge_approved`). It starts no agent, and runs in a
+    concurrency group of its own, so it never replaces a command that waits."""
     issue = issue_from_branch((pull.get("head") or {}).get("ref"))
     repo = ((pull.get("head") or {}).get("repo") or {}).get("full_name")
     base = (pull.get("base") or {}).get("repo") or {}

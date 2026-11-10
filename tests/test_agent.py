@@ -152,6 +152,26 @@ class ChecklistTests(unittest.TestCase):
         self.assertEqual(result["status"], "done")
         self.assertEqual(result["output"]["checklist"][0]["item"], CHECKLIST[0])
 
+    def test_an_item_a_person_decides_is_marked_in_prompts_and_answers(self):
+        person = {"text": "No check loosens", "person": True}
+        cfg = make_config(review={"checklist": [*CHECKLIST, person]})
+        for stage in ("plan", "review"):
+            prompt = agent.build_prompt(stage, CONTEXT, cfg)
+            self.assertIn("3. No check loosens (a person decides)", prompt)
+            self.assertIn("Only a person decides the items marked (a person decides)", prompt)
+            self.assertNotIn("$mark", prompt)
+        self.assertNotIn("a person decides", agent.build_prompt("review", CONTEXT, self.cfg))
+        answers = [
+            {"number": n, "answer": "met" if n < 3 else "not_met", "evidence": "x"}
+            for n in (1, 2, 3)
+        ]
+        result = self.result("review", {**VERDICT, "checklist": answers})
+        agent.answer_checklist(result, "review", cfg)
+        self.assertEqual(
+            [(e["item"], e.get("person", False)) for e in result["output"]["checklist"]],
+            [(CHECKLIST[0], False), (CHECKLIST[1], False), ("No check loosens", True)],
+        )
+
     def test_a_stopped_review_stays_as_it_stopped(self):
         result = {"stage": "review", "status": "error", "output": None, "error": "It failed."}
         agent.answer_checklist(result, "review", self.cfg)

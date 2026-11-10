@@ -134,6 +134,8 @@ AFTER_WORKFLOW_KEYS = {"workflow", "every"}
 # Each item costs every plan and review an answer, so a checklist stays short.
 MAX_CHECKLIST = 20
 MAX_CHECKLIST_ITEM = 300
+# The keys of a checklist item that a person decides.
+CHECKLIST_KEYS = {"text", "person"}
 # GitHub's limit on a label's name.
 MAX_LABEL = 50
 # What a label in `autopilot.labels` may do, and its highest wave.
@@ -410,20 +412,41 @@ def _secret_slots(cfg):
             )
 
 
+def checklist_item(item):
+    """The text of a `review.checklist` item: a string, or {"text", "person"}."""
+    return item["text"] if isinstance(item, dict) else item
+
+
+def person_decides(item):
+    """Whether only a person decides a `review.checklist` item that is not met, such as one
+    that accepts a risk: NexKit starts no fix round for it, and merges on their approval."""
+    return isinstance(item, dict) and item.get("person") is True
+
+
 def _checklist(items):
-    """`review.checklist`: short items, one line each."""
+    """`review.checklist`: short items, one line each, as strings or as {"text", "person"}
+    for an item that a person decides."""
     where = "review.checklist"
     if not isinstance(items, list) or len(items) > MAX_CHECKLIST:
         _fail(f"{where} must be a list of at most {MAX_CHECKLIST} items")
     for item in items:
+        if isinstance(item, dict):
+            unknown = sorted(set(item) - CHECKLIST_KEYS)
+            if unknown or "text" not in item or not isinstance(item.get("person", False), bool):
+                _fail(
+                    f'{where} items are strings, or objects with "text" and "person" (true '
+                    "or false)"
+                )
+        text = checklist_item(item)
         if (
-            not isinstance(item, str)
-            or not item.strip()
-            or "\n" in item
-            or len(item) > MAX_CHECKLIST_ITEM
+            not isinstance(text, str)
+            or not text.strip()
+            or "\n" in text
+            or len(text) > MAX_CHECKLIST_ITEM
         ):
             _fail(f"{where} items must be one line of at most {MAX_CHECKLIST_ITEM} characters")
-    if len(set(items)) != len(items):
+    texts = [checklist_item(item) for item in items]
+    if len(set(texts)) != len(texts):
         _fail(f"{where} lists an item twice")
 
 

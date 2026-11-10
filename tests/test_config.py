@@ -486,6 +486,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(validate({})["review"], {"checklist": []})
         items = ["Docs change with the code", "A setting has a safe default"]
         self.assertEqual(validate({"review": {"checklist": items}})["review"]["checklist"], items)
+        # An item that a person decides, beside the plain ones.
+        decided = [*items, {"text": "No check loosens", "person": True}]
+        self.assertEqual(
+            validate({"review": {"checklist": decided}})["review"]["checklist"], decided
+        )
         for value, message in (
             ("x", "must be a list"),
             (["x"] * 21, "must be a list of at most 20"),
@@ -494,6 +499,11 @@ class ConfigTests(unittest.TestCase):
             (["x" * 301], "must be one line of at most 300"),
             ([5], "must be one line"),
             (["a", "a"], "lists an item twice"),
+            (["a", {"text": "a", "person": True}], "lists an item twice"),
+            ([{"text": "a", "person": "yes"}], "objects with"),
+            ([{"person": True}], "objects with"),
+            ([{"text": "a", "owner": True}], "objects with"),
+            ([{"text": "", "person": True}], "must be one line"),
         ):
             with self.assertRaisesRegex(ConfigError, f"review.checklist.*{message}"):
                 validate({"review": {"checklist": value}})

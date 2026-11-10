@@ -106,7 +106,7 @@ their defaults.
 | `limits.setup_timeout_minutes` | `30` | Time each `setup` command may take (1 to 120). The agent and verify jobs allow for it. |
 | `limits.max_patch_mb` | `5` | Largest change an implement or fix round may publish, in megabytes (1 to 50). |
 | `protected_paths` | `[".github/", ".nexkit/"]` | Path prefixes the agent may not change. Both defaults are required; you may add more. |
-| `review.checklist` | `[]` | Short rules, in your own words, that every plan and review answers one by one. See [Review checklist](#review-checklist). |
+| `review.checklist` | `[]` | Short rules, in your own words, that every plan and review answers one by one; `{"text": …, "person": true}` for one that a person decides. See [Review checklist](#review-checklist). |
 | `transcript` | `true` | Write the agent's transcripts (`transcript.jsonl`, `transcript.md`) into the `nexkit-agent` and `nexkit-review` artifacts. See [Logs and transcripts](#logs-and-transcripts). |
 | `log` | `{"tool_output": "truncated"}` | How the agent and review jobs print tool calls. |
 | `github_app` | none, required | The GitHub App that NexKit acts as: its `slug`, as in `github.com/apps/<slug>`, and the names of the secrets that hold its id (`app_id_secret`) and its private key (`private_key_secret`). `nexkit init` sets it. The secrets cannot be an agent's or start with `GITHUB_`. See [The GitHub App](#the-github-app). |
@@ -539,7 +539,8 @@ remembering them. `review.checklist` makes each one a question that needs an ans
 "review": {
   "checklist": [
     "The `Docs:` line names every doc section the change makes false, and each is fixed",
-    "A new setting has a default that keeps today's behaviour"
+    "A new setting has a default that keeps today's behaviour",
+    {"text": "The change adds no exception to a check and loosens none", "person": true}
   ]
 }
 ```
@@ -550,6 +551,16 @@ remembering them. `review.checklist` makes each one a question that needs an ans
   collapsed.
 - **An item not met** requests changes as a blocking finding does, whatever verdict the
   review returned, so an automatic fix round addresses it, within `fix.max_auto_rounds`.
+- **An item a person decides**, written `{"text": "...", "person": true}`, is one that a
+  fix cannot meet without undoing the change, such as one that accepts a risk. The review
+  answers it like any other, and NexKit marks it 🧑 when it is not met, but it is no finding
+  and starts no fix round. When nothing else blocks, the round ends `ready`: NexKit does not
+  merge it, `nexkit/review` fails with "A person decides …", the round's comment lists the
+  items with their evidence, and `notify` hears of it once. A writer's approval of that
+  commit accepts them: `nexkit/review` turns green, and with `merge.auto` NexKit merges it;
+  an approval of an older commit does nothing, and a new commit needs a new review and a new
+  approval. Beside other blocking findings or failing checks, the fix round starts for
+  those as before.
 - **A review that leaves an item out** is incomplete: it gives no verdict, `nexkit/review`
   shows an error, nothing merges, and `/nexkit review` tries again. A plan that leaves one out
   is posted as it is, since the review decides.

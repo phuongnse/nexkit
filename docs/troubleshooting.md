@@ -349,6 +349,7 @@ each outcome of a run is:
 | `retry_failed` | post the command again once the cause has passed. The run stopped on a transient error twice, and NexKit tries a command only once more | the error |
 | `conflicting` | comment `/nexkit fix` on the pull request, with any rule the conflict needs. Its commit conflicts with the base branch, and NexKit started no round to resolve it | |
 | `ready`, with `merge.auto` off | review the pull request, then merge it or close it. Checks and the AI review passed, and with `merge.auto` off a person decides the merge | |
+| `ready`, with checklist items a person decides | decide the checklist items in the round's comment: approve the pull request to accept them, which NexKit then merges (with `merge.auto` off, then merge it), or comment `/nexkit fix <what to change>`. Only a person decides them, and the review found them not met | the first item |
 | `ready`, with criteria the review could not verify | confirm from the diff and the checks the acceptance criteria that the review could not verify, then merge the pull request; with `merge.auto`, approve the pull request, which NexKit then merges | the first criterion |
 | `merge_refused` | what unblocks the merge, and the rule that refused it, such as `approve the pull request as a code owner (@owner), which NexKit then merges. GitHub requires a code owner's review for this file, and NexKit's App cannot review its own pull request: docs/reference/ui-glossary.json (+6 −0, owned by @owner)`: see [The automatic merge was refused](#the-automatic-merge-was-refused) | the rule, the files and their owners |
 | `merge_issue_closed` | merge the pull request or close it. Its issue closed before NexKit merged it, and NexKit leaves the pull request of a closed issue to a person | |
@@ -547,6 +548,16 @@ branch uses [NexKit's cache action](configuration.md#caches), which `nexkit doct
 and that it succeeds: it saves only at the end of a successful job. Its log says whether a
 run saves or only restores. Hand-written `actions/cache` steps must repeat each entry's paths
 and key files in the same order; the action needs none of that.
+
+### A checklist item waits for a person's decision
+
+The review found a [checklist item that a person decides](configuration.md#review-checklist)
+not met, such as a change that accepts a risk. No fix round starts for it, since a fix
+cannot meet it without undoing the change. Read the item and the review's evidence in the
+round's comment. To accept it, approve the pull request: NexKit turns `nexkit/review` green
+on that commit and, with `merge.auto`, merges it; with it off, merge it yourself. Approve
+the commit the round reviewed; after a new commit, wait for its review and approve again.
+To reject it, comment `/nexkit fix <what to change>`, or close the pull request.
 
 ### A review gave no answer for a checklist item
 

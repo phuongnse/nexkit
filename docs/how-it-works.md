@@ -7,8 +7,8 @@ Three parts are played around NexKit:
 - **The person who decides:** the people in [`notify`](configuration.md#mentions), whom
   NexKit mentions when a run needs a person. They answer the questions that have no
   recommended option, and those asked again after autopilot answered them. They decide
-  each merge while `merge.auto` is off, and confirm the acceptance criteria that the
-  review could not verify. They change what NexKit may not change: the settings in
+  each merge while `merge.auto` is off, confirm the acceptance criteria that the review
+  could not verify, and decide the checklist items that only a person decides. They change what NexKit may not change: the settings in
   `.nexkit/`, the workflow and anything else in `protected_paths`, in pull requests they
   make by hand, which [`/nexkit review`](#stages) checks and reviews on request.
   [Troubleshooting](troubleshooting.md#when-nexkit-waits-for-a-person) says
@@ -156,6 +156,7 @@ says](troubleshooting.md#what-a-mention-says)):
 | Checks or review still fail after a fix round found nothing to change for a cause outside the code and ran them again | yes |
 | Ready, with `merge.auto` off | yes |
 | Ready, with an acceptance criterion the review could not verify | yes, also with `merge.auto` on |
+| Ready, with a checklist item not met that a person decides | yes, also with `merge.auto` on; their approval merges |
 | GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](#failure-handling). The person's part, such as a code owner's approval, is enough: NexKit merges after an approval, or with autopilot once GitHub reports the pull request as mergeable (see [Automatic merge](configuration.md#automatic-merge)) |
 | Merged, or an automatic fix or conflict round started | no |
 | The round's commit conflicts with the base branch, and no conflict round is left to start (`conflicting`) | yes |
@@ -635,6 +636,10 @@ run. NexKit decides from the criteria as well as the verdict:
 - An approved round with an `unverifiable` criterion never merges by itself, even with
   `merge.auto` on. `nexkit/review` succeeds, so a person can merge by hand; the round's
   comment lists the criteria to confirm, and `notify` mentions its people.
+- A [checklist item that a person decides](configuration.md#review-checklist) and that is
+  not met is no finding and starts no fix round. When nothing else blocks, the round ends
+  `ready` without a merge: `nexkit/review` fails until a writer approves that commit, which
+  accepts the items, turns it green and, with `merge.auto`, merges the pull request.
 
 **A pull request brought up to date.** With GitHub's *Require branches to be up to date
 before merging*, a pull request that checks and review approved cannot merge once its base
@@ -845,7 +850,11 @@ one comment.
 
 **Merging after an approval** (`merge.auto`). A writer's approval of a NexKit pull request
 whose latest round ended as `merge_refused`, as `ready` for criteria the review could not
-verify, or as `pull_closed` before it was reopened, merges it on the head its checks and review passed, with the guards of every merge;
+verify or for checklist items a person decides, or as `pull_closed` before it was reopened,
+merges it on the head its checks and review passed, with the guards of every merge. An
+approval of that head accepts the checklist items a person decides and turns
+`nexkit/review` green there, also with `merge.auto` off, which then leaves the merge to the
+person;
 a head that moved gets `/nexkit review`. The run waits in the pull request's queue, and an
 approval while a round runs, or of a pull request whose round ended otherwise, starts
 nothing. Nor does one of a pull request that a person merged or closed first, as an owner

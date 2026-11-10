@@ -148,7 +148,10 @@ files or repository settings, and wait for confirmation.
    If the repository's agent instructions hold rules that every pull request must meet,
    such as docs that change with the code, offer `"review": {"checklist": ["<rule>"]}`:
    every plan and review answers each item, and an item not met requests changes. Keep
-   each item to something an agent can check and change in the code.
+   each item to something an agent can check and change in the code. A rule that only a
+   person may waive, such as one about accepting a risk, is
+   `{"text": "<rule>", "person": true}`: NexKit starts no fix round for it and merges
+   once a person approves the pull request.
 
    Offer `"notify": ["<login>"]` so the user gets a GitHub notification when a run needs
    a person, for example a plan with questions or a pull request ready to merge.

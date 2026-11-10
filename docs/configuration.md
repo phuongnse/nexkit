@@ -910,7 +910,11 @@ every open issue in scope, in order, and starts the one command that moves it on
   default branch, after NexKit's merges and people's alike, on a schedule or a dispatch,
   and at every attempt of each run; runs of pull requests, even from a
   fork's branch of the same name, do not count. When the latest run fails, its failed
-  jobs run once more, never more often. When it fails again, autopilot opens a `bug` issue
+  jobs run once more, never more often. A run in which no job failed, because GitHub never
+  created some of its jobs or the run failed before any job did, runs once more first, all
+  its jobs, also when a newer run overtook it: when it then passes, nothing is recorded,
+  unless another run of the workflow did the same within the day, and then both are
+  recorded, with the jobs GitHub never created. When it fails again, autopilot opens a `bug` issue
   in scope (in the current milestone, or without one with `null`), with the run link and the failed jobs and steps of every failed attempt,
   mentions `notify` in it, and plans it before every other issue. A later failure on a
   newer commit adds a comment to that issue while it is open; a commit is reported once.
@@ -1019,11 +1023,11 @@ every open issue in scope, in order, and starts the one command that moves it on
   | A job, or a step named like its job | Job "Integration tests" in ci.yml fails at times on main |
   | A step | Step "Unit tests" of job "Lint and unit tests" in ci.yml fails at times on main |
   | A step that failed the same way in several jobs | Step "Run actions/setup-dotnet@v5" in 3 jobs of ci.yml fails at times on main |
-  | A run that failed before any job | ci.yml does not start at times on main |
+  | A run with no failed job, run again, that did so again or that another run did so within the day | ci.yml does not start at times on main |
   | A run with more than five new failures | Run 123 of ci.yml failed in 7 ways at once on main |
   | A red branch | Steps "Lint" and "Unit tests" in ci.yml fail on main |
   | A red branch, failures of several kinds or more than three | ci.yml fails in 4 ways on main |
-  | A red branch, before any job | ci.yml does not start on main |
+  | A red branch with no failed job, also when run again | ci.yml does not start on main |
 
   The marker, not the title, ties a failure to its issue, so an issue opened with an
   older title keeps getting its records.

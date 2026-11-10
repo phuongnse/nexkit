@@ -1873,6 +1873,84 @@ class CITests(AutopilotCase):
         run.update(run_attempt=attempt, conclusion="success")
         self.gh.jobs[(run["id"], attempt)] = [{"name": "test", "conclusion": "success"}]
 
+    def jobless(self, run, attempt=1):
+        """`run` failed in `attempt` with no failed job: GitHub created only `lint`."""
+        self.gh.jobs[(run["id"], attempt)] = [
+            {"id": run["id"] * 10 + 2, "name": "lint", "conclusion": "success", "steps": []}
+        ]
+
+    def test_a_failure_with_no_failed_job_runs_again_and_records_nothing_when_it_passes(self):
+        self.ci_run("success", run_id=40)  # what the run is compared with
+        self.gh.jobs[40] = [
+            {"id": 401, "name": "test", "conclusion": "success"},
+            {"id": 402, "name": "lint", "conclusion": "success"},
+        ]
+        # A newer run overtook it: it is still run again, every job.
+        run = self.ci_run(run_id=48)
+        self.ci_run("success", run_id=50)
+        self.jobless(run)
+        self.sweep()
+        self.assertEqual(self.gh.reruns, [("all", 48)])
+        self.assertEqual((self.flaky(), self.bugs()), ([], []))
+        self.passed_again(run)
+        self.sweep()
+        self.sweep()
+        self.assertEqual(self.gh.reruns, [("all", 48)])
+        self.assertEqual((self.flaky(), self.bugs()), ([], []))
+
+    def test_a_failure_with_no_failed_job_that_comes_back_is_recorded_naming_the_jobs(self):
+        self.ci_run("success", run_id=40)
+        self.gh.jobs[40] = [
+            {"id": 401, "name": "test", "conclusion": "success"},
+            {"id": 402, "name": "lint", "conclusion": "success"},
+        ]
+        first = self.ci_run(run_id=46)
+        self.jobless(first)
+        self.passed_again(first)
+        self.sweep()
+        self.assertEqual(self.flaky(), [])
+        # Within a day, another run loses its jobs the same way: both are recorded.
+        second = self.ci_run(run_id=48)
+        self.ci_run("success", run_id=50)
+        self.jobless(second)
+        self.passed_again(second)
+        self.sweep()
+        [issue] = self.flaky()
+        self.assertEqual(issue["title"], "ci.yml does not start at times on main")
+        text = "\n".join([issue["body"], *(c["body"] for c in self.gh.comments(issue["number"]))])
+        self.assertIn("No job failed: GitHub never created `test`", text)
+        self.assertIn("runs/46", text)
+        self.assertIn("runs/48", text)
+        self.assertIn("outage of GitHub Actions", text)
+        self.assertEqual(self.gh.reruns, [])
+
+    def test_a_latest_run_with_no_failed_job_twice_opens_a_bug_that_names_the_jobs(self):
+        self.ci_run("success", run_id=40)
+        self.gh.jobs[40] = [
+            {"id": 401, "name": "test", "conclusion": "success"},
+            {"id": 402, "name": "lint", "conclusion": "success"},
+        ]
+        run = self.ci_run(run_id=50)
+        self.jobless(run)
+        self.sweep()
+        self.assertEqual(self.gh.reruns, [("all", 50)])
+        run["run_attempt"] = 2
+        self.gh.attempts[(50, 1)] = "failure"
+        self.jobless(run, 2)
+        self.sweep()
+        self.assertEqual(self.gh.reruns, [("all", 50)])
+        [bug] = self.bugs()
+        self.assertEqual(bug["title"], "ci.yml does not start on main")
+        self.assertIn("No job failed: GitHub never created `test`", bug["body"])
+
+    def test_a_run_with_a_failed_job_is_handled_as_before(self):
+        # An overtaken run with a failed job is recorded at once, never run again.
+        self.ci_run(run_id=48)
+        self.ci_run("success", run_id=50)
+        self.sweep()
+        self.assertEqual(self.gh.reruns, [])
+        self.assertEqual(len(self.flaky()), 1)
+
     def test_a_failure_runs_again_once_then_opens_a_bug_that_is_planned_first(self):
         run = self.ci_run()
         self.sweep()

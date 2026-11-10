@@ -2146,7 +2146,7 @@ def _runs_marker(run, attempts):
     return f"{CI_RUNS_PREFIX}{items} -->"
 
 
-def _failed_jobs(gh, run, attempt, failed_jobs=None):
+def _failed_jobs(gh, run, attempt, failed_jobs=None, known=None):
     """Each failed job of an attempt, linked, with its failed steps, the failures its error
     annotations name and the end of its log, so the issue holds what an agent needs. With
     `failed_jobs`, each failed job's name, failed commands and the tests its error
@@ -2176,7 +2176,7 @@ def _failed_jobs(gh, run, attempt, failed_jobs=None):
         tail = _log_tail(log)
         if tail:
             lines += ["", "  The end of its log:", "", "  ```text", *tail, "  ```", ""]
-    return lines or ["- The attempt failed before any job did; open it for the reason."]
+    return lines or [_jobless_line(gh, known, run, attempt)]
 
 
 # The lines of a failed job's log that a CI bug issue shows, at most this many characters.
@@ -2237,14 +2237,15 @@ def _failed_attempts(gh, run, attempts):
     return failed
 
 
-def _failures(gh, run, failed, failed_jobs=None):
+def _failures(gh, run, failed, failed_jobs=None, known=None):
     """Each failed attempt, linked, with its failed jobs and steps. With `failed_jobs`, the
     failed jobs of the latest failed attempt and their failed commands are added to it."""
     lines = []
     for attempt in failed:
         url = f"{run.get('html_url')}/attempts/{attempt}"
         found = failed_jobs if attempt == failed[-1] else None
-        lines += ["", f"Attempt [{attempt}]({url}):", *_failed_jobs(gh, run, attempt, found)]
+        jobs = _failed_jobs(gh, run, attempt, found, known)
+        lines += ["", f"Attempt [{attempt}]({url}):", *jobs]
     return lines
 
 
@@ -2254,11 +2255,11 @@ def _failed_marker(run, failed_jobs):
     return f"{CI_FAILED_PREFIX}{data} -->"
 
 
-def _failure_text(gh, workflow, run, branch):
+def _failure_text(gh, workflow, run, branch, known=None):
     sha = run.get("head_sha") or ""
     attempts = range(1, (run.get("run_attempt") or 1) + 1)
     failed_jobs = []
-    lines = _failures(gh, run, _failed_attempts(gh, run, attempts), failed_jobs)
+    lines = _failures(gh, run, _failed_attempts(gh, run, attempts), failed_jobs, known)
     return "\n".join(
         [
             f"[`{workflow}` failed]({run.get('html_url')}) on `{branch}` at {sha}, also when "
@@ -2436,7 +2437,7 @@ def _merged(found, item, workflow):
     return failure
 
 
-def _attempt_failures(gh, workflow, run, attempt):
+def _attempt_failures(gh, workflow, run, attempt, known=None):
     """The failures of one failed attempt, in the order of its jobs. A step that failed the
     same way in several jobs is one failure, with a line for each job."""
     found = {}
@@ -2450,25 +2451,31 @@ def _attempt_failures(gh, workflow, run, attempt):
             failure = _merged(found, {**item, "lines": []}, workflow)
             if item["line"] not in failure["lines"]:
                 failure["lines"].append(item["line"])
-    return list(found.values()) or [
+    if found:
+        return list(found.values())
+    line = _jobless_line(gh, known, run, attempt)
+    return [
         {
             "key": _key("start"),
             "kind": "start",
             "name": workflow,
             "subject": workflow,
-            "about": "the run failed before any job did",
-            "line": "- The attempt failed before any job did; open it for the reason.",
-            "lines": ["- The attempt failed before any job did; open it for the reason."],
+            "about": (
+                "no job failed, because GitHub never created some of the jobs or the run "
+                "failed before any job did, also when NexKit ran it again"
+            ),
+            "line": line,
+            "lines": [line],
         }
     ]
 
 
-def _flaky_failures(gh, workflow, run, unseen):
+def _flaky_failures(gh, workflow, run, unseen, known=None):
     """The failures of the attempts among `unseen` that failed, each once, with its lines
     for each attempt it failed in; empty when none of them failed."""
     found = {}
     for attempt in _failed_attempts(gh, run, unseen):
-        for item in _attempt_failures(gh, workflow, run, attempt):
+        for item in _attempt_failures(gh, workflow, run, attempt, known):
             failure = _merged(found, {**item, "attempts": {}}, workflow)
             lines = failure["attempts"].setdefault(attempt, [])
             lines += [line for line in item["lines"] if line not in lines]
@@ -2551,7 +2558,7 @@ def _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen):
     """Record a run that passed only when run again, or that failed and a newer run
     overtook, on the issue of each failure in its attempts among `unseen`. Returns lines for
     the log, none when none of those attempts failed."""
-    failures = _flaky_failures(gh, workflow, run, unseen)
+    failures = _flaky_failures(gh, workflow, run, unseen, known)
     new = [failure for failure in failures if not _issue_of(known, failure, "open")]
     if len(new) > CI_NEW_ISSUES:
         failures = [f for f in failures if _issue_of(known, f, "open")]
@@ -2564,7 +2571,7 @@ def _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen):
 
 
 def _report_failure(gh, cfg, where, workflow, branch, known, run):
-    text = _failure_text(gh, workflow, run, branch)
+    text = _failure_text(gh, workflow, run, branch, known)
     issue = known["bug"]
     if issue:
         gh.comment(issue["number"], f"It fails again on a newer commit.\n\n{text}")
@@ -2572,7 +2579,7 @@ def _report_failure(gh, cfg, where, workflow, branch, known, run):
     else:
         people = "".join(f"@{login} " for login in cfg["notify"])
         body = f"{CI_BUG_PREFIX}{workflow} -->\n{people}{text}"
-        failures = _attempt_failures(gh, workflow, run, run.get("run_attempt") or 1)
+        failures = _attempt_failures(gh, workflow, run, run.get("run_attempt") or 1, known)
         title = red_title(workflow, failures, branch)
         labels = ["bug", CI_LABEL]
         issue = known["bug"] = gh.create_issue(title, body, where.get("milestone"), labels)
@@ -2593,13 +2600,72 @@ def _passed_later(gh, workflow, run, number, unseen):
     return f"`{workflow}` passed in attempt {attempt}; commented on #{number}."
 
 
+def _unseen(known, run):
+    """The attempts of a run that no record covers yet."""
+    seen = known["seen"].get(run["id"], set())
+    return [n for n in range(1, (run.get("run_attempt") or 1) + 1) if n not in seen]
+
+
+def jobless(gh, run, attempt):
+    """Whether a failed attempt of a run failed with no failed job: GitHub created none of
+    its jobs, or only some, none of which failed, as in an outage of GitHub Actions. No
+    code of the repository explains such a failure."""
+    return not any(job.get("conclusion") in FAILED for job in gh.attempt_jobs(run["id"], attempt))
+
+
+def missing_jobs(gh, known, run, attempt):
+    """The jobs of the newest run of the workflow that passed (`known["passing"]`) that an
+    attempt lacks: those GitHub never created. None when no run passed to compare with."""
+    passing = known.get("passing")
+    if not passing:
+        return None
+    if "passing_jobs" not in known:
+        jobs = gh.attempt_jobs(passing["id"], passing.get("run_attempt") or 1)
+        known["passing_jobs"] = list(dict.fromkeys(j.get("name") for j in jobs if j.get("name")))
+    have = {job.get("name") for job in gh.attempt_jobs(run["id"], attempt)}
+    return [name for name in known["passing_jobs"] if name not in have]
+
+
+def _jobless_line(gh, known, run, attempt):
+    """What a bug or flaky-run record says of an attempt that failed with no failed job."""
+    missing = missing_jobs(gh, known, run, attempt) if known else None
+    if missing:
+        listed = ", ".join(f"`{_plain(name, 100)}`" for name in missing[:10])
+        more = f" and {len(missing) - 10} more" if len(missing) > 10 else ""
+        what = f"GitHub never created {listed}{more}, which the last run that passed had"
+    else:
+        what = "GitHub created no job that failed, or the run failed before any job did"
+    return (
+        f"- No job failed: {what}. Look for an outage of GitHub Actions at that time "
+        "(githubstatus.com) before a cause in the repository; open the attempt for GitHub's "
+        "reason."
+    )
+
+
+def _jobless_passed(gh, run, unseen):
+    """Whether a run that passed when run again failed before only with no failed job, in
+    each of its attempts among `unseen` that failed."""
+    failed = _failed_attempts(gh, run, unseen)
+    return bool(failed) and all(jobless(gh, run, attempt) for attempt in failed)
+
+
 def _check_run(gh, cfg, where, workflow, branch, known, run, latest):
-    """What one completed run on the default branch leads to: lines for the log."""
+    """What one completed run on the default branch leads to: lines for the log. A run
+    whose first attempt failed with no failed job runs again first, all its jobs, also
+    when a newer run overtook it; when it then passes, nothing is recorded, unless the
+    same happened to another run of the workflow within `CI_LOOK_BACK`."""
     attempt = run.get("run_attempt") or 1
     seen = known["seen"].get(run["id"], set())
     unseen = [n for n in range(1, attempt + 1) if n not in seen]
     lines = []
     if run.get("conclusion") in FAILED:
+        if attempt < 2 and unseen and jobless(gh, run, attempt):
+            # Its failed jobs, if any, would not bring back the jobs GitHub never created.
+            gh.rerun(run["id"])
+            return [
+                f"Running `{workflow}` on `{branch}` again: no job failed in run {run['id']}, "
+                "so GitHub likely never created some of its jobs."
+            ]
         if latest and attempt < 2:
             gh.rerun_failed_jobs(run["id"])
             return [f"Running the failed jobs of `{workflow}` on `{branch}` again."]
@@ -2613,6 +2679,12 @@ def _check_run(gh, cfg, where, workflow, branch, known, run, latest):
         reporter = known["reporter"].get(run["id"])
         if reporter:
             lines = [_passed_later(gh, workflow, run, reporter, unseen)]
+        elif run["id"] in known.get("jobless_alone", ()):
+            # GitHub created the missing jobs when run again, and this happened once.
+            return [
+                f"Run {run['id']} of `{workflow}` on `{branch}` passed when run again, after "
+                "an attempt in which no job failed; nothing is recorded."
+            ]
         else:
             lines = _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen)
     if lines:
@@ -2704,12 +2776,30 @@ def check_ci(gh, cfg, where, branch, now=None):
                 and (run.get("conclusion") in FAILED or (run.get("run_attempt") or 1) > 1)
             ]
             known = _ci_records(gh, workflow, ci_issues(gh, since)) if candidates else None
+            if known is not None:
+                # What a run that failed with no failed job is compared with.
+                known["passing"] = next((r for r in runs if r.get("conclusion") == "success"), None)
+
+            def recent(run, runs=runs):
+                created = parse_iso(run.get("created_at"))
+                return run is runs[0] or created is None or created >= since
+
+            if known is not None:
+                # Runs that passed when run again after only attempts with no failed job:
+                # one alone records nothing, two or more within the look-back do.
+                passed = [
+                    run
+                    for run in candidates
+                    if recent(run)
+                    and run.get("conclusion") == "success"
+                    and run["id"] not in known["reporter"]
+                    and _jobless_passed(gh, run, _unseen(known, run))
+                ]
+                known["jobless_alone"] = {run["id"] for run in passed} if len(passed) < 2 else set()
             # Oldest first, so records follow the order of the runs.
             for run in reversed(candidates):
                 latest = run is runs[0]
-                created = parse_iso(run.get("created_at"))
-                recent = latest or created is None or created >= since
-                if not recent and run["id"] not in known["reporter"]:
+                if not recent(run) and run["id"] not in known["reporter"]:
                     continue
                 lines += _check_run(gh, cfg, where, workflow, branch, known, run, latest)
         except GitHubError as exc:

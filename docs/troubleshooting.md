@@ -705,6 +705,17 @@ NexKit leaves the parent open, since nothing it asked for was delivered (see [Pa
 issues](configuration.md#parent-issues)). Decide whether the parent is done: close it, or
 open new parts for what is left.
 
+### A CI issue says no job failed
+
+The run failed with no failed job: GitHub never created some of its jobs, which the record
+names, or the run failed before any job did. NexKit ran it again once and it failed the
+same way, or another run did the same within the day. Check
+[githubstatus.com](https://www.githubstatus.com) for an outage of GitHub Actions at the
+run's time, and the run's page for GitHub's reason, such as a workflow file error, before
+you look for a cause in the repository. When it was an outage, close the issue as not
+planned. When the workflow file is the cause, a person fixes it, since `.github/` is
+protected.
+
 ### A CI issue holds records of several failures
 
 An issue for a run whose failures would open more than five issues, or one from an older

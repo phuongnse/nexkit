@@ -496,6 +496,9 @@ class FakeGitHub:
     def rerun_failed_jobs(self, run_id):
         self.reruns.append(run_id)
 
+    def rerun(self, run_id):
+        self.reruns.append(("all", run_id))
+
     def issues_by(self, creator, limit=100, state="all", since=None):
         # As GitHub does, the newest `limit` items, pull requests among them, then without
         # them. An issue without `updated_at`, as tests add them, counts as updated now.

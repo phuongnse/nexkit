@@ -1109,7 +1109,14 @@ the `null` scope, since it may have replaced a sweep that waited.
   latest run, the runs of the last day and the runs a bug issue reports, among the newest
   100. Runs of pull requests do not count, nor runs from a fork, whose head branch can
   have the same name. When the latest run failed in its first attempt, its failed jobs run
-  once more; NexKit never runs them a third time, which would hide failures. When a later
+  once more; NexKit never runs them a third time, which would hide failures. A run whose
+  first attempt failed with no failed job, because GitHub never created some of its jobs
+  or the run failed before any job did, as in an outage of GitHub Actions, runs once more
+  first, every job, whether it is the latest run or one a newer run overtook: no code of
+  the repository explains such a failure, and a real failure fails again. When the new
+  attempt passes, nothing is recorded, unless another run of the workflow passed the same
+  way within the day, and the sweep's log says so; then each such run is recorded as a
+  flaky run. When a later
   attempt fails too, autopilot opens a `bug` issue in scope (without a milestone with
   `null`), starting with a marker that
   names the workflow, and that issue goes before all others. Its report lists the failed
@@ -1136,8 +1143,10 @@ the `null` scope, since it may have replaced a sweep that waited.
   its first error annotation, so one step that fails the same way in several jobs, or in
   several workflows, such as a setup step whose download host refused requests, is one
   failure; an issue that NexKit 5.0 or earlier opened for one job's step keeps getting
-  that job's records. An attempt that failed before any job did is named by the
-  workflow. Each failure's issue is `bug`,
+  that job's records. An attempt with no failed job is named by the workflow, and its
+  record names the jobs that the newest run that passed had and it lacks, and says to look
+  for an outage of GitHub Actions before a cause in the repository. Each failure's issue
+  is `bug`,
   in scope, titled by the failure in plain words, for example 'Test "pages through more
   than twenty orders" in OrderHistory.test.tsx fails at times on main' (see [the title
   forms](configuration.md#autopilot)), starts with its own marker that names the workflow and a key for

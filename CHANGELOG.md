@@ -1,5 +1,68 @@
 # Changelog
 
+## 6.4.0
+
+A person decides what only a person may decide. NexKit gets through an outage of GitHub
+Actions without waiting for anyone, and a check can split itself into as many shards as it
+needs.
+
+- A `review.checklist` item can be one that a person decides:
+  `{"text": "...", "person": true}`, for example one that accepts a risk (#238).
+  - When the review finds it not met, it is no blocking finding, and no fix round starts,
+    since a fix could only undo the change.
+  - When nothing else blocks, the round ends `ready` without a merge: `nexkit/review` fails
+    with "A person decides …", the round's comment lists the items with their evidence,
+    and `notify` is mentioned once.
+  - A writer's approval of that commit accepts the items and turns `nexkit/review` green;
+    with `merge.auto`, NexKit then merges. An approval of an older commit does nothing.
+  - Beside other blocking findings or failing checks, the fix round still starts for
+    those.
+
+  See [Review checklist](docs/configuration.md#review-checklist).
+- A command that autopilot started, or an automatic round, whose run GitHub never started
+  or that ended without a report, starts again (#239):
+  - at once, then 30, 60 and 120 minutes after its last start;
+  - after that, it waits for a person, with a reason that names an outage of GitHub
+    Actions;
+  - a run whose agent or review job ran to its end starts once more only.
+
+  A round that started the next one by itself, or a run that continues a paused one, now
+  starts that run once more when it has not started after `autopilot.lost_after_minutes`,
+  instead of waiting six hours for a person. See [A command or round did not
+  start](docs/troubleshooting.md#a-command-or-round-did-not-start).
+- A run of a watched workflow on the default branch that failed with no failed job,
+  because GitHub never created some of its jobs, is no longer recorded at once (#240):
+  - The latest run's failed jobs run once more, as before.
+  - Such a run that then passes, or that a newer run overtook, is recorded only when
+    another run of the workflow did the same within a day.
+  - Its record names the jobs that GitHub never created and points at an outage before a
+    cause in the repository.
+
+  An overtaken run is never run again, since that could deploy an old commit over a newer
+  one.
+- A question of a plan or a blocked `/nexkit go` may offer one option that only closes the
+  issue, which the comment marks *(NexKit closes the issue as not planned)* (#241).
+  - A writer who picks it with `/nexkit go <option>` or `/nexkit plan <option>`, or with
+    autopilot in a plain comment, has NexKit close the issue as not planned, with no agent
+    run.
+  - Agents offer closing only that way, and a fix round never offers it.
+  - Autopilot no longer answers a recommended close on its own, unless it is a round's one
+    recommendation together with its finding that no change is needed.
+
+  See [A question without a recommended
+  option](docs/troubleshooting.md#a-question-without-a-recommended-option-or-asked-again).
+- A check can run in as many shards as a command prints when the round starts (#242):
+  `"shards": {"count": "<command>", "max": <2-20>}`, with `parallel_checks`.
+  - A new `shards` job, which has a read-only token and no secrets, runs `count` on the
+    head.
+  - NexKit then runs `<name>-1` to `<name>-N`, each a check of its own with
+    `NEXKIT_SHARD=k/N`. A shard's `NEXKIT_CHECK_VERIFIED_SHA` applies only while N stays
+    the same.
+  - A `count` that fails, or that prints no number from 1 to `max`, fails the check, and no
+    shard runs.
+
+  See [Parallel checks](docs/configuration.md#parallel-checks).
+
 ## 6.3.1
 
 - A merge after an approval, at a sweep or at the end of a round no longer mentions anyone

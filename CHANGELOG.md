@@ -1,5 +1,30 @@
 # Changelog
 
+## 6.7.0
+
+The `nexkit` CLI runs the release that a repository's workflow pins, so one installed
+`nexkit` serves every repository.
+
+- `nexkit status` and `nexkit doctor` judge a repository by the rules of the release that
+  its `.github/workflows/nexkit.yml` pins in `nexkit_ref`, as corepack runs the package
+  manager a project names (#256). Before, they judged it by the installed release's rules,
+  and nothing said so when the two differed.
+  - They fetch the pinned release once into `~/.cache/nexkit/releases` and reuse it. A
+    branch, such as `main`, is looked up on each run and fetched again when it moved.
+    Stderr names the release that runs and its folder, which holds that release's docs.
+  - They fetch only a release tag or a branch, by its full ref. Anyone can add a pull
+    request's ref or a commit to a repository's network, so for such a `nexkit_ref` they
+    say so and run the installed release.
+  - The installed release runs with no fetch when the pin is its own version, outside a
+    repository with a NexKit workflow, for `nexkit init`, and with `--own-release` or
+    `NEXKIT_OWN_RELEASE=1`.
+  - When `nexkit_repository` names another repository, such as a fork, they fetch and run
+    nothing unless `NEXKIT_KIT_REPOSITORY=OWNER/REPO` names it: otherwise cloning a
+    repository and running `nexkit status` would run whatever code it points at.
+  - The plugin's `status` and `drive` skills no longer clone the pinned ref themselves.
+
+  See [Local commands](README.md#local-commands).
+
 ## 6.6.0
 
 An agent reads an issue and its discussion whole, a person's pull request is judged on

@@ -1,7 +1,8 @@
 # Every week, propose the newest stable version of each agent runtime, one pull request per
 # runtime. CI on the pull request runs the unit tests and that runtime's live smoke test
 # with that exact version; merge it when CI is green, then release. Until then the pipeline
-# keeps using the version it was tested with.
+# keeps using the version it was tested with. A run that fails says so in an issue, which
+# the next run that succeeds closes.
 name: Update agents
 
 on:
@@ -13,6 +14,7 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  issues: write # the issue that says this workflow failed
 
 concurrency:
   group: update-agents
@@ -54,3 +56,29 @@ jobs:
           done
         env:
           GH_TOKEN: ${{ github.token }}
+      # A run that fails leaves no pull request, which looks the same as no newer version:
+      # say so in an issue, one at a time, and close it once a run succeeds.
+      - name: Report the failure in an issue
+        if: failure()
+        run: |
+          body="[Update agents]($RUN_URL) failed, so no pull request proposes a newer agent runtime. This issue closes when the workflow next succeeds."
+          number=$(gh issue list --state open --author app/github-actions --search "\"$TITLE\" in:title" --json number -q '.[0].number')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "[Update agents]($RUN_URL) failed again."
+          else
+            gh issue create --title "$TITLE" --label bug --body "$body"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: Update agents failed
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Close the failure issue
+        if: success()
+        run: |
+          for number in $(gh issue list --state open --author app/github-actions --search "\"$TITLE\" in:title" --json number -q '.[].number'); do
+            gh issue close "$number" --comment "[Update agents]($RUN_URL) succeeded."
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: Update agents failed
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -1,5 +1,37 @@
 # Changelog
 
+## 6.5.0
+
+A sharded check's CI evidence takes one name, and a configuration that would stop NexKit
+can no longer pass a person's pull request.
+
+- `evidence.artifacts` takes any number of names, and a name ending in `*` takes every
+  artifact of a run whose name starts with the part before it, such as
+  `test-results-e2e-*` for each shard's `test-results-e2e-1`, `test-results-e2e-2` and so
+  on (#245).
+  - The limit of 10 names is gone. Before, an 11th name made NexKit refuse every command.
+  - `*` may only end a name. Exact names work as before, and an artifact that several
+    names match is downloaded once.
+  - A round now keeps up to 250 MB of the runs' logs, annotations and artifacts, instead of
+    the 50 MB that the result files of failing checks keep, since nothing uploads that
+    folder again. What goes past it is left out, and the prompt, the log and the run
+    summary say so, as before.
+
+  See [Evidence from CI runs](docs/configuration.md#evidence-from-ci-runs).
+- A person's pull request that changes `.nexkit/config.json` fails `nexkit/checks` on
+  `/nexkit review` when NexKit would refuse that file (#246). Before, its checks and review
+  passed, and once it merged NexKit refused every command, the one on the pull request that
+  corrected it included.
+  - `route` reads the file at the head through the API and loads it as `nexkit doctor`
+    does. Nothing of the pull request runs, and the checks still come from the default
+    branch's configuration.
+  - The status's description and the round's comment name the error, whatever the checks
+    and the review found. A file that loads, or a pull request that leaves it alone, runs
+    as before.
+
+  See [A person's pull request](docs/how-it-works.md#stages) and
+  [Troubleshooting](docs/troubleshooting.md#setup).
+
 ## 6.4.0
 
 A person decides what only a person may decide. NexKit gets through an outage of GitHub

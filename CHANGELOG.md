@@ -2,7 +2,8 @@
 
 ## 6.6.0
 
-An agent reads an issue and its discussion whole, and the pipeline runs Claude Code 2.1.311.
+An agent reads an issue and its discussion whole, a person's pull request is judged on
+nothing it never asked for, and the pipeline runs Claude Code 2.1.311.
 
 - An issue's body and each collaborator's comment reach the agent whole, up to the 65,536
   characters GitHub keeps (#249). Before, NexKit cut the body at 20,000 characters and each
@@ -21,6 +22,13 @@ An agent reads an issue and its discussion whole, and the pipeline runs Claude C
     knows why it asks.
 
   See [Agents](docs/how-it-works.md#agents).
+- A review of a person's pull request no longer keeps acceptance criteria that the reviewer
+  made up from the pull request's text (#254). Such a pull request has no plan, so its
+  review has no criteria to judge, but only the prompt said so. One marked `unmet` became a
+  blocking finding and requested changes, and one marked `unverifiable` waited for a
+  person. NexKit now drops them before it acts on the review.
+
+  See [A person's pull request](docs/how-it-works.md#stages).
 - The pipeline installs Claude Code 2.1.311, up from 2.1.285 (#251).
 
 ## 6.5.0

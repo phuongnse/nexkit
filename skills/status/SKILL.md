@@ -10,18 +10,13 @@ Change nothing. The NexKit CLI ships with this plugin; run it as
 `nexkit` means that command.
 
 The plugin can be newer or older than the release the repository runs, and states and
-advice match what runs only at that release. So when the `nexkit_ref` input in
-`.github/workflows/nexkit.yml` is not the plugin's version, run the CLI of the pinned
-release, and read NexKit's docs at that ref:
-
-```sh
-repo=$(grep -oE 'nexkit_repository: \S+' .github/workflows/nexkit.yml | cut -d' ' -f2)
-ref=$(grep -oE 'nexkit_ref: \S+' .github/workflows/nexkit.yml | cut -d' ' -f2)
-kit="${TMPDIR:-/tmp}/nexkit-$ref"
-[ -d "$kit" ] || git clone -q --depth 1 --branch "$ref" "https://github.com/$repo" "$kit"
-python3 "$kit/bin/nexkit" status --json
-gh api "repos/$repo/contents/docs/troubleshooting.md?ref=$ref" -H 'Accept: application/vnd.github.raw'
-```
+advice match what runs only at that release. The CLI sees to that: when
+`.github/workflows/nexkit.yml` pins another release, it fetches and runs that one, and
+says on stderr which release runs and from which folder. Then read NexKit's docs in that
+folder, not those the links below lead to, which are the plugin's. When it says instead
+that the workflow runs NexKit's code from another repository, ask the user whether they
+trust that repository; only on their word, run it again with
+`NEXKIT_KIT_REPOSITORY=<that repository>` set.
 
 1. **Snapshot.** Run `nexkit status --json` in the repository. It reads GitHub with the
    `gh` login, judges with the `.nexkit/config.json` on the default branch, as the

@@ -883,6 +883,11 @@ def build_parser():
         metavar="FILE",
         help="The App's private key, to check the App and its installation on this repository",
     )
+    p.add_argument(
+        "--own-release",
+        action="store_true",
+        help="Run this release, not the one .github/workflows/nexkit.yml pins",
+    )
     p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("status", help="List open NexKit work and what each item waits for")
@@ -897,6 +902,11 @@ def build_parser():
         action="store_true",
         help="Judge with this checkout's .nexkit/config.json, to preview a change (default: "
         "the one on the default branch, which the pipeline uses)",
+    )
+    p.add_argument(
+        "--own-release",
+        action="store_true",
+        help="Run this release, not the one .github/workflows/nexkit.yml pins",
     )
     p.set_defaults(func=cmd_status)
 
@@ -984,6 +994,12 @@ def main(argv=None):
     if not python_supported(sys.version_info):
         print(python_error(sys.version_info), file=sys.stderr)
         return 2
+    from . import pin
+
+    argv = sys.argv[1:] if argv is None else list(argv)
+    pinned = pin.run(argv)
+    if pinned is not None:
+        return pinned
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

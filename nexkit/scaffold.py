@@ -782,13 +782,28 @@ def pipeline_ref(workflow):
     return (match.group(1), match.group(2)) if match else None
 
 
+def _input(workflow, name):
+    match = re.search(rf"^\s*{name}:\s*['\"]?([^'\"\s]+)", _uncommented(workflow), re.M)
+    return match.group(1) if match else None
+
+
+def kit_pin(workflow):
+    """(NexKit repository, ref) whose code the workflow's jobs check out, from its
+    `nexkit_repository` and `nexkit_ref` inputs, or None when it does not call the pipeline
+    or sets no `nexkit_ref`."""
+    if not pipeline_ref(workflow):
+        return None
+    ref = _input(workflow, "nexkit_ref")
+    return (_input(workflow, "nexkit_repository") or KIT_REPOSITORY, ref) if ref else None
+
+
 def _same_ref(workflow, ref):
     """Findings: `nexkit_ref` names the ref the pipeline is called at. The jobs check out
     NexKit's code at `nexkit_ref`, so with another ref they run another release's code."""
-    match = re.search(r"^\s*nexkit_ref:\s*['\"]?([^'\"\s]+)", _uncommented(workflow), re.M)
-    if match and match.group(1) == ref:
+    pinned = _input(workflow, "nexkit_ref")
+    if pinned == ref:
         return []
-    found = f"is {match.group(1)}" if match else "is not set"
+    found = f"is {pinned}" if pinned else "is not set"
     return [
         (
             False,

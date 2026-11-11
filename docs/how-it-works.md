@@ -720,7 +720,9 @@ Both statuses are set on that head.
   error, and otherwise `notify` hears of it.
 - The reviewer gets no plan. It judges the change against the pull request's title and
   description, and it reviews `.github/`, `.nexkit/` and every other protected path like any
-  other code, since a person wrote them.
+  other code, since a person wrote them. With no plan there are no acceptance criteria:
+  NexKit drops any the reviewer still gives, so none blocks the review or waits for a
+  person.
 - When it changes `.nexkit/config.json`, `route` also reads that file at the head through
   the API and loads it as `nexkit doctor` does, with NexKit's own code: nothing of the
   head runs, and the checks still come from the default branch's configuration. NexKit

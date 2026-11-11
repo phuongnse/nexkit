@@ -9,7 +9,9 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import agent, runlog
+from nexkit.context import PERSON_PLAN
 from nexkit.redact import Redactor
+from nexkit.report import apply_criteria
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.claude_code import ClaudeReader
 from tests.support import (
@@ -933,6 +935,33 @@ class RunStageTests(StageCase):
         prompt = self.claude.call()["prompt"]
         self.assertIn("+    return a + b", prompt)
         self.assertIn("`test` (`true`): passed", prompt)
+
+    def test_a_persons_pull_request_review_drops_the_criteria_it_made_up(self):
+        git(self.repo, "checkout", "-q", "-b", "fix-add")
+        (self.repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+        git(self.repo, "add", "-A")
+        self.repos.commit(self.repo, "fix")
+        made_up = {
+            "criterion": "add(2, 3) returns 5",
+            "status": "unmet",
+            "test": "",
+            "evidence": "No test asserts it.",
+        }
+        self.claude.configure(result={**VERDICT, "criteria": [made_up]})
+        checks = [{"name": "test", "run": "true", "exit_code": 0, "passed": True, "output": ""}]
+        person = {**CONTEXT, "person": True, "plan": PERSON_PLAN}
+        result, log = self.run_quietly("review", context=person, checks=checks, base="main")
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["output"]["criteria"], [])
+        self.assertIn("Dropped the 1 acceptance criteria the review gave", log)
+        saved = json.loads((self.out / "result.json").read_text())
+        self.assertEqual(saved["output"]["criteria"], [])
+        # So the review approves: nothing else blocks.
+        self.assertEqual(apply_criteria(result["output"])["verdict"], "approve")
+        # A NexKit pull request's review keeps its criteria.
+        result = self.run_stage("review", checks=checks, base="main")
+        self.assertEqual(result["output"]["criteria"], [made_up])
+        self.assertEqual(apply_criteria(result["output"])["verdict"], "request_changes")
 
     def test_a_review_that_skips_a_checklist_item_gives_no_verdict(self):
         cfg = make_config(review={"checklist": CHECKLIST})

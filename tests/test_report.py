@@ -19,6 +19,7 @@ from nexkit.report import (
     report,
     retry_line,
     review_body,
+    shortened_line,
     workflow_file,
 )
 from nexkit.route import route
@@ -1785,3 +1786,56 @@ class ReportTests(ReportCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SHORTENED = [
+    {"name": "the comment of `@alice` of 2026-11-01T00:00:00Z", "kept": 1000, "length": 39016}
+]
+SHORTENED_LINE = (
+    "**Shortened for the agent:** these texts are longer than a prompt keeps, so its prompt "
+    "had only their start and the agent read each whole from a file: the comment of "
+    "`@alice` of 2026-11-01T00:00:00Z (1,000 of 39,016 characters)."
+)
+
+
+class ShortenedTextsTests(ReportCase):
+    """The round's comment names the texts an agent's prompt shortened, so the person who
+    answers the agent knows why it asks."""
+
+    def test_a_blocked_round_names_the_shortened_texts(self):
+        blocked = {"status": "blocked", "error": "Which file?", "shortened": SHORTENED}
+        self.write("nexkit-agent", "result.json", blocked)
+        outcome = self.run_report(published=False)
+        self.assertEqual(outcome["outcome"], "agent_blocked")
+        [run] = self.gh.run_comments(5)
+        self.assertIn(SHORTENED_LINE, run["body"])
+
+    def test_a_posted_plan_names_the_shortened_texts(self):
+        self.write("nexkit-agent", "result.json", {"status": "done", "shortened": SHORTENED})
+        plan = "https://github.com/acme/app/issues/5#issuecomment-1"
+        published = json.dumps({"published": True, "comment": plan})
+        needs = {"publish": {"outputs": {"result": published}}}
+        os.environ["GITHUB_RUN_ID"] = "1"
+        outcome = report(
+            self.gh,
+            decision("plan"),
+            make_config(),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertEqual(outcome["outcome"], "planned")
+        self.assertIn(f"[Plan]({plan}) posted.\n\n{SHORTENED_LINE}", outcome["summary"])
+
+    def test_a_pull_request_round_names_what_the_review_shortened(self):
+        self.candidate()
+        self.write("nexkit-review", "result.json", {**review_result(), "shortened": SHORTENED})
+        self.run_report(decision("fix", pr=6, target=6, head=HEAD))
+        self.assertIn(SHORTENED_LINE, self.gh.run_comments(6)[-1]["body"])
+
+    def test_a_round_without_shortened_texts_says_nothing_of_them(self):
+        self.candidate()
+        self.run_report(decision("fix", pr=6, target=6, head=HEAD))
+        self.assertNotIn("Shortened", self.gh.run_comments(6)[-1]["body"])
+        self.assertEqual(shortened_line(None, {"shortened": [{"kept": 1}]}), "")

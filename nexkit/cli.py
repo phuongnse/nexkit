@@ -448,6 +448,8 @@ def cmd_context(args):
         ci=args.evidence,
         cfg=cfg if args.evidence else None,
         workflow=workflow_file(os.environ.get("GITHUB_WORKFLOW_REF", "")),
+        # Beside the context, outside the working tree; the agent's artifact keeps them.
+        texts=Path(args.out) / "texts",
     )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

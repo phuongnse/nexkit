@@ -1777,9 +1777,36 @@ def _carry_line(decision, base, carry):
     return f"The AI review ran again rather than carry over the approval of `{sha[:7]}`: {why}."
 
 
+def shortened_line(*results):
+    """What the round's comment says about the texts that an agent's prompt kept only the
+    start of, from the results of the round's agents, or "". A person who answers the
+    agent then knows that NexKit shortened them, and that the agent had each whole."""
+    found = {}
+    for result in results:
+        for item in (result or {}).get("shortened") or []:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                found.setdefault(clip(one_line(item["name"]), 200), item)
+    if not found:
+        return ""
+    parts = []
+    for name, item in list(found.items())[:10]:
+        kept, length = item.get("kept"), item.get("length")
+        sizes = isinstance(kept, int) and isinstance(length, int)
+        parts.append(name + (f" ({kept:,} of {length:,} characters)" if sizes else ""))
+    more = f", and {len(found) - 10} more" if len(found) > 10 else ""
+    return (
+        "**Shortened for the agent:** these texts are longer than a prompt keeps, so its "
+        "prompt had only their start and the agent read each whole from a file: "
+        + "; ".join(parts)
+        + more
+        + "."
+    )
+
+
 def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     action = decision["action"]
     agent = _load(artifacts / "nexkit-agent" / "result.json")
+    shortened = shortened_line(agent, _load(artifacts / "nexkit-review" / "result.json"))
     publish = json.loads(((needs.get("publish") or {}).get("outputs") or {}).get("result") or "{}")
 
     if action in ("plan", "implement", "fix"):
@@ -1823,6 +1850,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent):
                 reason = None
                 message += "\n\nNexKit autopilot carries on from here."
+            if shortened:
+                message = f"{message}\n\n{shortened}"
             if decision.get("pr"):
                 _stop_round(gh, decision, agent, outcome, message, reason, **fields)
             return {
@@ -1842,6 +1871,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             if reason and autopilot.carries_on(gh, cfg, decision, "planned", agent):
                 reason = None
                 summary += " NexKit autopilot carries on from here."
+            if shortened:
+                summary = f"{summary}\n\n{shortened}"
             return {
                 "outcome": "planned",
                 "summary": summary.strip(),
@@ -2077,6 +2108,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         message += _conflicts_after(
             gh, cfg, decision, pr, row, workflow_file(workflow_ref), default_branch
         )
+    if shortened:
+        message = f"{message}\n\n{shortened}"
     row.update(status=run_status(outcome), outcome=outcome)
     failing = [c["name"] for c in checks or [] if not c.get("passed")]
     blocking = [f for f in (review or {}).get("findings") or [] if f.get("severity") == "blocking"]

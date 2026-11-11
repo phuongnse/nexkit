@@ -38,7 +38,7 @@ $plan
 $body
 </untrusted>
 
-## Rules
+$shortened## Rules
 
 - Fix every failing check and every blocking finding. If a finding is wrong, leave the
   code unchanged and explain why in `summary`.

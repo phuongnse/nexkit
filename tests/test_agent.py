@@ -877,6 +877,31 @@ class RunStageTests(StageCase):
         self.assertIn("NexKit's agents may not change these paths: `.github/`", call["prompt"])
         self.assertEqual(result["passed_since"][0]["id"], 61)
 
+    def test_an_agent_reads_the_texts_its_prompt_shortened_outside_the_checkout(self):
+        folder = Path(self.tmp.name) / "out" / "texts"
+        folder.mkdir(parents=True)
+        (folder / "comment-7.md").write_text("x" * 39_016)
+        shortened = [
+            {
+                "name": "the comment of `@alice` of 2026-11-01T00:00:00Z",
+                "key": "comment-7",
+                "path": str(folder / "comment-7.md"),
+                "kept": 1_000,
+                "length": 39_016,
+            }
+        ]
+        self.claude.configure(result={**DONE, "status": "blocked", "blocker": "Which file?"})
+        result = self.run_stage("implement", context={**CONTEXT, "shortened": shortened})
+        call = self.claude.call()
+        self.assertEqual(call["args"][call["args"].index("--add-dir") + 1], str(folder))
+        self.assertIn("## Texts this prompt shortened", call["prompt"])
+        self.assertIn(f"the whole text in `{folder / 'comment-7.md'}`", call["prompt"])
+        # The round's comment names them.
+        self.assertEqual(
+            result["shortened"],
+            [{"name": shortened[0]["name"], "kept": 1_000, "length": 39_016}],
+        )
+
     def test_only_protected_paths_count_as_needing_a_person(self):
         listed = [".github/workflows/ci.yml", "src/app.py", "/.nexkit/config.json", "src/app.py"]
         self.claude.configure(

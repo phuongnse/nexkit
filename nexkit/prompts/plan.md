@@ -27,7 +27,7 @@ $previous
 $note
 </untrusted>
 
-$ci_evidence## Project checks NexKit runs on every candidate
+$shortened$ci_evidence## Project checks NexKit runs on every candidate
 
 $checks
 

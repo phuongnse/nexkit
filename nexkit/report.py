@@ -2005,7 +2005,15 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     resume = None
     if review_paused:
         # The commit is published and checked; only the review runs again after the reset.
-        message, resume = pause(reviewed, cfg, "review", pr, resumed=bool(decision.get("resumed")))
+        if action == "review":
+            again = auto_input(decision, resume=True)
+        else:
+            # The review stage of `/nexkit go` or a fix round resumes as `/nexkit review`.
+            kept = {"autopilot": decision.get("autopilot"), "retry": decision.get("retry")}
+            again = auto_input(kept, resume=True)
+        message, resume = pause(
+            reviewed, cfg, "review", pr, auto=again, resumed=bool(decision.get("resumed"))
+        )
         _pause_statuses(gh, head, resume, url)
         if config_error:
             gh.set_status(head, "nexkit/checks", "failure", config_status(config_error), url)

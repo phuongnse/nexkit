@@ -454,8 +454,10 @@ def start_waiting(gh, workflow, ref):
 
 
 def within_reach(cfg, run, at, now):
+    """Whether a run that waits for paused commands waits for this one: it is due, or
+    comes due within its `reach`."""
     minutes = reach(cfg, is_retry(run))
-    return bool(minutes) and at <= now + timedelta(minutes=minutes)
+    return at <= now or (bool(minutes) and at <= now + timedelta(minutes=minutes))
 
 
 def wait_for_paused(gh, cfg, now=datetime.now, sleep=time.sleep):
@@ -496,9 +498,10 @@ def resume_due(gh, cfg, workflow, ref, now=None):
 def check_paused(gh, cfg, workflow, ref, now=None):
     """The scheduled check. When a resume comes due within its `reach`, it starts the run
     that waits for it, and every resume goes through that run, so two runs never start the
-    same command. Otherwise it resumes what is due itself."""
+    same command. Without any wait, no such run exists, and it resumes what is due itself."""
     now = now or datetime.now(UTC)
-    if any(within_reach(cfg, run, at, now) for _, _, run, at in paused_runs(gh, now, cfg)):
+    found = paused_runs(gh, now, cfg)
+    if longest_reach(cfg) and any(within_reach(cfg, run, at, now) for _, _, run, at in found):
         start_waiting(gh, workflow, ref)
         return ["Started a run that resumes paused commands as they come due."]
     return resume_paused(gh, workflow, ref, now, cfg)[0]

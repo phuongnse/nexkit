@@ -614,6 +614,27 @@ class SweepTests(AutopilotCase):
         self.assertEqual((step["state"], step["person"]), ("waits", True))
         self.assertIn("after autopilot started it once more", step["reason"])
 
+    def test_a_reportless_run_again_after_a_transient_error_starts_as_that_run_again(self):
+        # Its number stays, so it gets only the waits of `retry.wait_minutes` left.
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", status="running", autopilot=True, retry=3)
+        self.gh.runs[self.runs] = {"status": "completed"}
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["state"], step["auto"]), ("start", "autopilot,retry:3"))
+
+    def test_a_reportless_fix_round_run_again_starts_as_that_run_again(self):
+        self.issue(5)
+        self.planned(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(6, 5)
+        kinds = ["auto", "retry", "autopilot"]
+        trigger = "fix (auto, retry 2, autopilot)"
+        self.run_comment(6, "fix", status="running", round=2, trigger=trigger, kinds=kinds, retry=2)
+        self.gh.runs[self.runs] = {"status": "completed"}
+        _, [step] = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual((step["command"], step["auto"]), ("fix", "true,autopilot,retry:2"))
+
     def test_tries_of_an_earlier_outage_do_not_count_later(self):
         self.issue(5)
         self.planned(5)

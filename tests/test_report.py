@@ -1836,6 +1836,19 @@ class ReportTests(ReportCase):
         self.assertNotIn("resume", command["run"])
         self.assertEqual([d["inputs"] for d in self.gh.dispatches], [WAIT_INPUTS])
 
+    def test_a_review_run_again_at_the_usage_limit_resumes_as_that_run_again(self):
+        self.candidate(review=LIMIT)
+        cases = (
+            (decision("review", pr=6, target=6, head=HEAD, autopilot=True, retry=2), "autopilot"),
+            (decision("fix", pr=6, target=6, head=HEAD, auto=True, retry=2), ""),
+        )
+        for d, kinds in cases:
+            self.run_report(d=d, published=d["action"] != "review")
+            resume = self.gh.run_comments(6)[-1]["run"]["resume"]
+            # A fix round's review resumes as `/nexkit review`, not as an automatic fix.
+            expected = ",".join(filter(None, (kinds, "resume", "retry:2")))
+            self.assertEqual((resume["command"], resume["auto"]), ("review", expected))
+
     def test_a_reset_beyond_the_wait_is_left_to_the_schedule(self):
         for usage_limit, at in (({"wait_minutes": 0}, None), ({}, "2099-01-01T00:00:00Z")):
             self.gh.dispatches.clear()

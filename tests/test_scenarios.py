@@ -1178,6 +1178,42 @@ class ScenarioTests(unittest.TestCase):
                 [d for d in pipe.gh.dispatches if d["inputs"]["command"] == "resume"], waits
             )
 
+    def test_a_go_whose_review_waits_to_run_again_needs_nobody_meanwhile(self):
+        # The review job leaves no result, as on 2026-11-09: the review runs again on the
+        # pull request after the first wait, and the issue's `/nexkit go` waits for it.
+        reviews = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            found = done()
+            if inputs["command"] == "go" and next(reviews) < 1:
+                del found["review"]
+            return found
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        while pipe.gh.dispatches[pipe.handled]["inputs"]["command"] != "resume":
+            pipe.drain_one()
+        self.assertEqual(pipe.played[-1], ("go", 5, "retry_waiting"))
+        # A sweep while it waits, such as the hourly one, mentions nobody.
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.gh.dispatches.append(pipe.gh.dispatches.pop(pipe.handled))
+        while pipe.gh.dispatches[pipe.handled]["inputs"]["command"] != "resume":
+            pipe.drain_one()
+        data = collect(pipe.gh, pipe.cfg)
+        self.assertEqual(data["needs_person"], [])
+        [issue] = data["issues"]
+        self.assertEqual((issue["state"], issue["pull"]), ("in_pull_request", 6))
+        [pull] = data["pull_requests"]
+        self.assertEqual(pull["state"], "retrying")
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+        pipe.play()
+        self.assertEqual(pipe.played[-1][::2], ("review", "merged"))
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
     def test_a_new_command_replaces_a_run_that_waits_to_run_again(self):
         def script(pipe, inputs):
             if inputs["command"] == "plan":

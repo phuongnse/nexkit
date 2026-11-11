@@ -430,10 +430,23 @@ class PausedRunTests(unittest.TestCase):
         task = {"action": "maintain", "task": "schedule"}
         maintain(self.gh, task, make_config(usage_limit={"resume": False}), workflow="n.yml")
         self.assertFalse(self.gh.dispatches)
-        # Without a wait, the schedule resumes due commands itself.
-        cfg = make_config(usage_limit={"wait_minutes": 0})
+        # Without any wait, the schedule resumes due commands itself.
+        cfg = make_config(usage_limit={"wait_minutes": 0}, retry={"wait_minutes": [0]})
         maintain(self.gh, task, cfg, workflow="n.yml", ref="main")
         self.assertEqual(self.gh.dispatches[-1]["inputs"]["command"], "plan")
+
+    def test_with_waits_to_run_again_the_waiting_run_alone_starts_what_is_due(self):
+        # A waiting run may be starting due commands: the schedule never starts one too.
+        self.paused(5, 1, at="2026-01-01T00:00:00Z")
+        cfg = make_config(usage_limit={"wait_minutes": 0})
+        task = {"action": "maintain", "task": "schedule"}
+        maintain(self.gh, task, cfg, workflow="n.yml", ref="main")
+        self.assertEqual([d["inputs"] for d in self.gh.dispatches], [WAIT_INPUTS])
+        # That run waits for nothing and starts it at once.
+        sleep = mock.Mock()
+        wait_for_paused(self.gh, cfg, sleep=sleep)
+        sleep.assert_not_called()
+        self.assertEqual(resume_due(self.gh, cfg, "n.yml", "main"), ["Resumed /nexkit plan on #5."])
 
     def test_the_schedule_hands_due_commands_to_the_waiting_run(self):
         now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)

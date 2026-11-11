@@ -63,10 +63,12 @@ def issue_item(issue, comments, open_pulls):
     comment, run = runs[-1]
     item.update(link=_link(comment), run=run.get("url"), command=run.get("command"))
     status, command = run.get("status"), run.get("command")
-    if run.get("attention") and status != CONTINUED:
+    handed_on = number in open_pulls and autopilot.in_pull_request(run)
+    if run.get("attention") and not handed_on and status != CONTINUED:
         item["attention"] = run["attention"]
-    if status == CONTINUED and number in open_pulls:
-        # `/nexkit go` paused on its pull request's review, which carries on there.
+    if handed_on:
+        # `/nexkit go` paused on its pull request's review, or waits to run it again, or
+        # carries on there: the pull request's own item says what it needs.
         item.update(state="in_pull_request", pull=open_pulls[number])
     elif status in (RUNNING, CONTINUED):
         # A continued run's command runs again in a run that has not posted yet.

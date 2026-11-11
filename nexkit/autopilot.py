@@ -29,7 +29,7 @@ from .config import SEVERITIES, after_workflow_names, autopilot_labels, watched_
 from .github import TRUSTED_ASSOCIATIONS, GitHubError, alerts_off
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
-from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command
+from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command, retry_kind
 from .schema import filled
 from .state import (
     ACTIONS_BOT,
@@ -1223,13 +1223,19 @@ def _auto_input(run):
     """The `auto` input that starts a run's kind of automatic round again, from its
     trigger, or "" for a command that autopilot started."""
     kinds = run_kinds(run)
+    retry = run.get("retry")
     if "conflicts" in kinds:
         found = ["conflicts"]
     elif "auto" in kinds:
         found = ["true"]
-    else:
+    elif not retry:
         return ""
-    return ",".join(found + ([AUTO] if AUTO in kinds else []))
+    else:
+        found = []
+    found += [AUTO] if AUTO in kinds or not found else []
+    # A run again after a transient error keeps its number, so it gets only the waits left.
+    found += [retry_kind(retry if type(retry) is int else 1)] if retry else []
+    return ",".join(found)
 
 
 def _not_resumed(comment, run, now):
@@ -1246,6 +1252,15 @@ def _not_resumed(comment, run, now):
     if at and now - at > PAUSE_WINDOW:
         return person(do, "it paused at the usage limit longer ago than NexKit resumes runs")
     return None
+
+
+def in_pull_request(run):
+    """Whether an issue's run carries on in its pull request: it continued there, or it
+    paused, at the usage limit or to run again after a transient error, at the pull
+    request's review, whose round holds the record that resumes it."""
+    if run.get("status") == CONTINUED:
+        return True
+    return run.get("status") == PAUSED and not isinstance(run.get("resume"), dict)
 
 
 def retry_waits(run):
@@ -1750,7 +1765,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     start = {"basis": current, "target": number, "note": "", "remember": {}}
     found = [(c, run) for c, run in run_comments(comments) if "command" in run]
     last = found[-1][1] if found else None
-    handed_on = pull and last and last.get("status") == CONTINUED
+    handed_on = pull and last and in_pull_request(last)
     if last and last.get("status") in ACTIVE and not handed_on:
         stalled = _stalled(gh, issue, *found[-1], record, start, number, now, cfg)
         reason = retry_waits(last) or f"`/nexkit {last['command']}` is {last['status']}"

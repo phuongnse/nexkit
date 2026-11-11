@@ -467,7 +467,8 @@ jobs:
     needs: route
     if: needs.route.outputs.action == 'maintain'
     runs-on: ubuntu-24.04
-    # Longer for the run that waits for paused commands to come due (usage_limit.wait_minutes).
+    # Longer for the run that waits for paused commands to come due: the longer of
+    # usage_limit.wait_minutes and the longest wait of retry.wait_minutes.
     timeout-minutes: ${{ fromJSON(needs.route.outputs.maintain_timeout) }}
     permissions:
       contents: read

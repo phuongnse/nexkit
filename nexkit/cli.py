@@ -294,7 +294,7 @@ def cmd_route(args):
     from . import progress
     from .checks import all_skipped, check_jobs, check_matrix, sharded
     from .github import GitHubError
-    from .maintain import TASKS, enabled
+    from .maintain import TASKS, enabled, longest_reach
     from .route import route, skip_unaffected, with_profile
 
     gh = _gh()
@@ -342,7 +342,7 @@ def cmd_route(args):
     if decision["action"] == "maintain":
         # A run that waits for paused commands needs the wait and time to start them.
         waits = decision["task"] == "resume"
-        minutes = cfg["usage_limit"]["wait_minutes"] + 15 if waits else 15
+        minutes = longest_reach(cfg) + 15 if waits else 15
         _output(action="maintain", decision=decision, config=cfg, maintain_timeout=str(minutes))
         return 0
     if decision["action"] == "none":
@@ -727,7 +727,7 @@ def cmd_maintain(args):
 
     gh = _gh()
     if args.wait:
-        wait_for_paused(gh, _config()["usage_limit"]["wait_minutes"])
+        wait_for_paused(gh, _config())
         return 0
     # Apart from the job's token: an App without the permission gets no such token.
     token = os.environ.get("NEXKIT_ALERTS_TOKEN")

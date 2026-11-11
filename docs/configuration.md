@@ -31,6 +31,7 @@ A complete configuration with every key at its default, except `agents`, `setup`
   "merge": {"auto": false, "after_workflows": []},
   "conflicts": {"auto_resolve": false, "max_rounds": 3},
   "usage_limit": {"resume": true, "retry_minutes": 60, "wait_minutes": 330},
+  "retry": {"wait_minutes": [15, 30, 60]},
   "close_parent_issues": false,
   "autopilot": {
     "enabled": false,
@@ -85,6 +86,7 @@ their defaults.
 | `usage_limit.resume` | `true` | When the agent stops at the account's usage limit, run the same command again after the limit resets. See [Usage limits](#usage-limits). |
 | `usage_limit.retry_minutes` | `60` | When the reset time is unknown, try again after this many minutes (1 to 1440). |
 | `usage_limit.wait_minutes` | `330` | Start a run that waits for the reset when it is at most this many minutes away (0 to 330); 0 leaves the resume to the hourly schedule. |
+| `retry.wait_minutes` | `[15, 30, 60]` | After a run stops on a transient error, run the same command again after each of these waits in turn, in minutes (at most 10 waits, each 0 to 330); a stop after the last wait waits for a person. `[0]` runs it again once at once, `[]` never. See [Transient errors](#transient-errors). |
 | `close_parent_issues` | `false` | Close a parent issue when its last open sub-issue closes and at least one sub-issue was completed. See [Parent issues](#parent-issues). |
 | `autopilot.enabled` | `false` | Work through the open issues in scope without commands: plan each ready issue, start `/nexkit go` on a plan that needs nobody, and move on when an issue closes. See [Autopilot](#autopilot). |
 | `autopilot.scope` | `"milestone"` | Which issues autopilot takes: `"milestone"`, the open issues of the earliest open milestone, or `null`, every open issue, whatever its milestone. |
@@ -875,7 +877,7 @@ every open issue in scope, in order, and starts the one command that moves it on
     otherwise it is outside the scope, and `nexkit status` says why.
   - **`hold`** makes autopilot start nothing for the issue, a label on the issue itself: no
     plan, no `/nexkit go`, no automatic fix or conflict round and no merge of its pull
-    request. A round that is already running finishes, also when it runs once more after a
+    request. A round that is already running finishes, also when it runs again after a
     transient error or resumes after the usage limit, and ends as `held`, with what it kept
     back; one that cannot read the label holds too. Removing the label starts a sweep,
     which takes the issue again and starts that: the automatic fix round, within
@@ -1340,6 +1342,36 @@ scheduled workflows when it can, so in practice a scheduled run can come hours l
 schedule run with nothing to resume runs only `route` and `maintain`, which take well under
 a minute and run no agent. To check less often, change the `cron` line, for example to
 `"23 */3 * * *"`.
+
+## Transient errors
+
+```json
+"retry": {"wait_minutes": [15, 30, 60]}
+```
+
+A run can stop for a reason outside the work: an overloaded or failing API, a lost
+connection or runner, GitHub's errors while `publish` writes, or an agent session that gave
+no result that fits (see [Failure handling](how-it-works.md#failure-handling)). Such an
+outage usually lasts minutes to hours, so NexKit runs the same command again, with the same
+note, after each wait of `wait_minutes` in turn: by default 15 minutes after the first stop,
+30 after the second and 60 after the third. A stop after the last wait waits for a person,
+and its comment lists every error the command's runs stopped on.
+
+- While it waits, the run's comment shows ⏸️ with the time the command runs again, which
+  run again this is out of how many, and, from the second on, the errors so far.
+  `nexkit/checks` and `nexkit/review` stay as the round left them, except that a review
+  that waits to run again is pending. `nexkit status` lists the issue or pull request as
+  `retrying`, with that time, not under *Needs a person*. The run that starts the command
+  is shown as `(retry N)`.
+- A wait holds no agent runner. NexKit starts the run that waits for paused commands,
+  which uses no agent and no repository code and also resumes runs paused at the [usage
+  limit](#usage-limits); it may wait as long as the longest of these waits. The hourly
+  `schedule` starts what that run missed, so `nexkit doctor` warns when it is missing.
+- A new command on the same issue or pull request replaces the wait, which then starts
+  nothing. A job a person cancelled is never run again.
+- The runs again count against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`.
+- `[0]` runs the command again once, at once, as NexKit did before this setting; a 0 among other
+  waits runs it again at once at that place. `[]` waits for a person at the first such stop.
 
 ## Agents
 

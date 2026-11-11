@@ -15,6 +15,8 @@ from nexkit.maintain import (
     WAIT_INPUTS,
     _give_back,
     check_paused,
+    enabled,
+    longest_reach,
     maintain,
     resume_due,
     resume_paused,
@@ -341,8 +343,11 @@ class PausedRunTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def paused(self, number, run_id, at="2026-10-11T04:40:00Z"):
+    def paused(self, number, run_id, at="2026-10-11T04:40:00Z", retry=0):
         resume = {"command": "plan", "number": number, "note": "", "auto": "resume", "at": at}
+        if retry:
+            # It waits to run again after a transient error rather than for a usage limit.
+            resume.update(auto="retry" if retry == 1 else f"retry:{retry}", retry=retry)
         run = {"url": f"https://x/runs/{run_id}", "command": "plan", "status": "paused"}
         return self.gh.comment(number, render_run({**run, "resume": resume}, "⏸️ Paused."))
 
@@ -425,20 +430,34 @@ class PausedRunTests(unittest.TestCase):
         task = {"action": "maintain", "task": "schedule"}
         maintain(self.gh, task, make_config(usage_limit={"resume": False}), workflow="n.yml")
         self.assertFalse(self.gh.dispatches)
-        # Without a wait, the schedule resumes due commands itself.
-        cfg = make_config(usage_limit={"wait_minutes": 0})
+        # Without any wait, the schedule resumes due commands itself.
+        cfg = make_config(usage_limit={"wait_minutes": 0}, retry={"wait_minutes": [0]})
         maintain(self.gh, task, cfg, workflow="n.yml", ref="main")
         self.assertEqual(self.gh.dispatches[-1]["inputs"]["command"], "plan")
+
+    def test_with_waits_to_run_again_the_waiting_run_alone_starts_what_is_due(self):
+        # A waiting run may be starting due commands: the schedule never starts one too.
+        self.paused(5, 1, at="2026-01-01T00:00:00Z")
+        cfg = make_config(usage_limit={"wait_minutes": 0})
+        task = {"action": "maintain", "task": "schedule"}
+        maintain(self.gh, task, cfg, workflow="n.yml", ref="main")
+        self.assertEqual([d["inputs"] for d in self.gh.dispatches], [WAIT_INPUTS])
+        # That run waits for nothing and starts it at once.
+        sleep = mock.Mock()
+        wait_for_paused(self.gh, cfg, sleep=sleep)
+        sleep.assert_not_called()
+        self.assertEqual(resume_due(self.gh, cfg, "n.yml", "main"), ["Resumed /nexkit plan on #5."])
 
     def test_the_schedule_hands_due_commands_to_the_waiting_run(self):
         now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
         self.paused(5, 1)  # due at 04:40, within the wait
-        lines = check_paused(self.gh, "nexkit.yml", "main", 330, now)
+        lines = check_paused(self.gh, make_config(), "nexkit.yml", "main", now)
         self.assertEqual(lines, ["Started a run that resumes paused commands as they come due."])
         self.assertEqual(self.gh.dispatches[-1]["inputs"], WAIT_INPUTS)
         self.assertEqual(self.gh.run_comments(5)[0]["run"]["status"], "paused")
         # A resume beyond the wait is left to a later check.
-        self.assertEqual(check_paused(self.gh, "nexkit.yml", "main", 60, now), [])
+        late = make_config(usage_limit={"wait_minutes": 60})
+        self.assertEqual(check_paused(self.gh, late, "nexkit.yml", "main", now), [])
         self.assertEqual(len(self.gh.dispatches), 1)
 
     def test_the_waiting_run_waits_with_reads_until_a_command_comes_due(self):
@@ -454,7 +473,7 @@ class PausedRunTests(unittest.TestCase):
                 self.paused(7, 2, at="2026-10-11T04:30:00Z")
 
         self.paused(5, 1)  # due at 04:40
-        wait_for_paused(self.gh, 330, now=lambda tz: clock[0], sleep=sleep)
+        wait_for_paused(self.gh, make_config(), now=lambda tz: clock[0], sleep=sleep)
         self.assertEqual(slept, [600, 300])  # looks again at least every ten minutes
         self.assertEqual(clock[0], datetime(2026, 10, 11, 4, 30, tzinfo=UTC))
         # The App's token comes after this wait, so it writes nothing.
@@ -463,9 +482,10 @@ class PausedRunTests(unittest.TestCase):
     def test_the_waiting_run_does_not_wait_for_what_comes_too_late(self):
         now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
         sleep = mock.Mock()
-        wait_for_paused(self.gh, 60, now=lambda tz: now, sleep=sleep)  # nothing paused
+        cfg = make_config(usage_limit={"wait_minutes": 60})
+        wait_for_paused(self.gh, cfg, now=lambda tz: now, sleep=sleep)  # nothing paused
         self.paused(5, 1)  # due at 04:40
-        wait_for_paused(self.gh, 60, now=lambda tz: now, sleep=sleep)
+        wait_for_paused(self.gh, cfg, now=lambda tz: now, sleep=sleep)
         sleep.assert_not_called()
 
     def test_after_the_wait_it_resumes_what_is_due_and_starts_the_next_wait(self):
@@ -473,7 +493,7 @@ class PausedRunTests(unittest.TestCase):
         self.gh.add_issue(7)
         self.paused(7, 2, at="2026-10-11T06:00:00Z")
         now = datetime(2026, 10, 11, 4, 41, tzinfo=UTC)
-        lines = resume_due(self.gh, "nexkit.yml", "main", 330, now)
+        lines = resume_due(self.gh, make_config(), "nexkit.yml", "main", now)
         self.assertEqual(
             lines,
             [
@@ -486,8 +506,64 @@ class PausedRunTests(unittest.TestCase):
     def test_after_the_wait_a_later_resume_is_left_to_the_schedule(self):
         self.paused(5, 1)  # due at 04:40
         now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
-        self.assertEqual(resume_due(self.gh, "nexkit.yml", "main", 60, now), [])
+        cfg = make_config(usage_limit={"wait_minutes": 60})
+        self.assertEqual(resume_due(self.gh, cfg, "nexkit.yml", "main", now), [])
         self.assertFalse(self.gh.dispatches)
+
+    def test_a_run_again_after_a_transient_error_starts_when_its_wait_has_passed(self):
+        now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+        comment = self.paused(5, 1, at="2026-10-11T04:59:00Z", retry=2)
+        self.gh.dispatch_runs["nexkit.yml"] = "https://x/runs/3"
+        [line], _ = resume_paused(self.gh, "nexkit.yml", "main", now)
+        self.assertEqual(line, "Resumed /nexkit plan on #5.")
+        self.assertEqual(self.gh.dispatches[-1]["inputs"]["auto"], "retry:2")
+        self.assertIn(
+            "Started `/nexkit plan` again in [a new run](https://x/runs/3): run again 2 after a "
+            "transient error.",
+            comment["body"],
+        )
+        run = self.gh.run_comments(5)[0]["run"]
+        self.assertEqual((run["status"], run["next"]["auto"]), ("continued", "retry:2"))
+
+    def test_a_run_again_is_waited_for_within_the_longest_wait_whatever_the_usage_limit(self):
+        # With no wait for usage limits, a run again after a transient error is still
+        # waited for, within the longest wait of `retry.wait_minutes`.
+        cfg = make_config(usage_limit={"wait_minutes": 0, "resume": False})
+        now = datetime(2026, 10, 11, 4, 0, tzinfo=UTC)
+        self.paused(5, 1, at="2026-10-11T04:40:00Z")  # a usage limit, not resumed
+        self.gh.add_issue(7)
+        self.paused(7, 2, at="2026-10-11T04:30:00Z", retry=1)
+        self.assertEqual(
+            check_paused(self.gh, cfg, "nexkit.yml", "main", now),
+            ["Started a run that resumes paused commands as they come due."],
+        )
+        clock = [now]
+
+        def sleep(seconds):
+            clock[0] += timedelta(seconds=seconds)
+
+        wait_for_paused(self.gh, cfg, now=lambda tz: clock[0], sleep=sleep)
+        self.assertEqual(clock[0], datetime(2026, 10, 11, 4, 30, tzinfo=UTC))
+        lines = resume_due(self.gh, cfg, "nexkit.yml", "main", clock[0] + timedelta(minutes=11))
+        self.assertEqual(lines, ["Resumed /nexkit plan on #7."])
+        # The usage limit's pause stays: `usage_limit.resume` is off.
+        self.assertEqual(self.gh.run_comments(5)[0]["run"]["status"], "paused")
+        # The waiting run may last as long as the longest wait.
+        self.assertEqual(longest_reach(cfg), 60)
+        self.assertEqual(longest_reach(make_config()), 330)
+
+    def test_the_schedule_resumes_due_runs_again_with_usage_limit_resume_off(self):
+        self.paused(5, 1, at="2026-01-01T00:00:00Z", retry=1)
+        task = {"action": "maintain", "task": "schedule"}
+        cfg = make_config(usage_limit={"resume": False})
+        maintain(self.gh, task, cfg, workflow="n.yml", ref="main")
+        self.assertEqual(self.gh.dispatches[-1]["inputs"], WAIT_INPUTS)
+        self.assertTrue(enabled("resume", cfg))
+        self.assertFalse(
+            enabled(
+                "resume", make_config(usage_limit={"resume": False}, retry={"wait_minutes": []})
+            )
+        )
 
     def test_a_pull_request_command_continues_the_issues_paused_go(self):
         self.gh.add_pull(6, 5)

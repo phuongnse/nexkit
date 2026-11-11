@@ -927,19 +927,42 @@ def _triggers(root, cfg, workflow):
     if cfg["autopilot"]["enabled"]:
         findings.append(_autopilot_triggers(cfg, workflow))
         findings += _ci_trigger(root, cfg, workflow)
-    if cfg["usage_limit"]["resume"]:
-        if trigger(workflow, "schedule") is None:
-            findings.append(
-                (
-                    False,
-                    f"{WORKFLOW_PATH} has no 'schedule' trigger, so runs paused at the agent's "
-                    "usage limit cannot resume; add it as 'nexkit init' writes it, or set "
-                    "usage_limit.resume to false",
-                )
-            )
-        else:
-            findings.append((True, "A schedule resumes runs paused at the agent's usage limit"))
+    findings += _paused_schedule(cfg, workflow)
     return findings
+
+
+def _paused_schedule(cfg, workflow):
+    """The schedule that starts paused commands when they come due: after a usage limit, and
+    after the waits of `retry.wait_minutes` when the run that waits for them did not start."""
+    kinds = [
+        (what, off)
+        for what, off, on in (
+            (
+                "runs paused at the agent's usage limit",
+                "usage_limit.resume to false",
+                cfg["usage_limit"]["resume"],
+            ),
+            (
+                "runs again after a transient error",
+                "retry.wait_minutes to [0]",
+                any(cfg["retry"]["wait_minutes"]),
+            ),
+        )
+        if on
+    ]
+    if not kinds:
+        return []
+    what = " and ".join(what for what, _ in kinds)
+    if trigger(workflow, "schedule") is None:
+        offs = " and ".join(off for _, off in kinds)
+        return [
+            (
+                False,
+                f"{WORKFLOW_PATH} has no 'schedule' trigger, so {what} may never start; add it "
+                f"as 'nexkit init' writes it, or set {offs}",
+            )
+        ]
+    return [(True, f"A schedule starts {what}")]
 
 
 def _approval_trigger(workflow):

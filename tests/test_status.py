@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -12,6 +13,7 @@ from nexkit.config import CONFIG_PATH
 from nexkit.report import READY
 from nexkit.state import PLAN_MARKER, profile_record, render_run
 from nexkit.status import collect, render
+from nexkit.usage import iso, shown
 from tests.support import APP, CLAUDE, FakeGitHub, make_config
 
 
@@ -137,6 +139,36 @@ class StatusTests(unittest.TestCase):
         self.assertIn("round 2 (fix)", text)
         self.assertIn("[ci.yml: success]", text)
         self.assertTrue(text.rstrip().endswith(f"#16    {READY}"))
+
+    def test_a_command_that_waits_to_run_again_after_a_transient_error_needs_nobody(self):
+        at = iso(datetime.now(UTC) + timedelta(minutes=30))
+        go = {"command": "go", "number": 3, "auto": "retry:2", "at": at, "retry": 2}
+        self.command(3, "go", "paused", outcome="retry_waiting", resume=go)
+        self.gh.add_pull(8, 9)
+        resume = {"command": "review", "number": 8, "auto": "retry", "at": at, "retry": 1}
+        self.round(8, 1, status="paused", outcome="retry_waiting", resume=resume)
+        cfg = make_config(autopilot={"enabled": True, "scope": None})
+        data = collect(self.gh, cfg, workers=1)
+        [issue] = [i for i in data["issues"] if i["number"] == 3]
+        self.assertEqual((issue["state"], issue["retry_at"]), ("retrying", at))
+        [pull] = data["pull_requests"]
+        self.assertEqual((pull["state"], pull["retry_at"]), ("retrying", at))
+        self.assertEqual(data["needs_person"], [])
+        [step] = [s for s in data["autopilot"]["issues"] if s["number"] == 3]
+        self.assertEqual(step["state"], "active")
+        self.assertEqual(
+            step["reason"], f"`/nexkit go` runs again after {shown(at)}, after a transient error"
+        )
+        text = render(data)
+        self.assertIn(f"#3     retrying         Issue 3 (runs again after {at})", text)
+        self.assertIn(f"round 1 (fix), runs again after {at}", text)
+        # Long past its time with no run started, it waits for a person.
+        late = iso(datetime.now(UTC) - timedelta(hours=7))
+        self.command(3, "go", "paused", outcome="retry_waiting", resume={**go, "at": late})
+        data = collect(self.gh, cfg, workers=1)
+        [need] = [n for n in data["needs_person"] if n["number"] == 3]
+        self.assertIn("check that NexKit's workflow has its `schedule` trigger", need["reason"])
+        self.assertIn("and no run started it", need["reason"])
 
     def test_conflicts_wait_for_nexkit_with_auto_resolve_conflicts(self):
         self.gh.add_pull(8, 9)

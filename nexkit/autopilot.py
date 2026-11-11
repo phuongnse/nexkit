@@ -29,7 +29,7 @@ from .config import SEVERITIES, after_workflow_names, autopilot_labels, watched_
 from .github import TRUSTED_ASSOCIATIONS, GitHubError, alerts_off
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
-from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command
+from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command, retry_kind
 from .schema import filled
 from .state import (
     ACTIONS_BOT,
@@ -56,7 +56,7 @@ from .state import (
     run_kinds,
     with_run,
 )
-from .usage import PAUSE_WINDOW, iso, parse_iso
+from .usage import PAUSE_WINDOW, iso, parse_iso, shown
 
 # The dispatch that starts a sweep. Its `number` input is not a number, so callers'
 # concurrency groups give every sweep the group `nexkit-autopilot`: one runs at a time, and
@@ -213,6 +213,10 @@ PULL_REQUEST_EVENTS = {"pull_request", "pull_request_target"}
 UNTRUSTED_ROUND = "agent_untrusted"
 UNTRUSTED_MERGE = "merge_untrusted"
 CHAINED = {"auto_fix", "conflict_fix", "retry", "branch_updated", "head_moved", "superseded"}
+# The outcome of a run that stopped on a transient error and whose command runs again after
+# the next wait of `retry.wait_minutes`: paused until then, with a resume record, as at a
+# usage limit (see `maintain.resume_paused`).
+RETRY_WAITING = "retry_waiting"
 # The outcome of a round whose checks fail as the default branch does while a bug issue
 # for that failure is open: no fix round starts until the default branch passes again.
 CI_WAITING = "ci_waiting"
@@ -257,11 +261,12 @@ def request_safely(gh, cfg, workflow, ref, closed=None, after=None, gate=takes):
 
 
 def after_run(gh, cfg, decision, outcome, workflow, ref):
-    """Start a sweep after a run, unless it waits for a usage limit, or it already started
+    """Start a sweep after a run, unless it waits for a usage limit or to run again after a
+    transient error, or it already started
     the next one itself and no finished run on the default branch `ref` needs a sweep. A
     merge closed the issue, which may empty the scope. With `conflicts.auto_resolve`, the
     sweep also starts the conflict rounds that were held back while a round ran."""
-    if not sweeps(cfg) or outcome == "paused":
+    if not sweeps(cfg) or outcome in ("paused", RETRY_WAITING):
         return []
     if outcome in CHAINED and not (takes(cfg) and ci_due(gh, cfg, ref)):
         return []
@@ -908,7 +913,7 @@ REPLANNED_NOTE = (
 )
 # Outcomes of runs that changed nothing about an issue: they only ran a command once more,
 # found nothing to merge, or ended without a report.
-UNCHANGED = {"retry", "lost", "up_to_date"}
+UNCHANGED = {"retry", RETRY_WAITING, "lost", "up_to_date"}
 # What every comment that mentions the people in `notify` says before its reason.
 NEEDED = "a person is needed: "
 
@@ -1218,18 +1223,26 @@ def _auto_input(run):
     """The `auto` input that starts a run's kind of automatic round again, from its
     trigger, or "" for a command that autopilot started."""
     kinds = run_kinds(run)
+    retry = run.get("retry")
     if "conflicts" in kinds:
         found = ["conflicts"]
     elif "auto" in kinds:
         found = ["true"]
-    else:
+    elif not retry:
         return ""
-    return ",".join(found + ([AUTO] if AUTO in kinds else []))
+    else:
+        found = []
+    found += [AUTO] if AUTO in kinds or not found else []
+    # A run again after a transient error keeps its number, so it gets only the waits left.
+    found += [retry_kind(retry if type(retry) is int else 1)] if retry else []
+    return ",".join(found)
 
 
 def _not_resumed(comment, run, now):
     """Why a run paused at the usage limit waits for a person, or None while NexKit
     resumes it by itself."""
+    if retry_waits(run):
+        return _retry_overdue(run, now)
     do = "post the command again once the usage limit has reset"
     if not isinstance(run.get("resume"), dict):
         return run.get("attention") or person(
@@ -1239,6 +1252,41 @@ def _not_resumed(comment, run, now):
     if at and now - at > PAUSE_WINDOW:
         return person(do, "it paused at the usage limit longer ago than NexKit resumes runs")
     return None
+
+
+def in_pull_request(run):
+    """Whether an issue's run carries on in its pull request: it continued there, or it
+    paused, at the usage limit or to run again after a transient error, at the pull
+    request's review, whose round holds the record that resumes it."""
+    if run.get("status") == CONTINUED:
+        return True
+    return run.get("status") == PAUSED and not isinstance(run.get("resume"), dict)
+
+
+def retry_waits(run):
+    """What a run that waits to run its command again after a transient error says, or ""
+    for any other run (see `RETRY_WAITING`)."""
+    resume = run.get("resume")
+    if run.get("status") != PAUSED or not isinstance(resume, dict) or not resume.get("retry"):
+        return ""
+    command = f"`/nexkit {resume.get('command') or run.get('command') or 'review'}`"
+    return f"{command} runs again after {shown(resume.get('at'))}, after a transient error"
+
+
+def _retry_overdue(run, now):
+    """Why a run that waits to run its command again after a transient error waits for a
+    person, or None while its time has not long passed: the run that waits for it, or the
+    hourly schedule, starts it (see `maintain.resume_paused`)."""
+    resume = run["resume"]
+    at = parse_iso(resume.get("at"))
+    if at is None or now - at <= LOST:
+        return None
+    command = f"`/nexkit {resume.get('command') or run.get('command') or 'review'}`"
+    return person(
+        f"post {command} again, and check that NexKit's workflow has its `schedule` trigger",
+        f"it was to run again after a transient error at {shown(resume.get('at'))}, and no run "
+        "started it",
+    )
 
 
 def _tries(record):
@@ -1440,7 +1488,8 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         return _step(issue, "active", f"pull request #{pull} is open")
     if latest.get("status") in ACTIVE:
         stalled = _stalled(gh, issue, comment, latest, record, start, pull, now, cfg)
-        return stalled or _step(issue, "active", f"pull request #{pull} has a round on its way")
+        reason = retry_waits(latest) or f"pull request #{pull} has a round on its way"
+        return stalled or _step(issue, "active", reason)
     if latest.get("outcome") in CHAINED:
         what = f"the round that pull request #{pull} started next"
         lost = _handed_on(issue, comment, latest, start, now, cfg, what)
@@ -1716,10 +1765,11 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     start = {"basis": current, "target": number, "note": "", "remember": {}}
     found = [(c, run) for c, run in run_comments(comments) if "command" in run]
     last = found[-1][1] if found else None
-    handed_on = pull and last and last.get("status") == CONTINUED
+    handed_on = pull and last and in_pull_request(last)
     if last and last.get("status") in ACTIVE and not handed_on:
         stalled = _stalled(gh, issue, *found[-1], record, start, number, now, cfg)
-        return stalled or _step(issue, "active", f"`/nexkit {last['command']}` is {last['status']}")
+        reason = retry_waits(last) or f"`/nexkit {last['command']}` is {last['status']}"
+        return stalled or _step(issue, "active", reason)
     if last and last.get("outcome") == "lost" and not pull:
         lost = _reportless(gh, issue, found[-1][0], last, record, start, number, now)
         if lost:

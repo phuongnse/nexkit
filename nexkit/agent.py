@@ -1154,7 +1154,7 @@ def _run_one(
                 calls = calls + again.calls
             if unfit(result):
                 # Another run may pass where this session did not: the stage's command runs
-                # once more, as after a transient error.
+                # again, as after a transient error.
                 result["transient"] = True
                 if result.get("asked_again"):
                     result["error"] = f"{result['error']} {NO_RESULT_AGAIN}".strip()

@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -24,6 +25,7 @@ from nexkit.report import (
 )
 from nexkit.route import route
 from nexkit.state import check_fingerprint, empty_state, read_state, render_run, render_state
+from nexkit.usage import parse_iso, shown
 from tests.support import FakeGitHub, make_config
 
 HEAD = "c" * 40
@@ -46,6 +48,8 @@ def decision(action="implement", **kw):
 
 
 TOKENS = {"input": 1000, "cached": 800, "output": 200}
+# A single run again at once after a transient error, as before `retry.wait_minutes`.
+ONCE = make_config(retry={"wait_minutes": [0]})
 
 
 def review_result(verdict="approve", findings=()):
@@ -269,9 +273,14 @@ class PersonsPullRequestTests(ReportCase):
                 workflow_ref=WORKFLOW,
                 default_branch="main",
             )
-        self.assertEqual(found["outcome"], "retry")
+        # It runs again after the first wait, which the waiting run sees to.
+        self.assertEqual(found["outcome"], "retry_waiting")
         [start] = self.gh.dispatches
-        self.assertEqual(start["inputs"]["command"], "review")
+        self.assertEqual(start["inputs"], WAIT_INPUTS)
+        [row] = [c["run"] for c in self.gh.run_comments(6)]
+        self.assertEqual(row["status"], "paused")
+        self.assertEqual(row["resume"]["command"], "review")
+        self.assertIn(("nexkit/review", "pending"), self.statuses())
         self.assertEqual(self.gh.merged, [])
 
     def test_a_lost_shards_job_runs_the_round_once_more(self):
@@ -387,14 +396,14 @@ class ReportTests(ReportCase):
         self.assertFalse(self.gh.comments_matching(5, "No change is needed"))
 
     def test_agent_failures_are_explained_on_the_issue(self):
-        # The try after a job that failed as a whole: a person decides.
-        outcome = self.run_report(d=decision(retry=True), published=False)
+        # The last run again after a job that failed as a whole: a person decides.
+        outcome = self.run_report(d=decision(retry=3), published=False)
         self.assertEqual(outcome["outcome"], "retry_failed")
         self.assertEqual(
             outcome["attention"],
             "post the command again once the cause has passed. The run stopped on a transient "
-            "error twice, and NexKit tries a command only once more: `the agent job ended "
-            "without a result`",
+            "error 4 times, the last after every wait of `retry.wait_minutes`: `the agent job "
+            "ended without a result`",
         )
         self.assertTrue(self.gh.comments_matching(5, "could not run"))
         self.write(
@@ -407,8 +416,8 @@ class ReportTests(ReportCase):
         self.assertTrue(self.gh.comments_matching(5, "Need API key"))
         self.assertFalse(self.gh.dispatches)
 
-    def test_a_transient_error_runs_the_command_once_more(self):
-        cfg = make_config(notify=["olivia"])
+    def test_a_transient_error_runs_the_command_once_more_at_once_with_a_single_wait_of_0(self):
+        cfg = make_config(notify=["olivia"], retry={"wait_minutes": [0]})
         error = "Claude stopped (success). API Error: 529 overloaded"
         self.write(
             "nexkit-agent", "result.json", {"status": "error", "error": error, "transient": True}
@@ -435,10 +444,86 @@ class ReportTests(ReportCase):
         outcome = self.run_report(d=retry, cfg=cfg, published=False)
         self.assertEqual(outcome["outcome"], "retry_failed")
         self.assertIn(
-            "The try before stopped on a transient error too: Claude stopped", outcome["summary"]
+            "Transient errors so far:\n\n1. Claude stopped (success). API Error: 529 overloaded"
+            "\n2. Connection error",
+            outcome["summary"],
         )
         self.assertEqual(len(self.gh.dispatches), 1)
         self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+
+    def test_a_transient_error_runs_again_after_growing_waits_then_waits_for_a_person(self):
+        cfg = make_config(notify=["olivia"])
+        errors = ["API Error: 529 overloaded", "Connection error", "API Error: 500", "ETIMEDOUT"]
+        for tries, (error, wait) in enumerate(zip(errors, (15, 30, 60, None), strict=True)):
+            self.write(
+                "nexkit-agent",
+                "result.json",
+                {"status": "error", "error": error, "transient": True},
+            )
+            before = datetime.now(UTC)
+            d = decision(note="Use the cache.", **({"retry": tries} if tries else {}))
+            outcome = self.run_report(d=d, cfg=cfg, published=False)
+            run = self.gh.run_comments(5)[-1]
+            if wait is None:
+                break
+            # Paused until the wait has passed; only the run that waits for it starts now.
+            self.assertEqual(outcome["outcome"], "retry_waiting", tries)
+            self.assertIsNone(outcome.get("attention"))
+            self.assertEqual(self.gh.dispatches[-1]["inputs"], WAIT_INPUTS)
+            self.assertEqual(run["run"]["status"], "paused")
+            resume = run["run"]["resume"]
+            auto = "retry" if not tries else f"retry:{tries + 1}"
+            self.assertEqual(
+                {k: resume[k] for k in ("command", "number", "note", "auto", "retry")},
+                {
+                    "command": "go",
+                    "number": "5",
+                    "note": "Use the cache.",
+                    "auto": auto,
+                    "retry": tries + 1,
+                },
+            )
+            at = parse_iso(resume["at"])
+            self.assertLessEqual(abs(at - before - timedelta(minutes=wait)), timedelta(minutes=1))
+            self.assertIn(
+                f"again after {shown(resume['at'])}: run again {tries + 1} of 3", run["body"]
+            )
+            self.assertIn("A new command here replaces this.", run["body"])
+            listed = "Transient errors so far:" in run["body"]
+            self.assertEqual(listed, tries > 0)
+        self.assertEqual(outcome["outcome"], "retry_failed")
+        self.assertEqual(run["run"]["status"], "failure")
+        self.assertNotIn("resume", run["run"])
+        numbered = "\n".join(f"{i}. {e}" for i, e in enumerate(errors, 1))
+        self.assertIn(f"Transient errors so far:\n\n{numbered}", run["body"])
+        self.assertIn("stopped on a transient error 4 times", outcome["attention"])
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+        self.assertEqual({d["inputs"]["command"] for d in self.gh.dispatches}, {"resume"})
+
+    def test_a_run_again_that_passes_goes_on_as_usual_and_shows_its_number(self):
+        self.candidate()
+        outcome = self.run_report(d=decision(retry=2))
+        self.assertEqual(outcome["outcome"], "ready")
+        [row] = [c for c in self.gh.run_comments(6)]
+        self.assertTrue(row["body"].startswith("### NexKit round 1: implement (retry 2)"))
+        self.assertEqual(trigger(decision("fix", auto=True, retry=2)), "fix (auto, retry 2)")
+        progress_comment = render_run(
+            {"url": "u", "command": "go", "status": "running", "retry": 2}
+        )
+        self.assertIn("### NexKit `/nexkit go` (retry 2)", progress_comment)
+
+    def test_without_waits_a_transient_error_waits_for_a_person_at_once(self):
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {"status": "error", "error": "API 529", "transient": True},
+        )
+        cfg = make_config(retry={"wait_minutes": []})
+        outcome = self.run_report(cfg=cfg, published=False)
+        self.assertEqual(outcome["outcome"], "retry_failed")
+        self.assertIn("with `retry.wait_minutes` empty NexKit does not run", outcome["attention"])
+        self.assertNotIn("Transient errors so far", outcome["summary"])
+        self.assertFalse(self.gh.dispatches)
 
     def test_a_round_without_a_result_that_fits_runs_once_more(self):
         error = (
@@ -448,7 +533,8 @@ class ReportTests(ReportCase):
         result = {"status": "error", "error": error, "transient": True, "unfit": "no testing"}
         result["asked_again"] = True
         self.write("nexkit-agent", "result.json", result)
-        outcome = self.run_report(d=decision(note="Keep it small."), published=False)
+        cfg = make_config(retry={"wait_minutes": [0]})
+        outcome = self.run_report(d=decision(note="Keep it small."), cfg=cfg, published=False)
         self.assertEqual(outcome["outcome"], "retry")
         self.assertIn("even when asked for it alone", outcome["summary"])
         self.assertNotIn("from the service, the network", outcome["summary"])
@@ -461,7 +547,7 @@ class ReportTests(ReportCase):
         self.assertIn("gave no result that fits. Another run", retry_line({"unfit": "x"}))
         # A second such stop waits for a person.
         retry = decision(note="Keep it small.", retry=True)
-        outcome = self.run_report(d=retry, published=False)
+        outcome = self.run_report(d=retry, cfg=cfg, published=False)
         self.assertEqual(outcome["outcome"], "retry_failed")
         self.assertEqual(len(self.gh.dispatches), 1)
 
@@ -474,7 +560,7 @@ class ReportTests(ReportCase):
         outcome = report(
             self.gh,
             decision(),
-            make_config(),
+            ONCE,
             needs,
             self.artifacts,
             workflow_ref=WORKFLOW,
@@ -491,7 +577,7 @@ class ReportTests(ReportCase):
         outcome = report(
             self.gh,
             decision(),
-            make_config(),
+            ONCE,
             needs,
             self.artifacts,
             workflow_ref=WORKFLOW,
@@ -505,7 +591,7 @@ class ReportTests(ReportCase):
         outcome = report(
             self.gh,
             decision(),
-            make_config(),
+            ONCE,
             needs,
             self.artifacts,
             workflow_ref=WORKFLOW,
@@ -558,7 +644,7 @@ class ReportTests(ReportCase):
             outcome = report(
                 self.gh,
                 fix,
-                make_config(),
+                ONCE,
                 needs,
                 self.artifacts,
                 workflow_ref=WORKFLOW,
@@ -571,7 +657,7 @@ class ReportTests(ReportCase):
         )
         self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 1)
         # The retried round keeps the label, and the conflict rounds never count it.
-        self.assertEqual(trigger(decision("fix", auto=True, retry=True)), "fix (auto, retry)")
+        self.assertEqual(trigger(decision("fix", auto=True, retry=True)), "fix (auto, retry 1)")
 
     def test_a_review_that_never_ran_is_retried_only_after_a_failed_verify_job(self):
         self.candidate(review=False)
@@ -594,7 +680,7 @@ class ReportTests(ReportCase):
             outcome = report(
                 self.gh,
                 fix,
-                make_config(),
+                ONCE,
                 needs,
                 self.artifacts,
                 workflow_ref=WORKFLOW,
@@ -620,7 +706,8 @@ class ReportTests(ReportCase):
 
     def test_a_review_that_failed_on_a_transient_error_runs_once_more(self):
         self.candidate(review={"status": "error", "error": "API Error: 503", "transient": True})
-        outcome = self.run_report(d=decision("fix", pr=6, target=6, head=HEAD, autopilot=True))
+        fix = decision("fix", pr=6, target=6, head=HEAD, autopilot=True)
+        outcome = self.run_report(d=fix, cfg=ONCE)
         self.assertEqual(outcome["outcome"], "retry")
         [dispatch] = self.gh.dispatches
         self.assertEqual(
@@ -1748,6 +1835,19 @@ class ReportTests(ReportCase):
         self.assertEqual(command["run"]["status"], "paused")
         self.assertNotIn("resume", command["run"])
         self.assertEqual([d["inputs"] for d in self.gh.dispatches], [WAIT_INPUTS])
+
+    def test_a_review_run_again_at_the_usage_limit_resumes_as_that_run_again(self):
+        self.candidate(review=LIMIT)
+        cases = (
+            (decision("review", pr=6, target=6, head=HEAD, autopilot=True, retry=2), "autopilot"),
+            (decision("fix", pr=6, target=6, head=HEAD, auto=True, retry=2), ""),
+        )
+        for d, kinds in cases:
+            self.run_report(d=d, published=d["action"] != "review")
+            resume = self.gh.run_comments(6)[-1]["run"]["resume"]
+            # A fix round's review resumes as `/nexkit review`, not as an automatic fix.
+            expected = ",".join(filter(None, (kinds, "resume", "retry:2")))
+            self.assertEqual((resume["command"], resume["auto"]), ("review", expected))
 
     def test_a_reset_beyond_the_wait_is_left_to_the_schedule(self):
         for usage_limit, at in (({"wait_minutes": 0}, None), ({}, "2099-01-01T00:00:00Z")):

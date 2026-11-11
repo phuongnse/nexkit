@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import autopilot
 from .config import DEFAULTS
+from .maintain import is_retry
 from .report import READY
 from .route import issue_from_branch
 from .snapshot import Snapshot
@@ -62,14 +63,20 @@ def issue_item(issue, comments, open_pulls):
     comment, run = runs[-1]
     item.update(link=_link(comment), run=run.get("url"), command=run.get("command"))
     status, command = run.get("status"), run.get("command")
-    if run.get("attention") and status != CONTINUED:
+    handed_on = number in open_pulls and autopilot.in_pull_request(run)
+    if run.get("attention") and not handed_on and status != CONTINUED:
         item["attention"] = run["attention"]
-    if status == CONTINUED and number in open_pulls:
-        # `/nexkit go` paused on its pull request's review, which carries on there.
+    if handed_on:
+        # `/nexkit go` paused on its pull request's review, or waits to run it again, or
+        # carries on there: the pull request's own item says what it needs.
         item.update(state="in_pull_request", pull=open_pulls[number])
     elif status in (RUNNING, CONTINUED):
         # A continued run's command runs again in a run that has not posted yet.
         item["state"] = "planning" if command == "plan" else "implementing"
+    elif is_retry(run):
+        # Its command runs again after a transient error, once its wait has passed.
+        item.update(state="retrying", retry_at=run["resume"].get("at"))
+        item.pop("attention", None)
     elif status == PAUSED:
         item["state"] = "paused"
         item["resume_at"] = (run.get("resume") or {}).get("at")
@@ -98,6 +105,8 @@ def _meaningful(rounds):
 def pull_state(run, conflicting):
     """A pull request's state from its latest round and GitHub's mergeability."""
     status, outcome = run.get("status"), run.get("outcome")
+    if is_retry(run):
+        return "retrying"
     if status in (RUNNING, CONTINUED) or outcome in QUEUED:
         return "running"
     if status == PAUSED:
@@ -149,6 +158,8 @@ def pull_item(pull, comments, cfg):
     )
     if state == "paused":
         item["resume_at"] = (run.get("resume") or {}).get("at")
+    if state == "retrying":
+        item["retry_at"] = run["resume"].get("at")
     if state == "waiting":
         wait = meaningful.get("ci_wait") or {}
         item.update(waits_for=wait.get("bug"), reason=ci_wait_reason(wait))
@@ -162,7 +173,7 @@ def pull_item(pull, comments, cfg):
     elif state == "conflicting" and used:
         why = f"it conflicts with `{base}`, and its automatic conflict rounds are used up"
         attention = autopilot.person(fix, why)
-    elif state in ("running", "conflicting"):
+    elif state in ("running", "retrying", "conflicting"):
         attention = None
     elif meaningful.get("outcome") == autopilot.PULL_CLOSED and run.get("status") == SUCCESS:
         attention = autopilot.person(*autopilot.REOPENED)
@@ -379,6 +390,8 @@ def render(data):
             detail = f" (#{item['pull']})"
         elif item["state"] == "paused" and item.get("resume_at"):
             detail = f" (resumes after {item['resume_at']})"
+        elif item["state"] == "retrying" and item.get("retry_at"):
+            detail = f" (runs again after {item['retry_at']})"
         lines.append(
             f"  #{item['number']:<5} {item['state']:<16} {_short(item['title'])}{detail}"
             f"  {item.get('link') or item['url']}"
@@ -390,6 +403,8 @@ def render(data):
         detail = f" round {item['round']} ({item['trigger']})" if item.get("round") else ""
         if item["state"] == "paused" and item.get("resume_at"):
             detail += f", resumes after {item['resume_at']}"
+        if item["state"] == "retrying" and item.get("retry_at"):
+            detail += f", runs again after {item['retry_at']}"
         if item["state"] == "waiting":
             detail += f", waits for #{item['waits_for']}"
         lines.append(

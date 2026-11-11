@@ -45,10 +45,17 @@ def kinds(decision):
     ]
 
 
+def shown_kinds(labels, retry):
+    """`labels` as people read them: the `retry` kind with its number, as `retry 2`."""
+    number = retry if isinstance(retry, int) and not isinstance(retry, bool) else 1
+    return [f"retry {number}" if label == "retry" else label for label in labels]
+
+
 def trigger(decision):
     """`fix`, `fix (auto)`, `fix (auto, diagnosis)`, `fix (auto, conflicts)`, `review
-    (resumed)`, ...: for people. NexKit reads a round's `action` and `kinds` instead."""
-    labels = kinds(decision)
+    (resumed)`, `go (retry 2)`, ...: for people. NexKit reads a round's `action` and `kinds`
+    instead."""
+    labels = shown_kinds(kinds(decision), decision.get("retry"))
     return decision["action"] + (f" ({', '.join(labels)})" if labels else "")
 
 
@@ -97,6 +104,9 @@ def show_command(gh, decision, status, text="", comments=None, **fields):
     run = {"url": url, "command": COMMANDS[decision["action"]], "status": status, **fields}
     if decision.get("autopilot"):
         run["autopilot"] = True
+    if decision.get("retry"):
+        # Which run again after a transient error this is, shown with the command.
+        run["retry"] = decision["retry"]
     if decision.get("setup"):
         # Which setup an implement round's checks ran, for a round stopped in its checks.
         run["setup"] = decision["setup"]

@@ -29,7 +29,8 @@ from .state import (
 
 # How long `publish` waits before each further try of a push, a fetch or a GitHub API call
 # that failed on a server error, a rate limit or a dropped connection, in seconds. When
-# every try fails, the round stops as transient, and NexKit runs its command once more.
+# every try fails, the round stops as transient, and NexKit runs its command again later
+# (see `retry.wait_minutes`).
 WAITS = (10, 30, 60)
 
 

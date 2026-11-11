@@ -516,7 +516,11 @@ class InitDoctorTests(unittest.TestCase):
 
     def test_doctor_checks_the_schedule_that_resumes_paused_runs(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
-        ok = (True, "A schedule resumes runs paused at the agent's usage limit")
+        ok = (
+            True,
+            "A schedule starts runs paused at the agent's usage limit and runs again after a "
+            "transient error",
+        )
         self.assertIn(ok, scaffold.doctor(self.root))
         workflow = self.root / ".github/workflows/nexkit.yml"
         text = workflow.read_text()
@@ -526,6 +530,12 @@ class InitDoctorTests(unittest.TestCase):
         path = self.root / ".nexkit/config.json"
         cfg = json.loads(path.read_text())
         cfg["usage_limit"] = {"resume": False}
+        path.write_text(json.dumps(cfg))
+        [missing] = [m for ok, m in scaffold.doctor(self.root) if "schedule" in m]
+        self.assertIn("so runs again after a transient error may never start", missing)
+        self.assertIn("or set retry.wait_minutes to [0]", missing)
+        # Runs again at once need no schedule.
+        cfg["retry"] = {"wait_minutes": [0]}
         path.write_text(json.dumps(cfg))
         self.assertFalse(any("schedule" in m for _, m in scaffold.doctor(self.root)))
 
@@ -1447,6 +1457,13 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("workflow_dispatch", event)
         self.assertEqual(json.loads(out["decision"]), {"action": "maintain", "task": "resume"})
         self.assertEqual(out["maintain_timeout"], str(330 + 15))
+        # It may wait as long as the longest wait before a run again after a transient error.
+        path = self.root / "repo/.nexkit/config.json"
+        raw = json.loads(path.read_text())
+        raw.update(usage_limit={"wait_minutes": 0}, retry={"wait_minutes": [15, 90]})
+        path.write_text(json.dumps(raw))
+        out = self.run_route("workflow_dispatch", event)
+        self.assertEqual(out["maintain_timeout"], str(90 + 15))
 
     def test_route_stops_when_the_key_belongs_to_another_app(self):
         with mock.patch.dict(os.environ, {"NEXKIT_APP_SLUG": "someone-else"}):
@@ -1502,7 +1519,9 @@ class PipelineCommandTests(unittest.TestCase):
             mock.patch.object(maintain, "maintain") as work,
         ):
             self.assertEqual(cli.main(["maintain", "--wait"]), 0)
-        wait.assert_called_once_with(self.gh, 330)
+        [(gh, cfg)] = [call.args for call in wait.call_args_list]
+        self.assertIs(gh, self.gh)
+        self.assertEqual(cfg["retry"]["wait_minutes"], [15, 30, 60])
         work.assert_not_called()
 
     def test_route_replies_with_configuration_errors(self):

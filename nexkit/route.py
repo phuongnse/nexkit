@@ -96,11 +96,13 @@ def issue_from_branch(branch):
 # The `auto` dispatch input: `true` for an automatic fix round after failures, `conflicts`
 # for an automatic round that merges the base branch, `resume` for a command that NexKit
 # runs again after the agent's usage limit reset, `autopilot` for a command that autopilot
-# started, `retry` for the one more try after a transient error, `carry` for the review
-# after NexKit brought an approved pull request up to date with its base branch, which
-# carries the approval over when the change is the same. Several are joined with commas.
+# started, `retry` for the first run again after a transient error and `retry:N` for the
+# N-th (see `retry.wait_minutes`), `carry` for the review after NexKit brought an approved
+# pull request up to date with its base branch, which carries the approval over when the
+# change is the same. Several are joined with commas.
 RESUME = "resume"
 RETRY = "retry"
+RETRY_KIND = re.compile(r"retry(?::(\d{1,2}))?")
 CARRY = "carry"
 # Also the `command` of the dispatch that starts an autopilot sweep.
 AUTOPILOT = "autopilot"
@@ -117,12 +119,29 @@ def auto_kinds(value):
     return {"resumed" if kind == RESUME else kind for kind in kinds if kind}
 
 
-def auto_input(decision, resume=False, retry=False):
-    """The `auto` input that starts this decision's command again."""
+def retry_number(kinds):
+    """Which run again after a transient error the `auto` kinds name: 1 for `retry`, N for
+    `retry:N`, 0 for none."""
+    for kind in kinds:
+        match = RETRY_KIND.fullmatch(kind)
+        if match:
+            return max(1, int(match.group(1) or 1))
+    return 0
+
+
+def retry_kind(number):
+    """The `auto` kind of the `number`-th run again after a transient error."""
+    return RETRY if number <= 1 else f"{RETRY}:{number}"
+
+
+def auto_input(decision, resume=False, retry=0):
+    """The `auto` input that starts this decision's command again: with `retry`, as that
+    run again after a transient error; otherwise as the run again the decision was."""
     kinds = ["conflicts" if decision.get("conflicts") else "true"] if decision.get("auto") else []
     kinds += [AUTOPILOT] if decision.get(AUTOPILOT) else []
     kinds += [RESUME] if resume else []
-    kinds += [RETRY] if retry or decision.get(RETRY) else []
+    number = int(retry or decision.get(RETRY) or 0)
+    kinds += [retry_kind(number)] if number else []
     kinds += [CARRY] if decision.get("carry_from") else []
     return ",".join(kinds) or "false"
 
@@ -249,8 +268,11 @@ def route(gh, event_name, event, inputs=None):
         decision["actor"] = event.get("sender", {}).get("login")
         if decision["action"] not in ("none", "maintain"):
             decision.update(
-                {kind: True for kind in ("conflicts", "resumed", AUTOPILOT, RETRY) if kind in kinds}
+                {kind: True for kind in ("conflicts", "resumed", AUTOPILOT) if kind in kinds}
             )
+            if retry_number(kinds):
+                # Which run again after a transient error this is, for the next wait.
+                decision[RETRY] = retry_number(kinds)
         if decision["action"] == "review" and CARRY in kinds:
             approved = approved_head(gh.comments(decision["pr"]))
             if approved and approved != decision["head"]:

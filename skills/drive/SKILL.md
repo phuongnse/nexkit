@@ -97,9 +97,10 @@ Where the instructions say nothing, the driver does not act and notifies instead
 ## At each stop
 
 Act on an item when it waits for a person and no newer command started for it. Leave
-what NexKit still carries on by itself, such as a pending `(retry)` (⏭️), a `merge_waiting`
-or `waiting` pull request that needs nobody, or a command autopilot started that has not
-run yet. Re-read the item's latest comments first. Then apply its entry, within these
+what NexKit still carries on by itself, such as a `retrying` item (⏸️), a pending
+`(retry N)` (⏭️), a `merge_waiting` or `waiting` pull request that needs nobody, or a
+command autopilot started that has not run yet: posting a command on a `retrying` item
+replaces its wait. Re-read the item's latest comments first. Then apply its entry, within these
 bounds:
 
 - **[Questions](../../docs/troubleshooting.md#a-question-without-a-recommended-option-or-asked-again):**
@@ -110,9 +111,9 @@ bounds:
   twice per issue, then notify. When the answer is to
   wait for another issue, mark the issue *blocked by* it with its reason line. A diagnosis
   round's question belongs to the diagnosis stop below.
-- **[A transient failure after NexKit's retry](../../docs/troubleshooting.md#a-run-stopped-twice-on-a-transient-error):**
+- **[A transient failure after NexKit's runs again](../../docs/troubleshooting.md#a-run-kept-stopping-on-a-transient-error):**
   post the command once more only when the log shows the cause has passed; otherwise
-  notify. When both stops were results that did not fit the schema, post it once more, and
+  notify. When the stops were results that did not fit the schema, post it once more, and
   notify if it stops the same way: a stronger model is the person's choice.
 - **[A note from the implement agent](../../docs/troubleshooting.md#agents)** in a round's
   comment: read it with the pull request. When it says the issue needs no change, notify
@@ -201,7 +202,7 @@ Notify only for:
 - an approved pull request with a criterion that no test or check can show, or that
   stayed unverifiable after the round that adds tests;
 - a question still asked after two answers;
-- a transient failure that has not passed after NexKit's retry, or a service still down
+- a transient failure that has not passed after NexKit's runs again, or a service still down
   after `recheck_failed`;
 - an issue reopened after a wrong `no_change` or `already_on_base`;
 - a `merge_waiting` pull request whose checks neither passed nor failed within six hours,

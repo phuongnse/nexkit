@@ -9,6 +9,21 @@ transcript: `transcript.md` to read, `transcript.jsonl` with every event.
 
 ## Setup
 
+**`nexkit status` or `nexkit doctor`: "… pins NexKit vX.Y.Z, so it runs from …".** The
+installed `nexkit` is another release than the one the repository's workflow pins, so it
+ran the pinned release, which judges the repository by the rules the pipeline runs (see
+[Local commands](../README.md#local-commands)). Its docs are in the folder it names. To
+run the installed release instead, pass `--own-release` or set `NEXKIT_OWN_RELEASE=1`.
+
+**"cannot fetch NexKit … from …".** The pinned release could not be fetched: no network,
+or a `nexkit_ref` that names no tag, branch or commit there. Fix the ref, or pass
+`--own-release` to run the installed release.
+
+**"… runs NexKit's code from OWNER/REPO, not from phuongnse/nexkit".** The workflow's
+`nexkit_repository` names another repository, such as a fork, and NexKit runs another
+repository's code only when you name it. If you trust it, set
+`NEXKIT_KIT_REPOSITORY=OWNER/REPO`; otherwise pass `--own-release`.
+
 **`nexkit doctor`: "Set 'concurrency' on the 'nexkit' job".** In workflows installed before
 NexKit 1.8, a plain comment can cancel a waiting command. Move the `concurrency` block in
 `.github/workflows/nexkit.yml` into the `nexkit` job, as `nexkit init` writes it.

@@ -69,7 +69,9 @@ add the secret and runs `nexkit doctor`.
 ### By hand
 
 ```sh
-pipx install git+https://github.com/phuongnse/nexkit@v6.6.0   # or run bin/nexkit from a clone
+pipx install git+https://github.com/phuongnse/nexkit@v6.6.0   # or run bin/nexkit from a clone;
+                                         # in each repository it runs the release the
+                                         # workflow pins (see Local commands)
 cd your-repository
 nexkit init --check "test=npm test" --check "lint=npm run lint" --setup "npm ci"
                                          # opens your browser to create the GitHub App, then
@@ -140,6 +142,17 @@ what](docs/how-it-works.md#who-does-what).
 | `nexkit status [--json] [--local-config]` | Lists the open NexKit issues and pull requests with what each waits for and a link to its last run, recent merges by NexKit and pull requests it closed without merging, the items that need a person and why, and with autopilot what its next sweep does with each issue in scope. It reads NexKit's hidden markers and changes nothing. It judges with the `.nexkit/config.json` on the default branch, as the pipeline does, and warns when the checkout's differs; `--local-config` previews the checkout's. |
 
 The commands use the GitHub CLI's login (`gh auth login`) or `GITHUB_TOKEN`.
+
+One installed `nexkit` serves every repository, whatever release each pins. `nexkit doctor`
+and `nexkit status` judge a repository by the rules of the release its
+`.github/workflows/nexkit.yml` pins in `nexkit_ref`, so when that is another release they
+run it: they fetch it once from `phuongnse/nexkit` into `~/.cache/nexkit/releases` (or
+`$XDG_CACHE_HOME/nexkit/releases`), say on stderr which release runs and from where, and
+reuse it after. A branch, such as `main`, is fetched again each time. `--own-release`, or
+`NEXKIT_OWN_RELEASE=1`, runs the installed release instead; `nexkit init` always does.
+When the workflow's `nexkit_repository` names another repository, such as a fork, they
+fetch and run nothing unless you name it in `NEXKIT_KIT_REPOSITORY=OWNER/REPO`: otherwise
+cloning a repository and running `nexkit status` would run whatever code it points at.
 
 ## Configuration
 

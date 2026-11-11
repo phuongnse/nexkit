@@ -1752,7 +1752,9 @@ pull request:
    new key, or new value of a key, that the repository has a value for, such as the
    names of its own CI workflows or artifacts.
 4. Check that the workflow file grants every permission the release asks for.
-5. Run `nexkit doctor` at the new release, and fix every ✗ line.
+5. Run `nexkit doctor` in the checkout of that pull request's branch, and fix every ✗
+   line. It runs the release the workflow now pins (see [Local
+   commands](../README.md#local-commands)).
 6. Comment [`/nexkit review`](#reviewing-your-own-pull-requests) on the pull request, which
    checks and reviews it and sets the statuses your rules may require.
 

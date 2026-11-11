@@ -37,21 +37,24 @@ Where the instructions say nothing, the driver does not act and notifies instead
 
 1. Check out the default branch, up to date, and read the repository's instructions for
    the driver.
-2. Read `nexkit_repository` and `nexkit_ref` in `.github/workflows/nexkit.yml`. At that
-   ref, read this skill and the docs it links: in How it works, [Who does
+2. Run `nexkit status --json` (the [`status` skill](../status/SKILL.md) says how). The CLI
+   runs the release that `.github/workflows/nexkit.yml` pins and, when that is not the
+   plugin's, says on stderr from which folder. Read, in that folder rather than the
+   plugin, this skill and the docs it links: in How it works, [Who does
    what](../../docs/how-it-works.md#who-does-what), [One run at a
    time](../../docs/how-it-works.md#one-run-at-a-time),
    [Autopilot](../../docs/how-it-works.md#autopilot) and [Failure
    handling](../../docs/how-it-works.md#failure-handling); the configuration's
    [Autopilot](../../docs/configuration.md#autopilot); and Troubleshooting, [When NexKit
-   waits for a person](../../docs/troubleshooting.md#when-nexkit-waits-for-a-person). The
-   [`status` skill](../status/SKILL.md) shows how to run the pinned release's CLI and read
-   its docs.
-3. Run `nexkit status --json` from the pinned release. Its `needs_person` items, and the
-   autopilot items that wait with a person needed, are the stops to act on, each with its
-   reason. The CLI needs Python 3.12 or newer; when `python3` is older, use a newer
-   `python3.x`. When it cannot run, read NexKit's run comments; [State](../../docs/how-it-works.md#state)
-   names what they hold.
+   waits for a person](../../docs/troubleshooting.md#when-nexkit-waits-for-a-person). When
+   the CLI says the workflow runs NexKit's code from another repository, set
+   `NEXKIT_KIT_REPOSITORY` only if the repository's instructions for the driver name that
+   repository; otherwise notify.
+3. The `needs_person` items of `nexkit status --json`, and the autopilot items that wait
+   with a person needed, are the stops to act on, each with its reason. The CLI needs
+   Python 3.12 or newer; when `python3` is older, use a newer `python3.x`. When it cannot
+   run, read NexKit's run comments; [State](../../docs/how-it-works.md#state) names what
+   they hold.
 4. Use `gh` or the GitHub REST API for comments, issues, sub-issues, *blocked by*
    relationships, mergeability and workflow dispatch, or a GitHub MCP server's tools where
    the session has them, with REST for what they lack. In a cloud session, `gh api` can

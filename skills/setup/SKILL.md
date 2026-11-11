@@ -107,7 +107,9 @@ files or repository settings, and wait for confirmation.
    and quoted, and with `--parallel-checks`, `--check-group <name>=<group>`. When the
    repository's CI workflows upload artifacts that explain a failure, such as end-to-end
    test results, add `--evidence-artifact <name>` for each, so plan, implement and fix rounds on an issue
-   that names a failed run get them.
+   that names a failed run get them. For a sharded check that uploads one artifact per
+   shard, such as `test-results-e2e-1` to `test-results-e2e-5`, give the shared start with
+   a `*`: `--evidence-artifact "test-results-e2e-*"`.
    Show the generated `.nexkit/config.json` and `.github/workflows/nexkit.yml`. The config
    declares the `claude` agent with `"oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"`; if
    the user has an Anthropic API key instead, change it to

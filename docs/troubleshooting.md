@@ -95,6 +95,19 @@ the same message. Some of them:
   fallbacks (and for a plan with profiles, every profile's plan agent), need too many
   secrets. Use fewer agents, or agents that share secrets.
 
+While the configuration on the default branch is invalid, NexKit refuses every command,
+`/nexkit review` on the pull request that corrects it included, so that pull request gets
+no `nexkit/checks` or `nexkit/review` status. Where the rules require them, someone with
+the right to bypass them merges it; NexKit works again from that merge on.
+
+**`nexkit/checks` fails with "NexKit would refuse .nexkit/config.json: …".** The pull
+request is a person's, it changes `.nexkit/config.json`, and NexKit would refuse the file
+at its head with that error. Merged, it would stop every command as above. `/nexkit review`
+reads the file through the API and loads it as `nexkit doctor` does, whatever the checks
+and the review found; the round's comment gives the whole message. Correct the file, run
+`nexkit doctor` on the branch, push, and comment `/nexkit review` again. "NexKit could not
+read .nexkit/config.json" means GitHub did not answer: comment `/nexkit review` again.
+
 **Setup failed.** The `setup` commands must work on a fresh `ubuntu-24.04` runner without
 secrets. Run them in a clean container to reproduce.
 

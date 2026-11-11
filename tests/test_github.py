@@ -133,6 +133,15 @@ class RefusalReadsTests(unittest.TestCase):
             with self.assertRaises(GitHubError):
                 self.gh.file_text("CODEOWNERS", "main")
 
+    def test_a_run_s_artifacts_are_read_page_by_page(self):
+        pages = [
+            {"artifacts": [{"id": n} for n in range(100)]},
+            {"artifacts": [{"id": 100}]},
+        ]
+        with mock.patch.object(self.gh, "request", side_effect=pages) as request:
+            self.assertEqual(len(self.gh.run_artifacts(7)), 101)
+        self.assertEqual(request.call_args.kwargs["params"], {"per_page": 100, "page": 2})
+
 
 class TransportTests(unittest.TestCase):
     def test_a_read_that_times_out_is_tried_again_then_fails_as_github(self):

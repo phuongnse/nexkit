@@ -5,7 +5,7 @@ step that collects the issue's context can: before the agent runs, it downloads 
 failed jobs' logs and error annotations of each run the issue names, and the artifacts
 that `evidence.artifacts` lists, into a folder outside the working tree. Text files are
 redacted, like the result files of failing checks, and a round keeps at most
-`RESULTS_LIMIT` of it. For each run it also says whether a newer run of the same workflow
+`EVIDENCE_LIMIT` of it. For each run it also says whether a newer run of the same workflow
 passed on the default branch since, so a round can tell a failure that came from outside
 the repository and has passed from one that still needs a change.
 
@@ -26,7 +26,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .autopilot import CI_RUNS, FAILED, on_default_branch
-from .checks import RESULTS_LIMIT, _is_text, size_text
+from .checks import _is_text, size_text
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .state import by_bot
 
@@ -38,6 +38,11 @@ RUN_LINK = re.compile(
 ACTIONS_LINK = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/actions/(?!runs/\d)[^\s)>\]]*")
 # The most runs one round collects: the ones named last.
 MAX_RUNS = 5
+# The most a round keeps of the runs' logs, annotations and artifacts. More than the result
+# files of failing checks keep, since nothing uploads this folder again: a sharded check's
+# Playwright traces take 15-20 MB a shard. What bounds it is the agent job's memory, since an
+# artifact's zip is read whole, and the time its download takes from the agent's.
+EVIDENCE_LIMIT = 250_000_000
 # How much of the end of a failed job's log a round keeps.
 LOG_TAIL = 2_000_000
 # How a job's name becomes a file name.
@@ -111,7 +116,7 @@ def _latest(gh, runs, workflow):
 class Budget:
     """What a round may still keep."""
 
-    def __init__(self, limit=RESULTS_LIMIT):
+    def __init__(self, limit=EVIDENCE_LIMIT):
         self.left = limit
         self.used = 0
         self.left_out = []
@@ -303,12 +308,19 @@ def collect(gh, cfg, runs, folder, redact, workflow="", budget=None):
         except GitHubError as exc:
             item["missing"].append(f"its jobs could not be read: {exc}")
             continue
+        taken = set()
         for name in names:
-            matching = [a for a in available if a.get("name") == name]
+            matching = [a for a in available if matches(name, a.get("name") or "")]
             if not matching:
-                item["missing"].append(f"no artifact named `{name}`")
-            for artifact in matching:
-                _artifact(gh, artifact, folder, budget, redact, item)
+                item["missing"].append(
+                    f"no artifact whose name starts with `{name[:-1]}`"
+                    if name.endswith("*")
+                    else f"no artifact named `{name}`"
+                )
+            for artifact in sorted(matching, key=lambda a: a.get("name") or ""):
+                if artifact.get("id") not in taken:
+                    taken.add(artifact.get("id"))
+                    _artifact(gh, artifact, folder, budget, redact, item)
     return {
         "folder": str(root),
         "runs": found,
@@ -316,6 +328,14 @@ def collect(gh, cfg, runs, folder, redact, workflow="", budget=None):
         "left_out": budget.left_out,
         "used": budget.used,
     }
+
+
+def matches(pattern, name):
+    """Whether the artifact `name` is one that the `evidence.artifacts` entry `pattern`
+    takes: the same name, or for a pattern ending in `*`, a name starting with the rest."""
+    if pattern.endswith("*"):
+        return name.startswith(pattern[:-1])
+    return name == pattern
 
 
 def _artifact(gh, artifact, folder, budget, redact, item):
@@ -353,7 +373,7 @@ def summary_lines(found):
         if run.get("workflow"):
             lines.append(f"Run {run['id']}: {since_text(run)}.")
     if found["left_out"]:
-        limit = size_text(RESULTS_LIMIT)
+        limit = size_text(EVIDENCE_LIMIT)
         lines.append(f"Left out, past the {limit} a round keeps: " + "; ".join(found["left_out"]))
     return lines
 

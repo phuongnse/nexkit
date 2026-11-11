@@ -290,7 +290,7 @@ logs and artifacts (see [What is redacted](how-it-works.md#what-is-redacted)).
 ### Evidence from CI runs
 
 ```json
-"evidence": {"artifacts": ["test-results-e2e"]}
+"evidence": {"artifacts": ["test-results-e2e-*", "performance-report"]}
 ```
 
 An issue about a failing or flaky CI run, such as a `bug` issue that autopilot opened, is
@@ -307,15 +307,25 @@ the agent runs.
   runs of other repositories, runs from a fork, and other links are skipped, and the log
   says which and why.
 - **What.** For each run and each attempt that failed: the end of each failed job's log
-  and its error and warning annotations. Then the run's artifacts that `artifacts` lists
-  by name, as the repository's CI workflows upload them; NexKit's own artifacts are not
-  among them. Without `artifacts`, only logs and annotations. For each run, also whether
+  and its error and warning annotations. Then the run's artifacts that `artifacts` lists,
+  as the repository's CI workflows upload them; NexKit's own artifacts are not among
+  them. Without `artifacts`, only logs and annotations. For each run, also whether
   a newer run of the same workflow passed on the default branch since, and which: among
   the workflow's 20 latest runs there, without runs of pull requests and forks.
+- **Which artifacts.** A name matches the artifact of that exact name. A name ending in
+  `*` matches every artifact of the run whose name starts with the part before it, so
+  `test-results-e2e-*` takes each shard's `test-results-e2e-1`, `test-results-e2e-2` and
+  so on, however many shards the check has today. `*` may only end a name. The list may
+  hold any number of names, and an artifact that several of them match is downloaded
+  once. What bounds a round's download is the five runs and the 250 MB below, not the
+  number of names: artifacts are taken in the order the list names them, and those of
+  one name in the order of their names, until the 250 MB are used.
 - **Where.** The plan, implement and fix rounds' `agent` job downloads them, with
   `actions: read` and `checks: read`, to a folder outside the working tree, one folder per
   run. Text files are redacted like the result files of failing checks; binary files are
-  kept as they are. A round keeps at most 50 MB; what would go past it is left out. The
+  kept as they are. A round keeps at most 250 MB, more than the 50 MB of [result
+  files](#result-files-of-failing-checks), since the folder is not uploaded again; what
+  would go past it is left out. The
   plan agent, which may only read, may read that folder too.
 - **The prompt** names the folder and, for each run, each file and artifact it holds and
   the newer run that passed since, and asks the agent to read them before anything else,
@@ -330,7 +340,8 @@ the agent runs.
   round's comment shows the finding and links the run that passed; see
   [Autopilot](#autopilot) for how the issue closes.
 
-`nexkit init --evidence-artifact NAME`, repeated for each name, sets `artifacts`.
+`nexkit init --evidence-artifact NAME`, repeated for each name or pattern, sets
+`artifacts`.
 
 ### Skipping work that a change cannot affect
 

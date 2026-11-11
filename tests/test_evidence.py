@@ -184,7 +184,7 @@ class EvidenceTests(EvidenceCase):
             self.gather()
         summary = (self.folder.parent / "s").read_text()
         self.assertIn("### NexKit: evidence from CI runs", summary)
-        self.assertIn("Left out, past the 50.0 MB a round keeps", summary)
+        self.assertIn("Left out, past the 250.0 MB a round keeps", summary)
 
     def test_a_zip_entry_that_leads_out_of_its_folder_is_skipped(self):
         self.issue("https://github.com/acme/app/actions/runs/101")
@@ -296,12 +296,95 @@ class EvidenceTests(EvidenceCase):
         from nexkit.config import ConfigError
 
         self.assertEqual(make_config()["evidence"], {"artifacts": []})
-        for bad in ("x", [""], ["a", "a"], [1], ["a\nb"]):
+        for bad in ("x", [""], ["a", "a"], [1], ["a\nb"], ["a*b"], ["*a"], ["a**"]):
             with self.assertRaises(ConfigError):
                 make_config(evidence={"artifacts": bad})
         with self.assertRaises(ConfigError):
             make_config(evidence={"names": []})
         json.dumps(make_config(evidence={"artifacts": ["test-results"]}))
+        # No count limit: a sharded check names an artifact per shard.
+        names = [f"test-results-e2e-{n}" for n in range(1, 18)] + ["test-results-unit-*"]
+        self.assertEqual(make_config(evidence={"artifacts": names})["evidence"]["artifacts"], names)
+
+    def shards(self, run_id, names, size=100):
+        """Artifacts of `run_id` with `names`, each holding a file named after it."""
+        found = []
+        for n, name in enumerate(names):
+            data = zipped({f"{name}.txt": "x" * size})
+            artifact = {"id": run_id * 100 + n, "name": name, "size_in_bytes": len(data)}
+            found.append(artifact)
+            self.gh.zips[artifact["id"]] = data
+        self.gh.run_artifact_list[run_id] = found
+        return len(data)
+
+    def test_a_round_keeps_more_evidence_than_result_files_and_says_how_much(self):
+        from nexkit.checks import RESULTS_LIMIT
+
+        self.assertEqual(evidence.Budget().left, evidence.EVIDENCE_LIMIT)
+        self.assertEqual(evidence.EVIDENCE_LIMIT, 250_000_000)
+        self.assertGreater(evidence.EVIDENCE_LIMIT, RESULTS_LIMIT)
+        # The download of an artifact past the result files' limit is asked for in full.
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        self.gh.run_artifact_list[101][0]["size_in_bytes"] = 60_000_000
+        with mock.patch.object(self.gh, "artifact_zip", wraps=self.gh.artifact_zip) as download:
+            found = self.gather()["ci_evidence"]
+        self.assertGreater(download.call_args.args[1], 60_000_000)
+        self.assertEqual(found["left_out"], [])
+        found["left_out"] = ["artifact `big` of run 101 (300.0 MB)"]
+        section = ci_evidence_text(found)
+        self.assertIn("- Left out, past the 250 MB a round keeps: artifact `big`", section)
+
+    def test_a_name_ending_in_a_star_takes_every_shard_beside_an_exact_name(self):
+        self.cfg = make_config(evidence={"artifacts": ["test-results-e2e-*", "perf"]})
+        self.shards(
+            101,
+            ["test-results-e2e-2", "perf", "test-results-e2e-1", "test-results-unit-1", "perf-2"],
+        )
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        found = self.gather()["ci_evidence"]
+        folder = self.folder / "run-101" / "artifacts"
+        self.assertEqual(
+            sorted(path.name for path in folder.iterdir()),
+            ["perf", "test-results-e2e-1", "test-results-e2e-2"],
+        )
+        self.assertEqual(found["runs"][0]["missing"], [])
+        section = ci_evidence_text(found)
+        self.assertIn("  - `run-101/artifacts/test-results-e2e-1/`: an artifact, 1 file", section)
+
+    def test_a_pattern_and_an_exact_name_of_the_same_artifact_download_it_once(self):
+        self.cfg = make_config(evidence={"artifacts": ["test-results-*", "test-results-e2e"]})
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        found = self.gather()["ci_evidence"]
+        artifacts = [f for f in found["runs"][0]["files"] if "/artifacts/" in f["path"]]
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(found["runs"][0]["missing"], [])
+
+    def test_a_pattern_that_matches_nothing_says_so(self):
+        self.cfg = make_config(evidence={"artifacts": ["smoke-*"]})
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        section = ci_evidence_text(self.gather()["ci_evidence"])
+        self.assertIn("Missing: no artifact whose name starts with `smoke-`.", section)
+
+    def test_shards_past_the_size_limit_are_left_out_and_named(self):
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        self.cfg = make_config(evidence={"artifacts": []})
+        logs = self.gather()["ci_evidence"]["used"]  # the log and annotations
+        self.cfg = make_config(evidence={"artifacts": ["test-results-e2e-*"]})
+        size = self.shards(101, [f"test-results-e2e-{n}" for n in (3, 1, 5, 2, 4)], size=40)
+        real = evidence.Budget
+        # Room for two shards' files, and for no third download.
+        with mock.patch.object(evidence, "Budget", lambda: real(limit=logs + 80 + size - 1)):
+            found = self.gather()["ci_evidence"]
+        kept = sorted(path.name for path in (self.folder / "run-101" / "artifacts").iterdir())
+        self.assertEqual(kept, ["test-results-e2e-1", "test-results-e2e-2"])
+        shown = evidence.size_text(size)
+        self.assertEqual(
+            found["left_out"],
+            [f"artifact `test-results-e2e-{n}` of run 101 ({shown})" for n in (3, 4, 5)],
+        )
+        summary = (self.folder.parent / "s").read_text()
+        self.assertIn("Left out, past the 250.0 MB a round keeps", summary)
+        self.assertIn("artifact `test-results-e2e-5` of run 101", summary)
 
 
 if __name__ == "__main__":

@@ -864,7 +864,7 @@ def validate(raw, *, layered=False):
 def _artifacts(names):
     """`evidence.artifacts`: names of artifacts that the repository's CI workflows upload,
     each exact or ending in `*` for every artifact whose name starts with what precedes it.
-    The runs and the size a round keeps bound the download, so the list has no limit."""
+    The runs and `evidence.EVIDENCE_LIMIT` bound the download, so the list has no limit."""
     where = "evidence.artifacts"
     if not isinstance(names, list):
         _fail(f'{where} must be a list of artifact names, such as "test-results"')

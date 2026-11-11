@@ -16,7 +16,8 @@ WRITE_ROLES = {"admin", "maintain", "write"}
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 
-# The most a download from GitHub reads: a job's log or an artifact's zip.
+# The most a download from GitHub reads, such as a job's log or an artifact's zip, unless
+# the caller gives its own limit.
 DOWNLOAD_LIMIT = 64_000_000
 
 

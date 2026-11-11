@@ -317,13 +317,15 @@ the agent runs.
   `test-results-e2e-*` takes each shard's `test-results-e2e-1`, `test-results-e2e-2` and
   so on, however many shards the check has today. `*` may only end a name. The list may
   hold any number of names, and an artifact that several of them match is downloaded
-  once. What bounds a round's download is the five runs and the 50 MB below, not the
+  once. What bounds a round's download is the five runs and the 250 MB below, not the
   number of names: artifacts are taken in the order the list names them, and those of
-  one name in the order of their names, until the 50 MB are used.
+  one name in the order of their names, until the 250 MB are used.
 - **Where.** The plan, implement and fix rounds' `agent` job downloads them, with
   `actions: read` and `checks: read`, to a folder outside the working tree, one folder per
   run. Text files are redacted like the result files of failing checks; binary files are
-  kept as they are. A round keeps at most 50 MB; what would go past it is left out. The
+  kept as they are. A round keeps at most 250 MB, more than the 50 MB of [result
+  files](#result-files-of-failing-checks), since the folder is not uploaded again; what
+  would go past it is left out. The
   plan agent, which may only read, may read that folder too.
 - **The prompt** names the folder and, for each run, each file and artifact it holds and
   the newer run that passed since, and asks the agent to read them before anything else,

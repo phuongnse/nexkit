@@ -184,7 +184,7 @@ class EvidenceTests(EvidenceCase):
             self.gather()
         summary = (self.folder.parent / "s").read_text()
         self.assertIn("### NexKit: evidence from CI runs", summary)
-        self.assertIn("Left out, past the 50.0 MB a round keeps", summary)
+        self.assertIn("Left out, past the 250.0 MB a round keeps", summary)
 
     def test_a_zip_entry_that_leads_out_of_its_folder_is_skipped(self):
         self.issue("https://github.com/acme/app/actions/runs/101")
@@ -317,6 +317,23 @@ class EvidenceTests(EvidenceCase):
         self.gh.run_artifact_list[run_id] = found
         return len(data)
 
+    def test_a_round_keeps_more_evidence_than_result_files_and_says_how_much(self):
+        from nexkit.checks import RESULTS_LIMIT
+
+        self.assertEqual(evidence.Budget().left, evidence.EVIDENCE_LIMIT)
+        self.assertEqual(evidence.EVIDENCE_LIMIT, 250_000_000)
+        self.assertGreater(evidence.EVIDENCE_LIMIT, RESULTS_LIMIT)
+        # The download of an artifact past the result files' limit is asked for in full.
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        self.gh.run_artifact_list[101][0]["size_in_bytes"] = 60_000_000
+        with mock.patch.object(self.gh, "artifact_zip", wraps=self.gh.artifact_zip) as download:
+            found = self.gather()["ci_evidence"]
+        self.assertGreater(download.call_args.args[1], 60_000_000)
+        self.assertEqual(found["left_out"], [])
+        found["left_out"] = ["artifact `big` of run 101 (300.0 MB)"]
+        section = ci_evidence_text(found)
+        self.assertIn("- Left out, past the 250 MB a round keeps: artifact `big`", section)
+
     def test_a_name_ending_in_a_star_takes_every_shard_beside_an_exact_name(self):
         self.cfg = make_config(evidence={"artifacts": ["test-results-e2e-*", "perf"]})
         self.shards(
@@ -366,7 +383,7 @@ class EvidenceTests(EvidenceCase):
             [f"artifact `test-results-e2e-{n}` of run 101 ({shown})" for n in (3, 4, 5)],
         )
         summary = (self.folder.parent / "s").read_text()
-        self.assertIn("Left out, past the 50.0 MB a round keeps", summary)
+        self.assertIn("Left out, past the 250.0 MB a round keeps", summary)
         self.assertIn("artifact `test-results-e2e-5` of run 101", summary)
 
 

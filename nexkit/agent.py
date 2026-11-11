@@ -19,7 +19,7 @@ from string import Template
 
 from . import config as configuration
 from .checks import BASE_SHA, RESULTS_LIMIT, SHARD, environment, known_base, shown_command
-from .evidence import since_text
+from .evidence import EVIDENCE_LIMIT, since_text
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, one_line, summary, write_summary
@@ -661,7 +661,7 @@ def ci_evidence_text(found):
         if run.get("workflow"):
             lines.append(f"  - Since: {since_text(run)}.")
     if found.get("left_out"):
-        limit = RESULTS_LIMIT // 1_000_000
+        limit = EVIDENCE_LIMIT // 1_000_000
         lines.append(
             f"- Left out, past the {limit} MB a round keeps: " + "; ".join(found["left_out"])
         )

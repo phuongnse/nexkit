@@ -332,6 +332,24 @@ def checklist_text(stage, cfg):
     return text
 
 
+def drop_criteria(result, stage, context):
+    """A person's pull request has no plan, so its review judges no acceptance criteria.
+    The prompt asks for none; criteria that a reviewer still gives, which it can only have
+    made up from the pull request's text, go here, so that none blocks the review or waits
+    for a person."""
+    output = result.get("output")
+    if stage != "review" or not context.get("person") or not isinstance(output, dict):
+        return
+    if output.get("criteria"):
+        count = len(output["criteria"])
+        print(
+            f"Dropped the {count} acceptance criteria the review gave: a person's pull "
+            "request has no plan.",
+            flush=True,
+        )
+    output["criteria"] = []
+
+
 def answer_checklist(result, stage, cfg):
     """Put each item's text next to its answer, in the order of `review.checklist`, so what
     reads the result needs no configuration. An answer for an item that does not exist goes.
@@ -1420,6 +1438,7 @@ def run_stage(
         ],
     )
     answer_checklist(result, stage, cfg)
+    drop_criteria(result, stage, context)
     if stage in ("implement", "fix") and result["status"] == "done":
         left = leftover_markers(repo, conflicts)
         files, size = collect_changes(repo, base_commit, out)

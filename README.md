@@ -69,7 +69,7 @@ add the secret and runs `nexkit doctor`.
 ### By hand
 
 ```sh
-pipx install git+https://github.com/phuongnse/nexkit@v6.5.0   # or run bin/nexkit from a clone
+pipx install git+https://github.com/phuongnse/nexkit@v6.6.0   # or run bin/nexkit from a clone
 cd your-repository
 nexkit init --check "test=npm test" --check "lint=npm run lint" --setup "npm ci"
                                          # opens your browser to create the GitHub App, then

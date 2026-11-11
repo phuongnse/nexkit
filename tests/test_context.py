@@ -6,7 +6,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nexkit.agent import build_prompt, diagnosis_text, evidence_text
+from nexkit.agent import (
+    build_prompt,
+    diagnosis_text,
+    evidence_text,
+    shortened_folders,
+    shortened_names,
+    shortened_text,
+)
 from nexkit.context import NO_PLAN, PERSON_PLAN, gather, outside_plan
 from nexkit.publish import pull_body
 from nexkit.state import (
@@ -627,3 +634,115 @@ class EvidenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LongTextTests(unittest.TestCase):
+    """An issue's body and a collaborator's comment reach the agent whole up to GitHub's
+    limit; a text that a prompt still shortens is whole in a file, and named."""
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.texts = Path(self.tmp.name) / "texts"
+        self.body = "B" * 59_990 + "END OF BODY"
+        self.gh.add_issue(5, title="Copy the files", body=self.body)
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+
+    def prompt(self, stage, decision, extra=None):
+        context = gather(self.gh, decision, stage, texts=self.texts)
+        self.assertNotIn("shortened", context)
+        return build_prompt(stage, context, make_config(), extra)
+
+    def test_a_long_body_and_comment_reach_every_prompt_whole(self):
+        comment = "C" * 19_990 + "END OF NOTE"
+        self.gh.human_comment(5, comment)
+        self.gh.human_comment(6, comment)
+        self.gh.pr_review_comments[6] = [
+            {
+                "id": 77,
+                "user": {"login": "alice"},
+                "author_association": "COLLABORATOR",
+                "path": "calc.py",
+                "line": 2,
+                "body": comment,
+            }
+        ]
+        issue = {"issue": 5, "note": ""}
+        pull = {**issue, "pr": 6, "head": HEAD}
+        prompts = {
+            "plan": self.prompt("plan", {**issue, "action": "plan"}),
+            "implement": self.prompt("implement", {**issue, "action": "implement"}),
+            "fix": self.prompt("fix", {**pull, "action": "fix"}),
+            "review": self.prompt("review", {**pull, "action": "fix"}),
+        }
+        for stage, prompt in prompts.items():
+            with self.subTest(stage):
+                self.assertIn(self.body, prompt)
+                self.assertIn(comment, prompt)
+                self.assertNotIn("[truncated]", prompt)
+                self.assertNotIn("NexKit shortened", prompt)
+        self.assertFalse(self.texts.exists())
+
+    def test_older_comments_past_the_block_limit_are_whole_in_a_file_and_named(self):
+        for n in range(3):
+            self.gh.human_comment(5, f"Comment {n} " + "x" * 39_000 + f" end {n}")
+        context = gather(self.gh, {"action": "plan", "issue": 5, "note": ""}, texts=self.texts)
+        discussion = context["discussion"]
+        # The latest two fit; the oldest keeps its start, and its whole text is in a file.
+        self.assertIn("end 2", discussion)
+        self.assertIn("end 1", discussion)
+        self.assertIn("Comment 0", discussion)
+        self.assertNotIn("end 0", discussion)
+        self.assertIn("this prompt has the first 1,000 of its 39,016 characters", discussion)
+        [item] = context["shortened"]
+        self.assertTrue(item["name"].startswith("the comment of `@alice` of "))
+        self.assertEqual((item["kept"], item["length"]), (1_000, 39_016))
+        path = Path(item["path"])
+        self.assertEqual(path.parent, self.texts.resolve())
+        self.assertTrue(path.read_text().endswith("end 0"))
+        self.assertIn(f"The whole text is in `{path}`.", discussion)
+
+        prompt = build_prompt(
+            "plan", context, make_config(), {"shortened": shortened_text(context)}
+        )
+        self.assertIn("## Texts this prompt shortened", prompt)
+        self.assertIn(
+            f"- {item['name']}: the first 1,000 of 39,016 characters here, the whole text in "
+            f"`{path}`",
+            prompt,
+        )
+        self.assertIn("never stop as blocked because a text was shortened", prompt)
+        self.assertEqual(shortened_folders(context), [str(self.texts.resolve())])
+        self.assertEqual(
+            shortened_names(context), [{"name": item["name"], "kept": 1_000, "length": 39_016}]
+        )
+
+    def test_a_body_past_githubs_limit_is_whole_in_a_file(self):
+        self.gh.issues[5]["body"] = "B" * 70_000
+        context = gather(self.gh, {"action": "implement", "issue": 5}, texts=self.texts)
+        self.assertIn("this prompt has the first 65,536 of its 70,000 characters", context["body"])
+        [item] = context["shortened"]
+        self.assertEqual(item["name"], "the body of #5")
+        self.assertEqual(Path(item["path"]).read_text(), "B" * 70_000)
+
+    def test_only_texts_shortened_in_the_prompt_are_named(self):
+        # Triage has no tools to read a file with, and the fix prompt shows the feedback
+        # rather than the discussion.
+        for n in range(3):
+            self.gh.human_comment(5, f"/nexkit plan note {n} " + "x" * 40_000)
+        plan = gather(self.gh, {"action": "plan", "issue": 5, "note": ""}, texts=self.texts)
+        self.assertIn("NexKit shortened", plan["requests"])
+        self.assertNotIn("shortened", plan)
+        for _ in range(3):
+            self.gh.human_comment(6, "y" * 40_000)
+        fix = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD}
+        self.assertNotIn("shortened", gather(self.gh, fix, texts=self.texts))
+        self.assertEqual(shortened_text({}), "")
+
+    def test_without_a_folder_a_shortened_text_says_the_rest_was_left_out(self):
+        self.gh.issues[5]["body"] = "B" * 70_000
+        context = gather(self.gh, {"action": "implement", "issue": 5})
+        self.assertIn("The rest was left out.", context["body"])
+        self.assertEqual(shortened_text(context), "")
+        self.assertEqual(shortened_folders(context), [])

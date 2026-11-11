@@ -26,7 +26,7 @@ Comments from collaborators on the issue and the pull request, including notes o
 $discussion
 </untrusted>
 
-## Outside the plan
+$shortened## Outside the plan
 
 What the implementation agent did that the plan did not ask for, and why, as it wrote in
 the pull request description.

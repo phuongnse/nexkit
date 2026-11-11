@@ -19,6 +19,14 @@ from .runlog import write_summary
 from .state import answers_text, by_bot, clip, latest_plan, plan_text, read_state
 
 MAX_COMMENTS = 30
+# GitHub keeps at most this many characters in an issue's body or a comment, so a text
+# reaches an agent whole up to it.
+TEXT_LIMIT = 65_536
+# What one block of comments, such as a discussion, keeps in a prompt; above TEXT_LIMIT, so
+# the latest comment always comes whole. Older comments past it keep their start, with the
+# whole text in a file.
+BLOCK_LIMIT = 80_000
+SHORT = 1_000
 NO_PLAN = "No plan was posted. Implement the issue as described."
 PERSON_PLAN = "None: a person wrote this pull request."
 # The section of a NexKit pull request description that `publish.pull_body` writes from the
@@ -30,30 +38,77 @@ def _trusted(item):
     return item.get("author_association") in TRUSTED_ASSOCIATIONS and not by_bot(item)
 
 
-def _discussion(comments, notes=False):
+class Shelf:
+    """The texts that a prompt keeps only the start of. Each whole text goes to a file in
+    `folder`, outside the working tree, which the agent reads; `cut` names them for the
+    prompt and the round's comment. Without a folder no file is written."""
+
+    def __init__(self, folder=None):
+        self.folder = Path(folder).resolve() if folder else None
+        self.cut = []
+
+    def put(self, name, key, text, keep):
+        """`text` with at most `keep` characters, and where the rest is when it has more.
+        `name` says which text it is, `key` names its file."""
+        if len(text) <= keep:
+            return text
+        path = ""
+        if self.folder:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            path = str(self.folder / f"{key}.md")
+            Path(path).write_text(text, encoding="utf-8")
+        if not any(item["key"] == key for item in self.cut):
+            self.cut.append(
+                {"name": name, "key": key, "path": path, "kept": keep, "length": len(text)}
+            )
+        where = f"The whole text is in `{path}`." if path else "The rest was left out."
+        return (
+            f"{text[:keep]}\n[NexKit shortened this text here: this prompt has the first "
+            f"{keep:,} of its {len(text):,} characters. {where}]"
+        )
+
+
+def _fit(entries, shelf):
+    """Texts of `entries`, each `(header, body, name, key)`, with at most BLOCK_LIMIT
+    characters in all, latest first: a body that no longer fits keeps its first SHORT
+    characters, and its whole text goes to `shelf`."""
+    left = BLOCK_LIMIT
+    shown = []
+    for header, body, name, key in reversed(entries):
+        body = body or ""
+        whole = min(len(body), TEXT_LIMIT)
+        keep = whole if len(header) + whole <= left else SHORT
+        text = header + shelf.put(name, key, body, keep)
+        left -= len(text)
+        shown.append(text)
+    return shown[::-1]
+
+
+def _discussion(comments, notes=False, shelf=None):
     """Collaborators' comments, and the answers autopilot gave for the owner. Command
     comments are left out, or with `notes` kept when they carry a note: the agent that acts
     on a command gets its note through the decision, the reviewer only through the
-    discussion."""
+    discussion. Each comment comes whole, as long as the block fits (see `_fit`)."""
     entries = []
     for comment in comments:
+        when = comment["created_at"]
+        key = f"comment-{comment['id']}"
         answered = answers_text(comment)
         if answered is not None:
             # Autopilot answered for the owner, with the options NexKit recommended.
-            entries.append(
-                f"NexKit autopilot for the owner ({comment['created_at']}):\n{clip(answered)}"
-            )
+            header = f"NexKit autopilot for the owner ({when}):\n"
+            entries.append((header, answered, f"autopilot's answers of {when}", key))
             continue
         if not _trusted(comment):
             continue
         command, note = parse_command(comment.get("body"))
         if command and not (notes and note):
             continue
-        entries.append(
-            f"@{comment['user']['login']} ({comment['created_at']}):\n{clip(comment['body'])}"
-        )
-    entries = entries[-MAX_COMMENTS:]
-    return "\n\n---\n\n".join(entries) if entries else "No discussion."
+        login = comment["user"]["login"]
+        name = f"the comment of `@{login}` of {when}"
+        entries.append((f"@{login} ({when}):\n", comment["body"], name, key))
+    texts = _fit(entries[-MAX_COMMENTS:], shelf or Shelf())
+    return "\n\n---\n\n".join(texts) if texts else "No discussion."
 
 
 def _saved_feedback(comments):
@@ -197,7 +252,7 @@ def _required_text(item):
     return "\n".join(lines)
 
 
-def _feedback(gh, decision, comments):
+def _feedback(gh, decision, comments, shelf=None):
     """Earlier NexKit results plus current human review feedback on the pull request."""
     pr = decision["pr"]
     head = decision["head"]
@@ -221,16 +276,21 @@ def _feedback(gh, decision, comments):
             lines.append(f"- `{where}`: {f.get('body')}")
         parts.append("\n".join(lines))
 
-    human = []
+    entries = []
     for review in gh.reviews(pr):
         if _trusted(review) and review.get("commit_id") == head and (review.get("body") or ""):
-            human.append(f"@{review['user']['login']} ({review['state']}): {clip(review['body'])}")
+            login = review["user"]["login"]
+            name = f"the review of `@{login}`"
+            key = f"review-{review.get('id') or len(entries)}"
+            entries.append((f"@{login} ({review['state']}): ", review["body"], name, key))
     for comment in gh.review_comments(pr):
         if _trusted(comment) and comment.get("line") is not None:
-            human.append(
-                f"@{comment['user']['login']} on `{comment['path']}:{comment['line']}`: "
-                f"{clip(comment['body'])}"
-            )
+            login = comment["user"]["login"]
+            where = f"{comment['path']}:{comment['line']}"
+            name = f"the review comment of `@{login}` on `{where}`"
+            key = f"review-comment-{comment.get('id') or len(entries)}"
+            entries.append((f"@{login} on `{where}`: ", comment["body"], name, key))
+    human = _fit(entries, shelf or Shelf())
     if human:
         parts.append("### Review comments from collaborators\n\n" + "\n\n".join(human))
     return "\n\n".join(parts) if parts else "No recorded feedback. Follow the note."
@@ -320,28 +380,42 @@ def ci_evidence(gh, cfg, issue, comments, folder, workflow=""):
     return found
 
 
-def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg=None, workflow=""):
+def gather(
+    gh,
+    decision,
+    stage=None,
+    fix_result=None,
+    results=None,
+    ci=None,
+    cfg=None,
+    workflow="",
+    texts=None,
+):
     """Context for an agent stage. `stage` defaults to the decision's action; the review
     stage also gets the previous review round, with `fix_result` from this run's fix. A
     fix round also gets the failing checks' result files, which the agent job downloaded
     into the folder `results`. With `ci` and `cfg`, a plan, implement or fix round also
     gets the evidence of the CI runs the issue names, downloaded into the folder `ci`,
-    other than runs of NexKit's own workflow, the file `workflow`."""
+    other than runs of NexKit's own workflow, the file `workflow`. A text that the prompt
+    keeps only the start of goes whole to the folder `texts`, and `shortened` names it."""
     issue = gh.issue(decision["issue"])
     comments = gh.comments(decision["issue"])
     plan = latest_plan(comments)
+    shelf = Shelf(texts)
+    number = decision["issue"]
+    body = issue.get("body") or "No description."
     context = {
-        "issue": decision["issue"],
+        "issue": number,
         "pr": decision.get("pr") or "",
         "title": issue["title"],
-        "body": clip(issue.get("body") or "No description.", 20000),
-        "discussion": _discussion(comments),
+        "body": shelf.put(f"the body of #{number}", f"issue-{number}", body, TEXT_LIMIT),
         "plan": plan_text(plan) if plan else NO_PLAN,
         "note": decision.get("note") or "None.",
         "feedback": "",
         "outside_plan": "None.",
     }
     stage = stage or decision["action"]
+    discussion = None
     if stage in ("plan", "implement", "fix") and (
         decision.get("auto") or decision.get("autopilot")
     ):
@@ -355,22 +429,25 @@ def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg
     if stage == "plan":
         # Triage reads the notes on earlier commands too: a later note can change the
         # profile that an earlier comment asked for.
-        context["requests"] = _discussion(comments, notes=True)
+        # Its prompt has no tools to read a file with, so it names nothing it shortened.
+        context["requests"] = _discussion(comments, notes=True, shelf=Shelf())
         if plan:
             # A re-plan revises the latest plan with what was said since it.
             at = comments.index(plan)
-            context["discussion"] = _discussion(comments[:at])
-            context["since_plan"] = _discussion(comments[at + 1 :], notes=True)
+            discussion = _discussion(comments[:at], shelf=shelf)
+            context["since_plan"] = _discussion(comments[at + 1 :], notes=True, shelf=shelf)
     if decision.get("person"):
         # Its issue is the pull request itself, with its description and comments, so the
         # review needs neither a plan nor the same discussion twice.
-        context.update(person=True, plan=PERSON_PLAN, discussion=_discussion(comments, notes=True))
+        discussion = _discussion(comments, notes=True, shelf=shelf)
+        context.update(person=True, plan=PERSON_PLAN)
         context.update(previous_review(gh, decision, fix_result) or {})
     elif stage == "review" and decision.get("pr"):
-        context["discussion"] = _discussion(comments, notes=True)
         pr_comments = gh.comments(decision["pr"])
-        context["discussion"] += "\n\n---\n\nOn the pull request:\n\n" + _discussion(
-            pr_comments, notes=True
+        discussion = (
+            _discussion(comments, notes=True, shelf=shelf)
+            + "\n\n---\n\nOn the pull request:\n\n"
+            + _discussion(pr_comments, notes=True, shelf=shelf)
         )
         context["outside_plan"] = outside_plan(gh.pull(decision["pr"]))
         context.update(previous_review(gh, decision, fix_result) or {})
@@ -382,11 +459,20 @@ def gather(gh, decision, stage=None, fix_result=None, results=None, ci=None, cfg
             }
     elif stage == "fix":
         pr_comments = gh.comments(decision["pr"])
-        context["feedback"] = _feedback(gh, decision, pr_comments)
+        context["feedback"] = _feedback(gh, decision, pr_comments, shelf)
         context["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
         saved = _saved_feedback(pr_comments)
         context["evidence"] = evidence(saved, decision, results)
         context["earlier_fixes"] = earlier_fixes(pr_comments)
         context["diagnose"] = diagnosis(decision, saved)
-        context["discussion"] += "\n\n---\n\nOn the pull request:\n\n" + _discussion(pr_comments)
+        # The fix prompt shows the feedback rather than the discussion, so it names nothing
+        # shortened here.
+        discussion = (
+            _discussion(comments, shelf=Shelf())
+            + "\n\n---\n\nOn the pull request:\n\n"
+            + _discussion(pr_comments, shelf=Shelf())
+        )
+    context["discussion"] = discussion or _discussion(comments, shelf=shelf)
+    if shelf.cut:
+        context["shortened"] = shelf.cut
     return context

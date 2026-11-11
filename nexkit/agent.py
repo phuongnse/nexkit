@@ -672,6 +672,35 @@ def ci_evidence_text(found):
     return text + "\n"
 
 
+def shortened_text(context):
+    """The plan, implement, fix and review prompts' section about the texts the prompt
+    keeps only the start of, or "" without any. `context["shortened"]` comes from
+    `context.gather`."""
+    items = [item for item in context.get("shortened") or [] if item.get("path")]
+    if not items:
+        return ""
+    lines = [
+        f"- {item['name']}: the first {item['kept']:,} of {item['length']:,} characters here, "
+        f"the whole text in `{item['path']}`"
+        for item in items
+    ]
+    return Template(_template("shortened")).safe_substitute(texts="\n".join(lines)) + "\n"
+
+
+def shortened_folders(context):
+    """The folders that hold the whole texts a prompt shortened."""
+    found = {str(Path(item["path"]).parent) for item in context.get("shortened") or []}
+    return sorted(folder for folder in found if folder != "." and Path(folder).is_dir())
+
+
+def shortened_names(context):
+    """For the round's comment: which texts the prompt shortened, and by how much."""
+    return [
+        {key: item[key] for key in ("name", "kept", "length")}
+        for item in context.get("shortened") or []
+    ]
+
+
 def diagnosis_text(repeated):
     """The fix prompt's section for a diagnosis round, or "" for any other round.
     `repeated` comes from `context.diagnosis`."""
@@ -1350,6 +1379,7 @@ def run_stage(
             "previous": previous_round(repo, context, base),
             "merge": merge_review(repo, context, base),
         }
+    extra["shortened"] = shortened_text(context)
     prompt = build_prompt(stage, context, cfg, extra)
     (out / "prompt.md").write_text(prompt, encoding="utf-8")
 
@@ -1384,7 +1414,10 @@ def run_stage(
         commits=commits,
         program=program,
         restore=restore if base_commit else None,
-        dirs=[found["folder"]] if found and Path(found["folder"]).is_dir() else [],
+        dirs=[
+            *([found["folder"]] if found and Path(found["folder"]).is_dir() else []),
+            *shortened_folders(context),
+        ],
     )
     answer_checklist(result, stage, cfg)
     if stage in ("implement", "fix") and result["status"] == "done":
@@ -1441,6 +1474,8 @@ def run_stage(
             result["passed_since"] = passed_runs(found)
     if triage:
         result.update(profile=triage["profile"], triage=triage)
+    if context.get("shortened"):
+        result["shortened"] = shortened_names(context)
     return _save(result, out, redact, calls, start=start, merged=merged, conflicts=conflicts)
 
 

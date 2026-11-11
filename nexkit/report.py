@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import autopilot, progress, refusal
 from .checks import failing_signatures, skipped_line, skipped_names, with_skipped
-from .config import after_workflows
+from .config import CONFIG_PATH, after_workflows
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
     ON_BASE_FAILED_NEED,
@@ -434,19 +434,48 @@ def workflow_file(workflow_ref):
     return workflow_ref.split("@", 1)[0].rsplit("/", 1)[-1]
 
 
-def _set_statuses(gh, head, checks, review, url, review_error=""):
-    """Set both commit statuses from check results and a review output (None: not run).
-    `review_error` says why a review that did not complete stopped."""
-    checks_ok = checks is not None and all(c["passed"] for c in checks)
-    gh.set_status(
-        head,
-        "nexkit/checks",
-        "success" if checks_ok else "failure",
-        "Checks passed"
-        if checks_ok
-        else ("Checks did not run" if checks is None else "Some checks failed"),
-        url,
+def config_check(error):
+    """The failed check of a person's pull request whose `.nexkit/config.json` NexKit would
+    refuse (see `route.head_config_error`)."""
+    return {
+        "name": CONFIG_PATH,
+        "run": "nexkit doctor",
+        "exit_code": 1,
+        "passed": False,
+        "seconds": 0,
+        "output": error,
+    }
+
+
+def config_status(error):
+    """The `nexkit/checks` description for that pull request."""
+    text = f"NexKit would refuse {CONFIG_PATH}: {one_line(error)}"
+    return text if len(text) <= STATUS_LIMIT else text[: STATUS_LIMIT - 1] + "…"
+
+
+def config_line(error, head):
+    """What the round's comment says of it."""
+    return (
+        f"❌ NexKit would refuse the `{CONFIG_PATH}` of `{head[:7]}`: {clip(one_line(error), 500)}"
+        "\n\nNexKit reads its configuration from the default branch, so once this merged it "
+        "would refuse every command, the one on the pull request that corrects it included. "
+        "`nexkit doctor` shows the same error; correct the file, then comment `/nexkit review` "
+        "again."
     )
+
+
+def _set_statuses(gh, head, checks, review, url, review_error="", config_error=""):
+    """Set both commit statuses from check results and a review output (None: not run).
+    `review_error` says why a review that did not complete stopped; `config_error` why
+    NexKit would refuse the configuration the pull request brings."""
+    checks_ok = checks is not None and all(c["passed"] for c in checks)
+    if config_error:
+        text = config_status(config_error)
+    elif checks_ok:
+        text = "Checks passed"
+    else:
+        text = "Checks did not run" if checks is None else "Some checks failed"
+    gh.set_status(head, "nexkit/checks", "success" if checks_ok else "failure", text, url)
     verdict = review["verdict"] if review else None
     if verdict:
         if verdict != "approve":
@@ -1828,6 +1857,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     # With the checks that route skipped, which ran on no runner.
     skipped = decision.get("skipped_checks")
     checks = with_skipped(cfg, _load(artifacts / "nexkit-checks" / "checks.json"), skipped)
+    # A person's pull request whose configuration NexKit would refuse fails its checks.
+    config_error = decision.get("config_error") or ""
+    if config_error:
+        checks = [config_check(config_error), *(checks or [])]
     reviewed = _load(artifacts / "nexkit-review" / "result.json")
     given = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
     review = apply_criteria(given) if given else None
@@ -1863,6 +1896,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         # The commit is published and checked; only the review runs again after the reset.
         message, resume = pause(reviewed, cfg, "review", pr, resumed=bool(decision.get("resumed")))
         _pause_statuses(gh, head, resume, url)
+        if config_error:
+            gh.set_status(head, "nexkit/checks", "failure", config_status(config_error), url)
         checks_ok, verdict = checks is not None and all(c["passed"] for c in checks), None
     elif conflicting:
         skipped = f"Not run: {head[:7]} conflicts with {decision['base']}"
@@ -1871,7 +1906,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         checks_ok, verdict = False, None
     else:
         failed = "" if review else review_failure(reviewed)[0]
-        checks_ok, verdict = _set_statuses(gh, head, checks, review, url, failed)
+        checks_ok, verdict = _set_statuses(gh, head, checks, review, url, failed, config_error)
     if given:
         gh.create_review(pr, head, review_body({"output": given}, checks, person))
 
@@ -2036,6 +2071,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     carry_line = _carry_line(decision, decision["base"], carry)
     if carry_line:
         message = f"{carry_line}\n\n{message}"
+    if config_error:
+        message = f"{config_line(config_error, head)}\n\n{message}"
     if action == "implement" and outcome in IMPLEMENT_LEFT and cfg["conflicts"]["auto_resolve"]:
         message += _conflicts_after(
             gh, cfg, decision, pr, row, workflow_file(workflow_ref), default_branch

@@ -167,6 +167,7 @@ class FakeGitHub:
         self.rules = []  # the base branch's ruleset rules, each {type, parameters}
         self.review_states = {}  # pull request number -> {draft, decision, unresolved}
         self.files = {}  # path -> its text on the base branch
+        self.files_at = {}  # (path, ref) -> its text at that ref, before `files`
         self.pr_files = {}  # pull request number -> the files it changes
         self.repo_settings = {"default_branch": "main", "allow_squash_merge": True}
         self.labeled = []  # (number, labels) for each add_labels
@@ -538,6 +539,8 @@ class FakeGitHub:
         return dict(self.repo_settings)
 
     def file_text(self, path, ref):
+        if (path, ref) in self.files_at:
+            return self.files_at[(path, ref)]
         return self.files.get(path)
 
     def branch_rules(self, branch):

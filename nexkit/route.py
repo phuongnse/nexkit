@@ -359,6 +359,41 @@ def on_base(gh, base, head):
     return (found.get("merge_base_commit") or {}).get("sha") or head
 
 
+# The most files GitHub lists for a pull request (see `GitHub.pull_files`).
+PULL_FILES_LIMIT = 300
+
+
+def head_config_error(gh, number, base, head):
+    """Why NexKit would refuse the configuration that the pull request `number` brings at
+    `head`, or "" when it leaves `.nexkit/config.json` as it is or the file loads. NexKit
+    reads its configuration from the default branch, so a file it refuses would stop every
+    command once it merged, its fix included. The file is read through the API and loaded
+    by NexKit's own validation, as `nexkit doctor` loads it: nothing of the head runs, and
+    the round's checks still come from the default branch's configuration."""
+    path = configuration.CONFIG_PATH
+    try:
+        files = gh.pull_files(number)
+        names = {f.get("filename") for f in files} | {f.get("previous_filename") for f in files}
+        if path not in names:
+            if len(files) < PULL_FILES_LIMIT:
+                return ""
+            # GitHub lists only the first files: compare the file with the merge base's.
+            found = gh.compare(base, head)
+            merge_base = (found.get("merge_base_commit") or {}).get("sha") or base
+            if gh.file_text(path, merge_base) == gh.file_text(path, head):
+                return ""
+        text = gh.file_text(path, head)
+    except GitHubError as exc:
+        return f"NexKit could not read {path} at {head[:7]}: {exc}"
+    if text is None:
+        return f"{path} is missing at {head[:7]}, or larger than the 1 MB NexKit reads"
+    try:
+        configuration.validate(configuration.parse(text))
+    except configuration.ConfigError as exc:
+        return str(exc)
+    return ""
+
+
 def _decide(gh, command, number, on_pull, note, *, auto):
     if on_pull:
         if command not in PR_COMMANDS:
@@ -414,6 +449,10 @@ def _decide(gh, command, number, on_pull, note, *, auto):
         }
         if person:
             decision["person"] = True
+            error = head_config_error(gh, number, pull["base"]["ref"], pull["head"]["sha"])
+            if error:
+                # `report` fails `nexkit/checks` with it, so the change cannot merge.
+                decision["config_error"] = error
         comments = gh.comments(number)
         # The last commit whose checks passed, for NEXKIT_VERIFIED_SHA.
         verified = verified_head(comments)

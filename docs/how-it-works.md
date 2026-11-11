@@ -75,7 +75,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 
 | Job | Runs for | Token permissions | Secrets | Does |
 |---|---|---|---|---|
-| `route` | every event | the App's: read; comments, reactions, statuses; workflow runs (`actions: read`) | the App's, for its token | Checks the command and the author's write access, reads the config from the default branch, picks the action, and shows that the run started. In an automatic review, leaves out of the check matrix the checks whose [`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) lists every path changed since they passed, from GitHub's comparison. Never executes repository code. |
+| `route` | every event | the App's: read; comments, reactions, statuses; workflow runs (`actions: read`) | the App's, for its token | Checks the command and the author's write access, reads the config from the default branch, and on a person's pull request that changes `.nexkit/config.json` loads that file from its head through the API, picks the action, and shows that the run started. In an automatic review, leaves out of the check matrix the checks whose [`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) lists every path changed since they passed, from GitHub's comparison. Never executes repository code. |
 | `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | the App's: write, also workflow files | the App's, for its token | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. When the base branch moved while the agent worked, it merges the base branch's tip after the round's commit if the base branch's rules want pull requests up to date, and finds with git whether that tip conflicts with the commit (see [Stages](#stages)). Never executes repository code. |
 | `shards` | go, fix, review, with [sharded checks](configuration.md#parallel-checks) | read only | none | Runs the `count` of each sharded check on the published commit, before `setup`, and gives `verify` the matrix of its shards, each a check of its own with `NEXKIT_SHARD=k/N`. In an automatic review, also leaves out the shards whose `unaffected_by` lists every path changed since they passed with the same N, from git. A `count` that fails or prints no number from 1 to `max` fails its check, and no shard of it runs. |
@@ -721,6 +721,15 @@ Both statuses are set on that head.
 - The reviewer gets no plan. It judges the change against the pull request's title and
   description, and it reviews `.github/`, `.nexkit/` and every other protected path like any
   other code, since a person wrote them.
+- When it changes `.nexkit/config.json`, `route` also reads that file at the head through
+  the API and loads it as `nexkit doctor` does, with NexKit's own code: nothing of the
+  head runs, and the checks still come from the default branch's configuration. NexKit
+  reads its configuration only from the default branch, so a file it refuses would stop
+  every command once it merged, the one on the pull request that corrects it included.
+  Such a file fails `nexkit/checks`, whose description and the round's comment name the
+  error, whatever the checks and the review found, so the pull request cannot merge where
+  the rules require that status. A file that loads changes nothing in the round. When
+  GitHub does not answer, the status fails too, and says so.
 - The state comment keeps the review, so the next `/nexkit review` sees its findings.
 - `/nexkit fix` is refused there, a pull request that changes no file has nothing to review,
   and a pull request from a fork runs nothing, since its checks would run code that nobody

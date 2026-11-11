@@ -202,6 +202,40 @@ class PersonsPullRequestTests(ReportCase):
         self.assertEqual(row["run"]["status"], "success")
         self.assertIn("a person makes any change", row["body"])
 
+    def test_a_configuration_nexkit_would_refuse_fails_the_checks_and_says_why(self):
+        self.candidate()  # its checks passed and its review approved
+        error = "evidence.artifacts: `*` may only end a name, such as \"test-results-e2e-*\""
+        outcome = self.report_person(config_error=error)
+        self.assertEqual(outcome["outcome"], "person_reviewed")
+        [checks] = [s for s in self.gh.statuses if s["context"] == "nexkit/checks"]
+        self.assertEqual(checks["state"], "failure")
+        self.assertEqual(checks["description"], f"NexKit would refuse .nexkit/config.json: {error}")
+        self.assertIn(("nexkit/review", "success"), self.statuses())
+        [row] = self.gh.run_comments(6)
+        self.assertIn(f"NexKit would refuse the `.nexkit/config.json` of `{HEAD[:7]}`", row["body"])
+        self.assertIn(error, row["body"])
+        self.assertIn("Checks or review need attention", row["body"])
+        self.assertEqual(row["run"]["checks"], "failed")
+        [review] = self.gh.created_reviews
+        self.assertIn("❌ `.nexkit/config.json`", review["body"])
+        self.assertEqual(self.gh.merged, [])
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_a_long_configuration_error_is_cut_to_fit_the_description(self):
+        self.candidate(checks_pass=False)
+        error = "Configuration keys were renamed: " + "; ".join(["'a' is now 'b'"] * 20)
+        self.report_person(config_error=error)
+        [checks] = [s for s in self.gh.statuses if s["context"] == "nexkit/checks"]
+        self.assertEqual(len(checks["description"]), 140)
+        self.assertTrue(checks["description"].endswith("…"))
+        self.assertIn(error, self.gh.run_comments(6)[-1]["body"])
+
+    def test_a_configuration_error_holds_while_the_review_waits_for_the_usage_limit(self):
+        self.candidate(review={"status": "paused", "error": "limit", "resets_at": None})
+        self.report_person(config_error="Configuration must be a JSON object")
+        self.assertEqual(self.gh.statuses[-1]["context"], "nexkit/checks")
+        self.assertEqual(self.gh.statuses[-1]["state"], "failure")
+
     def test_a_review_that_requests_changes_starts_no_fix_round(self):
         finding = {"severity": "blocking", "file": "a.yml", "line": 1, "body": "It breaks."}
         self.candidate(review=review_result("request_changes", [finding]))

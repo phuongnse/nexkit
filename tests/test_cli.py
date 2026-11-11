@@ -2280,6 +2280,13 @@ class WorkflowSafetyTests(unittest.TestCase):
             self.assertIn(permission, route)
         self.assertNotIn("contents: write", route)
         self.assertIn("sparse-checkout: .nexkit", route)
+        # It checks out only the default branch: a person's pull request's configuration is
+        # read through the API and loaded by NexKit (`route.head_config_error`), never run.
+        refs = [line.strip() for line in route.splitlines() if line.strip().startswith("ref:")]
+        self.assertEqual(
+            refs,
+            ["ref: ${{ inputs.nexkit_ref }}", "ref: ${{ github.event.repository.default_branch }}"],
+        )
 
     def test_review_carries_an_approval_over_before_any_agent_or_credential_use(self):
         review = self.jobs["review"]

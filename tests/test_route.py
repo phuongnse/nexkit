@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest import mock
 
@@ -22,7 +23,12 @@ from nexkit.state import (
     render_state,
     setup_fingerprint,
 )
-from tests.support import BOT_LOGIN, FakeGitHub, make_config, profile_config
+from tests.support import APP, BOT_LOGIN, FakeGitHub, make_config, profile_config, with_claude
+
+
+def config_text():
+    """A `.nexkit/config.json` that NexKit loads."""
+    return json.dumps(with_claude({"checks": [{"name": "test", "run": "true"}], "github_app": APP}))
 
 
 def comment_event(number, body, login="alice", on_pull=False, user_type="User"):
@@ -111,6 +117,54 @@ class PersonsPullRequestTests(unittest.TestCase):
     def test_a_closed_pull_request_is_refused(self):
         self.gh.pulls[10]["state"] = "closed"
         self.assertIn("closed", self.review()["reason"])
+
+    def test_a_configuration_nexkit_would_refuse_is_named_for_report(self):
+        path = ".nexkit/config.json"
+        names = [f"test-results-{n}" for n in range(3)]
+        self.gh.pr_files[10] = [{"filename": "README.md"}, {"filename": path}]
+        self.gh.files_at[(path, "a" * 40)] = json.dumps(
+            {**json.loads(config_text()), "evidence": {"artifacts": [*names, "x*y"]}}
+        )
+        found = self.review()
+        self.assertEqual(found["action"], "review")  # the checks and review still run
+        self.assertIn("evidence.artifacts: `*` may only end a name", found["config_error"])
+        self.gh.files_at[(path, "a" * 40)] = "{"
+        self.assertIn(f"{path} is not valid JSON", self.review()["config_error"])
+        self.gh.files_at[(path, "a" * 40)] = None  # removed
+        self.assertIn(f"{path} is missing at aaaaaaa", self.review()["config_error"])
+        self.gh.pr_files[10] = [{"filename": "nexkit.json", "previous_filename": path}]
+        self.assertIn(f"{path} is missing", self.review()["config_error"])
+
+    def test_a_configuration_that_loads_or_is_not_changed_changes_nothing(self):
+        path = ".nexkit/config.json"
+        self.gh.files_at[(path, "a" * 40)] = "{"
+        self.gh.pr_files[10] = [{"filename": "README.md"}]
+        self.assertNotIn("config_error", self.review())  # not changed: never read
+        self.gh.pr_files[10] = [{"filename": path}]
+        self.gh.files_at[(path, "a" * 40)] = config_text()
+        self.assertNotIn("config_error", self.review())
+
+    def test_past_the_files_github_lists_the_file_is_compared_with_the_merge_base(self):
+        path = ".nexkit/config.json"
+        self.gh.pr_files[10] = [{"filename": f"f{n}"} for n in range(300)]
+        self.gh.files_at[(path, "c" * 40)] = "{"  # the merge base's, which is not loaded
+        self.gh.files_at[(path, "a" * 40)] = "{"
+        self.assertNotIn("config_error", self.review())
+        self.gh.files_at[(path, "c" * 40)] = config_text()
+        self.assertIn("is not valid JSON", self.review()["config_error"])
+
+    def test_a_configuration_that_cannot_be_read_fails_closed(self):
+        self.gh.pr_files[10] = [{"filename": ".nexkit/config.json"}]
+        with mock.patch.object(self.gh, "file_text", side_effect=GitHubError(502, "Bad")):
+            found = self.review()
+        self.assertIn("NexKit could not read .nexkit/config.json at aaaaaaa", found["config_error"])
+
+    def test_a_nexkit_pull_request_never_reads_it(self):
+        self.gh.add_issue(5)
+        self.gh.add_pull(11, 5)
+        self.gh.pr_files[11] = [{"filename": ".nexkit/config.json"}]
+        self.gh.files_at[(".nexkit/config.json", "a" * 40)] = "{"
+        self.assertNotIn("config_error", self.review(11))
 
     def test_a_resumed_review_stays_a_persons(self):
         inputs = {"command": "review", "number": "10", "note": "", "auto": "resume"}

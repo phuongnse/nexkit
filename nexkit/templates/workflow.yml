@@ -17,7 +17,7 @@ on:
   push:
     branches: [__DEFAULT_BRANCH__] # conflicts.auto_resolve: the default branch moved
   schedule:
-    - cron: "23 * * * *" # usage_limit.resume, conflicts.auto_resolve, autopilot
+    - cron: "23 * * * *" # usage_limit.resume, retry.wait_minutes, conflicts.auto_resolve, autopilot
   # autopilot with merge.after_workflows or autopilot.watch_workflows: a finished run of
   # those workflows on the default branch starts a sweep at once, also a run that NexKit
   # started. Name each workflow as its `name:` does.
@@ -40,7 +40,7 @@ on:
         required: false
         type: string
       auto:
-        description: Set by NexKit for automatic, conflict, resumed and autopilot runs
+        description: Set by NexKit for automatic, conflict, resumed, retried and autopilot runs
         required: false
         type: string
         default: "false"

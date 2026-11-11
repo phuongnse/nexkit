@@ -20,6 +20,7 @@ from .maintain import (
     close_parents_safely,
     delete_head_branch,
     is_conflicting,
+    reach,
     resolve_conflicts,
     start_conflict_round,
     start_waiting,
@@ -132,7 +133,7 @@ NEEDS_PERSON = {
     ),
     "retry_failed": (
         "post the command again once the cause has passed",
-        "the run stopped on a transient error twice, and NexKit tries a command only once more",
+        "the run stopped on a transient error again after every wait of `retry.wait_minutes`",
     ),
     autopilot.UNTRUSTED_ROUND: (
         autopilot.TRUST_DO,
@@ -756,6 +757,16 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), decide=(), fo
     if outcome not in NEEDS_PERSON:
         return None
     do, why = NEEDS_PERSON[outcome]
+    if outcome == "retry_failed" and found.get("stops") == 1:
+        why = (
+            "the run stopped on a transient error, and with `retry.wait_minutes` empty NexKit "
+            "does not run a command again"
+        )
+    elif outcome == "retry_failed" and found.get("stops"):
+        why = (
+            f"the run stopped on a transient error {_times(found['stops'])}, the last after "
+            "every wait of `retry.wait_minutes`"
+        )
     if outcome == "agent_blocked" and found.get("pull"):
         do = "answer the questions in the round's comment with `/nexkit fix <answers>`"
     if outcome == "agent_blocked" and found.get("questions"):
@@ -806,8 +817,13 @@ def notify(gh, cfg, number, reason):
         print(f"warning: could not mention {', '.join(cfg['notify'])}: {exc}", file=sys.stderr)
 
 
+def _times(count):
+    return "once" if count == 1 else "twice" if count == 2 else f"{count} times"
+
+
 def run_status(outcome):
-    if outcome == "paused":
+    if outcome in ("paused", autopilot.RETRY_WAITING):
+        # It runs again after the reset, or after the wait of `retry.wait_minutes`.
         return PAUSED
     if outcome == "retry":
         # The command runs once more in a run of its own.
@@ -851,34 +867,66 @@ def _automatic(decision):
     return bool(decision.get("auto") or decision.get("autopilot"))
 
 
-def _retry(gh, decision, command, number, workflow_ref, default_branch):
-    """Start `command` once more after a transient error, with the same note for the same
-    command. Returns its inputs once it started, for the run's `next` (see
-    `autopilot._handed_on`), or None: never for a run that was itself the retry."""
-    if decision.get("retry"):
+def _retries_left(cfg, decision):
+    """How many runs again after a transient error `retry.wait_minutes` still allows."""
+    return max(0, len(cfg["retry"]["wait_minutes"]) - int(decision.get("retry") or 0))
+
+
+def _retry(gh, cfg, decision, command, number, workflow_ref, default_branch, now=None):
+    """Start `command` again after a transient error, with the same note for the same
+    command, after the next wait of `retry.wait_minutes`: at once when it is 0, otherwise
+    later, by `maintain.resume_paused`. Returns the inputs of the run it started, for the
+    run's `next` (see `autopilot._handed_on`), or for one that waits, its resume record
+    with `at` and `retry`, its number. None when the waits are used up, or the run could
+    not start."""
+    if not _retries_left(cfg, decision):
         return None
+    number_again = int(decision.get("retry") or 0) + 1
     same = command == progress.COMMANDS[decision["action"]]
     note = (decision.get("note") or "") if same else ""
     if same:
-        auto = auto_input(decision, retry=True)
+        auto = auto_input(decision, retry=number_again)
     else:
-        auto = auto_input({"autopilot": decision.get("autopilot")}, retry=True)
+        auto = auto_input({"autopilot": decision.get("autopilot")}, retry=number_again)
     inputs = {"command": command, "number": str(number), "note": note, "auto": auto}
+    wait = cfg["retry"]["wait_minutes"][number_again - 1]
+    if wait:
+        at = (now or datetime.now(UTC)) + timedelta(minutes=wait)
+        return {**inputs, "at": iso(at), "retry": number_again}
     try:
         gh.dispatch(workflow_file(workflow_ref), default_branch, inputs)
     except GitHubError as exc:
-        print(f"warning: could not start the command once more: {exc}", file=sys.stderr)
+        print(f"warning: could not start the command again: {exc}", file=sys.stderr)
         return None
     return inputs
 
 
-def _earlier_error(gh, decision):
-    """The transient error that the run before this retry stopped on, or "" ."""
-    number = decision.get("pr") or decision["issue"]
-    for _, run in reversed(list(run_comments(gh.comments(number)))):
-        if run.get("transient_error") and run.get("url") != run_url():
-            return run["transient_error"]
-    return ""
+def _earlier_errors(gh, decision):
+    """The transient errors that the runs before this run again stopped on, oldest first:
+    one for each run since the person's or NexKit's command they repeat. A review that a
+    stage of `/nexkit go` handed on keeps that stage's errors on the issue."""
+    count = int(decision.get("retry") or 0)
+    if not count:
+        return []
+    numbers = [decision.get("pr"), decision["issue"]] if decision.get("pr") else [decision["issue"]]
+    found = []
+    for number in dict.fromkeys(n for n in numbers if n):
+        for comment, run in run_comments(gh.comments(number)):
+            if run.get("transient_error") and run.get("url") != run_url():
+                found.append((comment.get("created_at") or "", comment["id"], run))
+    found.sort(key=lambda item: item[:2])
+    errors = []
+    for _, _, run in found:
+        # A `/nexkit go` that went on in its pull request shows its error in both places.
+        if not errors or errors[-1][0] != run.get("url"):
+            errors.append((run.get("url"), run["transient_error"]))
+    return [error for _, error in errors[-count:]]
+
+
+def errors_text(errors):
+    """The transient errors of a command's runs so far, numbered, for its comment."""
+    lines = [f"{i}. {clip(one_line(error), 500)}" for i, error in enumerate(errors, 1)]
+    return "Transient errors so far:\n\n" + "\n".join(lines)
 
 
 # An implement round that changed files and also filled `no_change` (see
@@ -892,30 +940,57 @@ NO_CHANGE_KEPT = (
 
 RETRY_LINE = (
     "The error looks transient, from the service, the network or the runner rather than the "
-    "work, so NexKit runs the command once more."
+    "work, so NexKit runs the command {when}."
 )
 # A session that gave no result that fits (`agent.unfit`), even when asked for it alone.
 UNFIT_RETRY_LINE = (
     "The agent gave no result that fits{asked}. Another run may give one, so NexKit runs "
-    "the command once more."
+    "the command {when}."
 )
 
 
-def retry_line(result):
-    """Why NexKit runs a stage's command once more after `result`."""
-    result = result or {}
+def retry_line(result, again=None, total=1):
+    """Why NexKit runs a stage's command again after `result`, and when: `again` is what
+    `_retry` returned, and `total` how many runs again `retry.wait_minutes` allows."""
+    result, again = result or {}, again or {}
+    number = again.get("retry") or 1
+    if again.get("at"):
+        when = f"again after {shown(again['at'])}: run again {number} of {total}"
+    elif total > 1:
+        when = f"again now: run again {number} of {total}"
+    else:
+        when = "once more"
     if not result.get("unfit"):
-        return RETRY_LINE
-    return UNFIT_RETRY_LINE.format(
-        asked=", even when asked for it alone" * bool(result.get("asked_again"))
-    )
+        line = RETRY_LINE.format(when=when)
+    else:
+        asked = ", even when asked for it alone" * bool(result.get("asked_again"))
+        line = UNFIT_RETRY_LINE.format(asked=asked, when=when)
+    if again.get("at"):
+        line += " A new command here replaces this."
+    return line
+
+
+def _retrying(gh, cfg, decision, result, error, again, message):
+    """(outcome, message, fields) of a run whose command runs again after a transient
+    error, as `_retry` started it or made it wait. The fields go into its marker: its
+    error, for the next run's list, and what it started or waits to start."""
+    total = len(cfg["retry"]["wait_minutes"])
+    message = f"{message}\n\n{retry_line(result, again, total)}"
+    errors = [*_earlier_errors(gh, decision), error]
+    if len(errors) > 1:
+        message += f"\n\n{errors_text(errors)}"
+    fields = {"transient_error": clip(one_line(error), 500)}
+    if again.get("at"):
+        return autopilot.RETRY_WAITING, message, {**fields, "resume": again}
+    return "retry", message, {**fields, "next": again}
 
 
 def _retried(gh, decision, error, message):
-    """The message of a retry that stopped on a transient error again, with both errors."""
-    earlier = _earlier_error(gh, decision)
-    if earlier:
-        message += f"\n\nThe try before stopped on a transient error too: {earlier}"
+    """The message of a run that stopped on a transient error with no run again left, with
+    every error of the command's runs so far."""
+    errors = [*_earlier_errors(gh, decision), error]
+    if len(errors) > 1:
+        message += f"\n\n{errors_text(errors)}"
     return message
 
 
@@ -1714,7 +1789,8 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
         if result.get(key):
             fields[key] = result[key]
     progress.finish(gh, decision, run_status(result["outcome"]), result["summary"], **fields)
-    wait_for_reset(gh, cfg, result.get("resume_at"), workflow_ref, default_branch)
+    retry = result["outcome"] == autopilot.RETRY_WAITING
+    wait_for_reset(gh, cfg, result.get("resume_at"), workflow_ref, default_branch, retry=retry)
     notify(
         gh,
         cfg,
@@ -1728,11 +1804,13 @@ def report(gh, decision, cfg, needs, artifacts, *, workflow_ref, default_branch)
     return result
 
 
-def wait_for_reset(gh, cfg, at, workflow_ref, default_branch):
+def wait_for_reset(gh, cfg, at, workflow_ref, default_branch, retry=False):
     """Start the run that waits for a paused command's reset when it comes within
-    `usage_limit.wait_minutes`. Later resumes are left to the scheduled check."""
+    `usage_limit.wait_minutes`, or, with `retry`, for a command's run again after a
+    transient error, which comes within the longest wait of `retry.wait_minutes`. Later
+    resumes are left to the scheduled check."""
     when = parse_iso(at)
-    wait = cfg["usage_limit"]["wait_minutes"]
+    wait = reach(cfg, retry)
     if not when or not wait or when > datetime.now(UTC) + timedelta(minutes=wait):
         return
     try:
@@ -1827,19 +1905,20 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             error = _transient(decision, agent, publish, needs)
             command = progress.COMMANDS[action]
             again = error and _retry(
-                gh, decision, command, decision["target"], workflow_ref, default_branch
+                gh, cfg, decision, command, decision["target"], workflow_ref, default_branch
             )
             if again:
-                outcome, message = "retry", f"{message}\n\n{retry_line(agent)}"
-                fields["transient_error"] = clip(one_line(error), 500)
-                fields["next"] = again
-            elif error and decision.get("retry"):
+                outcome, message, fields = _retrying(
+                    gh, cfg, decision, agent, error, again, message
+                )
+            elif error and not _retries_left(cfg, decision):
                 outcome, message = "retry_failed", _retried(gh, decision, error, message)
             found = {
                 "pull": bool(decision.get("pr")),
                 "questions": round_questions(agent),
                 "timed_out": bool((agent or {}).get("timed_out")),
                 "error": error if outcome == "retry_failed" else _failure_error(agent, publish),
+                "stops": int(decision.get("retry") or 0) + 1,
             }
             reason = needs_person(outcome, cfg, found=found)
             if agent and agent.get("unchanged"):
@@ -1859,6 +1938,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 "summary": message,
                 "attention": reason,
                 "agents": agents_ran(agent),
+                "resume_at": (fields.get("resume") or {}).get("at"),
                 **fields,
                 **_autopilot_fields(agent),
             }
@@ -2028,14 +2108,18 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         outcome = "review_failed"
         found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
-        again = error and _retry(gh, decision, "review", pr, workflow_ref, default_branch)
+        again = error and _retry(gh, cfg, decision, "review", pr, workflow_ref, default_branch)
         if again:
-            outcome, message = "retry", f"{message}\n\n{retry_line(reviewed)}"
-            row["transient_error"] = clip(one_line(error), 500)
-            row["next"] = again
-        elif error and decision.get("retry"):
+            outcome, message, fields = _retrying(gh, cfg, decision, reviewed, error, again, message)
+            row.update(fields)
+            resume = fields.get("resume") or resume
+            if resume:
+                # The review runs again later; until then it is neither passed nor failed.
+                waits = f"Runs again after {shown(resume['at'])} after a transient error"
+                gh.set_status(head, "nexkit/review", "pending", waits[:STATUS_LIMIT], url)
+        elif error and not _retries_left(cfg, decision):
             outcome, message = "retry_failed", _retried(gh, decision, error, message)
-            found["error"] = error
+            found.update(error=error, stops=int(decision.get("retry") or 0) + 1)
     elif recheck:
         # The fix agent found nothing to change for a cause outside the code, and the
         # checks and the review ran once more: what still fails waits for a person.

@@ -35,6 +35,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(
             cfg["usage_limit"], {"resume": True, "retry_minutes": 60, "wait_minutes": 330}
         )
+        self.assertEqual(cfg["retry"], {"wait_minutes": [15, 30, 60]})
         self.assertEqual(cfg["limits"], {"setup_timeout_minutes": 30, "max_patch_mb": 5})
         self.assertFalse(cfg["close_parent_issues"])
         self.assertEqual(cfg["notify"], [])
@@ -84,6 +85,12 @@ class ConfigTests(unittest.TestCase):
             ({"usage_limit": {"wait_minutes": 331}}, "usage_limit.wait_minutes"),
             ({"usage_limit": {"wait_minutes": -1}}, "usage_limit.wait_minutes"),
             ({"usage_limit": []}, "usage_limit must be an object"),
+            ({"retry": {"wait_minutes": 15}}, "retry.wait_minutes must be a list"),
+            ({"retry": {"wait_minutes": [15] * 11}}, "at most 10 waits"),
+            ({"retry": {"wait_minutes": [15, 331]}}, "each wait in retry.wait_minutes"),
+            ({"retry": {"wait_minutes": [-1]}}, "each wait in retry.wait_minutes"),
+            ({"retry": {"wait_minutes": [1.5]}}, "each wait in retry.wait_minutes"),
+            ({"retry": {"attempts": 3}}, "Unknown keys in retry"),
             ({"limits": {"setup_timeout_minutes": 500}}, "limits.setup_timeout_minutes"),
             ({"limits": {"max_patch_mb": 0}}, "limits.max_patch_mb"),
             ({"close_parent_issues": 1}, "close_parent_issues must be true or false"),

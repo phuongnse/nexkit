@@ -44,9 +44,9 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   review findings do, up to `fix.max_auto_rounds`. The one exception is a run that stopped
   on a transient error before it published anything (the service, the network, a lost
   runner, as `runtimes/` classifies it, or no result that fits even when its session was
-  asked for the result alone): it runs once more, and a second such stop waits
-  for a person. A command that autopilot or a round started and whose run GitHub never
-  started, or that ended without a report, starts again later each time
+  asked for the result alone): it runs again after each wait of `retry.wait_minutes`,
+  and a stop after the last waits for a person. A command that autopilot or a round
+  started and whose run GitHub never started, or that ended without a report, starts again later each time
   (`autopilot.AGAIN`), since such a stop says nothing about the work; then a person
   decides. Autopilot may answer a `blocked` result
   whose questions all have a recommended option (`autopilot.answer: "recommended"`), once

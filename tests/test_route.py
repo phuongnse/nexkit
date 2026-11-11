@@ -665,6 +665,13 @@ class RouteTests(unittest.TestCase):
         self.assertEqual((decision["auto"], decision["retry"]), (True, True))
         # A retry that pauses at the usage limit resumes as the retry it was.
         self.assertEqual(auto_input(decision, resume=True), "true,resume,retry")
+        # Each run again after a transient error knows its number, for the next wait.
+        self.assertEqual(decision["retry"], 1)
+        self.assertEqual(auto_input(decision, retry=2), "true,retry:2")
+        inputs["auto"] = "true,autopilot,retry:3"
+        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        self.assertEqual((decision["retry"], decision["autopilot"]), (3, True))
+        self.assertEqual(auto_input(decision, resume=True), "true,autopilot,resume,retry:3")
 
     def test_the_review_after_a_branch_update_may_carry_the_approval_over(self):
         self.gh.add_pull(9, 5, head_sha="e" * 40)

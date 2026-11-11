@@ -178,10 +178,10 @@ result lacks a field or has one of the wrong type. NexKit handles it by itself (
 result that does not fit](how-it-works.md#agents)): a field whose empty value means the
 same as leaving it out takes that value, and otherwise NexKit asks the same session for its
 result alone, keeping its changes, and goes on when that result fits. When it does not,
-NexKit runs the command once more, as after a transient error. A person is needed only
-when that run stops the same way (see [A run stopped twice on a transient
-error](#a-run-stopped-twice-on-a-transient-error)): run the command again, and if it keeps
-happening with one model, use a stronger one for that stage.
+NexKit runs the command again, as after a transient error. A person is needed only when the
+run after the last wait of `retry.wait_minutes` stops the same way (see [A run kept
+stopping on a transient error](#a-run-kept-stopping-on-a-transient-error)): run the command
+again, and if it keeps happening with one model, use a stronger one for that stage.
 
 **The agent timed out or stopped on its budget.** The issue is probably too large. Without
 autopilot, ask for a new plan and use its suggested split; or raise `timeout_minutes` or
@@ -381,7 +381,7 @@ each outcome of a run is:
 | `review_failed` | comment `/nexkit review` to run the review again. The AI review did not complete, and NexKit runs it again by itself only after an error of the service, the network or the runner; after an authentication error: fix the review agent's secret first, since another try stops the same way | the error |
 | `needs_human` | comment `/nexkit fix <instructions>` for what still fails, push a commit yourself, or close the pull request. Checks or review still need attention, and no automatic fix rounds remain | the failing checks, the number of blocking findings and where the first one is |
 | `recheck_failed` | check what the fix agent found outside the code, then comment `/nexkit review` once it works again, or `/nexkit fix` with evidence that the code is the cause. The checks or review still fail on the same commit after the fix agent found a cause outside the code | what the agent found |
-| `retry_failed` | post the command again once the cause has passed. The run stopped on a transient error twice, and NexKit tries a command only once more | the error |
+| `retry_failed` | post the command again once the cause has passed. The run stopped on a transient error again after every wait of `retry.wait_minutes`, such as `4 times, the last after every wait of retry.wait_minutes`, or at once with `retry.wait_minutes` empty | the last error |
 | `conflicting` | comment `/nexkit fix` on the pull request, with any rule the conflict needs. Its commit conflicts with the base branch, and NexKit started no round to resolve it | |
 | `ready`, with `merge.auto` off | review the pull request, then merge it or close it. Checks and the AI review passed, and with `merge.auto` off a person decides the merge | |
 | `ready`, with checklist items a person decides | decide the checklist items in the round's comment: approve the pull request to accept them, which NexKit then merges (with `merge.auto` off, then merge it), or comment `/nexkit fix <what to change>`. Only a person decides them, and the review found them not met | the first item |
@@ -392,6 +392,7 @@ each outcome of a run is:
 | `agent_untrusted`, `merge_untrusted` | read the issue, and comment `/nexkit trust` on it if you trust it. Someone without write access edited it after a writer vouched for it, so NexKit does not act on its text (or merge its pull request) | |
 | `close_failed`, `on_base_failed` | close the issue (and the pull request) yourself. No change is needed, or the base branch already holds this change, but GitHub refused NexKit's close | the error |
 | `paused`, not resumed | post the command again once the usage limit has reset. The agent hit its usage limit, and NexKit does not resume this run | |
+| `retry_waiting`, long past its time | post the command again, and check that NexKit's workflow has its `schedule` trigger. It was to run again after a transient error, and no run started it | the time it was to run |
 
 Text that an agent, GitHub or a person wrote, such as a question, an error or a path, is
 quoted in a code span on one line, and a login such as an issue's author is named in a code
@@ -440,14 +441,20 @@ planned again once that issue closes. A question that asks a person to download 
 a CI run's files: see [Evidence from a CI run is
 missing](#evidence-from-a-ci-run-is-missing).
 
-### A run stopped twice on a transient error
+### A run kept stopping on a transient error
 
-NexKit already ran the command once more, and the comment shows both errors. Read them
-and the run log. When the cause has passed, for example the service answers again, post
-the same command again. Otherwise wait until it has: another run now stops the same way.
-When both stops were results that did not fit the schema, the cause is the model, not a
-service: post the command again once, and if it stops the same way, use a stronger model
-for that stage.
+NexKit already ran the command again after each wait of `retry.wait_minutes` (by default
+15, 30 and 60 minutes), and the comment lists every error. Read them and the run logs.
+When the cause has passed, for example the service answers again, post the same command
+again. Otherwise wait until it has: another run now stops the same way. When the stops
+were results that did not fit the schema, the cause is the model, not a service: post the
+command again once, and if it stops the same way, use a stronger model for that stage.
+When outages of a service the repository's `setup` downloads from often last longer than
+the waits, add longer waits, such as `[15, 30, 60, 120, 240]`.
+
+While a command still waits to run again, its comment shows ⏸️ with the time, and
+`nexkit status` lists it as `retrying`: nobody needs to act. A command posted meanwhile
+replaces the wait.
 
 ### No automatic fix rounds left
 
@@ -614,9 +621,9 @@ cannot show is hard to answer, so reword it.
 
 ### The review job errored
 
-NexKit already ran the review once more after a transient error or a review that left no
-result. The round's comment says why. Comment `/nexkit review` to try again, unless it
-names an authentication error: fix the review agent's secret first, since another try
+NexKit already ran the review again after the waits of `retry.wait_minutes`, after a
+transient error or a review that left no result. The round's comment says why. Comment
+`/nexkit review` to try again, unless it names an authentication error: fix the review agent's secret first, since another try
 stops the same way (see ["The AI review did not complete"](#agents)).
 
 ### The automatic merge was refused

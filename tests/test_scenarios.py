@@ -27,11 +27,18 @@ from unittest import mock
 from nexkit import autopilot, progress
 from nexkit.checks import check_matrix
 from nexkit.github import GitHubError
-from nexkit.maintain import maintain
+from nexkit.maintain import maintain, paused_runs, within_reach
 from nexkit.publish import issue_closed, publish_plan
 from nexkit.report import report
 from nexkit.route import auto_kinds, issue_from_branch, route, skip_unaffected
-from nexkit.state import ACTIONS_BOT, UNCOUNTED, check_fingerprint, read_state, run_comments
+from nexkit.state import (
+    ACTIONS_BOT,
+    UNCOUNTED,
+    check_fingerprint,
+    read_state,
+    run_comments,
+    with_run,
+)
 from nexkit.status import collect
 from tests.support import BOT_LOGIN, FakeGitHub, make_config
 
@@ -141,6 +148,8 @@ class Pipeline:
         self.catch_up = True
         # What may read Dependabot alerts in a sweep, when the App may.
         self.alerts = None
+        # How much time `later` moved on.
+        self.elapsed = timedelta(0)
 
     def posted(self, number, body):
         """A comment, posted now: how recent a round's comment is tells whether the round
@@ -192,27 +201,47 @@ class Pipeline:
 
     def drain(self):
         while self.handled < len(self.gh.dispatches):
-            self.test.assertLess(self.handled, MAX_DISPATCHES, f"a loop: {self.played}")
-            dispatch = self.gh.dispatches[self.handled]
-            inputs = dispatch["inputs"]
-            self.handled += 1
-            if dispatch["workflow"] != "nexkit.yml":
-                if self.workflow:
-                    self.workflow(self, dispatch["workflow"])
-            elif inputs["command"] == "autopilot":
-                decision = route(self.gh, "workflow_dispatch", {}, inputs)
-                maintain(
-                    self.gh,
-                    decision,
-                    self.cfg,
-                    workflow="nexkit.yml",
-                    ref="main",
-                    alerts=self.alerts,
-                )
-                self.gh.runs[dispatch["run_id"]] = {"status": "completed"}
-                self.check()
-            else:
-                self.run(dispatch)
+            self.drain_one()
+
+    def drain_one(self):
+        """Run the next dispatch."""
+        self.test.assertLess(self.handled, MAX_DISPATCHES, f"a loop: {self.played}")
+        dispatch = self.gh.dispatches[self.handled]
+        inputs = dispatch["inputs"]
+        self.handled += 1
+        if dispatch["workflow"] != "nexkit.yml":
+            if self.workflow:
+                self.workflow(self, dispatch["workflow"])
+        elif inputs["command"] == "resume":
+            self.waited(inputs)
+        elif inputs["command"] == "autopilot":
+            decision = route(self.gh, "workflow_dispatch", {}, inputs)
+            maintain(
+                self.gh,
+                decision,
+                self.cfg,
+                workflow="nexkit.yml",
+                ref="main",
+                alerts=self.alerts,
+            )
+            self.gh.runs[dispatch["run_id"]] = {"status": "completed"}
+            self.check()
+        else:
+            self.run(dispatch)
+
+    def waited(self, inputs):
+        """The run that waits for paused commands: time passes until the first one within
+        its reach comes due, then it starts what is due."""
+        now = datetime.now(UTC)
+        due = [
+            at
+            for _, _, run, at in paused_runs(self.gh, now, self.cfg)
+            if within_reach(self.cfg, run, at, now)
+        ]
+        if due and min(due) > now:
+            self.later(min(due) - now)
+        decision = route(self.gh, "workflow_dispatch", {}, inputs)
+        maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
 
     def run(self, dispatch):
         inputs, run_id = dispatch["inputs"], dispatch["run_id"]
@@ -369,6 +398,7 @@ class Pipeline:
     def later(self, step):
         """Move every record and comment of NexKit, and the time each issue closed, back by
         `step`, as if that much time passed."""
+        self.elapsed += step
         for issue in self.gh.issues.values():
             if issue.get("closed_at"):
                 at = datetime.fromisoformat(issue["closed_at"].replace("Z", "+00:00"))
@@ -380,6 +410,13 @@ class Pipeline:
                         (comment.get(key) or "2026-01-01T00:00:00Z").replace("Z", "+00:00")
                     )
                     comment[key] = (at - step).strftime("%Y-%m-%dT%H:%M:%SZ")
+                found = next(run_comments([comment]), None)
+                resume = found[1].get("resume") if found else None
+                if isinstance(resume, dict) and resume.get("at"):
+                    # When a paused run resumes, or one runs again after a transient error.
+                    at = datetime.fromisoformat(resume["at"].replace("Z", "+00:00")) - step
+                    resume["at"] = autopilot.iso(at)
+                    comment["body"] = with_run(comment["body"], found[1])
                 match = autopilot.RECORD_PATTERN.search(comment["body"])
                 if match and comment["user"]["login"] == BOT_LOGIN:
                     record = json.loads(base64.b64decode(match.group(1)))
@@ -1096,25 +1133,88 @@ class ScenarioTests(unittest.TestCase):
         played = pipe.play()
         self.assertEqual(played, [("plan", 5), ("go", 5), ("fix", 6), ("fix", 6)])
 
-    def test_a_transient_error_runs_once_more_and_twice_waits(self):
+    def test_a_transient_error_runs_again_after_growing_waits_then_waits_for_a_person(self):
         tries = itertools.count()
+        started = []
 
         def script(pipe, inputs):
             if inputs["command"] == "plan":
                 return plan()
-            return error(transient=True) if next(tries) < 1 else done()
+            started.append(datetime.now(UTC) + pipe.elapsed)
+            return error(transient=True) if next(tries) < 2 else done()
 
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
-        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("go", 5)])
+        self.assertEqual(pipe.play(), [("plan", 5), *[("go", 5)] * 3])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        # The second run waited 15 minutes, the third 30; no sweep started either sooner.
+        waits = [round((b - a).total_seconds() / 60) for a, b in itertools.pairwise(started)]
+        self.assertEqual(waits, [15, 30])
+        self.assertIn("`/nexkit go` (autopilot, retry 2)", pipe.gh.run_comments(5)[-1]["body"])
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
 
         def always(pipe, inputs):
             return plan() if inputs["command"] == "plan" else error(transient=True)
 
+        # The fourth stop waits for a person, with every error listed.
         pipe = Pipeline(self, config(), always)
         pipe.issue(5)
-        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("go", 5)])
+        self.assertEqual(pipe.play(), [("plan", 5), *[("go", 5)] * 4])
+        last = pipe.gh.run_comments(5)[-1]
+        self.assertEqual(last["run"]["outcome"], "retry_failed")
+        self.assertIn("Transient errors so far:\n\n1. Claude stopped.", last["body"])
+        self.assertIn("\n4. Claude stopped.", last["body"])
+        [mention] = pipe.gh.comments_matching(5, "a person is needed")
+        self.assertIn("stopped on a transient error 4 times", mention["body"])
+
+        # `[0]` keeps a single run again at once, and `[]` none.
+        for waits, runs in (([0], 2), ([], 1)):
+            pipe = Pipeline(self, config(retry={"wait_minutes": waits}), always)
+            pipe.issue(5)
+            self.assertEqual(pipe.play(), [("plan", 5), *[("go", 5)] * runs], waits)
+            self.assertEqual(pipe.gh.run_comments(5)[-1]["run"]["outcome"], "retry_failed")
+            self.assertTrue(pipe.gh.comments_matching(5, "a person is needed"))
+            self.assertFalse(
+                [d for d in pipe.gh.dispatches if d["inputs"]["command"] == "resume"], waits
+            )
+
+    def test_a_new_command_replaces_a_run_that_waits_to_run_again(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            return error(transient=True) if inputs["auto"] == "autopilot" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        # The waiting run is not drained: the go waits to run again.
+        while pipe.handled < len(pipe.gh.dispatches):
+            if pipe.gh.dispatches[pipe.handled]["inputs"]["command"] == "resume":
+                break
+            pipe.drain_one()
+        self.assertEqual(pipe.gh.run_comments(5)[-1]["run"]["status"], "paused")
+        steps = {s["number"]: s for s in collect(pipe.gh, pipe.cfg)["autopilot"]["issues"]}
+        self.assertEqual(steps[5]["state"], "active")
+        self.assertIn("runs again after", steps[5]["reason"])
+        # A person posts the command while the waiting run waits: it replaces the wait, so
+        # that run starts nothing once the time comes.
+        waiting = pipe.gh.dispatches[pipe.handled]
+        pipe.handled += 1
+        go = {"command": "go", "number": "5", "note": "", "auto": ""}
+        pipe.dispatch("nexkit.yml", "main", go)
+        pipe.gh.dispatches[-1]["run_id"] = next(pipe.runs)
+        pipe.drain()
+        pipe.later(timedelta(minutes=15))
+        pipe.waited(waiting["inputs"])
+        pipe.drain()
+        played = [(c, o) for c, _, o in pipe.played]
+        expected = [("plan", "planned"), ("go", "retry_waiting"), ("go", "merged")]
+        self.assertEqual(played[:3], expected)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        replaced = pipe.gh.run_comments(5)[1]["run"]
+        self.assertEqual(replaced["status"], "continued")
+        self.assertNotIn("resume", replaced)
+        self.assertEqual([c for c, _ in played].count("go"), 2, played)
 
     def test_a_command_that_never_runs_starts_again_later_then_waits_naming_the_outage(self):
         def script(pipe, inputs):
@@ -1168,7 +1268,7 @@ class ScenarioTests(unittest.TestCase):
                 return found
             return "lost" if next(reviews) < 1 else done()
 
-        pipe = Pipeline(self, config(), script)
+        pipe = Pipeline(self, config(retry={"wait_minutes": [0]}), script)
         pipe.issue(5)
         autopilot.request(pipe.gh, "nexkit.yml", "main")
         pipe.drain()

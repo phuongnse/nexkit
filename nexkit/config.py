@@ -44,6 +44,9 @@ DEFAULTS = {
     "merge": {"auto": False, "after_workflows": []},
     "conflicts": {"auto_resolve": False, "max_rounds": 3},
     "usage_limit": {"resume": True, "retry_minutes": 60, "wait_minutes": 330},
+    # The minutes before each run again of a command that stopped on a transient error:
+    # one run again per entry, then a person decides.
+    "retry": {"wait_minutes": [15, 30, 60]},
     "close_parent_issues": False,
     # Work through the open issues in scope without commands (nexkit/autopilot.py).
     "autopilot": {
@@ -86,6 +89,8 @@ TOP_KEYS = set(DEFAULTS)
 # The longest a run waits for a usage limit to reset: a GitHub-hosted job ends after six
 # hours, and the wait needs time left to start the commands.
 MAX_WAIT = 330
+# The most runs again after transient errors that `retry.wait_minutes` may list.
+MAX_RETRIES = 10
 # The longest a stage may run, with all of its agents.
 MAX_STAGE_MINUTES = 340
 # Objects whose keys are merged over the defaults one by one.
@@ -95,6 +100,7 @@ GROUPS = (
     "merge",
     "conflicts",
     "usage_limit",
+    "retry",
     "autopilot",
     "limits",
     "log",
@@ -661,6 +667,16 @@ def _workflow_files(workflows, where):
         _fail(f"{where} lists a workflow twice")
 
 
+def _retry_waits(waits):
+    """`retry.wait_minutes`: the waits before each run again after a transient error. A
+    run that waits for its time does so within one job, as for a usage limit (`MAX_WAIT`)."""
+    where = "retry.wait_minutes"
+    if not isinstance(waits, list) or len(waits) > MAX_RETRIES:
+        _fail(f"{where} must be a list of at most {MAX_RETRIES} waits in minutes, such as [15, 60]")
+    for wait in waits:
+        _positive_int(wait, f"each wait in {where}", MAX_WAIT, minimum=0)
+
+
 def _after_workflows(entries):
     """`merge.after_workflows`: workflow files, each alone or as {"workflow", "every"}."""
     where = "merge.after_workflows"
@@ -833,6 +849,7 @@ def validate(raw, *, layered=False):
     _positive_int(
         cfg["usage_limit"]["wait_minutes"], "usage_limit.wait_minutes", MAX_WAIT, minimum=0
     )
+    _retry_waits(cfg["retry"]["wait_minutes"])
     _bool(cfg["close_parent_issues"], "close_parent_issues")
     _autopilot(cfg["autopilot"])
     _watch_workflows(cfg)

@@ -26,11 +26,13 @@ trust that repository; only on their word, run it again with
    got, so give it a minute on a large repository before you take it for stuck. It
    returns:
    - `issues`: open issues NexKit worked on, each with a `state` (`planning`, `planned`
-     with the plan's link and profile, `implementing`, `paused`, `failed`,
-     `in_pull_request`, `implemented`) and the link to its last run comment.
+     with the plan's link and profile, `implementing`, `paused`, `retrying` with its
+     `retry_at`, `failed`, `in_pull_request`, `implemented`) and the link to its last run
+     comment.
    - `pull_requests`: open NexKit pull requests, each with a `state` (`running`, `ready`,
      `blocked`, `failing`, `conflicting`, `merge_refused`, `merge_waiting`, `paused`,
-     `failed`, `waiting`, `held`), the round and the link to its last round. A `held` one
+     `retrying` with its `retry_at`, `failed`, `waiting`, `held`), the round and the link
+     to its last round. A `held` one
      has an issue that a label holds (see *Labels* under
      [Autopilot](../../docs/configuration.md#autopilot)), which only a person releases. A `waiting` pull
      request has `waits_for`, the autopilot `bug` issue it waits for, and the `reason`
@@ -53,8 +55,10 @@ trust that repository; only on their word, run it again with
    markers. Do not post a command for an item whose state is `planning`,
    `implementing` or `running`; it would queue behind the running one. A `paused` item
    resumes by itself after the time shown, unless it is also in `needs_person` (see
-   [Usage limits](../../docs/how-it-works.md#usage-limits)). A run comment showing ⏭️
-   `continued` was carried on by a later run.
+   [Usage limits](../../docs/how-it-works.md#usage-limits)). A `retrying` item stopped on
+   a transient error and runs its command again by itself at `retry_at` (see [Transient
+   errors](../../docs/configuration.md#transient-errors)); posting the command meanwhile
+   replaces that wait. A run comment showing ⏭️ `continued` was carried on by a later run.
 
 2. **Why a run stopped.** For an item that failed, open its link. For the details, use
    `gh run view <id> --log-failed` on the run. In the agent or review job log, each tool

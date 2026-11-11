@@ -580,7 +580,11 @@ def render_run(run, text=""):
             "| " + " | ".join(_cell(v) for v in cells) + " |",
         ]
     else:
-        by = " (autopilot)" if run.get("autopilot") else ""
+        labels = ["autopilot"] * bool(run.get("autopilot"))
+        if run.get("retry"):
+            retry = run["retry"]
+            labels.append(f"retry {retry if type(retry) is int else 1}")
+        by = f" ({', '.join(labels)})" if labels else ""
         lines = [f"### NexKit `/nexkit {run['command']}`{by}", "", run_link(run)]
     agents = agents_text(run.get("agents") or [])
     if agents:

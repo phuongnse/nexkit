@@ -80,24 +80,35 @@ class PinTests(unittest.TestCase):
             code = cli.main(list(argv))
         return code, err.getvalue()
 
-    def runs(self, ref="v1.0.0", repository=KIT_REPOSITORY):
-        path = pin.cache_root() / repository / ref / "runs.json"
-        return json.loads(path.read_text()) if path.exists() else []
+    def runs(self, repository=KIT_REPOSITORY):
+        """How each release in the cache from `repository` ran."""
+        found = []
+        for path in sorted((pin.cache_root() / repository).rglob("runs.json")):
+            found += json.loads(path.read_text())
+        return found
+
+    def ran_this_release(self, *argv):
+        with mock.patch.object(cli, f"cmd_{argv[0]}", return_value=0) as command:
+            code, err = self.main(*argv)
+        self.assertEqual(0, code)
+        command.assert_called_once()
+        return err
 
     def test_status_runs_the_pinned_release_fetched_once(self):
         self.pin_to("v1.0.0")
         argv = ["status", "--repo", str(self.repo), "--json"]
         code, err = self.main(*argv)
         self.assertEqual(7, code)
-        self.assertIn("fetching NexKit v1.0.0", err)
-        self.assertIn(f"pins NexKit v1.0.0, so it runs from {pin.cache_root()}", err)
+        self.assertIn("fetched NexKit v1.0.0", err)
+        folder = pin.cache_root() / KIT_REPOSITORY / "v1.0.0"
+        self.assertIn(f"pins NexKit v1.0.0, so it runs from {folder}", err)
         [run] = self.runs()
         self.assertEqual({"argv": argv, "own": "1", "cwd": os.getcwd(), "release": "1.0.0"}, run)
         # The second time, it runs the copy in the cache, with no fetch.
         self.sources[KIT_REPOSITORY] = str(self.tmp / "gone")
         code, err = self.main(*argv)
         self.assertEqual(7, code)
-        self.assertNotIn("fetching", err)
+        self.assertNotIn("fetched", err)
         self.assertIn("pins NexKit v1.0.0", err)
         self.assertEqual(2, len(self.runs()))
 
@@ -106,16 +117,58 @@ class PinTests(unittest.TestCase):
         self.assertEqual(7, self.main("doctor", f"--repo={self.repo}")[0])
         self.assertEqual([["doctor", f"--repo={self.repo}"]], [r["argv"] for r in self.runs()])
 
-    def test_a_branch_is_fetched_again_each_time(self):
+    def test_the_checkout_around_the_current_directory_counts_and_the_last_repo(self):
+        self.pin_to("v1.0.0")
+        git(self.repo, "init", "-q")
+        inside = self.repo / "src" / "deep"
+        inside.mkdir(parents=True)
+        here = os.getcwd()
+        os.chdir(inside)
+        self.addCleanup(os.chdir, here)
+        self.assertEqual((KIT_REPOSITORY, "v1.0.0"), pin.pinned(["status"]))
+        self.assertIsNone(pin.pinned(["status", "--repo", str(self.repo), "--repo", "/none"]))
+        self.assertIsNotNone(pin.pinned(["status", "--repo", "/none", "--repo", str(self.repo)]))
+
+    def test_a_branch_is_fetched_again_when_it_moved(self):
         self.pin_to("main")
-        with mock.patch.object(pin.subprocess, "run", wraps=subprocess.run) as run:
-            self.assertEqual(7, self.main("status", "--repo", str(self.repo))[0])
-            self.release("main 2")
-            self.assertEqual(7, self.main("status", "--repo", str(self.repo))[0])
-        ran = [c.args[0][1] for c in run.call_args_list if c.args[0][0] != "git"]
-        self.assertEqual(2, len(ran))
-        self.assertFalse(Path(ran[0]).exists())  # each copy goes when its run ends
-        self.assertFalse((pin.cache_root() / KIT_REPOSITORY / "main").exists())
+        argv = ("status", "--repo", str(self.repo))
+        code, err = self.main(*argv)
+        self.assertEqual(7, code)
+        self.assertIn("fetched NexKit main", err)
+        code, err = self.main(*argv)
+        self.assertNotIn("fetched", err)
+        self.release("main 2")
+        code, err = self.main(*argv)
+        self.assertIn("fetched NexKit main", err)
+        self.assertEqual(["main 2"], [r["release"] for r in self.runs()])
+        # The copy of the older commit went; the newer stays for the docs it holds.
+        [copy] = (pin.cache_root() / KIT_REPOSITORY / "heads" / "main").iterdir()
+        self.assertEqual("main 2", (copy / "RELEASE").read_text())
+        self.assertIn(str(copy), err)
+
+    def test_only_tags_and_branches_are_fetched_never_a_pull_request_or_commit(self):
+        # Anyone can open a pull request on NexKit's repository, whose ref and commits
+        # GitHub serves as NexKit's.
+        (self.kit / "RELEASE").write_text("an outsider's")
+        git(self.kit, "commit", "-q", "-am", "outsider")
+        outsider = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.kit, capture_output=True, text=True
+        ).stdout.strip()
+        git(self.kit, "update-ref", "refs/pull/1/head", outsider)
+        git(self.kit, "reset", "-q", "--hard", "HEAD~1")
+        self.pin_to("pull/1/head")
+        code, err = self.main("status", "--repo", str(self.repo))
+        self.assertEqual(2, code)
+        self.assertIn("has no tag or branch pull/1/head", err)
+        for ref in ("refs/pull/1/head", outsider, "--upload-pack=touch", "a/../b", "${{"):
+            self.pin_to(ref)
+            err = self.ran_this_release("status", "--repo", str(self.repo))
+            self.assertIn("which is no release tag or branch, so this NexKit", err)
+        self.assertEqual([], self.runs())
+
+    def test_doctor_still_checks_a_workflow_whose_ref_is_an_expression(self):
+        self.pin_to("${{ vars.NEXKIT_REF }}")
+        self.ran_this_release("doctor", "--repo", str(self.repo))
 
     def test_this_release_runs_when_the_pin_is_its_own_version(self):
         self.pin_to(f"v{__version__}")
@@ -138,6 +191,7 @@ class PinTests(unittest.TestCase):
         self.pin_to("v1.0.0")
         argv = ["status", "--repo", str(self.repo)]
         self.assertIsNone(pin.pinned([*argv, "--own-release"]))
+        self.assertIsNone(pin.pinned([*argv, "--own"]))  # as argparse takes it
         with mock.patch.dict(os.environ, {pin.OWN: "1"}):
             self.assertIsNone(pin.pinned(argv))
         with mock.patch.dict(os.environ, {pin.OWN: "0"}):
@@ -166,11 +220,10 @@ class PinTests(unittest.TestCase):
             self.assertEqual(7, self.main("status", "--repo", str(self.repo))[0])
         self.assertEqual(1, len(self.runs(repository="someone/fork")))
 
-    def test_a_ref_that_git_would_take_as_an_option_is_refused(self):
-        self.pin_to("--upload-pack=touch")
-        code, err = self.main("status", "--repo", str(self.repo))
-        self.assertEqual(2, code)
-        self.assertIn("which is not a ref", err)
+    def test_git_works_in_the_cache_whatever_repository_the_caller_names(self):
+        self.pin_to("v1.0.0")
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(self.repo / "nowhere")}):
+            self.assertEqual(7, self.main("status", "--repo", str(self.repo))[0])
 
     def test_a_ref_that_cannot_be_fetched_says_how_to_run_this_release(self):
         self.pin_to("v9.9.9")

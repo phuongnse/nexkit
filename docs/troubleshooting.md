@@ -16,10 +16,15 @@ ran the pinned release, which judges the repository by the rules the pipeline ru
 run the installed release instead, pass `--own-release` or set `NEXKIT_OWN_RELEASE=1`.
 
 **"cannot fetch NexKit … from …".** The pinned release could not be fetched: no network,
-or a `nexkit_ref` that names no tag, branch or commit there. Fix the ref, or pass
-`--own-release` to run the installed release.
+or a `nexkit_ref` that names no tag or branch there. Fix the ref, or pass `--own-release`
+to run the installed release.
 
-**"… runs NexKit's code from OWNER/REPO, not from phuongnse/nexkit".** The workflow's
+**"… pins NexKit as …, which is no release tag or branch, so this NexKit … runs".** The
+`nexkit_ref` is a commit, a pull request's ref or an expression. Anyone can add a commit
+or a pull request to a repository's network, so the CLI never fetches one, and runs the
+installed release. Pin a release tag, as `nexkit init` writes it.
+
+**"… runs NexKit's code from OWNER/REPO at REF, not from phuongnse/nexkit".** The workflow's
 `nexkit_repository` names another repository, such as a fork, and NexKit runs another
 repository's code only when you name it. If you trust it, set
 `NEXKIT_KIT_REPOSITORY=OWNER/REPO`; otherwise pass `--own-release`.

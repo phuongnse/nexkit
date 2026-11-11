@@ -1,5 +1,31 @@
 # Changelog
 
+## 6.8.0
+
+A command that stopped on a transient error runs again after growing waits, so an outage
+of a few minutes or hours costs no person's time.
+
+- A run that stops for a reason outside the work, such as an overloaded API, a lost runner,
+  a `setup` command that failed on a registry or mirror, or GitHub's errors while
+  `publish` writes, runs its command again after each wait of the new
+  `retry.wait_minutes`, by default 15, 30 and 60 minutes (#259). Before, it ran once more
+  at once, mostly inside the same outage, and a second stop waited for a person.
+  - A stop after the last wait waits for a person, and its comment lists every error.
+    `[0]` keeps the former single run again at once, and `[]` waits for a person at the
+    first stop.
+  - A wait holds no agent runner: the run that waits for paused commands starts it, as
+    after a usage limit, and the hourly schedule starts what that run missed. `nexkit
+    doctor` now wants the `schedule` trigger also for these waits.
+  - The comment says which run again it is and when it starts, and from the second on the
+    errors so far. Runs again are shown as `(retry N)`. A review that waits keeps
+    `nexkit/review` pending.
+  - `nexkit status` lists a waiting command as `retrying` with its time, not under *Needs
+    a person*, and autopilot counts it as active. A new command replaces the wait.
+  - The runs again still count against neither `fix.max_auto_rounds` nor
+    `conflicts.max_rounds`.
+
+  See [Transient errors](docs/configuration.md#transient-errors).
+
 ## 6.7.0
 
 The `nexkit` CLI runs the release that a repository's workflow pins, so one installed

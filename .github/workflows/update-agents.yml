@@ -29,35 +29,31 @@ jobs:
         with:
           python-version: "3.12"
       - name: Open a pull request per runtime
-        shell: bash # with pipefail, so the step fails with the script
         run: |
-          # The log goes to a file too, for the issue that says this workflow failed.
-          {
-            base=$(git rev-parse HEAD)
-            for runtime in $(python -c "from nexkit.runtimes import RUNTIMES; print(*RUNTIMES)"); do
-              git checkout -q --detach "$base"
-              version=$(python scripts/agent_version.py "$runtime" update)
-              if [ -z "$version" ]; then
-                echo "$runtime is up to date."
-                continue
-              fi
-              branch="update/$runtime-$version"
-              if [ -n "$(gh pr list --head "$branch" --state open --json number -q '.[0].number')" ]; then
-                echo "A pull request for $runtime $version is already open."
-                git checkout -q -- nexkit/__init__.py
-                continue
-              fi
-              git switch -q -c "$branch"
-              git -c user.name="github-actions[bot]" \
-                  -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-                  commit -qam "Support $runtime $version"
-              git push --force origin "$branch"
-              gh pr create --head "$branch" --title "Support $runtime $version" --body \
-                "$runtime $version is the newest stable version. CI on this branch runs the unit tests and the live smoke test with it. Merge when CI is green, then release."
-              # Pull requests opened with the Actions token do not start CI; dispatch it.
-              gh workflow run ci.yml --ref "$branch" -f runtime="$runtime"
-            done
-          } 2>&1 | tee "$RUNNER_TEMP/update.log"
+          base=$(git rev-parse HEAD)
+          for runtime in $(python -c "from nexkit.runtimes import RUNTIMES; print(*RUNTIMES)"); do
+            git checkout -q --detach "$base"
+            version=$(python scripts/agent_version.py "$runtime" update)
+            if [ -z "$version" ]; then
+              echo "$runtime is up to date."
+              continue
+            fi
+            branch="update/$runtime-$version"
+            if gh pr list --head "$branch" --state open --json number -q '.[0].number' | grep -q .; then
+              echo "A pull request for $runtime $version is already open."
+              git checkout -q -- nexkit/__init__.py
+              continue
+            fi
+            git switch -q -c "$branch"
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit -qam "Support $runtime $version"
+            git push --force origin "$branch"
+            gh pr create --head "$branch" --title "Support $runtime $version" --body \
+              "$runtime $version is the newest stable version. CI on this branch runs the unit tests and the live smoke test with it. Merge when CI is green, then release."
+            # Pull requests opened with the Actions token do not start CI; dispatch it.
+            gh workflow run ci.yml --ref "$branch" -f runtime="$runtime"
+          done
         env:
           GH_TOKEN: ${{ github.token }}
       # A run that fails leaves no pull request, which looks the same as no newer version:
@@ -65,32 +61,24 @@ jobs:
       - name: Report the failure in an issue
         if: failure()
         run: |
-          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          {
-            echo "[Update agents]($url) failed, so no pull request proposes a newer agent runtime. The end of its log:"
-            echo
-            echo '```'
-            tail -n 20 "$RUNNER_TEMP/update.log" 2>/dev/null || echo "(no log)"
-            echo '```'
-            echo
-            echo "This issue closes when the workflow next succeeds."
-          } > "$RUNNER_TEMP/failed.md"
+          body="[Update agents]($RUN_URL) failed, so no pull request proposes a newer agent runtime. This issue closes when the workflow next succeeds."
           number=$(gh issue list --state open --author app/github-actions --search "\"$TITLE\" in:title" --json number -q '.[0].number')
           if [ -n "$number" ]; then
-            gh issue comment "$number" --body-file "$RUNNER_TEMP/failed.md"
+            gh issue comment "$number" --body "[Update agents]($RUN_URL) failed again."
           else
-            gh issue create --title "$TITLE" --label bug --body-file "$RUNNER_TEMP/failed.md"
+            gh issue create --title "$TITLE" --label bug --body "$body"
           fi
         env:
           GH_TOKEN: ${{ github.token }}
           TITLE: Update agents failed
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       - name: Close the failure issue
         if: success()
         run: |
-          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           for number in $(gh issue list --state open --author app/github-actions --search "\"$TITLE\" in:title" --json number -q '.[].number'); do
-            gh issue close "$number" --comment "[Update agents]($url) succeeded."
+            gh issue close "$number" --comment "[Update agents]($RUN_URL) succeeded."
           done
         env:
           GH_TOKEN: ${{ github.token }}
           TITLE: Update agents failed
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

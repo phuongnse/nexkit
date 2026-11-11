@@ -1,5 +1,28 @@
 # Changelog
 
+## 6.6.0
+
+An agent reads an issue and its discussion whole, and the pipeline runs Claude Code 2.1.311.
+
+- An issue's body and each collaborator's comment reach the agent whole, up to the 65,536
+  characters GitHub keeps (#249). Before, NexKit cut the body at 20,000 characters and each
+  comment at 4,000, ending in `[truncated]` that neither the prompt nor the round's comment
+  explained, so a plan could plan on part of an issue and an agent ask a person for a text
+  NexKit itself had cut.
+  - The latest 30 comments still count, and each block of them, such as the discussion of
+    the issue or of the pull request, holds at most 80,000 characters, latest first. An
+    older comment past that keeps its first 1,000 characters in the prompt, with a note of
+    its length and where the rest is.
+  - NexKit writes each whole text it shortens to `texts/` beside `context.json`, outside
+    the working tree; the agent reads it there, and the agent's artifact keeps it. The
+    prompt's section *Texts this prompt shortened* names each one, and the agent reads
+    them rather than ask a person for them.
+  - The round's comment says which texts were shortened, so a person who answers the agent
+    knows why it asks.
+
+  See [Agents](docs/how-it-works.md#agents).
+- The pipeline installs Claude Code 2.1.311, up from 2.1.285 (#251).
+
 ## 6.5.0
 
 A sharded check's CI evidence takes one name, and a configuration that would stop NexKit

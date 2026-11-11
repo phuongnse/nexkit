@@ -204,7 +204,7 @@ class PersonsPullRequestTests(ReportCase):
 
     def test_a_configuration_nexkit_would_refuse_fails_the_checks_and_says_why(self):
         self.candidate()  # its checks passed and its review approved
-        error = "evidence.artifacts: `*` may only end a name, such as \"test-results-e2e-*\""
+        error = 'evidence.artifacts: `*` may only end a name, such as "test-results-e2e-*"'
         outcome = self.report_person(config_error=error)
         self.assertEqual(outcome["outcome"], "person_reviewed")
         [checks] = [s for s in self.gh.statuses if s["context"] == "nexkit/checks"]

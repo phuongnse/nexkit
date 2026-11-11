@@ -838,7 +838,8 @@ def build_parser():
         action="append",
         default=[],
         metavar="NAME",
-        help="An artifact of CI runs that implement and fix rounds download; repeat for more",
+        help="An artifact of CI runs that plan, implement and fix rounds download, or the "
+        "start of several names followed by *; repeat for more",
     )
     p.add_argument(
         "--after-workflow",

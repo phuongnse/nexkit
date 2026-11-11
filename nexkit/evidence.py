@@ -303,12 +303,19 @@ def collect(gh, cfg, runs, folder, redact, workflow="", budget=None):
         except GitHubError as exc:
             item["missing"].append(f"its jobs could not be read: {exc}")
             continue
+        taken = set()
         for name in names:
-            matching = [a for a in available if a.get("name") == name]
+            matching = [a for a in available if matches(name, a.get("name") or "")]
             if not matching:
-                item["missing"].append(f"no artifact named `{name}`")
-            for artifact in matching:
-                _artifact(gh, artifact, folder, budget, redact, item)
+                item["missing"].append(
+                    f"no artifact whose name starts with `{name[:-1]}`"
+                    if name.endswith("*")
+                    else f"no artifact named `{name}`"
+                )
+            for artifact in sorted(matching, key=lambda a: a.get("name") or ""):
+                if artifact.get("id") not in taken:
+                    taken.add(artifact.get("id"))
+                    _artifact(gh, artifact, folder, budget, redact, item)
     return {
         "folder": str(root),
         "runs": found,
@@ -316,6 +323,14 @@ def collect(gh, cfg, runs, folder, redact, workflow="", budget=None):
         "left_out": budget.left_out,
         "used": budget.used,
     }
+
+
+def matches(pattern, name):
+    """Whether the artifact `name` is one that the `evidence.artifacts` entry `pattern`
+    takes: the same name, or for a pattern ending in `*`, a name starting with the rest."""
+    if pattern.endswith("*"):
+        return name.startswith(pattern[:-1])
+    return name == pattern
 
 
 def _artifact(gh, artifact, folder, budget, redact, item):

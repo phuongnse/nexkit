@@ -204,9 +204,17 @@ class GitHub:
     def artifact_zip(self, artifact_id, limit=DOWNLOAD_LIMIT):
         return self.download(f"{self._repo}/actions/artifacts/{artifact_id}/zip", limit)
 
-    def run_artifacts(self, run_id):
+    def run_artifacts(self, run_id, limit=1000):
         path = f"{self._repo}/actions/runs/{run_id}/artifacts"
-        return self.request("GET", path, params={"per_page": 100}).get("artifacts") or []
+        items, page = [], 1
+        while len(items) < limit:
+            batch = self.request("GET", path, params={"per_page": 100, "page": page})
+            batch = batch.get("artifacts") or []
+            items.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return items[:limit]
 
     def paginate(self, path, params=None, limit=1000):
         items, page = [], 1

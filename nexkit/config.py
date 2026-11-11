@@ -101,8 +101,6 @@ GROUPS = (
     "github_app",
     "evidence",
 )
-# The most artifact names `evidence.artifacts` may list.
-MAX_ARTIFACTS = 10
 # Keys of earlier releases, with where they live now.
 RENAMED = {
     "max_auto_fixes": "fix.max_auto_rounds",
@@ -864,13 +862,17 @@ def validate(raw, *, layered=False):
 
 
 def _artifacts(names):
-    """`evidence.artifacts`: names of artifacts that the repository's CI workflows upload."""
+    """`evidence.artifacts`: names of artifacts that the repository's CI workflows upload,
+    each exact or ending in `*` for every artifact whose name starts with what precedes it.
+    The runs and the size a round keeps bound the download, so the list has no limit."""
     where = "evidence.artifacts"
-    if not isinstance(names, list) or len(names) > MAX_ARTIFACTS:
-        _fail(f"{where} must be a list of at most {MAX_ARTIFACTS} artifact names")
+    if not isinstance(names, list):
+        _fail(f'{where} must be a list of artifact names, such as "test-results"')
     for name in names:
         if not isinstance(name, str) or not name.strip() or len(name) > 100 or "\n" in name:
             _fail(f'{where} must be a list of artifact names, such as "test-results"')
+        if "*" in name[:-1]:
+            _fail(f'{where}: `*` may only end a name, such as "test-results-e2e-*"')
     if len(set(names)) != len(names):
         _fail(f"{where} lists an artifact twice")
 

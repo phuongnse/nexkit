@@ -68,6 +68,18 @@ class InitDoctorTests(unittest.TestCase):
         cfg = json.loads((self.root / ".nexkit/config.json").read_text())
         self.assertEqual(cfg["evidence"], {"artifacts": ["test-results-e2e"]})
 
+    def test_init_and_doctor_take_any_number_of_artifacts_and_patterns(self):
+        names = [f"test-results-e2e-{n}" for n in range(1, 13)] + ["test-results-unit-*"]
+        args = ["init", "--repo", str(self.root), "--check", "test=true"]
+        for name in names:
+            args += ["--evidence-artifact", name]
+        self.assertEqual(cli.main(args), 0)
+        cfg = json.loads((self.root / ".nexkit/config.json").read_text())
+        self.assertEqual(cfg["evidence"], {"artifacts": names})
+        self.assertIn((True, ".nexkit/config.json is valid"), scaffold.doctor(self.root))
+        args = ["init", "--repo", str(self.root), "--force", "--evidence-artifact", "a*b"]
+        self.assertEqual(cli.main(args), 2)
+
     def test_init_rejects_bad_check(self):
         self.assertEqual(cli.main(["init", "--repo", str(self.root), "--check", "npm test"]), 2)
         self.assertFalse((self.root / ".nexkit").exists())

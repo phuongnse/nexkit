@@ -448,7 +448,7 @@ def check_results_text(results, shelf=None):
         if not item["passed"]:
             key = f"check-{number}-{item['name']}"
             output = output_text(
-                item.get("output"),
+                item,
                 REVIEW_OUTPUT_TAIL,
                 REVIEW_FAILURE_LINES,
                 partial(shelf.store, key),

@@ -8,12 +8,14 @@ from pathlib import Path
 
 from nexkit.agent import (
     build_prompt,
+    check_results_text,
     diagnosis_text,
     evidence_text,
     shortened_folders,
     shortened_names,
     shortened_text,
 )
+from nexkit.checks import run_checks
 from nexkit.context import NO_PLAN, PERSON_PLAN, gather, outside_plan
 from nexkit.publish import pull_body
 from nexkit.state import (
@@ -819,9 +821,12 @@ class LongTextTests(unittest.TestCase):
         self.assertNotIn("shortened", gather(self.gh, decision, texts=self.texts))
 
     def fix_with_output(self, output):
-        state = empty_state(5)
         failing = {"name": "e2e (1/2)", "run": "make e2e", "exit_code": 1, "passed": False}
-        state["feedback"] = {"head": HEAD, "checks": [{**failing, "output": output}]}
+        return self.fix_with_checks([{**failing, "output": output}])
+
+    def fix_with_checks(self, results):
+        state = empty_state(5)
+        state["feedback"] = {"head": HEAD, "checks": results}
         self.gh.comment(6, render_state(state))
         fix = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
         return gather(self.gh, fix, texts=self.texts)
@@ -837,20 +842,34 @@ class LongTextTests(unittest.TestCase):
         )
         self.assertNotIn("[truncated]", context["feedback"])
 
-    def test_the_fix_prompt_holds_a_failure_line_that_much_output_follows(self):
-        output = "FAIL suite > picks an option: expected 2, got 3\n" + "teardown ok\n" * 1_700
-        self.assertGreater(len(output), 20_000)
-        feedback = self.fix_with_output(output)["feedback"]
-        self.assertIn("FAIL suite > picks an option: expected 2, got 3", feedback)
-        self.assertLess(feedback.index("FAIL suite"), feedback.index("End of output"))
+    def test_a_failure_line_that_much_output_follows_reaches_the_fix_and_review_prompts(self):
+        failure = "FAIL suite > picks an option: expected 2, got 3"
+        script = Path(self.tmp.name) / "e2e.py"
+        script.write_text(
+            f"print({failure!r})\nfor _ in range(1_700):\n    print('teardown ok')\n"
+            "raise SystemExit(1)\n"
+        )
+        cfg = make_config(checks=[{"name": "e2e", "run": f"python3 {script}"}])
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = run_checks(cfg, Path(self.tmp.name), Path(self.tmp.name) / "checks")
+        [result] = results
+        self.assertNotIn(failure, result["output"])
+        self.assertEqual(result["failure_lines"], [failure])
+        feedback = self.fix_with_checks(results)["feedback"]
+        self.assertIn(failure, feedback)
+        self.assertLess(feedback.index(failure), feedback.index("End of output"))
+        self.assertIn(failure, check_results_text(results))
 
     def test_the_fix_prompt_names_the_file_with_a_failing_checks_whole_output(self):
-        output = "".join(f"line {n}\n" for n in range(3_000)).rstrip()
+        output = "".join(f"line {n}\n" for n in range(3_000)).rstrip()[-12_000:]
         context = self.fix_with_output(output)
         [path] = context["check_outputs"]
         self.assertEqual(Path(path).parent, self.texts.resolve())
         self.assertEqual(Path(path).read_text(), output)
-        self.assertIn(f"the whole output is in `{path}`", context["feedback"])
+        self.assertIn(
+            f"the output NexKit kept (its last 12,000 characters) is in `{path}`",
+            context["feedback"],
+        )
         # The agent may read it; it is no text a person wrote, so no round's comment names it.
         self.assertEqual(shortened_folders(context), [str(self.texts.resolve())])
         self.assertNotIn("shortened", context)

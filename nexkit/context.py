@@ -319,7 +319,7 @@ def _feedback(gh, decision, comments, shelf=None):
         if not check.get("passed"):
             key = f"check-{number}-{check['name']}"
             output = output_text(
-                check.get("output"),
+                check,
                 FIX_OUTPUT_TAIL,
                 FIX_FAILURE_LINES,
                 partial(shelf.store, key),

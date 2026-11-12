@@ -55,7 +55,9 @@ JOB_RESULTS_FLOOR = 25_000_000
 SNIFF = 8192
 # A line of a check's output that reports a failure, for `failure_signature`.
 FAILURE_LINE = re.compile(r"fail|error|✘|✗", re.IGNORECASE)
-# What a prompt keeps of each such line before the end of a failing check's output.
+# What a check's result and a prompt keep of the lines that report a failure before the end
+# of its output: this many, each at most this many characters.
+FAILURE_LINES = 20
 FAILURE_LINE_WIDTH = 300
 # What differs between two runs of the same failure, removed in this order: UUIDs, hex ids,
 # durations, then any other number.
@@ -265,7 +267,7 @@ def setup(cfg, cwd, redact=str, commits=None):
                 "exit_code": code,
                 "passed": False,
                 "seconds": seconds,
-                "output": output[-OUTPUT_TAIL:],
+                **kept_output(output),
             }
     return None
 
@@ -623,7 +625,7 @@ def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None, skipp
                 "exit_code": code,
                 "passed": code == 0,
                 "seconds": seconds,
-                "output": output[-OUTPUT_TAIL:],
+                **kept_output(output),
                 **({"shard": check["shard"]} if check.get("shard") else {}),
             }
         )
@@ -653,36 +655,64 @@ def _fenced(text):
     return f"{fence(text)}\n{text}\n{fence(text)}"
 
 
-def output_text(output, tail, lines, keep=None):
-    """What a prompt shows of a failing check's `output`: the whole output when it has at
-    most `tail` characters; else the first `lines` lines before its last `tail` characters
-    that report a failure (FAILURE_LINE), each at most FAILURE_LINE_WIDTH characters, so a
-    failure that a long teardown follows still shows, then that end, from the start of a
-    line. `keep(output)` writes the whole output to a file outside the working tree and
-    returns its path, or "": the prompt names the file."""
-    output = (output or "").rstrip()
-    if len(output) <= tail:
-        return f"Output:\n\n{_fenced(output)}"
-    end = output[-tail:]
-    if output[-tail - 1] != "\n" and "\n" in end:
-        end = end[end.index("\n") + 1 :]
-    found = [
-        line.strip()
-        for line in output[: len(output) - len(end)].splitlines()
+def _failure_lines(text):
+    """The lines of `text` that report a failure (FAILURE_LINE), stripped, each at most
+    FAILURE_LINE_WIDTH characters."""
+    return [
+        line if len(line) <= FAILURE_LINE_WIDTH else line[:FAILURE_LINE_WIDTH] + " […]"
+        for line in (raw.strip() for raw in text.splitlines())
         if FAILURE_LINE.search(line)
     ]
-    shown = [
-        line if len(line) <= FAILURE_LINE_WIDTH else line[:FAILURE_LINE_WIDTH] + " […]"
-        for line in found[:lines]
-    ]
-    path = keep(output) if keep else ""
-    where = f"; the whole output is in `{path}`" if path else ""
+
+
+def kept_output(output):
+    """What a check's result keeps of its `output`: the last OUTPUT_TAIL characters, and in
+    `failure_lines` the first FAILURE_LINES lines before them that report a failure, which
+    that end would lose, such as a failure that a long teardown follows."""
+    earlier = _failure_lines(output[:-OUTPUT_TAIL])[:FAILURE_LINES]
+    return {"output": output[-OUTPUT_TAIL:], **({"failure_lines": earlier} if earlier else {})}
+
+
+def output_text(check, tail, lines, keep=None):
+    """What a prompt shows of a failing `check`'s output: the whole output when it has at
+    most `tail` characters and no earlier `failure_lines`; else the first `lines` lines
+    that report a failure, those its result recorded from before the output it kept, then
+    those of the kept output before its last `tail` characters, then that end, from the
+    start of a line. `keep(text)` writes what NexKit kept of the output to a file outside
+    the working tree and returns its path, or "": the prompt names the file. A result
+    without `failure_lines`, such as one an older NexKit saved, shows the same way."""
+    raw = check.get("output") or ""
+    output = raw.rstrip()
+    earlier = [str(line) for line in check.get("failure_lines") or []]
+    if len(output) <= tail and not earlier:
+        return f"Output:\n\n{_fenced(output)}"
+    end = output[-tail:]
+    if len(output) > tail and output[-tail - 1] != "\n" and "\n" in end:
+        end = end[end.index("\n") + 1 :]
+    found = earlier + _failure_lines(output[: len(output) - len(end)])
+    shown = found[:lines]
+    text = output
+    if earlier:
+        text = (
+            "Lines before the output that NexKit kept that report a failure or an error:\n\n"
+            + "\n".join(earlier)
+            + f"\n\nThe output NexKit kept, its last {OUTPUT_TAIL:,} characters:\n\n{output}"
+        )
+    path = keep(text) if keep else ""
+    where = ""
+    if path and (earlier or len(raw) >= OUTPUT_TAIL):
+        also = ", with the lines before them that report a failure" if earlier else ""
+        where = (
+            f"; the output NexKit kept (its last {OUTPUT_TAIL:,} characters{also}) is in `{path}`"
+        )
+    elif path:
+        where = f"; the whole output is in `{path}`"
     parts = []
     if shown:
-        which = f"the first {len(shown)} of {len(found)}" if len(found) > len(shown) else "all"
+        cut = len(found) > len(shown) or len(earlier) >= FAILURE_LINES
+        which = f"the first {len(shown)}" if cut else "all"
         parts.append(
-            f"Lines before the end that report a failure or an error ({which}):\n\n"
-            + _fenced("\n".join(shown))
+            f"Lines that report a failure or an error ({which}):\n\n" + _fenced("\n".join(shown))
         )
     parts.append(
         f"End of output (the last {len(end):,} of {len(output):,} characters{where}):\n\n"

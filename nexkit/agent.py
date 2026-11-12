@@ -693,14 +693,16 @@ def ci_evidence_text(found):
 
 def shortened_text(context):
     """The plan, implement, fix and review prompts' section about the texts the prompt
-    keeps only the start of, or "" without any. `context["shortened"]` comes from
-    `context.gather`."""
+    keeps only the start of or leaves out, or "" without any. `context["shortened"]` comes
+    from `context.gather`."""
     items = [item for item in context.get("shortened") or [] if item.get("path")]
     if not items:
         return ""
     lines = [
-        f"- {item['name']}: the first {item['kept']:,} of {item['length']:,} characters here, "
-        f"the whole text in `{item['path']}`"
+        f"- {item['name']}: left out here, all {item['left_out']} whole in `{item['path']}`"
+        if item.get("left_out")
+        else f"- {item['name']}: the first {item['kept']:,} of {item['length']:,} characters "
+        f"here, the whole text in `{item['path']}`"
         for item in items
     ]
     return Template(_template("shortened")).safe_substitute(texts="\n".join(lines)) + "\n"
@@ -713,9 +715,10 @@ def shortened_folders(context):
 
 
 def shortened_names(context):
-    """For the round's comment: which texts the prompt shortened, and by how much."""
+    """For the round's comment: which texts the prompt shortened, and by how much, or how
+    many it left out."""
     return [
-        {key: item[key] for key in ("name", "kept", "length")}
+        {key: item[key] for key in ("name", "kept", "length", "left_out") if key in item}
         for item in context.get("shortened") or []
     ]
 

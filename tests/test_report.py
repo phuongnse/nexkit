@@ -1934,6 +1934,22 @@ class ShortenedTextsTests(ReportCase):
         self.run_report(decision("fix", pr=6, target=6, head=HEAD))
         self.assertIn(SHORTENED_LINE, self.gh.run_comments(6)[-1]["body"])
 
+    def test_a_round_names_the_comments_its_prompt_left_out(self):
+        left_out = {"name": "10 older comments of a discussion, of 2026-11-01T00:00:00Z"}
+        shortened = [{**left_out, "left_out": 10}, *SHORTENED]
+        blocked = {"status": "blocked", "error": "Which file?", "shortened": shortened}
+        self.write("nexkit-agent", "result.json", blocked)
+        self.run_report(published=False)
+        [run] = self.gh.run_comments(5)
+        self.assertIn(
+            "**Shortened for the agent:** these texts are longer than a prompt keeps, so its "
+            "prompt had only their start or left them out, and the agent read each whole "
+            "from a file: 10 older comments of a discussion, of 2026-11-01T00:00:00Z (left "
+            "out); the comment of `@alice` of 2026-11-01T00:00:00Z (1,000 of 39,016 "
+            "characters).",
+            run["body"],
+        )
+
     def test_a_round_without_shortened_texts_says_nothing_of_them(self):
         self.candidate()
         self.run_report(decision("fix", pr=6, target=6, head=HEAD))

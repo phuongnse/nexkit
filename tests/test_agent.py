@@ -211,6 +211,55 @@ class PromptTests(unittest.TestCase):
         self.assertIn("</untrusted>\n\n## Note from the person", prompt)
         self.assertNotRegex(prompt, r"\$(previous|since_plan)\b")
 
+    def test_a_split_asks_that_a_parts_criteria_prove_what_later_parts_rely_on(self):
+        prompt = " ".join(agent.build_prompt("plan", CONTEXT, make_config()).split())
+        self.assertIn(
+            "when later parts depend on a part, its acceptance criteria must prove end to "
+            "end the behaviour they rely on",
+            prompt,
+        )
+
+    def test_a_parts_plan_names_and_checks_what_it_assumes_earlier_parts_do(self):
+        earlier = {
+            "parent": 3,
+            "parts": [
+                {
+                    "number": 6,
+                    "title": "Run an eval stack",
+                    "state": "closed",
+                    "body": "Serve $MCP over http.",
+                    "plan": "Start the stack.",
+                },
+                {"number": 7, "title": "Add a case client", "state": "open", "body": "B."},
+            ],
+        }
+        context = {**CONTEXT, "earlier": earlier}
+        prompt = agent.build_prompt("plan", context, make_config())
+        flat = " ".join(prompt.split())
+        self.assertIn("This issue is a part of #3", flat)
+        self.assertIn("### #6: Run an eval stack (closed)", prompt)
+        self.assertIn("Serve $MCP over http.", prompt)
+        self.assertIn("Its latest plan:\n\nStart the stack.", prompt)
+        self.assertIn("### #7: Add a case client (still open)", prompt)
+        self.assertIn(
+            "name what this part assumes it does, and check each assumption in the code", flat
+        )
+        self.assertIn("When the code does not do what this part needs", flat)
+        self.assertIn("Say so in `risks`", flat)
+        order = [
+            "## Discussion\n",
+            "## Earlier parts this part relies on",
+            "## Note from the person",
+        ]
+        positions = [prompt.index(text) for text in order]
+        self.assertEqual(positions, sorted(positions))
+        # An issue that is not a part, or a part that needs no other, has no such section.
+        for other in (CONTEXT, {**CONTEXT, "earlier": {"parent": 3, "parts": []}}):
+            prompt = agent.build_prompt("plan", other, make_config(), {"previous": ""})
+            self.assertNotIn("Earlier parts", prompt)
+            self.assertNotIn("$earlier_parts", prompt)
+            self.assertIn("</untrusted>\n\n## Note from the person", prompt)
+
     def test_plan_criteria_are_what_the_review_can_verify(self):
         prompt = " ".join(agent.build_prompt("plan", CONTEXT, make_config()).split())
         self.assertIn(

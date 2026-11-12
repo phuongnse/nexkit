@@ -1137,7 +1137,15 @@ the `null` scope, since it may have replaced a sweep that waited.
   that asks for parts that each fit one session; a second such plan waits for a person. Each part of the plan names the earlier parts it needs (`depends_on`); NexKit
   keeps only earlier parts, so the parts cannot wait for each other in a cycle, and records
   each as a *blocked by* relationship on GitHub. Parts that need no other part start at
-  once. A NexKit pull request of the split issue is closed as superseded. An implement or
+  once. Each part is reviewed only against its own acceptance criteria, so the plan
+  prompt asks that a part that later parts depend on has criteria that prove end to end
+  the behaviour they rely on, such as a request that goes through every service a later
+  part calls, not only that the part starts or answers. The plan of a part that needs
+  earlier parts gets each one's text, state and latest plan, and must name what it
+  assumes those parts do and check it in the code before it plans on top of them: each
+  assumption goes in `decisions` with the code that shows it, and one the code does not
+  bear out, or a part still open, goes in `risks` or `questions`. A NexKit pull request
+  of the split issue is closed as superseded. An implement or
   fix agent that ran out of time leads to one re-plan with a note to split the work; a
   second time waits for a person. When the re-plan after a fix round does not split the
   issue and needs nobody, autopilot starts a fix round on the pull request that follows

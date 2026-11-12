@@ -519,6 +519,24 @@ def previous_plan(context):
     )
 
 
+def earlier_parts_text(context):
+    """The plan prompt's section about the earlier parts that a part of a split relies
+    on, or "" for an issue that is not such a part."""
+    earlier = context.get("earlier") or {}
+    if not earlier.get("parts"):
+        return ""
+    blocks = []
+    for part in earlier["parts"]:
+        state = "closed" if part.get("state") == "closed" else "still open"
+        lines = [f"### #{part['number']}: {part['title']} ({state})", "", part["body"]]
+        if part.get("plan"):
+            lines += ["", "Its latest plan:", "", part["plan"]]
+        blocks.append("\n".join(lines))
+    return Template(_template("plan_parts")).safe_substitute(
+        parent=earlier["parent"], parts="\n\n".join(blocks)
+    )
+
+
 def merge_review(repo, context, base):
     """The review prompt's section about a merge of the base branch in this run's fix round,
     with what each side changed in the conflicted files, or ""."""
@@ -914,6 +932,7 @@ def build_prompt(stage, context, cfg, extra=None):
         "person": _template("review_person") if person else "",
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
         "checklist": checklist_text(stage, cfg),
+        "earlier_parts": earlier_parts_text(context),
         **(extra or {}),
     }
     return Template(template).safe_substitute({k: str(v) for k, v in values.items()})

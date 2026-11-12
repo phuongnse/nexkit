@@ -275,7 +275,7 @@ implement and review, only when every run in it has a count; otherwise the cell 
 
 | Artifact | Contains |
 |---|---|
-| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `texts/` (each whole text the prompt [shortened](#agents)), `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
+| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `texts/` (each whole text the prompt [shortened or left out](#agents)), `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
 | `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round; with [`parallel_checks`](configuration.md#parallel-checks), at most the larger of each job's even share of 50 MB and 25 MB per job. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](configuration.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, with `checked.json`, the commit it checked, and `combine` joins them into this one. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
@@ -1280,16 +1280,19 @@ not repeat it at the end, NexKit uses the result it accepted.
 **What an agent reads of an issue.** The prompt has the issue's body whole, up to the
 65,536 characters GitHub keeps in a body or a comment, and each comment of collaborators
 whole too: in the discussion, the notes on `/nexkit` commands and, for a fix round, the
-review comments on the current commit. The latest 30 comments of a discussion count, and
-each block of them, such as the discussion of the issue or of the pull request, holds at
-most 80,000 characters, latest first. An older comment past that keeps its first 1,000
-characters in the prompt, with a note that says how many it has and where the rest is:
-NexKit writes each whole text it shortens, before the agent starts, to `texts/` beside
-`context.json`, outside the working tree. The prompt's section *Texts this prompt
-shortened* names each one, and the agent reads them rather than ask a person for them.
-The run's comment says which texts were shortened, so a person who answers the agent
-knows why it asks. Triage has no tools to read a file with, so it keeps the start of each
-such text alone.
+review comments on the current commit. The latest 30 comments of a discussion are in the
+prompt, and each block of them, such as the discussion of the issue or of the pull
+request, holds at most 80,000 characters, latest first. An older comment past that keeps
+its first 1,000 characters in the prompt, with a note that says how many it has and where
+the rest is. Comments older than the latest 30 are left out, with a note at the start of
+the discussion that says how many and where they are. NexKit writes each whole text it
+shortens, and the comments it leaves out of each discussion together, before the agent
+starts, to `texts/` beside `context.json`, outside the working tree. The prompt's section
+*Texts this prompt shortened* names each one, and the agent reads them rather than ask a
+person for them. The run's comment says which texts were shortened or left out, so a
+person who answers the agent knows why it asks. Triage has no tools to read a file with,
+so it keeps the start of each such text alone, and of the comments it leaves out only
+how many.
 
 **A result that does not fit.** An agent may finish the work and still give no result
 that fits the stage's schema, such as one that leaves out a field or that Claude Code

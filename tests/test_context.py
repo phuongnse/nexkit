@@ -750,6 +750,74 @@ class LongTextTests(unittest.TestCase):
         self.assertNotIn("shortened", gather(self.gh, fix, texts=self.texts))
         self.assertEqual(shortened_text({}), "")
 
+    def test_comments_past_the_latest_30_are_whole_in_a_file_and_counted(self):
+        for n in range(40):
+            self.gh.human_comment(5, f"Comment {n} done.")
+        context = gather(self.gh, {"action": "plan", "issue": 5, "note": ""}, texts=self.texts)
+        [item] = context["shortened"]
+        path = Path(item["path"])
+        self.assertEqual(path.parent, self.texts.resolve())
+        self.assertEqual(item["left_out"], 10)
+        self.assertEqual(item["name"], "10 older comments of a discussion, of 2026-01-01T00:00:00Z")
+        whole = path.read_text()
+        for n in range(10):
+            self.assertIn(f"@alice (2026-01-01T00:00:00Z):\nComment {n} done.", whole)
+        self.assertNotIn("Comment 10 done.", whole)
+        discussion = context["discussion"]
+        self.assertTrue(
+            discussion.startswith(
+                "[NexKit left out the 10 older comments of this discussion here: this prompt "
+                f"keeps its latest 30. All 10 are whole in `{path}`.]"
+            )
+        )
+        self.assertNotIn("Comment 9 done.", discussion)
+        for n in range(10, 40):
+            self.assertIn(f"Comment {n} done.", discussion)
+
+        prompt = build_prompt(
+            "plan", context, make_config(), {"shortened": shortened_text(context)}
+        )
+        self.assertIn(f"- {item['name']}: left out here, all 10 whole in `{path}`", prompt)
+        self.assertIn("leaves them out when they are older comments", prompt)
+        self.assertEqual(shortened_folders(context), [str(self.texts.resolve())])
+        self.assertEqual(shortened_names(context), [{"name": item["name"], "left_out": 10}])
+
+    def test_30_comments_reach_the_prompt_as_they_are(self):
+        for n in range(30):
+            self.gh.human_comment(5, f"Comment {n} done.")
+        prompt = self.prompt("plan", {"action": "plan", "issue": 5, "note": ""})
+        self.assertIn("@alice (2026-01-01T00:00:00Z):\nComment 0 done.", prompt)
+        self.assertNotIn("NexKit left out", prompt)
+        self.assertFalse(self.texts.exists())
+
+    def test_one_left_out_comment_is_named_in_the_singular(self):
+        for n in range(31):
+            self.gh.human_comment(5, f"Comment {n} done.")
+        context = gather(self.gh, {"action": "plan", "issue": 5, "note": ""}, texts=self.texts)
+        [item] = context["shortened"]
+        self.assertTrue(item["name"].startswith("1 older comment of a discussion"))
+        self.assertTrue(
+            context["discussion"].startswith(
+                "[NexKit left out the 1 older comment of this discussion here: this prompt "
+                f"keeps its latest 30. It is whole in `{item['path']}`.]"
+            )
+        )
+
+    def test_each_discussion_of_a_review_names_its_own_left_out_comments(self):
+        for n in range(32):
+            self.gh.human_comment(5, f"Issue comment {n}.")
+            self.gh.human_comment(6, f"Pull comment {n}.")
+        decision = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD}
+        context = gather(self.gh, decision, "review", texts=self.texts)
+        issue, pull = context["shortened"]
+        self.assertEqual((issue["left_out"], pull["left_out"]), (2, 2))
+        self.assertNotEqual(issue["path"], pull["path"])
+        self.assertIn("Issue comment 1.", Path(issue["path"]).read_text())
+        self.assertIn("Pull comment 1.", Path(pull["path"]).read_text())
+        self.assertEqual(context["discussion"].count("[NexKit left out the 2 older"), 2)
+        # The fix prompt shows the feedback rather than the discussion, so names none.
+        self.assertNotIn("shortened", gather(self.gh, decision, texts=self.texts))
+
     def test_without_a_folder_a_shortened_text_says_the_rest_was_left_out(self):
         self.gh.issues[5]["body"] = "B" * 70_000
         context = gather(self.gh, {"action": "implement", "issue": 5})

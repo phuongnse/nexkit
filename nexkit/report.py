@@ -1872,8 +1872,9 @@ def _carry_line(decision, base, carry):
 
 def shortened_line(*results):
     """What the round's comment says about the texts that an agent's prompt kept only the
-    start of, from the results of the round's agents, or "". A person who answers the
-    agent then knows that NexKit shortened them, and that the agent had each whole."""
+    start of or left out, from the results of the round's agents, or "". A person who
+    answers the agent then knows that NexKit shortened them, and that the agent had each
+    whole."""
     found = {}
     for result in results:
         for item in (result or {}).get("shortened") or []:
@@ -1884,15 +1885,17 @@ def shortened_line(*results):
     parts = []
     for name, item in list(found.items())[:10]:
         kept, length = item.get("kept"), item.get("length")
+        if isinstance(item.get("left_out"), int):
+            parts.append(f"{name} (left out)")
+            continue
         sizes = isinstance(kept, int) and isinstance(length, int)
         parts.append(name + (f" ({kept:,} of {length:,} characters)" if sizes else ""))
     more = f", and {len(found) - 10} more" if len(found) > 10 else ""
+    left_out = any(isinstance(item.get("left_out"), int) for item in found.values())
+    had = "had only their start or left them out," if left_out else "had only their start"
     return (
         "**Shortened for the agent:** these texts are longer than a prompt keeps, so its "
-        "prompt had only their start and the agent read each whole from a file: "
-        + "; ".join(parts)
-        + more
-        + "."
+        f"prompt {had} and the agent read each whole from a file: " + "; ".join(parts) + more + "."
     )
 
 

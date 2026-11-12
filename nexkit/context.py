@@ -39,33 +39,46 @@ def _trusted(item):
 
 
 class Shelf:
-    """The texts that a prompt keeps only the start of. Each whole text goes to a file in
-    `folder`, outside the working tree, which the agent reads; `cut` names them for the
-    prompt and the round's comment. Without a folder no file is written."""
+    """The texts that a prompt keeps only the start of, or leaves out. Each whole text goes
+    to a file in `folder`, outside the working tree, which the agent reads; `cut` names
+    them for the prompt and the round's comment. Without a folder no file is written."""
 
     def __init__(self, folder=None):
         self.folder = Path(folder).resolve() if folder else None
         self.cut = []
+
+    def _write(self, key, text):
+        """The file that holds `text` whole, or "" without a folder."""
+        if not self.folder:
+            return ""
+        self.folder.mkdir(parents=True, exist_ok=True)
+        path = self.folder / f"{key}.md"
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+
+    def _note(self, item):
+        if not any(known["key"] == item["key"] for known in self.cut):
+            self.cut.append(item)
 
     def put(self, name, key, text, keep):
         """`text` with at most `keep` characters, and where the rest is when it has more.
         `name` says which text it is, `key` names its file."""
         if len(text) <= keep:
             return text
-        path = ""
-        if self.folder:
-            self.folder.mkdir(parents=True, exist_ok=True)
-            path = str(self.folder / f"{key}.md")
-            Path(path).write_text(text, encoding="utf-8")
-        if not any(item["key"] == key for item in self.cut):
-            self.cut.append(
-                {"name": name, "key": key, "path": path, "kept": keep, "length": len(text)}
-            )
+        path = self._write(key, text)
+        self._note({"name": name, "key": key, "path": path, "kept": keep, "length": len(text)})
         where = f"The whole text is in `{path}`." if path else "The rest was left out."
         return (
             f"{text[:keep]}\n[NexKit shortened this text here: this prompt has the first "
             f"{keep:,} of its {len(text):,} characters. {where}]"
         )
+
+    def leave_out(self, name, key, text, count):
+        """Where `text`, `count` texts that the prompt leaves out, is whole: a path, or ""
+        without a folder. `name` says which texts they are, `key` names their file."""
+        path = self._write(key, text)
+        self._note({"name": name, "key": key, "path": path, "left_out": count})
+        return path
 
 
 def _fit(entries, shelf):
@@ -88,8 +101,9 @@ def _discussion(comments, notes=False, shelf=None):
     """Collaborators' comments, and the answers autopilot gave for the owner. Command
     comments are left out, or with `notes` kept when they carry a note: the agent that acts
     on a command gets its note through the decision, the reviewer only through the
-    discussion. Each comment comes whole, as long as the block fits (see `_fit`)."""
-    entries = []
+    discussion. The latest MAX_COMMENTS count, each whole as long as the block fits (see
+    `_fit`); older ones go whole to `shelf`, and a note says how many were left out."""
+    entries, times = [], []
     for comment in comments:
         when = comment["created_at"]
         key = f"comment-{comment['id']}"
@@ -98,6 +112,7 @@ def _discussion(comments, notes=False, shelf=None):
             # Autopilot answered for the owner, with the options NexKit recommended.
             header = f"NexKit autopilot for the owner ({when}):\n"
             entries.append((header, answered, f"autopilot's answers of {when}", key))
+            times.append(when)
             continue
         if not _trusted(comment):
             continue
@@ -107,8 +122,31 @@ def _discussion(comments, notes=False, shelf=None):
         login = comment["user"]["login"]
         name = f"the comment of `@{login}` of {when}"
         entries.append((f"@{login} ({when}):\n", comment["body"], name, key))
-    texts = _fit(entries[-MAX_COMMENTS:], shelf or Shelf())
+        times.append(when)
+    shelf = shelf or Shelf()
+    older, entries = entries[:-MAX_COMMENTS], entries[-MAX_COMMENTS:]
+    texts = _fit(entries, shelf)
+    if older:
+        texts.insert(0, _left_out(older, times[0], times[len(older) - 1], shelf))
     return "\n\n---\n\n".join(texts) if texts else "No discussion."
+
+
+def _left_out(older, first, last, shelf):
+    """The note that stands for the `older` entries a discussion leaves out, of the times
+    `first` to `last`, which go whole to `shelf`."""
+    count = len(older)
+    span = first if first == last else f"{first} to {last}"
+    comments = "comment" if count == 1 else "comments"
+    name = f"{count} older {comments} of a discussion, of {span}"
+    whole = "\n\n---\n\n".join(header + (body or "") for header, body, _, _ in older)
+    path = shelf.leave_out(name, f"older-{older[-1][3]}", whole, count)
+    where = ""
+    if path:
+        where = f" {'It is' if count == 1 else f'All {count} are'} whole in `{path}`."
+    return (
+        f"[NexKit left out the {count} older {comments} of this discussion here: this "
+        f"prompt keeps its latest {MAX_COMMENTS}.{where}]"
+    )
 
 
 def _saved_feedback(comments):

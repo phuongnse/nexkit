@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -19,6 +20,32 @@ TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 # The most a download from GitHub reads, such as a job's log or an artifact's zip, unless
 # the caller gives its own limit.
 DOWNLOAD_LIMIT = 64_000_000
+# What starts a job's log that NexKit cut, as one longer than a download reads: only its
+# end is kept, so what failed last is never what is cut.
+LOG_CUT = b"[NexKit: the start of this log is cut; what follows is its end.]\n"
+
+
+def log_end(data, limit=DOWNLOAD_LIMIT):
+    """A job's log as NexKit keeps it: whole, or when longer than `limit` bytes, `LOG_CUT`
+    and then its last `limit` bytes from the first line that starts among them."""
+    if len(data) <= limit:
+        return data
+    end = data[-limit:]
+    return LOG_CUT + end[end.find(b"\n") + 1 :]
+
+
+def _read(resp, limit, end):
+    """At most `limit + 1` bytes of a response: its first, or with `end` its last, read
+    in parts so a long one never stays whole in memory."""
+    if not end:
+        return resp.read(limit + 1)
+    parts, size = deque(), 0
+    while part := resp.read(1 << 20):
+        parts.append(part)
+        size += len(part)
+        while size - len(parts[0]) > limit:
+            size -= len(parts.popleft())
+    return b"".join(parts)[-(limit + 1) :]
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -173,10 +200,10 @@ class GitHub:
             time.sleep(wait)
         raise AssertionError("unreachable")
 
-    def download(self, path, limit=DOWNLOAD_LIMIT):
+    def download(self, path, limit=DOWNLOAD_LIMIT, end=False):
         """The bytes behind an API path that redirects to storage, such as a job's log or an
-        artifact's zip, at most `limit + 1` of them. GitHub gets the token; the storage it
-        redirects to never does."""
+        artifact's zip, at most `limit + 1` of them: the first, or with `end` the last. GitHub
+        gets the token; the storage it redirects to never does."""
         headers = {"User-Agent": "nexkit", "X-GitHub-Api-Version": "2022-11-28"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -184,7 +211,7 @@ class GitHub:
             with build_opener(_NoRedirect).open(
                 Request(f"{self.api_url}{path}", headers=headers), timeout=120
             ) as resp:
-                return resp.read(limit + 1)
+                return _read(resp, limit, end)
         except HTTPError as exc:
             if exc.code not in (301, 302, 303, 307, 308) or not exc.headers.get("Location"):
                 raise GitHubError(exc.code, exc.read().decode(errors="replace")[:500]) from None
@@ -193,14 +220,16 @@ class GitHub:
             raise GitHubError(0, str(exc.reason)) from None
         try:
             with urlopen(Request(location, headers={"User-Agent": "nexkit"}), timeout=120) as resp:
-                return resp.read(limit + 1)
+                return _read(resp, limit, end)
         except HTTPError as exc:
             raise GitHubError(exc.code, "the download failed") from None
         except URLError as exc:
             raise GitHubError(0, str(exc.reason)) from None
 
-    def job_log(self, job_id):
-        return self.download(f"{self._repo}/actions/jobs/{job_id}/logs")
+    def job_log(self, job_id, limit=DOWNLOAD_LIMIT):
+        """A job's log, only its end when it is longer than `limit` (see `log_end`)."""
+        path = f"{self._repo}/actions/jobs/{job_id}/logs"
+        return log_end(self.download(path, limit, end=True), limit)
 
     def artifact_zip(self, artifact_id, limit=DOWNLOAD_LIMIT):
         return self.download(f"{self._repo}/actions/artifacts/{artifact_id}/zip", limit)

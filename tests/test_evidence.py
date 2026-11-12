@@ -203,6 +203,27 @@ class EvidenceTests(EvidenceCase):
         log = (self.folder / "run-101" / "attempt-1" / "e2e-chromium.log").read_text()
         self.assertNotIn(TOKEN, log)
 
+    def test_a_log_longer_than_nexkit_reads_keeps_its_end_and_says_it_was_cut(self):
+        self.issue("https://github.com/acme/app/actions/runs/101")
+        lines = "".join(f"line {n}\n" for n in range(1000))
+        self.gh.logs[1010] = f"{lines}Error: Create stays disabled\n".encode()
+        self.gh.log_limit = 2000
+        self.gather()
+        log = (self.folder / "run-101" / "attempt-1" / "e2e-chromium.log").read_bytes()
+        self.assertTrue(log.startswith(evidence.LOG_CUT))
+        self.assertTrue(log.endswith(b"line 999\nError: Create stays disabled\n"))
+        self.assertNotIn(b"line 0\n", log)
+        # A log that what a round keeps cuts says so too; a whole one says nothing.
+        self.gh.log_limit = 1_000_000
+        with mock.patch.object(evidence, "LOG_TAIL", 100):
+            self.gather()
+        log = (self.folder / "run-101" / "attempt-1" / "e2e-chromium.log").read_bytes()
+        self.assertTrue(log.startswith(evidence.LOG_CUT))
+        self.assertTrue(log.endswith(b"Error: Create stays disabled\n"))
+        self.gather()
+        log = (self.folder / "run-101" / "attempt-1" / "e2e-chromium.log").read_bytes()
+        self.assertTrue(log.startswith(b"line 0\n"))
+
     def test_an_artifact_with_a_file_and_a_folder_of_the_same_name_keeps_the_rest(self):
         self.issue("https://github.com/acme/app/actions/runs/101")
         self.gh.zips[106] = zipped({"a": "1", "a/b": "2", "c\n::error::x": "3", "d": "4"})

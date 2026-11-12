@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -11,6 +12,7 @@ from unittest import mock
 
 from nexkit import autopilot, state
 from nexkit import maintain as maintain_module
+from nexkit.context import TEXT_LIMIT
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.report import report
@@ -2117,6 +2119,7 @@ class CITests(AutopilotCase):
         body = bug["body"]
         self.assertIn("  - `OrderTests.Totals`, `tests/OrderTests.cs:10`", body)
         self.assertNotIn("Process completed", body)
+        # A log without steps shows its end.
         self.assertIn("  The end of its log:\n\n  ```text\n", body)
         self.assertIn("  Error: boom ***", body)
         self.assertNotIn(token, body)
@@ -2125,6 +2128,258 @@ class CITests(AutopilotCase):
         # A round on the bug issue collects that run's evidence, as its marker names it.
         runs, _ = named_runs(self.gh, bug, [])
         self.assertEqual(runs, [(run["id"], [1, 2])])
+
+    # A job's log as the runner writes it: the job's setup, its steps, each in a group, then
+    # the post steps and the job's cleanup.
+    STEPS_LOG = (
+        "﻿2026-10-23T03:30:00.1Z ##[group]Runner Image\n"
+        "2026-10-23T03:30:00.2Z Image: ubuntu-24.04\n"
+        "2026-10-23T03:30:00.3Z ##[endgroup]\n"
+        "2026-10-23T03:30:01.1Z ##[group]Run actions/checkout@v6\n"
+        "2026-10-23T03:30:01.2Z ##[endgroup]\n"
+        "2026-10-23T03:30:01.3Z checked out the commit\n"
+        "2026-10-23T03:30:02.1Z ##[group]Run dotnet build\n"
+        "2026-10-23T03:30:02.2Z ##[endgroup]\n"
+        "2026-10-23T03:30:05.0Z Orders.cs(12,9): error CS0103: The name 'tax' does not exist\n"
+        "2026-10-23T03:30:05.1Z ##[error]Process completed with exit code 1.\n"
+        "{after}"
+        "2026-10-23T03:30:06.0Z Post job cleanup.\n"
+        + "".join(f"2026-10-23T03:30:06.1Z [command]/usr/bin/git config {n}\n" for n in range(400))
+        + "2026-10-23T03:30:07.0Z Cleaning up orphan processes\n"
+    )
+
+    def test_a_bug_issue_shows_the_end_of_the_failed_steps_output_not_the_post_steps(self):
+        self.ci_run(attempt=2)
+        # A step that always runs comes after the failed one and fails too.
+        after = (
+            "2026-10-23T03:30:05.5Z ##[group]Run make report\n"
+            "2026-10-23T03:30:05.6Z ##[endgroup]\n"
+            "2026-10-23T03:30:05.7Z no results to report\n"
+            "2026-10-23T03:30:05.8Z ##[error]Process completed with exit code 2.\n"
+        )
+        log = self.STEPS_LOG.replace("{after}", after)
+        self.assertGreater(len(log.split("Post job cleanup.")[1]), 20_000)
+        self.gh.logs[501] = log.encode()
+        self.sweep()
+        [bug] = self.bugs()
+        body = bug["body"]
+        self.assertIn("  The end of its failed step's output:\n\n  ```text\n", body)
+        self.assertIn("  ##[group]Run dotnet build\n", body)
+        self.assertIn("error CS0103: The name 'tax' does not exist", body)
+        self.assertIn("  ##[error]Process completed with exit code 1.\n  ```", body)
+        for other in ("git config", "Post job", "orphan", "checked out", "make report"):
+            self.assertNotIn(other, body)
+
+    def test_a_job_whose_failed_step_is_not_found_shows_its_log_before_the_post_steps(self):
+        self.ci_run(attempt=2)
+        log = self.STEPS_LOG.replace("{after}", "")
+        log = log.replace("##[error]Process completed with exit code 1.", "The job was cancelled")
+        self.gh.logs[501] = log.encode()
+        self.sweep()
+        [bug] = self.bugs()
+        body = bug["body"]
+        heading = (
+            "  Its failed step is not found in its log, so this is the end of its log before "
+            "the post steps:\n\n  ```text\n"
+        )
+        self.assertIn(heading, body)
+        self.assertIn("  checked out the commit\n", body)
+        self.assertIn("  The job was cancelled\n  ```", body)
+        self.assertNotIn("git config", body)
+
+    def test_the_end_of_a_log_longer_than_nexkit_reads_shows_its_failed_step(self):
+        self.ci_run(attempt=2)
+        # The failed step's output and the post steps are longer than what NexKit reads, so
+        # the log is cut inside the failed step's output.
+        output = "".join(f"2026-10-23T03:30:04.0Z compiling {n}\n" for n in range(500))
+        log = self.STEPS_LOG.replace("{after}", "").replace("Orders.cs", output + "Orders.cs")
+        self.gh.log_limit = 30_000
+        self.assertGreater(len(log.split("Post job cleanup.")[1]), 20_000)
+        self.gh.logs[501] = log.encode()
+        self.assertNotIn(b"Run dotnet build", self.gh.job_log(501))
+        self.sweep()
+        [bug] = self.bugs()
+        body = bug["body"]
+        self.assertIn(
+            "  The end of its failed step's output, from the last 64 MB of its log, which NexKit "
+            "cut:\n",
+            body,
+        )
+        self.assertIn("  compiling 499\n", body)
+        self.assertIn("  ##[error]Process completed with exit code 1.\n  ```", body)
+        for other in ("git config", "orphan", "[NexKit:"):
+            self.assertNotIn(other, body)
+
+    def failed_jobs(self, run_id=50, attempts=(1, 2), count=30, notes=1):
+        """`count` failed jobs in each of `attempts` of run `run_id`, each with a long log
+        and `notes` error annotations that name a test."""
+        for attempt in attempts:
+            jobs = []
+            for n in range(count):
+                job_id = run_id * 1000 + attempt * 100 + n
+                url = f"https://github.com/acme/app/actions/runs/{run_id}/job/{job_id}"
+                jobs.append(
+                    {
+                        "id": job_id,
+                        "name": f"test ({n})",
+                        "conclusion": "failure",
+                        "html_url": url,
+                        "steps": [{"name": "Run tests", "conclusion": "failure"}],
+                    }
+                )
+                self.gh.annotations[job_id] = [
+                    {
+                        "path": f"tests/Shard{n}Tests.cs",
+                        "start_line": 10 + k,
+                        "annotation_level": "failure",
+                        "title": f"Shard{n}Tests.Totals{k}",
+                        "message": "Assert.Equal() Failure",
+                    }
+                    for k in range(notes)
+                ] + [GENERIC_ANNOTATION]
+                output = "".join(f"shard {n} line {i} {'x' * 100}\n" for i in range(200))
+                self.gh.logs[job_id] = (
+                    f"##[group]Run make test\n##[endgroup]\n{output}error in shard {n}\n"
+                    "##[error]Process completed with exit code 1.\n"
+                ).encode()
+            self.gh.jobs[(run_id, attempt)] = jobs
+
+    def assert_whole_record(self, text, sha=SHA, attempts=(1, 2), count=30):
+        """Each failed job of each attempt has its link, failed step and annotation in
+        `text`, and its markers read back."""
+        for attempt in attempts:
+            for n in range(count):
+                job_id = 50_000 + attempt * 100 + n
+                url = f"https://github.com/acme/app/actions/runs/50/job/{job_id}"
+                line = (
+                    f"- [test ({n})]({url}): `Run tests`\n"
+                    f"  - `Shard{n}Tests.Totals0`, `tests/Shard{n}Tests.cs:10`: "
+                    "`Assert.Equal() Failure`\n"
+                )
+                self.assertIn(line, text)
+        self.assertEqual(autopilot.CI_SHA.findall(text), [sha])
+        self.assertEqual(autopilot.CI_RUNS.search(text).group(1), "50.1 50.2")
+        record = json.loads(base64.b64decode(autopilot.CI_FAILED.search(text).group(1)))
+        self.assertEqual(record["run"], 50)
+        self.assertEqual(len(record["jobs"]), count)
+        self.assertEqual(record["jobs"][0]["commands"], ["make test"])
+
+    def test_a_bug_issue_of_many_failed_jobs_fits_githubs_limit_and_keeps_every_job(self):
+        self.ci_run(attempt=2)
+        self.failed_jobs()
+        self.sweep()
+        [bug] = self.bugs()
+        body = bug["body"]
+        self.assertLessEqual(len(body), TEXT_LIMIT)
+        self.assert_whole_record(body)
+        # The log excerpts share what is left evenly, each keeping its end.
+        excerpts = re.findall(r"\n  ```text\n(.*?)\n  ```\n", body, re.S)
+        self.assertEqual(len(excerpts), 60)
+        self.assertGreater(min(map(len, excerpts)), 300)
+        self.assertLess(max(map(len, excerpts)) - min(map(len, excerpts)), 120)
+        for excerpt in excerpts:
+            self.assertTrue(excerpt.endswith("  ##[error]Process completed with exit code 1."))
+        self.assertRegex(
+            body,
+            r"\nThis report is shortened to fit GitHub's limit on a text's length: each log "
+            r"excerpt shows at most its last [\d,]+ characters\. The links of the run, its "
+            r"attempts and its jobs lead to all of it, with the jobs' whole logs\.\n\n"
+            r"<!-- nexkit:ci-sha ",
+        )
+        self.assertTrue(body.startswith(f"{autopilot.CI_BUG_PREFIX}ci.yml -->\n@olivia "))
+
+    def test_a_comment_that_it_fails_again_fits_githubs_limit(self):
+        old = f"{autopilot.CI_SHA_PREFIX}{'d' * 40} -->"
+        bug = self.gh.create_issue(
+            "ci.yml fails on main", f"{autopilot.CI_BUG_PREFIX}ci.yml -->\n{old}"
+        )
+        self.ci_run(attempt=2)
+        self.failed_jobs()
+        self.sweep()
+        self.assertEqual(self.bugs(), [bug])
+        [comment] = self.gh.comments_matching(bug["number"], "It fails again")
+        self.assertLessEqual(len(comment["body"]), TEXT_LIMIT)
+        self.assertTrue(comment["body"].startswith("It fails again on a newer commit.\n\n"))
+        self.assert_whole_record(comment["body"])
+        self.assertIn("This report is shortened", comment["body"])
+
+    def test_a_report_that_does_not_fit_without_logs_lists_fewer_annotations_then_jobs(self):
+        run = self.ci_run(attempt=2)
+        self.failed_jobs(count=4, notes=5)
+        whole = autopilot._failure_text(self.gh, "ci.yml", run, "main")
+        logless = re.sub(r"\n\n  The end of .*?\n  ```\n", "\n", whole, flags=re.S)
+        self.assertNotIn("```", logless)
+        # Without the logs, only some annotations fit.
+        text = autopilot._failure_text(self.gh, "ci.yml", run, "main", room=len(logless) - 200)
+        self.assertLessEqual(len(text), len(logless) - 200)
+        self.assertNotIn("```", text)
+        self.assertIn("`tests/Shard3Tests.cs:10`", text)
+        self.assertNotIn("`tests/Shard3Tests.cs:14`", text)
+        self.assertRegex(text, r"\n  - [1-5] more error annotations; see the job\.\n")
+        self.assertRegex(
+            text,
+            r"shortened to fit GitHub's limit on a text's length: the log excerpts are left "
+            r"out; each job lists at most [0-4] error annotations\. ",
+        )
+        self.assertTrue(text.endswith(whole[whole.index("\n<!-- nexkit:ci-sha") :]))
+        # Without any annotation, only some jobs fit.
+        markers = whole[whole.index("\n<!-- nexkit:ci-sha") :]
+        room = len(markers) + 1000
+        text = autopilot._failure_text(self.gh, "ci.yml", run, "main", room=room)
+        self.assertLessEqual(len(text), room)
+        self.assertIn("- [test (0)]", text)
+        self.assertNotIn("- [test (3)]", text)
+        self.assertIn("more failed jobs; see the attempt.\n", text)
+        self.assertIn("the error annotations are left out; each attempt lists at most", text)
+        self.assertTrue(text.endswith(markers))
+
+    def test_a_small_failure_gives_its_whole_report(self):
+        run = self.ci_run(attempt=2)
+        self.annotate(50, "OrderTests.Totals")
+        self.gh.logs[501] = (
+            b"2026-10-23T03:30:01.1Z ##[group]Run make test\n"
+            b"2026-10-23T03:30:01.2Z ##[endgroup]\n"
+            b"2026-10-23T03:30:02.0Z FAIL OrderTests.Totals\n"
+            b"2026-10-23T03:30:02.1Z ##[error]Process completed with exit code 1.\n"
+            b"2026-10-23T03:30:03.0Z Post job cleanup.\n"
+        )
+        self.sweep()
+        [bug] = self.bugs()
+        record = [{"commands": ["make test"], "job": "test", "tests": ["ordertests.totals"]}]
+        job = (
+            "- [test](https://job): `Run tests`\n"
+            "  - `OrderTests.Totals`, `tests/OrderTests.cs:10`: "
+            "`Assert.Equal() Failure in OrderTests.Totals`\n"
+            "\n"
+            "  The end of its failed step's output:\n"
+            "\n"
+            "  ```text\n"
+            "  ##[group]Run make test\n"
+            "  ##[endgroup]\n"
+            "  FAIL OrderTests.Totals\n"
+            "  ##[error]Process completed with exit code 1.\n"
+            "  ```\n"
+        )
+        attempts = "https://github.com/acme/app/actions/runs/50/attempts"
+        self.assertEqual(
+            bug["body"],
+            "<!-- nexkit:ci ci.yml -->\n"
+            "@olivia [`ci.yml` failed](https://github.com/acme/app/actions/runs/50) on `main` "
+            f"at {self.SHA}, also when run again. Failed jobs and steps of each failed "
+            "attempt:\n"
+            "\n"
+            f"Attempt [1]({attempts}/1):\n"
+            f"{job}"
+            "\n"
+            "\n"
+            f"Attempt [2]({attempts}/2):\n"
+            f"{job}"
+            "\n"
+            "\n"
+            f"<!-- nexkit:ci-sha {self.SHA} -->\n"
+            f"{autopilot._failed_marker(run, record)}\n"
+            "<!-- nexkit:ci-runs 50.1 50.2 -->",
+        )
 
     def test_a_run_that_passes_when_run_again_is_recorded_once_on_its_own_issue(self):
         run = self.ci_run()

@@ -1434,9 +1434,11 @@ review (its commit and up to 30 of its findings: past 30, the blocking ones firs
 others in the reviewer's order, with how many were left out) and the recent fix rounds (summary, cause, note,
 the checks that still failed after it with their failure signatures and, after a merge,
 the files that had conflicts). Recorded text is clipped, and only the last five fix
-rounds are kept, so the comment and the prompts stay bounded. The comment always fits
-GitHub's 65,536 characters: when the record would not, NexKit shortens, in this order and
-each to the most that fits, the failing checks' outputs (keeping their end, down to 2,000
+rounds are kept, so the comment and the prompts stay bounded. Of a passed check, the
+record keeps its name, command and exit code, not its output, which no prompt reads. The
+comment always fits GitHub's 65,536 characters: when the record would not, NexKit first
+leaves out any passed check's output an older release recorded, then shortens, in this
+order and each to the most that fits, the failing checks' outputs (keeping their end, down to 2,000
 characters each, with the lines that report a failure from what it cut joining their
 failure lines), the findings other than blocking ones (keeping their start, down to 300
 characters), the failure lines, the outputs to nothing, the blocking findings, and last the

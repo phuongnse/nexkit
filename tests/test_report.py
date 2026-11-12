@@ -1525,6 +1525,83 @@ class ReportTests(ReportCase):
             len(check["output"]), len("  ✘ 1 desk.spec.ts:42 › picks an option (12.3s)\n") + 9_000
         )
 
+    def test_passed_checks_output_leaves_room_for_the_blocking_finding(self):
+        # 13 passed checks with as much output as NexKit stores, as in a repository with
+        # 14 check jobs: their output is not recorded, so nothing a prompt reads is cut.
+        passed = [
+            {"name": f"unit-{n}", "run": "make unit", "exit_code": 0, "passed": True}
+            for n in range(1, 14)
+        ]
+        passed = [{**check, "output": "ok\n" * 4_000} for check in passed]
+        output = "  ✘ 1 desk.spec.ts:42 › picks an option (1.3s)\n"
+        output += "teardown ok\n" * 990 + "1 failed"
+        failing = {
+            "name": "integration-1",
+            "run": "make integration",
+            "exit_code": 1,
+            "passed": False,
+            "output": output,
+        }
+        body = "The total leaves out refunds, so the invoice is too high. " * 26
+        finding = {"severity": "blocking", "file": "b.py", "line": 7, "body": body}
+        self.candidate(checks_pass=False, review=review_result("request_changes", [finding]))
+        self.write("nexkit-checks", "checks.json", [*passed, failing])
+        self.run_report(cfg=make_config(fix={"max_auto_rounds": 5}))
+        self.assertLessEqual(len(self.state_comment()), TEXT_LIMIT)
+        _, state = read_state(self.gh.comments(6))
+        checks = state["feedback"]["checks"]
+        self.assertEqual(len(checks), 14)
+        for check in checks[:13]:
+            self.assertEqual(
+                check, {"name": check["name"], "run": "make unit", "exit_code": 0, "passed": True}
+            )
+        self.assertEqual(checks[13]["output"], output)
+        self.assertNotIn("output_cut", checks[13])
+        self.assertEqual(state["feedback"]["review"]["findings"][0]["body"], body)
+
+        fix = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
+        feedback = gather(self.gh, fix)["feedback"]
+        self.assertIn(body.strip(), feedback)
+        self.assertIn("✘ 1 desk.spec.ts:42 › picks an option (1.3s)", feedback)
+        self.assertIn("teardown ok\n1 failed\n```", feedback)
+        self.assertNotIn("unit-1", feedback)
+
+    def test_a_check_that_passed_after_a_fix_is_told_apart_from_one_that_failed_again(self):
+        def checks(unit_passed, e2e_line):
+            unit = {"name": "unit", "run": "make unit", "passed": unit_passed}
+            if unit_passed:
+                unit.update(exit_code=0, output="ok\n")
+            else:
+                unit.update(exit_code=1, output="  ✘ 1 calc.test.ts:3 › adds (0.2s)\n")
+            e2e = {"name": "e2e", "run": "scripts/e2e.sh", "exit_code": 1, "passed": False}
+            self.write("nexkit-checks", "checks.json", [unit, {**e2e, "output": e2e_line}])
+
+        self.candidate(checks_pass=False, review=review_result("request_changes"))
+        checks(False, "  ✘ 1 desk.spec.ts:42 › picks an option (12.3s)\n")
+        self.run_report(cfg=make_config(fix={"max_auto_rounds": 5}))
+
+        # The fix made unit pass; e2e failed the same way.
+        agent = {"status": "done", "summary": "Fixed add.", "output": {"cause": ""}}
+        self.write("nexkit-agent", "result.json", agent)
+        checks(True, "  ✘ 3 desk.spec.ts:42 › picks an option (9.1s)\n")
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
+        self.run_report(d=d, cfg=make_config(fix={"max_auto_rounds": 5}), head="e" * 40)
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["feedback"]["repeated"], ["e2e"])
+        unit = state["feedback"]["checks"][0]
+        self.assertTrue(unit["passed"])
+        self.assertNotIn("output", unit)
+        self.assertNotIn("signature", unit)
+        signature = "✘ desk.spec.ts: › picks an option ()"
+        self.assertEqual(state["fixes"][-1]["failing"], [{"name": "e2e", "signature": signature}])
+
+        # After the next fix, unit fails as it did first: it passed in between, so it is
+        # a new failure, not one that failed the same way after a fix.
+        checks(False, "  ✘ 1 desk.spec.ts:50 › saves the ticket (1.0s)\n")
+        self.run_report(d=d, cfg=make_config(fix={"max_auto_rounds": 5}), head="f" * 40)
+        _, state = read_state(self.gh.comments(6))
+        self.assertNotIn("repeated", state["feedback"])
+
     def test_a_check_that_fails_the_same_way_twice_gets_a_diagnosis_round(self):
         self.candidate(checks_pass=False, review=review_result("request_changes"))
         self.failing("Running 3 tests\n  ✘ 1 desk.spec.ts:42 › picks an option (12.3s)\n")

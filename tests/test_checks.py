@@ -403,11 +403,33 @@ class CheckJobTimesTests(unittest.TestCase):
         self.assertEqual(
             self.rows(self.summary()),
             [
-                "| `e2e` (ended last) | passed | 15m 13s | 15m 00s |",
+                "| `e2e` | passed | 15m 13s | 15m 00s |",
                 "| `unit` | passed | 8m 56s | 6m 50s |",
                 "| `lint` | passed | 5m 49s | 30s |",
             ],
         )
+
+    def test_the_longest_job_that_ended_last_is_not_marked_again(self):
+        for group in ("unit", "e2e", "lint"):
+            self.part(group, [self.check(group)])
+        # `e2e` is the first row, so the run waited for the job at the top.
+        self.assertNotIn("ended last", self.summary())
+
+    def test_a_job_that_started_late_and_ended_last_is_marked_with_how_late(self):
+        # `lint` waited for a runner: shorter than `e2e`, it still ended after it.
+        self.jobs[3] = self.job("verify (lint)", "06:05:52", "06:16:01")
+        for group in ("unit", "e2e", "lint"):
+            self.part(group, [self.check(group)])
+        text = self.summary()
+        self.assertEqual(
+            self.rows(text),
+            [
+                "| `e2e` | passed | 15m 13s | 1s |",
+                "| `lint` (ended last: started 6m 40s late) | passed | 10m 09s | 1s |",
+                "| `unit` | passed | 8m 56s | 1s |",
+            ],
+        )
+        self.assertIn("check jobs: **16m 49s** from the first start to the last end", text)
 
     def test_the_line_above_gives_the_run_its_wait_and_the_check_jobs_span(self):
         for group in ("unit", "e2e", "lint"):
@@ -432,7 +454,7 @@ class CheckJobTimesTests(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                "| `e2e` (ended last) | 1 of 1 failed | 15m 13s | 1s |",
+                "| `e2e` | 1 of 1 failed | 15m 13s | 1s |",
                 "| `unit` | cancelled, 1 of 1 failed | 8m 56s | N/A |",
                 "| `lint` | failed, no result | 5m 49s | N/A |",
             ],
@@ -466,7 +488,7 @@ class CheckJobTimesTests(unittest.TestCase):
         text = self.summary(skipped=skipped)
         self.assertEqual(
             [row.split(" | ")[0] for row in self.rows(text)],
-            ["| `e2e` (ended last)", "| `unit`"],
+            ["| `e2e`", "| `unit`"],
         )
 
     def test_without_parallel_checks_there_is_no_section(self):
@@ -502,7 +524,7 @@ class CheckJobTimesTests(unittest.TestCase):
         gh.every_attempt_job.assert_called_once_with("43163637643", "2")
         text = summary.read_text()
         self.assertIn("### NexKit check jobs", text)
-        self.assertIn("| `e2e` (ended last) | passed | 15m 13s | 1s |", text)
+        self.assertIn("| `e2e` | passed | 15m 13s | 1s |", text)
 
 
 TOKEN = "ghp_" + "a" * 36

@@ -253,19 +253,20 @@ shows the round's checks as a whole, from the Actions API and each job's `checks
 line with the run's time so far, how long it waited before its first job started, and the
 time from the first check job's start to the last one's end; then one row per check job,
 longest first, with its result, its time and how much of it its checks ran (without
-`setup` and the cache restore). The job that ended last is marked, since the run waited
-for it. A job that failed, was cancelled or uploaded no result is listed too, with what
-happened; a job whose checks `route` all skipped ran on no runner and has no row. When
+`setup` and the cache restore). A job that ended last without being the first row, as
+after waiting for a runner, is marked with how late it started. A job that failed, was
+cancelled or uploaded no result is listed too, with what happened; a job whose checks `route` all skipped ran on no runner and has no row. When
 the Actions API cannot be read, the summary says why and the times are `N/A`.
 
 ```text
 ### NexKit check jobs
 
-The run so far: **28m 30s**; waited **11m 51s** before its first job started; check jobs: **15m 13s** from the first start to the last end.
+The run so far: **29m 07s**; waited **11m 51s** before its first job started; check jobs: **15m 50s** from the first start to the last end.
 
 | Check job | Result | Time | Checks |
 |---|---|---|---|
-| `e2e-4` (ended last) | passed | 15m 13s | 14m 02s |
+| `e2e-4` | passed | 15m 13s | 14m 02s |
+| `integration-5` (ended last: started 6m 40s late) | passed | 9m 10s | 7m 31s |
 | `test-2` | 1 of 3 failed | 8m 56s | 6m 50s |
 | `smoke-1` | cancelled, no result | 5m 49s | N/A |
 ```

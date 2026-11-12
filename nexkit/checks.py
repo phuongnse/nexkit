@@ -992,7 +992,8 @@ def jobs_summary(cfg, parts, skipped=None, run=None, jobs=None, now=None, error=
     line with the run's time so far, how long it waited before its first job started and
     the time from the first check job's start to the last one's end; then one row per check
     job that ran (see `read_parts`), longest first, with its result, its time and its
-    checks' time, the job that ended last marked, since the run waited for it.
+    checks' time. The run waited for the job that ended last, which is the first row
+    unless it started later than the others: then it is marked, with how much later.
 
     `run` is the run attempt and `jobs` its jobs, from the Actions API; without them, or
     with the `error` of reading them, the table has no times."""
@@ -1006,7 +1007,8 @@ def jobs_summary(cfg, parts, skipped=None, run=None, jobs=None, now=None, error=
         took = (end - start).total_seconds() if start else None
         rows.append((group, found.get(group), start, end, took, results))
     ended = [row for row in rows if row[3]]
-    last = max(ended, key=lambda row: row[3])[0] if ended else None
+    first = min(row[2] for row in ended) if ended else None
+    last = max(ended, key=lambda row: row[3]) if ended else None
 
     said = []
     begun = parse_iso((run or {}).get("run_started_at") or (run or {}).get("created_at"))
@@ -1023,8 +1025,7 @@ def jobs_summary(cfg, parts, skipped=None, run=None, jobs=None, now=None, error=
             wait = max(0, (min(starts) - begun).total_seconds())
             said.append(f"waited **{duration(wait)}** before its first job started")
     if ended:
-        first = min(row[2] for row in ended)
-        span = (max(row[3] for row in ended) - first).total_seconds()
+        span = (last[3] - first).total_seconds()
         said.append(f"check jobs: **{duration(span)}** from the first start to the last end")
     lines = ["### NexKit check jobs", ""]
     if said:
@@ -1034,8 +1035,13 @@ def jobs_summary(cfg, parts, skipped=None, run=None, jobs=None, now=None, error=
     lines += ["| Check job | Result | Time | Checks |", "|---|---|---|---|"]
     # Longest first; a job without a time last, in the order of the checks.
     rows.sort(key=lambda row: (row[4] is None, -(row[4] or 0)))
-    for group, job, _, _, took, results in rows:
-        name = code(group) + (" (ended last)" if group == last else "")
+    # A job that waited for a runner can end last without being the longest.
+    late = last if last and rows[0][3] != last[3] else None
+    for group, job, start, _, took, results in rows:
+        name = code(group)
+        if late and group == late[0]:
+            later = duration((start - first).total_seconds())
+            name += f" (ended last: started {later} late)"
         seconds = _checks_seconds(results)
         lines.append(
             f"| {name} | {_job_result(job, results)} "

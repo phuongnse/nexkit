@@ -669,6 +669,81 @@ class FailureSignatureTests(unittest.TestCase):
         self.assertEqual(checks.failing_signatures(None), {})
 
 
+class OutputTextTests(unittest.TestCase):
+    """What a check's result keeps of its output, and what a prompt shows of it."""
+
+    def test_a_short_output_shows_whole_without_a_file(self):
+        kept = []
+        text = checks.output_text({"output": "E1 bad\n"}, 100, 5, kept.append)
+        self.assertEqual(text, "Output:\n\n```\nE1 bad\n```")
+        self.assertEqual(kept, [])
+
+    def test_a_long_output_shows_its_failure_lines_and_its_end_from_a_line(self):
+        # As an older NexKit saved it: without `failure_lines`.
+        output = (
+            "Error: ``` the first\n"
+            + "".join(f"teardown {n} ok\n" for n in range(300))
+            + "".join(f"FAIL test {n} {'x' * 400}\n" for n in range(3))
+            + "".join(f"teardown {n} ok\n" for n in range(300, 600))
+            + "Tests: 3 failed\n"
+        )
+        kept = []
+        text = checks.output_text(
+            {"output": output}, 200, 2, lambda whole: kept.append(whole) or "/t/x.txt"
+        )
+        self.assertEqual(kept, [output.rstrip()])
+        lines, end = text.split("End of output")
+        self.assertIn("(the first 2):", lines)
+        first = ("FAIL test 0 " + "x" * 400)[: checks.FAILURE_LINE_WIDTH]
+        self.assertIn(f"````\nError: ``` the first\n{first} […]\n````", lines)
+        self.assertNotIn("FAIL test 1", text)
+        self.assertNotIn("teardown", lines)
+        self.assertTrue(end.endswith("teardown 599 ok\nTests: 3 failed\n```"))
+        self.assertIn(
+            f"of {len(output.rstrip()):,} characters; the whole output is in `/t/x.txt`", end
+        )
+        # The end starts at a line, and only the lines before it are listed.
+        self.assertIn("```\nteardown 589 ok\n", end)
+        self.assertNotIn("Tests: 3 failed", lines)
+
+    def test_without_a_file_or_a_failure_line_only_the_end_shows(self):
+        text = checks.output_text({"output": "x" * 300}, 100, 5)
+        self.assertEqual(
+            text, f"End of output (the last 100 of 300 characters):\n\n```\n{'x' * 100}\n```"
+        )
+
+    def test_a_result_keeps_the_failure_lines_before_the_end_it_keeps(self):
+        output = (
+            "".join(f"FAIL early {n}\n" for n in range(25)) + "teardown ok\n" * 2_000 + "1 failed"
+        )
+        record = checks.kept_output(output)
+        self.assertEqual(record["output"], output[-checks.OUTPUT_TAIL :])
+        self.assertEqual(record["failure_lines"], [f"FAIL early {n}" for n in range(20)])
+        self.assertEqual(checks.kept_output("FAIL\nok"), {"output": "FAIL\nok"})
+
+    def test_recorded_failure_lines_come_first_and_count_toward_the_limit(self):
+        output = "FAIL late\n" + "teardown ok\n" * 1_000 + "1 failed"
+        check = {"output": output, "failure_lines": ["FAIL early"]}
+        kept = []
+        text = checks.output_text(check, 100, 5, lambda whole: kept.append(whole) or "/t/x.txt")
+        self.assertIn("(all):\n\n```\nFAIL early\nFAIL late\n```", text)
+        self.assertIn(
+            "the output NexKit kept (its last 12,000 characters, with the lines before them "
+            "that report a failure) is in `/t/x.txt`",
+            text,
+        )
+        [whole] = kept
+        self.assertTrue(whole.startswith("Lines before the output that NexKit kept"))
+        self.assertIn("FAIL early", whole)
+        self.assertTrue(whole.endswith(output))
+        text = checks.output_text(check, 100, 1)
+        self.assertIn("(the first 1):\n\n```\nFAIL early\n```", text)
+
+    def test_a_kept_tail_is_not_called_the_whole_output(self):
+        text = checks.output_text({"output": "x" * checks.OUTPUT_TAIL}, 100, 5, lambda _: "/t/x")
+        self.assertIn("the output NexKit kept (its last 12,000 characters) is in `/t/x`", text)
+
+
 class CommitCase(unittest.TestCase):
     """A NexKit branch that forked from the base branch at `self.fork`."""
 

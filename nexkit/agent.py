@@ -13,12 +13,22 @@ import threading
 import time
 import uuid
 from dataclasses import replace
+from functools import partial
 from importlib import resources
 from pathlib import Path
 from string import Template
 
 from . import config as configuration
-from .checks import BASE_SHA, SHARD, environment, known_base, results_limit, shown_command
+from .checks import (
+    BASE_SHA,
+    SHARD,
+    environment,
+    known_base,
+    output_text,
+    results_limit,
+    shown_command,
+)
+from .context import Shelf
 from .evidence import EVIDENCE_LIMIT, since_text
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
@@ -416,19 +426,35 @@ def _round_checks_text(cfg):
     return "\n".join(lines + _check_lines(slow, indent="    "))
 
 
-def check_results_text(results):
+# What the review prompt shows of a failing check's output: its end, and before it this many
+# lines that report a failure.
+REVIEW_OUTPUT_TAIL = 3_000
+REVIEW_FAILURE_LINES = 10
+
+
+def check_results_text(results, shelf=None):
+    """The review prompt's check results. The whole output of a failing check that it does
+    not show whole goes to `shelf`, and the prompt names its file."""
     if not results:
         return "No checks are configured."
+    shelf = shelf or Shelf()
     lines = []
-    for item in results:
+    for number, item in enumerate(results, 1):
         state = "passed" if item["passed"] else f"FAILED (exit {item['exit_code']})"
         if item["passed"] and item.get("skipped"):
             # NexKit did not run it: no path it reads changed since it passed there.
             state = f"passed on `{item['skipped'][:7]}`; no path it reads changed since"
         lines.append(f"- `{item['name']}` (`{shown_command(item)}`): {state}")
         if not item["passed"]:
-            lines.append(f"  End of output:\n```\n{item['output'][-3000:]}\n```")
-    return "\n".join(lines)
+            key = f"check-{number}-{item['name']}"
+            output = output_text(
+                item,
+                REVIEW_OUTPUT_TAIL,
+                REVIEW_FAILURE_LINES,
+                partial(shelf.store, key),
+            )
+            lines.append(f"\n{output}\n")
+    return "\n".join(lines).strip()
 
 
 def _clip_diff(diff, limit=MAX_DIFF):
@@ -709,8 +735,11 @@ def shortened_text(context):
 
 
 def shortened_folders(context):
-    """The folders that hold the whole texts a prompt shortened."""
-    found = {str(Path(item["path"]).parent) for item in context.get("shortened") or []}
+    """The folders that hold the whole texts a prompt shortened, and the whole outputs of
+    the failing checks it shows."""
+    paths = [item["path"] for item in context.get("shortened") or []]
+    paths += context.get("check_outputs") or []
+    found = {str(Path(path).parent) for path in paths}
     return sorted(folder for folder in found if folder != "." and Path(folder).is_dir())
 
 
@@ -1394,13 +1423,16 @@ def run_stage(
     if stage == "plan":
         extra["previous"] = previous_plan(context)
     if stage == "review":
+        # Beside the context's texts, outside the working tree; the agent's artifact keeps them.
+        outputs = Shelf(out / "texts")
         extra = {
             "base": base,
             "diff": review_diff(repo, base),
-            "check_results": check_results_text(checks),
+            "check_results": check_results_text(checks, outputs),
             "previous": previous_round(repo, context, base),
             "merge": merge_review(repo, context, base),
         }
+        context = {**context, "check_outputs": outputs.stored}
     extra["shortened"] = shortened_text(context)
     prompt = build_prompt(stage, context, cfg, extra)
     (out / "prompt.md").write_text(prompt, encoding="utf-8")

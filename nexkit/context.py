@@ -6,10 +6,11 @@ Gathering happens in its own step so the agent process never holds a GitHub toke
 from __future__ import annotations
 
 import re
+from functools import partial
 from pathlib import Path
 
 from .autopilot import edited_after_vouch
-from .checks import RESULTS_DIR, failing_signatures, shown_command
+from .checks import RESULTS_DIR, failing_signatures, output_text, shown_command
 from .config import NAME
 from .evidence import collect, named_runs, summary_lines
 from .github import TRUSTED_ASSOCIATIONS
@@ -27,6 +28,10 @@ TEXT_LIMIT = 65_536
 # whole text in a file.
 BLOCK_LIMIT = 80_000
 SHORT = 1_000
+# What the fix prompt shows of a failing check's output: its end, and before it this many
+# lines that report a failure.
+FIX_OUTPUT_TAIL = 6_000
+FIX_FAILURE_LINES = 20
 NO_PLAN = "No plan was posted. Implement the issue as described."
 PERSON_PLAN = "None: a person wrote this pull request."
 # The section of a NexKit pull request description that `publish.pull_body` writes from the
@@ -46,6 +51,19 @@ class Shelf:
     def __init__(self, folder=None):
         self.folder = Path(folder).resolve() if folder else None
         self.cut = []
+        self.stored = []
+
+    def store(self, key, text):
+        """Write `text` whole to a file of its own, for a text that the prompt shows part of
+        in its own way, such as a failing check's output, and names the file of. Its path,
+        or "" without a folder."""
+        if not self.folder:
+            return ""
+        self.folder.mkdir(parents=True, exist_ok=True)
+        path = self.folder / f"{re.sub(r'[^A-Za-z0-9._-]+', '-', key)}.txt"
+        path.write_text(text, encoding="utf-8")
+        self.stored.append(str(path))
+        return str(path)
 
     def _write(self, key, text):
         """The file that holds `text` whole, or "" without a folder."""
@@ -296,12 +314,19 @@ def _feedback(gh, decision, comments, shelf=None):
     head = decision["head"]
     parts = []
     saved = _saved_feedback(comments)
-    for check in saved.get("checks") or []:
+    shelf = shelf or Shelf()
+    for number, check in enumerate(saved.get("checks") or [], 1):
         if not check.get("passed"):
+            key = f"check-{number}-{check['name']}"
+            output = output_text(
+                check,
+                FIX_OUTPUT_TAIL,
+                FIX_FAILURE_LINES,
+                partial(shelf.store, key),
+            )
             parts.append(
                 f"### Failing check `{check['name']}` (`{shown_command(check)}`)\n\n"
-                f"Exit code {check.get('exit_code')}. End of output:\n\n```\n"
-                f"{clip(check.get('output'), 6000)}\n```"
+                f"Exit code {check.get('exit_code')}. {output}"
             )
     for item in saved.get("required") or []:
         parts.append(_required_text(item))
@@ -328,7 +353,7 @@ def _feedback(gh, decision, comments, shelf=None):
             name = f"the review comment of `@{login}` on `{where}`"
             key = f"review-comment-{comment.get('id') or len(entries)}"
             entries.append((f"@{login} on `{where}`: ", comment["body"], name, key))
-    human = _fit(entries, shelf or Shelf())
+    human = _fit(entries, shelf)
     if human:
         parts.append("### Review comments from collaborators\n\n" + "\n\n".join(human))
     return "\n\n".join(parts) if parts else "No recorded feedback. Follow the note."
@@ -521,4 +546,6 @@ def gather(
     context["discussion"] = discussion or _discussion(comments, shelf=shelf)
     if shelf.cut:
         context["shortened"] = shelf.cut
+    if shelf.stored:
+        context["check_outputs"] = shelf.stored
     return context

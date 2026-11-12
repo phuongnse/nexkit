@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import agent, runlog
+from nexkit.checks import kept_output
 from nexkit.context import PERSON_PLAN
 from nexkit.redact import Redactor
 from nexkit.report import apply_criteria
@@ -935,6 +936,30 @@ class RunStageTests(StageCase):
         prompt = self.claude.call()["prompt"]
         self.assertIn("+    return a + b", prompt)
         self.assertIn("`test` (`true`): passed", prompt)
+
+    def test_review_shows_a_failing_checks_failure_lines_end_and_file(self):
+        self.claude.configure(result=VERDICT)
+        output = "FAIL suite > picks an option: expected 2, got 3\n" + "teardown ok\n" * 1_700
+        output += "1 failed"
+        failing = {"name": "e2e", "run": "make e2e", "exit_code": 1, "passed": False}
+        checks = [
+            {"name": "unit", "run": "true", "exit_code": 0, "passed": True, "output": ""},
+            {**failing, **kept_output(output)},
+        ]
+        self.run_stage("review", checks=checks, base="main")
+        call = self.claude.call()
+        prompt = call["prompt"]
+        self.assertIn("`e2e` (`make e2e`): FAILED (exit 1)", prompt)
+        self.assertIn("FAIL suite > picks an option: expected 2, got 3", prompt)
+        self.assertIn("teardown ok\n1 failed\n```", prompt)
+        folder = (self.out / "texts").resolve()
+        path = folder / "check-2-e2e.txt"
+        self.assertIn("FAIL suite > picks an option", path.read_text())
+        self.assertTrue(path.read_text().endswith(output[-12_000:]))
+        self.assertIn(f"failure) is in `{path}`", prompt)
+        self.assertEqual(call["args"][call["args"].index("--add-dir") + 1], str(folder))
+        # No text a person wrote was shortened.
+        self.assertNotIn("## Texts this prompt shortened", prompt)
 
     def test_a_persons_pull_request_review_drops_the_criteria_it_made_up(self):
         git(self.repo, "checkout", "-q", "-b", "fix-add")

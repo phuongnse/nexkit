@@ -275,8 +275,8 @@ implement and review, only when every run in it has a count; otherwise the cell 
 
 | Artifact | Contains |
 |---|---|
-| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `texts/` (each whole text the prompt [shortened or left out](#agents)), `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
-| `nexkit-checks` | `checks.json`: each check's command, exit code and the end of its output. `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round; with [`parallel_checks`](configuration.md#parallel-checks), at most the larger of each job's even share of 50 MB and 25 MB per job. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](configuration.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, with `checked.json`, the commit it checked, and `combine` joins them into this one. |
+| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `texts/` (each whole text the prompt [shortened or left out](#agents), and the whole kept output of each failing check it shows), `result.json`, `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
+| `nexkit-checks` | `checks.json`: each check's command, exit code, the last 12,000 characters of its output (`output`) and the first 20 lines before them that report a failure (`failure_lines`, when there are any). `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round; with [`parallel_checks`](configuration.md#parallel-checks), at most the larger of each job's even share of 50 MB and 25 MB per job. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](configuration.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, with `checked.json`, the commit it checked, and `combine` joins them into this one. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
 artifacts of the stages that ran:
@@ -1303,6 +1303,19 @@ person for them. The run's comment says which texts were shortened or left out, 
 person who answers the agent knows why it asks. Triage has no tools to read a file with,
 so it keeps the start of each such text alone, and of the comments it leaves out only
 how many.
+
+**What an agent reads of a failing check's output.** NexKit keeps the last 12,000
+characters of each check's output, and the first 20 lines before them that report a
+failure (they contain `fail`, `error`, `✘` or `✗`, in any case, as for a
+[failure signature](#failure-handling)), each cut at 300 characters, so a failure that a
+long teardown follows is not lost. The fix prompt shows the last 6,000 characters of a
+failing check's output, and the review prompt the last 3,000, from the start of a line, so
+the summary that test runners print at the end is there. Before that end, each shows the
+lines that report a failure, those kept from before the 12,000 characters first: at most
+20 in the fix prompt and 10 in the review prompt. When the prompt does not show all that
+NexKit kept, NexKit writes it to `texts/` too, and the check's section names the file and
+says whether it holds the whole output or only what NexKit kept. The run's comment does not
+list these files: no person wrote them.
 
 **A result that does not fit.** An agent may finish the work and still give no result
 that fits the stage's schema, such as one that leaves out a field or that Claude Code

@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 
 from .checks import same_test, test_name
 from .config import SEVERITIES, after_workflow_names, autopilot_labels, watched_workflows
-from .github import TRUSTED_ASSOCIATIONS, GitHubError, alerts_off
+from .github import DOWNLOAD_LIMIT, LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError, alerts_off
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
 from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command, retry_kind
@@ -2310,9 +2310,7 @@ def _failed_jobs(gh, run, attempt, failed_jobs=None, known=None):
                     "tests": list(dict.fromkeys(tests)),
                 }
             )
-        tail = _log_tail(log)
-        if tail:
-            lines += ["", "  The end of its log:", "", "  ```text", *tail, "  ```", ""]
+        lines += _log_excerpt(log)
     return lines or [_jobless_line(gh, known, run, attempt)]
 
 
@@ -2320,6 +2318,28 @@ def _failed_jobs(gh, run, attempt, failed_jobs=None, known=None):
 LOG_LINES = 30
 LOG_CHARS = 4000
 TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")
+# A job's log in steps, as the runner writes it: each of the job's steps starts with a group
+# `Run` and its command or action, which a composite action's own steps do too; then come
+# the post steps, the first starting with `Post job cleanup.`, or else the job's cleanup.
+# Each line may start with its time.
+LOG_STAMP = r"^(?:\d{4}-\d\d-\d\dT[\d:.]+Z )?"
+LOG_STARTS = re.compile(LOG_STAMP + r"##\[group\]Run ", re.M)
+LOG_POST = re.compile(
+    LOG_STAMP + r"(?:Post job cleanup\.|Cleaning up orphan processes)[ \t\r]*$", re.M
+)
+# What a failed step ends with: its command failed or ran out of time, else any error.
+LOG_ERRORS = (
+    re.compile(LOG_STAMP + LOG_FAILED.pattern, re.M),
+    re.compile(LOG_STAMP + r"##\[error\]", re.M),
+)
+# What a CI bug issue says it shows of a job's log, by what `_failed_output` found.
+LOG_SHOWN = {
+    "step": "The end of its failed step's output",
+    "post": "Its failed step is not found in its log, so this is the end of its log before "
+    "the post steps",
+    "none": "Its failed step is not found in its log, so this is the end of its log",
+    "log": "The end of its log",
+}
 
 
 def _job_log(gh, job):
@@ -2354,12 +2374,49 @@ def failed_commands(log):
     return found
 
 
-def _log_tail(log):
-    """The last lines of a failed job's log, redacted and indented for the issue, or []."""
+def _failed_output(log):
+    """The part of a failed job's log that its issue shows the end of, and which part it is
+    (a key of `LOG_SHOWN`). From the log's steps: the first step whose command failed or ran
+    out of time, else the first with an error; without either, the log before the post
+    steps. A log without steps is shown whole. The end of a log that `LOG_CUT` starts is
+    the end of a step whose start was cut."""
+    cut = log.startswith(LOG_CUT.decode())
+    log = log.removeprefix(LOG_CUT.decode()).lstrip("\ufeff")
+    starts = [found.start() for found in LOG_STARTS.finditer(log)]
+    if cut and starts[:1] != [0]:
+        starts.insert(0, 0)
+    if not starts:
+        return log, "log"
+    post = LOG_POST.search(log, starts[0])
+    end = post.start() if post else len(log)
+    bounds = [start for start in starts if start < end] + [end]
+    for error in LOG_ERRORS:
+        for start, stop in zip(bounds, bounds[1:], strict=False):
+            if error.search(log, start, stop):
+                return log[start:stop], "step"
+    return log[:end], "post" if post else "none"
+
+
+def _log_excerpt(log):
+    """What a CI bug issue shows of a failed job's log: what it is and the end of the output
+    of its failed step (see `_failed_output`), redacted and indented, or []."""
+    part, shown = _failed_output(log)
+    tail = _log_tail(part)
+    if not tail:
+        return []
+    cut = ""
+    if log.startswith(LOG_CUT.decode()):
+        cut = f", from the last {DOWNLOAD_LIMIT // 1_000_000} MB of its log, which NexKit cut"
+    return ["", f"  {LOG_SHOWN[shown]}{cut}:", "", "  ```text", *tail, "  ```", ""]
+
+
+def _log_tail(log, chars=LOG_CHARS):
+    """The last lines of a failed job's log, at most `chars` characters, redacted and
+    indented for the issue, or []."""
     text = log[-LOG_CHARS * 4 :]
     lines = [TIMESTAMP.sub("", line).rstrip() for line in text.splitlines()]
     lines = [line[:300].replace("```", "'''") for line in lines if line.strip()][-LOG_LINES:]
-    shown = Redactor()("\n".join(lines))[-LOG_CHARS:]
+    shown = Redactor()("\n".join(lines))[-chars:]
     return [f"  {line}" for line in shown.splitlines()]
 
 

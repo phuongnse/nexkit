@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath
 
 from .autopilot import CI_RUNS, FAILED, on_default_branch
 from .checks import _is_text, size_text
-from .github import TRUSTED_ASSOCIATIONS, GitHubError
+from .github import LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError
 from .state import by_bot
 
 # A link to a run, an attempt of it, or a job of it.
@@ -204,6 +204,15 @@ def _shown(path, folder):
     return path.relative_to(folder.parent).as_posix()
 
 
+def _log_end(raw):
+    """The end of a failed job's log that a round keeps, as text, starting with `LOG_CUT`
+    when it is not the whole log."""
+    whole = not raw.startswith(LOG_CUT) and len(raw) <= LOG_TAIL
+    tail = raw.removeprefix(LOG_CUT)[-LOG_TAIL:]
+    text = tail.decode("utf-8", errors="replace").replace("\0", "").encode("utf-8")
+    return text if whole else LOG_CUT + text
+
+
 def _jobs(gh, run_id, attempt, folder, budget, redact, files):
     """The failed jobs of one attempt: the end of each log and its annotations."""
     for job in gh.attempt_jobs(run_id, attempt):
@@ -213,8 +222,7 @@ def _jobs(gh, run_id, attempt, folder, budget, redact, files):
         place = folder / f"attempt-{attempt}"
         log_path, notes_path = place / f"{name}.log", place / f"{name}.annotations.md"
         try:
-            tail = gh.job_log(job["id"])[-LOG_TAIL:]
-            log = tail.decode("utf-8", errors="replace").replace("\0", "").encode("utf-8")
+            log = _log_end(gh.job_log(job["id"]))
         except GitHubError as exc:
             files.append({"path": _shown(log_path, folder), "missing": f"its log: {exc}"})
             log = None

@@ -1142,7 +1142,12 @@ the `null` scope, since it may have replaced a sweep that waited.
   `null`), starting with a marker that
   names the workflow, and that issue goes before all others. Its report lists the failed
   jobs and steps of every failed attempt, the failures each job's error annotations name,
-  and the last lines of its log, redacted. A round on the issue downloads the evidence of
+  and the last lines of the output of its failed step, redacted: from the steps of the
+  job's log, the first step whose command failed or ran out of time, else the first with an
+  error, never the post steps and cleanup that follow it. When it finds neither, it
+  shows the end of the log before the post steps and says so; a log without steps shows
+  its end. NexKit reads the last 64 MB of a longer log, and says it cut it. A round on the
+  issue downloads the evidence of
   the runs its marker records (see
   [Evidence from CI runs](configuration.md#evidence-from-ci-runs)). Each report holds a marker with its commit, so a
   commit is reported once, and a newer failing commit adds a comment to the open issue.

@@ -16,7 +16,7 @@ from unittest import mock
 
 from nexkit.agent import interpret
 from nexkit.config import validate
-from nexkit.github import GitHubError
+from nexkit.github import DOWNLOAD_LIMIT, GitHubError, log_end
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.base import Launch, Runtime
 from nexkit.runtimes.claude_code import ClaudeReader
@@ -139,6 +139,7 @@ class FakeGitHub:
         self.annotations = {}  # job id -> its annotations
         self.commit_checks = {}  # commit sha -> its check runs
         self.logs = {}  # job id -> its log, as bytes
+        self.log_limit = DOWNLOAD_LIMIT  # what a job's log keeps of its end, as GitHub's does
         self.run_artifact_list = {}  # run id -> its artifacts
         self.zips = {}  # artifact id -> its zip, as bytes
         self.calls = []  # ("attempt" or "jobs", run id, attempt) for each attempt read
@@ -480,7 +481,7 @@ class FakeGitHub:
     def job_log(self, job_id):
         if job_id not in self.logs:
             raise GitHubError(410, "Gone")
-        return self.logs[job_id]
+        return log_end(self.logs[job_id], self.log_limit)
 
     def run_artifacts(self, run_id):
         return list(self.run_artifact_list.get(run_id, []))

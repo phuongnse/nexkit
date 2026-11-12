@@ -1,8 +1,9 @@
+import io
 import json
 import unittest
 from unittest import mock
 
-from nexkit.github import GitHub, GitHubError
+from nexkit.github import LOG_CUT, GitHub, GitHubError
 
 
 def editors(nodes, more=False, events=()):
@@ -249,3 +250,30 @@ class CommentRetryTests(unittest.TestCase):
     def test_a_refused_comment_fails_at_once(self):
         with self.assertRaises(GitHubError):
             self.post(http_error(403, "Resource not accessible by integration"))
+
+
+class DownloadTests(unittest.TestCase):
+    def download(self, data, call):
+        """What `call` returns when the storage a download goes to answers `data`."""
+        gh = GitHub(repository="acme/app", token="t")
+        with mock.patch("nexkit.github.build_opener") as opener:
+            opener.return_value.open.return_value = io.BytesIO(data)
+            return call(gh)
+
+    def test_a_job_log_longer_than_nexkit_reads_keeps_its_end_and_says_it_was_cut(self):
+        lines = [f"2026-10-23T03:30:00.0Z line {n}\n".encode() for n in range(100_000)]
+        data = b"".join(lines) + b"2026-10-23T03:30:09.0Z ##[error]Process completed\n"
+        # Read in parts, more than one of which is longer than what is kept.
+        limit = 1_500_000
+        self.assertGreater(len(data), 2 * limit)
+        log = self.download(data, lambda gh: gh.job_log(7, limit))
+        self.assertTrue(log.startswith(LOG_CUT))
+        end = log.removeprefix(LOG_CUT)
+        self.assertLessEqual(len(end), limit)
+        self.assertTrue(data.endswith(end))
+        self.assertTrue(end.startswith(b"2026-10-23T03:30:00.0Z line "))
+        self.assertGreater(len(end), limit - 100)
+        # A log within the limit is whole, and an artifact's zip keeps its start.
+        self.assertEqual(self.download(data, lambda gh: gh.job_log(7)), data)
+        zipped = self.download(data, lambda gh: gh.artifact_zip(8, 100))
+        self.assertEqual(zipped, data[:101])

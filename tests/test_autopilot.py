@@ -2117,6 +2117,7 @@ class CITests(AutopilotCase):
         body = bug["body"]
         self.assertIn("  - `OrderTests.Totals`, `tests/OrderTests.cs:10`", body)
         self.assertNotIn("Process completed", body)
+        # A log without steps shows its end.
         self.assertIn("  The end of its log:\n\n  ```text\n", body)
         self.assertIn("  Error: boom ***", body)
         self.assertNotIn(token, body)
@@ -2125,6 +2126,87 @@ class CITests(AutopilotCase):
         # A round on the bug issue collects that run's evidence, as its marker names it.
         runs, _ = named_runs(self.gh, bug, [])
         self.assertEqual(runs, [(run["id"], [1, 2])])
+
+    # A job's log as the runner writes it: the job's setup, its steps, each in a group, then
+    # the post steps and the job's cleanup.
+    STEPS_LOG = (
+        "﻿2026-10-23T03:30:00.1Z ##[group]Runner Image\n"
+        "2026-10-23T03:30:00.2Z Image: ubuntu-24.04\n"
+        "2026-10-23T03:30:00.3Z ##[endgroup]\n"
+        "2026-10-23T03:30:01.1Z ##[group]Run actions/checkout@v6\n"
+        "2026-10-23T03:30:01.2Z ##[endgroup]\n"
+        "2026-10-23T03:30:01.3Z checked out the commit\n"
+        "2026-10-23T03:30:02.1Z ##[group]Run dotnet build\n"
+        "2026-10-23T03:30:02.2Z ##[endgroup]\n"
+        "2026-10-23T03:30:05.0Z Orders.cs(12,9): error CS0103: The name 'tax' does not exist\n"
+        "2026-10-23T03:30:05.1Z ##[error]Process completed with exit code 1.\n"
+        "{after}"
+        "2026-10-23T03:30:06.0Z Post job cleanup.\n"
+        + "".join(f"2026-10-23T03:30:06.1Z [command]/usr/bin/git config {n}\n" for n in range(400))
+        + "2026-10-23T03:30:07.0Z Cleaning up orphan processes\n"
+    )
+
+    def test_a_bug_issue_shows_the_end_of_the_failed_steps_output_not_the_post_steps(self):
+        self.ci_run(attempt=2)
+        # A step that always runs comes after the failed one and fails too.
+        after = (
+            "2026-10-23T03:30:05.5Z ##[group]Run make report\n"
+            "2026-10-23T03:30:05.6Z ##[endgroup]\n"
+            "2026-10-23T03:30:05.7Z no results to report\n"
+            "2026-10-23T03:30:05.8Z ##[error]Process completed with exit code 2.\n"
+        )
+        log = self.STEPS_LOG.replace("{after}", after)
+        self.assertGreater(len(log.split("Post job cleanup.")[1]), 20_000)
+        self.gh.logs[501] = log.encode()
+        self.sweep()
+        [bug] = self.bugs()
+        body = bug["body"]
+        self.assertIn("  The end of its failed step's output:\n\n  ```text\n", body)
+        self.assertIn("  ##[group]Run dotnet build\n", body)
+        self.assertIn("error CS0103: The name 'tax' does not exist", body)
+        self.assertIn("  ##[error]Process completed with exit code 1.\n  ```", body)
+        for other in ("git config", "Post job", "orphan", "checked out", "make report"):
+            self.assertNotIn(other, body)
+
+    def test_a_job_whose_failed_step_is_not_found_shows_its_log_before_the_post_steps(self):
+        self.ci_run(attempt=2)
+        log = self.STEPS_LOG.replace("{after}", "")
+        log = log.replace("##[error]Process completed with exit code 1.", "The job was cancelled")
+        self.gh.logs[501] = log.encode()
+        self.sweep()
+        [bug] = self.bugs()
+        body = bug["body"]
+        heading = (
+            "  Its failed step is not found in its log, so this is the end of its log before "
+            "the post steps:\n\n  ```text\n"
+        )
+        self.assertIn(heading, body)
+        self.assertIn("  checked out the commit\n", body)
+        self.assertIn("  The job was cancelled\n  ```", body)
+        self.assertNotIn("git config", body)
+
+    def test_the_end_of_a_log_longer_than_nexkit_reads_shows_its_failed_step(self):
+        self.ci_run(attempt=2)
+        # The failed step's output and the post steps are longer than what NexKit reads, so
+        # the log is cut inside the failed step's output.
+        output = "".join(f"2026-10-23T03:30:04.0Z compiling {n}\n" for n in range(500))
+        log = self.STEPS_LOG.replace("{after}", "").replace("Orders.cs", output + "Orders.cs")
+        self.gh.log_limit = 30_000
+        self.assertGreater(len(log.split("Post job cleanup.")[1]), 20_000)
+        self.gh.logs[501] = log.encode()
+        self.assertNotIn(b"Run dotnet build", self.gh.job_log(501))
+        self.sweep()
+        [bug] = self.bugs()
+        body = bug["body"]
+        self.assertIn(
+            "  The end of its failed step's output, from the last 64 MB of its log, which NexKit "
+            "cut:\n",
+            body,
+        )
+        self.assertIn("  compiling 499\n", body)
+        self.assertIn("  ##[error]Process completed with exit code 1.\n  ```", body)
+        for other in ("git config", "orphan", "[NexKit:"):
+            self.assertNotIn(other, body)
 
     def test_a_run_that_passes_when_run_again_is_recorded_once_on_its_own_issue(self):
         run = self.ci_run()

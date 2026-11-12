@@ -311,8 +311,9 @@ the agent runs.
   linked. At most the five named last of the runs that count. Runs of NexKit's workflow,
   runs of other repositories, runs from a fork, and other links are skipped, and the log
   says which and why.
-- **What.** For each run and each attempt that failed: the end of each failed job's log
-  and its error and warning annotations. Then the run's artifacts that `artifacts` lists,
+- **What.** For each run and each attempt that failed: the end of each failed job's log,
+  its last 2 MB, and its error and warning annotations. A log that NexKit cut starts with
+  a line that says so. Then the run's artifacts that `artifacts` lists,
   as the repository's CI workflows upload them; NexKit's own artifacts are not among
   them. Without `artifacts`, only logs and annotations. For each run, also whether
   a newer run of the same workflow passed on the default branch since, and which: among

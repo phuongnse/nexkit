@@ -211,7 +211,9 @@ in several jobs at once, and a round takes about as long as its slowest job plus
 - A `combine` job then joins the jobs' results, so the round's result is the same as with
   one job: one `nexkit/checks` status, one `checks.json` with every check in the order of
   `checks`, the failing checks' result files under `results/<check>/`, and the same fix
-  prompt. It runs no repository code.
+  prompt. It runs no repository code. Its run summary has each check job's result and
+  time, and marks the job the run waited for (see [Logs, summary and
+  artifacts](how-it-works.md#logs-summary-and-artifacts)).
 - A `setup` that fails in one job counts as a failed check, as with one job, and that
   job's checks do not run. A job that ended without a result, for example because its
   runner was lost, fails each of its checks, and the review does not run.

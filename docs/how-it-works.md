@@ -80,7 +80,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `publish` | plan, go, fix | the App's: write, also workflow files | the App's, for its token | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. When the base branch moved while the agent worked, it merges the base branch's tip after the round's commit if the base branch's rules want pull requests up to date, and finds with git whether that tip conflicts with the commit (see [Stages](#stages)). Never executes repository code. |
 | `shards` | go, fix, review, with [sharded checks](configuration.md#parallel-checks) | read only | none | Runs the `count` of each sharded check on the published commit, before `setup`, and gives `verify` the matrix of its shards, each a check of its own with `NEXKIT_SHARD=k/N`. In an automatic review, also leaves out the shards whose `unaffected_by` lists every path changed since they passed with the same N, from git. A `count` that fails or prints no number from 1 to `max` fails its check, and no shard of it runs. |
 | `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. Skipped, with the review, for a published commit that conflicts with the base branch, and by itself when `route` skipped every check. |
-| `combine` | go, fix, review, with `parallel_checks` | read only | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read. Never checks out or executes repository code. |
+| `combine` | go, fix, review, with `parallel_checks` | read only; workflow runs (`actions: read`) | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read, and writes each check job's time to the [run summary](#logs-summary-and-artifacts), from the Actions API. Never checks out or executes repository code. |
 | `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](#stages), and then runs no agent. |
 | `report` | every action | the App's: write | the App's, for its token | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` that are due on the base branch. Never checks out or executes repository code. |
 | `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches, `/nexkit trust` | the App's: contents (to merge); issues, comments, workflows, statuses; check annotations; with `autopilot.dependabot`, a second token that reads Dependabot alerts | the App's, for its token | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit or one that waits to run again after a transient error, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
@@ -247,6 +247,28 @@ model, result (`usage limit`, or `skipped` and why), duration and tokens. Then c
 stage stopped, for a fix round that merged the base branch the files that had conflicts,
 the files changed (including what the merge brought), each command the agent ran and
 whether it failed, and for a review the findings.
+
+With [`parallel_checks`](configuration.md#parallel-checks), the `combine` job's summary
+shows the round's checks as a whole, from the Actions API and each job's `checks.json`: a
+line with the run's time so far, how long it waited before its first job started, and the
+time from the first check job's start to the last one's end; then one row per check job,
+longest first, with its result, its time and how much of it its checks ran (without
+`setup` and the cache restore). The job that ended last is marked, since the run waited
+for it. A job that failed, was cancelled or uploaded no result is listed too, with what
+happened; a job whose checks `route` all skipped ran on no runner and has no row. When
+the Actions API cannot be read, the summary says why and the times are `N/A`.
+
+```text
+### NexKit check jobs
+
+The run so far: **28m 30s**; waited **11m 51s** before its first job started; check jobs: **15m 13s** from the first start to the last end.
+
+| Check job | Result | Time | Checks |
+|---|---|---|---|
+| `e2e-4` (ended last: the run waited for it) | passed | 15m 13s | 14m 02s |
+| `test-2` | 1 of 3 failed | 8m 56s | 6m 50s |
+| `smoke-1` | cancelled, no result | 5m 49s | N/A |
+```
 
 ```text
 ### NexKit review: done

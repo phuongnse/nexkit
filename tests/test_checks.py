@@ -8,6 +8,7 @@ import signal
 import tempfile
 import time
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -339,6 +340,169 @@ class ParallelChecksTests(unittest.TestCase):
         self.assertEqual(results[0]["results_left_out"], 1)
         summary = (self.root / "summary.md").read_text()
         self.assertIn("each of the round's 3 check jobs keeps at most", summary)
+
+
+class CheckJobTimesTests(unittest.TestCase):
+    """With `parallel_checks`, `combine` writes each check job's time to the run summary,
+    and the job the run waited for."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.parts = Path(self.tmp.name) / "parts"
+        self.cfg = make_config(
+            parallel_checks=True,
+            checks=[
+                {"name": "unit", "run": "true"},
+                {"name": "e2e", "run": "true"},
+                {"name": "lint", "run": "true"},
+            ],
+        )
+        # A second attempt: its own start counts, not the first attempt's.
+        self.run = {
+            "run_started_at": "2026-11-12T05:46:47Z",
+            "created_at": "2026-11-12T05:00:00Z",
+        }
+        self.jobs = [
+            self.job("route", "05:58:38", "05:59:00"),
+            self.job("verify (unit)", "05:59:12", "06:08:08"),
+            self.job("verify (e2e)", "05:59:12", "06:14:25"),
+            self.job("verify (lint)", "05:59:12", "06:05:01"),
+            self.job("review", "06:14:25", "06:14:25", "skipped"),
+        ]
+        self.now = datetime(2026, 11, 12, 6, 15, 17, tzinfo=UTC)
+
+    def job(self, name, start, end, conclusion="success"):
+        return {
+            "name": f"nexkit / {name}",
+            "status": "completed",
+            "conclusion": conclusion,
+            "started_at": f"2026-11-12T{start}Z",
+            "completed_at": f"2026-11-12T{end}Z",
+        }
+
+    def part(self, group, results):
+        folder = self.parts / checks.artifact_name(group)
+        folder.mkdir(parents=True)
+        (folder / "checks.json").write_text(json.dumps(results))
+
+    def check(self, name, passed=True, seconds=1.0):
+        return {"name": name, "run": "true", "passed": passed, "seconds": seconds}
+
+    def summary(self, **kwargs):
+        options = {"run": self.run, "jobs": self.jobs, "now": self.now, **kwargs}
+        return checks.jobs_summary(self.cfg, self.parts, **options)
+
+    def rows(self, text):
+        return [line for line in text.splitlines() if line.startswith("| `")]
+
+    def test_one_row_per_job_longest_first_with_its_checks_time(self):
+        self.part("unit", [self.check("unit", seconds=410.7)])
+        self.part("e2e", [self.check("e2e", seconds=900)])
+        self.part("lint", [self.check("lint", seconds=30)])
+        self.assertEqual(
+            self.rows(self.summary()),
+            [
+                "| `e2e` (ended last: the run waited for it) | passed | 15m 13s | 15m 00s |",
+                "| `unit` | passed | 8m 56s | 6m 50s |",
+                "| `lint` | passed | 5m 49s | 30s |",
+            ],
+        )
+
+    def test_the_line_above_gives_the_run_its_wait_and_the_check_jobs_span(self):
+        for group in ("unit", "e2e", "lint"):
+            self.part(group, [self.check(group)])
+        text = self.summary()
+        self.assertIn(
+            "The run so far: **28m 30s**; "
+            "waited **11m 51s** before its first job started; "
+            "check jobs: **15m 13s** from the first start to the last end.",
+            text,
+        )
+        # The skipped review, which never started, does not count.
+        self.assertLess(text.index("The run so far"), text.index("| Check job |"))
+
+    def test_a_failed_cancelled_or_resultless_job_is_still_listed(self):
+        self.jobs[1]["conclusion"] = "cancelled"
+        self.jobs[3]["conclusion"] = "failure"
+        self.part("unit", [self.check("unit", passed=False, seconds=None)])
+        self.part("e2e", [self.check("e2e", passed=False)])
+        # `lint` uploaded no part.
+        rows = self.rows(self.summary())
+        self.assertEqual(
+            rows,
+            [
+                "| `e2e` (ended last: the run waited for it) | 1 of 1 failed | 15m 13s | 1s |",
+                "| `unit` | cancelled, 1 of 1 failed | 8m 56s | N/A |",
+                "| `lint` | failed, no result | 5m 49s | N/A |",
+            ],
+        )
+
+    def test_a_failed_setup_says_so(self):
+        setup = {"name": "setup", "passed": False, "seconds": 12}
+        for group in ("unit", "e2e", "lint"):
+            self.part(group, [setup] if group == "unit" else [self.check(group)])
+        self.assertIn("| `unit` | setup failed | 8m 56s | N/A |", self.summary())
+
+    def test_without_the_actions_api_the_table_has_no_times(self):
+        for group in ("unit", "e2e"):
+            self.part(group, [self.check(group, seconds=5)])
+        text = self.summary(run=None, jobs=None, error="403 Resource not accessible")
+        self.assertNotIn("The run so far", text)
+        self.assertIn("No job times: the Actions API answered 403 Resource not accessible", text)
+        self.assertEqual(
+            self.rows(text),
+            [
+                "| `unit` | passed | N/A | 5s |",
+                "| `e2e` | passed | N/A | 5s |",
+                "| `lint` | no result | N/A | N/A |",
+            ],
+        )
+
+    def test_a_job_whose_checks_route_all_skipped_has_no_row(self):
+        self.part("unit", [self.check("unit")])
+        self.part("e2e", [self.check("e2e")])
+        skipped = [{"name": "lint", "since": "a" * 40}]
+        text = self.summary(skipped=skipped)
+        self.assertEqual(
+            [row.split(" | ")[0] for row in self.rows(text)],
+            ["| `e2e` (ended last: the run waited for it)", "| `unit`"],
+        )
+
+    def test_without_parallel_checks_there_is_no_section(self):
+        self.cfg["parallel_checks"] = False
+        self.assertEqual(self.summary(), "")
+
+    def test_combine_checks_writes_the_section_to_the_run_summary(self):
+        from nexkit import cli
+
+        for group in ("unit", "e2e", "lint"):
+            self.part(group, [self.check(group)])
+        summary = Path(self.tmp.name) / "summary.md"
+        gh = mock.Mock()
+        gh.run_attempt.return_value = self.run
+        gh.every_attempt_job.return_value = self.jobs
+        env = {
+            "NEXKIT_CONFIG": json.dumps(self.cfg),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "GITHUB_REPOSITORY": "o/r",
+            "GITHUB_RUN_ID": "43163637643",
+            "GITHUB_RUN_ATTEMPT": "2",
+        }
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch.object(cli, "_gh", return_value=gh),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            os.environ.pop("NEXKIT_DECISION", None)
+            os.environ.pop("NEXKIT_SHARDS", None)
+            out = f"{self.tmp.name}/out"
+            cli.main(["combine-checks", "--parts", str(self.parts), "--out", out])
+        gh.run_attempt.assert_called_once_with("43163637643", "2")
+        gh.every_attempt_job.assert_called_once_with("43163637643", "2")
+        text = summary.read_text()
+        self.assertIn("### NexKit check jobs", text)
+        self.assertIn("| `e2e` (ended last: the run waited for it) | passed | 15m 13s | 1s |", text)
 
 
 TOKEN = "ghp_" + "a" * 36

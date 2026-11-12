@@ -1926,7 +1926,8 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(self.permissions("agent"), {"actions": "read", "checks": "read", **read})
         self.assertEqual(self.permissions("verify"), {"contents": "read"})
         self.assertEqual(self.permissions("shards"), {"contents": "read"})
-        self.assertEqual(self.permissions("combine"), {"contents": "read"})
+        # `actions: read`: the times of the run and of its check jobs, for the run summary.
+        self.assertEqual(self.permissions("combine"), {"actions": "read", "contents": "read"})
         self.assertEqual(self.permissions("review"), read)
 
     def test_a_fix_round_downloads_the_result_files_outside_the_checkout(self):
@@ -1995,7 +1996,13 @@ class WorkflowSafetyTests(unittest.TestCase):
     def test_verify_holds_no_secrets(self):
         for name in ("verify", "combine"):
             self.assertNotIn("secrets", self.jobs[name], name)
-            self.assertNotIn("github.token", self.jobs[name], name)
+        self.assertNotIn("github.token", self.jobs["verify"])
+        # Combine runs no repository code: its read-only token reads only the run's job
+        # times, in the step that joins the results.
+        combine = self.jobs["combine"]
+        self.assertEqual(combine.count("github.token"), 1)
+        step = combine.split("- name: Combine check results\n", 1)[1].split("\n      - ", 1)[0]
+        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", step)
 
     def test_parallel_checks_run_in_jobs_of_one_verify_matrix_on_the_published_commit(self):
         verify = self.jobs["verify"]
@@ -2076,6 +2083,8 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("always() && needs.verify.result != 'skipped'", combine)
         self.assertIn("pattern: nexkit-checks-*\n          path: parts\n", combine)
         self.assertIn("kit/bin/nexkit combine-checks --parts parts --out out", combine)
+        # It reads the run's job times with the job's read-only token.
+        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", combine)
         self.assertIn("name: nexkit-checks\n", combine.split("actions/upload-artifact@", 1)[1])
         # Nothing of the repository: NexKit's own code only.
         self.assertEqual(combine.count("actions/checkout@"), 1)

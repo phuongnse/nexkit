@@ -808,7 +808,9 @@ discussion do not support, is.
 
 Every review is a fresh session, so the reviewer stays independent of the agent that wrote
 the code. When the pull request already has a NexKit review, the prompt adds a *Previous
-round* section: that review's findings, each fix round since then with the note that
+round* section: that review's findings as the state comment keeps them (see
+[State](#state); it says how many were left out of a longer review, and the reviewer
+reports only on those listed), each fix round since then with the note that
 started it and the fix agent's summary (which may reject a finding with a reason), and the
 diff from the reviewed commit to the current one, next to the full diff. The reviewer
 first returns a `resolution` for each earlier finding (`resolved`, `unresolved` or
@@ -1378,7 +1380,8 @@ place, says how many automatic fix rounds were used and holds a hidden JSON reco
 latest feedback (with the run that holds its checks' result files, and the checks that
 failed the same way before and after the last fix round), that count, the `bug` issue the
 pull request waits for while it does, the last completed
-review (its commit and all its findings) and the recent fix rounds (summary, cause, note,
+review (its commit and up to 30 of its findings: past 30, the blocking ones first, then the
+others in the reviewer's order, with how many were left out) and the recent fix rounds (summary, cause, note,
 the checks that still failed after it with their failure signatures and, after a merge,
 the files that had conflicts). Recorded text is clipped, and only the last five fix
 rounds are kept, so the comment and the prompts stay bounded. With autopilot, each issue

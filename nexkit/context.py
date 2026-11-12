@@ -319,6 +319,14 @@ def previous_review(gh, decision, fix_result):
         lines.append(f"{number}. {f['severity']}, `{where}`: {clip(f['body'], 1500)}")
     if not last["findings"]:
         lines.append("No findings.")
+    left_out = last.get("left_out") or 0
+    if left_out:
+        lines += [
+            "",
+            f"That review had {left_out} more finding{'s' if left_out != 1 else ''}, left out "
+            "here: NexKit keeps a bounded number, blocking findings first. Report previous "
+            "findings only for those listed.",
+        ]
     lines += ["", "### Fix rounds since that review"]
     if not fixes:
         lines += ["", "None. Any later commits were pushed without a NexKit fix round."]

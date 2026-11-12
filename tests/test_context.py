@@ -337,7 +337,13 @@ class ContextTests(unittest.TestCase):
         self.assertIn("#### Fix 2 (requested by a person)", text)
         self.assertIn("Add floats", text)
         self.assertIn("Rejected the docs finding", text)
+        self.assertNotIn("left out", text)  # a record from before `left_out`
         self.assertLess(len(text), 4000)
+
+        state["last_review"]["left_out"] = 1
+        self.gh.comment(6, render_state(state))
+        text = gather(self.gh, decision, "review", fix_result)["previous_round"]
+        self.assertIn("That review had 1 more finding, left out here", text)
 
     def test_only_an_automatic_round_after_failing_checks_merges_a_moved_base(self):
         self.gh.add_pull(6, 5, head_sha=HEAD)

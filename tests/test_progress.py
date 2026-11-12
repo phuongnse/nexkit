@@ -789,6 +789,24 @@ class FitStateTests(unittest.TestCase):
         self.assertEqual(check["failure_lines"], ["FAIL early one", "FAIL early two"])
         self.assertEqual(check["signature"], "FAIL x")
 
+    def test_passed_checks_output_an_older_nexkit_recorded_goes_first(self):
+        passed = [
+            {"name": f"unit-{n}", "run": "make", "passed": True, "output": "ok\n" * 4_000}
+            for n in range(1, 14)
+        ]
+        failing = self.failing("e2e", "FAIL x\n" + "y" * 10_000)
+        blocking = {"severity": "blocking", "file": "b.py", "line": 2, "body": "b" * 1_500}
+        feedback = {"checks": [*passed, failing], "review": {"findings": [blocking]}}
+        state = {**empty_state(5), "feedback": feedback}
+        fitted = progress.fit_state(state)
+        self.assertLessEqual(len(render_state(fitted)), progress.TEXT_LIMIT)
+        checks = fitted["feedback"]["checks"]
+        for check in checks[:13]:
+            self.assertEqual(check, {"name": check["name"], "run": "make", "passed": True})
+        self.assertEqual(checks[13], failing)  # whole: nothing else had to go
+        self.assertEqual(fitted["feedback"]["review"]["findings"], [blocking])
+        self.assertEqual(len(state["feedback"]["checks"][0]["output"]), 12_000)
+
     def test_a_check_without_a_recorded_signature_keeps_its_output(self):
         # Saved by an older NexKit: shortening it would change how it compares.
         old = {"name": "e2e", "passed": False, "output": "x" * 70_000}

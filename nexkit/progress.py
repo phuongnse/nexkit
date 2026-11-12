@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 import sys
 
-from .checks import FAILURE_LINES, failing_lines
+from .checks import FAILURE_LINES, PASSED_LEFT_OUT, failing_lines
 from .github import GitHubError, run_url
 from .state import (
     CONTINUED,
@@ -88,8 +88,9 @@ def save_round(gh, pr, comment_id, row, text=""):
     _save(gh, pr, comment_id, render_run(row, text))
 
 
-# What `fit_state` shortens, in this order, until the state comment fits: each step keeps
-# the most it can down to its floor, and only when that is not enough goes on to the next.
+# What `fit_state` shortens, in this order, until the state comment fits, once it has
+# left out the passed checks' output that an older NexKit recorded: each step keeps the
+# most it can down to its floor, and only when that is not enough goes on to the next.
 # A failing check's output keeps its end, as NexKit stores it; a finding keeps its start.
 FIT_STEPS = (
     ("output", 2_000),
@@ -112,6 +113,17 @@ def _fit_failing(state):
         for check in checks
         if isinstance(check, dict) and not check.get("passed") and check.get("signature")
     ]
+
+
+def _without_passed_output(state):
+    """A copy of `state` whose passed checks keep no output: no prompt reads it, and only
+    an older NexKit recorded it (`checks.recorded`)."""
+    state = copy.deepcopy(state)
+    for check in (state.get("feedback") or {}).get("checks") or []:
+        if isinstance(check, dict) and check.get("passed"):
+            for key in PASSED_LEFT_OUT:
+                check.pop(key, None)
+    return state
 
 
 def _fit_findings(state, blocking):
@@ -171,14 +183,18 @@ def _fitted(state, caps):
 
 def fit_state(state, limit=TEXT_LIMIT):
     """`state` as its comment can hold it: unchanged when its comment fits in `limit`
-    characters, else with what FIT_STEPS names shortened, each step to the most that fits,
-    so that a pull request with many failing checks or a long review keeps its state. A
-    shortened check's output says so (`output_cut`) to the prompt that shows it."""
+    characters, else without passed checks' output and, while it does not fit, with what
+    FIT_STEPS names shortened, each step to the most that fits, so that a pull request with
+    many failing checks or a long review keeps its state. A shortened check's output says
+    so (`output_cut`) to the prompt that shows it."""
 
     def fits(caps):
         return len(render_state(_fitted(state, caps))) <= limit
 
     caps = {}
+    if fits(caps):
+        return state
+    state = _without_passed_output(state)
     if fits(caps):
         return state
     for key, floor in FIT_STEPS:

@@ -287,7 +287,7 @@ def failure_signature(output):
 
 def failing_signatures(results):
     """{check name: failure signature} for each failed check of `results`: the signature
-    the result recorded (`signed`), since the state comment may keep less of its output,
+    the result recorded (`recorded`), since the state comment may keep less of its output,
     else that of its output."""
     return {
         str(result.get("name")): result.get("signature") or failure_signature(result.get("output"))
@@ -296,17 +296,26 @@ def failing_signatures(results):
     }
 
 
-def signed(results):
-    """`results` with each failed check's failure signature recorded, for the state comment,
-    which may later keep only part of its output (`state.fit_state`)."""
+# What a passed check's result holds that the state comment does not keep: no prompt reads
+# a passed check's output, and fourteen checks of 12,000 characters each would not fit.
+PASSED_LEFT_OUT = ("output", "failure_lines")
+
+
+def recorded(results):
+    """`results` as the state comment records them: each failed check with its failure
+    signature, since the comment may later keep only part of its output
+    (`progress.fit_state`), and each passed one without its output (PASSED_LEFT_OUT)."""
     if results is None:
         return None
-    return [
-        {**result, "signature": failure_signature(result.get("output"))}
-        if isinstance(result, dict) and not result.get("passed")
-        else result
-        for result in results
-    ]
+    return [_recorded(result) for result in results]
+
+
+def _recorded(result):
+    if not isinstance(result, dict):
+        return result
+    if result.get("passed"):
+        return {key: value for key, value in result.items() if key not in PASSED_LEFT_OUT}
+    return {**result, "signature": failure_signature(result.get("output"))}
 
 
 def test_name(title, file=""):

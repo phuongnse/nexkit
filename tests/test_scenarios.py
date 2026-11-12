@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, progress
+from nexkit import autopilot, progress, state
 from nexkit.checks import check_matrix
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain, paused_runs, within_reach
@@ -2372,6 +2372,98 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         played = pipe.play()
         self.assertEqual(played, [("plan", 5), ("go", 5), ("fix", 6), ("plan", 5), ("fix", 6)])
+
+    def test_a_blocked_go_that_recommends_a_split_plans_again_and_splits(self):
+        # As in phuongnse/axis#3864: the round recommends splitting the work, which another
+        # `/nexkit go` cannot do; a new plan with the answer as its note splits the issue.
+        split = "Split the work: file an issue for the stack first, then finish this one"
+        parts = [
+            {
+                "title": "Let the eval stack carry an authoring request",
+                "body": "A.",
+                "depends_on": [],
+            },
+            {"title": "Script the authoring eval", "body": "B.", "depends_on": [1]},
+        ]
+
+        def script(pipe, inputs):
+            number = int(inputs["number"])
+            if inputs["command"] == "plan":
+                if number == 5 and autopilot.REPLAN_NOTE in inputs["note"]:
+                    self.assertIn(split, inputs["note"])
+                    return plan(too_large=True, split=parts)
+                return plan()
+            if number != 5:
+                return done()
+            question = {
+                "question": "The eval stack cannot carry an authoring request yet.",
+                "options": [split, "Wait for a person to change the stack"],
+                "recommended": 1,
+                "closes": 0,
+                "replans": [1],
+            }
+            output = {"status": "blocked", "blocker": "Stack.", "questions": [question]}
+            return {"agent": {"status": "blocked", "error": "Stack.", "output": output}}
+
+        pipe = Pipeline(self, config(close_parent_issues=True), script)
+        pipe.issue(5)
+        played = pipe.play()
+        self.assertEqual(played[:3], [("plan", 5), ("go", 5), ("plan", 5)])
+        self.assertEqual(played.count(("go", 5)), 1)
+        [answered] = pipe.gh.comments_matching(5, "answers for the owner")
+        self.assertIn(split, answered["body"])
+        self.assertEqual(len(pipe.gh.sub_issues(5)), 2)
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7)), played)
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+        # The round's comment tells a person how to answer with that option.
+        [round_] = pipe.gh.comments_matching(5, "Decisions needed")
+        self.assertIn(f"- {split} (recommended){state.REPLAN_MARK}", round_["body"])
+
+    def test_a_go_that_blocks_again_after_the_plan_autopilots_answer_started_waits(self):
+        widen = "Widen the issue to cover the importer too"
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            question = {
+                "question": "The importer has the same bug.",
+                "options": [widen, "Leave the importer alone"],
+                "recommended": 1,
+                "closes": 0,
+                "replans": [1],
+            }
+            output = {"status": "blocked", "blocker": "Importer.", "questions": [question]}
+            return {"agent": {"status": "blocked", "error": "Importer.", "output": output}}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        # Answered once in a row: the plan it started is part of that answer's round.
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("plan", 5), ("go", 5)])
+        self.assertEqual(len(pipe.gh.comments_matching(5, "answers for the owner")), 1)
+        self.assertEqual(len(pipe.gh.comments_matching(5, "@olivia a person is needed")), 1)
+
+    def test_a_fix_round_that_recommends_a_new_plan_waits_for_a_person(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return done(checks=False)
+            question = {
+                "question": "The failing test belongs to another feature.",
+                "options": ["Split that feature into its own issue", "Fix the test here"],
+                "recommended": 1,
+                "replans": [1],
+            }
+            output = {"status": "blocked", "blocker": "Scope.", "questions": [question]}
+            return {"agent": {"status": "blocked", "error": "Scope.", "output": output}}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertFalse(pipe.gh.comments_matching(6, "answers for the owner"))
+        [mention] = pipe.gh.comments_matching(6, "@olivia a person is needed")
+        self.assertIn(autopilot.REPLAN_IN_PULL_DO, mention["body"])
+        self.assertFalse(pipe.gh.comments_matching(5, "@olivia a person is needed"))
 
     def test_a_plan_that_asks_after_autopilots_answer_waits(self):
         question = {"question": "Which port?", "options": ["8080", "9090"], "recommended": 1}

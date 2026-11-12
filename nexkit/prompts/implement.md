@@ -90,6 +90,12 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
   "Close the issue as not reproduced". Never offer closing together with another step,
   such as closing once someone acts, which NexKit cannot carry out. Recommend that option
   only with a `no_change` finding.
+  `replans`: the numbers of the options that change the issue's scope, such as splitting
+  it, doing other work first or widening it, or an empty list. Another round of this plan
+  cannot carry such an option out: NexKit plans the issue again when it is picked, and a
+  plan can split the issue. An option that waits for other work names the open issue that
+  holds it; when no issue holds that work yet, the option changes the scope, such as
+  "Split the work: plan the change to the stack as its own part first", and belongs here.
 - `checks_run`: a list of strings, one for each command you ran, with whether it passed.
 - `no_change`: only when you changed nothing because no change is needed: the finding,
   followed by the evidence that shows it, such as the commit, log or test output lines,

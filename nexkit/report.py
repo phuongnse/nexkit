@@ -767,7 +767,9 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), decide=(), fo
             f"the run stopped on a transient error {_times(found['stops'])}, the last after "
             "every wait of `retry.wait_minutes`"
         )
-    if outcome == "agent_blocked" and found.get("pull"):
+    if outcome == "agent_blocked" and found.get("pull") and autopilot.replans(found):
+        do = autopilot.REPLAN_IN_PULL_DO
+    elif outcome == "agent_blocked" and found.get("pull"):
         do = "answer the questions in the round's comment with `/nexkit fix <answers>`"
     if outcome == "agent_blocked" and found.get("questions"):
         why += ": " + _listed([item["question"] for item in questions(found["questions"])])

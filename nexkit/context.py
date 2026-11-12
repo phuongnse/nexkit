@@ -9,11 +9,11 @@ import re
 from functools import partial
 from pathlib import Path
 
-from .autopilot import edited_after_vouch
+from .autopilot import PART, edited_after_vouch
 from .checks import RESULTS_DIR, failing_signatures, output_text, shown_command
 from .config import NAME
 from .evidence import collect, named_runs, summary_lines
-from .github import TRUSTED_ASSOCIATIONS
+from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .redact import Redactor
 from .route import parse_command
 from .runlog import write_summary
@@ -456,6 +456,49 @@ def ci_evidence(gh, cfg, issue, comments, folder, workflow=""):
     return found
 
 
+# The most earlier parts a part's plan reads, and what it keeps of each one's text.
+MAX_EARLIER = 6
+EARLIER_BODY = 3_000
+EARLIER_PLAN = 6_000
+
+
+def _part_of(issue):
+    """The number of the issue that a part of a split came from, or None."""
+    match = PART.match(issue.get("body") or "")
+    return int(match.group(1)) if match else None
+
+
+def earlier_parts(gh, issue):
+    """{parent, parts} for a part of a split that needs earlier parts first: the issues
+    that block it and are parts of the same issue, oldest first, each with its title,
+    state, text and latest plan. None for any other issue. A failed read leaves out what
+    it could not read: the plan goes on without it."""
+    parent = _part_of(issue)
+    if parent is None:
+        return None
+    found = []
+    try:
+        blockers = sorted(gh.blocked_by(issue["number"]), key=lambda b: b["number"])
+        for blocker in blockers[: MAX_EARLIER * 2]:
+            earlier = gh.issue(blocker["number"])
+            if _part_of(earlier) != parent:
+                continue
+            plan = latest_plan(gh.comments(earlier["number"]))
+            found.append(
+                {
+                    "number": earlier["number"],
+                    "title": earlier.get("title") or "",
+                    "state": earlier.get("state") or "",
+                    "body": clip(PART.sub("", earlier["body"]), EARLIER_BODY),
+                    "plan": clip(plan_text(plan), EARLIER_PLAN) if plan else "",
+                }
+            )
+    except GitHubError:
+        pass
+    parts = found[:MAX_EARLIER]
+    return {"parent": parent, "parts": parts} if parts else None
+
+
 def gather(
     gh,
     decision,
@@ -503,6 +546,9 @@ def gather(
     if stage in ("plan", "implement", "fix") and ci and cfg:
         context["ci_evidence"] = ci_evidence(gh, cfg, issue, comments, ci, workflow)
     if stage == "plan":
+        earlier = earlier_parts(gh, issue)
+        if earlier:
+            context["earlier"] = earlier
         # Triage reads the notes on earlier commands too: a later note can change the
         # profile that an earlier comment asked for.
         # Its prompt has no tools to read a file with, so it names nothing it shortened.

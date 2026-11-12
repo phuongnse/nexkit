@@ -61,6 +61,32 @@ class ContextTests(unittest.TestCase):
         self.assertNotIn("standard profile", context["discussion"])
         self.assertNotIn("requests", gather(self.gh, {"action": "implement", "issue": 5}))
 
+    def test_a_parts_plan_gets_the_earlier_parts_of_the_same_issue(self):
+        part = "<!-- nexkit:part 3 -->\n"
+        self.gh.add_issue(3, title="Eval everything", body="All of it.")
+        self.gh.add_issue(6, title="Run a stack", body=f"{part}Serve http.", state="closed")
+        self.gh.add_issue(7, title="Something else", body="<!-- nexkit:part 4 -->\nOther.")
+        self.gh.add_issue(8, title="Run every case", body=f"{part}Run them on the stack.")
+        self.gh.comment(6, "<!-- nexkit:plan -->\nStart the stack on a free port.")
+        self.gh.blockers[8] = [7, 6]
+        context = gather(self.gh, {"action": "plan", "issue": 8, "note": ""})
+        [earlier] = context["earlier"]["parts"]
+        self.assertEqual(context["earlier"]["parent"], 3)
+        self.assertEqual(
+            earlier,
+            {
+                "number": 6,
+                "title": "Run a stack",
+                "state": "closed",
+                "body": "Serve http.",
+                "plan": "Start the stack on a free port.",
+            },
+        )
+        # Only a plan reads them; an issue that is not a part has none.
+        self.assertNotIn("earlier", gather(self.gh, {"action": "implement", "issue": 8}))
+        self.gh.blockers[5] = [6]
+        self.assertNotIn("earlier", gather(self.gh, {"action": "plan", "issue": 5, "note": ""}))
+
     def test_replan_gets_the_discussion_before_and_since_the_latest_plan(self):
         self.gh.human_comment(5, "Limit names to 2,000 characters.")
         self.gh.comment(5, "<!-- nexkit:plan -->\nold plan")

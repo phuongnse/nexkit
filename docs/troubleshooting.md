@@ -418,8 +418,10 @@ Answer every question in one comment, one short line each:
   answers on the issue, without a command; the next sweep plans again with them (see
   ["Autopilot waits after a `/nexkit go` that was blocked or failed"](#agents)). Without
   autopilot, comment `/nexkit plan <answers>`, or for a blocked `/nexkit go` whose
-  answers leave the plan as it is, `/nexkit go <answers>`.
-- A blocked round on a pull request: `/nexkit fix <answers>`.
+  answers leave the plan as it is, `/nexkit go <answers>`. An option the comment marks
+  *(needs a new plan)*, such as splitting the issue, always takes `/nexkit plan`.
+- A blocked round on a pull request: `/nexkit fix <answers>`, or `/nexkit plan <answers>`
+  on the issue for an option marked *(needs a new plan)*.
 
 **To close the issue through an answer,** pick the option the comment marks *(NexKit
 closes the issue as not planned)*: comment `/nexkit go <that option>` or `/nexkit plan

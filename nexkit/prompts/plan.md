@@ -20,7 +20,7 @@ $body
 <untrusted>
 $discussion
 </untrusted>
-$previous
+$previous$earlier_parts
 ## Note from the person who asked for this plan
 
 <untrusted>
@@ -95,13 +95,20 @@ $writing
     when no option does. NexKit closes the issue when a person picks that option, so
     offer closing only that way: one option that closes the issue and does nothing else.
     Never offer closing together with another step, which NexKit cannot carry out.
-- `too_large`: true when the work cannot be finished and tested well in one session.
+- `too_large`: true when the work cannot be finished and tested well in one session, and
+  also when the note answers a blocked round with an option that splits the issue or does
+  other work first: that work and the rest of this issue are then the parts in `split`.
 - `split`: when `too_large` is true, smaller issues that can each be done in one session,
   in order. Otherwise an empty list. Each has a `title`, a `body`, and `depends_on`: the
   numbers (counting from 1) of the earlier parts that must be merged before this one can
   start, or an empty list. Name a part only when this one really needs its code; parts
   that do not need each other run at the same time. Title each part by its own behaviour,
-  never by this issue's title.
+  never by this issue's title. Each part is planned, reviewed and merged on its own, and
+  its review checks only its acceptance criteria. So when later parts depend on a part,
+  its acceptance criteria must prove end to end the behaviour they rely on, such as a
+  request that goes through every service a later part calls, not only that the part
+  starts or answers: name that behaviour in the part's body, with the criteria that
+  prove it.
 - `revision`: for a re-plan, as *How to use the latest plan* says. For a first plan,
   `started_over` is false and `changes` is empty.
 - `protected_paths`: the protected paths that the change must modify, each as a path in

@@ -41,6 +41,7 @@ from .state import (
     SUCCESS,
     TEXT_LIMIT,
     answers_marker,
+    answers_record,
     answers_text,
     by_bot,
     ci_wait_reason,
@@ -974,6 +975,24 @@ CLOSE_UNFOUNDED = person(
     "the agent recommends closing the issue, and NexKit closes it by itself only when that "
     "is a round's one recommendation, with its finding that no change is needed",
 )
+REPLAN_IN_PULL_DO = (
+    "answer with `/nexkit plan <answers>` on the issue to plan it anew, or with "
+    "`/nexkit fix <answers>` on the pull request for an answer that keeps its scope"
+)
+REPLAN_IN_PULL = person(
+    REPLAN_IN_PULL_DO,
+    "the round recommends changing the issue's scope, which only a new plan carries out, and "
+    "a new plan would leave the open pull request behind",
+)
+# The note before the answers on the plan that autopilot starts after a blocked round
+# recommended an option that only a new plan carries out.
+REPLAN_NOTE = (
+    "The last `/nexkit go` stopped as blocked, and its recommended answer below changes this "
+    "issue's scope, which another `/nexkit go` cannot do. Plan the issue again to carry it "
+    "out. When the answer splits the issue or needs other work first, return `too_large` "
+    "with parts in `split`: the other work first, then the rest of this issue, each titled "
+    "by its own behaviour, with `depends_on` naming the parts it needs."
+)
 QUESTIONS_REASON = person(
     "answer the plan's questions with `/nexkit plan <answers>`",
     "the plan asks for decisions that are the owner's to make",
@@ -1009,19 +1028,37 @@ def asked_again(target_comments, other_comments=()):
     is the first run after autopilot answered there, with no comment by a person since that
     answer on the issue or its pull request. Its questions then follow from autopilot's own
     answers: another answer would only change the wording of the note, so a person decides.
+    After answers that only a new plan carries out, the plan they started does not count:
+    the `/nexkit go` of that plan is the round they started.
     """
     found = [(comment["id"], run) for comment, run in run_comments(target_comments)]
     if not found:
         return False
     latest = found[-1][0]
-    answered = [
-        c["id"] for c in target_comments if answers_text(c) is not None and c["id"] < latest
-    ]
-    between = [run for at, run in found if answered and answered[-1] < at < latest]
-    if not answered or any(run.get("outcome") not in UNCHANGED for run in between):
+    answered = [c for c in target_comments if answers_text(c) is not None and c["id"] < latest]
+    if not answered:
         return False
-    since = answered[-1]
+    since = answered[-1]["id"]
+    replan = bool((answers_record(answered[-1]) or {}).get("replan"))
+    between = [run for at, run in found if since < at < latest]
+    if any(not _unchanged(run, replan) for run in between):
+        return False
     return not any(_by_person(c) and c["id"] > since for c in [*target_comments, *other_comments])
+
+
+def _unchanged(run, replan):
+    """Whether a run between autopilot's answers and the round they started changed
+    nothing about the issue: after answers that only a new plan carries out, that plan
+    is part of the round they started."""
+    if run.get("outcome") in UNCHANGED:
+        return True
+    return replan and run.get("command") == "plan" and run.get("outcome") == "planned"
+
+
+def replans(run):
+    """Whether a blocked round recommends an option that only a new plan carries out, such
+    as splitting the issue, doing other work first or widening it."""
+    return any(item.get("replans") for item in questions(run.get("questions")))
 
 
 def closes(run):
@@ -1070,6 +1107,19 @@ def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
     if found and any(item.get("closes") for item in questions(run.get("questions"))):
         # Closing without a finding that no change is needed is a person's choice.
         return _step(issue, "waits", CLOSE_UNFOUNDED)
+    if found and replans(run) and command != "go":
+        # A new plan of the issue would leave its open pull request behind.
+        return _step(issue, "waits", REPLAN_IN_PULL)
+    if found and replans(run):
+        # Another `/nexkit go` cannot change the issue's scope: a new plan can, and it
+        # splits the issue as any plan that is too large.
+        start = {
+            **start,
+            "target": issue["number"],
+            "note": f"{REPLAN_NOTE}\n\n{answer_note(found)}",
+        }
+        reason = "autopilot answers the blocked round with an option that a new plan carries out"
+        return _step(issue, "start", reason, command="plan", answers=found, replan=True, **start)
     if found:
         start = {**start, "target": target, "note": answer_note(found)}
         reason = "autopilot answers the questions of the blocked round"
@@ -1856,7 +1906,10 @@ def carries_on(gh, cfg, decision, outcome, agent):
     elif outcome == "planned":
         handled = answers(cfg, output.get("questions")) is not None
     elif outcome == "agent_blocked":
-        handled = answers(cfg, round_questions(agent)) is not None
+        found = {"questions": round_questions(agent)}
+        # A fix round's option that only a new plan carries out is a person's to answer.
+        planned = replans(found) and decision["action"] != "implement"
+        handled = answers(cfg, found["questions"]) is not None and not planned
     elif outcome == "agent_error" and agent.get("timed_out"):
         handled = decision["action"] in ("implement", "fix")
     else:
@@ -1993,12 +2046,14 @@ def _save_record(gh, step, record, text, now=None):
         gh.comment(step["number"], body)
 
 
-def post_answers(gh, number, found):
-    """Answer for the owner in a comment that the agents read as the owner's discussion."""
+def post_answers(gh, number, found, replan=False):
+    """Answer for the owner in a comment that the agents read as the owner's discussion.
+    `replan` marks answers that only a new plan carries out (see `asked_again`)."""
     lines = ["NexKit autopilot answers for the owner, with the option NexKit recommended:", ""]
     for index, item in enumerate(found, 1):
         lines += [f"{index}. {item['question']}", f"   **{item['answer']}**"]
-    gh.comment(number, "\n".join(lines) + "\n\n" + answers_marker({"answers": found}))
+    record = {"answers": found, **({"replan": True} if replan else {})}
+    gh.comment(number, "\n".join(lines) + "\n\n" + answers_marker(record))
 
 
 def start(gh, step, workflow, ref, now=None):
@@ -2006,7 +2061,7 @@ def start(gh, step, workflow, ref, now=None):
     Returns a line for the log."""
     command, target = step["command"], step["target"]
     if step.get("answers"):
-        post_answers(gh, target, step["answers"])
+        post_answers(gh, target, step["answers"], step.get("replan", False))
     settle(gh, step)
     auto = step.get("auto") or AUTO
     inputs = {"command": command, "number": str(target), "note": step["note"], "auto": auto}

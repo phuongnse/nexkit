@@ -61,23 +61,28 @@ _QUESTION = {
     "options": _STRING_LIST,
     "recommended": {"type": "integer"},
 }
-_QUESTIONS = {
-    "type": "array",
-    "items": {"type": "object", "properties": _QUESTION, "required": list(_QUESTION)},
-}
+
+
+def _questions_of(item):
+    return {
+        "type": "array",
+        "items": {"type": "object", "properties": item, "required": list(item)},
+    }
+
+
 # A plan's or an implement round's question also names the option that only closes the
 # issue, with no change (from 1), or 0 when none does. NexKit carries that option out when
 # a person picks it (`route.closing_answer`); autopilot picks it only for an implement
 # round whose `no_change` finding it is, never on the finding's text alone.
 _CLOSING_QUESTION = {**_QUESTION, "closes": {"type": "integer"}}
-_CLOSING_QUESTIONS = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": _CLOSING_QUESTION,
-        "required": list(_CLOSING_QUESTION),
-    },
-}
+# A blocked implement or fix round's question also names the options that change the
+# issue's scope, such as splitting it, doing other work first or widening it (from 1): a
+# new plan carries those out, never the same round again. Autopilot answers one with
+# `/nexkit plan` (`autopilot._stopped`).
+_REPLANS = {"type": "array", "items": {"type": "integer"}}
+_IMPLEMENT_QUESTION = {**_CLOSING_QUESTION, "replans": _REPLANS}
+_FIX_QUESTION = {**_QUESTION, "replans": _REPLANS}
+
 _CHANGE_RESULT = {
     "type": "object",
     "properties": {
@@ -85,7 +90,7 @@ _CHANGE_RESULT = {
         "summary": {"type": "string"},
         "blocker": {"type": "string"},
         # The decisions a blocked round needs from a person.
-        "questions": _QUESTIONS,
+        "questions": _questions_of(_FIX_QUESTION),
         "checks_run": _STRING_LIST,
         # The protected paths the change needs, which the agent left alone: a person makes
         # that change, so autopilot answers none of the round's questions.
@@ -117,7 +122,7 @@ SCHEMAS = {
             "risks": _STRING_LIST,
             "acceptance_criteria": _STRING_LIST,
             "implementation_notes": _STRING_LIST,
-            "questions": _CLOSING_QUESTIONS,
+            "questions": _questions_of(_CLOSING_QUESTION),
             "too_large": {"type": "boolean"},
             "split": {
                 "type": "array",
@@ -159,7 +164,7 @@ SCHEMAS = {
         "properties": {
             **_CHANGE_RESULT["properties"],
             **_PULL_FIELDS,
-            "questions": _CLOSING_QUESTIONS,
+            "questions": _questions_of(_IMPLEMENT_QUESTION),
             # The finding and its evidence when no change is needed, or "". Done without a
             # changed file, NexKit closes the issue with it; blocked, its one question's
             # `closes` names the option that closes the issue with it, and that option is
@@ -514,6 +519,24 @@ def previous_plan(context):
     )
 
 
+def earlier_parts_text(context):
+    """The plan prompt's section about the earlier parts that a part of a split relies
+    on, or "" for an issue that is not such a part."""
+    earlier = context.get("earlier") or {}
+    if not earlier.get("parts"):
+        return ""
+    blocks = []
+    for part in earlier["parts"]:
+        state = "closed" if part.get("state") == "closed" else "still open"
+        lines = [f"### #{part['number']}: {part['title']} ({state})", "", part["body"]]
+        if part.get("plan"):
+            lines += ["", "Its latest plan:", "", part["plan"]]
+        blocks.append("\n".join(lines))
+    return Template(_template("plan_parts")).safe_substitute(
+        parent=earlier["parent"], parts="\n\n".join(blocks)
+    )
+
+
 def merge_review(repo, context, base):
     """The review prompt's section about a merge of the base branch in this run's fix round,
     with what each side changed in the conflicted files, or ""."""
@@ -795,6 +818,23 @@ def check_closing(output):
             item["closes"] = 0
 
 
+def check_replans(output):
+    """Keep in `replans` only numbers of its question's options, each once, and never the
+    option that only closes the issue: autopilot answers such an option with a new plan
+    instead of the same round, so each must be one the agent meant."""
+    for item in output.get("questions") or []:
+        if not isinstance(item, dict):
+            continue
+        found, options = item.get("replans"), item.get("options") or []
+        closes = item.get("closes")
+        numbers = [
+            n
+            for n in (found if isinstance(found, list) else [])
+            if isinstance(n, int) and not isinstance(n, bool) and 0 < n <= len(options)
+        ]
+        item["replans"] = [n for n in dict.fromkeys(numbers) if n != closes]
+
+
 def needed_protected(result, cfg):
     """The protected paths that a result says its change needs: only those that are
     protected, each once. The agent's list alone decides nothing."""
@@ -892,6 +932,7 @@ def build_prompt(stage, context, cfg, extra=None):
         "person": _template("review_person") if person else "",
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
         "checklist": checklist_text(stage, cfg),
+        "earlier_parts": earlier_parts_text(context),
         **(extra or {}),
     }
     return Template(template).safe_substitute({k: str(v) for k, v in values.items()})
@@ -1522,6 +1563,8 @@ def run_stage(
                 result.update(status="error", error=unchanged(result), unchanged=True)
     if stage in ("plan", "implement") and result.get("output"):
         check_closing(result["output"])
+    if stage in ("implement", "fix") and result.get("output"):
+        check_replans(result["output"])
     if stage in ("plan", "implement", "fix") and result.get("output"):
         # Only paths that are protected count, so a person is asked only for those.
         result["output"]["protected_paths"] = needed_protected(result, cfg)

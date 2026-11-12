@@ -84,6 +84,11 @@ $writing
   granting access or running something by hand, set `recommended` to 0. Never offer to
   close the issue or the pull request: NexKit does not do that from a fix round, and a
   person closes them on GitHub.
+  `replans`: the numbers of the options that change the issue's scope, such as splitting
+  it, doing other work first or widening it, or an empty list. Another fix round cannot
+  carry such an option out: only a new plan of the issue can, and a person decides on it.
+  An option that waits for other work names the open issue that holds it; when no issue
+  holds that work yet, the option changes the scope and belongs here.
 - `checks_run`: the commands you ran and whether each passed.
 - `protected_paths`: the protected paths that the change must modify and that you left
   unchanged, each as a path in the repository. Otherwise an empty list.

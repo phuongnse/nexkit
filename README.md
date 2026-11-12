@@ -69,7 +69,7 @@ add the secret and runs `nexkit doctor`.
 ### By hand
 
 ```sh
-pipx install git+https://github.com/phuongnse/nexkit@v6.8.1   # or run bin/nexkit from a clone;
+pipx install git+https://github.com/phuongnse/nexkit@v6.9.0   # or run bin/nexkit from a clone;
                                          # in each repository it runs the release the
                                          # workflow pins (see Local commands)
 cd your-repository

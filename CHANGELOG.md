@@ -1,5 +1,57 @@
 # Changelog
 
+## 6.9.0
+
+Agents and people see what failed: a CI bug issue shows the failed step's error, prompts
+show a failing check's failure lines and its real end, and nothing NexKit writes or
+records is silently cut or refused for its length.
+
+- A CI bug issue shows the end of each failed job's failed step, not the post-job cleanup
+  (#266). The excerpt was the last 30 lines of the whole job log, which are always the
+  post steps, so triage and people never saw the cause: in phuongnse/axis#3830, none of 10
+  excerpts held the compiler error that broke every job.
+  - NexKit finds the failed step from the log's step groups. Without one, it shows the end
+    of the log before the post steps, and says so; a log without steps shows its end, as
+    before.
+  - A job log longer than the 64 MB a download reads keeps its end, not its start, for the
+    issue and for the evidence of CI runs, with a note that it was cut.
+
+  See [Autopilot](docs/how-it-works.md#autopilot) and
+  [Evidence from CI runs](docs/configuration.md#evidence-from-ci-runs).
+- A CI bug issue and its "It fails again" comments always fit GitHub's 65,536 characters
+  (#265). Many failed jobs, or a second failed attempt, could pass it, and GitHub then
+  refused the issue, so nobody heard of a broken default branch. When the whole text does
+  not fit, every failed job keeps its link, failed steps and error annotations, the log
+  excerpts share what is left evenly, and the text says what it shortened. The markers
+  NexKit reads back stay whole.
+- The fix and review prompts show a failing check's real end and the lines that report a
+  failure (#267). The fix prompt showed the first 6,000 of the 12,000 characters NexKit
+  stores under "End of output", so it lost the summary test runners print last.
+  - Each check's result also keeps the first 20 lines before its last 12,000 characters
+    that report a failure, so a failure that a long teardown follows is not lost.
+  - The fix prompt shows those lines and the last 6,000 characters, the review prompt 10
+    lines and the last 3,000, from the start of a line.
+  - What NexKit kept of a failing check's output goes to a file the agent reads, and the
+    prompt names it.
+
+  See [Agents](docs/how-it-works.md#agents).
+- A prompt says when it leaves out the comments older than the latest 30 of a discussion
+  (#268), and the agent reads them whole from a file in `texts/`. Before, they were dropped
+  with no note, so an early answer of a person could stop reaching the agent. The run's
+  comment lists them with the shortened texts.
+- A review with more than 30 findings keeps its blocking findings first in the state
+  comment (#269), so the next rounds never lose one written after 30 suggestions. The
+  record says how many it left out, and the next review's *Previous round* says so.
+- The state comment always fits GitHub's 65,536 characters (#274). Three failing checks
+  with long output, or one and a long review, could pass it, so the round could not save
+  its state and the next fix round lost its feedback. NexKit now shortens what matters
+  least first: failing checks' outputs, keeping their end and their failure lines, then
+  findings other than blocking ones, and only then the rest. Each failing check's failure
+  signature is recorded first, so a check that fails the same way after a fix is still
+  found.
+
+  See [State](docs/how-it-works.md#state).
+
 ## 6.8.1
 
 - With `parallel_checks`, each check job keeps up to the larger of its even share of the

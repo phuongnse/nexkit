@@ -1314,8 +1314,9 @@ the summary that test runners print at the end is there. Before that end, each s
 lines that report a failure, those kept from before the 12,000 characters first: at most
 20 in the fix prompt and 10 in the review prompt. When the prompt does not show all that
 NexKit kept, NexKit writes it to `texts/` too, and the check's section names the file and
-says whether it holds the whole output or only what NexKit kept. The run's comment does not
-list these files: no person wrote them.
+says whether it holds the whole output or only what NexKit kept, which is less when the
+state comment had to shorten it to fit GitHub's limit (see [State](#state)). The run's
+comment does not list these files: no person wrote them.
 
 **A result that does not fit.** An agent may finish the work and still give no result
 that fits the stage's schema, such as one that leaves out a field or that Claude Code
@@ -1410,7 +1411,15 @@ review (its commit and up to 30 of its findings: past 30, the blocking ones firs
 others in the reviewer's order, with how many were left out) and the recent fix rounds (summary, cause, note,
 the checks that still failed after it with their failure signatures and, after a merge,
 the files that had conflicts). Recorded text is clipped, and only the last five fix
-rounds are kept, so the comment and the prompts stay bounded. With autopilot, each issue
+rounds are kept, so the comment and the prompts stay bounded. The comment always fits
+GitHub's 65,536 characters: when the record would not, NexKit shortens, in this order and
+each to the most that fits, the failing checks' outputs (keeping their end, down to 2,000
+characters each, with the lines that report a failure from what it cut joining their
+failure lines), the findings other than blocking ones (keeping their start, down to 300
+characters), the failure lines, the outputs to nothing, the blocking findings, and last the
+fix rounds. Each failing check's failure signature is recorded first, so a shortened
+output still compares as before, and the fix prompt says that NexKit kept less of the
+output. With autopilot, each issue
 it worked on has one record comment, edited in place, that names the command it started
 last. Nothing else is stored, so there is nothing to migrate or repair.
 

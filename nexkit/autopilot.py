@@ -39,6 +39,7 @@ from .state import (
     PAUSED,
     RUNNING,
     SUCCESS,
+    TEXT_LIMIT,
     answers_marker,
     answers_text,
     by_bot,
@@ -2865,8 +2866,6 @@ def _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen):
 def _report_failure(gh, cfg, where, workflow, branch, known, run):
     """Report a red branch's run: open its bug issue, or comment on the open one, within
     GitHub's limit on a text's length."""
-    from .context import TEXT_LIMIT  # which imports this module
-
     issue = known["bug"]
     if issue:
         start = "It fails again on a newer commit.\n\n"

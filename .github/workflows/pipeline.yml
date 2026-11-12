@@ -17,8 +17,9 @@
 #          never runs repo code
 # verify   run setup and checks on the exact candidate; no secrets at all; restores
 #          caches but never saves one; with parallel_checks, one job per check job
-# combine  with parallel_checks, join the check jobs' results into one nexkit-checks;
-#          no secrets, no repository checkout
+# combine  with parallel_checks, join the check jobs' results into one nexkit-checks,
+#          and write each check job's time to the run summary; no secrets, no
+#          repository checkout
 # review   independent read-only agent review of that candidate; after NexKit brought an
 #          approved pull request up to date with a clean merge, the approval carries over
 #          when the change is the same, and no agent runs
@@ -334,6 +335,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read # NexKit's own code; nothing of the repository
+      actions: read # the times of the run and of its check jobs, for the run summary
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -354,6 +356,7 @@ jobs:
       - name: Combine check results
         run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit combine-checks --parts parts --out out
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           NEXKIT_DECISION: ${{ needs.route.outputs.decision }}
           NEXKIT_CONFIG: ${{ needs.route.outputs.config }}
           NEXKIT_SHARDS: ${{ needs.shards.outputs.shards }}

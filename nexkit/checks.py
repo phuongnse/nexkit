@@ -14,15 +14,17 @@ import subprocess
 import threading
 import time
 import xml.etree.ElementTree as ET
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .gitutil import GitError, git, has_commit, is_ancestor
 from .gitutil import names as file_names
 from .globs import unaffected
 from .redact import Redactor
-from .runlog import fence, one_line, write_summary
+from .runlog import NO_DATA, code, duration, fence, one_line, write_summary
 from .runtimes import NAMES_VAR, secret_names
 from .state import COMMIT, check_fingerprint
+from .usage import parse_iso
 
 OUTPUT_TAIL = 12_000
 # How long NexKit still reads a command's output after its shell exited or was killed,
@@ -860,6 +862,29 @@ def _read_results(path):
     return [result for result in results if isinstance(result, dict)]
 
 
+def read_parts(cfg, parts, skipped=None):
+    """{job: (folder, results)} for each parallel check job of `cfg` that ran, in the
+    order of `check_jobs`: the folder its artifact was downloaded to and the results of
+    its `checks.json`, None when it left none. A job whose checks `route` all
+    skipped (`skipped`) ran on no runner and is left out.
+
+    When only one job left an artifact, the download puts it in `parts` itself; it
+    belongs to the job whose checks it names."""
+    parts, found = Path(parts), {}
+    left_out = skipped_names(skipped)
+    flat = _read_results(parts / "checks.json")
+    for group, checks in check_jobs(cfg).items():
+        if all(check["name"] in left_out for check in checks):
+            continue
+        folder = parts / artifact_name(group)
+        results = _read_results(folder / "checks.json")
+        names = {"setup", *(check["name"] for check in checks)}
+        if results is None and flat is not None and {r.get("name") for r in flat} <= names:
+            folder, results, flat = parts, flat, None
+        found[group] = (folder, results)
+    return found
+
+
 def combine(cfg, parts, out_dir, skipped=None):
     """Join the results of the parallel `verify` jobs, each downloaded to
     `parts/<artifact_name>/`, into `out_dir` as one job would have left them: one
@@ -867,25 +892,19 @@ def combine(cfg, parts, out_dir, skipped=None):
     setup that failed comes first, once, and the checks of its job are left out, as after
     a setup failure in one job. A job that left no result fails each of its checks, but a
     job whose checks `route` all skipped (`skipped`) ran on no runner: they pass.
-    Returns the results.
-
-    When only one job left an artifact, the download puts it in `parts` itself; it
-    belongs to the job whose checks it names."""
-    parts, out = Path(parts), Path(out_dir)
+    Returns the results (see `read_parts`)."""
+    out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     found, setups = {}, []
     left_out = skipped_names(skipped)
-    flat = _read_results(parts / "checks.json")
+    ran = read_parts(cfg, parts, skipped)
     for group, checks in check_jobs(cfg).items():
-        if all(check["name"] in left_out for check in checks):
+        if group not in ran:
             for check in checks:
                 found[check["name"]] = skipped_result(check, left_out[check["name"]])
             continue
-        folder = parts / artifact_name(group)
-        results = _read_results(folder / "checks.json")
+        folder, results = ran[group]
         names = {"setup", *(check["name"] for check in checks)}
-        if results is None and flat is not None and {r.get("name") for r in flat} <= names:
-            folder, results, flat = parts, flat, None
         if results is None:
             print(f"The check job `{group}` left no result.", flush=True)
             results = [
@@ -911,3 +930,122 @@ def combine(cfg, parts, out_dir, skipped=None):
     combined = setups[:1] + [found[c["name"]] for c in cfg["checks"] if c["name"] in found]
     (out / "checks.json").write_text(json.dumps(combined, indent=2))
     return combined
+
+
+# How the run summary says that a check job ended, other than with success.
+JOB_ENDS = {"failure": "failed", "cancelled": "cancelled", "timed_out": "timed out"}
+# A `verify` job of one check job, as the Actions API names it: `nexkit / verify (unit)`.
+CHECK_JOB = re.compile(r"verify \((.+)\)")
+
+
+def check_job_runs(jobs):
+    """{group: job} for the parallel check jobs among the jobs of a run attempt, as the
+    Actions API lists them."""
+    found = {}
+    for job in jobs or []:
+        match = CHECK_JOB.fullmatch(str(job.get("name") or "").rsplit(" / ", 1)[-1])
+        if match:
+            found[match.group(1)] = job
+    return found
+
+
+def _span(job):
+    """(start, end) of a job that ran, or (None, None)."""
+    job = job or {}
+    start, end = parse_iso(job.get("started_at")), parse_iso(job.get("completed_at"))
+    return (start, end) if start and end and end >= start else (None, None)
+
+
+def _job_result(job, results):
+    said = []
+    conclusion = (job or {}).get("conclusion")
+    if conclusion and conclusion != "success":
+        said.append(JOB_ENDS.get(conclusion, str(conclusion).replace("_", " ")))
+    if results is None:
+        said.append("no result")
+    else:
+        checks = [r for r in results if r.get("name") != "setup"]
+        failed = [r for r in checks if not r.get("passed")]
+        if any(r.get("name") == "setup" and not r.get("passed") for r in results):
+            said.append("setup failed")
+        elif failed:
+            said.append(f"{len(failed)} of {len(checks)} failed")
+        else:
+            said.append("passed")
+    return ", ".join(said)
+
+
+def _checks_seconds(results):
+    """The seconds a job's checks ran, without its setup, from its `checks.json`."""
+    seconds = [
+        r.get("seconds")
+        for r in results or []
+        if r.get("name") != "setup"
+        and isinstance(r.get("seconds"), int | float)
+        and not isinstance(r.get("seconds"), bool)
+    ]
+    return sum(seconds) if seconds else None
+
+
+def jobs_summary(cfg, parts, skipped=None, run=None, jobs=None, now=None, error=None):
+    """The `combine` job's section of the run summary, which shows the run as a whole: a
+    line with the run's time so far, how long it waited before its first job started and
+    the time from the first check job's start to the last one's end; then one row per check
+    job that ran (see `read_parts`), longest first, with its result, its time and its
+    checks' time. The run waited for the job that ended last, which is the first row
+    unless it started later than the others: then it is marked, with how much later.
+
+    `run` is the run attempt and `jobs` its jobs, from the Actions API; without them, or
+    with the `error` of reading them, the table has no times."""
+    ran = read_parts(cfg, parts, skipped)
+    if not ran:
+        return ""
+    found = check_job_runs(jobs)
+    rows = []
+    for group, (_, results) in ran.items():
+        start, end = _span(found.get(group))
+        took = (end - start).total_seconds() if start else None
+        rows.append((group, found.get(group), start, end, took, results))
+    ended = [row for row in rows if row[3]]
+    first = min(row[2] for row in ended) if ended else None
+    last = max(ended, key=lambda row: row[3]) if ended else None
+
+    said = []
+    begun = parse_iso((run or {}).get("run_started_at") or (run or {}).get("created_at"))
+    if begun:
+        now = now or datetime.now(UTC)
+        said.append(f"The run so far: **{duration((now - begun).total_seconds())}**")
+        starts = [
+            parse_iso(job.get("started_at"))
+            for job in jobs or []
+            if job.get("conclusion") != "skipped" and job.get("status") != "queued"
+        ]
+        starts = [start for start in starts if start]
+        if starts:
+            wait = max(0, (min(starts) - begun).total_seconds())
+            said.append(f"waited **{duration(wait)}** before its first job started")
+    if ended:
+        span = (last[3] - first).total_seconds()
+        said.append(f"check jobs: **{duration(span)}** from the first start to the last end")
+    lines = ["### NexKit check jobs", ""]
+    if said:
+        lines += ["; ".join(said) + ".", ""]
+    if error:
+        lines += [f"No job times: the Actions API answered {one_line(error)[:300]}", ""]
+    lines += ["| Check job | Result | Time | Checks |", "|---|---|---|---|"]
+    # Longest first; a job without a time last, in the order of the checks.
+    rows.sort(key=lambda row: (row[4] is None, -(row[4] or 0)))
+    # A job that waited for a runner can end last without being the longest.
+    late = last if last and rows[0][3] != last[3] else None
+    for group, job, start, _, took, results in rows:
+        name = code(group)
+        if late and group == late[0]:
+            later = duration((start - first).total_seconds())
+            name += f" (ended last: started {later} late)"
+        seconds = _checks_seconds(results)
+        lines.append(
+            f"| {name} | {_job_result(job, results)} "
+            f"| {duration(took) if took is not None else NO_DATA} "
+            f"| {duration(seconds) if seconds is not None else NO_DATA} |"
+        )
+    return "\n".join(lines) + "\n"

@@ -537,6 +537,19 @@ class GitHub:
         path = f"{self._repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
         return self.request("GET", path, params={"per_page": 100}).get("jobs") or []
 
+    def every_attempt_job(self, run_id, attempt, limit=1000):
+        """The jobs of one attempt of a run, page after page, up to `limit`."""
+        path = f"{self._repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
+        items, page = [], 1
+        while len(items) < limit:
+            found = self.request("GET", path, params={"per_page": 100, "page": page})
+            batch = (found or {}).get("jobs") or []
+            items.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return items[:limit]
+
     def check_runs(self, sha):
         """The latest check run of each name on a commit, such as the jobs of the workflow
         runs that tested it: the first 100."""

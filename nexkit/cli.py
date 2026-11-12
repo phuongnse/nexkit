@@ -637,13 +637,34 @@ def cmd_shards(args):
 
 
 def cmd_combine_checks(args):
-    from .checks import combine
+    from .checks import combine, jobs_summary
+    from .redact import Redactor
+    from .runlog import write_summary
 
     skipped = _decision().get("skipped_checks") if os.environ.get("NEXKIT_DECISION") else None
-    results = combine(_config(), args.parts, args.out, skipped)
+    cfg = _config()
+    results = combine(cfg, args.parts, args.out, skipped)
     passed = all(r["passed"] for r in results)
     print(f"{len(results)} checks, {'all passed' if passed else 'some failed'}")
+    run, jobs, error = _run_jobs()
+    write_summary(jobs_summary(cfg, args.parts, skipped, run, jobs, error=error), Redactor())
     return 0
+
+
+def _run_jobs():
+    """(this run attempt, its jobs, None), or the error of reading them: (None, None,
+    error). Nothing to read outside GitHub Actions."""
+    from .github import GitHubError
+
+    run_id, attempt = os.environ.get("GITHUB_RUN_ID"), os.environ.get("GITHUB_RUN_ATTEMPT")
+    if not run_id or not os.environ.get("GITHUB_REPOSITORY"):
+        return None, None, None
+    attempt = attempt or 1
+    try:
+        gh = _gh()
+        return gh.run_attempt(run_id, attempt), gh.every_attempt_job(run_id, attempt), None
+    except GitHubError as error:
+        return None, None, str(error)
 
 
 def cmd_cache(args):

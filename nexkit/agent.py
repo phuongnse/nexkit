@@ -18,7 +18,7 @@ from pathlib import Path
 from string import Template
 
 from . import config as configuration
-from .checks import BASE_SHA, RESULTS_LIMIT, SHARD, environment, known_base, shown_command
+from .checks import BASE_SHA, SHARD, environment, known_base, results_limit, shown_command
 from .evidence import EVIDENCE_LIMIT, since_text
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
@@ -651,8 +651,9 @@ def evidence_text(found):
                 lines.append(f"  - `{item['path']}`: a file")
         if check.get("left_out"):
             lines.append(
-                f"  - {check['left_out']} more files were left out: a round keeps at most "
-                f"{RESULTS_LIMIT // 1_000_000} MB of result files."
+                f"  - {check['left_out']} more files were left out: a check job keeps at most "
+                f"{results_limit(1) // 1_000_000} MB of result files, "
+                f"{results_limit(2) // 1_000_000} MB when the checks run in several jobs."
             )
     text = Template(_template("fix_evidence")).safe_substitute(
         folder=found["folder"], checks="\n".join(lines)

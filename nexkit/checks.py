@@ -45,9 +45,12 @@ STEP_FILES = ("GITHUB_OUTPUT", "GITHUB_ENV", "GITHUB_PATH", "GITHUB_STATE", "GIT
 # stops in its checks records only checks that passed on the pull request's head.
 CHECKED_FILE = "checked.json"
 # The files that failing checks name in `results` go into the round's `nexkit-checks`
-# artifact under `results/<check>/`, at most this many bytes per round.
+# artifact under `results/<check>/`: at most RESULTS_LIMIT bytes when the round's checks
+# run in one job; with several, each keeps the larger of its even share of RESULTS_LIMIT
+# and JOB_RESULTS_FLOOR, room for one end-to-end trace, however many jobs pass.
 RESULTS_DIR = "results"
 RESULTS_LIMIT = 50_000_000
+JOB_RESULTS_FLOOR = 25_000_000
 # How much of a file decides whether it is text, which is redacted, or binary.
 SNIFF = 8192
 # A line of a check's output that reports a failure, for `failure_signature`.
@@ -378,12 +381,19 @@ def _result_files(root, path):
     return sorted(found, key=lambda file: file.relative_to(root).as_posix())
 
 
+def results_limit(jobs=1):
+    """How many bytes of result files one of a round's `jobs` check jobs keeps: all of
+    RESULTS_LIMIT with one job; with several, the larger of its even share and
+    JOB_RESULTS_FLOOR, since a passing job keeps nothing and a failing one needs room for
+    its trace. A job never keeps more than RESULTS_LIMIT."""
+    return min(RESULTS_LIMIT, max(RESULTS_LIMIT // jobs, JOB_RESULTS_FLOOR))
+
+
 def keep_results(cfg, results, cwd, out_dir, redact=None, jobs=1):
     """Copy the files that each failing check names in `results` into
     `out_dir/results/<check>/<path>`, for the next fix round. Text files are redacted;
     binary files are copied as they are. Missing paths are skipped. In check order, then
-    path order, files that would take the round past RESULTS_LIMIT are left out; when
-    the round's checks run in several `jobs`, past this job's share of it.
+    path order, files that would take this job past its `results_limit` are left out.
 
     Each failing check's result gets `results`, the paths of which files were kept, and
     `results_left_out`, the number of its files left out. When kept files are JUnit XML
@@ -392,7 +402,7 @@ def keep_results(cfg, results, cwd, out_dir, redact=None, jobs=1):
     none past FAILED_TESTS_LIMIT. Returns the lines for the run summary, or [] when no
     failing check names result files."""
     redact = redact or Redactor()
-    limit = RESULTS_LIMIT // jobs
+    limit = results_limit(jobs)
     root = Path(cwd)
     named = {check["name"]: check.get("results") or [] for check in cfg["checks"]}
     used = kept = 0
@@ -568,8 +578,7 @@ def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None, skipp
     commit on which it passed, from `heads` (see `check_commit`). A check that `route`
     skipped (`skipped`, the decision's `skipped_checks`) does not run and passes. With
     `out_dir`, the failing checks' result files are kept there too (see `keep_results`),
-    and the commit checked; each of several jobs keeps its share of RESULTS_LIMIT, so the
-    round stays within it."""
+    and the commit checked; each of several jobs keeps up to its `results_limit`."""
     jobs = len(check_jobs(cfg)) if group else 1
     cfg = _only(cfg, group)
     names = skipped_names(skipped)

@@ -42,8 +42,9 @@ files or repository settings, and wait for confirmation.
    - `results` for a check that writes traces, screenshots, test reports or logs, such as
      an end-to-end suite: the folders or files where it writes them, relative to the
      repository root (for example `["test-results", "playwright-report"]`). When the check
-     fails, NexKit keeps them, at most 50 MB per round, and the next fix round reads them
-     first (see the configuration reference, Result files of failing checks).
+     fails, NexKit keeps them, at most 50 MB per round (25 MB per check job with parallel
+     checks), and the next fix round reads them first (see the configuration reference,
+     Result files of failing checks).
    - `unaffected_by` for a check that never reads whole parts of the repository, such as
      an integration suite that docs, workflows or another app cannot affect: globs of
      those paths (for example `["docs/**", "**/*.md", "web/**", "!web/package.json"]`; a

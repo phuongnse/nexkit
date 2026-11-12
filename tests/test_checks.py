@@ -669,6 +669,47 @@ class FailureSignatureTests(unittest.TestCase):
         self.assertEqual(checks.failing_signatures(None), {})
 
 
+class OutputTextTests(unittest.TestCase):
+    """What a prompt shows of a failing check's output."""
+
+    def test_a_short_output_shows_whole_without_a_file(self):
+        kept = []
+        text = checks.output_text("E1 bad\n", 100, 5, kept.append)
+        self.assertEqual(text, "Output:\n\n```\nE1 bad\n```")
+        self.assertEqual(kept, [])
+
+    def test_a_long_output_shows_its_failure_lines_and_its_end_from_a_line(self):
+        output = (
+            "Error: ``` the first\n"
+            + "".join(f"teardown {n} ok\n" for n in range(500))
+            + "".join(f"FAIL test {n} {'x' * 400}\n" for n in range(3))
+            + "".join(f"teardown {n} ok\n" for n in range(500, 1000))
+            + "Tests: 3 failed\n"
+        )
+        kept = []
+        text = checks.output_text(output, 200, 2, lambda whole: kept.append(whole) or "/t/x.txt")
+        self.assertEqual(kept, [output.rstrip()])
+        lines, end = text.split("End of output")
+        self.assertIn("(the first 2 of 4):", lines)
+        first = ("FAIL test 0 " + "x" * 400)[: checks.FAILURE_LINE_WIDTH]
+        self.assertIn(f"````\nError: ``` the first\n{first} […]\n````", lines)
+        self.assertNotIn("FAIL test 1", text)
+        self.assertNotIn("teardown", lines)
+        self.assertTrue(end.endswith("teardown 999 ok\nTests: 3 failed\n```"))
+        self.assertIn(
+            f"of {len(output.rstrip()):,} characters; the whole output is in `/t/x.txt`", end
+        )
+        # The end starts at a line, and only the lines before it are listed.
+        self.assertIn("```\nteardown 9", end)
+        self.assertNotIn("Tests: 3 failed", lines)
+
+    def test_without_a_file_or_a_failure_line_only_the_end_shows(self):
+        text = checks.output_text("x" * 300, 100, 5)
+        self.assertEqual(
+            text, f"End of output (the last 100 of 300 characters):\n\n```\n{'x' * 100}\n```"
+        )
+
+
 class CommitCase(unittest.TestCase):
     """A NexKit branch that forked from the base branch at `self.fork`."""
 

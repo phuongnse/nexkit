@@ -259,7 +259,10 @@ setting from `--parallel-checks`, and each `group` from `--check-group NAME=GROU
 ### Result files of failing checks
 
 NexKit keeps only the end of a check's output: the last 12,000 characters in the round's
-artifact and the last 6,000 in the fix prompt. A failing end-to-end suite often leaves its
+artifact. Of those, the fix prompt shows the last 6,000 and the review prompt the last
+3,000, each after the first lines before that end that report a failure (20 in the fix
+prompt, 10 in the review prompt), and each names a file outside the working tree with all
+12,000 (see [Agents](how-it-works.md#agents)). A failing end-to-end suite often leaves its
 real evidence in files instead. Name them in `results`, and the next fix round's agent
 reads them before it runs anything, rather than running the slow suite again to see the
 failure.

@@ -936,6 +936,28 @@ class RunStageTests(StageCase):
         self.assertIn("+    return a + b", prompt)
         self.assertIn("`test` (`true`): passed", prompt)
 
+    def test_review_shows_a_failing_checks_failure_lines_end_and_file(self):
+        self.claude.configure(result=VERDICT)
+        output = "FAIL suite > picks an option: expected 2, got 3\n" + "teardown ok\n" * 1_700
+        output += "1 failed"
+        checks = [
+            {"name": "unit", "run": "true", "exit_code": 0, "passed": True, "output": ""},
+            {"name": "e2e", "run": "make e2e", "exit_code": 1, "passed": False, "output": output},
+        ]
+        self.run_stage("review", checks=checks, base="main")
+        call = self.claude.call()
+        prompt = call["prompt"]
+        self.assertIn("`e2e` (`make e2e`): FAILED (exit 1)", prompt)
+        self.assertIn("FAIL suite > picks an option: expected 2, got 3", prompt)
+        self.assertIn("teardown ok\n1 failed\n```", prompt)
+        folder = (self.out / "texts").resolve()
+        path = folder / "check-2-e2e.txt"
+        self.assertEqual(path.read_text(), output)
+        self.assertIn(f"the whole output is in `{path}`", prompt)
+        self.assertEqual(call["args"][call["args"].index("--add-dir") + 1], str(folder))
+        # No text a person wrote was shortened.
+        self.assertNotIn("## Texts this prompt shortened", prompt)
+
     def test_a_persons_pull_request_review_drops_the_criteria_it_made_up(self):
         git(self.repo, "checkout", "-q", "-b", "fix-add")
         (self.repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")

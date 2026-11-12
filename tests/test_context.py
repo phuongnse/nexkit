@@ -818,6 +818,43 @@ class LongTextTests(unittest.TestCase):
         # The fix prompt shows the feedback rather than the discussion, so names none.
         self.assertNotIn("shortened", gather(self.gh, decision, texts=self.texts))
 
+    def fix_with_output(self, output):
+        state = empty_state(5)
+        failing = {"name": "e2e (1/2)", "run": "make e2e", "exit_code": 1, "passed": False}
+        state["feedback"] = {"head": HEAD, "checks": [{**failing, "output": output}]}
+        self.gh.comment(6, render_state(state))
+        fix = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
+        return gather(self.gh, fix, texts=self.texts)
+
+    def test_the_fix_prompt_shows_the_real_end_of_a_failing_checks_output(self):
+        # NexKit stores the last 12,000 characters of a check's output.
+        output = "".join(f"log line {n:05}\n" for n in range(1_000))[-12_000:]
+        output = output[output.index("\n") + 1 :] + "Failed tests: suite > picks an option"
+        context = self.fix_with_output(output)
+        section = context["feedback"].split("End of output")[1]
+        self.assertTrue(
+            section.endswith("log line 00999\nFailed tests: suite > picks an option\n```")
+        )
+        self.assertNotIn("[truncated]", context["feedback"])
+
+    def test_the_fix_prompt_holds_a_failure_line_that_much_output_follows(self):
+        output = "FAIL suite > picks an option: expected 2, got 3\n" + "teardown ok\n" * 1_700
+        self.assertGreater(len(output), 20_000)
+        feedback = self.fix_with_output(output)["feedback"]
+        self.assertIn("FAIL suite > picks an option: expected 2, got 3", feedback)
+        self.assertLess(feedback.index("FAIL suite"), feedback.index("End of output"))
+
+    def test_the_fix_prompt_names_the_file_with_a_failing_checks_whole_output(self):
+        output = "".join(f"line {n}\n" for n in range(3_000)).rstrip()
+        context = self.fix_with_output(output)
+        [path] = context["check_outputs"]
+        self.assertEqual(Path(path).parent, self.texts.resolve())
+        self.assertEqual(Path(path).read_text(), output)
+        self.assertIn(f"the whole output is in `{path}`", context["feedback"])
+        # The agent may read it; it is no text a person wrote, so no round's comment names it.
+        self.assertEqual(shortened_folders(context), [str(self.texts.resolve())])
+        self.assertNotIn("shortened", context)
+
     def test_without_a_folder_a_shortened_text_says_the_rest_was_left_out(self):
         self.gh.issues[5]["body"] = "B" * 70_000
         context = gather(self.gh, {"action": "implement", "issue": 5})

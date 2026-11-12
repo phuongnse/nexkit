@@ -136,13 +136,16 @@ def _left_out(older, first, last, shelf):
     `first` to `last`, which go whole to `shelf`."""
     count = len(older)
     span = first if first == last else f"{first} to {last}"
-    name = f"{count} older comments of a discussion, of {span}"
+    comments = "comment" if count == 1 else "comments"
+    name = f"{count} older {comments} of a discussion, of {span}"
     whole = "\n\n---\n\n".join(header + (body or "") for header, body, _, _ in older)
     path = shelf.leave_out(name, f"older-{older[-1][3]}", whole, count)
-    where = f" All {count} are whole in `{path}`." if path else ""
+    where = ""
+    if path:
+        where = f" {'It is' if count == 1 else f'All {count} are'} whole in `{path}`."
     return (
-        f"[NexKit left out the {count} older comments of this discussion here: this prompt "
-        f"keeps its latest {MAX_COMMENTS}.{where}]"
+        f"[NexKit left out the {count} older {comments} of this discussion here: this "
+        f"prompt keeps its latest {MAX_COMMENTS}.{where}]"
     )
 
 

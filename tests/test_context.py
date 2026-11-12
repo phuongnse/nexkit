@@ -784,6 +784,19 @@ class LongTextTests(unittest.TestCase):
         self.assertNotIn("NexKit left out", prompt)
         self.assertFalse(self.texts.exists())
 
+    def test_one_left_out_comment_is_named_in_the_singular(self):
+        for n in range(31):
+            self.gh.human_comment(5, f"Comment {n} done.")
+        context = gather(self.gh, {"action": "plan", "issue": 5, "note": ""}, texts=self.texts)
+        [item] = context["shortened"]
+        self.assertTrue(item["name"].startswith("1 older comment of a discussion"))
+        self.assertTrue(
+            context["discussion"].startswith(
+                "[NexKit left out the 1 older comment of this discussion here: this prompt "
+                f"keeps its latest 30. It is whole in `{item['path']}`.]"
+            )
+        )
+
     def test_each_discussion_of_a_review_names_its_own_left_out_comments(self):
         for n in range(32):
             self.gh.human_comment(5, f"Issue comment {n}.")

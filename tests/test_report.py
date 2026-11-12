@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import cli
+from nexkit.context import gather
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
 from nexkit.progress import trigger
@@ -1607,6 +1608,44 @@ class ReportTests(ReportCase):
                 }
             ],
         )
+
+    def test_a_long_review_keeps_its_blocking_findings_and_counts_the_rest(self):
+        hints = [
+            {"severity": "suggestion", "file": "", "line": 0, "body": f"Hint {n}"}
+            for n in range(1, 36)
+        ]
+        blocking = {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Wrong sign"}
+        self.candidate(review=review_result("request_changes", [*hints, blocking]))
+        self.run_report()
+        _, state = read_state(self.gh.comments(6))
+        last = state["last_review"]
+        # Blocking first, then the suggestions in the reviewer's order, up to 30.
+        bodies = [f["body"] for f in last["findings"]]
+        self.assertEqual(bodies, ["Wrong sign", *(f"Hint {n}" for n in range(1, 30))])
+        self.assertEqual(last["left_out"], 6)
+
+        # The review of the next fix round is told how many were left out.
+        decision = {"action": "fix", "issue": 5, "pr": 6, "head": "e" * 40, "note": ""}
+        fix_result = {"status": "done", "summary": "Fixed the sign.", "output": {"cause": ""}}
+        text = gather(self.gh, decision, "review", fix_result)["previous_round"]
+        self.assertIn("1. blocking, `calc.py:2`: Wrong sign", text)
+        self.assertIn("That review had 6 more findings, left out here", text)
+        # The fix agent's own prompt reads the whole review, so it lists the finding too.
+        feedback = gather(self.gh, decision, "fix")["feedback"]
+        self.assertIn("`calc.py:2`: Wrong sign", feedback)
+
+    def test_a_review_of_at_most_30_findings_is_recorded_whole_in_its_order(self):
+        findings = [
+            {"severity": "suggestion", "file": "", "line": 0, "body": f"Hint {n}"}
+            for n in range(1, 30)
+        ]
+        findings.append({"severity": "blocking", "file": "calc.py", "line": 2, "body": "Sign"})
+        self.candidate(review=review_result("request_changes", findings))
+        self.run_report()
+        _, state = read_state(self.gh.comments(6))
+        last = state["last_review"]
+        self.assertEqual([f["body"] for f in last["findings"]], [f["body"] for f in findings])
+        self.assertNotIn("left_out", last)
 
     def test_blocked_conflicts_are_listed_for_a_person(self):
         open_conflict = {

@@ -1711,6 +1711,16 @@ def close_merged_issue(gh, issue, pr, sha):
     return True, [f"Closed #{issue} as completed."]
 
 
+def _kept_findings(findings):
+    """The review's findings that the state comment keeps: all of them up to
+    `MAX_FINDINGS`, else the blocking ones first and then the others, each group in the
+    reviewer's order, so that no blocking finding is lost to suggestions written before it.
+    The cut list leads with them, as the pull request review does."""
+    if len(findings) <= MAX_FINDINGS:
+        return findings
+    return sorted(findings, key=lambda f: f.get("severity") != "blocking")[:MAX_FINDINGS]
+
+
 def _record(state, decision, row, agent, review, checks):
     """Keep what the next review and the next fix rounds need: the last review's findings
     and the recent fix rounds, each with the checks that still failed after it."""
@@ -1740,6 +1750,8 @@ def _record(state, decision, row, agent, review, checks):
             fixes[-1]["conflicts"] = (agent.get("conflicts") or [])[:MAX_FINDINGS]
         state["fixes"] = fixes
     if review:
+        findings = review.get("findings") or []
+        kept = _kept_findings(findings)
         state["last_review"] = {
             "round": row["round"],
             "head": row["head"],
@@ -1751,9 +1763,12 @@ def _record(state, decision, row, agent, review, checks):
                     "line": f.get("line") or 0,
                     "body": clip(f.get("body"), 1500),
                 }
-                for f in review.get("findings", [])[:MAX_FINDINGS]
+                for f in kept
             ],
         }
+        if len(findings) > len(kept):
+            # How many the next review's prompt is told were left out; older records lack it.
+            state["last_review"]["left_out"] = len(findings) - len(kept)
         if to_decide(review):
             state["last_review"]["decide"] = [clip(i, 300) for i in to_decide(review)]
 

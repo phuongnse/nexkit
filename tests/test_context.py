@@ -604,7 +604,11 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn(f"- Failing check `e2e` (`scripts/e2e.sh`): `{root}/e2e/`", prompt)
         self.assertIn("  - `test-results/`: a folder with 2 files", prompt)
         self.assertIn("  - `logs/app.log`: a file", prompt)
-        self.assertIn("2 more files were left out", prompt)
+        self.assertIn(
+            "2 more files were left out: a check job keeps at most 50 MB of result files, "
+            "25 MB when the checks run in several jobs.",
+            prompt,
+        )
         self.assertIn("Read these files before you run anything.", prompt)
         self.assertNotIn("`unit`", prompt.split("## Result files", 1)[1].split("## Note", 1)[0])
         # The section comes right after the feedback it explains.

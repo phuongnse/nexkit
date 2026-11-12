@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import tempfile
 import time
@@ -330,10 +331,11 @@ class ParallelChecksTests(unittest.TestCase):
     def test_each_job_keeps_its_share_of_the_result_files_limit(self):
         with (
             mock.patch.object(checks, "RESULTS_LIMIT", 9),
+            mock.patch.object(checks, "JOB_RESULTS_FLOOR", 2),
             mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(self.root / "summary.md")}),
         ):
             results = self.run_job("e2e")
-        # Three jobs share 9 bytes: the 4-byte log fits in 3 bytes no more.
+        # Three jobs share 9 bytes, more than the floor: the 4-byte log fits in 3 no more.
         self.assertEqual(results[0]["results_left_out"], 1)
         summary = (self.root / "summary.md").read_text()
         self.assertIn("each of the round's 3 check jobs keeps at most", summary)
@@ -471,6 +473,67 @@ class ResultFilesTests(unittest.TestCase):
         summary = self.summary.read_text()
         self.assertIn("**Left out** (1): a round keeps at most 0.0 MB", summary)
         self.assertIn("e2e: reports/b.txt (0.0 MB)", summary)
+
+    def trace(self, path, size):
+        """A binary result file of `size` bytes, such as a Playwright trace."""
+        target = self.repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("wb") as handle:
+            handle.write(b"PK\x03\x04\x00")
+            handle.truncate(size)
+
+    def keep(self, jobs, checks_cfg, passed=()):
+        cfg = make_config(checks=checks_cfg)
+        results = [{"name": c["name"], "passed": c["name"] in passed} for c in checks_cfg]
+        with contextlib.redirect_stdout(io.StringIO()):
+            lines = checks.keep_results(cfg, results, self.repo, self.out, jobs=jobs)
+        return results, "\n".join(lines)
+
+    def test_each_check_job_keeps_the_larger_of_its_share_and_the_floor(self):
+        self.assertEqual(checks.results_limit(1), 50_000_000)
+        self.assertEqual(checks.results_limit(2), 25_000_000)
+        self.assertEqual(checks.results_limit(13), 25_000_000)
+        self.assertEqual(checks.results_limit(17), 25_000_000)
+        # The floor never lets a job keep more than the round would with one job.
+        with mock.patch.object(checks, "JOB_RESULTS_FLOOR", 80_000_000):
+            self.assertEqual(checks.results_limit(3), 50_000_000)
+
+    def test_the_one_failing_job_of_thirteen_keeps_its_trace(self):
+        self.trace("test-results/trace.zip", 20_000_000)
+        results, summary = self.keep(
+            13, [{"name": "e2e-3", "run": "x", "results": ["test-results"]}]
+        )
+        kept = self.out / checks.RESULTS_DIR / "e2e-3/test-results/trace.zip"
+        self.assertEqual(kept.stat().st_size, 20_000_000)
+        self.assertEqual(results[0]["results_left_out"], 0)
+        self.assertIn("Kept 1 file (20.0 MB)", summary)
+
+    def test_one_job_keeps_up_to_50_mb_and_each_of_two_up_to_25_mb(self):
+        self.trace("big/trace.zip", 40_000_000)
+        self.trace("small/trace.zip", 20_000_000)
+        cfg = [
+            {"name": "e2e", "run": "x", "results": ["big"]},
+            {"name": "api", "run": "x", "results": ["small"]},
+        ]
+        results, _ = self.keep(1, cfg[:1])
+        self.assertEqual(results[0]["results_left_out"], 0)
+        shutil.rmtree(self.out)
+        results, _ = self.keep(2, cfg)
+        self.assertEqual([r["results_left_out"] for r in results], [1, 0])
+        self.assertTrue((self.out / checks.RESULTS_DIR / "api/small/trace.zip").is_file())
+
+    def test_files_past_a_jobs_budget_are_left_out_and_listed(self):
+        self.trace("test-results/a.zip", 20_000_000)
+        self.trace("test-results/b.zip", 10_000_000)
+        results, summary = self.keep(
+            13, [{"name": "e2e-1", "run": "x", "results": ["test-results"]}]
+        )
+        self.assertEqual(results[0]["results_left_out"], 1)
+        self.assertFalse((self.out / checks.RESULTS_DIR / "e2e-1/test-results/b.zip").exists())
+        self.assertIn(
+            "**Left out** (1): each of the round's 13 check jobs keeps at most 25.0 MB", summary
+        )
+        self.assertIn("e2e-1: test-results/b.zip (10.0 MB)", summary)
 
 
 class FailedTestsTests(unittest.TestCase):

@@ -2284,22 +2284,19 @@ def _runs_marker(run, attempts):
 
 
 def _failed_jobs(gh, run, attempt, failed_jobs=None, known=None):
-    """Each failed job of an attempt, linked, with its failed steps, the failures its error
-    annotations name and the end of its log, so the issue holds what an agent needs. With
-    `failed_jobs`, each failed job's name, failed commands and the tests its error
-    annotations name are added to it."""
-    lines = []
+    """Each failed job of an attempt, so the issue holds what an agent needs: its line, with
+    its link and failed steps, a line for each failure its error annotations name, and the
+    excerpt of its log (see `_log_excerpt`). With `failed_jobs`, each failed job's name,
+    failed commands and the tests its error annotations name are added to it."""
+    jobs = []
     for job in gh.attempt_jobs(run["id"], attempt):
         if job.get("conclusion") not in FAILED:
             continue
         steps = [s.get("name") for s in job.get("steps") or [] if s.get("conclusion") in FAILED]
         failed = f": {', '.join(f'`{name}`' for name in steps if name)}" if steps else ""
         link = f"[{job.get('name')}]({job['html_url']})" if job.get("html_url") else job.get("name")
-        lines.append(f"- {link}{failed}")
         notes = gh.check_run_annotations(job["id"]) if job.get("id") else []
-        for found in (_annotated(link, note) for note in notes):
-            if found:
-                lines.append("  " + found["line"].replace(f"- {link}: ", "- ", 1))
+        named = [found for found in (_annotated(link, note) for note in notes) if found]
         log = _job_log(gh, job)
         if failed_jobs is not None:
             tests = [name for name in map(_annotated_test, notes) if name]
@@ -2310,8 +2307,14 @@ def _failed_jobs(gh, run, attempt, failed_jobs=None, known=None):
                     "tests": list(dict.fromkeys(tests)),
                 }
             )
-        lines += _log_excerpt(log)
-    return lines or [_jobless_line(gh, known, run, attempt)]
+        jobs.append(
+            {
+                "line": f"- {link}{failed}",
+                "notes": ["  " + found["line"].replace(f"- {link}: ", "- ", 1) for found in named],
+                "log": _log_excerpt(log),
+            }
+        )
+    return jobs
 
 
 # The lines of a failed job's log that a CI bug issue shows, at most this many characters.
@@ -2398,26 +2401,34 @@ def _failed_output(log):
 
 
 def _log_excerpt(log):
-    """What a CI bug issue shows of a failed job's log: what it is and the end of the output
-    of its failed step (see `_failed_output`), redacted and indented, or []."""
+    """What a CI bug issue shows of a failed job's log: {"what": what it is, "text": the end
+    of the output of its failed step (see `_failed_output`), redacted}, or None."""
     part, shown = _failed_output(log)
-    tail = _log_tail(part)
-    if not tail:
-        return []
+    text = _log_tail(part)
+    if not text:
+        return None
     cut = ""
     if log.startswith(LOG_CUT.decode()):
         cut = f", from the last {DOWNLOAD_LIMIT // 1_000_000} MB of its log, which NexKit cut"
-    return ["", f"  {LOG_SHOWN[shown]}{cut}:", "", "  ```text", *tail, "  ```", ""]
+    return {"what": f"{LOG_SHOWN[shown]}{cut}", "text": text}
 
 
-def _log_tail(log, chars=LOG_CHARS):
-    """The last lines of a failed job's log, at most `chars` characters, redacted and
-    indented for the issue, or []."""
+def _log_tail(log):
+    """The last lines of a failed job's log, at most `LOG_CHARS` characters, redacted."""
     text = log[-LOG_CHARS * 4 :]
     lines = [TIMESTAMP.sub("", line).rstrip() for line in text.splitlines()]
     lines = [line[:300].replace("```", "'''") for line in lines if line.strip()][-LOG_LINES:]
-    shown = Redactor()("\n".join(lines))[-chars:]
-    return [f"  {line}" for line in shown.splitlines()]
+    return Redactor()("\n".join(lines))[-LOG_CHARS:]
+
+
+def _excerpt_lines(excerpt, chars=LOG_CHARS):
+    """A log's excerpt, at most its last `chars` characters, indented under its job; none
+    without an excerpt or `chars`."""
+    shown = excerpt["text"][-chars:] if excerpt and chars > 0 else ""
+    if not shown.strip():
+        return []
+    lines = [f"  {line}" for line in shown.splitlines()]
+    return ["", f"  {excerpt['what']}:", "", "  ```text", *lines, "  ```", ""]
 
 
 def _failed_attempts(gh, run, attempts):
@@ -2432,15 +2443,50 @@ def _failed_attempts(gh, run, attempts):
 
 
 def _failures(gh, run, failed, failed_jobs=None, known=None):
-    """Each failed attempt, linked, with its failed jobs and steps. With `failed_jobs`, the
-    failed jobs of the latest failed attempt and their failed commands are added to it."""
-    lines = []
+    """Each failed attempt: its linked line and its failed jobs (see `_failed_jobs`), else
+    what its jobless line says. With `failed_jobs`, the failed jobs of the latest failed
+    attempt and their failed commands are added to it."""
+    attempts = []
     for attempt in failed:
         url = f"{run.get('html_url')}/attempts/{attempt}"
         found = failed_jobs if attempt == failed[-1] else None
         jobs = _failed_jobs(gh, run, attempt, found, known)
-        lines += ["", f"Attempt [{attempt}]({url}):", *jobs]
+        none = "" if jobs else _jobless_line(gh, known, run, attempt)
+        attempts.append({"line": f"Attempt [{attempt}]({url}):", "jobs": jobs, "none": none})
+    return attempts
+
+
+def _failure_lines(attempts, chars=LOG_CHARS, notes=None, jobs=None):
+    """The lines of each failed attempt and its failed jobs: each job's log excerpt at most
+    `chars` characters, and with `notes` and `jobs`, at most that many error annotations
+    for each job and failed jobs for each attempt."""
+    lines = []
+    for attempt in attempts:
+        lines += ["", attempt["line"]]
+        shown = attempt["jobs"][:jobs] if jobs is not None else attempt["jobs"]
+        for job in shown:
+            kept = job["notes"][:notes] if notes is not None else job["notes"]
+            lines += [job["line"], *kept]
+            if len(kept) < len(job["notes"]):
+                more = len(job["notes"]) - len(kept)
+                lines.append(f"  - {more} more error annotations; see the job.")
+            lines += _excerpt_lines(job["log"], chars)
+        if len(shown) < len(attempt["jobs"]):
+            more = len(attempt["jobs"]) - len(shown)
+            lines.append(f"- {more} more failed jobs; see the attempt.")
+        if attempt["none"]:
+            lines.append(attempt["none"])
     return lines
+
+
+def _most(fits, low, high):
+    """The largest value from `low` to `high` that `fits`, or None when `low` does not."""
+    if not fits(low):
+        return None
+    while low < high:
+        middle = (low + high + 1) // 2
+        low, high = (middle, high) if fits(middle) else (low, middle - 1)
+    return low
 
 
 def _failed_marker(run, failed_jobs):
@@ -2449,21 +2495,73 @@ def _failed_marker(run, failed_jobs):
     return f"{CI_FAILED_PREFIX}{data} -->"
 
 
-def _failure_text(gh, workflow, run, branch, known=None):
+def _failure_text(gh, workflow, run, branch, known=None, room=None):
+    """A red branch's report of a run: each failed attempt with its failed jobs, then the
+    markers NexKit reads back. With `room`, at most that many characters, the markers kept
+    whole: what does not fit shortens first the jobs' log excerpts, each to the same length
+    at most, then each job's list of error annotations, then each attempt's list of failed
+    jobs, and the report says so."""
     sha = run.get("head_sha") or ""
     attempts = range(1, (run.get("run_attempt") or 1) + 1)
     failed_jobs = []
-    lines = _failures(gh, run, _failed_attempts(gh, run, attempts), failed_jobs, known)
-    return "\n".join(
-        [
-            f"[`{workflow}` failed]({run.get('html_url')}) on `{branch}` at {sha}, also when "
-            "run again. Failed jobs and steps of each failed attempt:",
-            *lines,
-            "",
-            f"{CI_SHA_PREFIX}{sha} -->",
-            _failed_marker(run, failed_jobs),
-            _runs_marker(run, attempts),
-        ]
+    failures = _failures(gh, run, _failed_attempts(gh, run, attempts), failed_jobs, known)
+    markers = [
+        f"{CI_SHA_PREFIX}{sha} -->",
+        _failed_marker(run, failed_jobs),
+        _runs_marker(run, attempts),
+    ]
+    intro = (
+        f"[`{workflow}` failed]({run.get('html_url')}) on `{branch}` at {sha}, also when "
+        "run again. Failed jobs and steps of each failed attempt:"
+    )
+
+    def text(chars=LOG_CHARS, notes=None, jobs=None):
+        lines = _failure_lines(failures, chars, notes, jobs)
+        note = _shortened(chars, notes, jobs)
+        return "\n".join([intro, *lines, *(["", note] if note else []), "", *markers])
+
+    def fits(**shortened):
+        return len(text(**shortened)) <= room
+
+    if room is None or fits():
+        return text()
+    chars = _most(lambda chars: fits(chars=chars), 0, LOG_CHARS - 1)
+    if chars is not None:
+        return text(chars)
+    jobs = [job for attempt in failures for job in attempt["jobs"]]
+    most = max((len(job["notes"]) for job in jobs), default=0)
+    notes = _most(lambda notes: fits(chars=0, notes=notes), 0, max(most - 1, 0))
+    if notes is not None:
+        return text(0, notes)
+    most = max((len(attempt["jobs"]) for attempt in failures), default=0)
+    jobs = _most(lambda jobs: fits(chars=0, notes=0, jobs=jobs), 0, max(most - 1, 0))
+    return text(0, 0, jobs or 0)
+
+
+def _shortened(chars, notes, jobs):
+    """What a red branch's report says it shortened (see `_failure_text`), or "" when it is
+    whole."""
+    if (chars, notes, jobs) == (LOG_CHARS, None, None):
+        return ""
+    cuts = [
+        f"each log excerpt shows at most its last {chars:,} characters"
+        if chars
+        else "the log excerpts are left out"
+    ]
+    if notes is not None:
+        cuts.append(
+            f"each job lists at most {notes} error annotations"
+            if notes
+            else "the error annotations are left out"
+        )
+    if jobs is not None:
+        cuts.append(
+            f"each attempt lists at most {jobs} failed jobs" if jobs else "the jobs are left out"
+        )
+    return (
+        f"This report is shortened to fit GitHub's limit on a text's length: {'; '.join(cuts)}. "
+        "The links of the run, its attempts and its jobs lead to all of it, with the jobs' "
+        "whole logs."
     )
 
 
@@ -2765,14 +2863,21 @@ def _record_flaky_run(gh, cfg, where, workflow, branch, known, run, unseen):
 
 
 def _report_failure(gh, cfg, where, workflow, branch, known, run):
-    text = _failure_text(gh, workflow, run, branch, known)
+    """Report a red branch's run: open its bug issue, or comment on the open one, within
+    GitHub's limit on a text's length."""
+    from .context import TEXT_LIMIT  # which imports this module
+
     issue = known["bug"]
     if issue:
-        gh.comment(issue["number"], f"It fails again on a newer commit.\n\n{text}")
+        start = "It fails again on a newer commit.\n\n"
+        text = _failure_text(gh, workflow, run, branch, known, TEXT_LIMIT - len(start))
+        gh.comment(issue["number"], f"{start}{text}")
         line = f"`{workflow}` fails again; commented on #{issue['number']}."
     else:
         people = "".join(f"@{login} " for login in cfg["notify"])
-        body = f"{CI_BUG_PREFIX}{workflow} -->\n{people}{text}"
+        start = f"{CI_BUG_PREFIX}{workflow} -->\n{people}"
+        text = _failure_text(gh, workflow, run, branch, known, TEXT_LIMIT - len(start))
+        body = f"{start}{text}"
         failures = _attempt_failures(gh, workflow, run, run.get("run_attempt") or 1, known)
         title = red_title(workflow, failures, branch)
         labels = ["bug", CI_LABEL]

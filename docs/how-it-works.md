@@ -265,7 +265,7 @@ The run so far: **28m 30s**; waited **11m 51s** before its first job started; ch
 
 | Check job | Result | Time | Checks |
 |---|---|---|---|
-| `e2e-4` (ended last: the run waited for it) | passed | 15m 13s | 14m 02s |
+| `e2e-4` (ended last) | passed | 15m 13s | 14m 02s |
 | `test-2` | 1 of 3 failed | 8m 56s | 6m 50s |
 | `smoke-1` | cancelled, no result | 5m 49s | N/A |
 ```

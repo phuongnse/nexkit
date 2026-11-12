@@ -1035,7 +1035,7 @@ def jobs_summary(cfg, parts, skipped=None, run=None, jobs=None, now=None, error=
     # Longest first; a job without a time last, in the order of the checks.
     rows.sort(key=lambda row: (row[4] is None, -(row[4] or 0)))
     for group, job, _, _, took, results in rows:
-        name = code(group) + (" (ended last: the run waited for it)" if group == last else "")
+        name = code(group) + (" (ended last)" if group == last else "")
         seconds = _checks_seconds(results)
         lines.append(
             f"| {name} | {_job_result(job, results)} "

@@ -375,12 +375,59 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(state.option_marks(recorded[0], "Close the issue"), state.CLOSING_MARK)
         self.assertEqual(state.questions(recorded), recorded)
 
+    def test_options_that_need_a_new_plan_are_kept_only_where_they_name_options(self):
+        from nexkit import state
+
+        options = ["Split the work into its own issue", "Widen it", "Close the issue"]
+        output = {
+            "questions": [
+                {"question": "A?", "options": options, "recommended": 1, "replans": [1, 2, 1]},
+                {"question": "B?", "options": options, "recommended": 1, "replans": [0, 4, True]},
+                {
+                    "question": "C?",
+                    "options": options,
+                    "recommended": 3,
+                    "replans": [3],
+                    "closes": 3,
+                },
+                {"question": "D?", "options": options, "recommended": 2, "replans": 2},
+            ]
+        }
+        agent.check_replans(output)
+        self.assertEqual([q["replans"] for q in output["questions"]], [[1, 2], [], [], []])
+        recorded = state.questions(output["questions"])
+        self.assertEqual(recorded[0]["replanning"], options[:2])
+        self.assertTrue(recorded[0]["replans"])
+        self.assertTrue(all("replanning" not in q and "replans" not in q for q in recorded[1:]))
+        # The comments mark each option that a new plan carries out.
+        marks = state.option_marks(recorded[0], options[1])
+        self.assertEqual(marks, state.REPLAN_MARK)
+        self.assertEqual(state.questions(recorded), recorded)
+
+    def test_an_implement_or_fix_question_names_the_options_that_need_a_new_plan(self):
+        for stage in ("implement", "fix"):
+            item = agent.SCHEMAS[stage]["properties"]["questions"]["items"]
+            self.assertEqual(item["properties"]["replans"]["items"], {"type": "integer"})
+            self.assertIn("replans", item["required"])
+            template = " ".join(agent._template(stage).split())
+            self.assertIn("`replans`: the numbers of the options that change the issue's", template)
+            self.assertIn(
+                "when no issue holds that work yet, the option changes the scope", template
+            )
+        self.assertNotIn(
+            "replans", agent.SCHEMAS["plan"]["properties"]["questions"]["items"]["properties"]
+        )
+        template = " ".join(agent._template("plan").split())
+        self.assertIn(
+            "the note answers a blocked round with an option that splits the issue", template
+        )
+
     def test_a_plan_or_implement_question_names_the_option_that_closes_the_issue(self):
         for stage in ("plan", "implement"):
             item = agent.SCHEMAS[stage]["properties"]["questions"]["items"]
-            self.assertEqual(
-                item["required"], ["question", "options", "recommended", "closes"], stage
-            )
+            closing = ["question", "options", "recommended", "closes"]
+            replans = ["replans"] if stage == "implement" else []
+            self.assertEqual(item["required"], [*closing, *replans], stage)
             template = " ".join(agent._template(stage).split())
             self.assertIn(
                 "`closes`: the number of the option that only closes the issue, with no "
@@ -1395,7 +1442,7 @@ class DiagnosisTests(StageCase):
             **FIX_DONE,
             "status": "blocked",
             "blocker": "The trace ends before the click.",
-            "questions": [{**asked, "recommended": 0}],
+            "questions": [{**asked, "recommended": 0, "replans": []}],
         }
         result = self.run_fix(result=blocked)
         self.assertEqual(result["status"], "blocked")

@@ -107,8 +107,9 @@ bounds:
   answer with the recommended option, or from the plan, the issue and the repository's
   docs where the repository lets the driver take that choice, in the form the entry gives.
   Closing the issue is the person's choice: never pick the option that only closes it
-  unless the repository lets the driver close issues. Answer the same question at most
-  twice per issue, then notify. When the answer is to
+  unless the repository lets the driver close issues. An option marked *(needs a new
+  plan)*, such as a split, takes `/nexkit plan` on the issue. Answer the same question at
+  most twice per issue, then notify. When the answer is to
   wait for another issue, mark the issue *blocked by* it with its reason line. A diagnosis
   round's question belongs to the diagnosis stop below.
 - **[A transient failure after NexKit's runs again](../../docs/troubleshooting.md#a-run-kept-stopping-on-a-transient-error):**

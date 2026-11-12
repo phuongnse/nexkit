@@ -1123,7 +1123,16 @@ the `null` scope, since it may have replaced a sweep that waited.
   [Troubleshooting](troubleshooting.md#a-question-without-a-recommended-option-or-asked-again)). A recommended option is
   one NexKit can carry
   out itself, a change to the plan or the code; the prompts never recommend one that
-  needs a person to act outside NexKit, such as downloading files or granting access. A plan that is too large becomes sub-issues, in
+  needs a person to act outside NexKit, such as downloading files or granting access.
+  A blocked round's question also names, in `replans`, the options that change the
+  issue's scope, such as splitting it, doing other work first or widening it, which the
+  comment marks; an option that waits for work no issue holds yet is one of them.
+  Another `/nexkit go` cannot carry such an option out, so when a blocked `/nexkit go`
+  recommends one, autopilot posts the answers and starts `/nexkit plan` with them as
+  its note, and the plan splits the issue as any plan that is too large. The `/nexkit go`
+  after that plan counts as the round the answers started, so autopilot still answers
+  once in a row. A blocked fix round that recommends such an option waits for a person,
+  since a new plan would leave its pull request behind. A plan that is too large becomes sub-issues, in
   order. A plan that is too large but suggests no parts is planned once more, with a note
   that asks for parts that each fit one session; a second such plan waits for a person. Each part of the plan names the earlier parts it needs (`depends_on`); NexKit
   keeps only earlier parts, so the parts cannot wait for each other in a cycle, and records
@@ -1511,7 +1520,7 @@ state, leaves it as it is and saves the state in a new state comment.
 | GitHub creates no job for a run, or ends it without a report, as in an outage of GitHub Actions | With autopilot, a command autopilot started, or an automatic round, starts again at once, then 30, 60 and 120 minutes after its last start; these starts cost no agent time when no job runs, and the fifth that does not run waits for a person, with a reason that names the outage. A round or continued run whose next run never starts gets that run started once more after `autopilot.lost_after_minutes`. A person's command waits for them. |
 | The agent stops at the account's usage limit | Runs the stage again on its fallback agents, if any. When all of them are at their limits, pauses the run with the earliest reset time; publishes nothing from that stage; runs the command again after the reset, unless `usage_limit.resume` is `false`. |
 | An agent's secret is missing or invalid | Reports it as an error and publishes nothing; a fallback agent without its secret is skipped instead. |
-| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person's answer that picks the option that only closes the issue closes it as not planned, with no agent run. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. When a blocked `/nexkit go` found that no change is needed, that answer closes the issue with the round's finding, without another round. After a blocked or failed `/nexkit go` that it does not answer, autopilot plans again once a collaborator commented or an issue that blocks it closed since the round started. |
+| Agent returns `blocked` | Reports its reason and questions; no automatic retry. A person's answer that picks the option that only closes the issue closes it as not planned, with no agent run. A person decides, or with `autopilot.answer: "recommended"` autopilot answers when every question has a recommended option, once in a row: when the round its answers started asks again and no person commented since, a person decides. When a blocked `/nexkit go` found that no change is needed, that answer closes the issue with the round's finding, without another round. When its recommended option changes the issue's scope (`replans`), such as a split, autopilot answers with `/nexkit plan`, not `/nexkit go`. After a blocked or failed `/nexkit go` that it does not answer, autopilot plans again once a collaborator commented or an issue that blocks it closed since the round started. |
 | Triage fails or names an unknown profile | Plans on the previous plan's profile, or `default_profile`; the plan comment says so. |
 | The latest plan's profile is no longer configured | Implement, fix and review stop before any job runs and ask for a re-plan. |
 | Patch touches a protected path | Rejects the whole change and says which paths. |

@@ -803,6 +803,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 | Its plan is too large and suggests a split | Creates each part as a sub-issue, in order, with the issue's milestone and labels, marks each part *blocked by* the earlier parts it needs, closes the issue's open NexKit pull request as superseded, and plans the parts that need no other part. |
 | Its plan has questions, and every question has a recommended option | With `answer: "recommended"`: posts the answers for the owner and starts `/nexkit plan` again. |
 | Its last `/nexkit go` or fix round was blocked, and every question has a recommended option | With `answer: "recommended"`: posts the answers and starts `/nexkit go` or `/nexkit fix` with them as the note. |
+| Its last `/nexkit go` was blocked, every question has a recommended option, and one of them changes the issue's scope, such as splitting it, doing other work first or widening it (the question's `replans`) | With `answer: "recommended"`: posts the answers and starts `/nexkit plan` with them as the note, since another `/nexkit go` cannot change the scope. When that plan is too large and suggests a split, creates the parts as for any such plan. A fix round that recommends such an option waits for a person, since a new plan would leave its pull request behind. |
 | The plan or round after autopilot's answers asks again, and no person commented since | Nothing: a person decides, and `notify` mentions them. A comment by a person lets autopilot answer again. |
 | A blocked `/nexkit go` found that no change is needed, and its one question recommends the option its `closes` names | Closes the issue as completed with the round's finding, with `answer: "recommended"`; no other round runs. |
 | Its last `/nexkit go` or fix round was blocked because its change needs protected paths | Nothing, whatever it recommends: a person makes that change, and `notify` is mentioned. |
@@ -959,6 +960,13 @@ every open issue in scope, in order, and starts the one command that moves it on
   `closes`), autopilot starts no other round: it closes the issue
   as completed with a comment that holds the finding. A round whose recommended answer
   is to wait or do more is answered as any blocked round, whatever its `no_change` says.
+  An option that changes the issue's scope, such as splitting it, doing other work first
+  or widening it, is one only a new plan carries out: the question names it in
+  `replans`, and the comment marks it. When a blocked `/nexkit go` recommends one,
+  autopilot answers with `/nexkit plan`, not `/nexkit go`, and that plan's `/nexkit go`
+  counts as the round its answers started; a blocked fix round that recommends one waits
+  for a person. The prompts list an option that waits for work no issue holds yet as such
+  an option, so autopilot never waits for an issue that does not exist.
   A question's option that only closes the issue, which the comment marks, closes it as
   not planned when a person picks it, with `/nexkit go`, `/nexkit plan` or a plain
   comment, and no agent runs; autopilot never picks it without a round's finding.

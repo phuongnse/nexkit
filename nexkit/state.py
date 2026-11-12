@@ -229,11 +229,33 @@ def closes_issue(item):
     return bool(recommended) and closing_option(item) == recommended
 
 
+def replanning_options(item):
+    """The texts of a question's options that change the issue's scope, such as splitting
+    it, doing other work first or widening it, which a new plan carries out rather than
+    the same round again. Agents name them by their numbers in `replans`, from 1; records
+    keep their texts in `replanning`."""
+    options = options_of(item)
+    if isinstance(item.get("replanning"), list):
+        return [o for o in options if o in item["replanning"]]
+    found = item.get("replans")
+    numbers = found if isinstance(found, list) else []
+    valid = {n for n in numbers if isinstance(n, int) and not isinstance(n, bool)}
+    closing = closing_option(item)
+    return [o for n, o in enumerate(options, 1) if n in valid and o != closing]
+
+
+def replans_issue(item):
+    """Whether a question's recommended option is one that only a new plan carries out."""
+    recommended = recommended_option(item)
+    return bool(recommended) and recommended in replanning_options(item)
+
+
 def questions(items):
     """Questions as {question, options, recommended}, with the recommended option's text
     or "", `closing` with the text of the option that only closes the issue, if any, and
-    `closes` when that option is the recommended one. Plans from before 4.1 hold plain
-    strings, without options."""
+    `closes` when that option is the recommended one; `replanning` with the texts of the
+    options that only a new plan carries out, if any, and `replans` when the recommended
+    one is among them. Plans from before 4.1 hold plain strings, without options."""
     found = []
     for item in items or []:
         if isinstance(item, str):
@@ -243,6 +265,7 @@ def questions(items):
         options = [clip(o, 500) for o in options_of(item)[:6]]
         recommended = recommended_option(item)
         closing = closing_option(item)
+        replanning = [clip(o, 500) for o in replanning_options(item)]
         found.append(
             {
                 "question": clip(item["question"], 1500),
@@ -250,6 +273,8 @@ def questions(items):
                 "recommended": clip(recommended, 500) if recommended else "",
                 **({"closing": clip(closing, 500)} if closing else {}),
                 **({"closes": True} if closes_issue(item) else {}),
+                **({"replanning": replanning} if replanning else {}),
+                **({"replans": True} if replans_issue(item) else {}),
             }
         )
     return found[:MAX_QUESTIONS]
@@ -257,12 +282,16 @@ def questions(items):
 
 # How comments mark the option that only closes the issue, which NexKit carries out.
 CLOSING_MARK = " (NexKit closes the issue as not planned)"
+# How comments mark an option that changes the issue's scope, which a new plan carries out.
+REPLAN_MARK = " (needs a new plan: answer with `/nexkit plan` on the issue)"
 
 
 def option_marks(item, option):
-    """The marks after an option of a question: recommended, and the one that closes."""
+    """The marks after an option of a question: recommended, the one that closes, and
+    those that need a new plan."""
     marks = " (recommended)" if option == item.get("recommended") else ""
-    return marks + (CLOSING_MARK if option == item.get("closing") else "")
+    marks += CLOSING_MARK if option == item.get("closing") else ""
+    return marks + (REPLAN_MARK if option in (item.get("replanning") or []) else "")
 
 
 # What an answer may differ by from the option it picks: case, runs of whitespace, quotes
@@ -338,6 +367,19 @@ def answers_text(comment):
     if not by_bot(comment) or not ANSWERS.search(body):
         return None
     return ANSWERS.sub("", body).strip()
+
+
+def answers_record(comment):
+    """The record of an autopilot answers comment, such as {answers, replan}, or None for
+    any other comment."""
+    match = ANSWERS.search(comment.get("body") or "") if by_bot(comment) else None
+    if not match:
+        return None
+    try:
+        data = json.loads(base64.b64decode(match.group(1)))
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else {}
 
 
 def profile_record(record):

@@ -1,5 +1,19 @@
 # Changelog
 
+## 6.8.1
+
+- With `parallel_checks`, each check job keeps up to the larger of its even share of the
+  round's 50 MB of result files and 25 MB (#262). Before, every job got only its share,
+  whether it passed or failed, though a passing job keeps nothing: in a round of 13 jobs,
+  each kept about 3.8 MB, so a failing end-to-end shard never kept its Playwright trace of
+  15 to 20 MB, and the fix round could not read it. Now:
+  - One job keeps 50 MB and two jobs 25 MB each, as before; 13 jobs keep 25 MB each.
+  - The round's artifact grows only with the number of failing jobs.
+  - Files past a job's budget are still left out and listed in its run summary, and the
+    fix prompt says how much a check job keeps.
+
+  See [Result files of failing checks](docs/configuration.md#result-files-of-failing-checks).
+
 ## 6.8.0
 
 A command that stopped on a transient error runs again after growing waits, so an outage

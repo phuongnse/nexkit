@@ -17,12 +17,17 @@ from .github import TRUSTED_ASSOCIATIONS
 from .redact import Redactor
 from .route import parse_command
 from .runlog import write_summary
-from .state import answers_text, by_bot, clip, latest_plan, plan_text, read_state
+from .state import (
+    TEXT_LIMIT,
+    answers_text,
+    by_bot,
+    clip,
+    latest_plan,
+    plan_text,
+    read_state,
+)
 
 MAX_COMMENTS = 30
-# GitHub keeps at most this many characters in an issue's body or a comment, so a text
-# reaches an agent whole up to it.
-TEXT_LIMIT = 65_536
 # What one block of comments, such as a discussion, keeps in a prompt; above TEXT_LIMIT, so
 # the latest comment always comes whole. Older comments past it keep their start, with the
 # whole text in a file.

@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import autopilot, progress, refusal
-from .checks import failing_signatures, skipped_line, skipped_names, with_skipped
+from .checks import failing_signatures, signed, skipped_line, skipped_names, with_skipped
 from .config import CONFIG_PATH, after_workflows
 from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
@@ -2066,7 +2066,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     _record(state, decision, row, agent or {}, review, checks)
     # The checks this round's fix was asked to fix, before they are replaced.
     before = failing_signatures((state.get("feedback") or {}).get("checks"))
-    state["feedback"] = {"head": head, "checks": checks, "review": review}
+    state["feedback"] = {"head": head, "checks": signed(checks), "review": review}
     repeated = [
         name
         for name, signature in failing_signatures(checks).items()

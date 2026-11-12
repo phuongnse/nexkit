@@ -7,14 +7,17 @@ agent, verify and review jobs keep read-only tokens.
 
 from __future__ import annotations
 
+import copy
 import sys
 
+from .checks import FAILURE_LINES, failing_lines
 from .github import GitHubError, run_url
 from .state import (
     CONTINUED,
     PAUSED,
     RUNNING,
     SUCCESS,
+    TEXT_LIMIT,
     find_run,
     next_round,
     render_run,
@@ -85,13 +88,123 @@ def save_round(gh, pr, comment_id, row, text=""):
     _save(gh, pr, comment_id, render_run(row, text))
 
 
+# What `fit_state` shortens, in this order, until the state comment fits: each step keeps
+# the most it can down to its floor, and only when that is not enough goes on to the next.
+# A failing check's output keeps its end, as NexKit stores it; a finding keeps its start.
+FIT_STEPS = (
+    ("output", 2_000),
+    ("suggestions", 300),
+    ("failure_lines", 0),
+    ("output", 0),
+    ("blocking", 300),
+    ("suggestions", 0),
+    ("blocking", 0),
+    ("fixes", 0),
+)
+
+
+def _fit_failing(state):
+    """The failing checks of the state's feedback that `fit_state` may shorten: those whose
+    failure signature it recorded, so shortening never changes how they compare."""
+    checks = (state.get("feedback") or {}).get("checks") or []
+    return [
+        check
+        for check in checks
+        if isinstance(check, dict) and not check.get("passed") and check.get("signature")
+    ]
+
+
+def _fit_findings(state, blocking):
+    """The blocking, or other, findings of the state's feedback and of its last review."""
+    found = []
+    for review in ((state.get("feedback") or {}).get("review"), state.get("last_review")):
+        findings = review.get("findings") if isinstance(review, dict) else None
+        for finding in findings or []:
+            if isinstance(finding, dict) and (finding.get("severity") == "blocking") == blocking:
+                found.append(finding)
+    return found
+
+
+def _fit_most(state, key):
+    """How much of what `key` caps the state holds, so no cap above it changes anything."""
+    if key == "output":
+        return max((len(c.get("output") or "") for c in _fit_failing(state)), default=0)
+    if key == "failure_lines":
+        return FAILURE_LINES
+    if key == "fixes":
+        return len(state.get("fixes") or [])
+    found = _fit_findings(state, key == "blocking")
+    return max((len(str(f.get("body") or "")) for f in found), default=0)
+
+
+def _fitted(state, caps):
+    """A copy of `state` with what `caps` names cut to its cap."""
+    state = copy.deepcopy(state)
+    for check in _fit_failing(state):
+        output, most = check.get("output") or "", caps.get("output")
+        if most is not None and len(output) > most:
+            # Its end, as NexKit stores it: the summary that test runners print last. The
+            # lines that report a failure in what goes join those kept from before it.
+            cut = len(output) - most
+            earlier = list(check.get("failure_lines") or []) + failing_lines(output[:cut])
+            check["output"] = output[cut:]
+            if earlier:
+                check["failure_lines"] = earlier[:FAILURE_LINES]
+            check["output_cut"] = True
+        lines, most = check.get("failure_lines"), caps.get("failure_lines")
+        if most is not None and lines and len(lines) > most:
+            check["failure_lines"] = lines[:most]
+            check["output_cut"] = True
+    for key in ("suggestions", "blocking"):
+        most = caps.get(key)
+        if most is None:
+            continue
+        for finding in _fit_findings(state, key == "blocking"):
+            body = str(finding.get("body") or "")
+            if len(body) > most:
+                finding["body"] = body[:most] + " […]"
+    most = caps.get("fixes")
+    if most is not None:
+        state["fixes"] = (state.get("fixes") or [])[len(state.get("fixes") or []) - most :]
+    return state
+
+
+def fit_state(state, limit=TEXT_LIMIT):
+    """`state` as its comment can hold it: unchanged when its comment fits in `limit`
+    characters, else with what FIT_STEPS names shortened, each step to the most that fits,
+    so that a pull request with many failing checks or a long review keeps its state. A
+    shortened check's output says so (`output_cut`) to the prompt that shows it."""
+
+    def fits(caps):
+        return len(render_state(_fitted(state, caps))) <= limit
+
+    caps = {}
+    if fits(caps):
+        return state
+    for key, floor in FIT_STEPS:
+        most = _fit_most(state, key)
+        if caps.get(key) is not None:
+            most = min(most, caps[key])
+        if most <= floor:
+            continue
+        if fits({**caps, key: floor}):
+            low, high = floor, most
+            while low < high:
+                middle = (low + high + 1) // 2
+                low, high = (middle, high) if fits({**caps, key: middle}) else (low, middle - 1)
+            return _fitted(state, {**caps, key: low})
+        caps[key] = floor
+    return _fitted(state, caps)
+
+
 def save_state(gh, pr, comment_id, state):
-    """Edit the state comment. A v1.1.0 state comment is left as it is; a new one replaces it."""
+    """Edit the state comment, within GitHub's limit on a comment's length (see
+    `fit_state`). A v1.1.0 state comment is left as it is; a new one replaces it."""
     if "rounds" in state:
         state = {key: value for key, value in state.items() if key != "rounds"}
         state["version"] = 2
         comment_id = None
-    _save(gh, pr, comment_id, render_state(state))
+    _save(gh, pr, comment_id, render_state(fit_state(state)))
 
 
 def show_command(gh, decision, status, text="", comments=None, **fields):

@@ -16,6 +16,8 @@ import re
 from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
 from .schema import filled
 
+# GitHub keeps at most this many characters in an issue's body or a comment.
+TEXT_LIMIT = 65_536
 ACTIONS_BOT = "github-actions[bot]"
 # Who writes as NexKit: the App that `use_app` names, and only it. A pull request's own CI
 # can write as the Actions bot, and NexKit's App starts that CI on code that an agent wrote,

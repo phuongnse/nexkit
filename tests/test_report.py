@@ -25,7 +25,14 @@ from nexkit.report import (
     workflow_file,
 )
 from nexkit.route import route
-from nexkit.state import check_fingerprint, empty_state, read_state, render_run, render_state
+from nexkit.state import (
+    TEXT_LIMIT,
+    check_fingerprint,
+    empty_state,
+    read_state,
+    render_run,
+    render_state,
+)
 from nexkit.usage import parse_iso, shown
 from tests.support import FakeGitHub, make_config
 
@@ -1455,6 +1462,68 @@ class ReportTests(ReportCase):
     def next_round(self):
         inputs = self.gh.dispatches[-1]["inputs"]
         return route(self.gh, "workflow_dispatch", {"sender": {"login": "nexkit"}}, inputs)
+
+    def many_failing(self, number):
+        """Six failing e2e shards, each with an output as long as NexKit stores, whose
+        failure line comes first and changes its numbers each round, as a run's would."""
+        output = f"  ✘ {number} desk.spec.ts:42 › picks an option ({number}.3s)\n"
+        output += "teardown ok\n" * 990 + "1 failed"
+        check = {"run": "scripts/e2e.sh", "exit_code": 1, "passed": False, "output": output}
+        shards = [{**check, "name": f"e2e-{n}"} for n in range(1, 7)]
+        self.write("nexkit-checks", "checks.json", shards)
+
+    def state_comment(self):
+        [body] = [c["body"] for c in self.gh.comments(6) if "<!-- nexkit:state " in c["body"]]
+        return body
+
+    def test_many_failing_checks_and_a_long_review_keep_the_state_within_the_limit(self):
+        findings = [
+            {"severity": "suggestion", "file": "a.py", "line": n, "body": "Rename it. " * 140}
+            for n in range(1, 31)
+        ]
+        findings.append({"severity": "blocking", "file": "b.py", "line": 7, "body": "Off. " * 300})
+        self.candidate(checks_pass=False, review=review_result("request_changes", findings))
+        self.many_failing(1)
+        self.run_report(cfg=make_config(fix={"max_auto_rounds": 5}))
+        self.assertLessEqual(len(self.state_comment()), TEXT_LIMIT)
+        _, state = read_state(self.gh.comments(6))
+        shards = state["feedback"]["checks"]
+        self.assertEqual(len(shards), 6)
+        for shard in shards:
+            self.assertTrue(shard["output_cut"])
+            self.assertTrue(shard["output"].endswith("teardown ok\nteardown ok\n1 failed"))
+            self.assertEqual(shard["signature"], "✘ desk.spec.ts: › picks an option ()")
+        blocking = state["feedback"]["review"]["findings"][-1]
+        self.assertEqual(blocking["body"], "Off. " * 300)  # whole: suggestions go first
+
+        # The next fix round still sees each shard's failure line and real end.
+        fix = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
+        feedback = gather(self.gh, fix)["feedback"]
+        self.assertEqual(feedback.count("✘ 1 desk.spec.ts:42 › picks an option (1.3s)"), 6)
+        self.assertEqual(feedback.count("teardown ok\n1 failed\n```"), 6)
+        self.assertIn("Off. Off.", feedback)
+
+        # Failing the same way after a fix compares by the recorded signatures, not by
+        # what the state comment kept of the output.
+        agent = {"status": "done", "summary": "Wrapped the popup.", "output": {"cause": ""}}
+        self.write("nexkit-agent", "result.json", agent)
+        self.many_failing(2)
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
+        self.run_report(d=d, cfg=make_config(fix={"max_auto_rounds": 5}), head="e" * 40)
+        self.assertLessEqual(len(self.state_comment()), TEXT_LIMIT)
+        _, state = read_state(self.gh.comments(6))
+        self.assertEqual(state["feedback"]["repeated"], [f"e2e-{n}" for n in range(1, 7)])
+
+    def test_a_state_that_fits_is_saved_as_it_is(self):
+        self.candidate(checks_pass=False, review=review_result("request_changes"))
+        self.failing("  ✘ 1 desk.spec.ts:42 › picks an option (12.3s)\n" + "ok\n" * 3_000)
+        self.run_report()
+        _, state = read_state(self.gh.comments(6))
+        [check] = state["feedback"]["checks"]
+        self.assertNotIn("output_cut", check)
+        self.assertEqual(
+            len(check["output"]), len("  ✘ 1 desk.spec.ts:42 › picks an option (12.3s)\n") + 9_000
+        )
 
     def test_a_check_that_fails_the_same_way_twice_gets_a_diagnosis_round(self):
         self.candidate(checks_pass=False, review=review_result("request_changes"))

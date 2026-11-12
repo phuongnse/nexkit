@@ -284,12 +284,27 @@ def failure_signature(output):
 
 
 def failing_signatures(results):
-    """{check name: failure signature} for each failed check of `results`."""
+    """{check name: failure signature} for each failed check of `results`: the signature
+    the result recorded (`signed`), since the state comment may keep less of its output,
+    else that of its output."""
     return {
-        str(result.get("name")): failure_signature(result.get("output"))
+        str(result.get("name")): result.get("signature") or failure_signature(result.get("output"))
         for result in results or []
         if isinstance(result, dict) and not result.get("passed")
     }
+
+
+def signed(results):
+    """`results` with each failed check's failure signature recorded, for the state comment,
+    which may later keep only part of its output (`state.fit_state`)."""
+    if results is None:
+        return None
+    return [
+        {**result, "signature": failure_signature(result.get("output"))}
+        if isinstance(result, dict) and not result.get("passed")
+        else result
+        for result in results
+    ]
 
 
 def test_name(title, file=""):
@@ -655,7 +670,7 @@ def _fenced(text):
     return f"{fence(text)}\n{text}\n{fence(text)}"
 
 
-def _failure_lines(text):
+def failing_lines(text):
     """The lines of `text` that report a failure (FAILURE_LINE), stripped, each at most
     FAILURE_LINE_WIDTH characters."""
     return [
@@ -669,7 +684,7 @@ def kept_output(output):
     """What a check's result keeps of its `output`: the last OUTPUT_TAIL characters, and in
     `failure_lines` the first FAILURE_LINES lines before them that report a failure, which
     that end would lose, such as a failure that a long teardown follows."""
-    earlier = _failure_lines(output[:-OUTPUT_TAIL])[:FAILURE_LINES]
+    earlier = failing_lines(output[:-OUTPUT_TAIL])[:FAILURE_LINES]
     return {"output": output[-OUTPUT_TAIL:], **({"failure_lines": earlier} if earlier else {})}
 
 
@@ -684,33 +699,38 @@ def output_text(check, tail, lines, keep=None):
     raw = check.get("output") or ""
     output = raw.rstrip()
     earlier = [str(line) for line in check.get("failure_lines") or []]
-    if len(output) <= tail and not earlier:
+    # The state comment kept less of it, to fit GitHub's limit (`state.fit_state`).
+    cut = bool(check.get("output_cut"))
+    if len(output) <= tail and not earlier and not cut:
         return f"Output:\n\n{_fenced(output)}"
+    if cut and not output and not earlier:
+        return (
+            "NexKit left its output out of the state comment, to fit GitHub's limit on a "
+            "comment's length; the run's links lead to it."
+        )
     end = output[-tail:]
     if len(output) > tail and output[-tail - 1] != "\n" and "\n" in end:
         end = end[end.index("\n") + 1 :]
-    found = earlier + _failure_lines(output[: len(output) - len(end)])
+    found = earlier + failing_lines(output[: len(output) - len(end)])
     shown = found[:lines]
     text = output
     if earlier:
         text = (
             "Lines before the output that NexKit kept that report a failure or an error:\n\n"
             + "\n".join(earlier)
-            + f"\n\nThe output NexKit kept, its last {OUTPUT_TAIL:,} characters:\n\n{output}"
+            + f"\n\nThe output NexKit kept, its last {len(raw):,} characters:\n\n{output}"
         )
     path = keep(text) if keep else ""
     where = ""
-    if path and (earlier or len(raw) >= OUTPUT_TAIL):
+    if path and (earlier or cut or len(raw) >= OUTPUT_TAIL):
         also = ", with the lines before them that report a failure" if earlier else ""
-        where = (
-            f"; the output NexKit kept (its last {OUTPUT_TAIL:,} characters{also}) is in `{path}`"
-        )
+        where = f"; the output NexKit kept (its last {len(raw):,} characters{also}) is in `{path}`"
     elif path:
         where = f"; the whole output is in `{path}`"
     parts = []
     if shown:
-        cut = len(found) > len(shown) or len(earlier) >= FAILURE_LINES
-        which = f"the first {len(shown)}" if cut else "all"
+        partly = cut or len(found) > len(shown) or len(earlier) >= FAILURE_LINES
+        which = f"the first {len(shown)}" if partly else "all"
         parts.append(
             f"Lines that report a failure or an error ({which}):\n\n" + _fenced("\n".join(shown))
         )

@@ -728,8 +728,8 @@ class OutputTextTests(unittest.TestCase):
         text = checks.output_text(check, 100, 5, lambda whole: kept.append(whole) or "/t/x.txt")
         self.assertIn("(all):\n\n```\nFAIL early\nFAIL late\n```", text)
         self.assertIn(
-            "the output NexKit kept (its last 12,000 characters, with the lines before them "
-            "that report a failure) is in `/t/x.txt`",
+            f"the output NexKit kept (its last {len(output):,} characters, with the lines "
+            "before them that report a failure) is in `/t/x.txt`",
             text,
         )
         [whole] = kept
@@ -738,6 +738,15 @@ class OutputTextTests(unittest.TestCase):
         self.assertTrue(whole.endswith(output))
         text = checks.output_text(check, 100, 1)
         self.assertIn("(the first 1):\n\n```\nFAIL early\n```", text)
+
+    def test_an_output_the_state_comment_shortened_says_so(self):
+        check = {"output": "teardown ok\n1 failed", "output_cut": True, "failure_lines": ["FAIL a"]}
+        text = checks.output_text(check, 100, 5, lambda _: "/t/x")
+        self.assertIn("(the first 1):\n\n```\nFAIL a\n```", text)
+        self.assertIn("the output NexKit kept (its last 20 characters, with the lines", text)
+        self.assertNotIn("whole output", text)
+        text = checks.output_text({"output": "", "output_cut": True}, 100, 5)
+        self.assertIn("left its output out of the state comment", text)
 
     def test_a_kept_tail_is_not_called_the_whole_output(self):
         text = checks.output_text({"output": "x" * checks.OUTPUT_TAIL}, 100, 5, lambda _: "/t/x")

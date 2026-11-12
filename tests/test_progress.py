@@ -750,5 +750,51 @@ class LatestClosedIssueTests(unittest.TestCase):
             self.assertIsNone(gh.latest_closed_issue(1))
 
 
+class FitStateTests(unittest.TestCase):
+    def failing(self, name, output, signature="FAIL x"):
+        return {
+            "name": name,
+            "run": "make",
+            "passed": False,
+            "output": output,
+            "signature": signature,
+        }
+
+    def test_a_state_that_fits_is_the_same_object(self):
+        state = {**empty_state(5), "feedback": {"checks": [self.failing("e2e", "FAIL x")]}}
+        self.assertIs(progress.fit_state(state), state)
+
+    def test_blocking_findings_are_shortened_only_after_every_other_finding(self):
+        review = {
+            "findings": [
+                {"severity": "suggestion", "file": "a.py", "line": 1, "body": "s" * 20_000},
+                {"severity": "blocking", "file": "b.py", "line": 2, "body": "b" * 60_000},
+            ]
+        }
+        state = {**empty_state(5), "feedback": {"review": review}}
+        fitted = progress.fit_state(state)
+        self.assertLessEqual(len(render_state(fitted)), progress.TEXT_LIMIT)
+        suggestion, blocking = fitted["feedback"]["review"]["findings"]
+        self.assertEqual(suggestion["body"], "s" * 300 + " […]")
+        self.assertTrue(blocking["body"].endswith(" […]"))
+        self.assertGreater(len(blocking["body"]), 40_000)
+        self.assertEqual(len(state["feedback"]["review"]["findings"][1]["body"]), 60_000)
+
+    def test_a_cut_output_keeps_its_end_and_its_failure_lines(self):
+        output = "FAIL early one\nFAIL early two\n" + "x" * 70_000 + "\nend"
+        state = {**empty_state(5), "feedback": {"checks": [self.failing("e2e", output)]}}
+        [check] = progress.fit_state(state)["feedback"]["checks"]
+        self.assertTrue(check["output_cut"])
+        self.assertTrue(check["output"].endswith("x\nend"))
+        self.assertEqual(check["failure_lines"], ["FAIL early one", "FAIL early two"])
+        self.assertEqual(check["signature"], "FAIL x")
+
+    def test_a_check_without_a_recorded_signature_keeps_its_output(self):
+        # Saved by an older NexKit: shortening it would change how it compares.
+        old = {"name": "e2e", "passed": False, "output": "x" * 70_000}
+        state = {**empty_state(5), "feedback": {"checks": [old]}}
+        self.assertEqual(progress.fit_state(state)["feedback"]["checks"][0], old)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.10.1
+
+- The state comment keeps no output of a passed check (#280), since no prompt reads it.
+  Before, it kept up to 12,000 characters of every check of the latest feedback, so with
+  many passed checks, shortening the comment to fit GitHub's limit cut the failing checks'
+  output and then every finding, blocking ones too. In phuongnse/axis#3856, 13 passed
+  checks held 107,569 characters, every finding became ` […]`, and fix rounds 2 and 3
+  could only guess at the blocking finding.
+  - A state an older release saved drops passed checks' output first, before anything a
+    prompt reads is shortened. A state that fits is saved unchanged.
+  - A check that passed in between still never counts as failing the same way after a fix.
+
 ## 6.10.0
 
 With `parallel_checks`, the run summary shows the check jobs as a whole.

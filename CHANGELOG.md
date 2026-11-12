@@ -1,5 +1,22 @@
 # Changelog
 
+## 6.10.0
+
+With `parallel_checks`, the run summary shows the check jobs as a whole.
+
+- `combine` writes a section to the run summary (#277): one line with the run's time so
+  far, its wait before the first job started, and the time from the first check job's
+  start to the last one's end; then one row per check job, longest first, with its
+  result, its time and its checks' time. A failed, cancelled or resultless job is listed
+  with what happened. A job that ended last without being the first row, as after waiting
+  for a runner, is marked with how late it started. Before, finding the job the run
+  waited for meant opening every job or reading the API.
+  - The times come from the Actions API, so `combine` reads with `actions: read`, which
+    the caller workflow already grants. It still never checks out or runs repository
+    code. When the API cannot be read, the summary says why and the times are `N/A`.
+
+  See [Logs, summary and artifacts](docs/how-it-works.md#logs-summary-and-artifacts).
+
 ## 6.9.0
 
 Agents and people see what failed: a CI bug issue shows the failed step's error, prompts

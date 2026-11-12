@@ -1,5 +1,33 @@
 # Changelog
 
+## 6.11.0
+
+A blocked round that recommends changing the issue's scope plans again, and the parts of a
+split prove and check what later parts rely on.
+
+- A blocked `/nexkit go` whose recommended option changes the issue's scope, such as
+  splitting it, doing other work first or widening it, starts `/nexkit plan` with the
+  answers, not another `/nexkit go` (#283). Before, autopilot answered such an option and
+  started `/nexkit go` again, which can create no issue: in phuongnse/axis#3864 two
+  implement rounds ran, nothing was split, and the issue waited for a person.
+  - Implement and fix rounds name these options in their questions' `replans`, and
+    comments mark them *(needs a new plan: answer with `/nexkit plan` on the issue)*. An
+    option that waits for work no issue holds yet is one of them.
+  - The plan is asked for parts in `split` when the answer splits the issue or does other
+    work first, and a plan that is too large splits as before. Autopilot still answers
+    once in a row: the `/nexkit go` after that plan is the round its answers started.
+  - A blocked fix round that recommends such an option waits for a person, since a new
+    plan would leave its pull request behind.
+
+  See *Answers and splits* in [Autopilot](docs/how-it-works.md#autopilot).
+- A part of a split that later parts depend on gets acceptance criteria that prove end to
+  end the behaviour they rely on, not only that it starts or answers (#284). The plan of
+  a later part reads the earlier parts' text, state and latest plan, names what it assumes
+  they do and checks it in the code; an assumption the code does not bear out, or a part
+  still open, goes in its risks or questions. Before, in phuongnse/axis#3854, an earlier
+  part merged with a criterion that never covered what the next part needed, and the gap
+  showed only when that part was implemented.
+
 ## 6.10.1
 
 - The state comment keeps no output of a passed check (#280), since no prompt reads it.

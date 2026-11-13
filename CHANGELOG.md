@@ -1,5 +1,20 @@
 # Changelog
 
+## 6.11.1
+
+- A mention that needs a person, and the reason `nexkit status` gives, list what the person
+  decides whole (#287): every checklist item a person decides with what the review found,
+  every criterion the review could not verify, and every question of a plan or a blocked
+  round with its options. Before, they quoted only the first, cut to 100 characters, then
+  said "and N more". In phuongnse/axis#3911 the cut landed inside a link and the mention
+  left out what the review found, so the owner had to open the round's comment to decide.
+  - Each stays in a code span, as before, so a mention still reaches only `notify`.
+  - Only a list longer than 12,000 characters, which keeps the run's marker within
+    GitHub's limit on a comment, ends early, at the end of a word, and says that NexKit cut
+    it and which comment has it whole.
+  - A round that carries the approval over to a new head, and a person's pull request's
+    round, list what the review found for each item too.
+
 ## 6.11.0
 
 A blocked round that recommends changing the issue's scope plans again, and the parts of a

@@ -137,7 +137,8 @@ bounds:
   pull request. When nothing can show a criterion, or a later approved round still leaves
   one unverifiable, notify with what the diff and the check results show for each.
 - **[The review job errored](../../docs/troubleshooting.md#the-review-job-errored):**
-  comment `/nexkit review` once. For an authentication error, notify.
+  comment `/nexkit review` once. For an authentication error that NexKit does not treat as
+  transient, notify.
 - **[A refused merge](../../docs/troubleshooting.md#the-automatic-merge-was-refused):**
   only what NexKit leaves to a person. When the checks neither passed nor failed within
   six hours, act on what their runs show, or notify. For a rule on the default branch, or
@@ -197,7 +198,7 @@ Notify only for:
   the issue or the docs;
 - a diagnosis or a time-out whose evidence shows no cause;
 - a split that would go below three levels;
-- an authentication error;
+- an authentication error that NexKit does not treat as transient;
 - a merge refused by a rule on the default branch, or one that waits while its issue is
   outside the scope;
 - an approved pull request with a criterion that no test or check can show, or that

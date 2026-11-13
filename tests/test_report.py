@@ -21,6 +21,7 @@ from nexkit.report import (
     report,
     retry_line,
     review_body,
+    review_failure,
     shortened_line,
     workflow_file,
 )
@@ -752,6 +753,19 @@ class ReportTests(ReportCase):
             dispatch["inputs"],
             {"command": "review", "number": "6", "note": "", "auto": "autopilot,retry"},
         )
+
+    def test_a_review_stopped_by_cloudflare_runs_again_without_asking_for_new_secrets(self):
+        cloudflare = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"
+        for transient, secrets in ((True, False), (False, True)):
+            reviewed = {"status": "error", "error": cloudflare}
+            if transient:
+                reviewed["transient"] = True
+            _, message = review_failure(reviewed)
+            self.assertEqual("secrets are fixed" in message, secrets, message)
+        self.candidate(review={"status": "error", "error": cloudflare, "transient": True})
+        outcome = self.run_report(d=decision("fix", pr=6, target=6, head=HEAD))
+        self.assertEqual(outcome["outcome"], "retry_waiting")
+        self.assertNotIn("secrets", self.gh.run_comments(6)[-1]["body"])
 
     def test_publish_failure(self):
         self.write("nexkit-agent", "result.json", {"status": "done"})

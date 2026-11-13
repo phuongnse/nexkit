@@ -138,7 +138,7 @@ class InterpretTests(unittest.TestCase):
         self.assertNotIn("transient", limited)
 
     def test_an_api_error_is_transient_by_its_status_and_whether_it_reached_the_api(self):
-        def stop(status, text, request_id=None, before=()):
+        def stop(status, text, request_id=None, before=(), kind=None):
             # As Claude Code 2.1.311 reports an API error: its own message, then the result.
             said = {
                 "type": "assistant",
@@ -149,6 +149,8 @@ class InterpretTests(unittest.TestCase):
             }
             if request_id:
                 said["request_id"] = request_id
+            if kind:
+                said["api_error"] = kind
             result = {
                 "subtype": "success",
                 "is_error": True,
@@ -183,6 +185,11 @@ class InterpretTests(unittest.TestCase):
             stop(401, "Failed to authenticate. API Error: 401 invalid x-api-key", "req_4"),
             stop(401, "Failed to authenticate. API Error: 401 Connection error", "req_5"),
             stop(400, "API Error: 400 prompt is too long", "req_6"),
+            # A typed kind names a cause that a wait does not clear, whatever the status.
+            stop(429, "You're out of usage credits", "req_7", kind="model_requires_usage_credits"),
+            stop(503, "API Error: 503 credits", "req_8", kind="long_context_credits_required"),
+            # A 429 that says no rate limit, such as an organization's policy.
+            stop(429, "Your organization has turned off Claude Code", "req_9"),
         ):
             self.assertEqual(result["status"], "error")
             self.assertNotIn("transient", result)

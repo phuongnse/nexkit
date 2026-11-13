@@ -200,24 +200,29 @@ def _rejected_until(event):
 
 
 def _api_error(event):
-    """The status of the API error that Claude Code reports in its own message `event`, and
-    whether the API's `request-id` came with it, or None."""
+    """What Claude Code reports of the API error in its own message `event`, or None: the
+    HTTP status, whether the API's `request-id` came with it, and the error's typed kind
+    (`api_error`), which Claude Code gives only to causes that another try cannot fix, such
+    as usage credits that are off, an organization's policy or a PDF over the API's limit."""
     status = event.get("api_error_status") if event.get("type") == "assistant" else None
     if not isinstance(status, int) or isinstance(status, bool):
         return None
-    return status, bool(event.get("request_id"))
+    return status, bool(event.get("request_id")), event.get("api_error")
 
 
-def _passing(api_error):
-    """Whether an API error with this status, and with or without the API's request id, is
-    one that another try later may pass: the API overloaded or failing, a rate limit that is
-    not a usage limit, or a 403 that never reached the API, because something in front of it
-    turned the runner away, such as Cloudflare's challenge page for its IP address. The API
-    sends a request id with each answer, its own refusals of a key included."""
-    if api_error is None:
+def _passing(api_error, texts):
+    """Whether an API error is one that another try later may pass: the API overloaded or
+    failing, a 403 that never reached the API, because something in front of it turned the
+    runner away, such as Cloudflare's challenge page for its IP address, or a 429 that says
+    it is a rate limit. The API sends a request id with each answer, its own refusals of a
+    key included. A 429 that is not a usage limit can still be one that no wait clears, such
+    as an organization's policy that turned the service off, so its text decides."""
+    status, reached, kind = api_error
+    if kind:
         return False
-    status, reached = api_error
-    return status >= 500 or status == 429 or (status == 403 and not reached)
+    if status == 429:
+        return bool(TRANSIENT.search(texts))
+    return status >= 500 or (status == 403 and not reached)
 
 
 # The tool through which Claude Code takes the result that `--json-schema` asks for.
@@ -336,7 +341,7 @@ class ClaudeReader(Reader):
             texts = " ".join(str(text) for text in (said, stderr, self.last_text) if text)
             # A CLI that exited before the model answered never got to the work.
             outcome.transient = (
-                _passing(self.api_error)
+                _passing(self.api_error, texts)
                 if self.api_error
                 else bool(TRANSIENT.search(texts)) or (not self.result and not self.answered)
             )

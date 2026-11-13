@@ -531,7 +531,8 @@ def review_failure(reviewed):
         reason = one_line(reviewed["error"])[:500]
     else:
         reason = "the review agent returned no verdict"
-    if reviewed and ACCESS_ERROR.search(reason):
+    # A transient error, such as a 403 from a page in front of the API, runs again by itself.
+    if reviewed and not reviewed.get("transient") and ACCESS_ERROR.search(reason):
         advice = (
             "Another try will stop the same way until the review agent's secrets are fixed: "
             f"see [Troubleshooting]({TROUBLESHOOTING}). Then comment `/nexkit review`."

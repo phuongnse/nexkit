@@ -235,7 +235,10 @@ command again after the reset time shown:
 **"The AI review did not complete: …".** The round's comment and the `nexkit/review`
 status say why the review stopped. When it is a 401, 403 or another authentication error,
 another `/nexkit review` stops the same way: fix the review agent's secret first, or point
-the review at another agent in `.nexkit/config.json`. A timeout or a review that returned
+the review at another agent in `.nexkit/config.json`. A 403 that never reached the API,
+such as Cloudflare's challenge page for the runner's IP address, is not one: NexKit runs
+the review again after the waits of
+[`retry.wait_minutes`](configuration.md#transient-errors). A timeout or a review that returned
 no verdict can be tried again with `/nexkit review`.
 
 **"The agent finished without changing any files".** The implement or fix agent found
@@ -632,8 +635,8 @@ cannot show is hard to answer, so reword it.
 
 NexKit already ran the review again after the waits of `retry.wait_minutes`, after a
 transient error or a review that left no result. The round's comment says why. Comment
-`/nexkit review` to try again, unless it names an authentication error: fix the review agent's secret first, since another try
-stops the same way (see ["The AI review did not complete"](#agents)).
+`/nexkit review` to try again, unless it names an authentication error that NexKit does not treat
+as transient: fix the review agent's secret first, since another try stops the same way (see ["The AI review did not complete"](#agents)).
 
 ### The automatic merge was refused
 

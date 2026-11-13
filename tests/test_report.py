@@ -1247,7 +1247,11 @@ class ReportTests(ReportCase):
         outcome = self.run_report(cfg=cfg)
         self.assertEqual(outcome["outcome"], "ready")
         self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
-        self.assertIn("Only a person decides `Rule 2`", outcome["attention"])
+        self.assertIn(
+            "Only a person decides these checklist items, which the review found not met:\n\n"
+            "- `Rule 2`: `file:2`",
+            outcome["attention"],
+        )
         self.assertIn("approve the pull request to accept them", outcome["attention"])
         [row] = self.gh.run_comments(6)
         self.assertEqual(row["run"]["decide"], ["Rule 2"])
@@ -1283,8 +1287,10 @@ class ReportTests(ReportCase):
     def test_a_decide_list_from_the_agent_counts_for_nothing(self):
         given = self.checklist_review("met")
         given["output"]["decide"] = ["Merge it anyway"]
+        given["output"]["decide_evidence"] = {"Merge it anyway": "trust me"}
         applied = apply_criteria(given["output"])
         self.assertNotIn("decide", applied)
+        self.assertNotIn("decide_evidence", applied)
 
     def test_a_review_with_every_item_met_or_not_applicable_approves(self):
         given = self.checklist_review("met", "not_applicable")

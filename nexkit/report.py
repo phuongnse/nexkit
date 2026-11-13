@@ -181,6 +181,12 @@ PAUSED_REASON = autopilot.person(
 # Bounds for what the state comment keeps for the next review.
 MAX_FINDINGS = 30
 MAX_FIXES = 5
+# What the review found for a checklist item a person decides, as the state keeps it.
+DECIDE_EVIDENCE = 1_000
+# The most characters of a reason's list of what a person decides. The run marker of a
+# round's comment holds the reason in base64, beside the round's text that lists the same,
+# and the comment fits GitHub's limit (`state.TEXT_LIMIT`).
+LISTED_LIMIT = 12_000
 # How a failed review's reason fits in a commit status; GitHub allows 140 characters.
 STATUS_LIMIT = 140
 # An agent's error that another try cannot fix: the credential, endpoint or deployment.
@@ -267,14 +273,19 @@ def apply_criteria(review):
     blocking finding and requests changes, whatever verdict the reviewer returned. An item
     not met that a person decides is no finding: it goes to `decide`, and when nothing else
     blocks, the review approves, so that no fix round starts and a person's approval
-    merges (see `to_decide`)."""
+    merges (see `to_decide`), with what the review found for each in `decide_evidence`."""
     unmet = _criteria(review, "unmet")
     not_met = _not_met(review)
-    decide = [clip(c["item"], 300) for c in _not_met(review, person=True)]
+    decided = [
+        (clip(c["item"], 300), str(c.get("evidence") or "").strip())
+        for c in _not_met(review, person=True)
+    ]
+    decide = [item for item, _ in decided]
     # Only the checklist decides which items wait for a person.
-    review = {key: value for key, value in review.items() if key != "decide"}
+    review = {k: v for k, v in review.items() if k not in ("decide", "decide_evidence")}
     if decide:
         review["decide"] = decide
+        review["decide_evidence"] = {item: found for item, found in decided if found}
         blocking = any(f.get("severity") == "blocking" for f in review.get("findings") or [])
         if not unmet and not not_met and not blocking:
             # The reviewer may have requested changes for these items alone.
@@ -310,19 +321,26 @@ def to_decide(review):
     return list(review.get("decide") or [])
 
 
+def decide_evidence(review):
+    """What the review found for each checklist item a person decides, by the item."""
+    return dict((review or {}).get("decide_evidence") or {})
+
+
+def _decide_lines(review, decide):
+    """The checklist items a person decides, one line each with what the review found."""
+    evidence = decide_evidence(review)
+    return "\n".join(
+        f"- {item}" + (f": {evidence[item]}" if evidence.get(item) else "") for item in decide
+    )
+
+
 def _for_person(cfg, review, confirm, decide):
     """What a ready round's comment says when a person must act before the merge: the
     checklist items they decide, with the review's evidence, and the criteria the review
     could not verify."""
     text = " NexKit does not merge it by itself." if cfg["merge"]["auto"] else ""
     if decide:
-        evidence = {
-            c["item"]: str(c.get("evidence") or "").strip()
-            for c in (review or {}).get("checklist") or []
-        }
-        items = "\n".join(
-            f"- {item}" + (f": {evidence[item]}" if evidence.get(item) else "") for item in decide
-        )
+        items = _decide_lines(review, decide)
         accept = (
             "Approve the pull request to accept them, and NexKit merges it"
             if cfg["merge"]["auto"]
@@ -688,21 +706,65 @@ def _with_finding(reason, agent):
     found = str(output.get("cause") or output.get("summary") or "").strip()
     if not reason or not found:
         return reason
-    return f"{reason.rstrip('.')}; the agent found: {autopilot.quoted(found, 300)}"
+    found = autopilot.quoted(found, 300)
+    if "\n" in reason:
+        # After a list, as a paragraph of its own.
+        return f"{reason}\n\nThe agent found: {found}"
+    return f"{reason.rstrip('.')}; the agent found: {found}"
 
 
-def _listed(items, size=100):
-    """The first of `items` in code spans, then how many more there are."""
-    first = autopilot.quoted(items[0], size)
-    return first + (f" and {len(items) - 1} more" if len(items) > 1 else "")
+def _listed(intro, lines, where, room=LISTED_LIMIT):
+    """`intro`, then `lines` as a Markdown list, each whole, so that a person decides from
+    the mention alone. Only a list longer than `room` characters ends early, at the end of
+    a word, and `intro` then says so and that `where` lists everything."""
+    text = "\n".join(lines)
+    if len(text) <= room:
+        return f"{intro}:\n\n{text}"
+    kept = []
+    for line in lines:
+        left = room - sum(len(k) + 1 for k in kept)
+        if len(line) <= left:
+            kept.append(line)
+            continue
+        cut = line[: max(left - 2, 0)]
+        cut = cut[: cut.rfind(" ")].rstrip() if " " in cut.strip() else ""
+        if cut:
+            # A cut within a code span closes it.
+            kept.append(cut + ("…`" if cut.count("`") % 2 else "…"))
+        break
+    return (
+        f"{intro} (NexKit cut this list to fit GitHub's limit on a comment; {where} has it "
+        "whole):\n\n" + "\n".join(kept)
+    )
 
 
-def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), decide=(), found=None):
+def _quoted_lines(items):
+    """One list line per item, in a code span, whole."""
+    return [f"- {autopilot.quoted(item, None)}" for item in items]
+
+
+def _question_lines(items):
+    """The questions, numbered, each with its options and the marks on them, whole: what a
+    person answers with."""
+    lines = []
+    for number, item in enumerate(questions(items), 1):
+        lines.append(f"{number}. {autopilot.quoted(item['question'], None)}")
+        lines += [
+            f"   - {autopilot.quoted(option, None)}{option_marks(item, option)}"
+            for option in item["options"]
+        ]
+    return lines
+
+
+def needs_person(
+    outcome, cfg, plan=None, resume=None, confirm=(), decide=(), evidence=None, found=None
+):
     """The reason a person is needed after a run, or None: what to do, then why NexKit does
     not, with what the run found that shows where to look (see `autopilot.person`). It
     follows only the outcome and the run's structured output, never a judgment by the
     agent. `confirm` holds the criteria a ready round's review could not verify, and
-    `decide` the checklist items not met that a person decides. `found`
+    `decide` the checklist items not met that a person decides, with what the review found
+    for each in `evidence`. Each of them, and each question, is listed whole. `found`
     may name `questions` (a blocked round's), `pull` (the run is a pull request's round),
     `error`, `failing` (the names of checks that still fail), `findings` (the review's
     blocking findings), `refused` (`refusal.explain` for a refused merge) and
@@ -718,10 +780,9 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), decide=(), fo
             return autopilot.protected_reason(plan["protected_paths"])
         if not plan.get("questions"):
             return None
-        asked = questions(plan["questions"])
         why = "the plan asks for decisions that are the owner's to make"
-        if asked:
-            why += ": " + _listed([item["question"] for item in asked])
+        if questions(plan["questions"]):
+            why = _listed(why, _question_lines(plan["questions"]), "the plan comment")
         return autopilot.person("answer the plan's questions with `/nexkit plan <answers>`", why)
     if outcome == "merge_waiting":
         # Only a round whose issue autopilot's sweeps look at waits like this.
@@ -734,11 +795,23 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), decide=(), fo
                 else "approve the pull request to accept them, then merge it"
             )
             confirmed = " and confirm the criteria the review could not verify" * bool(confirm)
+            evidence = evidence or {}
+            lines = [
+                f"- {autopilot.quoted(item, None)}"
+                + (f": {autopilot.quoted(evidence[item], None)}" if evidence.get(item) else "")
+                for item in decide
+            ]
+            if confirm:
+                lines += ["", "The review could not verify these acceptance criteria:", ""]
+                lines += _quoted_lines(confirm)
             return autopilot.person(
                 f"decide the checklist items in the round's comment{confirmed}: {accept}, or "
                 "comment `/nexkit fix <what to change>`",
-                "only a person decides " + _listed(list(decide)) + ", which the review found "
-                "not met",
+                _listed(
+                    "only a person decides these checklist items, which the review found not met",
+                    lines,
+                    "the round's comment",
+                ),
             )
         if confirm:
             then = (
@@ -749,7 +822,11 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), decide=(), fo
             return autopilot.person(
                 "confirm from the diff and the checks the acceptance criteria that the review "
                 f"could not verify, then {then}",
-                "the review could not verify " + _listed(list(confirm)),
+                _listed(
+                    "the review could not verify these acceptance criteria",
+                    _quoted_lines(confirm),
+                    "the round's comment",
+                ),
             )
         return None if cfg["merge"]["auto"] else READY
     if outcome == "paused":
@@ -771,8 +848,9 @@ def needs_person(outcome, cfg, plan=None, resume=None, confirm=(), decide=(), fo
         do = autopilot.REPLAN_IN_PULL_DO
     elif outcome == "agent_blocked" and found.get("pull"):
         do = "answer the questions in the round's comment with `/nexkit fix <answers>`"
-    if outcome == "agent_blocked" and found.get("questions"):
-        why += ": " + _listed([item["question"] for item in questions(found["questions"])])
+    if outcome == "agent_blocked" and questions(found.get("questions")):
+        where = "the round's comment" if found.get("pull") else "the run's comment"
+        why = _listed(why, _question_lines(found["questions"]), where)
     if outcome == "agent_error" and found.get("timed_out"):
         do = (
             "comment `/nexkit plan` to split the issue into parts that each fit one session, "
@@ -1773,6 +1851,11 @@ def _record(state, decision, row, agent, review, checks):
             state["last_review"]["left_out"] = len(findings) - len(kept)
         if to_decide(review):
             state["last_review"]["decide"] = [clip(i, 300) for i in to_decide(review)]
+            # What the review found for each, for a round that carries the approval over.
+            state["last_review"]["decide_evidence"] = {
+                item: clip(found, DECIDE_EVIDENCE)
+                for item, found in decide_evidence(review).items()
+            }
 
 
 def _ci_wait(gh, cfg, decision, checks, default_branch):
@@ -1853,6 +1936,7 @@ def carried_over(state, reviewed):
     if decide:
         # The items a person decides wait for their approval of the new head too.
         carried["decide"] = decide
+        carried["decide_evidence"] = dict(last.get("decide_evidence") or {})
     return carried
 
 
@@ -2102,7 +2186,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             message = f"Checks or review need attention on `{head[:7]}`."
         message += f" {PERSON_LINE}"
         if decide:
-            items = "\n".join(f"- {item}" for item in decide)
+            items = _decide_lines(review, decide)
             message += (
                 "\n\nOnly a person decides these checklist items, which the review found not "
                 f"met:\n\n{items}"
@@ -2226,7 +2310,15 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     failing = [c["name"] for c in checks or [] if not c.get("passed")]
     blocking = [f for f in (review or {}).get("findings") or [] if f.get("severity") == "blocking"]
     found = {"pull": True, "failing": failing, "findings": blocking, **found}
-    reason = needs_person(outcome, cfg, resume=resume, confirm=confirm, decide=decide, found=found)
+    reason = needs_person(
+        outcome,
+        cfg,
+        resume=resume,
+        confirm=confirm,
+        decide=decide,
+        evidence=decide_evidence(review),
+        found=found,
+    )
     if outcome == "recheck_failed":
         reason = _with_finding(reason, agent)
     if reason:

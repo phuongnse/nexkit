@@ -938,7 +938,7 @@ REOPENED = (
 
 def quoted(text, size=150):
     """Text that an agent, GitHub or a person wrote, for a reason: in a code span on one
-    line, where it can mention nobody and close no comment."""
+    line, where it can mention nobody and close no comment. With `size` None, whole."""
     return "`" + _plain(text, size).replace("<", "‹").replace(">", "›") + "`"
 
 
@@ -1733,9 +1733,14 @@ def mention_text(cfg, reason):
     if not cfg["notify"]:
         return None
     people = " ".join(f"@{login}" for login in cfg["notify"])
-    return f"{people} {NEEDED}{_unmentioned(reason).rstrip('.')}."
+    text = _unmentioned(reason).rstrip(".")
+    # A reason that ends with a list of what a person decides ends without a period.
+    end = "" if LIST_ITEM.match(text.rsplit("\n", 1)[-1]) else "."
+    return f"{people} {NEEDED}{text}{end}"
 
 
+# A line of a Markdown list, as a reason lists what a person decides.
+LIST_ITEM = re.compile(r"\s*(?:-|\d+\.) ")
 MENTION = re.compile(r"@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9._-]+|\[bot\])?")
 
 
@@ -2622,9 +2627,10 @@ def _shortened(chars, notes, jobs):
 
 
 def _plain(text, size=200):
-    """`text` on one line, without backticks, at most `size` characters: for a code span."""
+    """`text` on one line, without backticks, at most `size` characters (whole with None):
+    for a code span."""
     text = " ".join(str(text or "").split()).replace("`", "'")
-    return text if len(text) <= size else text[: size - 1] + "…"
+    return text if size is None or len(text) <= size else text[: size - 1] + "…"
 
 
 def _quoted(text):

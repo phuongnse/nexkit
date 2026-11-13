@@ -143,8 +143,9 @@ replaces ⏸️ once a later run carries the command on.
 person is needed. It records the reason in the run comment's hidden marker, and with
 `notify` set it mentions those people in a new comment (see
 [Mentions](configuration.md#mentions)). The reason says what to do, why NexKit does not do
-it itself, and where to look, such as the question to answer or, for a refused merge, the
-rule and the files a code owner reviews (see [What a mention
+it itself, and where to look, such as every question to answer, each checklist item to
+decide with what the review found, or, for a refused merge, the rule and the files a code
+owner reviews (see [What a mention
 says](troubleshooting.md#what-a-mention-says)):
 
 | Run result | A person is needed |

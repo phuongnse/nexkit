@@ -365,6 +365,12 @@ def autopilot_item(gh, cfg):
     return item
 
 
+def _lines(text, indent):
+    """A reason as plain text shows it: a list it ends with goes on lines of their own,
+    each indented to its item, without blank lines."""
+    return f"\n{' ' * indent}".join(line for line in str(text).split("\n") if line.strip())
+
+
 def _short(text, width=50):
     text = " ".join(str(text or "").split())
     return text if len(text) <= width else text[: width - 1] + "…"
@@ -440,14 +446,15 @@ def render(data):
                 f"start /nexkit {item['command']}" if item["state"] == "start" else item["state"]
             )
             lines.append(
-                f"  #{item['number']:<5} {action:<16} {_short(item['title'])}  {item['reason']}"
+                f"  #{item['number']:<5} {action:<16} {_short(item['title'])}  "
+                + _lines(item["reason"], 9)
             )
         if not pilot["issues"]:
             lines.append("  no open issues")
     lines += ["", "Needs a person"]
     for item in data["needs_person"]:
         number = f"#{item['number']:<5}" if item["number"] else " " * 6
-        lines.append(f"  {number} {item['reason']}")
+        lines.append(f"  {number} {_lines(item['reason'], 9)}")
     if not data["needs_person"]:
         lines.append("  nothing")
     return "\n".join(lines)

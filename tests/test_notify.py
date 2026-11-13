@@ -1,10 +1,14 @@
 """Who is mentioned when a run needs a person (`notify`)."""
 
+import json
+import os
 import unittest
 
+from nexkit import report as report_module
 from nexkit.autopilot import mention_text, person
 from nexkit.config import ConfigError, validate
 from nexkit.report import NEEDS_PERSON, READY, needs_person, report
+from nexkit.status import collect, render, to_json
 from tests.support import CLAUDE, make_config
 from tests.test_report import HEAD, LIMIT, ReportCase, decision, review_result
 
@@ -26,7 +30,7 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(
             needs_person("planned", self.cfg, plan={"questions": ["Which?"]}),
             "answer the plan's questions with `/nexkit plan <answers>`. The plan asks for "
-            "decisions that are the owner's to make: `Which?`",
+            "decisions that are the owner's to make:\n\n1. `Which?`",
         )
         self.assertReason(
             needs_person("planned", self.cfg, plan={"too_large": True}),
@@ -43,7 +47,7 @@ class RuleTests(unittest.TestCase):
             needs_person("agent_blocked", self.cfg, found=found),
             "answer the questions in the run's comment with `/nexkit plan <answers>`, or "
             "`/nexkit go <answers>` when they leave the plan as it is. The agent stopped at a "
-            "decision that is the owner's to make: `Keep @alice's API?` and 1 more",
+            "decision that is the owner's to make:\n\n1. `Keep @alice's API?`\n2. `Rename it?`",
         )
         self.assertTrue(
             needs_person("agent_blocked", self.cfg, found={"pull": True}).startswith(
@@ -112,9 +116,82 @@ class RuleTests(unittest.TestCase):
             self.assertReason(
                 reason,
                 "confirm from the diff and the checks the acceptance criteria",
-                "The review could not verify `passes five runs` and 1 more",
+                "The review could not verify these acceptance criteria:\n\n"
+                "- `passes five runs`\n- `is fast`",
             )
             self.assertIn(then, reason)
+
+    def test_ready_with_items_to_decide_lists_each_whole_with_its_evidence(self):
+        decide = ["a" * 250 + " end", "b" * 250 + " end"]
+        evidence = {decide[0]: "found x " * 40, decide[1]: "found y " * 40}
+        reason = needs_person(
+            "ready", self.cfg, confirm=["is fast"], decide=decide, evidence=evidence
+        )
+        self.assertTrue(reason.startswith("decide the checklist items in the round's comment"))
+        self.assertTrue(
+            reason.endswith(
+                "Only a person decides these checklist items, which the review found not met:"
+                f"\n\n- `{decide[0]}`: `{evidence[decide[0]].strip()}`"
+                f"\n- `{decide[1]}`: `{evidence[decide[1]].strip()}`"
+                "\n\nThe review could not verify these acceptance criteria:\n\n- `is fast`"
+            ),
+            reason,
+        )
+        self.assertNotIn("more", reason)
+        self.assertNotIn("…", reason)
+
+    def test_questions_are_listed_whole_with_their_options(self):
+        asked = [
+            {
+                "question": "Which store? " * 20,
+                "options": ["Postgres", "SQLite"],
+                "recommended": "Postgres",
+            },
+            {"question": "Close it?", "options": ["Keep it", "Close"], "closing": "Close"},
+        ]
+        reason = needs_person("agent_blocked", self.cfg, found={"questions": asked})
+        self.assertTrue(
+            reason.endswith(
+                "The agent stopped at a decision that is the owner's to make:\n\n"
+                f"1. `{asked[0]['question'].strip()}`\n"
+                "   - `Postgres` (recommended)\n   - `SQLite`\n"
+                "2. `Close it?`\n   - `Keep it`\n"
+                "   - `Close` (NexKit closes the issue as not planned)"
+            ),
+            reason,
+        )
+
+    def test_a_list_past_its_room_says_it_was_cut_and_ends_at_a_word(self):
+        lines = ["- `one two three`", "- `four five six seven eight`", "- `nine`"]
+        text = report_module._listed("these items", lines, "the round's comment", room=30)
+        self.assertEqual(
+            text,
+            "these items (NexKit cut this list to fit GitHub's limit on a comment; the "
+            "round's comment has it whole):\n\n- `one two three`\n- `four…`",
+        )
+        whole = report_module._listed("these items", lines, "the round's comment")
+        self.assertEqual(whole, "these items:\n\n" + "\n".join(lines))
+
+    def test_a_long_list_stays_within_its_limit(self):
+        decide = [f"item {n} " + "word " * 58 for n in range(20)]
+        evidence = {item: "evidence " * 200 for item in decide}
+        reason = needs_person("ready", self.cfg, decide=decide, evidence=evidence)
+        listed = reason.split("whole):\n\n", 1)[1]
+        self.assertLessEqual(len(listed), report_module.LISTED_LIMIT)
+        self.assertIn("NexKit cut this list to fit GitHub's limit on a comment", reason)
+        self.assertTrue(listed.endswith("…`"), listed[-40:])
+        self.assertEqual(listed.count("`") % 2, 0)
+
+    def test_a_mention_that_ends_with_a_list_adds_no_period(self):
+        cfg = make_config(notify=["owner"])
+        self.assertEqual(
+            mention_text(cfg, "do it. Because:\n\n- `a`"),
+            "@owner a person is needed: do it. Because:\n\n- `a`",
+        )
+        self.assertEqual(
+            mention_text(cfg, "do it. Because:\n\n- `a`\n\nThe agent found: `b`"),
+            "@owner a person is needed: do it. Because:\n\n- `a`\n\nThe agent found: `b`.",
+        )
 
     def test_merge_refused_says_what_unblocks_it(self):
         found = {"refused": ("approve it", "GitHub wants a review")}
@@ -186,11 +263,107 @@ class MentionTests(ReportCase):
         )
         reason = (
             "answer the plan's questions with `/nexkit plan <answers>`. The plan asks for "
-            "decisions that are the owner's to make: `?`"
+            "decisions that are the owner's to make:\n\n1. `?`"
         )
-        self.assertEqual(self.mentions(5), [f"@owner a person is needed: {reason}."])
+        self.assertEqual(self.mentions(5), [f"@owner a person is needed: {reason}"])
         [run] = self.gh.run_comments(5)
         self.assertEqual(run["run"]["attention"], reason)
+
+    def person_review(self, *items):
+        """A review that approves, with checklist items not met that a person decides, each
+        over 200 characters, and what it found for each."""
+        review = review_result()
+        review["output"]["checklist"] = [
+            {
+                "item": f"{item} " + "and the rule holds everywhere it applies " * 5,
+                "answer": "not_met",
+                "person": True,
+                "evidence": f"{item.lower()}.py:8-12 does it another way, " + "with a reason " * 15,
+            }
+            for item in items
+        ]
+        return review
+
+    def test_a_ready_round_lists_each_item_to_decide_with_its_evidence(self):
+        review = self.person_review("Rule A", "Rule B")
+        self.candidate(review=review)
+        cfg = make_config(notify=["owner"])
+        self.run_report(cfg=cfg)
+        [text] = self.mentions(6)
+        for c in review["output"]["checklist"]:
+            self.assertGreater(len(c["item"]), 200)
+            self.assertIn(f"- `{c['item'].strip()}`: `{c['evidence'].strip()}`", text)
+        self.assertNotIn("more", text)
+        self.assertNotIn("…", text)
+        # `nexkit status --json` gives the reason the mention gives.
+        [row] = self.gh.run_comments(6)
+        reason = row["run"]["attention"]
+        self.assertEqual(text, f"@owner a person is needed: {reason}")
+        data = json.loads(to_json(collect(self.gh, cfg, workers=1)))
+        self.assertIn({"number": 6, "kind": "pull_request", "reason": reason}, data["needs_person"])
+        # Its text form puts each item on a line of its own.
+        shown = render(collect(self.gh, cfg, workers=1))
+        self.assertIn(f"\n         - `{review['output']['checklist'][1]['item'].strip()}`", shown)
+
+    def test_a_carried_approval_keeps_the_evidence_of_each_item(self):
+        review = self.person_review("Rule A")
+        self.candidate(review=review)
+        self.run_report()
+        os.environ["GITHUB_RUN_ID"] = "carried"
+        self.candidate(review={"stage": "review", "status": "carried", "carried": HEAD})
+        self.write("nexkit-review", "carry.json", {"from": HEAD, "carried": True, "why": ""})
+        d = decision("review", pr=6, target=6, head="d" * 40, carry_from=HEAD)
+        outcome = self.run_report(d=d, cfg=make_config(notify=["owner"]), published=False)
+        self.assertEqual(outcome["outcome"], "ready")
+        [c] = review["output"]["checklist"]
+        self.assertIn(f"- `{c['item'].strip()}`: `{c['evidence'].strip()}`", self.mentions(6)[0])
+        self.assertIn(f"- {c['item'].strip()}: {c['evidence'].strip()}", outcome["summary"])
+
+    def test_a_ready_round_lists_each_criterion_to_confirm(self):
+        review = review_result()
+        criteria = [f"criterion {n} " + "holds under load " * 15 for n in range(3)]
+        review["output"]["criteria"] = [
+            {"criterion": c, "status": "unverifiable", "test": "", "evidence": "no trace"}
+            for c in criteria
+        ]
+        self.candidate(review=review)
+        self.run_report(cfg=make_config(notify=["owner"]))
+        [text] = self.mentions(6)
+        self.assertIn(
+            "The review could not verify these acceptance criteria:\n\n"
+            + "\n".join(f"- `{c.strip()}`" for c in criteria),
+            text,
+        )
+
+    def test_a_plan_with_three_questions_lists_each_whole(self):
+        asked = [
+            {
+                "question": f"Question {n}: " + "which way should it go " * 10,
+                "options": ["This way", "That way"],
+                "recommended": "This way",
+            }
+            for n in range(3)
+        ]
+        self.write(
+            "nexkit-agent", "result.json", {"status": "done", "output": {"questions": asked}}
+        )
+        needs = {"publish": {"outputs": {"result": '{"published": true, "comment": "u"}'}}}
+        report(
+            self.gh,
+            decision("plan"),
+            make_config(notify=["owner"]),
+            needs,
+            self.artifacts,
+            workflow_ref="x/nexkit.yml@main",
+            default_branch="main",
+        )
+        [text] = self.mentions(5)
+        for n, item in enumerate(asked, 1):
+            self.assertIn(
+                f"{n}. `{item['question'].strip()}`\n   - `This way` (recommended)\n"
+                "   - `That way`",
+                text,
+            )
 
     def test_automatic_rounds_and_resumed_pauses_mention_nobody(self):
         finding = {"severity": "blocking", "file": "a", "line": 1, "body": "x"}

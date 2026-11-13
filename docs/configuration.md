@@ -1267,13 +1267,18 @@ nothing shows until the next sweep looks.
 
 NexKit mentions the listed people when a run ends in a state that needs a person, so they
 get a GitHub notification without watching every run. Right after the run's comment, it
-posts one line on the issue, or on the pull request once there is one, such as:
+posts a comment on the issue, or on the pull request once there is one, such as:
 
 > @owner a person is needed: answer the plan's questions with `/nexkit plan <answers>`. The
-> plan asks for decisions that are the owner's to make: `Which host?`.
+> plan asks for decisions that are the owner's to make:
+>
+> 1. `Which host?`
+>    - `Fly.io` (recommended)
+>    - `Render`
 
 It says what to do, why NexKit does not do it itself, and where to look (see [What a
-mention says](troubleshooting.md#what-a-mention-says)). The line is its own comment because GitHub
+mention says](troubleshooting.md#what-a-mention-says)), with every question, checklist item
+to decide and criterion to confirm whole. The mention is its own comment because GitHub
 notifies people mentioned in a new comment, but not in an edited one, and the run's
 comment is edited when the run ends.
 

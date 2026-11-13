@@ -368,12 +368,12 @@ each outcome of a run is:
 
 | Outcome | `@owner a person is needed: …` | It also names |
 |---|---|---|
-| plan with questions | answer the plan's questions with `/nexkit plan <answers>`. The plan asks for decisions that are the owner's to make | the first question |
+| plan with questions | answer the plan's questions with `/nexkit plan <answers>`. The plan asks for decisions that are the owner's to make | every question, with its options |
 | plan too large | split the issue by hand into parts that each fit one session, with the `request` skill, or make it smaller and comment the change on it. The plan says the issue is too large for one session | |
 | plan finds no change | check the plan's finding, then close the issue, or comment `/nexkit plan <what still needs changing>`. The plan finds that no change is needed, and NexKit closes an issue by itself only with autopilot | |
 | plan or round needs protected paths | make the change in the protected paths (…) by hand, as the plan says. Only a person changes protected paths | the paths |
 | a recommended close | answer the questions: an answer that is the option to close the issue closes it as not planned. The agent recommends closing the issue, and NexKit closes it by itself only when that is a round's one recommendation, with its finding that no change is needed | |
-| `agent_blocked` | answer the questions in the run's comment with `/nexkit plan <answers>`, or `/nexkit go <answers>` when they leave the plan as it is (on a pull request: with `/nexkit fix <answers>`). The agent stopped at a decision that is the owner's to make | the first question |
+| `agent_blocked` | answer the questions in the run's comment with `/nexkit plan <answers>`, or `/nexkit go <answers>` when they leave the plan as it is (on a pull request: with `/nexkit fix <answers>`). The agent stopped at a decision that is the owner's to make | every question, with its options |
 | `agent_error` | read the error in the run's comment and log, remove its cause, then post the command again. The run stopped on an error, and NexKit runs a command again by itself only after an error of the service, the network or the runner | the error |
 | `agent_error`, out of time | comment `/nexkit plan` to split the issue into parts that each fit one session, or raise the stage's `timeout_minutes`. The agent ran out of time before it finished | |
 | `agent_failed` | read the agent job's log for why it ended, then post the command again. The agent job ended without a result, so NexKit had nothing to go on | |
@@ -384,8 +384,8 @@ each outcome of a run is:
 | `retry_failed` | post the command again once the cause has passed. The run stopped on a transient error again after every wait of `retry.wait_minutes`, such as `4 times, the last after every wait of retry.wait_minutes`, or at once with `retry.wait_minutes` empty | the last error |
 | `conflicting` | comment `/nexkit fix` on the pull request, with any rule the conflict needs. Its commit conflicts with the base branch, and NexKit started no round to resolve it | |
 | `ready`, with `merge.auto` off | review the pull request, then merge it or close it. Checks and the AI review passed, and with `merge.auto` off a person decides the merge | |
-| `ready`, with checklist items a person decides | decide the checklist items in the round's comment: approve the pull request to accept them, which NexKit then merges (with `merge.auto` off, then merge it), or comment `/nexkit fix <what to change>`. Only a person decides them, and the review found them not met | the first item |
-| `ready`, with criteria the review could not verify | confirm from the diff and the checks the acceptance criteria that the review could not verify, then merge the pull request; with `merge.auto`, approve the pull request, which NexKit then merges | the first criterion |
+| `ready`, with checklist items a person decides | decide the checklist items in the round's comment: approve the pull request to accept them, which NexKit then merges (with `merge.auto` off, then merge it), or comment `/nexkit fix <what to change>`. Only a person decides them, and the review found them not met | every item, with what the review found; and every criterion the review could not verify |
+| `ready`, with criteria the review could not verify | confirm from the diff and the checks the acceptance criteria that the review could not verify, then merge the pull request; with `merge.auto`, approve the pull request, which NexKit then merges | every criterion |
 | `merge_refused` | what unblocks the merge, and the rule that refused it, such as `approve the pull request as a code owner (@owner), which NexKit then merges. GitHub requires a code owner's review for this file, and NexKit's App cannot review its own pull request: docs/reference/ui-glossary.json (+6 −0, owned by @owner)`: see [The automatic merge was refused](#the-automatic-merge-was-refused) | the rule, the files and their owners |
 | `merge_issue_closed` | merge the pull request or close it. Its issue closed before NexKit merged it, and NexKit leaves the pull request of a closed issue to a person | |
 | `pull_closed`, reopened | approve the pull request, which NexKit then merges, or comment `/nexkit review` on it. It was closed when its round was to merge it, and reopening it starts nothing by itself. A pull request that stays merged or closed needs nobody | |
@@ -393,6 +393,13 @@ each outcome of a run is:
 | `close_failed`, `on_base_failed` | close the issue (and the pull request) yourself. No change is needed, or the base branch already holds this change, but GitHub refused NexKit's close | the error |
 | `paused`, not resumed | post the command again once the usage limit has reset. The agent hit its usage limit, and NexKit does not resume this run | |
 | `retry_waiting`, long past its time | post the command again, and check that NexKit's workflow has its `schedule` trigger. It was to run again after a transient error, and no run started it | the time it was to run |
+
+Questions, checklist items to decide and criteria to confirm follow as a list, each whole,
+as the run's or round's comment lists them, so that a person decides from the mention
+alone. Only a list longer than 12,000 characters ends early, at the end of a word, and the
+mention then says that NexKit cut it to fit GitHub's limit on a comment and which comment
+has it whole. `nexkit status` gives the same reason, with each item of a list on a line of
+its own.
 
 Text that an agent, GitHub or a person wrote, such as a question, an error or a path, is
 quoted in a code span on one line, and a login such as an issue's author is named in a code

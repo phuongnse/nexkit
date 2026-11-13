@@ -137,6 +137,69 @@ class InterpretTests(unittest.TestCase):
         self.assertEqual(limited["status"], "paused")
         self.assertNotIn("transient", limited)
 
+    def test_an_api_error_is_transient_by_its_status_and_whether_it_reached_the_api(self):
+        def stop(status, text, request_id=None, before=()):
+            # As Claude Code 2.1.311 reports an API error: its own message, then the result.
+            said = {
+                "type": "assistant",
+                "error": "authentication_failed" if status in (401, 403) else "unknown",
+                "is_api_error_message": True,
+                "api_error_status": status,
+                "message": {"model": "<synthetic>", "content": [{"type": "text", "text": text}]},
+            }
+            if request_id:
+                said["request_id"] = request_id
+            result = {
+                "subtype": "success",
+                "is_error": True,
+                "terminal_reason": "api_error",
+                "api_error_status": status,
+                "result": text,
+            }
+            return interpret_claude("implement", result, returncode=1, stream=[*before, said])
+
+        model = {
+            "type": "assistant",
+            "message": {"id": "m1", "model": "claude", "content": [{"type": "text", "text": "Hi"}]},
+        }
+        # Cloudflare in front of the API turned the runner's IP address away: the request
+        # never reached the API, which sends a request id with every answer.
+        cloudflare = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"
+        for result in (
+            stop(403, cloudflare),
+            stop(403, "Failed to authenticate. API Error: 403 Just a moment...", before=[model]),
+            stop(529, "API Error: 529 Overloaded", "req_1"),
+            stop(429, "API Error: 429 Too many requests", "req_2"),
+        ):
+            self.assertEqual((result["status"], result.get("transient")), ("error", True))
+        self.assertIn("Attention Required! | Cloudflare", stop(403, cloudflare)["error"])
+        # The API itself refused the key, or the request: another try cannot change that.
+        for result in (
+            stop(
+                403,
+                "Failed to authenticate. API Error: 403 Your API key does not have permission",
+                "req_3",
+            ),
+            stop(401, "Failed to authenticate. API Error: 401 invalid x-api-key", "req_4"),
+            stop(401, "Failed to authenticate. API Error: 401 Connection error", "req_5"),
+            stop(400, "API Error: 400 prompt is too long", "req_6"),
+        ):
+            self.assertEqual(result["status"], "error")
+            self.assertNotIn("transient", result)
+        # An error that the model answered after does not decide how the run stopped.
+        error = {
+            "type": "assistant",
+            "api_error_status": 403,
+            "message": {
+                "model": "<synthetic>",
+                "content": [{"type": "text", "text": "API Error: 403"}],
+            },
+        }
+        later = interpret_claude(
+            "fix", {"subtype": "error_max_turns"}, returncode=1, stream=[error, model]
+        )
+        self.assertNotIn("transient", later)
+
     def test_the_models_own_words_never_pause_a_run(self):
         prose = 'The handler now returns "Rate limit reached" when the usage limit is hit.'
         stopped = {"subtype": "error_max_turns", "is_error": False, "result": prose}

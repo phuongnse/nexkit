@@ -38,7 +38,8 @@ LIMIT = re.compile(
 EPOCH = re.compile(r"limit reached\|(\d{9,11})\b", re.I)
 # What Claude Code says when the service or the network failed for a while rather than the
 # work: an overloaded or failing API, a rate limit that is not a usage limit, a lost
-# connection. Another try later may pass.
+# connection. Another try later may pass. Read where a stop carries no API error status,
+# such as an error on stderr alone.
 TRANSIENT = re.compile(
     r"API Error: (?:5\d\d|429)\b|overloaded|internal server error|service unavailable"
     r"|bad gateway|gateway timeout|Connection error|ECONNRESET|ECONNREFUSED|ETIMEDOUT"
@@ -198,6 +199,27 @@ def _rejected_until(event):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _api_error(event):
+    """The status of the API error that Claude Code reports in its own message `event`, and
+    whether the API's `request-id` came with it, or None."""
+    status = event.get("api_error_status") if event.get("type") == "assistant" else None
+    if not isinstance(status, int) or isinstance(status, bool):
+        return None
+    return status, bool(event.get("request_id"))
+
+
+def _passing(api_error):
+    """Whether an API error with this status, and with or without the API's request id, is
+    one that another try later may pass: the API overloaded or failing, a rate limit that is
+    not a usage limit, or a 403 that never reached the API, because something in front of it
+    turned the runner away, such as Cloudflare's challenge page for its IP address. The API
+    sends a request id with each answer, its own refusals of a key included."""
+    if api_error is None:
+        return False
+    status, reached = api_error
+    return status >= 500 or status == 429 or (status == 403 and not reached)
+
+
 # The tool through which Claude Code takes the result that `--json-schema` asks for.
 RESULT_TOOL = "StructuredOutput"
 # How Claude Code ends a run whose model called that tool as often as it allows without a
@@ -222,11 +244,15 @@ class ClaudeReader(Reader):
         self.answered = False
         # What Claude Code said when it last turned a `StructuredOutput` call down.
         self.rejected = ""
+        # The status of the last API error and whether it reached the API (`_api_error`),
+        # until the model answers again.
+        self.api_error = None
 
     def events(self, raw):
         if raw.get("type") == "result":
             self.result = raw
         self.last_text = _text_of(raw) or self.last_text
+        self.api_error = _api_error(raw) or self.api_error
         self.resets_at = _rejected_until(raw) or self.resets_at
         message = raw.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -234,7 +260,8 @@ class ClaudeReader(Reader):
             return []
         found = []
         if raw.get("type") == "assistant":
-            self.answered = self.answered or message.get("model") != "<synthetic>"
+            if message.get("model") != "<synthetic>":
+                self.answered, self.api_error = True, None
             message_id = message.get("id")
             if message_id is None or message_id not in self._messages:
                 self._messages.add(message_id)
@@ -308,8 +335,10 @@ class ClaudeReader(Reader):
         if outcome.error and not outcome.limit:
             texts = " ".join(str(text) for text in (said, stderr, self.last_text) if text)
             # A CLI that exited before the model answered never got to the work.
-            outcome.transient = bool(TRANSIENT.search(texts)) or (
-                not self.result and not self.answered
+            outcome.transient = (
+                _passing(self.api_error)
+                if self.api_error
+                else bool(TRANSIENT.search(texts)) or (not self.result and not self.answered)
             )
         return outcome
 

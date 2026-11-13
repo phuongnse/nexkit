@@ -1373,9 +1373,12 @@ a minute and run no agent. To check less often, change the `cron` line, for exam
 ```
 
 A run can stop for a reason outside the work: an overloaded or failing API, a lost
-connection or runner, GitHub's errors while `publish` writes, or an agent session that gave
-no result that fits (see [Failure handling](how-it-works.md#failure-handling)). Such an
-outage usually lasts minutes to hours, so NexKit runs the same command again, with the same
+connection or runner, a request that something in front of the API turned away before it
+reached the API (such as Cloudflare's challenge page for the runner's IP address), GitHub's
+errors while `publish` writes, or an agent session that gave no result that fits (see
+[Failure handling](how-it-works.md#failure-handling)). A key that the API itself refuses is
+not among them: that stop waits for a person at once. Such an outage usually lasts minutes
+to hours, so NexKit runs the same command again, with the same
 note, after each wait of `wait_minutes` in turn: by default 15 minutes after the first stop,
 30 after the second and 60 after the third. A stop after the last wait waits for a person,
 and its comment lists every error the command's runs stopped on.

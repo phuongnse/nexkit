@@ -34,7 +34,7 @@ from nexkit.state import (
     render_state,
 )
 from nexkit.usage import parse_iso, shown
-from tests.support import FakeGitHub, make_config
+from tests.support import FakeGitHub, interpret_claude, make_config
 
 HEAD = "c" * 40
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -519,6 +519,36 @@ class ReportTests(ReportCase):
             {"url": "u", "command": "go", "status": "running", "retry": 2}
         )
         self.assertIn("### NexKit `/nexkit go` (retry 2)", progress_comment)
+
+    def test_a_stop_on_cloudflares_challenge_page_runs_again_but_a_refused_key_does_not(self):
+        def stop(text, request_id=None):
+            said = {
+                "type": "assistant",
+                "api_error_status": 403,
+                "message": {"model": "<synthetic>", "content": [{"type": "text", "text": text}]},
+            }
+            if request_id:
+                said["request_id"] = request_id
+            result = {"subtype": "success", "is_error": True, "result": text}
+            return interpret_claude("implement", result, returncode=1, stream=[said])
+
+        cloudflare = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"
+        self.write("nexkit-agent", "result.json", stop(cloudflare))
+        outcome = self.run_report(published=False)
+        self.assertEqual(outcome["outcome"], "retry_waiting")
+        self.assertIsNone(outcome.get("attention"))
+        run = self.gh.run_comments(5)[-1]
+        self.assertEqual(run["run"]["status"], "paused")
+        self.assertIn(
+            f"again after {shown(run['run']['resume']['at'])}: run again 1 of 3", run["body"]
+        )
+        self.assertNotIn("remove its cause", run["body"])
+        refused = "Failed to authenticate. API Error: 403 Your API key does not have permission"
+        self.write("nexkit-agent", "result.json", stop(refused, "req_1"))
+        outcome = self.run_report(published=False)
+        self.assertEqual(outcome["outcome"], "agent_error")
+        self.assertIn("remove its cause", outcome["attention"])
+        self.assertEqual(len(self.gh.dispatches), 1)
 
     def test_without_waits_a_transient_error_waits_for_a_person_at_once(self):
         self.write(

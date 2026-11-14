@@ -1,5 +1,26 @@
 # Changelog
 
+## 6.11.2
+
+- A Claude Code stop on a 403 that never reached the API, such as Cloudflare's challenge
+  page for the runner's IP address (`API Error: 403 Attention Required! | Cloudflare`),
+  is a transient error (#290). It runs again after the waits of
+  [`retry.wait_minutes`](docs/configuration.md#transient-errors), and a stop after the
+  last wait still waits for a person. Before, it waited for a person at once: in
+  phuongnse/axis#3915 the issue waited about five hours for the owner to post
+  `/nexkit go` again.
+  - Claude Code reports Cloudflare's block and the API's own refusal of a key alike, as
+    `api_error_status` 403 and `authentication_failed`. Only the API's answer carries its
+    request id, so NexKit tells them apart by that, not by the page's text. A refused or
+    wrong key (401, or a 403 with a request id) still waits for a person at the first stop.
+  - An API error that Claude Code gives a typed kind (`api_error`), such as usage credits
+    that are off or an organization's policy, is never transient, and a 429 is transient
+    only when its text says it is a rate limit. A 401 or a 400 now waits for a person
+    even when the CLI exited before the model answered, which counted as transient
+    before.
+  - A review stopped this way no longer says the review agent's secrets must be fixed
+    while it runs again.
+
 ## 6.11.1
 
 - A mention that needs a person, and the reason `nexkit status` gives, list what the person

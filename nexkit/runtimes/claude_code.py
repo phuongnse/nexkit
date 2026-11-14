@@ -38,7 +38,8 @@ LIMIT = re.compile(
 EPOCH = re.compile(r"limit reached\|(\d{9,11})\b", re.I)
 # What Claude Code says when the service or the network failed for a while rather than the
 # work: an overloaded or failing API, a rate limit that is not a usage limit, a lost
-# connection. Another try later may pass.
+# connection. Another try later may pass. Read where a stop carries no API error status,
+# such as an error on stderr alone.
 TRANSIENT = re.compile(
     r"API Error: (?:5\d\d|429)\b|overloaded|internal server error|service unavailable"
     r"|bad gateway|gateway timeout|Connection error|ECONNRESET|ECONNREFUSED|ETIMEDOUT"
@@ -198,6 +199,32 @@ def _rejected_until(event):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _api_error(event):
+    """What Claude Code reports of the API error in its own message `event`, or None: the
+    HTTP status, whether the API's `request-id` came with it, and the error's typed kind
+    (`api_error`), which Claude Code gives only to causes that another try cannot fix, such
+    as usage credits that are off, an organization's policy or a PDF over the API's limit."""
+    status = event.get("api_error_status") if event.get("type") == "assistant" else None
+    if not isinstance(status, int) or isinstance(status, bool):
+        return None
+    return status, bool(event.get("request_id")), event.get("api_error")
+
+
+def _passing(api_error, texts):
+    """Whether an API error is one that another try later may pass: the API overloaded or
+    failing, a 403 that never reached the API, because something in front of it turned the
+    runner away, such as Cloudflare's challenge page for its IP address, or a 429 that says
+    it is a rate limit. The API sends a request id with each answer, its own refusals of a
+    key included. A 429 that is not a usage limit can still be one that no wait clears, such
+    as an organization's policy that turned the service off, so its text decides."""
+    status, reached, kind = api_error
+    if kind:
+        return False
+    if status == 429:
+        return bool(TRANSIENT.search(texts))
+    return status >= 500 or (status == 403 and not reached)
+
+
 # The tool through which Claude Code takes the result that `--json-schema` asks for.
 RESULT_TOOL = "StructuredOutput"
 # How Claude Code ends a run whose model called that tool as often as it allows without a
@@ -222,11 +249,15 @@ class ClaudeReader(Reader):
         self.answered = False
         # What Claude Code said when it last turned a `StructuredOutput` call down.
         self.rejected = ""
+        # The status of the last API error and whether it reached the API (`_api_error`),
+        # until the model answers again.
+        self.api_error = None
 
     def events(self, raw):
         if raw.get("type") == "result":
             self.result = raw
         self.last_text = _text_of(raw) or self.last_text
+        self.api_error = _api_error(raw) or self.api_error
         self.resets_at = _rejected_until(raw) or self.resets_at
         message = raw.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -234,7 +265,8 @@ class ClaudeReader(Reader):
             return []
         found = []
         if raw.get("type") == "assistant":
-            self.answered = self.answered or message.get("model") != "<synthetic>"
+            if message.get("model") != "<synthetic>":
+                self.answered, self.api_error = True, None
             message_id = message.get("id")
             if message_id is None or message_id not in self._messages:
                 self._messages.add(message_id)
@@ -308,8 +340,10 @@ class ClaudeReader(Reader):
         if outcome.error and not outcome.limit:
             texts = " ".join(str(text) for text in (said, stderr, self.last_text) if text)
             # A CLI that exited before the model answered never got to the work.
-            outcome.transient = bool(TRANSIENT.search(texts)) or (
-                not self.result and not self.answered
+            outcome.transient = (
+                _passing(self.api_error, texts)
+                if self.api_error
+                else bool(TRANSIENT.search(texts)) or (not self.result and not self.answered)
             )
         return outcome
 

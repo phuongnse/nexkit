@@ -21,6 +21,7 @@ from nexkit.report import (
     report,
     retry_line,
     review_body,
+    review_failure,
     shortened_line,
     workflow_file,
 )
@@ -34,7 +35,7 @@ from nexkit.state import (
     render_state,
 )
 from nexkit.usage import parse_iso, shown
-from tests.support import FakeGitHub, make_config
+from tests.support import FakeGitHub, interpret_claude, make_config
 
 HEAD = "c" * 40
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -520,6 +521,36 @@ class ReportTests(ReportCase):
         )
         self.assertIn("### NexKit `/nexkit go` (retry 2)", progress_comment)
 
+    def test_a_stop_on_cloudflares_challenge_page_runs_again_but_a_refused_key_does_not(self):
+        def stop(text, request_id=None):
+            said = {
+                "type": "assistant",
+                "api_error_status": 403,
+                "message": {"model": "<synthetic>", "content": [{"type": "text", "text": text}]},
+            }
+            if request_id:
+                said["request_id"] = request_id
+            result = {"subtype": "success", "is_error": True, "result": text}
+            return interpret_claude("implement", result, returncode=1, stream=[said])
+
+        cloudflare = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"
+        self.write("nexkit-agent", "result.json", stop(cloudflare))
+        outcome = self.run_report(published=False)
+        self.assertEqual(outcome["outcome"], "retry_waiting")
+        self.assertIsNone(outcome.get("attention"))
+        run = self.gh.run_comments(5)[-1]
+        self.assertEqual(run["run"]["status"], "paused")
+        self.assertIn(
+            f"again after {shown(run['run']['resume']['at'])}: run again 1 of 3", run["body"]
+        )
+        self.assertNotIn("remove its cause", run["body"])
+        refused = "Failed to authenticate. API Error: 403 Your API key does not have permission"
+        self.write("nexkit-agent", "result.json", stop(refused, "req_1"))
+        outcome = self.run_report(published=False)
+        self.assertEqual(outcome["outcome"], "agent_error")
+        self.assertIn("remove its cause", outcome["attention"])
+        self.assertEqual(len(self.gh.dispatches), 1)
+
     def test_without_waits_a_transient_error_waits_for_a_person_at_once(self):
         self.write(
             "nexkit-agent",
@@ -722,6 +753,19 @@ class ReportTests(ReportCase):
             dispatch["inputs"],
             {"command": "review", "number": "6", "note": "", "auto": "autopilot,retry"},
         )
+
+    def test_a_review_stopped_by_cloudflare_runs_again_without_asking_for_new_secrets(self):
+        cloudflare = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"
+        for transient, secrets in ((True, False), (False, True)):
+            reviewed = {"status": "error", "error": cloudflare}
+            if transient:
+                reviewed["transient"] = True
+            _, message = review_failure(reviewed)
+            self.assertEqual("secrets are fixed" in message, secrets, message)
+        self.candidate(review={"status": "error", "error": cloudflare, "transient": True})
+        outcome = self.run_report(d=decision("fix", pr=6, target=6, head=HEAD))
+        self.assertEqual(outcome["outcome"], "retry_waiting")
+        self.assertNotIn("secrets", self.gh.run_comments(6)[-1]["body"])
 
     def test_publish_failure(self):
         self.write("nexkit-agent", "result.json", {"status": "done"})

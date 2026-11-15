@@ -1,5 +1,32 @@
 # Changelog
 
+## 6.11.3
+
+- A plan that splits an issue into more than ten parts is never filed cut (#293). Before,
+  the plan's record kept only the first ten parts, without a word: autopilot filed ten
+  sub-issues and closed the parent when they were done. In phuongnse/axis#3288, parts
+  11–17 of a 17-part plan were never filed, and four parents there lost their last parts
+  this way.
+  - The plan prompt says a split has at most ten parts, and that larger work becomes
+    fewer, larger parts, each of which splits again when it is planned.
+  - The plan's record keeps every part and how many there are. A plan with more than ten
+    is planned once more, with a note that names both counts; a second such plan waits
+    for a person. An open issue whose plan was recorded cut is counted from its comment's
+    *Suggested split* and planned again, not filed cut.
+  - A parent that autopilot split, whose latest plan lists more parts than it has
+    sub-issues, such as a split cut short or one that stopped partway, is not closed. It
+    waits for a person under *Needs a person*, and gets one comment with both counts when
+    its sub-issues close. See [a parent has fewer sub-issues than its plan lists
+    parts](docs/troubleshooting.md#a-parent-has-fewer-sub-issues-than-its-plan-lists-parts).
+    A parent that a person split by hand keeps the parts that person chose.
+- A plan comment always fits GitHub's limit of 65,536 characters. Before, GitHub refused a
+  plan too long for one comment, and its run failed. Now each text longer than the most
+  that fits is cut to it, marked `[…]`, and the comment says so; questions, titles,
+  checklist items and protected paths stay whole. The parts autopilot files are what the
+  comment shows. Before, a part's body was cut at 6,000 characters in the record alone.
+- A parent's note that every sub-issue closed without one completed is posted once, even
+  when a sweep's mention comes between the runs of parts that closed together.
+
 ## 6.11.2
 
 - A Claude Code stop on a 403 that never reached the API, such as Cloudflare's challenge

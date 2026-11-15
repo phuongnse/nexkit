@@ -381,6 +381,14 @@ Files, signatures, commands: the detail the implementing agent needs.
 Empty sections are left out. The implementing agent, and the reviewer, receive the whole
 comment, including the implementation notes, but not the profile lines.
 
+The comment always fits GitHub's 65,536 characters, with its record whole. A plan longer
+than that has each text longer than the most that fits cut to it, marked `[…]`, and the
+comment says so: the summary, each bullet, decision, criterion and note, each part's
+body. Questions and their options, part titles, checklist items and protected paths are
+never cut; NexKit bounds each. The record holds the same text, so the parts autopilot
+files are what the comment shows. A plan that does not fit even with each text cut to
+500 characters is not posted: its run fails and a person decides.
+
 A plan for an issue that names CI runs gets the same [evidence of those
 runs](configuration.md#evidence-from-ci-runs) as the implement round: the end of the
 failed jobs' logs, their annotations, and whether a newer run of the workflow passed on

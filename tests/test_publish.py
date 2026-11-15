@@ -774,6 +774,39 @@ class PublishTests(unittest.TestCase):
         data = plan_data(latest_plan(self.gh.comments(5)))
         self.assertEqual((data["parts"], len(data["split"])), (MAX_PARTS, MAX_PARTS))
 
+    def test_a_plan_too_long_for_a_comment_has_its_longest_texts_cut_to_fit(self):
+        from nexkit.state import TEXT_LIMIT
+
+        parts = [{"title": f"P{n}", "body": "b" * 9000, "depends_on": []} for n in range(1, 6)]
+        output = {
+            **PLAN,
+            "questions": [],
+            "too_large": True,
+            "split": parts,
+            "implementation_notes": ["n" * 30000],
+        }
+        body = render_plan(output)
+        self.assertLessEqual(len(body), TEXT_LIMIT)
+        self.assertIn("marked […], to fit GitHub's limit on a comment", body)
+        self.assertIn("- add(a, b) returns a + b.", body)  # short texts stay whole
+        self.gh.comment(5, body)
+        data = plan_data(latest_plan(self.gh.comments(5)))
+        # What autopilot files is what the comment shows.
+        [first, *_] = data["split"]
+        self.assertTrue(first["body"].endswith(" […]"))
+        self.assertIn(f"1. **P1**: {first['body']}", body)
+        self.assertEqual(len(data["split"]), 5)
+        # A plan that fits is not cut.
+        self.assertNotIn("[…]", render_plan(PLAN))
+
+    def test_a_plan_that_fits_no_comment_even_cut_stops(self):
+        long = [
+            {"question": "q" * 1500, "options": [f"{n}" + "o" * 499 for n in range(6)]}
+            for _ in range(10)
+        ]
+        with self.assertRaisesRegex(PublishError, "more than the 65536 GitHub keeps"):
+            render_plan({**PLAN, "questions": long})
+
     def test_pull_request_description_order(self):
         output = {
             "summary": "add() now returns the sum.",

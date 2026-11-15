@@ -171,7 +171,7 @@ def plan_data_record(output, passed=()):
         data["split"] = [
             {
                 "title": clip(item.get("title"), 256),
-                "body": clip(item.get("body"), 6000),
+                "body": (item.get("body") or "").strip(),
                 "depends_on": depends_on(item, number),
             }
             for number, item in enumerate(split if len(split) <= MAX_PARTS else [], 1)

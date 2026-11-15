@@ -19,6 +19,7 @@ from .state import (
     MAX_PARTS,
     PLAN_MARKER,
     PROTECTED_ENTRY,
+    TEXT_LIMIT,
     depends_on,
     option_marks,
     passed_lines,
@@ -135,11 +136,65 @@ def _protected(paths):
     ]
 
 
+# The fewest characters `render_plan` cuts a plan's text to, to fit its comment.
+PLAN_FLOOR = 500
+# What in a plan `render_plan` never cuts: questions and their options, which autopilot
+# answers by their text, titles, checklist items and protected paths. NexKit bounds each.
+UNCUT = {"questions", "title", "item", "protected_paths"}
+
+
+def _cut(value, most):
+    """`value` with each text in it, but those under UNCUT keys, cut to `most` characters."""
+    if isinstance(value, dict):
+        return {k: v if k in UNCUT else _cut(v, most) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_cut(item, most) for item in value]
+    if isinstance(value, str) and len(value.strip()) > most:
+        return value.strip()[:most].rstrip() + " […]"
+    return value
+
+
+def _longest(value):
+    """The length of the longest text in `value` that `_cut` may cut."""
+    if isinstance(value, dict):
+        return max((_longest(v) for k, v in value.items() if k not in UNCUT), default=0)
+    if isinstance(value, list):
+        return max((_longest(item) for item in value), default=0)
+    return len(value.strip()) if isinstance(value, str) else 0
+
+
 def render_plan(output, profile=None, replan=False, passed=()):
     """The plan comment: the part a person approves, then the agent's notes collapsed.
     `profile` comes from `render_profile`, when profiles are configured. A re-plan says how
     it differs from the latest plan. `passed` holds the runs that passed since the CI runs
-    the issue names, shown with a finding that no change is needed."""
+    the issue names, shown with a finding that no change is needed.
+
+    A comment holds at most `TEXT_LIMIT` characters. A plan longer than that has each of
+    its longest texts cut to the most that fits, and says so; one that does not fit even
+    with them cut to `PLAN_FLOOR` raises PublishError. The plan's record holds the same
+    text, so the parts filed from a split are what the comment shows."""
+    body = _render_plan(output, profile, replan, passed)
+    if len(body) <= TEXT_LIMIT:
+        return body
+
+    def fits(most):
+        return len(_render_plan(_cut(output, most), profile, replan, passed, most)) <= TEXT_LIMIT
+
+    low, high = PLAN_FLOOR, _longest(output)
+    if high <= low or not fits(low):
+        raise PublishError(
+            f"The plan's comment would have {len(body)} characters, more than the "
+            f"{TEXT_LIMIT} GitHub keeps, even with each of its texts cut to {PLAN_FLOOR}."
+        )
+    while low < high:
+        middle = (low + high + 1) // 2
+        low, high = (middle, high) if fits(middle) else (low, middle - 1)
+    return _render_plan(_cut(output, low), profile, replan, passed, low)
+
+
+def _render_plan(output, profile, replan, passed, cut=None):
+    """The plan comment of `render_plan`, saying that its texts were cut to `cut`
+    characters, when they were."""
     finding = filled(output.get("no_change"))
     protected = output.get("protected_paths") or []
     record, text = profile or (None, None)
@@ -226,6 +281,12 @@ def render_plan(output, profile=None, replan=False, passed=()):
             "Comment `/nexkit go` to implement this plan, or reply with changes and comment "
             "`/nexkit plan` to revise it."
         )
+    if cut:
+        parts += [
+            "",
+            f"NexKit cut each text of this plan longer than {cut} characters, marked […], to "
+            "fit GitHub's limit on a comment.",
+        ]
     parts += ["", plan_data_record(output, passed)]
     return "\n".join(parts)
 

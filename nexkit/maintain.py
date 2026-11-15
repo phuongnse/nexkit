@@ -75,6 +75,7 @@ TASKS = {
     "approved": ("merge.auto", "review.checklist"),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
+UNFILED = "<!-- nexkit:parent-unfiled -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
 HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "duplicate"}
 # The `resume` dispatch: a run that waits for paused commands to come due and starts them.
@@ -150,21 +151,32 @@ def close_parents(gh, number):
 def close_parent(gh, number):
     """Close the parent issue `number` when every sub-issue of it is closed and at least
     one was completed, with one `parent-closed` comment, however many runs and sweeps try
-    it. Returns (lines, whether NexKit closed it now). Without a completed sub-issue, the
-    parent stays open with a note for a person."""
+    it. Returns (lines, whether NexKit closed it now). Without a completed sub-issue, or
+    with fewer sub-issues than its latest plan lists parts, the parent stays open with a
+    note for a person."""
     subs = gh.sub_issues(number)
     if not subs or any(sub.get("state") == "open" for sub in subs):
         return [], False
     listing = "\n".join(f"- #{sub['number']}: {_closed_as(sub)}" for sub in subs)
+    missing = autopilot.unfiled(gh, number, subs)
+    if missing:
+        _note_once(
+            gh,
+            number,
+            UNFILED,
+            f"Every sub-issue of this issue is closed:\n\n{listing}\n\nNexKit leaves this "
+            f"issue open: {missing}. A person should open the parts that are missing as "
+            "sub-issues of it, or close it once its work is done.",
+        )
+        return [f"Left #{number} open: it has fewer sub-issues than its plan lists parts."], False
     if not any(sub.get("state_reason") == "completed" for sub in subs):
-        latest = gh.comments(number)[-1:]
-        if not (latest and by_bot(latest[0]) and UNDECIDED in latest[0]["body"]):
-            gh.comment(
-                number,
-                f"{UNDECIDED}\nEvery sub-issue of this issue is closed, but none was "
-                f"completed:\n\n{listing}\n\nNexKit leaves this issue open. A person "
-                "should decide whether to close it.",
-            )
+        _note_once(
+            gh,
+            number,
+            UNDECIDED,
+            f"Every sub-issue of this issue is closed, but none was completed:\n\n{listing}"
+            "\n\nNexKit leaves this issue open. A person should decide whether to close it.",
+        )
         return [f"Left #{number} open: none of its sub-issues was completed."], False
     # Sub-issues closed together start one run each, and a sweep may try it too; only the
     # first closes the parent.
@@ -179,6 +191,15 @@ def close_parent(gh, number):
         )
     gh.close_issue(number, "completed")
     return [f"Closed #{number} as completed: all its sub-issues are closed."], True
+
+
+def _note_once(gh, number, marker, text):
+    """Comment `text` on issue `number` after `marker`, unless NexKit commented that note
+    there already: the runs of parts that closed together, and a sweep's mention between
+    them, leave one. A note about other sub-issues is a new one."""
+    body = f"{marker}\n{text}"
+    if not any(by_bot(c) and c.get("body") == body for c in gh.comments(number)):
+        gh.comment(number, body)
 
 
 def close_parents_safely(gh, number):

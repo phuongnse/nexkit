@@ -543,6 +543,11 @@ def alert(number=1, ghsa="GHSA-aaaa-bbbb-cccc", severity="high", package="lodash
     }
 
 
+def issues(pipe):
+    """The numbers of the issues, without pull requests."""
+    return sorted(n for n, issue in pipe.gh.issues.items() if "pull_request" not in issue)
+
+
 def config(**kw):
     autopilot_settings = {"enabled": True, "answer": "recommended", **kw.pop("autopilot", {})}
     return make_config(
@@ -2559,6 +2564,66 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(played[:3], [("plan", 5), ("plan", 5), ("plan", 6)])
         self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7)), played)
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+
+    def test_a_split_with_too_many_parts_plans_again_for_fewer_and_never_files_it_cut(self):
+        many = [
+            {"title": f"Part {n}", "body": f"Do {n}.", "depends_on": []}
+            for n in range(1, state.MAX_PARTS + 3)
+        ]
+        fewer = many[:2]
+        plans = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan" and inputs["number"] == "5":
+                return plan(too_large=True, split=many if next(plans) == 0 else fewer)
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(close_parent_issues=True), script)
+        pipe.issue(5)
+        played = pipe.play()
+        self.assertEqual(played[:3], [("plan", 5), ("plan", 5), ("plan", 6)])
+        notes = [d["inputs"]["note"] for d in pipe.gh.dispatches if d["inputs"]["number"] == "5"]
+        note = autopilot.FEWER_NOTE.format(parts=len(many), most=state.MAX_PARTS)
+        self.assertEqual(notes, ["", note])
+        self.assertEqual(issues(pipe), [5, 6, 7])  # the long split filed nothing
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 6, 7)), played)
+        self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
+        # A plan that has too many parts again waits for a person, once.
+        pipe = Pipeline(self, config(), lambda pipe, inputs: plan(too_large=True, split=many))
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("plan", 5)])
+        self.assertEqual(issues(pipe), [5])
+        self.assertEqual(len(pipe.gh.comments_matching(5, "@olivia a person is needed")), 1)
+
+    def test_a_parent_missing_parts_of_its_plan_waits_when_its_sub_issues_close(self):
+        parts = [{"title": f"Part {n}", "body": f"Do {n}.", "depends_on": []} for n in (1, 2, 3)]
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                number = int(inputs["number"])
+                return plan(too_large=True, split=parts) if number == 5 else plan()
+            return done()
+
+        pipe = Pipeline(self, config(close_parent_issues=True), script)
+        pipe.issue(5)
+        # GitHub refuses the third part: the split stops after two.
+        real = pipe.gh.create_issue
+
+        def create_issue(title, *args, **kw):
+            if title == "Part 3":
+                raise GitHubError(422, "Validation Failed")
+            return real(title, *args, **kw)
+
+        pipe.gh.create_issue = create_issue
+        played = pipe.play()
+        self.assertEqual(issues(pipe), [5, 6, 7])
+        self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (6, 7)), played)
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        self.assertFalse(pipe.gh.comments_matching(5, "<!-- nexkit:parent-closed -->"))
+        self.assertEqual(len(pipe.gh.comments_matching(5, "<!-- nexkit:parent-unfiled -->")), 1)
+        mention = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertEqual(len(mention), 1)
+        self.assertIn("Its plan lists 3 parts, but it has 2 sub-issues.", mention[0]["body"])
 
     def test_a_stopped_go_plans_again_once_a_person_answers_or_its_blocker_closes(self):
         def script():

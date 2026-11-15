@@ -83,7 +83,9 @@ def conflict_rounds_used(rounds):
 
 
 RUN_LABELS = {RUNNING: "running", PAUSED: "paused", CONTINUED: "continued"}
-# Bounds for what a plan's record and a run's marker keep.
+# The most parts a split may have. The plan prompt says so, and autopilot files a split
+# whole or not at all: a plan with more parts is asked again for fewer, larger ones, which
+# may split again in turn (see `autopilot.MAX_DEPTH`).
 MAX_PARTS = 10
 # Where the docs say what a person does at each stop.
 TROUBLESHOOTING = "https://github.com/phuongnse/nexkit/blob/main/docs/troubleshooting.md"
@@ -162,15 +164,47 @@ def plan_data_record(output, passed=()):
             "\n\n".join([finding, *(["\n".join(lines)] if lines else [])]), 3500
         )
     if data["too_large"]:
+        split = output.get("split") or []
+        # Every part the plan lists, or none when there are more than autopilot files:
+        # `parts` says how many it lists, so a split is never filed cut.
+        data["parts"] = len(split)
         data["split"] = [
             {
                 "title": clip(item.get("title"), 256),
-                "body": clip(item.get("body"), 6000),
+                "body": (item.get("body") or "").strip(),
                 "depends_on": depends_on(item, number),
             }
-            for number, item in enumerate((output.get("split") or [])[:MAX_PARTS], 1)
+            for number, item in enumerate(split if len(split) <= MAX_PARTS else [], 1)
         ]
     return _encode(PLAN_DATA_PREFIX, data)
+
+
+# The plan comment's *Suggested split*, up to the implementation notes or the record: a
+# part's body can hold headings and rules of its own. A numbered part: `3. **Title**`.
+SPLIT_SECTION = re.compile(
+    r"^### Suggested split\n\n(.*?)(?=^<details><summary>Implementation notes|<!-- nexkit:|\Z)",
+    re.M | re.S,
+)
+SPLIT_ITEM = re.compile(r"^(\d+)\. \*\*", re.M)
+
+
+def planned_parts(comment, data):
+    """How many parts the plan comment `comment`, with its record `data`, lists, or 0 when
+    it does not split the issue. A record from before NexKit kept the count held at most
+    ten parts, so for one that holds ten the comment's own *Suggested split* counts."""
+    if not (data or {}).get("too_large"):
+        return 0
+    split = data.get("split") or []
+    if "parts" in data:
+        return data["parts"]
+    if len(split) < MAX_PARTS:
+        return len(split)
+    section = SPLIT_SECTION.search(comment.get("body") or "")
+    numbers = [int(n) for n in SPLIT_ITEM.findall(section.group(1))] if section else []
+    count = 0
+    while count + 1 in numbers:
+        count += 1
+    return max(count, len(split))
 
 
 def depends_on(part, number):

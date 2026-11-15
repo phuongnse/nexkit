@@ -260,6 +260,14 @@ class PromptTests(unittest.TestCase):
             self.assertNotIn("$earlier_parts", prompt)
             self.assertIn("</untrusted>\n\n## Note from the person", prompt)
 
+    def test_the_plan_prompt_states_how_many_parts_a_split_may_have(self):
+        from nexkit.state import MAX_PARTS
+
+        prompt = " ".join(agent.build_prompt("plan", CONTEXT, make_config()).split())
+        self.assertIn(f"in order, at most {MAX_PARTS} of them,", prompt)
+        self.assertIn("NexKit files no part of a split with more parts than that", prompt)
+        self.assertNotIn("$max_parts", prompt)
+
     def test_plan_criteria_are_what_the_review_can_verify(self):
         prompt = " ".join(agent.build_prompt("plan", CONTEXT, make_config()).split())
         self.assertIn(

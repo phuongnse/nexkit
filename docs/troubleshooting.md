@@ -552,8 +552,8 @@ issue three levels of parts deep is not split again.
 ### A plan is too large again
 
 Autopilot already planned once more after a plan that was too large and suggested no
-parts, or suggested parts titled like the issue (see [Autopilot](configuration.md#autopilot)),
-and the second plan did the same; or the issue is three levels of parts deep, where
+parts, suggested parts titled like the issue, or suggested more than ten parts (see
+[Autopilot](configuration.md#autopilot)), and the second plan did the same; or the issue is three levels of parts deep, where
 NexKit splits no further. Read the plan: its *What changes* and implementation notes
 usually show the steps. Split the issue by hand into parts that each fit one session, with
 the [`request` skill](../skills/request/SKILL.md), or make the issue smaller and comment
@@ -769,6 +769,16 @@ blocker in another repository is outside the scope: finish it there. Or remove t
 NexKit leaves the parent open, since nothing it asked for was delivered (see [Parent
 issues](configuration.md#parent-issues)). Decide whether the parent is done: close it, or
 open new parts for what is left.
+
+### A parent has fewer sub-issues than its plan lists parts
+
+Autopilot split the parent, but its latest plan lists more parts than it has sub-issues:
+a split that stopped partway, such as when GitHub refused to create a part, a split that an
+older release filed cut to ten parts, or a part a person unlinked. NexKit leaves the
+parent open, with a comment of both counts, so it never closes with work left out. Compare
+the plan's *Suggested split* with the sub-issues. Open each part that is missing as a
+sub-issue of the parent, with the [`request` skill](../skills/request/SKILL.md), or close
+the parent once its work is done.
 
 ### A CI issue says no job failed
 

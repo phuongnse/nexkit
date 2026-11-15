@@ -36,6 +36,7 @@ from .state import (
     BOT_LOGINS,
     CONTINUED,
     FAILURE,
+    MAX_PARTS,
     PAUSED,
     RUNNING,
     SUCCESS,
@@ -50,6 +51,7 @@ from .state import (
     is_bot,
     latest_plan,
     plan_data,
+    planned_parts,
     questions,
     read_state,
     round_questions,
@@ -89,7 +91,7 @@ AGAIN = (
     timedelta(minutes=120),
 )
 # What the record keeps from one start to the next.
-STICKY = ("split_asked", "titles_asked", "parts_asked")
+STICKY = ("split_asked", "titles_asked", "parts_asked", "fewer_asked")
 # A sweep looks again after splitting an issue, at most this often.
 PASSES = 3
 # The note on the plan that autopilot asks for after an agent ran out of time.
@@ -118,6 +120,14 @@ PARTS_NOTE = (
     "done and tested in one session, each titled by its own behaviour, and order them so "
     "that each leaves the default branch working. If the work fits one session after all, "
     "return a plan that is not too large."
+)
+# The note on the plan that autopilot asks for again when a plan has more parts than it
+# files.
+FEWER_NOTE = (
+    "NexKit autopilot did not split this issue, because the last plan has {parts} parts and "
+    "NexKit files at most {most}. Return the split again with at most {most} parts: make "
+    "fewer, larger parts, each titled by its own behaviour. A part still too large for one "
+    "session is split again when it is planned."
 )
 PART = re.compile(r"\A<!-- nexkit:part (\d+) -->")
 # How deep parts go: the issue first split is at depth 0, its parts at 1, their parts at 2.
@@ -614,6 +624,12 @@ def _trusted_part(gh, issue, cfg=None, level=0):
     return distrust(gh, parent, cfg, level + 1) is None
 
 
+def _part_of(issue, number):
+    """Whether autopilot created `issue` as a part of the issue `number`."""
+    match = PART.match(issue.get("body") or "")
+    return bool(match) and int(match.group(1)) == number and is_bot(author(issue))
+
+
 def in_repository(gh, issue):
     """Whether an issue from the sub-issues API belongs to this repository: a parent can be
     in another repository of the same owner, with a number that means another issue here."""
@@ -640,8 +656,7 @@ def depth(issue, above):
     `lineage`: 0 for an issue that is not a part that autopilot created."""
     level, child = 0, issue
     for parent in above:
-        match = PART.match(child.get("body") or "")
-        if not match or not is_bot(author(child)) or int(match.group(1)) != parent["number"]:
+        if not _part_of(child, parent["number"]):
             break
         level, child = level + 1, parent
     return level
@@ -1189,6 +1204,21 @@ def _split(gh, issue, plan, data, record, start, pull=None):
     if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
         do = "make the issue smaller and comment the change on it, or implement it by hand"
         return _step(issue, "waits", person(do, DEPTH_REASON))
+    parts = planned_parts(plan, data)
+    if parts > MAX_PARTS and record.get("fewer_asked"):
+        why = f"its plan has {parts} parts again, and autopilot files at most {MAX_PARTS}"
+        return _step(issue, "waits", person(SPLIT_DO, why))
+    if parts > MAX_PARTS:
+        start = {
+            **start,
+            "note": FEWER_NOTE.format(parts=parts, most=MAX_PARTS),
+            "remember": {"fewer_asked": True},
+        }
+        reason = (
+            f"the plan has {parts} parts and autopilot files at most {MAX_PARTS}, so autopilot "
+            "plans again for fewer"
+        )
+        return _step(issue, "start", reason, command="plan", **start)
     if not data.get("split") and record.get("parts_asked"):
         why = "its plan is too large for one session and suggests no parts again"
         return _step(issue, "waits", person(SPLIT_DO, why))
@@ -1759,6 +1789,26 @@ def _unmentioned(reason):
     return "`".join(parts)
 
 
+UNFILED_DO = (
+    "open the parts that are missing as sub-issues of it, or close it yourself once its work "
+    "is done"
+)
+
+
+def unfiled(gh, number, subs):
+    """Why the sub-issues `subs` of the parent issue `number` are not all its work, or "":
+    autopilot filed parts of it, and its latest plan lists more parts than it has
+    sub-issues, such as a split cut short. A parent that a person split by hand, with none
+    of autopilot's parts, has the parts that person chose."""
+    if not any(_part_of(sub, number) for sub in subs):
+        return ""
+    plan = latest_plan(gh.comments(number))
+    planned = planned_parts(plan, plan_data(plan)) if plan else 0
+    if planned <= len(subs):
+        return ""
+    return f"its plan lists {planned} parts, but it has {len(subs)} sub-issues"
+
+
 def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     number = issue["number"]
     label = hold_label(cfg, issue)
@@ -1777,6 +1827,9 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     if left_alone:
         return _step(issue, "waits", person(TRUST_DO, f"autopilot leaves it alone: {left_alone}"))
     parts = gh.sub_issues(number)
+    missing = unfiled(gh, number, parts) if parts else ""
+    if missing:
+        return _step(issue, "waits", person(UNFILED_DO, missing))
     done = parts and all(part.get("state") == "closed" for part in parts)
     if (
         done

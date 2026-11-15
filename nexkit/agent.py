@@ -36,6 +36,7 @@ from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import AgentConfigError, Spec
 from .schema import filled, problems
+from .state import MAX_PARTS
 from .usage import schedule
 
 MAX_DIFF = 80_000
@@ -933,6 +934,7 @@ def build_prompt(stage, context, cfg, extra=None):
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
         "checklist": checklist_text(stage, cfg),
         "earlier_parts": earlier_parts_text(context),
+        "max_parts": MAX_PARTS,
         **(extra or {}),
     }
     return Template(template).safe_substitute({k: str(v) for k, v in values.items()})

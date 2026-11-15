@@ -16,6 +16,7 @@ from .gitutil import git, git_retrying, is_ancestor, merge_tree, names
 from .runlog import stage_agent
 from .schema import filled
 from .state import (
+    MAX_PARTS,
     PLAN_MARKER,
     PROTECTED_ENTRY,
     depends_on,
@@ -208,6 +209,13 @@ def render_plan(output, profile=None, replan=False, passed=()):
             "This looks too large for one session. Consider opening the smaller issues above. "
             "Comment `/nexkit go` only if you want to try it as one change."
         )
+        count = len(output.get("split") or [])
+        if count > MAX_PARTS:
+            parts += [
+                "",
+                f"This split has {count} parts, and NexKit autopilot files at most "
+                f"{MAX_PARTS}: it files none of them, and plans again for fewer, larger parts.",
+            ]
     elif output.get("questions"):
         parts.append(
             "Answer the questions in a comment, then comment `/nexkit plan` to revise the plan, "

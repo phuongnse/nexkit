@@ -371,7 +371,7 @@ One or two sentences: what changes and why.
 ### No change needed      only when the evidence shows the issue needs none; the finding, and the run that passed since
 ### Needs a hand-made change  only when the change needs protected paths, which a person changes
 ### Questions             only when answers would change the work; options, one marked (recommended)
-### Suggested split       only when the work is too large for one session; each part says which earlier parts it needs
+### Suggested split       only when the work is too large for one session: at most ten parts, each saying which earlier parts it needs
 
 <details><summary>Implementation notes</summary>
 Files, signatures, commands: the detail the implementing agent needs.
@@ -875,6 +875,10 @@ sub-issue, NexKit looks at its parent's sub-issues:
   parent's own parent the same way.
 - When every sub-issue was closed as not planned or as a duplicate, the parent stays open,
   and NexKit comments that a person should decide.
+- When autopilot filed parts of the parent and its latest plan lists more parts than it
+  has sub-issues, such as a split that stopped partway, the parent stays open, and NexKit
+  comments both counts and that a person should open the missing parts as sub-issues or
+  close it. A parent that a person split by hand has the parts that person chose.
 - A parent that is already closed, or that still has an open sub-issue, stays as it is.
   Reopening a sub-issue does not reopen its parent.
 - A parent in another repository is left alone.
@@ -884,7 +888,8 @@ the check. When NexKit closes the issue itself after an automatic merge, `report
 same check in that run, for its comment, and the event's run finds nothing left. With
 [autopilot](#autopilot), each sweep also closes an open parent in scope whose sub-issues
 are all closed, one of them completed, by the same rules, in case that check did not run or
-failed: it never asks a person to close it. Whichever comes first closes the parent, with
+failed: it never asks a person to close it. A parent missing parts of its plan waits for a
+person from the sweep that finds it, even while its other parts are open. Whichever comes first closes the parent, with
 one comment.
 
 **Merging after an approval** (`merge.auto`). A writer's approval of a NexKit pull request
@@ -1134,7 +1139,7 @@ the `null` scope, since it may have replaced a sweep that waited.
   after that plan counts as the round the answers started, so autopilot still answers
   once in a row. A blocked fix round that recommends such an option waits for a person,
   since a new plan would leave its pull request behind. A plan that is too large becomes sub-issues, in
-  order. A plan that is too large but suggests no parts is planned once more, with a note
+  order: every part it lists, or none. A plan that is too large but suggests no parts is planned once more, with a note
   that asks for parts that each fit one session; a second such plan waits for a person. Each part of the plan names the earlier parts it needs (`depends_on`); NexKit
   keeps only earlier parts, so the parts cannot wait for each other in a cycle, and records
   each as a *blocked by* relationship on GitHub. Parts that need no other part start at
@@ -1157,7 +1162,12 @@ the `null` scope, since it may have replaced a sweep that waited.
   whose cause was not found makes the first part a diagnosis that finds the cause, with
   evidence, before the change. With profiles, triage chooses a diagnosis part's profile
   like any other's; it is not forced onto `hard`.
-- **Limits on parts.** A part inherits the time-outs of the issues above it, found through
+- **Limits on parts.** A split has at most ten parts, as the plan prompt says, and
+  autopilot never files one cut. A plan with more is planned once more, with a note that
+  names both counts and asks for fewer, larger parts, each of which may split again when
+  it is planned; a second such plan waits for a person. A plan's record keeps how many
+  parts it lists; for a plan from before it did, which kept ten, the comment's *Suggested
+  split* counts them. A part inherits the time-outs of the issues above it, found through
   GitHub's sub-issue parents: when an issue above it already asked for a split, a part
   that runs out of time waits for a person instead of asking again, however deep it is. A
   part whose title is its parent's title, or starts with it (ignoring case, spaces and

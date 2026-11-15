@@ -756,6 +756,24 @@ class PublishTests(unittest.TestCase):
         self.assertIn("too large", large)
         json.dumps(large)
 
+    def test_a_split_with_too_many_parts_keeps_none_in_its_record_and_says_so(self):
+        from nexkit.state import MAX_PARTS
+
+        base = {**PLAN, "questions": [], "too_large": True}
+        parts = [{"title": f"P{n}", "body": "b", "depends_on": []} for n in range(12)]
+        body = render_plan({**base, "split": parts})
+        self.gh.comment(5, body)
+        data = plan_data(latest_plan(self.gh.comments(5)))
+        self.assertEqual((data["parts"], data["split"]), (12, []))
+        self.assertIn(
+            f"This split has 12 parts, and NexKit autopilot files at most {MAX_PARTS}", body
+        )
+        within = render_plan({**base, "split": parts[:MAX_PARTS]})
+        self.assertNotIn("This split has", within)
+        self.gh.comment(5, within)
+        data = plan_data(latest_plan(self.gh.comments(5)))
+        self.assertEqual((data["parts"], len(data["split"])), (MAX_PARTS, MAX_PARTS))
+
     def test_pull_request_description_order(self):
         output = {
             "summary": "add() now returns the sum.",

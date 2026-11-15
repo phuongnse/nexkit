@@ -99,9 +99,12 @@ $writing
   also when the note answers a blocked round with an option that splits the issue or does
   other work first: that work and the rest of this issue are then the parts in `split`.
 - `split`: when `too_large` is true, smaller issues that can each be done in one session,
-  in order. Otherwise an empty list. Each has a `title`, a `body`, and `depends_on`: the
-  numbers (counting from 1) of the earlier parts that must be merged before this one can
-  start, or an empty list. Name a part only when this one really needs its code; parts
+  in order, at most $max_parts of them, or an empty list when `too_large` is false. NexKit
+  files no part of a split with more parts than that, so when the work needs more, make
+  fewer, larger parts: a part still too large for one session is split again when it is
+  planned. Each part has a `title`, a `body`, and `depends_on`: the numbers (counting
+  from 1) of the earlier parts that must be merged before this one can start, or an
+  empty list. Name a part only when this one really needs its code; parts
   that do not need each other run at the same time. Title each part by its own behaviour,
   never by this issue's title. Each part is planned, reviewed and merged on its own, and
   its review checks only its acceptance criteria. So when later parts depend on a part,

@@ -764,7 +764,8 @@ repositories where a parent is only its sub-issues, for example when a too-large
 split, turn this on. When the last open sub-issue closes, NexKit closes the parent as
 completed if at least one sub-issue was completed, and comments a list of the sub-issues
 and how each closed. When all of them were closed as not planned, the parent stays open
-with a note for a person. NexKit then checks the parent's own parent. It works the same
+with a note for a person, as does a parent that autopilot split whose plan lists more parts
+than it has sub-issues. NexKit then checks the parent's own parent. It works the same
 whether a person or NexKit merged the work, and autopilot's sweeps close such a parent too,
 instead of asking a person to. Without the setting, autopilot lists a parent whose
 sub-issues are all closed under *Needs a person*. See

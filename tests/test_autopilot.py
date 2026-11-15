@@ -210,6 +210,9 @@ class ParentTests(AutopilotCase):
         self.assertEqual(self.gh.issues[5]["state"], "open")
         self.assertFalse(self.closed_comments())
         self.assertEqual(len(self.gh.comments_matching(5, "@olivia a person is needed")), 1)
+        # A part's run after the sweep's mention adds no second note.
+        maintain_module.close_parents(self.gh, 6)
+        self.assertEqual(len(self.gh.comments_matching(5, maintain_module.UNFILED)), 1)
         # Once a person opens the parts that were missing and they close, it closes.
         for number in range(8, 23):
             self.issue(number)
@@ -219,6 +222,19 @@ class ParentTests(AutopilotCase):
             "Closed #5 as completed: all its sub-issues are closed.",
             maintain_module.close_parents(self.gh, 22),
         )
+
+    def test_sub_issues_in_another_repository_do_not_count_as_parts(self):
+        legacy_plan(self.gh, 5, parts=3)
+        self.autopilot_parts()
+        self.gh.issues[8] = {
+            "number": 8,
+            "state": "closed",
+            "state_reason": "completed",
+            "repository_url": "https://api.github.com/repos/acme/other",
+        }
+        self.gh.parents[8] = 5
+        why = autopilot.unfiled(self.gh, 5, self.gh.sub_issues(5))
+        self.assertEqual(why, "its plan lists 3 parts, but it has 2 sub-issues")
 
     def test_a_parent_with_every_part_of_its_plan_or_split_by_hand_is_closed_as_before(self):
         cfg = make_config(autopilot={"enabled": True}, close_parent_issues=True)
@@ -1007,12 +1023,14 @@ def plan_output(**kw):
     }
 
 
-def legacy_plan(gh, number, parts):
+def legacy_plan(gh, number, parts, body="Do {n}."):
     """A plan comment of `parts` parts as NexKit wrote it before its record kept their count:
     the record holds at most ten of them."""
     from nexkit.state import PLAN_DATA_PREFIX, _encode
 
-    split = [{"title": f"P{n}", "body": f"Do {n}.", "depends_on": []} for n in range(1, parts + 1)]
+    split = [
+        {"title": f"P{n}", "body": body.format(n=n), "depends_on": []} for n in range(1, parts + 1)
+    ]
     data = {"questions": [], "too_large": True, "split": split[:10]}
     listed = "\n".join(f"{n}. **{p['title']}**: {p['body']}" for n, p in enumerate(split, 1))
     body = (
@@ -1690,6 +1708,14 @@ class SplitTests(AnswerAndSplitCase):
         self.assertEqual((self.started(), sorted(self.gh.issues)), ([("plan", 5)], [5]))
         note = autopilot.FEWER_NOTE.format(parts=17, most=state.MAX_PARTS)
         self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], note)
+        # Headings and rules in the parts' bodies do not end the count.
+        self.issue(20)
+        self.run_comment(20, "plan", outcome="planned")
+        legacy_plan(
+            self.gh, 20, parts=12, body="Do {n}.\n\n### Acceptance criteria\n\n---\n- It works."
+        )
+        self.sweep()
+        self.assertEqual(self.gh.sub_issues(20), [])
         # One that had exactly ten parts splits into all ten.
         self.issue(30)
         self.run_comment(30, "plan", outcome="planned")

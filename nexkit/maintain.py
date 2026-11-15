@@ -194,11 +194,12 @@ def close_parent(gh, number):
 
 
 def _note_once(gh, number, marker, text):
-    """Comment `text` on issue `number` after `marker`, unless NexKit's latest comment there
-    is that note already."""
-    latest = gh.comments(number)[-1:]
-    if not (latest and by_bot(latest[0]) and marker in latest[0]["body"]):
-        gh.comment(number, f"{marker}\n{text}")
+    """Comment `text` on issue `number` after `marker`, unless NexKit commented that note
+    there already: the runs of parts that closed together, and a sweep's mention between
+    them, leave one. A note about other sub-issues is a new one."""
+    body = f"{marker}\n{text}"
+    if not any(by_bot(c) and c.get("body") == body for c in gh.comments(number)):
+        gh.comment(number, body)
 
 
 def close_parents_safely(gh, number):

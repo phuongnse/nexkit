@@ -20,6 +20,7 @@ from .state import (
     PLAN_MARKER,
     PROTECTED_ENTRY,
     TEXT_LIMIT,
+    clip,
     depends_on,
     option_marks,
     passed_lines,
@@ -196,7 +197,8 @@ def _render_plan(output, profile, replan, passed, cut=None):
     """The plan comment of `render_plan`, saying that its texts were cut to `cut`
     characters, when they were."""
     finding = filled(output.get("no_change"))
-    protected = output.get("protected_paths") or []
+    # As many and as long as the record keeps.
+    protected = [clip(p, 300) for p in output.get("protected_paths") or []][:20]
     record, text = profile or (None, None)
     parts = [PLAN_MARKER, *([record] if record else []), "## Plan", "", output["summary"].strip()]
     parts += ["", *([text, ""] if text else [])]
@@ -231,7 +233,7 @@ def _render_plan(output, profile, replan, passed, cut=None):
         parts += _section(
             "Suggested split",
             [
-                f"{i}. **{item['title']}**{_after(item, i)}: {item['body']}"
+                f"{i}. **{clip(item['title'], 256)}**{_after(item, i)}: {item['body']}"
                 for i, item in enumerate(split, 1)
             ],
         )
@@ -268,8 +270,8 @@ def _render_plan(output, profile, replan, passed, cut=None):
         if count > MAX_PARTS:
             parts += [
                 "",
-                f"This split has {count} parts, and NexKit autopilot files at most "
-                f"{MAX_PARTS}: it files none of them, and plans again for fewer, larger parts.",
+                f"This split has {count} parts, more than the {MAX_PARTS} NexKit autopilot "
+                "files, so autopilot files none of them.",
             ]
     elif output.get("questions"):
         parts.append(

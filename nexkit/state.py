@@ -179,9 +179,11 @@ def plan_data_record(output, passed=()):
     return _encode(PLAN_DATA_PREFIX, data)
 
 
-# A numbered part in the plan comment's *Suggested split*: `3. **Title**`.
+# The plan comment's *Suggested split*, up to the implementation notes or the record: a
+# part's body can hold headings and rules of its own. A numbered part: `3. **Title**`.
 SPLIT_SECTION = re.compile(
-    r"^### Suggested split\n\n(.*?)(?=^### |^<details>|^---$|\Z)", re.M | re.S
+    r"^### Suggested split\n\n(.*?)(?=^<details><summary>Implementation notes|<!-- nexkit:|\Z)",
+    re.M | re.S,
 )
 SPLIT_ITEM = re.compile(r"^(\d+)\. \*\*", re.M)
 

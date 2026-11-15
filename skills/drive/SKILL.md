@@ -156,6 +156,10 @@ bounds:
 - **[A blocker outside the scope](../../docs/troubleshooting.md#an-issue-is-blocked-by-an-issue-outside-the-scope),
   or [a parent whose parts all closed without one completed](../../docs/troubleshooting.md#a-parents-parts-all-closed-and-none-was-completed):**
   these are the person's call. Notify, with the blocker, or the parts and how each closed.
+- **[A parent with fewer sub-issues than its plan lists parts](../../docs/troubleshooting.md#a-parent-has-fewer-sub-issues-than-its-plan-lists-parts):**
+  compare the plan's *Suggested split* with the sub-issues. Open each missing part with the
+  [`request` skill](../request/SKILL.md) when the plan names it whole and its work is not
+  on the default branch; otherwise notify.
 - **[A CI issue with records of several failures](../../docs/troubleshooting.md#a-ci-issue-holds-records-of-several-failures):**
   whenever it has a new plan, pull request or records, account for every record before it
   closes. Start a sweep after opening issues.
@@ -211,6 +215,7 @@ Notify only for:
   for a reason the driver cannot act on;
 - a plan too large again that the driver may not split;
 - a blocker outside the scope, or a parent whose parts all closed without one completed;
+- a parent missing parts of its plan that the driver did not open;
 - an issue opened by someone without write access;
 - a CI run's evidence that expired;
 - a command paused again at a usage limit with an unknown reset time;

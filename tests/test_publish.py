@@ -765,9 +765,10 @@ class PublishTests(unittest.TestCase):
         self.gh.comment(5, body)
         data = plan_data(latest_plan(self.gh.comments(5)))
         self.assertEqual((data["parts"], data["split"]), (12, []))
-        self.assertIn(
-            f"This split has 12 parts, and NexKit autopilot files at most {MAX_PARTS}", body
-        )
+        self.assertIn(f"This split has 12 parts, more than the {MAX_PARTS} NexKit", body)
+        # Titles and protected paths are as long and as many as the record keeps.
+        long = render_plan({**base, "split": [{"title": "t" * 300, "body": "b"}]})
+        self.assertIn(f"1. **{'t' * 256}\n[truncated]**: b", long)
         within = render_plan({**base, "split": parts[:MAX_PARTS]})
         self.assertNotIn("This split has", within)
         self.gh.comment(5, within)

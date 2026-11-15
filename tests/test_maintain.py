@@ -237,6 +237,10 @@ class CloseParentTests(unittest.TestCase):
         self.assertIn("A person should decide", note["body"])
         close_parents(self.gh, 3)  # the same event again adds no second note
         self.assertEqual(len(self.gh.comments(1)), 1)
+        # Nor does the run of the other part after a sweep's mention came between them.
+        self.gh.comment(1, "@olivia a person is needed: decide whether to close it.")
+        close_parents(self.gh, 2)
+        self.assertEqual(len(self.gh.comments_matching(1, UNDECIDED)), 1)
 
     def test_goes_up_the_tree(self):
         self.gh.add_issue(10, title="Roadmap")

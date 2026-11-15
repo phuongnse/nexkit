@@ -150,7 +150,7 @@ says](troubleshooting.md#what-a-mention-says)):
 
 | Run result | A person is needed |
 |---|---|
-| Plan posted, and it has questions or says the issue is too large | yes, unless [autopilot](#autopilot) answers or splits it, or plans again for parts it lacks or that are titled like the issue |
+| Plan posted, and it has questions or says the issue is too large | yes, unless [autopilot](#autopilot) answers or splits it, or plans again for parts it lacks, for fewer than its more than ten parts, or for parts titled like the issue |
 | Plan posted without either | no |
 | The agent returned `blocked` | yes, unless autopilot answers it |
 | The agent failed or errored, publishing failed, or the review did not complete | yes, unless the error was transient and the command runs again after its wait of [`retry.wait_minutes`](configuration.md#transient-errors), or autopilot asks for a split after an implement or fix agent ran out of time (see [limits on parts](#autopilot)) |

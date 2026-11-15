@@ -1798,8 +1798,9 @@ UNFILED_DO = (
 def unfiled(gh, number, subs):
     """Why the sub-issues `subs` of the parent issue `number` are not all its work, or "":
     autopilot filed parts of it, and its latest plan lists more parts than it has
-    sub-issues, such as a split cut short. A parent that a person split by hand, with none
-    of autopilot's parts, has the parts that person chose."""
+    sub-issues in this repository, such as a split cut short. A parent that a person split
+    by hand, with none of autopilot's parts, has the parts that person chose."""
+    subs = [sub for sub in subs if in_repository(gh, sub)]
     if not any(_part_of(sub, number) for sub in subs):
         return ""
     plan = latest_plan(gh.comments(number))

@@ -1368,24 +1368,41 @@ so it cannot open a link. NexKit reads for it, before the agent starts, what the
 refers to, and the plan, implement, fix and review prompts show it in their section
 *Texts the issue links to*:
 
-- **Linked comments.** Each comment of this repository that the issue's body, or a
-  collaborator's comment on the issue, links to: a link to a comment on an issue or pull
-  request, such as `https://github.com/<owner>/<repo>/issues/12#issuecomment-345`, or a
-  bare anchor such as `(#issuecomment-345)`, which names a comment by its id. At most 20,
-  in the order they were linked, each once. A comment of the issue itself is in its
-  discussion already, so it is not repeated.
-- **The issue a part was split from.** A part of a split gets the body of the issue it
-  was split from and that issue's discussion, as for the issue's own discussion, without
-  the comments it already shows as linked. The rules and the context the part refers to
-  often live there, and the part's own text decides where they differ.
+- **The issues a part was split from.** A part of a split gets the text and the
+  collaborators' discussion of the issue it was split from, and of each issue above that
+  one when it is a part too, up to the root of the split, root first. The rules and the
+  context the part refers to often live there; where they differ, the nearer issue
+  decides, and the part's own text decides over all. Only a part that NexKit's App filed
+  as a sub-issue of the issue its marker names counts: an issue whose text only claims to
+  be a part reads no other issue, and its prompt says so. A round that NexKit started
+  stops when someone without write access edited one of these issues after a writer
+  vouched for it, as for the issue itself.
+- **Linked comments.** Each comment of this repository that the issue's body, the issues
+  it was split from, or a collaborator's comment on any of them links to: a link to a
+  comment on an issue or pull request, such as
+  `https://github.com/<owner>/<repo>/issues/12#issuecomment-345`, or a bare anchor such as
+  `(#issuecomment-345)`, which names a comment by its id. At most 20, in the order they
+  were linked, each once. A comment of the issue itself is in its discussion already, so
+  it is not repeated, and a comment of an issue above is shown once, as linked. A part's
+  text links the plan that split it, so a part reads the plan of each issue above it.
+- **Linked issues and pull requests.** The text of each issue or pull request of this
+  repository that those texts link to, such as `#12` or
+  `https://github.com/<owner>/<repo>/issues/12`, outside code, at most 10. Only its text:
+  a comment of its discussion counts only when it is linked itself.
 
-Only comments of collaborators count, as in a discussion, and NexKit's own plans, which
-the agents read without the records for people. A link to another repository, any other
-comment a person outside the collaborators wrote, and a comment NexKit could not read are
-left out: the prompt lists them under *Links NexKit did not read*, and the log and the run
-summary say why. These texts are kept as a discussion is, at most 80,000 characters for the
-linked comments and as many for the discussion of the issue a part was split from, with the
-whole texts in `texts/`. Triage does not read them.
+Only texts of collaborators count, as in a discussion, and NexKit's own plans and issues,
+which the agents read without the records for people. Every link NexKit did not read is
+listed under *Links NexKit did not read* with why: another repository, a text a person
+outside the collaborators wrote, past the limits, or one that could not be read. When the
+work depends on one of them and nothing the agent has settles it, the plan asks a
+question with no recommended option, and an implement or fix round stops blocked with
+one, so a person answers and autopilot does not; the review checks the change against
+the rules the texts set, and flags a listed text that may hold one. The round's comment
+says what NexKit read for the agents (*Read for the agent*) and what it did not (*Linked
+but not read*), and so do the log and the run summary. These texts are kept as a
+discussion is: at most 80,000 characters for the linked texts and as many for the
+discussions of the issues above, with the whole texts in `texts/`. Triage does not read
+them.
 
 **What an agent reads of a failing check's output.** NexKit keeps the last 12,000
 characters of each check's output, and the first 20 lines before them that report a

@@ -624,6 +624,19 @@ def _trusted_part(gh, issue, cfg=None, level=0):
     return distrust(gh, parent, cfg, level + 1) is None
 
 
+def split_from(gh, issue):
+    """The issue that autopilot split `issue` from, or None: `issue` is a part that the App
+    created, with the part marker, as a sub-issue of the issue that marker names. Text that
+    only claims to be a part names no issue here."""
+    match = PART.match(issue.get("body") or "")
+    if not match or not is_bot(author(issue)):
+        return None
+    parent = gh.parent_issue(issue["number"])
+    if not parent or parent["number"] != int(match.group(1)) or not in_repository(gh, parent):
+        return None
+    return parent
+
+
 def _part_of(issue, number):
     """Whether autopilot created `issue` as a part of the issue `number`."""
     match = PART.match(issue.get("body") or "")

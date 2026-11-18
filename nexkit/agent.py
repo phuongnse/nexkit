@@ -538,30 +538,84 @@ def earlier_parts_text(context):
     )
 
 
-def linked_text(context):
-    """The plan, implement, fix and review prompts' section about the texts the issue links
-    to and, for a part of a split, the issue it was split from, or "" without any.
+# What each stage does with the texts NexKit read for it, and with those it could not read.
+LINKED_USE = {
+    "plan": "When what this issue asks depends on a text listed under *Links NexKit did not "
+    "read*, and nothing shown here, in the discussion or in the repository settles it, do not "
+    "guess: ask a question about it with `recommended` 0, so that a person answers it.",
+    "implement": "When what this issue asks depends on a text listed under *Links NexKit did "
+    "not read*, and nothing shown here, in the plan, in the discussion or in the repository "
+    "settles it, do not guess: stop and return `status: blocked` with a question about it, "
+    "with `recommended` 0, so that a person answers it.",
+    "review": "Check the change against what these texts require, as you check the plan's "
+    "criteria: a change that breaks a rule they set is a blocking finding. When a text listed "
+    "under *Links NexKit did not read* may hold a rule the change must follow, say so in a "
+    "finding that is not blocking.",
+}
+LINKED_USE["fix"] = LINKED_USE["implement"]
+
+
+def linked_text(context, stage=None):
+    """The plan, implement, fix and review prompts' section about what the issue refers to:
+    for a part of a split, the issues it was split from, root first, and the texts that the
+    issue and those issues link to, with what NexKit could not read, or "" without any.
     `context["linked"]` comes from `context.linked`."""
     found = context.get("linked") or {}
     blocks = []
-    if found.get("comments"):
-        blocks.append(f"### Comments the issue links to\n\n{found['comments']}")
-    parent = found.get("parent")
-    if parent:
-        number = parent["number"]
-        blocks.append(
-            f"### #{number}, the issue this part was split from: {parent['title']}\n\n"
-            f"This issue was split from #{number} because #{number} was too large for one "
-            "session. Its text and its discussion hold what this part refers to. Where they "
-            "differ, this part's own text decides what this part does.\n\n"
-            f"{parent['body']}\n\n#### Discussion of #{number}\n\n{parent['discussion']}"
+    chain = found.get("chain") or []
+    if chain:
+        names = ["this issue"] + [f"#{above['number']}" for above in chain]
+        steps = ", and ".join(
+            f"{names[index]} from {names[index + 1]}" for index in range(len(chain))
         )
-    if found.get("skipped"):
-        lines = "\n".join(f"- {line}" for line in found["skipped"])
+        lines = [
+            "### The issues this part was split from",
+            "",
+            f"NexKit split {steps}, because each was too large for one session. Their texts "
+            "and their discussions hold what this part refers to, such as rules agreed there. "
+            "Where they differ, the nearer issue decides, and this issue's own text decides "
+            "over all of them.",
+        ]
+        for index in range(len(chain) - 1, -1, -1):
+            above = chain[index]
+            number = above["number"]
+            lines += [
+                "",
+                f"#### #{number}: {above['title']}",
+                "",
+                f"The issue {names[index]} was split from.",
+                "",
+                above["body"],
+                "",
+                f"##### Discussion of #{number}",
+                "",
+                above["discussion"],
+            ]
+        blocks.append("\n".join(lines))
+    if found.get("comments"):
+        blocks.append(
+            "### Texts linked from these issues\n\n"
+            "Each comment, issue and pull request of this repository that the issue"
+            f"{', the issues above' if chain else ''} or a collaborator's comment on them "
+            "links to. Of an issue or a pull request, NexKit read only its text: a comment of "
+            "its discussion counts only when it is linked itself.\n\n"
+            f"{found['comments']}"
+        )
+    skipped = found.get("skipped") or []
+    if skipped:
+        lines = "\n".join(f"- {line}" for line in skipped)
         blocks.append(f"### Links NexKit did not read\n\n{lines}")
     if not blocks:
         return ""
-    return Template(_template("linked")).safe_substitute(texts="\n\n".join(blocks)) + "\n"
+    use = LINKED_USE.get(stage, "")
+    if stage != "review" and not skipped:
+        use = ""
+    return (
+        Template(_template("linked")).safe_substitute(
+            texts="\n\n".join(blocks), use=f"\n{use}\n" if use else ""
+        )
+        + "\n"
+    )
 
 
 def merge_review(repo, context, base):
@@ -960,7 +1014,7 @@ def build_prompt(stage, context, cfg, extra=None):
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
         "checklist": checklist_text(stage, cfg),
         "earlier_parts": earlier_parts_text(context),
-        "linked": linked_text(context),
+        "linked": linked_text(context, stage),
         "max_parts": MAX_PARTS,
         **(extra or {}),
     }
@@ -1603,6 +1657,9 @@ def run_stage(
         result.update(profile=triage["profile"], triage=triage)
     if context.get("shortened"):
         result["shortened"] = shortened_names(context)
+    refers = context.get("linked") or {}
+    if refers.get("read") or refers.get("skipped"):
+        result["linked"] = {key: refers.get(key) or [] for key in ("read", "skipped")}
     return _save(result, out, redact, calls, start=start, merged=merged, conflicts=conflicts)
 
 

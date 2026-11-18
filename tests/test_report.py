@@ -18,6 +18,7 @@ from nexkit.report import (
     after_merge,
     apply_criteria,
     criterion_status,
+    linked_line,
     report,
     retry_line,
     review_body,
@@ -2190,3 +2191,45 @@ class ShortenedTextsTests(ReportCase):
         self.run_report(decision("fix", pr=6, target=6, head=HEAD))
         self.assertNotIn("Shortened", self.gh.run_comments(6)[-1]["body"])
         self.assertEqual(shortened_line(None, {"shortened": [{"kept": 1}]}), "")
+
+
+class LinkedTextsTests(ReportCase):
+    """The round's comment names the texts NexKit read for the agents and the links it could
+    not read, so a person sees what the plan and the change were made from."""
+
+    def test_a_posted_plan_names_what_its_agent_read_and_did_not(self):
+        linked = {"read": ["comment 12 on #2", "#3 with its discussion"], "skipped": []}
+        linked["skipped"] = ["other/repo#9: not this repository"]
+        result = {"status": "done", "linked": linked, "shortened": SHORTENED}
+        self.write("nexkit-agent", "result.json", result)
+        plan = "https://github.com/acme/app/issues/5#issuecomment-1"
+        published = json.dumps({"published": True, "comment": plan})
+        needs = {"publish": {"outputs": {"result": published}}}
+        os.environ["GITHUB_RUN_ID"] = "1"
+        outcome = report(
+            self.gh,
+            decision("plan"),
+            make_config(),
+            needs,
+            self.artifacts,
+            workflow_ref=WORKFLOW,
+            default_branch="main",
+        )
+        self.assertIn(
+            f"[Plan]({plan}) posted.\n\n"
+            "**Read for the agent:** comment 12 on #2; #3 with its discussion.\n"
+            "**Linked but not read:** other/repo#9: not this repository. The agents were told "
+            "to ask rather than guess when the work depends on one of these.\n\n"
+            f"{SHORTENED_LINE}",
+            outcome["summary"],
+        )
+
+    def test_a_pull_request_round_names_what_the_review_read(self):
+        self.candidate()
+        linked = {"read": ["#3 with its discussion"], "skipped": []}
+        self.write("nexkit-review", "result.json", {**review_result(), "linked": linked})
+        self.run_report(decision("fix", pr=6, target=6, head=HEAD))
+        body = self.gh.run_comments(6)[-1]["body"]
+        self.assertIn("**Read for the agent:** #3 with its discussion.", body)
+        self.assertNotIn("Linked but not read", body)
+        self.assertEqual(linked_line(None, {"linked": "x"}, {"linked": {"read": [1]}}), "")

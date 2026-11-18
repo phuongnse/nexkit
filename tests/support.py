@@ -265,6 +265,8 @@ class FakeGitHub:
         return "main"
 
     def issue(self, number):
+        if number not in self.issues:
+            raise GitHubError(404, "Not Found")
         return self.issues[number]
 
     def comments(self, number):

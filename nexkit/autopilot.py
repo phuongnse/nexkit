@@ -624,17 +624,16 @@ def _trusted_part(gh, issue, cfg=None, level=0):
     return distrust(gh, parent, cfg, level + 1) is None
 
 
-def split_from(gh, issue):
-    """The issue that autopilot split `issue` from, or None: `issue` is a part that the App
-    created, with the part marker, as a sub-issue of the issue that marker names. Text that
-    only claims to be a part names no issue here."""
+def part_of_parent(gh, issue, parent):
+    """Whether the sub-issue `issue` of `parent` is a part of it whose round reads it: one
+    that NexKit's App opened, which as a part of a split names `parent` in its marker, or
+    one that someone who can write opened, such as a part a person split by hand. Text that
+    only claims to be a part counts for nothing."""
     match = PART.match(issue.get("body") or "")
-    if not match or not is_bot(author(issue)):
-        return None
-    parent = gh.parent_issue(issue["number"])
-    if not parent or parent["number"] != int(match.group(1)) or not in_repository(gh, parent):
-        return None
-    return parent
+    if is_bot(author(issue)):
+        return not match or int(match.group(1)) == parent["number"]
+    login = author(issue)
+    return bool(login) and gh.can_write(login)
 
 
 def _part_of(issue, number):

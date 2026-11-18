@@ -10,7 +10,14 @@ import re
 from functools import partial
 from pathlib import Path
 
-from .autopilot import MAX_DEPTH, PART, edited_after_vouch, split_from, vouch
+from .autopilot import (
+    LINEAGE,
+    PART,
+    edited_after_vouch,
+    in_repository,
+    part_of_parent,
+    vouch,
+)
 from .checks import RESULTS_DIR, failing_signatures, output_text, shown_command
 from .config import NAME
 from .evidence import collect, named_runs, summary_lines
@@ -535,29 +542,37 @@ def _links():
 
 
 def ancestors(gh, issue):
-    """(the issues NexKit split `issue` from, nearest first, a line saying what could not be
-    read or None). For a part of a split that is the issue it was split from, that issue's
-    own when it is a part too, and so on, as deep as parts go. Only a part that NexKit's App
-    created as a sub-issue of the issue its marker names counts (`autopilot.split_from`):
-    for any other issue whose text starts with a part marker, the line says so."""
-    found, child = [], issue
+    """(the issues `issue` is part of, nearest first, lines saying what was not read). That
+    is its parent on GitHub, the parent's parent, and so on: for a part of a split, the
+    issues it was split from, by NexKit or by a person, up to the root. Each step counts
+    only when the sub-issue is a part whose round reads its parent
+    (`autopilot.part_of_parent`); a part marker without such a parent names no issue."""
+    found, child, lines, seen = [], issue, [], {issue["number"]}
     try:
-        for _ in range(MAX_DEPTH):
-            parent = split_from(gh, child)
-            if parent is None:
+        for _ in range(LINEAGE):
+            parent = gh.parent_issue(child["number"])
+            if not parent or not in_repository(gh, parent) or parent["number"] in seen:
+                break
+            if not part_of_parent(gh, child, parent):
+                where = f"#{parent['number']}, which #{child['number']} is a sub-issue of"
+                lines.append(
+                    f"{where}: #{child['number']} is no part of it that NexKit or a writer opened"
+                )
                 break
             found.append(parent)
+            seen.add(parent["number"])
             child = parent
     except GitHubError as exc:
-        where = f"#{_part_of(child)}, which #{child['number']} was split from"
-        return found, f"{where}: could not be read ({exc.status})"
+        lines.append(
+            f"the issue #{child['number']} is a sub-issue of: could not be read ({exc.status})"
+        )
     claimed = _part_of(issue)
-    if claimed is not None and not found:
-        return found, (
+    if claimed is not None and not found and not lines:
+        lines.append(
             f"#{claimed}, which this issue's text names as the issue it was split from: "
             "NexKit did not split this issue from it"
         )
-    return found, None
+    return found, lines
 
 
 def chain_edited(gh, chain):
@@ -672,7 +687,7 @@ def _vouched_text(gh, issue):
         return False
 
 
-def linked(gh, issue, comments, shelf, chain=(), problem=None, skip=(), own=None):
+def linked(gh, issue, comments, shelf, chain=(), problems=(), skip=(), own=None):
     """What the issue refers to and the agent cannot open itself, since it holds no GitHub
     token. `chain` are the issues it was split from, nearest first (`ancestors`): each
     with its text and its collaborators' discussion. Then the comments and the issues or
@@ -681,9 +696,9 @@ def linked(gh, issue, comments, shelf, chain=(), problem=None, skip=(), own=None
     issues that collaborators or NexKit wrote, the first linked first. Comments in `own`
     (by default all of the issue's) and issues in `skip` are shown elsewhere. Each block
     keeps at most BLOCK_LIMIT characters, and texts past that go whole to `shelf`. Each
-    link that was not read is listed with why, as `problem` is, in the log and the run
+    link that was not read is listed with why, as `problems` are, in the log and the run
     summary too; the round goes on. None when there is nothing."""
-    skipped = [problem] if problem else []
+    skipped = list(problems)
     talks, counts = {}, {}
     for above in chain:
         number = above["number"]
@@ -728,21 +743,21 @@ def linked(gh, issue, comments, shelf, chain=(), problem=None, skip=(), own=None
     # The first linked first: `_fit` keeps the last entries whole.
     texts_shown = _fit(entries[::-1], shelf)[::-1] if entries else []
     found = {"comments": "\n\n---\n\n".join(texts_shown), "chain": []}
-    bodies = {}
+    # The issues above share one block, the nearest first, each text before its discussion.
+    left = BLOCK_LIMIT
     for above in chain:
         number = above["number"]
         text = _text(above) if counts[number] else "NexKit did not read this issue's text."
-        bodies[number] = shelf.put(f"the body of #{number}", f"issue-{number}", text, TEXT_LIMIT)
-    left = BLOCK_LIMIT - sum(len(body) for body in bodies.values())
-    for above in chain:
-        number = above["number"]
+        keep = max(SHORT, min(TEXT_LIMIT, left))
+        body = shelf.put(f"the body of #{number}", f"issue-{number}", text, keep)
+        left -= len(body)
         # A comment already shown above, whole, is not repeated in the discussion.
         rest = [c for c in talks[number] if c["id"] not in read]
         discussion = _discussion(rest, notes=True, shelf=shelf, limit=max(0, left))
         left -= len(discussion)
         title = (above.get("title") or "") if counts[number] else "(not read)"
         found["chain"].append(
-            {"number": number, "title": title, "body": bodies[number], "discussion": discussion}
+            {"number": number, "title": title, "body": body, "discussion": discussion}
         )
         names.append(f"#{number} with its discussion")
     skipped = list(dict.fromkeys(skipped))
@@ -800,7 +815,7 @@ def gather(
     stage = stage or decision["action"]
     discussion = None
     reads = stage in ("plan", "implement", "fix", "review")
-    chain, problem = ancestors(gh, issue) if reads else ([], None)
+    chain, problems = ancestors(gh, issue) if reads else ([], [])
     if stage in ("plan", "implement", "fix") and (
         decision.get("auto") or decision.get("autopilot")
     ):
@@ -821,7 +836,7 @@ def gather(
             if stage == "fix"
             else {c["id"] for c in comments if _trusted(c) and not parse_command(c.get("body"))[0]}
         )
-        context["linked"] = linked(gh, issue, comments, shelf, chain, problem, pull, own)
+        context["linked"] = linked(gh, issue, comments, shelf, chain, problems, pull, own)
     if stage == "plan":
         earlier = earlier_parts(gh, issue)
         if earlier:

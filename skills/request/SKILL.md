@@ -25,8 +25,9 @@ succeeds. Help the user write issues that one session can finish and test.
      link the docs that describe them: with profiles, triage reads only the issue and its
      discussion, never the links, to choose the issue's models. Link a comment or an issue
      of this repository that holds what the issue needs, such as an agreed rule, rather
-     than copy it: NexKit reads them for every other agent, and the parts of a split read
-     the issues above them (see *What an agent reads of the texts an issue links to* in
+     than copy it: NexKit reads them for every other agent, and the parts of a split, also
+     those a writer files by hand as sub-issues, read the issues above them (see *What an
+     agent reads of the texts an issue links to* in
      [How it works](../../docs/how-it-works.md#agents)). Link the comment itself when the
      rule is in a discussion: of a linked issue, agents read only its text.
    - **Expected behaviour**: concrete and observable.

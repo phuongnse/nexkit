@@ -569,10 +569,10 @@ def linked_text(context, stage=None):
             f"{names[index]} from {names[index + 1]}" for index in range(len(chain))
         )
         lines = [
-            "### The issues this part was split from",
+            "### The issues this issue was split from",
             "",
-            f"NexKit split {steps}, because each was too large for one session. Their texts "
-            "and their discussions hold what this part refers to, such as rules agreed there. "
+            f"NexKit or a person split {steps}: each is a sub-issue of the next. Their texts "
+            "and their discussions hold what this issue refers to, such as rules agreed there. "
             "Where they differ, the nearer issue decides, and this issue's own text decides "
             "over all of them.",
         ]

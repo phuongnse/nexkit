@@ -1182,7 +1182,8 @@ the `null` scope, since it may have replaced a sweep that waited.
   trailing punctuation), is not created: autopilot plans once more with a note that names
   those titles, and a second such plan waits for a person. Parts go at most three levels
   deep (the issue first split is level 0): an issue at level 3 is not split, after a plan
-  that is too large or a time-out, and waits for a person. The limit is fixed, not a
+  that is too large or a time-out, and waits for a person. A sub-issue that a person who
+  can write files by hand under it still reads every issue above it, as NexKit's parts do. The limit is fixed, not a
   setting. `nexkit status` shows each of these reasons.
 - **CI on the default branch.** Each sweep looks at the completed runs, on the default
   branch, of each workflow in `merge.after_workflows` and `autopilot.watch_workflows`,
@@ -1370,14 +1371,16 @@ refers to, and the plan, implement, fix and review prompts show it in their sect
 
 - **The issues a part was split from.** A part of a split gets the text and the
   collaborators' discussion of the issue it was split from, and of each issue above that
-  one when it is a part too, up to the root of the split, root first. The rules and the
-  context the part refers to often live there; where they differ, the nearer issue
-  decides, and the part's own text decides over all. Only a part that NexKit's App filed
-  as a sub-issue of the issue its marker names counts: an issue whose text only claims to
-  be a part reads no other issue, and its prompt says so. The text of an issue above
-  counts when NexKit or someone who can write wrote it, or a writer vouched for it; a
-  round that NexKit started stops when someone without write access edited it after the
-  vouch, as for the issue itself.
+  one, up to the root, root first: its parent on GitHub, the parent's parent, and so on.
+  The rules and the context the part refers to often live there; where they differ, the
+  nearer issue decides, and the part's own text decides over all. Each step counts when
+  the sub-issue is a part NexKit's App filed of that parent, or an issue that someone who
+  can write opened, such as a part a person split by hand past the depth autopilot splits
+  to (see [limits on parts](#autopilot)) or an issue a writer put under an epic. An issue
+  someone else opened, and one whose text only claims to be a part, reads no issue above,
+  and its prompt says so. The text of an issue above counts when NexKit or someone who
+  can write wrote it, or a writer vouched for it; a round that NexKit started stops when
+  someone without write access edited it after the vouch, as for the issue itself.
 - **Linked comments.** Each comment of this repository that the issue's body, the issues
   it was split from, or a collaborator's comment on any of them links to: a link to a
   comment on an issue or pull request, such as
@@ -1405,10 +1408,10 @@ person answers and autopilot does not; the review checks the change against the 
 the texts set, and flags a listed text that may hold one. The round's comment says what
 NexKit read for the agents (*Read for the agent*) and what it did not (*Linked but not
 read*), and so do the log and the run summary. The linked texts keep at most 80,000
-characters, the first linked whole first. The text of each issue above keeps at most
-65,536, and their discussions share what is left of another 80,000, the nearest first;
-past it each comment keeps its start. Every text kept only in part is whole in `texts/`.
-Triage does not read them.
+characters, the first linked whole first. The texts and discussions of the issues above
+share another 80,000, the nearest first, each text at most 65,536; past it each text and
+comment keeps its start. Every text kept only in part is whole in `texts/`. Triage does
+not read them.
 
 **What an agent reads of a failing check's output.** NexKit keeps the last 12,000
 characters of each check's output, and the first 20 lines before them that report a

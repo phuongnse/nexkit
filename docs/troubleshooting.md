@@ -558,7 +558,9 @@ NexKit splits no further. Read the plan: its *What changes* and implementation n
 usually show the steps. Split the issue by hand into parts that each fit one session, with
 the [`request` skill](../skills/request/SKILL.md), or make the issue smaller and comment
 the change on it, which with autopilot plans it again. At three levels deep, make the
-issue smaller rather than splitting it once more.
+issue smaller rather than splitting it once more. A part you file by hand as a sub-issue
+reads the issues above it, as NexKit's parts do, so link rather than copy the rules they
+hold.
 
 ### A diagnosis round stopped as `blocked`
 

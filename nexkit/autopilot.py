@@ -1214,7 +1214,12 @@ def _split(gh, issue, plan, data, record, start, pull=None):
     if not (data or {}).get("too_large"):
         return None
     if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
-        do = "make the issue smaller and comment the change on it, or implement it by hand"
+        # Its scope was set levels above, so a person splits it on, or implements it.
+        do = (
+            "split it by hand into sub-issues that each fit one session, with the `request` "
+            "skill (each reads every issue above it, as NexKit's parts do), or implement it "
+            "by hand"
+        )
         return _step(issue, "waits", person(do, DEPTH_REASON))
     parts = planned_parts(plan, data)
     if parts > MAX_PARTS and record.get("fewer_asked"):

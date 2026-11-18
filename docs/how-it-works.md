@@ -1182,9 +1182,9 @@ the `null` scope, since it may have replaced a sweep that waited.
   trailing punctuation), is not created: autopilot plans once more with a note that names
   those titles, and a second such plan waits for a person. Parts go at most three levels
   deep (the issue first split is level 0): an issue at level 3 is not split, after a plan
-  that is too large or a time-out, and waits for a person. A sub-issue that a person who
-  can write files by hand under it still reads every issue above it, as NexKit's parts do. The limit is fixed, not a
-  setting. `nexkit status` shows each of these reasons.
+  that is too large or a time-out, and waits for a person, who splits it on by hand or
+  implements it: a sub-issue that someone who can write files under it reads every issue
+  above it, as NexKit's parts do. The limit is fixed, not a setting. `nexkit status` shows each of these reasons.
 - **CI on the default branch.** Each sweep looks at the completed runs, on the default
   branch, of each workflow in `merge.after_workflows` and `autopilot.watch_workflows`,
   whatever started them, and at every attempt of each: the

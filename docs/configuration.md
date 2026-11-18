@@ -1109,7 +1109,9 @@ every open issue in scope, in order, and starts the one command that moves it on
   - A part titled like its parent, or starting with its parent's title, is not created.
     Autopilot asks for the plan once more, and then waits for a person.
   - Parts go at most three levels deep: an issue at level 3 (its parent's parent's parent
-    was the issue first split) is not split again. This limit is not a setting.
+    was the issue first split) is not split again; a person splits it by hand into
+    sub-issues, which read every issue above them, or implements it. This limit is not a
+    setting.
 
   After a time-out, the plan says why the round did not finish. For a failure whose cause
   was not found, its first part is a diagnosis that finds the cause before the change.

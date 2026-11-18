@@ -314,6 +314,10 @@ class GitHub:
     def comments(self, number):
         return self.paginate(f"{self._repo}/issues/{number}/comments")
 
+    def issue_comment(self, comment_id):
+        """One comment on an issue or pull request of this repository, by its id."""
+        return self.request("GET", f"{self._repo}/issues/comments/{comment_id}")
+
     def parent_issue(self, number):
         """The parent of a sub-issue, or None for an issue without a parent."""
         try:

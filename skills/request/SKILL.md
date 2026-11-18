@@ -23,7 +23,11 @@ succeeds. Help the user write issues that one session can finish and test.
    - **Context**: what exists today, with file paths when known. Name the parts of the
      system and the concepts the change touches in the issue's own words, even when you
      link the docs that describe them: with profiles, triage reads only the issue and its
-     discussion, never the links, to choose the issue's models.
+     discussion, never the links, to choose the issue's models. Link a comment of this
+     repository that holds what the issue needs, such as an agreed rule, rather than copy
+     it: NexKit reads the comments an issue links to for every other agent (see *What an
+     agent reads of the texts an issue links to* in
+     [How it works](../../docs/how-it-works.md#agents)).
    - **Expected behaviour**: concrete and observable.
    - **Acceptance criteria**: two to five checks that a test in the change or one of the
      project's checks can show. NexKit's review reads the code and the check results and

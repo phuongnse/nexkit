@@ -270,6 +270,14 @@ class FakeGitHub:
     def comments(self, number):
         return list(self.issue_comments[number])
 
+    def issue_comment(self, comment_id):
+        for number, comments in self.issue_comments.items():
+            for comment in comments:
+                if comment["id"] == comment_id:
+                    url = f"https://api.github.com/repos/{self.repository}/issues/{number}"
+                    return {**comment, "issue_url": url}
+        raise GitHubError(404, "Not Found")
+
     def parent_issue(self, number):
         parent = self.parents.get(number)
         return self.issues[parent] if parent else None

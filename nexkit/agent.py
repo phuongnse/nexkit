@@ -538,6 +538,32 @@ def earlier_parts_text(context):
     )
 
 
+def linked_text(context):
+    """The plan, implement, fix and review prompts' section about the texts the issue links
+    to and, for a part of a split, the issue it was split from, or "" without any.
+    `context["linked"]` comes from `context.linked`."""
+    found = context.get("linked") or {}
+    blocks = []
+    if found.get("comments"):
+        blocks.append(f"### Comments the issue links to\n\n{found['comments']}")
+    parent = found.get("parent")
+    if parent:
+        number = parent["number"]
+        blocks.append(
+            f"### #{number}, the issue this part was split from: {parent['title']}\n\n"
+            f"This issue was split from #{number} because #{number} was too large for one "
+            "session. Its text and its discussion hold what this part refers to. Where they "
+            "differ, this part's own text decides what this part does.\n\n"
+            f"{parent['body']}\n\n#### Discussion of #{number}\n\n{parent['discussion']}"
+        )
+    if found.get("skipped"):
+        lines = "\n".join(f"- {line}" for line in found["skipped"])
+        blocks.append(f"### Links NexKit did not read\n\n{lines}")
+    if not blocks:
+        return ""
+    return Template(_template("linked")).safe_substitute(texts="\n\n".join(blocks)) + "\n"
+
+
 def merge_review(repo, context, base):
     """The review prompt's section about a merge of the base branch in this run's fix round,
     with what each side changed in the conflicted files, or ""."""
@@ -934,6 +960,7 @@ def build_prompt(stage, context, cfg, extra=None):
         "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
         "checklist": checklist_text(stage, cfg),
         "earlier_parts": earlier_parts_text(context),
+        "linked": linked_text(context),
         "max_parts": MAX_PARTS,
         **(extra or {}),
     }

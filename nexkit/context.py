@@ -18,6 +18,7 @@ from .redact import Redactor
 from .route import parse_command
 from .runlog import write_summary
 from .state import (
+    PLAN_MARKER,
     TEXT_LIMIT,
     answers_text,
     by_bot,
@@ -499,6 +500,111 @@ def earlier_parts(gh, issue):
     return {"parent": parent, "parts": parts} if parts else None
 
 
+# A link to a comment on an issue or pull request, and a bare anchor such as
+# `(#issuecomment-123)`, which names a comment of this repository by its id.
+COMMENT_LINK = re.compile(
+    r"https://github\.com/([\w.-]+/[\w.-]+)/(?:issues|pull)/\d+#issuecomment-(\d+)"
+)
+COMMENT_ANCHOR = re.compile(r"(?<![\w/.-])#issuecomment-(\d+)\b")
+# The most linked comments one round reads, in the order they were linked.
+MAX_LINKED = 20
+
+
+def _linked_ids(gh, issue, comments):
+    """Ids of the comments of this repository that the issue's body and its collaborators'
+    comments link to, in the order they were linked, without repeats or the issue's own
+    comments, and lines saying what was skipped."""
+    texts = [issue.get("body") or ""] + [c.get("body") or "" for c in comments if _trusted(c)]
+    own = {comment["id"] for comment in comments}
+    found, skipped = [], []
+    for text in texts:
+        links = [(m.start(), m.group(1), int(m.group(2))) for m in COMMENT_LINK.finditer(text)]
+        links += [(m.start(), None, int(m.group(1))) for m in COMMENT_ANCHOR.finditer(text)]
+        for _, repository, comment_id in sorted(links):
+            if repository and repository.lower() != gh.repository.lower():
+                skipped.append(f"comment {comment_id} of {repository}: not this repository")
+            elif comment_id not in own:
+                found.append(comment_id)
+    found = list(dict.fromkeys(found))
+    skipped += [
+        f"comment {comment_id}: past the {MAX_LINKED} a round reads"
+        for comment_id in found[MAX_LINKED:]
+    ]
+    return found[:MAX_LINKED], skipped
+
+
+def _issue_number(comment):
+    """The number of the issue or pull request a comment is on, or None."""
+    match = re.search(r"/issues/(\d+)$", comment.get("issue_url") or "")
+    return int(match.group(1)) if match else None
+
+
+def linked(gh, issue, comments, shelf):
+    """What the issue refers to and the agent cannot open itself, since it holds no GitHub
+    token: the comments of this repository that the issue's body or its collaborators'
+    comments link to, and for a part of a split, the issue it was split from, with its
+    collaborators' discussion. Only comments of collaborators count. Texts past what the
+    prompt keeps go whole to `shelf`. None when there is nothing; a failed read leaves out
+    what it could not read, says so in the log and the run summary, and the round goes on."""
+    ids, skipped = _linked_ids(gh, issue, comments)
+    parent_number = _part_of(issue)
+    entries, read = [], set()
+    for comment_id in ids:
+        try:
+            comment = gh.issue_comment(comment_id)
+        except GitHubError as exc:
+            skipped.append(f"comment {comment_id}: could not be read ({exc.status})")
+            continue
+        plan = by_bot(comment) and (comment.get("body") or "").startswith(PLAN_MARKER)
+        if not (_trusted(comment) or plan):
+            skipped.append(f"comment {comment_id}: not written by a collaborator")
+            continue
+        read.add(comment_id)
+        login, when = comment["user"]["login"], comment["created_at"]
+        number = _issue_number(comment)
+        where = f" on #{number}" if number else ""
+        # NexKit's own plan, as the agents read a plan: without the records for people.
+        who, body = (
+            ("NexKit's plan", plan_text(comment))
+            if plan
+            else (f"@{login}", comment.get("body") or "")
+        )
+        header = f"{who}{where} ({when}), comment {comment_id}:\n"
+        name = f"the comment {comment_id} of {'NexKit' if plan else f'`@{login}`'}{where}"
+        entries.append((header, body, name, f"linked-{comment_id}"))
+    found = {"comments": "\n\n---\n\n".join(_fit(entries, shelf)) if entries else ""}
+    if parent_number is not None:
+        try:
+            parent = gh.issue(parent_number)
+            # A comment already shown above, whole, is not repeated in the discussion.
+            rest = [c for c in gh.comments(parent_number) if c["id"] not in read]
+        except GitHubError as exc:
+            where = f"#{parent_number}, the issue this part was split from"
+            skipped.append(f"{where}: could not be read ({exc.status})")
+        else:
+            body = PART.sub("", parent.get("body") or "") or "No description."
+            found["parent"] = {
+                "number": parent_number,
+                "title": parent.get("title") or "",
+                "body": shelf.put(
+                    f"the body of #{parent_number}", f"issue-{parent_number}", body, TEXT_LIMIT
+                ),
+                "discussion": _discussion(rest, notes=True, shelf=shelf),
+            }
+    redact = Redactor()
+    for line in skipped:
+        print(redact(f"Texts the issue links to: not read: {line}."), flush=True)
+    if skipped:
+        lines = [f"- Not read: {line}." for line in skipped]
+        write_summary(
+            "\n".join(["### NexKit: texts the issue links to", "", *lines]) + "\n", redact
+        )
+    found["skipped"] = skipped
+    if not found["comments"] and "parent" not in found and not skipped:
+        return None
+    return found
+
+
 def gather(
     gh,
     decision,
@@ -545,6 +651,8 @@ def gather(
             context["untrusted"] = edited
     if stage in ("plan", "implement", "fix") and ci and cfg:
         context["ci_evidence"] = ci_evidence(gh, cfg, issue, comments, ci, workflow)
+    if stage in ("plan", "implement", "fix", "review"):
+        context["linked"] = linked(gh, issue, comments, shelf)
     if stage == "plan":
         earlier = earlier_parts(gh, issue)
         if earlier:

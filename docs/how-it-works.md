@@ -1363,6 +1363,30 @@ person who answers the agent knows why it asks. Triage has no tools to read a fi
 so it keeps the start of each such text alone, and of the comments it leaves out only
 how many.
 
+**What an agent reads of the texts an issue links to.** The agent holds no GitHub token,
+so it cannot open a link. NexKit reads for it, before the agent starts, what the issue
+refers to, and the plan, implement, fix and review prompts show it in their section
+*Texts the issue links to*:
+
+- **Linked comments.** Each comment of this repository that the issue's body, or a
+  collaborator's comment on the issue, links to: a link to a comment on an issue or pull
+  request, such as `https://github.com/<owner>/<repo>/issues/12#issuecomment-345`, or a
+  bare anchor such as `(#issuecomment-345)`, which names a comment by its id. At most 20,
+  in the order they were linked, each once. A comment of the issue itself is in its
+  discussion already, so it is not repeated.
+- **The issue a part was split from.** A part of a split gets the body of the issue it
+  was split from and that issue's discussion, as for the issue's own discussion, without
+  the comments it already shows as linked. The rules and the context the part refers to
+  often live there, and the part's own text decides where they differ.
+
+Only comments of collaborators count, as in a discussion, and NexKit's own plans, which
+the agents read without the records for people. A link to another repository, any other
+comment a person outside the collaborators wrote, and a comment NexKit could not read are
+left out: the prompt lists them under *Links NexKit did not read*, and the log and the run
+summary say why. These texts are kept as a discussion is, at most 80,000 characters for the
+linked comments and as many for the discussion of the issue a part was split from, with the
+whole texts in `texts/`. Triage does not read them.
+
 **What an agent reads of a failing check's output.** NexKit keeps the last 12,000
 characters of each check's output, and the first 20 lines before them that report a
 failure (they contain `fail`, `error`, `✘` or `✗`, in any case, as for a

@@ -624,6 +624,18 @@ def _trusted_part(gh, issue, cfg=None, level=0):
     return distrust(gh, parent, cfg, level + 1) is None
 
 
+def part_of_parent(gh, issue, parent):
+    """Whether the sub-issue `issue` of `parent` is a part of it whose round reads it: one
+    that NexKit's App opened, which as a part of a split names `parent` in its marker, or
+    one that someone who can write opened, such as a part a person split by hand. Text that
+    only claims to be a part counts for nothing."""
+    match = PART.match(issue.get("body") or "")
+    if is_bot(author(issue)):
+        return not match or int(match.group(1)) == parent["number"]
+    login = author(issue)
+    return bool(login) and gh.can_write(login)
+
+
 def _part_of(issue, number):
     """Whether autopilot created `issue` as a part of the issue `number`."""
     match = PART.match(issue.get("body") or "")
@@ -1202,7 +1214,12 @@ def _split(gh, issue, plan, data, record, start, pull=None):
     if not (data or {}).get("too_large"):
         return None
     if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
-        do = "make the issue smaller and comment the change on it, or implement it by hand"
+        # Its scope was set levels above, so a person splits it on, or implements it.
+        do = (
+            "split it by hand into sub-issues that each fit one session, with the `request` "
+            "skill (each reads every issue above it, as NexKit's parts do), or implement it "
+            "by hand"
+        )
         return _step(issue, "waits", person(do, DEPTH_REASON))
     parts = planned_parts(plan, data)
     if parts > MAX_PARTS and record.get("fewer_asked"):

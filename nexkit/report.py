@@ -1986,10 +1986,48 @@ def shortened_line(*results):
     )
 
 
+def linked_line(*results):
+    """What the round's comment says about the texts NexKit read for the round's agents
+    because the issue, or the issues it was split from, refer to them, and those it could
+    not read, from the results of the round's agents, or "". A person who reads the plan or
+    the change then knows what the agents worked from, and what they did not have."""
+    read, skipped = {}, {}
+    for result in results:
+        found = (result or {}).get("linked")
+        if not isinstance(found, dict):
+            continue
+        for into, key in ((read, "read"), (skipped, "skipped")):
+            for item in found.get(key) or []:
+                if isinstance(item, str):
+                    # In code, so that GitHub links no `#12` and mentions no issue each round.
+                    text = clip(one_line(item), 200).replace("`", "'")
+                    into.setdefault(f"`{text}`", None)
+
+    def listed(items):
+        names = list(items)
+        more = f", and {len(names) - 10} more" if len(names) > 10 else ""
+        return "; ".join(names[:10]) + more
+
+    lines = []
+    if read:
+        lines.append(f"**Read for the agent:** {listed(read)}.")
+    if skipped:
+        lines.append(
+            f"**Linked but not read:** {listed(skipped)}. The agents were told to ask rather "
+            "than guess when the work depends on one of these."
+        )
+    return "\n".join(lines)
+
+
 def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     action = decision["action"]
     agent = _load(artifacts / "nexkit-agent" / "result.json")
-    shortened = shortened_line(agent, _load(artifacts / "nexkit-review" / "result.json"))
+    review_result = _load(artifacts / "nexkit-review" / "result.json")
+    shortened = "\n\n".join(
+        line
+        for line in (linked_line(agent, review_result), shortened_line(agent, review_result))
+        if line
+    )
     publish = json.loads(((needs.get("publish") or {}).get("outputs") or {}).get("result") or "{}")
 
     if action in ("plan", "implement", "fix"):

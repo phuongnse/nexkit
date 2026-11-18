@@ -546,8 +546,8 @@ Read the plan, the run log and the result files in the round's `nexkit-checks` a
 When they show why the round did not finish, comment
 `/nexkit plan <the cause, with the evidence, and the smallest change that removes it>`.
 When they show no cause, find it first, for example by running the slow check locally;
-then split the issue by hand with the `request` skill, or comment a smaller plan. An
-issue three levels of parts deep is not split again.
+then split the issue by hand with the `request` skill, or comment a smaller plan. NexKit
+does not split an issue three levels of parts deep again; split it by hand.
 
 ### A plan is too large again
 
@@ -557,8 +557,10 @@ parts, suggested parts titled like the issue, or suggested more than ten parts (
 NexKit splits no further. Read the plan: its *What changes* and implementation notes
 usually show the steps. Split the issue by hand into parts that each fit one session, with
 the [`request` skill](../skills/request/SKILL.md), or make the issue smaller and comment
-the change on it, which with autopilot plans it again. At three levels deep, make the
-issue smaller rather than splitting it once more.
+the change on it, which with autopilot plans it again. At three levels deep the scope
+was set levels above, so split it by hand, or implement it yourself. File each part as a
+sub-issue of the issue: it reads every issue above it, as NexKit's parts do, so link
+rather than copy the rules they hold.
 
 ### A diagnosis round stopped as `blocked`
 

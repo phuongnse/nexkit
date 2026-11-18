@@ -1746,7 +1746,7 @@ class SplitTests(AnswerAndSplitCase):
         self.assertEqual(self.started(), [])
         self.assertEqual(sorted(self.gh.issues), [5, 6, 7, 8, 9, 10])
         steps = {s["number"]: s for s in autopilot.preview(self.gh, self.cfg)[1]}
-        starts = {8: "make the issue smaller", 9: "read the plan, the run log"}
+        starts = {8: "split it by hand into sub-issues", 9: "read the plan, the run log"}
         for number in (8, 9):
             step = steps[number]
             self.assertEqual(step["state"], "waits")

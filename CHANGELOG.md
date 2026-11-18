@@ -1,5 +1,52 @@
 # Changelog
 
+## 6.12.0
+
+Agents read what an issue refers to, including every issue a part was split from, and ask
+a person rather than guess when a text they need could not be read.
+
+- Before the plan, implement, fix and review agents start, NexKit reads for them what the
+  issue refers to, since they hold no GitHub token and cannot open a link (#296). Before,
+  a part of a split saw neither the rule comments its issue linked nor the issues above
+  it: in phuongnse/axis#4074 two of the steps a part needed lived only in its parent's
+  discussion, and a rule agreed at the root of a nested split reached a part two levels
+  down only when a plan agent happened to copy it.
+  - A part gets the text and collaborators' discussion of every issue above it, up to
+    the root, root first, through GitHub's sub-issue parents: parts the App filed, and
+    issues that someone who can write opened, such as parts split by hand. The text of an
+    issue above counts when NexKit or a writer wrote it, or a writer vouched for it, and a
+    round NexKit started stops when someone without write access edited it after the
+    vouch.
+  - The comments, issues and pull requests of this repository that the issue, the issues
+    above or collaborators' comments on them link to, outside code: at most 20 comments
+    and 10 issues, the first linked first. A part reads the plan of each issue above it,
+    which its text links.
+  - Every link not read is listed with why: another repository, a review comment or a
+    discussion, a text a person outside the collaborators wrote, past the limits, or one
+    that could not be read. When the work depends on one of them, the plan asks a
+    question with no recommended option and implement or fix stop blocked with one, so a
+    person answers, not autopilot. The review checks the change against the rules the
+    texts set.
+  - The round's comment says what NexKit read for the agents (*Read for the agent*) and
+    what it did not (*Linked but not read*), as do the log and the run summary.
+
+  See *What an agent reads of the texts an issue links to* in [How it
+  works](docs/how-it-works.md#agents). The `request` skill links such a comment rather
+  than copy it.
+- An issue three levels of parts deep, which autopilot splits no further, waits for a
+  person to split it by hand into sub-issues or to implement it, rather than to make it
+  smaller: its scope was set levels above, and its sub-issues read every issue above
+  them.
+- The plugin's `drive` skill is gone (#298). Autopilot already carries on wherever no
+  person's judgement is needed, and the skill notified at the stops it leaves rather than
+  decide; `notify` and `nexkit status` cover those.
+
+### Upgrade
+
+- **Stop a scheduled session that runs `/nexkit:drive`**, such as a Claude Code routine:
+  the skill no longer exists. `notify` still mentions a person once at each stop, and
+  `nexkit status` lists the stops under *Needs a person*.
+
 ## 6.11.3
 
 - A plan that splits an issue into more than ten parts is never filed cut (#293). Before,

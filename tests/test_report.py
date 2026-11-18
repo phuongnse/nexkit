@@ -2217,8 +2217,8 @@ class LinkedTextsTests(ReportCase):
         )
         self.assertIn(
             f"[Plan]({plan}) posted.\n\n"
-            "**Read for the agent:** comment 12 on #2; #3 with its discussion.\n"
-            "**Linked but not read:** other/repo#9: not this repository. The agents were told "
+            "**Read for the agent:** `comment 12 on #2`; `#3 with its discussion`.\n"
+            "**Linked but not read:** `other/repo#9: not this repository`. The agents were told "
             "to ask rather than guess when the work depends on one of these.\n\n"
             f"{SHORTENED_LINE}",
             outcome["summary"],
@@ -2230,6 +2230,6 @@ class LinkedTextsTests(ReportCase):
         self.write("nexkit-review", "result.json", {**review_result(), "linked": linked})
         self.run_report(decision("fix", pr=6, target=6, head=HEAD))
         body = self.gh.run_comments(6)[-1]["body"]
-        self.assertIn("**Read for the agent:** #3 with its discussion.", body)
+        self.assertIn("**Read for the agent:** `#3 with its discussion`.", body)
         self.assertNotIn("Linked but not read", body)
         self.assertEqual(linked_line(None, {"linked": "x"}, {"linked": {"read": [1]}}), "")

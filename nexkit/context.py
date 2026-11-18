@@ -5,11 +5,12 @@ Gathering happens in its own step so the agent process never holds a GitHub toke
 
 from __future__ import annotations
 
+import os
 import re
 from functools import partial
 from pathlib import Path
 
-from .autopilot import MAX_DEPTH, PART, edited_after_vouch, split_from
+from .autopilot import MAX_DEPTH, PART, edited_after_vouch, split_from, vouch
 from .checks import RESULTS_DIR, failing_signatures, output_text, shown_command
 from .config import NAME
 from .evidence import collect, named_runs, summary_lines
@@ -500,24 +501,37 @@ def earlier_parts(gh, issue):
     return {"parent": parent, "parts": parts} if parts else None
 
 
-# A link to a comment on an issue or pull request, and a bare anchor such as
-# `(#issuecomment-123)`, which names a comment of this repository by its id.
-COMMENT_LINK = re.compile(
-    r"https://github\.com/([\w.-]+/[\w.-]+)/(?:issues|pull)/\d+#issuecomment-(\d+)"
-)
+# A reference such as `#12`, which GitHub links to an issue or pull request of this
+# repository, or `acme/app#12`; and a bare anchor such as `(#issuecomment-123)`, which
+# names a comment of this repository by its id. GitHub links nothing inside code, so no
+# link counts there.
+ISSUE_REF = re.compile(r"(?<![\w/&#.-])(?:([\w-]+/[\w.-]+))?#(\d+)\b")
 COMMENT_ANCHOR = re.compile(r"(?<![\w/.-])#issuecomment-(\d+)\b")
-# A link to an issue or pull request as a whole, and a reference such as `#12`, which
-# GitHub links to one of this repository, or `acme/app#12`. GitHub links no reference
-# inside code, so those count only outside it.
-ISSUE_LINK = re.compile(
-    r"https://github\.com/([\w.-]+/[\w.-]+)/(?:issues|pull)/(\d+)\b(?!#issuecomment-)"
-)
-ISSUE_REF = re.compile(r"(?<![\w/&#.-])(?:([\w.-]+/[\w.-]+))?#(\d+)\b")
-CODE = re.compile(r"```.*?```|`[^`\n]*`|<!--.*?-->", re.S)
-# The most linked comments, and issues or pull requests, one round reads, in the order
-# they were linked.
+CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`|<!--.*?-->", re.S)
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+# The most linked comments, and issues or pull requests, one round tries to read, in the
+# order they were linked, and the most links the prompt lists as not read.
 MAX_LINKED = 20
 MAX_LINKED_ISSUES = 10
+MAX_SKIPPED = 30
+
+
+def _links():
+    """The links to GitHub's pages of a repository, on the server the workflow runs on:
+    to a comment, to a review or a review comment of a pull request, to a discussion, and
+    to an issue or a pull request as a whole. Each names the repository first."""
+    server = os.environ.get("GITHUB_SERVER_URL") or "https://github.com"
+    host = re.escape(re.sub(r"^https?://(?:www\.)?", "", server.rstrip("/")))
+    base = rf"https?://(?:www\.)?{host}/([\w-]+/[\w.-]+)"
+    return [
+        ("comment", re.compile(base + r"/(?:issues|pull)/\d+#issuecomment-(\d+)")),
+        (
+            "review",
+            re.compile(base + r"/pull/(\d+)(?:/files)?#(?:discussion_r|pullrequestreview-|r)\d+"),
+        ),
+        ("discussion", re.compile(base + r"/discussions/(\d+)")),
+        ("issue", re.compile(base + r"/(?:issues|pull)/(\d+)(?![\d#])(?!/files#)")),
+    ]
 
 
 def ancestors(gh, issue):
@@ -557,18 +571,27 @@ def chain_edited(gh, chain):
 
 
 def _references(gh, texts, own, skip):
-    """(ids of comments, numbers of issues or pull requests, lines about links of other
-    repositories) that `texts` link to, each once and in the order linked. Comments in
-    `own` and issues in `skip` are shown already, so they are left out."""
-    comments, issues, skipped = [], [], []
+    """(what `texts` link to, each once and in the order linked: ("comment", id) or
+    ("issue", number) of this repository, lines about the links NexKit does not read).
+    Comments in `own` and issues in `skip` are shown already, so they are left out."""
+    found, skipped = [], []
     this = gh.repository.lower()
+    patterns = _links()
     for text in texts:
-        found = [(m.start(), "comment", *m.groups()) for m in COMMENT_LINK.finditer(text)]
-        found += [(m.start(), "comment", None, m.group(1)) for m in COMMENT_ANCHOR.finditer(text)]
-        found += [(m.start(), "issue", m.group(1), m.group(2)) for m in ISSUE_LINK.finditer(text)]
         plain = CODE.sub(lambda m: " " * len(m.group()), text)
-        found += [(m.start(), "issue", m.group(1), m.group(2)) for m in ISSUE_REF.finditer(plain)]
-        for _, kind, repository, number in sorted(found, key=lambda link: link[0]):
+        links = []
+        for kind, pattern in patterns:
+            links += [(m.start(), m.end(), kind, *m.groups()) for m in pattern.finditer(plain)]
+        links += [
+            (m.start(), m.end(), "comment", None, m.group(1))
+            for m in COMMENT_ANCHOR.finditer(plain)
+        ]
+        links += [(m.start(), m.end(), "issue", *m.groups()) for m in ISSUE_REF.finditer(plain)]
+        end = -1
+        for start, stop, kind, repository, number in sorted(links, key=lambda link: link[:2]):
+            if start < end:
+                continue  # a reference inside a link already counted, such as its `#12`
+            end = stop
             number = int(number)
             if repository and repository.lower() != this:
                 what = (
@@ -577,11 +600,15 @@ def _references(gh, texts, own, skip):
                     else (f"{repository}#{number}")
                 )
                 skipped.append(f"{what}: not this repository")
+            elif kind == "review":
+                skipped.append(f"a review comment on #{number}: NexKit reads no review comments")
+            elif kind == "discussion":
+                skipped.append(f"discussion {number}: NexKit reads no discussions")
             elif kind == "comment" and number not in own:
-                comments.append(number)
+                found.append(("comment", number))
             elif kind == "issue" and number not in skip:
-                issues.append(number)
-    return list(dict.fromkeys(comments)), list(dict.fromkeys(issues)), skipped
+                found.append(("issue", number))
+    return list(dict.fromkeys(found)), skipped
 
 
 def _issue_number(comment):
@@ -613,6 +640,12 @@ def _linked_comment(gh, comment_id):
     return (header, body, name, f"linked-{comment_id}"), read
 
 
+def _text(item):
+    """The text of an issue or pull request without NexKit's markers and other HTML
+    comments, which nobody reading the page sees."""
+    return HTML_COMMENT.sub("", item.get("body") or "").strip() or "No description."
+
+
 def _linked_issue(gh, number):
     """(the entry `_fit` shows of the text of a linked issue or pull request, what people
     read it as) or (None, why it was not read)."""
@@ -626,91 +659,107 @@ def _linked_issue(gh, number):
     login = (item.get("user") or {}).get("login") or "someone"
     who = "NexKit" if by_bot(item) else f"@{login}"
     header = f"#{number}, {kind} of {who}: {item.get('title') or ''}\n"
-    body = PART.sub("", item.get("body") or "").strip() or "No description."
-    return (header, body, f"the text of #{number}", f"issue-{number}"), f"#{number}"
+    return (header, _text(item), f"the text of #{number}", f"issue-{number}"), f"#{number}"
 
 
-def linked(gh, issue, comments, shelf, chain=(), problem=None, skip=()):
+def _vouched_text(gh, issue):
+    """Whether the text of an issue a part was split from counts: NexKit's own, or written
+    by someone who can write, or vouched for by a writer (`autopilot.vouch`)."""
+    login = (issue.get("user") or {}).get("login") or ""
+    try:
+        return by_bot(issue) or (login and gh.can_write(login)) or vouch(gh, issue) is not None
+    except GitHubError:
+        return False
+
+
+def linked(gh, issue, comments, shelf, chain=(), problem=None, skip=(), own=None):
     """What the issue refers to and the agent cannot open itself, since it holds no GitHub
     token. `chain` are the issues it was split from, nearest first (`ancestors`): each
-    with its text and its collaborators' discussion, in BLOCK_LIMIT characters for all of
-    them. Then the comments and the issues or pull requests of this repository that the
-    texts of the issue, of `chain` and of their collaborators' comments link to: comments
-    of collaborators and NexKit's plans, texts of issues that collaborators or NexKit wrote.
-    Issues in `skip` are shown elsewhere. Texts past what the prompt keeps go whole to
-    `shelf`. Each link that was not read is listed with why, as `problem` is, in the log
-    and the run summary too; the round goes on. None when there is nothing."""
+    with its text and its collaborators' discussion. Then the comments and the issues or
+    pull requests of this repository that the texts of the issue, of `chain` and of their
+    collaborators' comments link to: comments of collaborators and NexKit's plans, texts of
+    issues that collaborators or NexKit wrote, the first linked first. Comments in `own`
+    (by default all of the issue's) and issues in `skip` are shown elsewhere. Each block
+    keeps at most BLOCK_LIMIT characters, and texts past that go whole to `shelf`. Each
+    link that was not read is listed with why, as `problem` is, in the log and the run
+    summary too; the round goes on. None when there is nothing."""
     skipped = [problem] if problem else []
-    talks = {}
+    talks, counts = {}, {}
     for above in chain:
+        number = above["number"]
         try:
-            talks[above["number"]] = gh.comments(above["number"])
+            talks[number] = gh.comments(number)
         except GitHubError as exc:
-            where = f"the discussion of #{above['number']}"
-            skipped.append(f"{where}: could not be read ({exc.status})")
-            talks[above["number"]] = []
+            skipped.append(f"the discussion of #{number}: could not be read ({exc.status})")
+            talks[number] = []
+        counts[number] = _vouched_text(gh, above)
+        if not counts[number]:
+            why = "not written by a collaborator, and no writer vouched for it"
+            skipped.append(f"the text of #{number}: {why}")
     texts = [issue.get("body") or ""] + [c.get("body") or "" for c in comments if _trusted(c)]
     for above in chain:
-        texts.append(above.get("body") or "")
+        if counts[above["number"]]:
+            texts.append(above.get("body") or "")
         texts += [c.get("body") or "" for c in talks[above["number"]] if _trusted(c)]
     shown = {issue["number"], *(above["number"] for above in chain), *skip}
-    ids, numbers, outside = _references(gh, texts, {c["id"] for c in comments}, shown)
+    own = {c["id"] for c in comments} if own is None else own
+    refs, outside = _references(gh, texts, own, shown)
     skipped += outside
     entries, read, names = [], set(), []
-    for comment_id in ids:
-        if len(read) >= MAX_LINKED:
-            skipped.append(f"comment {comment_id}: past the {MAX_LINKED} a round reads")
+    tried = {"comment": 0, "issue": 0}
+    most = {"comment": MAX_LINKED, "issue": MAX_LINKED_ISSUES}
+    for kind, number in refs:
+        if tried[kind] >= most[kind]:
             continue
-        entry, line = _linked_comment(gh, comment_id)
+        tried[kind] += 1
+        entry, line = (_linked_comment if kind == "comment" else _linked_issue)(gh, number)
         if entry is None:
             skipped.append(line)
             continue
-        read.add(comment_id)
+        if kind == "comment":
+            read.add(number)
         entries.append(entry)
         names.append(line)
-    count = 0
-    for number in numbers:
-        if count >= MAX_LINKED_ISSUES:
-            skipped.append(f"#{number}: past the {MAX_LINKED_ISSUES} a round reads")
-            continue
-        entry, line = _linked_issue(gh, number)
-        if entry is None:
-            skipped.append(line)
-            continue
-        count += 1
-        entries.append(entry)
-        names.append(line)
-    found = {"comments": "\n\n---\n\n".join(_fit(entries, shelf)) if entries else ""}
-    found["chain"], left = [], BLOCK_LIMIT
+    beyond = []
+    for kind, label in (("comment", "comments"), ("issue", "issues or pull requests")):
+        left_over = sum(1 for ref in refs if ref[0] == kind) - tried[kind]
+        if left_over:
+            beyond.append(f"{left_over} more linked {label}: past the {most[kind]} a round reads")
+    # The first linked first: `_fit` keeps the last entries whole.
+    texts_shown = _fit(entries[::-1], shelf)[::-1] if entries else []
+    found = {"comments": "\n\n---\n\n".join(texts_shown), "chain": []}
+    bodies = {}
+    for above in chain:
+        number = above["number"]
+        text = _text(above) if counts[number] else "NexKit did not read this issue's text."
+        bodies[number] = shelf.put(f"the body of #{number}", f"issue-{number}", text, TEXT_LIMIT)
+    left = BLOCK_LIMIT - sum(len(body) for body in bodies.values())
     for above in chain:
         number = above["number"]
         # A comment already shown above, whole, is not repeated in the discussion.
         rest = [c for c in talks[number] if c["id"] not in read]
-        discussion = _discussion(rest, notes=True, shelf=shelf, limit=left)
-        left = max(0, left - len(discussion))
-        body = PART.sub("", above.get("body") or "").strip() or "No description."
+        discussion = _discussion(rest, notes=True, shelf=shelf, limit=max(0, left))
+        left -= len(discussion)
+        title = (above.get("title") or "") if counts[number] else "(not read)"
         found["chain"].append(
-            {
-                "number": number,
-                "title": above.get("title") or "",
-                "body": shelf.put(f"the body of #{number}", f"issue-{number}", body, TEXT_LIMIT),
-                "discussion": discussion,
-            }
+            {"number": number, "title": title, "body": bodies[number], "discussion": discussion}
         )
         names.append(f"#{number} with its discussion")
-    found["skipped"] = list(dict.fromkeys(skipped))
-    found["read"] = names
+    skipped = list(dict.fromkeys(skipped))
+    if len(skipped) > MAX_SKIPPED:
+        more = len(skipped) - MAX_SKIPPED
+        skipped = skipped[:MAX_SKIPPED] + [f"{more} more links not read: not listed here"]
+    skipped += beyond
+    found["skipped"], found["read"] = skipped, names
     redact = Redactor()
-    for line in found["skipped"]:
+    for name in names:
+        print(redact(f"Texts the issue links to: read: {name}."), flush=True)
+    for line in skipped:
         print(redact(f"Texts the issue links to: not read: {line}."), flush=True)
-    if names or found["skipped"]:
-        lines = [f"- Read: {name}." for name in names]
-        lines += [f"- Not read: {line}." for line in found["skipped"]]
-        write_summary(
-            "\n".join(["### NexKit: texts the issue links to", "", *lines]) + "\n", redact
-        )
-    if not names and not found["skipped"]:
+    if not names and not skipped:
         return None
+    lines = [f"- Read: {name}." for name in names] + [f"- Not read: {line}." for line in skipped]
+    write_summary("\n".join(["### NexKit: texts the issue links to", "", *lines]) + "\n", redact)
     return found
 
 
@@ -765,7 +814,14 @@ def gather(
         context["ci_evidence"] = ci_evidence(gh, cfg, issue, comments, ci, workflow)
     if reads:
         pull = [decision["pr"]] if decision.get("pr") else []
-        context["linked"] = linked(gh, issue, comments, shelf, chain, problem, pull)
+        # Links to the issue's own comments that its discussion shows are not read again.
+        # The fix prompt shows no discussion, and a command's comment shows only with a note.
+        own = (
+            set()
+            if stage == "fix"
+            else {c["id"] for c in comments if _trusted(c) and not parse_command(c.get("body"))[0]}
+        )
+        context["linked"] = linked(gh, issue, comments, shelf, chain, problem, pull, own)
     if stage == "plan":
         earlier = earlier_parts(gh, issue)
         if earlier:

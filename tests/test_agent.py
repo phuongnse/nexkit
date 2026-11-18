@@ -1009,6 +1009,25 @@ class RunStageTests(StageCase):
             [{"name": shortened[0]["name"], "kept": 1_000, "length": 39_016}],
         )
 
+    def test_an_agent_asks_rather_than_guess_about_a_link_nexkit_did_not_read(self):
+        linked = {
+            "comments": "@olivia on #2 (2026-11-01T00:00:00Z), comment 9:\nRule: cents.",
+            "chain": [],
+            "read": ["comment 9 on #2"],
+            "skipped": ["comment 77 of other/repo: not this repository"],
+        }
+        self.claude.configure(result={**DONE, "status": "blocked", "blocker": "Which rule?"})
+        result = self.run_stage("implement", context={**CONTEXT, "linked": linked})
+        prompt = self.claude.call()["prompt"]
+        self.assertIn("Rule: cents.", prompt)
+        self.assertIn("- comment 77 of other/repo: not this repository", prompt)
+        self.assertIn("do not guess: stop and return `status: blocked`", prompt)
+        # The round's comment says what the agent read and did not.
+        self.assertEqual(
+            result["linked"],
+            {"read": ["comment 9 on #2"], "skipped": linked["skipped"]},
+        )
+
     def test_only_protected_paths_count_as_needing_a_person(self):
         listed = [".github/workflows/ci.yml", "src/app.py", "/.nexkit/config.json", "src/app.py"]
         self.claude.configure(

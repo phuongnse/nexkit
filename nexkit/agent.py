@@ -593,12 +593,16 @@ def linked_text(context, stage=None):
             ]
         blocks.append("\n".join(lines))
     if found.get("comments"):
+        sources = (
+            "the issue, the issues above or a collaborator's comment on them"
+            if chain
+            else "the issue or a collaborator's comment on it"
+        )
         blocks.append(
             "### Texts linked from these issues\n\n"
-            "Each comment, issue and pull request of this repository that the issue"
-            f"{', the issues above' if chain else ''} or a collaborator's comment on them "
-            "links to. Of an issue or a pull request, NexKit read only its text: a comment of "
-            "its discussion counts only when it is linked itself.\n\n"
+            f"Each comment, issue and pull request of this repository that {sources} links "
+            "to, the first linked first. Of an issue or a pull request, NexKit read only its "
+            "text: a comment of its discussion counts only when it is linked itself.\n\n"
             f"{found['comments']}"
         )
     skipped = found.get("skipped") or []

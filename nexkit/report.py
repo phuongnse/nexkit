@@ -1999,7 +1999,9 @@ def linked_line(*results):
         for into, key in ((read, "read"), (skipped, "skipped")):
             for item in found.get(key) or []:
                 if isinstance(item, str):
-                    into.setdefault(clip(one_line(item), 200), None)
+                    # In code, so that GitHub links no `#12` and mentions no issue each round.
+                    text = clip(one_line(item), 200).replace("`", "'")
+                    into.setdefault(f"`{text}`", None)
 
     def listed(items):
         names = list(items)

@@ -224,10 +224,6 @@ files or repository settings, and wait for confirmation.
    cannot be read, then 30, 60 and 120 minutes after its last start.
    After the commit, start the first sweep with
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
-   If the work should go on while nobody watches, mention the `drive` skill: a Claude Code
-   session on a schedule, such as a routine, runs it to act where autopilot stops for a
-   person. The repository's own instructions for that session set its limits: what it may
-   decide, whether it may push, and whom it notifies.
 
 8. **Commit to the default branch.** Comment events only run workflows from the default
    branch. Commit both files (directly or through a pull request, as the user prefers).

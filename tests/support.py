@@ -778,8 +778,11 @@ with open(os.environ["FAKE_CLAUDE_LOG"], "w") as log:
 with open(os.environ["FAKE_CLAUDE_LOG"] + "l", "a") as log:
     log.write(json.dumps(call) + "\\n")
 time.sleep(spec.get("sleep", 0))
+# Commands such as `git merge`, with an identity of their own: a runner has none.
+ident = {"GIT_AUTHOR_NAME": "agent", "GIT_AUTHOR_EMAIL": "agent@example.com",
+         "GIT_COMMITTER_NAME": "agent", "GIT_COMMITTER_EMAIL": "agent@example.com"}
 for command in spec.get("run", []):
-    subprocess.run(command, capture_output=True)
+    subprocess.run(command, capture_output=True, env={**os.environ, **ident})
 for path, content in spec.get("write", {}).items():
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w") as f:

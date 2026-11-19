@@ -1280,6 +1280,32 @@ class ConflictTests(StageCase):
         self.assertNotIn("## Conflicts with", self.claude.call()["prompt"])
         self.assertIn("\n</untrusted>\n\n## Approved plan", self.claude.call()["prompt"])
 
+    def test_an_agent_merge_of_main_is_the_rounds_merge(self):
+        head, base = self.behind_base()
+        merge = ["git", "merge", "--no-commit", "--no-ff", "-q", "origin/main"]
+        result = self.run_fix(run=[merge], write={"calc.py": CALC + SUB + "# fixed\n"})
+        self.assertEqual(result["status"], "done")
+        self.assertEqual((result["start_head"], result["start_base"]), (head, base))
+        self.assertEqual(result["conflicts"], [])
+        self.assertEqual(sorted(result["changed_files"]), ["calc.py", "other.py"])
+        self.assertIn("- Do not merge the base branch", self.claude.call()["prompt"])
+
+    def test_an_agent_merge_in_place_of_nexkits_publishes_nothing(self):
+        _, base = self.repos.diverge()
+        other = self.repos.push_commit("dev", "other", {"x.py": "1\n"}, "Elsewhere")
+        self.checkout_branch()
+        run = [
+            ["git", "merge", "--abort"],
+            ["git", "merge", "--no-commit", "--no-ff", "-q", "origin/other"],
+        ]
+        result = self.run_fix(run=run)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(
+            result["error"],
+            f"The agent merged {other[:7]} in place of NexKit's merge of `main` "
+            f"({base[:7]}), so NexKit publishes nothing.",
+        )
+
     def behind_base(self):
         """A branch that merges cleanly into a base branch that has moved since."""
         self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")

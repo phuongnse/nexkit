@@ -49,6 +49,8 @@ $round_checks
   you stop, so a command left running in the background ends the run without a result.
 - Do not modify these protected paths: $protected. NexKit rejects such changes.
 - Do not commit, push or create branches. NexKit commits your working-tree changes.
+- Do not merge the base branch or any other branch yourself. NexKit merges the base
+  branch when the round needs it, and publishes nothing after a merge of another commit.
 - Leave no temporary files, logs or build output in the working tree.
 - Never skip, delete or weaken tests or checks to make them pass.
 - If you cannot make progress, stop and return `status: blocked` with the reason.

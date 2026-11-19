@@ -560,6 +560,14 @@ a round by itself (see [Work without a command](#work-without-a-command)).
 5. The checks and the review run on the merge commit, as after any fix round. The round's
    comment says that the base branch was merged and which files had conflicts.
 
+The fix prompt tells the agent not to merge anything itself. When NexKit merged nothing and
+the agent merged a commit of the base branch anyway, as git's `MERGE_HEAD` shows after the
+agent ran, NexKit treats that commit as the round's merge: `publish` makes it the second
+parent, the protected-path check counts only what differs from git's own merge, and the
+round's comment says the base branch was merged. When the agent merged any other commit,
+or another commit than the one NexKit merged, the round ends with an error and publishes
+nothing.
+
 A round whose own commit conflicts with the base branch's tip when `publish` pushes it
 skips its checks and review, and with `conflicts.auto_resolve` starts the conflict round at
 once (see *A base branch that moved while the agent worked* above).

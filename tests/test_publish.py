@@ -27,6 +27,8 @@ from tests.support import (
 )
 
 CONTEXT = {"title": "Fix add", "issue": 5}
+# What a fix agent runs when it merges the base branch itself.
+MERGE_MAIN = ["git", "merge", "--no-commit", "--no-ff", "-q", "origin/main"]
 PLAN = {
     "summary": "add() returns the sum instead of the difference.",
     "changes": ["add(a, b) returns a + b.", "Negative numbers add up too."],
@@ -864,8 +866,9 @@ class MergePublishTests(unittest.TestCase):
         self.tmp.cleanup()
         self.repos.cleanup()
 
-    def run_fix(self, write, **context):
-        """Run the fix stage in a fresh checkout with a fake agent that writes `write`."""
+    def run_fix(self, write, run=(), status="done", **context):
+        """Run the fix stage in a fresh checkout with a fake agent that runs the commands
+        `run`, then writes `write`."""
         self.rounds = getattr(self, "rounds", 0) + 1
         work = self.repos.clone(f"agent-{self.rounds}")
         git(work, "checkout", "-q", "-B", "nexkit/issue-5", "origin/nexkit/issue-5")
@@ -883,7 +886,7 @@ class MergePublishTests(unittest.TestCase):
             "cause_outside": False,
             "open_conflicts": [],
         }
-        self.claude.configure(result=result, write=write)
+        self.claude.configure(result=result, write=write, run=list(run))
         context = {
             **CONTEXT,
             "pr": 6,
@@ -896,7 +899,7 @@ class MergePublishTests(unittest.TestCase):
         result = agent.run_stage(
             "fix", context, self.cfg, work, self.out, program=str(self.claude.path), base="main"
         )
-        self.assertEqual(result["status"], "done", result.get("error"))
+        self.assertEqual(result["status"], status, result.get("error"))
         return result
 
     def publish_fix(self, result, **options):
@@ -965,6 +968,53 @@ class MergePublishTests(unittest.TestCase):
         self.assertEqual(parents, [head, base])
         self.assertEqual(git(self.repos.origin, "show", f"{new_head}:flaky.py"), "fixed = True")
         self.assertEqual(git(self.repos.origin, "diff", base, new_head, "--name-only"), "calc.py")
+
+    def agent_merges_main(self):
+        """A branch that merges cleanly into a main that moved and changed a protected
+        path, so NexKit merges nothing. Return (branch head, main)."""
+        head = self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Sub")
+        files = {"other.py": "x = 1\n", ".nexkit/config.json": "{}\n"}
+        return head, self.repos.push_commit("dev", "main", files, "Other")
+
+    def test_a_merge_of_main_by_the_agent_is_published_as_a_merge(self):
+        head, base = self.agent_merges_main()
+        result = self.run_fix({"calc.py": CALC + SUB + "# fixed\n"}, run=[MERGE_MAIN])
+        self.assertEqual((result["start_base"], result["conflicts"]), (base, []))
+        outcome = self.publish_fix(result)
+        new_head = git(self.repos.origin, "rev-parse", "nexkit/issue-5")
+        self.assertEqual(outcome["head"], new_head)
+        parents = git(self.repos.origin, "log", "-1", "--format=%P", new_head).split()
+        self.assertEqual(parents, [head, base])
+        self.assertEqual(
+            git(self.repos.origin, "log", "-1", "--format=%s", new_head),
+            "Merge main and address feedback on #6",
+        )
+        # Only the agent's own edit is the pull request's change; main's protected path
+        # came with the merge and was not rejected.
+        self.assertEqual(git(self.repos.origin, "diff", base, new_head, "--name-only"), "calc.py")
+        self.assertEqual(git(self.repos.origin, "show", f"{new_head}:.nexkit/config.json"), "{}")
+
+    def test_an_agent_merge_with_its_own_edit_to_a_protected_path_is_rejected(self):
+        head, _ = self.agent_merges_main()
+        write = {"calc.py": CALC + SUB + "# fixed\n", ".nexkit/config.json": "[]\n"}
+        result = self.run_fix(write, run=[MERGE_MAIN])
+        with self.assertRaisesRegex(PublishError, r"protected paths.*`\.nexkit/config\.json`"):
+            self.publish_fix(result)
+        self.assertEqual(git(self.repos.origin, "rev-parse", "nexkit/issue-5"), head)
+
+    def test_an_agent_merge_of_a_commit_not_on_main_publishes_nothing(self):
+        head = self.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Sub")
+        other = self.repos.push_commit("dev", "other", {"x.py": "1\n"}, "Elsewhere")
+        merge = ["git", "merge", "--no-commit", "--no-ff", "-q", "origin/other"]
+        result = self.run_fix({"calc.py": CALC + SUB + "# fixed\n"}, run=[merge], status="error")
+        self.assertEqual(
+            result["error"],
+            f"The agent merged {other[:7]}, which is not on `main`. NexKit merges only "
+            "`main`, so it publishes nothing.",
+        )
+        self.assertIsNone(result["start_base"])
+        self.assertEqual(self.publish_fix(result), {"published": False})
+        self.assertEqual(git(self.repos.origin, "rev-parse", "nexkit/issue-5"), head)
 
     def test_agent_edit_to_a_protected_path_is_still_rejected(self):
         self.repos.diverge({".nexkit/config.json": "{}\n"})

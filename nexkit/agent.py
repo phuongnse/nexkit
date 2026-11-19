@@ -758,6 +758,35 @@ def merge_base_branch(repo, base, moved=False):
     return commit, list(dict.fromkeys(conflicts))
 
 
+def merge_heads(repo):
+    """The commits that the merge in progress merges, as git's MERGE_HEAD lists them."""
+    path = Path(git(repo, "rev-parse", "--git-path", "MERGE_HEAD").strip())
+    if not path.is_absolute():
+        path = Path(repo) / path
+    return path.read_text(encoding="utf-8").split() if path.is_file() else []
+
+
+def own_merge(repo, base, merged):
+    """The commit of `base` that a fix agent merged itself, when NexKit merged nothing
+    (`merged`): (commit, None), (None, None) without one, or (None, error) when the agent
+    merged anything else, which NexKit does not publish."""
+    heads = merge_heads(repo)
+    if not heads or heads == [merged]:
+        return None, None
+    shown = ", ".join(head[:7] for head in heads)
+    if merged:
+        return None, (
+            f"The agent merged {shown} in place of NexKit's merge of `{base}` "
+            f"({merged[:7]}), so NexKit publishes nothing."
+        )
+    if len(heads) > 1 or not is_ancestor(repo, heads[0], f"origin/{base}"):
+        return None, (
+            f"The agent merged {shown}, which is not on `{base}`. NexKit merges only "
+            f"`{base}`, so it publishes nothing."
+        )
+    return heads[0], None
+
+
 def conflicts_text(base, commit, files):
     """The fix prompt's section about a merge of the base branch, or ""."""
     if not commit:
@@ -1604,10 +1633,18 @@ def run_stage(
     answer_checklist(result, stage, cfg)
     drop_criteria(result, stage, context)
     if stage in ("implement", "fix") and result["status"] == "done":
+        mistake = None
+        if stage == "fix":
+            # A merge of the base branch that the agent ran itself is published as NexKit's.
+            own, mistake = own_merge(repo, base, merged)
+            if own:
+                merged, conflicts = own, merge_tree(repo, base_commit, own)[1]
         left = leftover_markers(repo, conflicts)
         files, size = collect_changes(repo, base_commit, out)
         result["changed_files"] = files
-        if left:
+        if mistake:
+            result.update(status="error", error=mistake)
+        elif left:
             result.update(
                 status="error",
                 error="The agent left conflict markers in "

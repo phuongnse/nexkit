@@ -1,5 +1,22 @@
 # Changelog
 
+## 6.12.1
+
+- A fix agent's own merge of the base branch is published as a merge (#300). Before, when
+  NexKit merged nothing and the agent ran `git merge` itself, the round's commit had a
+  single parent: everything the base branch brought became the pull request's own change,
+  and the protected-path check read it as the agent's edit. In phuongnse/axis#4534,
+  `/nexkit fix Merge main and run the checks again` on a pull request of three Markdown
+  files published about 40 files from `main` this way.
+  - The fix prompt tells the agent not to merge anything itself: NexKit merges the base
+    branch when the round needs it.
+  - When the agent merged a commit of the base branch anyway, as git's `MERGE_HEAD` shows,
+    the round publishes a merge with that commit as the second parent, the protected-path
+    check counts only what differs from git's own merge, and the round's comment says the
+    base branch was merged.
+  - A merge of any other commit, or of another commit than the one NexKit merged, ends the
+    round with an error, and nothing is published.
+
 ## 6.12.0
 
 Agents read what an issue refers to, including every issue a part was split from, and ask

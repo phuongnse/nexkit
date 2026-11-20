@@ -38,13 +38,12 @@ adds what is missing around the agent:
 ## Built with NexKit
 
 - **[Axis](https://github.com/phuongnse/axis)**: a platform where a business builds its own
-  applications, such as approvals and requests, through configuration. Its owner decides
-  what to build, and NexKit:
-  - plans and implements each open issue, and asks the owner only when a decision is needed;
-  - gives risky changes, such as to stored data or security, a stronger model;
-  - has the review check each change against Axis's own rules;
-  - runs every test a change can affect, in parallel;
-  - merges each change once its checks and review pass.
+  applications through configuration. Its owner decides what to build, and NexKit:
+  - Plans and implements each open issue, and asks the owner only when a decision is needed.
+  - Gives risky changes, such as to stored data or security, a stronger model.
+  - Has the review check each change against Axis's own rules.
+  - Runs every test a change can affect, in parallel.
+  - Merges each change once its checks and review pass.
 
 ## Supported versions
 

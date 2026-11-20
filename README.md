@@ -39,8 +39,8 @@ adds what is missing around the agent:
 
 - **[Axis](https://github.com/phuongnse/axis)** is a platform where a business builds its
   own applications, such as approvals and requests, through configuration. Its owner
-  decides what to build and how it should look, and NexKit does the work on each issue. Axis
-  uses NexKit in ways you can copy:
+  decides what to build and how it should look, and NexKit does the work on each issue. How
+  Axis uses NexKit:
   - **Open issues get worked on by themselves.** [Autopilot](docs/configuration.md#autopilot)
     plans and implements each open issue, and the owner steps in only where NexKit asks
     for a decision.

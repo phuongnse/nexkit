@@ -37,25 +37,14 @@ adds what is missing around the agent:
 
 ## Built with NexKit
 
-- **[Axis](https://github.com/phuongnse/axis)** is a platform where a business builds its
-  own applications, such as approvals and requests, through configuration. Its owner
-  decides what to build and how it should look, and NexKit does the work on each issue. How
-  Axis uses NexKit:
-  - **Open issues get worked on by themselves.** [Autopilot](docs/configuration.md#autopilot)
-    plans and implements each open issue, and the owner steps in only where NexKit asks
-    for a decision.
-  - **Risky changes get a stronger model.** [Profiles](docs/configuration.md#profiles) send
-    work that could touch stored data or security to a stronger model, and routine work
-    to a faster, cheaper one.
-  - **The review checks the project's own rules.** A
-    [review checklist](docs/configuration.md#review-checklist) makes the reviewer answer
-    for each of Axis's rules, such as keeping the docs true and reusing shared widgets.
-  - **A large test suite runs on every change.** [Parallel checks](docs/configuration.md#parallel-checks)
-    spread the build, unit, integration and end-to-end tests over jobs that run at once,
-    and [skip](docs/configuration.md#checks-that-a-change-cannot-affect) the ones a change
-    cannot affect.
-  - **Approved work merges without waiting.** [Automatic merge](docs/configuration.md#automatic-merge)
-    merges a pull request once its checks and its review pass.
+- **[Axis](https://github.com/phuongnse/axis)**: a platform where a business builds its own
+  applications, such as approvals and requests, through configuration. Its owner decides
+  what to build, and NexKit:
+  - plans and implements each open issue, and asks the owner only when a decision is needed;
+  - gives risky changes, such as to stored data or security, a stronger model;
+  - has the review check each change against Axis's own rules;
+  - runs the full test suite on every change, in parallel;
+  - merges each change once its checks and review pass.
 
 ## Supported versions
 

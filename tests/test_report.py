@@ -922,6 +922,40 @@ class ReportTests(ReportCase):
         self.assertIn("Could not close #5: GitHub API 403", row["body"])
         self.assertEqual(row["run"]["status"], "success")
 
+    def test_an_issue_github_closes_at_the_same_moment_counts_as_closed(self):
+        self.gh.add_issue(1, title="Epic")
+        self.gh.add_issue(2, state="closed", reason="completed")
+        self.gh.parents.update({2: 1, 5: 1})
+        self.candidate()
+        self.gh.closed_by_other.add(5)
+        cfg = make_config(merge={"auto": True}, close_parent_issues=True, notify=["owner"])
+        outcome = self.run_report(cfg=cfg)
+        self.assertEqual((outcome["outcome"], outcome["attention"]), ("merged", None))
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+        # The parent closes in this round, as after a close by NexKit.
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["status"], "success")
+        self.assertIn(
+            "#5 is closed: another request closed it at the same moment as NexKit.\n"
+            "Closed #1 as completed",
+            row["body"],
+        )
+        self.assertNotIn("Could not close", row["body"])
+        self.assertNotIn("Close it yourself", row["body"])
+        self.assertFalse(self.gh.comments_matching(6, "@owner"))
+
+    def test_a_failed_close_of_an_issue_that_stays_open_still_asks_a_person(self):
+        self.candidate()
+        # A 422 alike, but the issue is still open on a second read.
+        self.gh.close_errors[5] = GitHubError(422, "Validation Failed")
+        self.run_report(cfg=make_config(merge={"auto": True}))
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+        [row] = self.gh.run_comments(6)
+        self.assertIn(
+            "Could not close #5: GitHub API 422: Validation Failed. Close it yourself.", row["body"]
+        )
+
     def test_auto_merge_deletes_its_branch_when_the_repository_deletes_merged_branches(self):
         self.candidate()
         self.run_report(cfg=make_config(merge={"auto": True}))

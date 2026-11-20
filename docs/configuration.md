@@ -645,7 +645,8 @@ comments a link to the pull request and the merge commit on it, unless GitHub cl
 first through the pull request's `Closes` line. A pull request whose
 issue a person closed meanwhile is not merged: the round's comment says so, and the pull
 request waits for a person to merge or close it. If closing fails, the round's comment
-says so and links the issue; the merge stays.
+says so and links the issue; the merge stays. A close that fails because GitHub closed the
+issue at the same moment counts as done.
 
 NexKit follows the repository's *Automatically delete head branches* setting
 (`delete_branch_on_merge`, under **Settings → General → Pull Requests**) the same way:

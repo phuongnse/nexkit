@@ -17,7 +17,9 @@ from .github import GitHubError, dispatched_runs_url, run_url
 from .maintain import (
     ON_BASE_FAILED_NEED,
     close_on_base,
+    close_or_find_closed,
     close_parents_safely,
+    closed_line,
     delete_head_branch,
     is_conflicting,
     reach,
@@ -1779,17 +1781,18 @@ def close_merged_issue(gh, issue, pr, sha):
     """Close the issue a pull request implements after NexKit merged it.
 
     GitHub closes it too, through the pull request's `Closes` line, but not at once and not
-    when a person edited that line away. Returns (closed, lines for the round's comment). A
-    failure leaves the merge as it is."""
+    when a person edited that line away; when its close lands between NexKit's read and
+    NexKit's close, the issue counts as closed here. Returns (closed, lines for the round's
+    comment). A failure leaves the merge as it is."""
     try:
         if gh.issue(issue).get("state") != "open":
             return False, []
         commit = f" in {sha}" if sha else ""
         gh.comment(issue, f"NexKit merged #{pr}{commit}, which implements this issue.")
-        gh.close_issue(issue, "completed")
+        by_nexkit = close_or_find_closed(gh, issue)
     except GitHubError as exc:
         return False, [f"Could not close #{issue}: {exc}. Close it yourself."]
-    return True, [f"Closed #{issue} as completed."]
+    return True, [closed_line(issue, by_nexkit)]
 
 
 def _kept_findings(findings):

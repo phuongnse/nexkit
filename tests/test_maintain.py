@@ -226,6 +226,19 @@ class CloseParentTests(unittest.TestCase):
         [note] = self.gh.comments(1)
         self.assertIn("- #2: completed\n- #3: not planned", note["body"])
 
+    def test_a_parent_another_run_closes_at_the_same_moment_is_left_to_it(self):
+        self.close(2)
+        self.close(3)
+        self.gh.closed_by_other.add(1)
+        self.assertEqual(close_parents(self.gh, 3), [])
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+        # Any other failure is still an error.
+        self.gh.issues[1].update(state="open")
+        self.gh.closed_by_other.clear()
+        self.gh.close_errors[1] = GitHubError(403, "Forbidden")
+        with self.assertRaises(GitHubError):
+            close_parents(self.gh, 3)
+
     def test_a_parent_whose_sub_issues_were_all_not_planned_stays_open(self):
         self.close(2, "not_planned")
         self.close(3, "duplicate")
@@ -380,6 +393,23 @@ class OnBaseTests(unittest.TestCase):
             note["body"], "NexKit closed #6 without merging: `main` already holds its change."
         )
         self.assertNotIn("on_base", self.gh.run_comments(6)[0]["run"])
+
+    def test_an_issue_its_commit_closes_at_the_same_moment_counts_as_closed(self):
+        self.gh.add_issue(1, title="Epic")
+        self.gh.parents[5] = 1
+        self.gh.closed_by_other.add(5)
+        cfg = make_config(close_parent_issues=True)
+        self.assertEqual(self.maintain(cfg), ["#6: already_on_base."])
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(row["run"]["status"], "success")
+        self.assertNotIn("attention", row["run"])
+        self.assertIn(
+            "#5 is closed: another request closed it at the same moment as NexKit.\n\n"
+            "Closed #1 as completed",
+            row["body"],
+        )
+        self.assertNotIn("Close it yourself", row["body"])
 
     def test_an_issue_it_cannot_close_waits_for_a_person(self):
         self.gh.close_errors[5] = GitHubError(403, "Resource not accessible by integration")

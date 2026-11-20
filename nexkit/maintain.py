@@ -189,8 +189,38 @@ def close_parent(gh, number):
             f"{CLOSED}\nNexKit closed this issue because all its sub-issues are "
             f"closed:\n\n{listing}",
         )
-    gh.close_issue(number, "completed")
+    if not close_or_find_closed(gh, number):
+        # Another run closed it between the read above and this close, and reports it.
+        return [], False
     return [f"Closed #{number} as completed: all its sub-issues are closed."], True
+
+
+def close_or_find_closed(gh, number, reason="completed"):
+    """Close issue `number`. Returns True when NexKit closed it, False when the close failed
+    but the issue is closed now: another request closed it at the same moment, which GitHub
+    answers with `422` ("closed by another request"). GitHub closes the issue of a merged
+    pull request through its `Closes` line a moment after the merge, and the runs of
+    sub-issues closed together each try their parent. Raises the error of any other
+    failure."""
+    try:
+        gh.close_issue(number, reason)
+        return True
+    except GitHubError as exc:
+        error = exc
+    try:
+        if gh.issue(number).get("state") == "closed":
+            return False
+    except GitHubError:
+        pass
+    raise error
+
+
+def closed_line(number, by_nexkit):
+    """The line for a round's comment after `close_or_find_closed` closed an issue as
+    completed, or found it closed."""
+    if by_nexkit:
+        return f"Closed #{number} as completed."
+    return f"#{number} is closed: another request closed it at the same moment as NexKit."
 
 
 def _note_once(gh, number, marker, text):
@@ -344,8 +374,8 @@ def close_on_base(gh, cfg, target, commit=None):
         if gh.issue(issue).get("state") == "open":
             closed = f"NexKit closed #{pr} without merging: `{base}` already holds its change"
             gh.comment(issue, f"{closed}{by}.")
-            gh.close_issue(issue, "completed")
-            lines.append(f"Closed #{issue} as completed.")
+            # A push whose commit closes the issue may close it at the same moment.
+            lines.append(closed_line(issue, close_or_find_closed(gh, issue)))
             if cfg["close_parent_issues"]:
                 # At once, for this comment; the `issues: closed` run finds nothing left.
                 lines += close_parents_safely(gh, issue)

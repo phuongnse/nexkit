@@ -1,5 +1,25 @@
 # Changelog
 
+## 6.12.2
+
+- An issue that GitHub closes at the same moment as NexKit counts as closed (#303). After
+  an automatic merge, GitHub closes the issue through the pull request's `Closes` line
+  while NexKit closes it too; when GitHub's close landed between NexKit's read and its
+  close, GitHub refused NexKit's close with `422` ("This issue was closed by another
+  request"). The round's comment then said `Could not close #N: … Close it yourself.`
+  about an issue that was closed, and the parent issues waited for the `issues: closed`
+  run. In phuongnse/axis this happened on 27 of about 600 pull requests in ten days.
+  - After a failed close, NexKit reads the issue again. A closed issue counts as closed:
+    the round's comment says so, asks nobody to close it, and the parents close in the
+    same round. Any other failure, or an issue still open, is reported as before.
+  - The same holds when NexKit closes a pull request whose change its base branch already
+    holds, while a pushed commit closes the issue: before, that round ended as
+    `on_base_failed` and waited for a person.
+  - Of the runs of sub-issues closed together, the one whose close of their parent lost
+    leaves the parent to the other, instead of a `Could not check the parent issue` line.
+    The `parent-closed` comment follows the close, so only the run whose close went
+    through posts it.
+
 ## 6.12.1
 
 - A fix agent's own merge of the base branch is published as a merge (#300). Before, when

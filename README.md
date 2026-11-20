@@ -32,12 +32,12 @@ adds what is missing around the agent:
   bounded number of fix rounds.
 - **Agents never hold a token that can write.** An agent edits a working tree. NexKit
   validates the result and commits it in a separate job.
-- **It keeps going without you.** It waits out an agent's usage limit and continues after
-  the reset. With autopilot it also works through the open issues by itself, and it stops
-  only where a person must decide.
+- **It keeps going without you.** With autopilot it works through the open issues by
+  itself, and it stops only where a person must decide.
 
-NexKit builds [Axis](https://github.com/phuongnse/axis): more than 2,200 merged pull
-requests since October 2026.
+NexKit builds [Axis](https://github.com/phuongnse/axis), from issues to plans to reviewed
+pull requests, as its
+[merged pull requests](https://github.com/phuongnse/axis/pulls?q=is%3Apr+is%3Amerged) show.
 
 ## Supported versions
 

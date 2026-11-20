@@ -20,6 +20,25 @@ flowchart LR
     human -.->|"/nexkit fix ..."| fix
 ```
 
+## Why NexKit
+
+Running a coding agent in GitHub Actions is easy. Trusting what it merges is harder. NexKit
+adds what is missing around the agent:
+
+- **A plan before code.** The agent posts a plan with its decisions and acceptance criteria,
+  and implementation starts only from a plan.
+- **Your checks, then a second opinion.** NexKit runs the project's own checks, and a fresh
+  agent session reviews the diff against the plan. Failures go back to the agent for a
+  bounded number of fix rounds.
+- **Agents never hold a token that can write.** An agent edits a working tree. NexKit
+  validates the result and commits it in a separate job.
+- **It keeps going without you.** It waits out an agent's usage limit and continues after
+  the reset. With autopilot it also works through the open issues by itself, and it stops
+  only where a person must decide.
+
+NexKit builds [Axis](https://github.com/phuongnse/axis): more than 2,200 merged pull
+requests since October 2026.
+
 ## Supported versions
 
 Everything the pipeline installs is pinned to the version NexKit was tested with, so a

@@ -937,8 +937,7 @@ class ReportTests(ReportCase):
         [row] = self.gh.run_comments(6)
         self.assertEqual(row["run"]["status"], "success")
         self.assertIn(
-            "#5 is closed: another request closed it at the same moment as NexKit.\n"
-            "Closed #1 as completed",
+            "#5 is closed: it closed at the same moment as NexKit's close.\nClosed #1 as completed",
             row["body"],
         )
         self.assertNotIn("Could not close", row["body"])

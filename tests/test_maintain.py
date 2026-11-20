@@ -232,6 +232,9 @@ class CloseParentTests(unittest.TestCase):
         self.gh.closed_by_other.add(1)
         self.assertEqual(close_parents(self.gh, 3), [])
         self.assertEqual(self.gh.issues[1]["state"], "closed")
+        # The run whose close went through comments; this one, which may have lost to a
+        # person, says nothing.
+        self.assertEqual(self.gh.comments(1), [])
         # Any other failure is still an error.
         self.gh.issues[1].update(state="open")
         self.gh.closed_by_other.clear()
@@ -405,7 +408,7 @@ class OnBaseTests(unittest.TestCase):
         self.assertEqual(row["run"]["status"], "success")
         self.assertNotIn("attention", row["run"])
         self.assertIn(
-            "#5 is closed: another request closed it at the same moment as NexKit.\n\n"
+            "#5 is closed: it closed at the same moment as NexKit's close.\n\n"
             "Closed #1 as completed",
             row["body"],
         )

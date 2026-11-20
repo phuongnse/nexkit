@@ -182,6 +182,12 @@ def close_parent(gh, number):
     # first closes the parent.
     if gh.issue(number).get("state") != "open":
         return [], False
+    if not close_or_find_closed(gh, number):
+        # Another request closed it between the read above and this close: another run,
+        # which comments, or a person, about whose close NexKit says nothing.
+        return [], False
+    # After the close, so that only a run whose close went through comments. The latest
+    # comment guards a run whose close went through after another's.
     latest = gh.comments(number)[-1:]
     if not (latest and by_bot(latest[0]) and CLOSED in latest[0]["body"]):
         gh.comment(
@@ -189,16 +195,14 @@ def close_parent(gh, number):
             f"{CLOSED}\nNexKit closed this issue because all its sub-issues are "
             f"closed:\n\n{listing}",
         )
-    if not close_or_find_closed(gh, number):
-        # Another run closed it between the read above and this close, and reports it.
-        return [], False
     return [f"Closed #{number} as completed: all its sub-issues are closed."], True
 
 
 def close_or_find_closed(gh, number, reason="completed"):
     """Close issue `number`. Returns True when NexKit closed it, False when the close failed
-    but the issue is closed now: another request closed it at the same moment, which GitHub
-    answers with `422` ("closed by another request"). GitHub closes the issue of a merged
+    but the issue is closed now: mostly another request closed it at the same moment, which
+    GitHub answers with `422` ("closed by another request"); rarely NexKit's own close went
+    through behind a server error. GitHub closes the issue of a merged
     pull request through its `Closes` line a moment after the merge, and the runs of
     sub-issues closed together each try their parent. Raises the error of any other
     failure."""
@@ -220,7 +224,7 @@ def closed_line(number, by_nexkit):
     completed, or found it closed."""
     if by_nexkit:
         return f"Closed #{number} as completed."
-    return f"#{number} is closed: another request closed it at the same moment as NexKit."
+    return f"#{number} is closed: it closed at the same moment as NexKit's close."
 
 
 def _note_once(gh, number, marker, text):

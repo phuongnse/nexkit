@@ -902,7 +902,8 @@ same check in that run, for its comment, and the event's run finds nothing left.
 are all closed, one of them completed, by the same rules, in case that check did not run or
 failed: it never asks a person to close it. A parent missing parts of its plan waits for a
 person from the sweep that finds it, even while its other parts are open. Whichever comes first closes the parent, with
-one comment; a run whose close another request beat leaves the parent to it.
+one comment, posted after its close; a run whose close another request beat leaves the
+parent, and the comment, to it.
 
 **Merging after an approval** (`merge.auto`). A writer's approval of a NexKit pull request
 whose latest round ended as `merge_refused`, as `ready` for criteria the review could not

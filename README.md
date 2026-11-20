@@ -43,7 +43,7 @@ adds what is missing around the agent:
   - plans and implements each open issue, and asks the owner only when a decision is needed;
   - gives risky changes, such as to stored data or security, a stronger model;
   - has the review check each change against Axis's own rules;
-  - runs the full test suite on every change, in parallel;
+  - runs every test a change can affect, in parallel;
   - merges each change once its checks and review pass.
 
 ## Supported versions

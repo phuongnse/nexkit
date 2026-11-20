@@ -35,9 +35,7 @@ adds what is missing around the agent:
 - **It keeps going without you.** With autopilot it works through the open issues by
   itself, and it stops only where a person must decide.
 
-NexKit builds [Axis](https://github.com/phuongnse/axis), from issues to plans to reviewed
-pull requests, as its
-[merged pull requests](https://github.com/phuongnse/axis/pulls?q=is%3Apr+is%3Amerged) show.
+NexKit builds [Axis](https://github.com/phuongnse/axis).
 
 ## Supported versions
 

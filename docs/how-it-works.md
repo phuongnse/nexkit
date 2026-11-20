@@ -720,6 +720,7 @@ against its base branch, as its *Files changed* tab shows. When it does not:
 
 - No round runs and nothing merges. NexKit closes the pull request without merging, and
   its issue as completed, as a merge would, with its parents under `close_parent_issues`.
+  An issue that a commit of the base branch closes at the same moment counts as closed.
   It deletes the branch as after a merge (see *Branches of closed work* below). The outcome
   is `already_on_base`; nobody is mentioned.
 - The pull request's round comment and a comment on the issue say that the base branch
@@ -779,7 +780,10 @@ Both statuses are set on that head.
   until a writer comments the command again.
 
 **After an automatic merge.** NexKit closes the issue the pull request implements, unless
-GitHub closed it first through the pull request's `Closes` line. When the repository's
+GitHub closed it first through the pull request's `Closes` line. GitHub's close can land
+while NexKit closes it, and GitHub then refuses NexKit's close; NexKit reads the issue
+again, and a closed issue counts as closed, parents included, with nothing left for a
+person. When the repository's
 *Automatically delete head branches* setting (`delete_branch_on_merge`) is on, NexKit
 deletes the pull request's head branch, if GitHub has not. It deletes
 only a `nexkit/issue-<number>` branch of this repository, never the base branch, and keeps
@@ -903,7 +907,8 @@ same check in that run, for its comment, and the event's run finds nothing left.
 are all closed, one of them completed, by the same rules, in case that check did not run or
 failed: it never asks a person to close it. A parent missing parts of its plan waits for a
 person from the sweep that finds it, even while its other parts are open. Whichever comes first closes the parent, with
-one comment.
+one comment, posted after its close; a run whose close another request beat leaves the
+parent, and the comment, to it.
 
 **Merging after an approval** (`merge.auto`). A writer's approval of a NexKit pull request
 whose latest round ended as `merge_refused`, as `ready` for criteria the review could not

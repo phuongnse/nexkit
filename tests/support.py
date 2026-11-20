@@ -128,6 +128,9 @@ class FakeGitHub:
         self.merge_error = None
         self.dispatch_errors = {}
         self.close_errors = {}
+        # Issues that another request closes as NexKit tries to: GitHub closes them and
+        # answers NexKit's close with its 422.
+        self.closed_by_other = set()
         self.update_errors = {}
         self.updates = []  # (number, milestone, labels) for each update_issue
         self.parents = {}  # sub-issue number -> parent number
@@ -386,6 +389,14 @@ class FakeGitHub:
     def close_issue(self, number, reason="completed"):
         if number in self.close_errors:
             raise self.close_errors[number]
+        if number in self.closed_by_other and self.issues[number]["state"] == "open":
+            self.issues[number].update(state="closed", state_reason="completed")
+            self._touch(number)
+            raise GitHubError(
+                422,
+                '{"message":"Validation Failed","errors":[{"message":"This issue was closed '
+                'by another request. Reload it and try again."}]}',
+            )
         closed_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.issues[number].update(state="closed", state_reason=reason, closed_at=closed_at)
         self._touch(number)

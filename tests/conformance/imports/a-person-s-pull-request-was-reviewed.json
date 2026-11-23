@@ -1,0 +1,108 @@
+{
+  "nexkit6": {
+    "issue": {
+      "number": 400,
+      "pull_request": {}
+    },
+    "pull": {
+      "number": 400,
+      "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "comments": [
+      {
+        "state": {
+          "version": 2,
+          "issue": 400,
+          "auto_fixes": 0,
+          "feedback": {
+            "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+            "checks": [
+              {
+                "name": "test",
+                "passed": true
+              }
+            ],
+            "review": {
+              "verdict": "approve",
+              "criteria": [
+                {
+                  "criterion": "A test shows it.",
+                  "status": "met"
+                }
+              ],
+              "findings": []
+            }
+          },
+          "person": true
+        }
+      },
+      {
+        "run": {
+          "round": 1,
+          "trigger": "review",
+          "action": "review",
+          "kinds": [],
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/101",
+          "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+          "checks": "passed",
+          "verdict": "approve",
+          "tokens": {
+            "input": 1000,
+            "cached": 500,
+            "output": 200
+          },
+          "outcome": "person_reviewed"
+        }
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "400",
+    "itemKind": "reviewOnly",
+    "state": "ready",
+    "change": {
+      "id": "400",
+      "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "start",
+        "for": "start",
+        "until": null,
+        "on": null
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "person",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 1000,
+        "cached": 500,
+        "output": 200
+      },
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {}
+  }
+}

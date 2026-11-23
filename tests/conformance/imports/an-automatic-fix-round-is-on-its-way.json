@@ -1,0 +1,190 @@
+{
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "comments": [
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [],
+            "too_large": false
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "planned"
+        }
+      },
+      {
+        "run": {
+          "command": "go",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/2",
+          "outcome": "planned"
+        }
+      }
+    ],
+    "pull": {
+      "number": 308,
+      "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "pullComments": [
+      {
+        "state": {
+          "version": 2,
+          "issue": 42,
+          "auto_fixes": 1,
+          "feedback": {
+            "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+            "checks": [
+              {
+                "name": "test",
+                "passed": false,
+                "signature": "test_close: AssertionError"
+              },
+              {
+                "name": "lint",
+                "passed": true
+              }
+            ],
+            "review": {
+              "verdict": "request_changes",
+              "criteria": [
+                {
+                  "criterion": "A test shows it.",
+                  "status": "unmet"
+                }
+              ],
+              "findings": []
+            }
+          },
+          "last_review": {
+            "round": 1,
+            "head": "0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e",
+            "verdict": "request_changes",
+            "findings": [
+              {
+                "severity": "suggestion",
+                "file": "a.py",
+                "line": 3,
+                "body": "Name the helper after what it reads."
+              },
+              {
+                "severity": "blocking",
+                "file": "b.py",
+                "line": 9,
+                "body": "The close is not read again after a 422."
+              }
+            ]
+          }
+        }
+      },
+      {
+        "run": {
+          "round": 1,
+          "trigger": "implement",
+          "action": "implement",
+          "kinds": [],
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/101",
+          "head": "0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e",
+          "checks": "passed",
+          "verdict": "approve",
+          "tokens": {
+            "input": 1000,
+            "cached": 500,
+            "output": 200
+          },
+          "next": {
+            "command": "fix",
+            "number": "308",
+            "note": "",
+            "auto": "true"
+          },
+          "outcome": "auto_fix"
+        }
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "fixing",
+    "change": {
+      "id": "308",
+      "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "attention": null,
+    "hold": false,
+    "waits": [],
+    "pending": [
+      {
+        "id": "a0.1",
+        "kind": "runAgent",
+        "changeVersion": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+      }
+    ],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": {
+      "text": {
+        "name": "plan",
+        "ref": "1"
+      },
+      "questions": [],
+      "criteria": 1,
+      "tooLarge": false,
+      "parts": 0,
+      "noChange": false,
+      "protectedPaths": [],
+      "approved": true,
+      "split": []
+    },
+    "rounds": {
+      "started": 1,
+      "counted": 1,
+      "conflicts": 0,
+      "signatures": [
+        "test_close: AssertionError"
+      ],
+      "findings": [
+        {
+          "severity": "blocking",
+          "text": "The close is not read again after a 422."
+        },
+        {
+          "severity": "suggestion",
+          "text": "Name the helper after what it reads."
+        }
+      ],
+      "criteria": [
+        "unmet"
+      ],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 1000,
+        "cached": 500,
+        "output": 200
+      },
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {}
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "blockers": [
+      41
+    ],
+    "comments": [
+      {
+        "person": "Please read the issue again after a failed close."
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "new",
+    "change": null,
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "start",
+        "for": "start",
+        "until": null,
+        "on": null
+      },
+      {
+        "id": "blocker-41",
+        "for": "blocker",
+        "until": null,
+        "on": "41"
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {}
+  }
+}

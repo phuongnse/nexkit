@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 
+from ..protocol.size import MOST, STATE_LIMIT, fit
 from ..schema import filled
 
 FINAL = ("accepted", "noChange", "dropped")
@@ -430,12 +431,8 @@ class Step:
     # Results.
 
     def take_plan(self, output, text):
-        questions = [
-            {key: question[key] for key in ("question", "options", "recommended", "closes")}
-            if "closes" in question
-            else {key: question[key] for key in ("question", "options", "recommended")}
-            for question in output.get("questions", [])
-        ]
+        found = output.get("questions", [])[: MOST["questions"]]
+        questions = [_question(question) for question in found]
         split = [
             {"key": number, "title": part["title"], "needs": part["depends_on"]}
             for number, part in enumerate(output.get("split", []), 1)
@@ -447,7 +444,7 @@ class Step:
             "tooLarge": bool(output.get("too_large")),
             "parts": len(split),
             "noChange": bool(filled(output.get("no_change"))),
-            "protectedPaths": list(output.get("protected_paths", [])),
+            "protectedPaths": list(output.get("protected_paths", []))[: MOST["protectedPaths"]],
             "approved": False,
             "split": split,
         }
@@ -525,9 +522,14 @@ class Step:
             return
         rounds["criteria"] = [item["status"] for item in output.get("criteria", [])]
         rounds["checklist"] = [item["answer"] for item in output.get("checklist", [])]
+        # The blocking findings first, so that the ones kept past MOST hold every blocking one
+        # there is room for.
+        findings = sorted(
+            output.get("findings", []), key=lambda item: item["severity"] != "blocking"
+        )
         rounds["findings"] = [
             {"severity": item["severity"], "text": item["body"][:300]}
-            for item in output.get("findings", [])
+            for item in findings[: MOST["findings"]]
         ]
         blocking = any(item["severity"] == "blocking" for item in rounds["findings"])
         if (
@@ -556,7 +558,9 @@ class Step:
         failing = [
             check for check in result["checks"] if not check["passed"] and not check["skipped"]
         ]
-        self.s["rounds"]["signatures"] = [check["signature"] or check["name"] for check in failing]
+        self.s["rounds"]["signatures"] = [
+            check["signature"] or check["name"] for check in failing[: MOST["signatures"]]
+        ]
         if self.s["itemKind"] == "reviewOnly" or not failing:
             self.review()
         elif self.p["reviewAfterFailingChecks"] == "always":
@@ -591,6 +595,20 @@ class Step:
         self.s["waits"].append({"id": "parts", "for": "parts", "until": None, "on": None})
 
 
+def _question(question):
+    """A question as the state keeps it: at most MOST["options"] options, and no number that
+    names an option it left out."""
+    options = question["options"][: MOST["options"]]
+    kept = {
+        "question": question["question"],
+        "options": options,
+        "recommended": question["recommended"] if question["recommended"] <= len(options) else 0,
+    }
+    if "closes" in question:
+        kept["closes"] = question["closes"] if question["closes"] <= len(options) else 0
+    return kept
+
+
 def step(state, event, policies):
     """The new state and actions after `event`, and whether anything changed."""
     if state is None:
@@ -623,4 +641,6 @@ def step(state, event, policies):
     if not changed:
         return before, [], False
     work.s["revision"] += 1
+    if fit(work.s) is None:
+        raise EngineError(f"The state document passes the limit of {STATE_LIMIT} characters.")
     return work.s, work.actions, True

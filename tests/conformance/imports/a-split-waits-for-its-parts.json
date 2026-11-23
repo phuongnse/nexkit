@@ -1,0 +1,134 @@
+{
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "parts": [
+      {
+        "number": 43,
+        "state": "closed",
+        "reason": "completed"
+      },
+      {
+        "number": 44,
+        "state": "open"
+      }
+    ],
+    "comments": [
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [],
+            "too_large": true,
+            "parts": 2,
+            "split": [
+              {
+                "title": "The schemas",
+                "body": "Part one.",
+                "depends_on": []
+              },
+              {
+                "title": "The step",
+                "body": "Part two.",
+                "depends_on": [
+                  1
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "planned"
+        }
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "split",
+    "change": null,
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "parts",
+        "for": "parts",
+        "until": null,
+        "on": null
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": {
+      "text": {
+        "name": "plan",
+        "ref": "1"
+      },
+      "questions": [],
+      "criteria": 1,
+      "tooLarge": true,
+      "parts": 2,
+      "noChange": false,
+      "protectedPaths": [],
+      "approved": true,
+      "split": [
+        {
+          "key": 1,
+          "title": "The schemas",
+          "needs": []
+        },
+        {
+          "key": 2,
+          "title": "The step",
+          "needs": [
+            1
+          ]
+        }
+      ]
+    },
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "since": null
+    },
+    "asked": [],
+    "parts": [
+      {
+        "item": "43",
+        "state": "accepted"
+      },
+      {
+        "item": "44",
+        "state": null
+      }
+    ],
+    "policies": {}
+  }
+}

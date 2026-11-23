@@ -80,8 +80,16 @@ needed.
   name, the change, questions, criteria and checklist outcomes, findings in short, failure
   signatures, counts and budgets used. Long texts, such as a plan's prose, check output, a
   discussion and evidence, stay with the host as texts that the state names, and reach the
-  engine only in `prompt`. The protocol sets the largest state document, small enough for one
-  GitHub comment.
+  engine only in `prompt`.
+- **It has a size.** The protocol sets the largest state document: 48,000 characters as JSON in
+  ASCII with its keys sorted and no spaces, so that its base64 fits one GitHub comment of
+  65,536 characters. The state keeps at most 10 questions of 6 options each, 20 protected paths,
+  30 findings, the blocking ones first, and 30 failure signatures. When a document would still
+  pass the limit, the engine shortens its texts to the most that fits, in this order: the
+  findings, the questions and their options, the split's titles, the protected paths, the
+  failure signatures and the attention's text. Past the lists' limits it shortens only texts,
+  never a count, a status, an id or how long a list is, which decisions read, and a host that
+  builds a first document shortens it the same way.
 - **It is the truth.** A host may keep columns or markers that copy parts of it, for its own
   lists and pages, written in the same transaction, but the engine reads only the document.
 
@@ -263,7 +271,7 @@ A host that starts each item when it is made, as an application may, needs no sw
 | --- | --- | --- |
 | Work item | An issue, or a person's pull request for a review-only item | A request that a person sends |
 | Change | A pull request on `nexkit/issue-<n>`, its version a commit | A draft, its version its newest revision |
-| Where the state lives | NexKit's comments, as today's markers do | The request's row in the application's database |
+| Where the state lives | One comment of NexKit's App on the work item, ending with the marker `nexkit:item-state` | The request's row in the application's database |
 | Events from | GitHub's events, commands and the hourly schedule | The application's routes, its tools for agents and its own workers |
 | Runs actions in | Workflow runs, a round as one run | The application's worker |
 | Checks | The repository's `checks` | The application's own validation and tests |
@@ -275,6 +283,11 @@ What exists only because of GitHub stays in the GitHub host: the GitHub App, sta
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,
 and up-to-date rules. Each reaches the engine as an event or a result: a failure the base branch
 has is a `runChecks` result, and a branch behind its base is an `accept` refused as `behind`.
+
+GitHub has no compare-and-set. The GitHub host reads the stored revision again just before it
+edits the state comment, and makes no write when the revision moved since its caller read it. A
+write by anyone else between that read and the edit is still overwritten: the check narrows the
+race to that moment and does not close it.
 
 ## Conformance
 
@@ -298,8 +311,12 @@ adapter. A new rule of the engine comes with a case.
   engine's error names it.
 - **A host's first state document is the host's to build.** The GitHub host builds each open
   item's document from NexKit 6's markers, open pull requests, paused runs and waits included, and
-  an application that had a loop of its own builds each request's from its records. A conformance
-  case checks each import.
+  an application that had a loop of its own builds each request's from its records. A NexKit 6
+  run on its way becomes the action the engine waits for, and a run paused at a usage limit or
+  until it runs again after a transient stop becomes a wait with its time. A merge that waits
+  for required checks is `accepting` with that wait, and a round that waits for a failure the
+  base branch has is `fixing` with that wait. A conformance case in `tests/conformance/imports/`
+  checks each import: a NexKit 6 situation in, the state document out.
 
 ## Getting there
 

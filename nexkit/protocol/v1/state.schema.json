@@ -1,5 +1,5 @@
 {
-  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions, not prose.",
+  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions, not prose. As JSON in ASCII with sorted keys and no spaces, it is at most 48,000 characters (`size.STATE_LIMIT`), so its base64 fits one GitHub comment: it keeps at most 10 questions of 6 options, 20 protected paths, 30 findings and 30 failure signatures, and the engine shortens its texts to fit, findings first (`size.fit`).",
   "type": "object",
   "properties": {
     "schemaVersion": {

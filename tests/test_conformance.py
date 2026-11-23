@@ -115,20 +115,56 @@ def allowed():
     return table_transitions() | extra
 
 
+def cases():
+    return sorted(path for path in CASES.glob("*.json") if path.name != "fixtures.json")
+
+
+def play(case):
+    """Each step of a case with the request the suite sends for it and the engine's answer."""
+    state = None
+    for step in case["steps"]:
+        request = {
+            "protocol": 1,
+            "call": "step",
+            "state": state,
+            "event": event_of(step["event"], state),
+            "policies": case["policies"],
+        }
+        answer = engine.answer(copy.deepcopy(request))
+        yield step, request, answer
+        state = answer.get("state")
+
+
+def drop(state, policies):
+    """The request that drops a work item in `state`."""
+    return {
+        "protocol": 1,
+        "call": "step",
+        "state": state,
+        "event": event_of({"kind": "dropRequested"}, state),
+        "policies": policies,
+    }
+
+
+def every_request():
+    """Every request the suite sends: each case's, then a drop from the first snapshot of
+    each state that is not final."""
+    snapshots = {}
+    for path in cases():
+        for _, request, answer in play(json.loads(path.read_text())):
+            yield request
+            snapshots.setdefault(answer["state"]["state"], (answer["state"], request["policies"]))
+    for name, (state, policies) in snapshots.items():
+        if name not in FINAL:
+            yield drop(state, policies)
+
+
 class ConformanceTest(unittest.TestCase):
     def run_case(self, path, seen, snapshots):
         case = json.loads(path.read_text())
-        state = None
-        for number, step in enumerate(case["steps"], 1):
+        for number, (step, request, answer) in enumerate(play(case), 1):
             where = f"{path.stem} step {number} ({step['event']['kind']})"
-            request = {
-                "protocol": 1,
-                "call": "step",
-                "state": state,
-                "event": event_of(step["event"], state),
-                "policies": case["policies"],
-            }
-            answer = engine.answer(copy.deepcopy(request))
+            state = request["state"]
             self.assertNotIn("error", answer, where)
             self.assertEqual(protocol.check(answer, "calls/step.answer.schema.json"), [], where)
             for action in answer["actions"]:
@@ -152,11 +188,10 @@ class ConformanceTest(unittest.TestCase):
             if state is not None and new["state"] != state["state"]:
                 seen.add((state["state"], new["state"]))
             snapshots.setdefault(new["state"], (new, case["policies"]))
-            state = new
 
     def test_the_cases(self):
         seen, snapshots = set(), {}
-        paths = sorted(path for path in CASES.glob("*.json") if path.name != "fixtures.json")
+        paths = cases()
         self.assertTrue(paths)
         for path in paths:
             with self.subTest(case=path.stem):
@@ -167,14 +202,8 @@ class ConformanceTest(unittest.TestCase):
             if name in FINAL:
                 continue
             with self.subTest(drop=name):
-                request = {
-                    "protocol": 1,
-                    "call": "step",
-                    "state": state,
-                    "event": event_of({"kind": "dropRequested"}, state),
-                    "policies": policies,
-                }
-                self.assertEqual(engine.answer(request)["state"]["state"], "dropped")
+                answer = engine.answer(drop(state, policies))
+                self.assertEqual(answer["state"]["state"], "dropped")
         self.assertEqual(set(snapshots) - set(FINAL), set(_states()) - set(FINAL))
 
 

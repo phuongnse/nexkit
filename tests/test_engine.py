@@ -29,6 +29,9 @@ IMPURE = {
     "time",
     "urllib",
 }
+# The program around the engine: it reads standard input or listens on a socket and calls the
+# pure engine, which never imports it back.
+PROGRAM = {"cli.py", "serve.py"}
 
 
 def created():
@@ -80,7 +83,7 @@ class ProgramTest(unittest.TestCase):
 class PurityTest(unittest.TestCase):
     def test_nothing_in_the_engine_reads_the_world(self):
         for path in (ROOT / "nexkit" / "engine").glob("*.py"):
-            if path.name == "cli.py":
+            if path.name in PROGRAM:
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
@@ -88,6 +91,12 @@ class PurityTest(unittest.TestCase):
                     names = [alias.name for alias in node.names]
                 elif isinstance(node, ast.ImportFrom) and node.level == 0:
                     names = [node.module]
+                elif isinstance(node, ast.ImportFrom) and node.level == 1:
+                    found = {node.module, *(alias.name for alias in node.names)}
+                    self.assertFalse(
+                        {f"{name}.py" for name in found} & PROGRAM, f"{path.name} imports {found}"
+                    )
+                    continue
                 else:
                     continue
                 for name in names:

@@ -3,6 +3,8 @@ docs/engine.md describes. A host sends a JSON request and carries out the answer
 
 from __future__ import annotations
 
+import json
+
 from .. import protocol
 from .machine import EngineError, step
 
@@ -15,6 +17,20 @@ def answer(request):
         return _answer(request)
     except EngineError as error:
         return {"protocol": protocol.VERSION, "error": str(error)}
+
+
+def reply(call, text):
+    """The answer to a request for `call` given as JSON text, as the program reads it on
+    standard input and `serve` in a body. A request may leave out its call, or name `call`."""
+    try:
+        request = json.loads(text)
+    except ValueError as error:
+        return {"protocol": protocol.VERSION, "error": f"The request is not JSON: {error}"}
+    if not isinstance(request, dict):
+        return answer(request)
+    if request.get("call", call) != call:
+        return {"protocol": protocol.VERSION, "error": f"The request is a {request['call']} call."}
+    return answer({**request, "call": call})
 
 
 def _answer(request):

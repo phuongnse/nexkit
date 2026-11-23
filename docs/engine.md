@@ -1,7 +1,7 @@
 # The engine
 
-_Planned for NexKit 7. Nothing on this page is built yet. NexKit 6 runs as
-[How it works](how-it-works.md) says._
+_Planned for NexKit 7, and built a part at a time: so far `nexkit-engine` answers `step`, on
+standard input and over HTTP. NexKit 6 runs as [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
 **hosts** that store the work, carry out what the engine decides and show it to people. GitHub
@@ -41,11 +41,19 @@ carried out.
 | Runner | Runs one agent session for one stage | This repository for agent CLIs; a host may bring its own |
 | Conformance suite | Events and the actions and state they must give | This repository |
 
-A host never imports the engine's code. It runs the engine as a program, `nexkit-engine`, that
-reads one JSON request on standard input and writes one JSON answer, or as a container that
-answers the same requests over HTTP. A host in any language can therefore run it, and the
-engine could be written again in another language without a change to any host, as long as
-the conformance suite passes.
+A host never imports the engine's code. It runs the engine as a program, `nexkit-engine <call>`,
+that reads one JSON request on standard input and writes one JSON answer, or runs
+`nexkit-engine serve` beside it, which answers the same requests over HTTP. A host in any
+language can therefore run it, and the engine could be written again in another language
+without a change to any host, as long as the conformance suite passes.
+
+- **Over HTTP**, `POST /<call>` takes the request as its body and answers with the same JSON
+  text as standard input: status `200`, or `400` when the engine refuses the request. `serve`
+  answers each request on its own and keeps nothing between them. It refuses a body over 1 MiB
+  or without a `Content-Length`, and listens on `127.0.0.1:8080` unless `--host` and `--port`
+  say otherwise.
+- **The image.** Each release publishes `ghcr.io/phuongnse/nexkit-engine:<version>`, built from
+  the release's commit. It runs `serve` on port 8080 of the container.
 
 ## The engine
 

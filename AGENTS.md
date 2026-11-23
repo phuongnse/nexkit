@@ -17,7 +17,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `runtimes/` | Everything specific to one CLI or model provider |
 | `schema.py`, `redact.py`, `runlog.py` | Result validation, secret removal, log and run summary |
 | `protocol/` | The engine's protocol as JSON Schemas (`v1/`), stage result schemas included, with an example of each; see [The engine](docs/engine.md) |
-| `engine/` | The engine: `machine.py` holds the states and what moves an item between them, as pure functions; `cli.py` is `nexkit-engine`. Its rules come with a case in `tests/conformance/` |
+| `engine/` | The engine: `machine.py` holds the states and what moves an item between them, as pure functions; `cli.py` is `nexkit-engine` and `serve.py` its HTTP server, the program around them. Its rules come with a case in `tests/conformance/` |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py`, `cache.py` | Setup and checks with `NEXKIT_BASE_SHA`/`NEXKIT_VERIFIED_SHA`; the keys of cache restore and of the `cache/` action |
 | `report.py`, `state.py`, `progress.py` | Statuses, review, run and state comments and their markers |
@@ -88,7 +88,10 @@ sets the version in `nexkit/__init__.py`, `pyproject.toml`, `.claude-plugin/plug
 the README's `pipx install` line, and adds a `## X.Y.Z` changelog entry, ending with
 `### Upgrade` steps when the configuration, caller workflow or permissions must change. Its
 description holds the output of `python3 scripts/release_notes.py X.Y.Z`; after the merge,
-release `vX.Y.Z` (titled `NexKit X.Y.Z`) on the merge commit with those notes.
+release `vX.Y.Z` (titled `NexKit X.Y.Z`) on the merge commit with those notes. Publishing
+it runs `release.yml`, which builds `Dockerfile` and publishes the engine's image
+`ghcr.io/phuongnse/nexkit-engine:X.Y.Z`; it fails when the tag is not `v` and the version in
+`nexkit/__init__.py`.
 
 ## Verify
 

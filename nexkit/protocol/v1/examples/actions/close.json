@@ -1,0 +1,10 @@
+{
+  "id": "a1",
+  "kind": "close",
+  "next": null,
+  "outcome": "completed",
+  "finding": {
+    "name": "no-change",
+    "ref": "issue-42/no-change"
+  }
+}

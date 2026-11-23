@@ -1,0 +1,10 @@
+{
+  "id": "a1",
+  "kind": "show",
+  "next": null,
+  "what": "plan",
+  "text": {
+    "name": "plan-1",
+    "ref": "issue-42/plan-1"
+  }
+}

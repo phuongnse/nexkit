@@ -1,0 +1,87 @@
+{
+  "$comment": "The result of runAgent, in actionFinished.",
+  "type": "object",
+  "properties": {
+    "output": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "tokens": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/tokens"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "limit": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "reset": {
+              "anyOf": [
+                {
+                  "$ref": "../common.schema.json#/$defs/time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "message",
+            "reset"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "transient": {
+      "type": "boolean"
+    },
+    "noResult": {
+      "type": "boolean"
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "changeVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "output",
+    "tokens",
+    "limit",
+    "transient",
+    "noResult",
+    "error",
+    "session",
+    "changeVersion"
+  ],
+  "additionalProperties": false
+}

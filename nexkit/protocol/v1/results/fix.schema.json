@@ -1,0 +1,110 @@
+{
+  "$comment": "The fix stage's result. `cause` and its evidence come first in a diagnosis round; `open_conflicts` need a person.",
+  "type": "object",
+  "properties": {
+    "status": {
+      "enum": [
+        "done",
+        "blocked"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "blocker": {
+      "type": "string"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recommended": {
+            "type": "integer"
+          },
+          "replans": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "question",
+          "options",
+          "recommended",
+          "replans"
+        ]
+      }
+    },
+    "checks_run": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cause": {
+      "type": "string"
+    },
+    "cause_outside": {
+      "type": "boolean"
+    },
+    "open_conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "base_change": {
+            "type": "string"
+          },
+          "pr_change": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recommended": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file",
+          "base_change",
+          "pr_change",
+          "question",
+          "options",
+          "recommended"
+        ]
+      }
+    }
+  },
+  "required": [
+    "status",
+    "summary",
+    "checks_run"
+  ]
+}

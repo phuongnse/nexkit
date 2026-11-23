@@ -1,0 +1,40 @@
+{
+  "$comment": "An action ended. `result` has the shape of the action kind's result schema.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "actionFinished"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "action": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "changeVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "result": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "action",
+    "changeVersion",
+    "result"
+  ],
+  "additionalProperties": false
+}

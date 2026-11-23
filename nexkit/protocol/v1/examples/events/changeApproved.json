@@ -1,0 +1,11 @@
+{
+  "protocol": 1,
+  "kind": "changeApproved",
+  "item": "42",
+  "at": "2026-11-23T15:01:11Z",
+  "by": {
+    "id": "octocat",
+    "role": "decides"
+  },
+  "changeVersion": "3e37c53"
+}

@@ -1,0 +1,29 @@
+{
+  "$comment": "A person approves the plan, or a split.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "planApproved"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "by": {
+      "$ref": "../common.schema.json#/$defs/person"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "by"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,32 @@
+{
+  "$comment": "Run the host's checks on a version of the change.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "kind": {
+      "const": "runChecks"
+    },
+    "next": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "changeVersion": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "next",
+    "changeVersion"
+  ],
+  "additionalProperties": false
+}

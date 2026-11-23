@@ -1,0 +1,7 @@
+{
+  "$comment": "The result of close, in actionFinished.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

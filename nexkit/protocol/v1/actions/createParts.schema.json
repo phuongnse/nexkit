@@ -1,0 +1,59 @@
+{
+  "$comment": "Make the parts of a split. `needs` names earlier parts by `key`.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "kind": {
+      "const": "createParts"
+    },
+    "next": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "parts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "$ref": "../common.schema.json#/$defs/text"
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "body",
+          "needs"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "next",
+    "parts"
+  ],
+  "additionalProperties": false
+}

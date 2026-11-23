@@ -1,0 +1,33 @@
+{
+  "$comment": "A person writes on the work item.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "commented"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "by": {
+      "$ref": "../common.schema.json#/$defs/person"
+    },
+    "text": {
+      "$ref": "../common.schema.json#/$defs/text"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "by",
+    "text"
+  ],
+  "additionalProperties": false
+}

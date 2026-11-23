@@ -1,0 +1,38 @@
+{
+  "$comment": "A part of this work item's split ended.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "partEnded"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "part": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "state": {
+      "enum": [
+        "accepted",
+        "noChange",
+        "dropped",
+        "failed"
+      ]
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "part",
+    "state"
+  ],
+  "additionalProperties": false
+}

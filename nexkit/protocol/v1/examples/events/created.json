@@ -1,0 +1,18 @@
+{
+  "protocol": 1,
+  "kind": "created",
+  "item": "42",
+  "at": "2026-11-23T15:01:11Z",
+  "itemKind": "change",
+  "title": "Report a raced close as closed",
+  "text": {
+    "name": "body",
+    "ref": "issue-42/body"
+  },
+  "actors": {
+    "plan": "engine",
+    "change": "engine",
+    "review": "engine"
+  },
+  "plan": null
+}

@@ -1,0 +1,47 @@
+{
+  "$comment": "An action the host started never reported.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "actionLost"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "action": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "changeVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tokens": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/tokens"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "action",
+    "changeVersion",
+    "tokens"
+  ],
+  "additionalProperties": false
+}

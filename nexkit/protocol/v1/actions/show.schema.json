@@ -1,0 +1,43 @@
+{
+  "$comment": "Show something where people read the work.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "kind": {
+      "const": "show"
+    },
+    "next": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "what": {
+      "enum": [
+        "plan",
+        "round",
+        "review",
+        "answers",
+        "stop",
+        "notice"
+      ]
+    },
+    "text": {
+      "$ref": "../common.schema.json#/$defs/text"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "next",
+    "what",
+    "text"
+  ],
+  "additionalProperties": false
+}

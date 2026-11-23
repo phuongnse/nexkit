@@ -1,0 +1,29 @@
+{
+  "$comment": "The time of a wait came.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "tick"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "wait": {
+      "$ref": "../common.schema.json#/$defs/id"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "wait"
+  ],
+  "additionalProperties": false
+}

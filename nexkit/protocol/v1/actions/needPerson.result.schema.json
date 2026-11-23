@@ -1,0 +1,7 @@
+{
+  "$comment": "The result of needPerson, in actionFinished.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

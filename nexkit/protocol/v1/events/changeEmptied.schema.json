@@ -1,0 +1,36 @@
+{
+  "$comment": "The change changes nothing any more, because the same change landed another way.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "changeEmptied"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "changeVersion": {
+      "type": "string"
+    },
+    "landedIn": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "changeVersion",
+    "landedIn"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,23 @@
+{
+  "id": "a1",
+  "kind": "runAgent",
+  "next": null,
+  "stage": "plan",
+  "access": "read",
+  "inputs": [
+    "item",
+    "discussion",
+    "notes"
+  ],
+  "result": "results/plan.schema.json",
+  "agent": "claude",
+  "model": "sonnet",
+  "effort": null,
+  "budget": {
+    "tokens": null,
+    "seconds": 900,
+    "usd": null
+  },
+  "session": null,
+  "resume": false
+}

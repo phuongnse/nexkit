@@ -1,0 +1,13 @@
+{
+  "protocol": 1,
+  "kind": "actionLost",
+  "item": "42",
+  "at": "2026-11-23T15:01:11Z",
+  "action": "a2",
+  "changeVersion": null,
+  "tokens": {
+    "input": 1200,
+    "cached": 0,
+    "output": 300
+  }
+}

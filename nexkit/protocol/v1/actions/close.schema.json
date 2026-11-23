@@ -1,0 +1,46 @@
+{
+  "$comment": "End the work item.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "kind": {
+      "const": "close"
+    },
+    "next": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "completed",
+        "notPlanned"
+      ]
+    },
+    "finding": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/text"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "next",
+    "outcome",
+    "finding"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,33 @@
+{
+  "$comment": "A work item that this one waits for ended.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "blockerClosed"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "blocker": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "completed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "blocker",
+    "completed"
+  ],
+  "additionalProperties": false
+}

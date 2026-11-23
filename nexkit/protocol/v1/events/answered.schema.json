@@ -1,0 +1,53 @@
+{
+  "$comment": "A person answers the plan's or a round's questions, counting from 1.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "answered"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "by": {
+      "$ref": "../common.schema.json#/$defs/person"
+    },
+    "answers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "integer"
+          },
+          "option": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "question",
+          "option"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "by",
+    "answers",
+    "note"
+  ],
+  "additionalProperties": false
+}

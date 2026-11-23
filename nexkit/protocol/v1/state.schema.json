@@ -1,0 +1,345 @@
+{
+  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions, not prose.",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "revision": {
+      "type": "integer"
+    },
+    "item": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "itemKind": {
+      "enum": [
+        "change",
+        "reviewOnly"
+      ]
+    },
+    "state": {
+      "$ref": "common.schema.json#/$defs/state"
+    },
+    "change": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/$defs/change"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attention": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "$ref": "common.schema.json#/$defs/attentionReason"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "hold": {
+      "type": "boolean"
+    },
+    "waits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "common.schema.json#/$defs/id"
+          },
+          "for": {
+            "enum": [
+              "time",
+              "blocker",
+              "baseFailure",
+              "requiredChecks",
+              "usageLimit"
+            ]
+          },
+          "until": {
+            "anyOf": [
+              {
+                "$ref": "common.schema.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "on": {
+            "anyOf": [
+              {
+                "$ref": "common.schema.json#/$defs/id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "for",
+          "until",
+          "on"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "common.schema.json#/$defs/id"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "actors": {
+      "type": "object",
+      "properties": {
+        "plan": {
+          "enum": [
+            "engine",
+            "person",
+            "outside"
+          ]
+        },
+        "change": {
+          "enum": [
+            "engine",
+            "person",
+            "outside"
+          ]
+        },
+        "review": {
+          "enum": [
+            "engine"
+          ]
+        }
+      },
+      "required": [
+        "plan",
+        "change",
+        "review"
+      ],
+      "additionalProperties": false
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "$ref": "common.schema.json#/$defs/text"
+            },
+            "questions": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/question"
+              }
+            },
+            "criteria": {
+              "type": "integer"
+            },
+            "tooLarge": {
+              "type": "boolean"
+            },
+            "parts": {
+              "type": "integer"
+            },
+            "noChange": {
+              "type": "boolean"
+            },
+            "protectedPaths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "approved": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "text",
+            "questions",
+            "criteria",
+            "tooLarge",
+            "parts",
+            "noChange",
+            "protectedPaths",
+            "approved"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rounds": {
+      "type": "object",
+      "properties": {
+        "started": {
+          "type": "integer"
+        },
+        "counted": {
+          "type": "integer"
+        },
+        "conflicts": {
+          "type": "integer"
+        },
+        "signatures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "severity": {
+                "enum": [
+                  "blocking",
+                  "suggestion"
+                ]
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "severity",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "met",
+              "unmet",
+              "unverifiable"
+            ]
+          }
+        },
+        "checklist": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "met",
+              "not_met",
+              "not_applicable"
+            ]
+          }
+        }
+      },
+      "required": [
+        "started",
+        "counted",
+        "conflicts",
+        "signatures",
+        "findings",
+        "criteria",
+        "checklist"
+      ],
+      "additionalProperties": false
+    },
+    "used": {
+      "type": "object",
+      "properties": {
+        "tokens": {
+          "$ref": "common.schema.json#/$defs/tokens"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tokens",
+        "since"
+      ],
+      "additionalProperties": false
+    },
+    "asked": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "split",
+          "titles",
+          "parts",
+          "fewer",
+          "answers"
+        ]
+      }
+    },
+    "parts": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/id"
+      }
+    },
+    "policies": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "revision",
+    "item",
+    "itemKind",
+    "state",
+    "change",
+    "attention",
+    "hold",
+    "waits",
+    "pending",
+    "actors",
+    "plan",
+    "rounds",
+    "used",
+    "asked",
+    "parts",
+    "policies"
+  ],
+  "additionalProperties": false
+}

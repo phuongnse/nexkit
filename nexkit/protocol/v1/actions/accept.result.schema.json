@@ -1,0 +1,37 @@
+{
+  "$comment": "The result of accept, in actionFinished.",
+  "type": "object",
+  "properties": {
+    "accepted": {
+      "type": "boolean"
+    },
+    "refusal": {
+      "anyOf": [
+        {
+          "enum": [
+            "transient",
+            "waitingForChecks",
+            "checkFailed",
+            "behind",
+            "headMoved",
+            "conflict",
+            "notAccepted",
+            "needsPerson"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "accepted",
+    "refusal",
+    "text"
+  ],
+  "additionalProperties": false
+}

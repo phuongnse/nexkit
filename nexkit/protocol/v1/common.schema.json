@@ -1,0 +1,164 @@
+{
+  "$comment": "Shapes that the events, actions, results and state document share.",
+  "$defs": {
+    "id": {
+      "$comment": "An id the host or the engine gives, unique for its kind within a work item.",
+      "type": "string"
+    },
+    "time": {
+      "$comment": "A UTC time in ISO 8601, such as 2026-11-23T15:01:11Z. The engine reads time only from these.",
+      "type": "string"
+    },
+    "change": {
+      "$comment": "A pull request or a draft, and its version, such as a commit or a revision.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "text": {
+      "$comment": "A long text that the host keeps, named for `prompt`. The engine never holds its words.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "ref"
+      ],
+      "additionalProperties": false
+    },
+    "person": {
+      "$comment": "Who acted, with the role the host gives them.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "decides",
+            "writer",
+            "reader",
+            "outside"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "role"
+      ],
+      "additionalProperties": false
+    },
+    "tokens": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "integer"
+        },
+        "cached": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input",
+        "cached",
+        "output"
+      ],
+      "additionalProperties": false
+    },
+    "question": {
+      "$comment": "A question for a person. `recommended`, `closes` and `replans` count options from 1; 0 is none.",
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recommended": {
+          "type": "integer"
+        },
+        "closes": {
+          "type": "integer"
+        },
+        "replans": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "question",
+        "options",
+        "recommended"
+      ],
+      "additionalProperties": false
+    },
+    "stage": {
+      "enum": [
+        "triage",
+        "plan",
+        "implement",
+        "fix",
+        "review"
+      ]
+    },
+    "state": {
+      "enum": [
+        "new",
+        "planning",
+        "awaitingApproval",
+        "working",
+        "checking",
+        "reviewing",
+        "fixing",
+        "ready",
+        "accepting",
+        "accepted",
+        "split",
+        "noChange",
+        "dropped",
+        "failed"
+      ]
+    },
+    "attentionReason": {
+      "enum": [
+        "question",
+        "unverifiableCriterion",
+        "personChecklistItem",
+        "acceptRefused",
+        "roundsUsedUp",
+        "splitIncomplete",
+        "blocked",
+        "failed",
+        "reopened",
+        "handMadeChange",
+        "outage"
+      ]
+    }
+  }
+}

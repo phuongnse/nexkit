@@ -1,0 +1,36 @@
+{
+  "$comment": "Tell the people who decide, once.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "kind": {
+      "const": "needPerson"
+    },
+    "next": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "$ref": "../common.schema.json#/$defs/attentionReason"
+    },
+    "text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "next",
+    "reason",
+    "text"
+  ],
+  "additionalProperties": false
+}

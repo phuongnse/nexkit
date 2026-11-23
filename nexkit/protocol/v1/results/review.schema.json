@@ -1,0 +1,114 @@
+{
+  "$comment": "The review stage's result.",
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "enum": [
+        "approve",
+        "request_changes"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "criterion": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "met",
+              "unmet",
+              "unverifiable"
+            ]
+          },
+          "test": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "criterion",
+          "status",
+          "test",
+          "evidence"
+        ]
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "enum": [
+              "blocking",
+              "suggestion"
+            ]
+          },
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "file",
+          "line",
+          "body"
+        ]
+      }
+    },
+    "previous_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "finding": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "blocking",
+              "suggestion"
+            ]
+          },
+          "resolution": {
+            "enum": [
+              "resolved",
+              "unresolved",
+              "rejection_accepted"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "finding",
+          "severity",
+          "resolution",
+          "evidence"
+        ]
+      }
+    }
+  },
+  "required": [
+    "verdict",
+    "summary",
+    "criteria",
+    "findings",
+    "previous_findings"
+  ]
+}

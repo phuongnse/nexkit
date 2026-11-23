@@ -1,0 +1,44 @@
+{
+  "$comment": "The result of runChecks, in actionFinished.",
+  "type": "object",
+  "properties": {
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "signature": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "knownBaseFailure": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "passed",
+          "skipped",
+          "signature",
+          "knownBaseFailure"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "checks"
+  ],
+  "additionalProperties": false
+}

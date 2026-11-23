@@ -1,0 +1,14 @@
+{
+  "protocol": 1,
+  "kind": "textChanged",
+  "item": "42",
+  "at": "2026-11-23T15:01:11Z",
+  "by": {
+    "id": "octocat",
+    "role": "decides"
+  },
+  "text": {
+    "name": "body",
+    "ref": "issue-42/body"
+  }
+}

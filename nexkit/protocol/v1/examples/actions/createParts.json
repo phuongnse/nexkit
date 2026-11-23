@@ -1,0 +1,27 @@
+{
+  "id": "a1",
+  "kind": "createParts",
+  "next": null,
+  "parts": [
+    {
+      "key": 1,
+      "title": "The protocol's schemas",
+      "body": {
+        "name": "part-1",
+        "ref": "issue-42/part-1"
+      },
+      "needs": []
+    },
+    {
+      "key": 2,
+      "title": "The engine's step",
+      "body": {
+        "name": "part-2",
+        "ref": "issue-42/part-2"
+      },
+      "needs": [
+        1
+      ]
+    }
+  ]
+}

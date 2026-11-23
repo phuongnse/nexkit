@@ -1,0 +1,8 @@
+{
+  "protocol": 1,
+  "kind": "stopped",
+  "item": "42",
+  "at": "2026-11-23T15:01:11Z",
+  "outcome": "keyRefused",
+  "text": "The provider refused the key."
+}

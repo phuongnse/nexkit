@@ -1,0 +1,25 @@
+{
+  "$comment": "A hold was taken off.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "released"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at"
+  ],
+  "additionalProperties": false
+}

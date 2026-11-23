@@ -1,0 +1,53 @@
+{
+  "$comment": "A person, or the sweep with `by` null, asks for something.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "requested"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "what": {
+      "enum": [
+        "plan",
+        "planFromScratch",
+        "go",
+        "fix",
+        "review",
+        "retry",
+        "trust",
+        "start"
+      ]
+    },
+    "by": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/person"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "item",
+    "at",
+    "what",
+    "by",
+    "note"
+  ],
+  "additionalProperties": false
+}

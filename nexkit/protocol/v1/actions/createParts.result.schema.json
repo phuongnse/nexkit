@@ -1,0 +1,29 @@
+{
+  "$comment": "The result of createParts, in actionFinished.",
+  "type": "object",
+  "properties": {
+    "parts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "integer"
+          },
+          "item": {
+            "$ref": "../common.schema.json#/$defs/id"
+          }
+        },
+        "required": [
+          "key",
+          "item"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "parts"
+  ],
+  "additionalProperties": false
+}

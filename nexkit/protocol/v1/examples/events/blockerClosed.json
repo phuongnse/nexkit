@@ -1,0 +1,8 @@
+{
+  "protocol": 1,
+  "kind": "blockerClosed",
+  "item": "42",
+  "at": "2026-11-23T15:01:11Z",
+  "blocker": "41",
+  "completed": true
+}

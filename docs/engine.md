@@ -36,7 +36,7 @@ carried out.
 | Part | What it is | Where it lives |
 | --- | --- | --- |
 | Engine | The loop's decisions, as pure functions | This repository, in Python |
-| Protocol | The events, actions, results and state document, as versioned JSON Schema | This repository |
+| Protocol | The events, actions, results and state document, as versioned JSON Schema | This repository, in `nexkit/protocol/` |
 | Host | Stores the work and its state, sends events, carries out actions, tells people | Its own code, in its own language |
 | Runner | Runs one agent session for one stage | This repository for agent CLIs; a host may bring its own |
 | Conformance suite | Events and the actions and state they must give | This repository |

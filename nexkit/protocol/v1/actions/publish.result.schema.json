@@ -1,0 +1,27 @@
+{
+  "$comment": "The result of publish, in actionFinished.",
+  "type": "object",
+  "properties": {
+    "change": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/change"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "refused": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "change",
+    "refused"
+  ],
+  "additionalProperties": false
+}

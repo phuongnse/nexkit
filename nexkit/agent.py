@@ -19,6 +19,7 @@ from pathlib import Path
 from string import Template
 
 from . import config as configuration
+from . import protocol
 from .checks import (
     BASE_SHA,
     SHARD,
@@ -53,214 +54,14 @@ BOT = ("-c", "user.name=nexkit", "-c", "user.email=nexkit@localhost")
 # brought the change of a pull request that changes nothing once merged with it.
 HOLDING_TRIES = 50
 
-_STRING_LIST = {"type": "array", "items": {"type": "string"}}
-# A question for a person, with the answers the agent sees and the number of the one it
-# recommends (from 1), or 0 when none is clearly better. A number cannot be copied loosely,
-# as an option's text can. With `autopilot.answer: "recommended"`, NexKit answers it.
-_QUESTION = {
-    "question": {"type": "string"},
-    "options": _STRING_LIST,
-    "recommended": {"type": "integer"},
-}
-
-
-def _questions_of(item):
-    return {
-        "type": "array",
-        "items": {"type": "object", "properties": item, "required": list(item)},
-    }
-
-
-# A plan's or an implement round's question also names the option that only closes the
-# issue, with no change (from 1), or 0 when none does. NexKit carries that option out when
-# a person picks it (`route.closing_answer`); autopilot picks it only for an implement
-# round whose `no_change` finding it is, never on the finding's text alone.
-_CLOSING_QUESTION = {**_QUESTION, "closes": {"type": "integer"}}
-# A blocked implement or fix round's question also names the options that change the
-# issue's scope, such as splitting it, doing other work first or widening it (from 1): a
-# new plan carries those out, never the same round again. Autopilot answers one with
-# `/nexkit plan` (`autopilot._stopped`).
-_REPLANS = {"type": "array", "items": {"type": "integer"}}
-_IMPLEMENT_QUESTION = {**_CLOSING_QUESTION, "replans": _REPLANS}
-_FIX_QUESTION = {**_QUESTION, "replans": _REPLANS}
-
-_CHANGE_RESULT = {
-    "type": "object",
-    "properties": {
-        "status": {"enum": ["done", "blocked"]},
-        "summary": {"type": "string"},
-        "blocker": {"type": "string"},
-        # The decisions a blocked round needs from a person.
-        "questions": _questions_of(_FIX_QUESTION),
-        "checks_run": _STRING_LIST,
-        # The protected paths the change needs, which the agent left alone: a person makes
-        # that change, so autopilot answers none of the round's questions.
-        "protected_paths": _STRING_LIST,
-    },
-    "required": ["status", "summary", "checks_run"],
-}
-# The pull request description is built from these, in this order, after `summary`.
-_PULL_FIELDS = {
-    "changes": _STRING_LIST,
-    "testing": {"type": "string"},
-    "outside_plan": _STRING_LIST,
-    "reviewer_notes": _STRING_LIST,
-}
+# Each stage's result schema is the protocol's (docs/engine.md#runners), so that every
+# runner and host reads the same one. A plan's or a round's question names the option it
+# recommends and the one that only closes the issue (`route.closing_answer`), counting from
+# 1, and a blocked round's the options that change the issue's scope, which a new plan
+# carries out (`autopilot._stopped`).
 SCHEMAS = {
-    "plan": {
-        "type": "object",
-        "properties": {
-            "summary": {"type": "string"},
-            "changes": _STRING_LIST,
-            "decisions": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {"decision": {"type": "string"}, "reason": {"type": "string"}},
-                    "required": ["decision", "reason"],
-                },
-            },
-            "risks": _STRING_LIST,
-            "acceptance_criteria": _STRING_LIST,
-            "implementation_notes": _STRING_LIST,
-            "questions": _questions_of(_CLOSING_QUESTION),
-            "too_large": {"type": "boolean"},
-            "split": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "body": {"type": "string"},
-                        # The 1-based numbers of the earlier parts this part needs first.
-                        "depends_on": {"type": "array", "items": {"type": "integer"}},
-                    },
-                    "required": ["title", "body", "depends_on"],
-                },
-            },
-            # How a re-plan relates to the latest plan; shown only on a re-plan.
-            "revision": {
-                "type": "object",
-                "properties": {"started_over": {"type": "boolean"}, "changes": _STRING_LIST},
-                "required": ["started_over", "changes"],
-            },
-            # The protected paths the change must modify: a person makes that change.
-            "protected_paths": _STRING_LIST,
-            # The finding and its evidence when no change is needed, or "". Autopilot
-            # closes the issue with it.
-            "no_change": {"type": "string"},
-        },
-        "required": [
-            "summary",
-            "changes",
-            "decisions",
-            "risks",
-            "acceptance_criteria",
-            "implementation_notes",
-            "revision",
-        ],
-    },
-    "implement": {
-        **_CHANGE_RESULT,
-        "properties": {
-            **_CHANGE_RESULT["properties"],
-            **_PULL_FIELDS,
-            "questions": _questions_of(_IMPLEMENT_QUESTION),
-            # The finding and its evidence when no change is needed, or "". Done without a
-            # changed file, NexKit closes the issue with it; blocked, its one question's
-            # `closes` names the option that closes the issue with it, and that option is
-            # the recommended one. A round that changed files is a change: the text becomes
-            # a note for the reviewer (see `set_aside_finding`).
-            "no_change": {
-                "type": "string",
-                "description": "Only when you changed no file because no change is needed: "
-                "the finding and its evidence. Otherwise an empty string, always in a round "
-                "that changes files; notes on what you did or skipped go in outside_plan or "
-                "reviewer_notes.",
-            },
-        },
-        "required": [*_CHANGE_RESULT["required"], "changes", "testing"],
-    },
-    "fix": {
-        **_CHANGE_RESULT,
-        "properties": {
-            **_CHANGE_RESULT["properties"],
-            # The cause of the failures and the evidence that shows it, or "". A diagnosis
-            # round must name it before it changes code.
-            "cause": {"type": "string"},
-            # Whether that cause lies outside the code, such as a registry or service that
-            # failed, so that the checks may pass on the same commit when they run again.
-            "cause_outside": {"type": "boolean"},
-            # Conflicts with the base branch that need a person's decision.
-            "open_conflicts": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string"},
-                        "base_change": {"type": "string"},
-                        "pr_change": {"type": "string"},
-                        **_QUESTION,
-                    },
-                    "required": ["file", "base_change", "pr_change", *_QUESTION],
-                },
-            },
-        },
-        "required": _CHANGE_RESULT["required"],
-    },
-    # NexKit adds the configured profile names as an enum when it runs triage.
-    "triage": {
-        "type": "object",
-        "properties": {"profile": {"type": "string"}, "reason": {"type": "string"}},
-        "required": ["profile", "reason"],
-    },
-    "review": {
-        "type": "object",
-        "properties": {
-            "verdict": {"enum": ["approve", "request_changes"]},
-            "summary": {"type": "string"},
-            "criteria": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "criterion": {"type": "string"},
-                        "status": {"enum": ["met", "unmet", "unverifiable"]},
-                        "test": {"type": "string"},
-                        "evidence": {"type": "string"},
-                    },
-                    "required": ["criterion", "status", "test", "evidence"],
-                },
-            },
-            "findings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "severity": {"enum": ["blocking", "suggestion"]},
-                        "file": {"type": "string"},
-                        "line": {"type": "integer"},
-                        "body": {"type": "string"},
-                    },
-                    "required": ["severity", "file", "line", "body"],
-                },
-            },
-            "previous_findings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "finding": {"type": "string"},
-                        "severity": {"enum": ["blocking", "suggestion"]},
-                        "resolution": {"enum": ["resolved", "unresolved", "rejection_accepted"]},
-                        "evidence": {"type": "string"},
-                    },
-                    "required": ["finding", "severity", "resolution", "evidence"],
-                },
-            },
-        },
-        "required": ["verdict", "summary", "criteria", "findings", "previous_findings"],
-    },
+    stage: protocol.load(f"results/{stage}.schema.json")
+    for stage in ("plan", "implement", "fix", "triage", "review")
 }
 
 # The fields of a result whose empty value means the same as leaving them out, as each
@@ -304,12 +105,8 @@ def with_defaults(output, stage):
 
 # What a plan and a review return for `review.checklist`, only when it has items.
 CHECKLIST = {
-    "plan": {"number": {"type": "integer"}, "how": {"type": "string"}},
-    "review": {
-        "number": {"type": "integer"},
-        "answer": {"enum": ["met", "not_met", "not_applicable"]},
-        "evidence": {"type": "string"},
-    },
+    stage: entry["properties"]
+    for stage, entry in protocol.load("results/checklist.schema.json")["$defs"].items()
 }
 
 

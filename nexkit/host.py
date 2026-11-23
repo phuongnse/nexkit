@@ -229,7 +229,7 @@ def after_plan(gh, cfg, issue, plan, run, record, start, comments, pull=None, pu
     found = answer(request)
     plan_view = _PlanView(issue, plan, data, run, start, pull, picked, said)
     step = plan_view.carry(found["actions"], doc["asked"], found["state"]["asked"])
-    step["engine"] = {"request": request, "for": step["state"], "stored": stored is not None}
+    step["engine"] = {"request": request, "for": step["state"]}
     return step
 
 

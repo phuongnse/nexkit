@@ -149,8 +149,11 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 Three things sit beside the state, never in place of it:
 
 - **Attention:** a person is needed, with the reason: a plan or an accept that waits for a
-  person, a question with no recommended answer, a change that needs paths only a person changes,
-  a criterion the review could not verify, a checklist item only a person decides, a refused
+  person, a question with no recommended answer, a plan that asks again right after the engine
+  answered it, a recommended answer that only closes the item, a change that needs paths only a
+  person changes, a plan too large to split, because the item is a part at the deepest level or
+  because its second plan still lists too many parts, no parts or parts titled like the item, a
+  criterion the review could not verify, a checklist item only a person decides, a refused
   accept, fix rounds used up, a split that is not complete.
 - **Hold:** nothing new starts. A step that runs finishes and records what it held back.
 - **Wait:** the next step waits for something named: a request to start; a time, such as after a
@@ -164,7 +167,7 @@ Three things sit beside the state, never in place of it:
 | --- | --- |
 | `created` | A work item is made, with its kind, its text, who does each stage and, for an item made with a plan, the plan |
 | `textChanged`, `commented` | A work item's text is edited, or a person writes on it, with their role |
-| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note |
+| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note and, for a plan, the item's title and how deep a part it is |
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |
 | `actionFinished` | An action ended, with its id, the change version and its result |
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |
@@ -321,7 +324,10 @@ adapter. A new rule of the engine comes with a case.
 ## Getting there
 
 1. The engine grows inside NexKit 6: decisions move behind the protocol one by one, and the
-   GitHub host calls them. Every existing test passes after each step, and the engine's part of
+   GitHub host calls them. While NexKit 6's code still moves an item between the decisions that
+   the engine holds, the GitHub host builds the item's document for each of them from NexKit 6's
+   markers, as its first import does, on the stored revision, and stores the answer it carried
+   out. Every existing test passes after each step, and the engine's part of
    `tests/test_scenarios.py` becomes the conformance suite as it goes.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on
    NexKit 6 move to it with the usual upgrade steps, and the GitHub host imports their open work.

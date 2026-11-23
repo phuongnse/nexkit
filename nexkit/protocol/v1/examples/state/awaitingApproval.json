@@ -37,7 +37,8 @@
     "parts": 0,
     "noChange": false,
     "protectedPaths": [],
-    "approved": false
+    "approved": false,
+    "split": []
   },
   "rounds": {
     "started": 0,

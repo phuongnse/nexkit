@@ -56,7 +56,8 @@ class ProtocolTest(unittest.TestCase):
         checked = set()
         for path in examples:
             folder = path.parent.name
-            name = "state.schema.json" if folder == "state" else f"{folder}/{path.stem}.schema.json"
+            root = folder in ("state", "policies")
+            name = f"{folder}.schema.json" if root else f"{folder}/{path.stem}.schema.json"
             value = json.loads(path.read_text())
             self.assertEqual(protocol.check(value, name), [], str(path))
             checked.add(name)

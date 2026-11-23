@@ -71,9 +71,11 @@ needed.
 - **The host owns it.** The state document is versioned JSON that the host stores where its work
   lives and passes back with each call. The engine keeps nothing between calls, so a host
   restarts, scales and fails over without the engine.
-- **It has a revision.** Each answer raises the revision by one, and the host stores it only if
-  the revision it read is still the stored one, as a compare-and-set. A host whose write loses
-  reads the state again and sends the event again.
+- **It has a revision.** Each answer that changes the state raises the revision by one, and the
+  host stores it only if the revision it read is still the stored one, as a compare-and-set. A
+  host whose write loses reads the state again and sends the event again. An answer that changes
+  nothing, such as to a duplicate result, says so and gives the state back as it came, with no
+  actions, so the host writes nothing.
 - **It holds decisions, not prose.** The state keeps what the engine decides from: the state
   name, the change, questions, criteria and checklist outcomes, findings in short, failure
   signatures, counts and budgets used. Long texts, such as a plan's prose, check output, a
@@ -111,7 +113,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `awaitingApproval` | The plan, or a split, waits for its approval or for answers | `planning`, `working` or `fixing`, `split`, `dropped` |
 | `working` | An agent makes the change | `checking`, `awaitingApproval`, `planning`, `noChange`, `failed` |
 | `checking` | The host's checks run on the change | `reviewing`, `fixing` |
-| `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `fixing` |
+| `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `accepting`, `fixing` |
 | `fixing` | An agent works on the failures and findings, in the same change | `checking`, `awaitingApproval`, `planning`, `failed` |
 | `ready` | The change passed, or a person decides what is left | `accepting`, `fixing`, `checking` |
 | `accepting` | The host accepts the change | `accepted`, `ready`, `fixing`, `working`, `failed` |
@@ -138,13 +140,15 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 
 Three things sit beside the state, never in place of it:
 
-- **Attention:** a person is needed, with the reason: a question with no recommended answer, a
-  criterion the review could not verify, a checklist item only a person decides, a refused accept,
-  fix rounds used up, a split that is not complete.
+- **Attention:** a person is needed, with the reason: a plan or an accept that waits for a
+  person, a question with no recommended answer, a change that needs paths only a person changes,
+  a criterion the review could not verify, a checklist item only a person decides, a refused
+  accept, fix rounds used up, a split that is not complete.
 - **Hold:** nothing new starts. A step that runs finishes and records what it held back.
-- **Wait:** the next step waits for something named: a time, such as after a transient stop or a
-  usage limit; an item that blocks it; a failure the base branch has; or required checks before a
-  merge. Each wait has an id, and the event that ends it names it.
+- **Wait:** the next step waits for something named: a request to start; a time, such as after a
+  transient stop or a usage limit; an item that blocks it; the parts of a split; a failure the
+  base branch has; or required checks before a merge. Each wait has an id, and the event that ends
+  it names it.
 
 ## Events
 
@@ -227,7 +231,7 @@ A host gives the engine its policies in its configuration. Each has a default.
 | Accept | `person`, `autoWhenPassed` | `person`; `autoWhenPassed` with `merge.auto` | `autoWhenPassed` only when the application and the request allow it, else the person who sent it |
 | Fix rounds | 0–10, and which rounds count | 2: rounds a person asked for, resumed, retried and stopped rounds do not count | 3; a request for changes and a retry start the count again |
 | When fix rounds run out | `person`, `failed` | `person` | `person`: the draft is ready with its open findings |
-| Conflicts | `resolve`, `redo`, by who accepted | `resolve` on a person's request; by itself with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
+| Conflicts | `person`, `resolve`, `redo`, by who accepted | `person`; `resolve` with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
 | Budgets | Tokens, time, money and model calls, per item and per stage | Time and money per stage | Tokens and time per request, model calls per stage |
 | Retries | Waits after a transient stop; when a lost action starts again | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
 | Usage limits | Resume after the reset, and how long to wait | `usage_limit.*` | Resume after the reset |

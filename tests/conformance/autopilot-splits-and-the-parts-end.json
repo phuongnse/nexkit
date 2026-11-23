@@ -1,0 +1,89 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "accept": "autoWhenPassed"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplit"
+      },
+      "state": "split",
+      "changed": true,
+      "actions": [
+        "show",
+        "createParts"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "createParts",
+        "result": {
+          "parts": [
+            {
+              "key": 1,
+              "item": "43"
+            },
+            {
+              "key": 2,
+              "item": "44"
+            }
+          ]
+        }
+      },
+      "state": "split",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "partEnded",
+        "part": "43",
+        "state": "accepted"
+      },
+      "state": "split",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "partEnded",
+        "part": "43",
+        "state": "accepted"
+      },
+      "state": "split",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "partEnded",
+        "part": "44",
+        "state": "dropped"
+      },
+      "state": "accepted",
+      "changed": true,
+      "actions": [
+        "close"
+      ]
+    }
+  ]
+}

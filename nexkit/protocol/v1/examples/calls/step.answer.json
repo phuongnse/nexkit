@@ -1,0 +1,73 @@
+{
+  "protocol": 1,
+  "state": {
+    "schemaVersion": 1,
+    "revision": 7,
+    "item": "42",
+    "itemKind": "change",
+    "state": "planning",
+    "change": null,
+    "attention": null,
+    "hold": false,
+    "waits": [],
+    "pending": [
+      {
+        "id": "a1",
+        "kind": "runAgent",
+        "changeVersion": null
+      }
+    ],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {}
+  },
+  "actions": [
+    {
+      "id": "a1",
+      "kind": "runAgent",
+      "next": null,
+      "stage": "plan",
+      "access": "read",
+      "inputs": [
+        "item",
+        "discussion",
+        "notes"
+      ],
+      "result": "results/plan.schema.json",
+      "agent": "claude",
+      "model": "sonnet",
+      "effort": null,
+      "budget": {
+        "tokens": null,
+        "seconds": 900,
+        "usd": null
+      },
+      "session": null,
+      "resume": false
+    }
+  ],
+  "changed": true
+}

@@ -1,0 +1,28 @@
+{
+  "$comment": "The answer to a step call. `changed` is false when the event changed nothing, such as a duplicate or stale result: the state is then the one the call sent, and there are no actions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "state",
+    "actions",
+    "changed"
+  ],
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "state": {
+      "$ref": "../state.schema.json"
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "changed": {
+      "type": "boolean"
+    }
+  }
+}

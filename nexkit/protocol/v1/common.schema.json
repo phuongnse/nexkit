@@ -147,16 +147,18 @@
     },
     "attentionReason": {
       "enum": [
+        "approval",
         "question",
+        "handMadeChange",
         "unverifiableCriterion",
         "personChecklistItem",
+        "accept",
         "acceptRefused",
         "roundsUsedUp",
         "splitIncomplete",
         "blocked",
         "failed",
         "reopened",
-        "handMadeChange",
         "outage"
       ]
     }

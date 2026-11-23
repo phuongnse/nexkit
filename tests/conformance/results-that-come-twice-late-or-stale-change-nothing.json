@@ -1,0 +1,133 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "a2.1",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "a2.1",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "working",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null
+        }
+      },
+      "state": "checking",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        },
+        "changeVersion": "v0"
+      },
+      "state": "checking",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "changeVersion": "v2"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "a6.1",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        },
+        "changeVersion": "v1"
+      },
+      "state": "checking",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "nothing"
+      },
+      "state": "checking",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

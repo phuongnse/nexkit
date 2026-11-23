@@ -11,7 +11,8 @@
   "pending": [
     {
       "id": "a1",
-      "kind": "runAgent"
+      "kind": "runAgent",
+      "changeVersion": null
     }
   ],
   "actors": {

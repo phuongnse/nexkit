@@ -7,7 +7,14 @@
   "change": null,
   "attention": null,
   "hold": false,
-  "waits": [],
+  "waits": [
+    {
+      "id": "start",
+      "for": "start",
+      "until": null,
+      "on": null
+    }
+  ],
   "pending": [],
   "actors": {
     "plan": "engine",

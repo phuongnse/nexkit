@@ -1,0 +1,55 @@
+{
+  "$comment": "A host's policies, which come with every call. A policy left out takes its default, which is NexKit 6's on GitHub.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties": {
+    "planApproval": {
+      "enum": [
+        "person",
+        "autoWhenClean"
+      ]
+    },
+    "answers": {
+      "enum": [
+        "never",
+        "recommended"
+      ]
+    },
+    "reviewAfterFailingChecks": {
+      "enum": [
+        "always",
+        "onlyAfterPassing"
+      ]
+    },
+    "accept": {
+      "enum": [
+        "person",
+        "autoWhenPassed"
+      ]
+    },
+    "fixRounds": {
+      "type": "integer"
+    },
+    "conflicts": {
+      "enum": [
+        "person",
+        "resolve",
+        "redo"
+      ]
+    },
+    "conflictRounds": {
+      "type": "integer"
+    },
+    "splits": {
+      "type": "boolean"
+    },
+    "afterFailure": {
+      "enum": [
+        "person",
+        "replan",
+        "newItem"
+      ]
+    }
+  }
+}

@@ -37,5 +37,6 @@
   "noResult": false,
   "error": null,
   "session": "s-1",
-  "changeVersion": null
+  "changeVersion": null,
+  "timedOut": false
 }

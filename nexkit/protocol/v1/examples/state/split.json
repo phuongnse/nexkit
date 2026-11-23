@@ -7,7 +7,14 @@
   "change": null,
   "attention": null,
   "hold": false,
-  "waits": [],
+  "waits": [
+    {
+      "id": "parts",
+      "for": "parts",
+      "until": null,
+      "on": null
+    }
+  ],
   "pending": [],
   "actors": {
     "plan": "engine",
@@ -25,7 +32,21 @@
     "parts": 2,
     "noChange": false,
     "protectedPaths": [],
-    "approved": true
+    "approved": true,
+    "split": [
+      {
+        "key": 1,
+        "title": "The schemas",
+        "needs": []
+      },
+      {
+        "key": 2,
+        "title": "The step",
+        "needs": [
+          1
+        ]
+      }
+    ]
   },
   "rounds": {
     "started": 0,
@@ -48,8 +69,14 @@
     "split"
   ],
   "parts": [
-    "43",
-    "44"
+    {
+      "item": "43",
+      "state": null
+    },
+    {
+      "item": "44",
+      "state": null
+    }
   ],
   "policies": {}
 }

@@ -71,6 +71,9 @@
         "string",
         "null"
       ]
+    },
+    "timedOut": {
+      "type": "boolean"
     }
   },
   "required": [
@@ -81,7 +84,8 @@
     "noResult",
     "error",
     "session",
-    "changeVersion"
+    "changeVersion",
+    "timedOut"
   ],
   "additionalProperties": false
 }

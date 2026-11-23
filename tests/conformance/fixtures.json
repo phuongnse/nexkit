@@ -1,0 +1,329 @@
+{
+  "plan": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": false,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planQuestions": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [
+      {
+        "question": "Read again or retry?",
+        "options": [
+          "Read again",
+          "Retry"
+        ],
+        "recommended": 0,
+        "closes": 0
+      }
+    ],
+    "too_large": false,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planNoChange": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": false,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": "The base branch already does this, as run 5 shows."
+  },
+  "planSplit": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": true,
+    "split": [
+      {
+        "title": "The schemas",
+        "body": "Part one.",
+        "depends_on": []
+      },
+      {
+        "title": "The step",
+        "body": "Part two.",
+        "depends_on": [
+          1
+        ]
+      }
+    ],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planProtected": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": false,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [
+      ".github/workflows/ci.yml"
+    ],
+    "no_change": ""
+  },
+  "implement": {
+    "status": "done",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "",
+    "questions": [],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": ""
+  },
+  "implementQuestions": {
+    "status": "blocked",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "Two ways to read.",
+    "questions": [
+      {
+        "question": "Read again or retry?",
+        "options": [
+          "Read again",
+          "Retry"
+        ],
+        "recommended": 0,
+        "closes": 0
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": ""
+  },
+  "implementBlocked": {
+    "status": "blocked",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "The API is gone.",
+    "questions": [],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": ""
+  },
+  "implementNoChange": {
+    "status": "done",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "",
+    "questions": [],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": "Nothing to change, as the test shows."
+  },
+  "fix": {
+    "status": "done",
+    "summary": "Fix the failing test.",
+    "blocker": "",
+    "questions": [],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "cause": "The test read a stale fake issue.",
+    "cause_outside": false,
+    "open_conflicts": []
+  },
+  "fixQuestions": {
+    "status": "blocked",
+    "summary": "Fix the failing test.",
+    "blocker": "A choice.",
+    "questions": [
+      {
+        "question": "Read again or retry?",
+        "options": [
+          "Read again",
+          "Retry"
+        ],
+        "recommended": 0
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "cause": "The test read a stale fake issue.",
+    "cause_outside": false,
+    "open_conflicts": []
+  },
+  "review": {
+    "verdict": "approve",
+    "summary": "The change does what the plan says.",
+    "criteria": [
+      {
+        "criterion": "A test shows the round says the issue is closed.",
+        "status": "met",
+        "test": "tests/test_report.py",
+        "evidence": "The test passes."
+      }
+    ],
+    "findings": [],
+    "previous_findings": []
+  },
+  "reviewChanges": {
+    "verdict": "request_changes",
+    "summary": "The change does what the plan says.",
+    "criteria": [
+      {
+        "criterion": "A test shows the round says the issue is closed.",
+        "status": "met",
+        "test": "tests/test_report.py",
+        "evidence": "The test passes."
+      }
+    ],
+    "findings": [
+      {
+        "severity": "blocking",
+        "file": "a.py",
+        "line": 3,
+        "body": "Wrong."
+      }
+    ],
+    "previous_findings": []
+  },
+  "reviewUnverifiable": {
+    "verdict": "approve",
+    "summary": "The change does what the plan says.",
+    "criteria": [
+      {
+        "criterion": "A test shows the round says the issue is closed.",
+        "status": "unverifiable",
+        "test": "tests/test_report.py",
+        "evidence": "The test passes."
+      }
+    ],
+    "findings": [],
+    "previous_findings": []
+  }
+}

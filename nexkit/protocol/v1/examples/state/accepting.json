@@ -18,7 +18,13 @@
       "on": null
     }
   ],
-  "pending": [],
+  "pending": [
+    {
+      "id": "a9.1",
+      "kind": "accept",
+      "changeVersion": "5a54e2b"
+    }
+  ],
   "actors": {
     "plan": "engine",
     "change": "engine",
@@ -35,7 +41,8 @@
     "parts": 0,
     "noChange": false,
     "protectedPaths": [],
-    "approved": true
+    "approved": true,
+    "split": []
   },
   "rounds": {
     "started": 1,

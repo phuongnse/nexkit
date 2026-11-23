@@ -11,7 +11,8 @@
   "pending": [
     {
       "id": "a2",
-      "kind": "runAgent"
+      "kind": "runAgent",
+      "changeVersion": null
     }
   ],
   "actors": {
@@ -30,7 +31,8 @@
     "parts": 0,
     "noChange": false,
     "protectedPaths": [],
-    "approved": true
+    "approved": true,
+    "split": []
   },
   "rounds": {
     "started": 0,

@@ -1,5 +1,5 @@
 {
-  "$comment": "A work item is made. An item made with its plan, such as by an outside app, starts in awaitingApproval.",
+  "$comment": "A work item is made. An item made with its plan, such as by an outside app, starts in awaitingApproval; a review-only item, such as a person's own pull request, comes with its change.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -65,6 +65,16 @@
           "type": "null"
         }
       ]
+    },
+    "change": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/change"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -76,7 +86,8 @@
     "title",
     "text",
     "actors",
-    "plan"
+    "plan",
+    "change"
   ],
   "additionalProperties": false
 }

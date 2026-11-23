@@ -66,8 +66,10 @@
           },
           "for": {
             "enum": [
+              "start",
               "time",
               "blocker",
+              "parts",
               "baseFailure",
               "requiredChecks",
               "usageLimit"
@@ -113,11 +115,18 @@
           },
           "kind": {
             "type": "string"
+          },
+          "changeVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "id",
-          "kind"
+          "kind",
+          "changeVersion"
         ],
         "additionalProperties": false
       }
@@ -186,6 +195,32 @@
             },
             "approved": {
               "type": "boolean"
+            },
+            "split": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "needs": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "required": [
+                  "key",
+                  "title",
+                  "needs"
+                ],
+                "additionalProperties": false
+              }
             }
           },
           "required": [
@@ -196,7 +231,8 @@
             "parts",
             "noChange",
             "protectedPaths",
-            "approved"
+            "approved",
+            "split"
           ],
           "additionalProperties": false
         },
@@ -315,7 +351,32 @@
     "parts": {
       "type": "array",
       "items": {
-        "$ref": "common.schema.json#/$defs/id"
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "common.schema.json#/$defs/id"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "accepted",
+                  "noChange",
+                  "dropped",
+                  "failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "item",
+          "state"
+        ],
+        "additionalProperties": false
       }
     },
     "policies": {

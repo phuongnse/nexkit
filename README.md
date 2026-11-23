@@ -208,6 +208,7 @@ Caches that your CI saves on the default branch can be restored before `setup`. 
 
 - [How it works](docs/how-it-works.md): jobs, permissions, state and failure handling.
 - [Configuration reference](docs/configuration.md)
+- [The engine](docs/engine.md): the engine and hosts planned for NexKit 7.
 - [Troubleshooting](docs/troubleshooting.md)
 - [Changelog](CHANGELOG.md)
 

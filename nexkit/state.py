@@ -150,6 +150,11 @@ def plan_data_record(output, passed=()):
     """The hidden record at the end of a plan comment: its questions, whether it is too
     large and its split, the protected paths its change needs, and its finding when no
     change is needed."""
+    return _encode(PLAN_DATA_PREFIX, plan_record(output, passed))
+
+
+def plan_record(output, passed=()):
+    """What a plan comment's record holds of the plan `output` (`plan_data_record`)."""
     data = {
         "questions": questions(output.get("questions")),
         "too_large": bool(output.get("too_large")),
@@ -176,7 +181,7 @@ def plan_data_record(output, passed=()):
             }
             for number, item in enumerate(split if len(split) <= MAX_PARTS else [], 1)
         ]
-    return _encode(PLAN_DATA_PREFIX, data)
+    return data
 
 
 # The plan comment's *Suggested split*, up to the implementation notes or the record: a

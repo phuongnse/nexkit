@@ -1,7 +1,7 @@
 # The engine
 
-_Planned for NexKit 7, and built a part at a time: so far `nexkit-engine` answers `step`, on
-standard input and over HTTP. NexKit 6 runs as [How it works](how-it-works.md) says._
+_Planned for NexKit 7, and built a part at a time: so far `nexkit-engine` answers `step`
+and `prompt`, on standard input and over HTTP. NexKit 6 runs as [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
 **hosts** that store the work, carry out what the engine decides and show it to people. GitHub
@@ -49,7 +49,7 @@ without a change to any host, as long as the conformance suite passes.
 
 - **Over HTTP**, `POST /<call>` takes the request as its body and answers with the same JSON
   text as standard input: status `200`, or `400` when the engine refuses the request. `serve`
-  answers each request on its own and keeps nothing between them. It refuses a body over 1 MiB
+  answers each request on its own and keeps nothing between them. It refuses a body over 16 MiB
   or without a `Content-Length`, and listens on `127.0.0.1:8080` unless `--host` and `--port`
   say otherwise.
 - **The image.** Each release publishes `ghcr.io/phuongnse/nexkit-engine:<version>`, built from
@@ -64,10 +64,39 @@ The engine answers three calls, each a pure function:
   fetched for it, so the prompts and their rules stay in the engine while the host does the reading.
 - **`sweep(items) -> starts`** chooses which waiting work items start, and in what order.
 
-All three read no network, no files and no clock: the time is a field of each event. They hold
-no secret and never see one. The policies of the host come with every call, as the host's
+All three read no network, no clock and no files but the engine's own prompt templates: the time
+is a field of each event. They hold no secret and never see one. The policies of the host come with every call, as the host's
 configuration reads at that moment, and the state keeps the ones that a running round started
 with.
+
+### The prompt
+
+`runAgent` names the inputs its stage reads, by kind, and the host fetches each before it calls
+`prompt`:
+
+| Input | What the host fetched |
+| --- | --- |
+| `item` | The work item's title and text, its change, and whether it is a person's change reviewed as its own item |
+| `discussion` | The comments on the item and on its change, oldest first, each a person's comment, a note on a command or the answers a policy gave. The host leaves out what nobody it trusts wrote |
+| `notes` | The note of the request that started the stage |
+| `plan`, `previousPlan` | The approved plan; for a new plan, the latest one, where it falls in the discussion and the profile it used |
+| `rounds` | The fix rounds so far, the fix round the review follows, what the change did outside the plan, and the checks a diagnosis round looks into |
+| `checks` | The checks' results, with the end of each output, and the required checks that refused an accept |
+| `findings` | The last review of the change, and what people said on its version |
+| `linked` | The texts the item links to, the items it was split from with their discussions, and each link not read, with why |
+| `evidence` | What the CI runs the item names left, and the result files of failing checks, with what the host keeps of each |
+| `parts` | The earlier parts of the same split that a part relies on |
+| `diff` | The change against its base, since the last review, a merge of the base and its conflicted files |
+| `workspace` | The checks the agent can run, the paths only a person changes, and the time the implement stage has |
+| `unfit` | Why a session's result did not fit: the prompt asks the same session for its result alone |
+
+The engine applies the limits: how much of each text and block a prompt keeps, how many comments,
+and in what order. A text that a prompt keeps only the start of, or leaves out, goes whole to a
+file in the folder that the request names, outside the working tree, where the agent reads it.
+The answer holds the prompt, the texts it shortened or left out, the links it lists as not read,
+and the files with their texts, which the host writes before the agent runs. The policies
+`checklist` and `profiles` give the items the plan and the review answer and the profiles triage
+chooses from.
 
 Every decision of NexKit 6 that is not about GitHub moves into the engine: plans, questions and
 answers, splits, approval, fix and diagnosis rounds and how they are counted, the review's
@@ -200,9 +229,9 @@ id. NexKit 6's round, from `route` to `report`, stays one workflow run.
 ## Runners
 
 A runner runs one agent session for one stage. Its contract is part of the protocol: `runAgent`
-gives it the stage, the stage's access, the prompt, the schema of the stage's result, the agent,
-the model and effort, the budget left in tokens, time and money, and a session id to ask the same
-session again. Its result gives the stage's result, the tokens as input, cached and output, a
+gives it the stage, the stage's access, the prompt that `prompt` writes from the inputs it names,
+the schema of the stage's result, the agent, the model and effort, the budget left in tokens,
+time and money, and a session id to ask the same session again. Its result gives the stage's result, the tokens as input, cached and output, a
 usage limit with its reset, whether the stop was transient, whether no result fit the schema, and
 the version of the change it produced.
 

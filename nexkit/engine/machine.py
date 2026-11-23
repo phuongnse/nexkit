@@ -15,11 +15,44 @@ FINAL = ("accepted", "noChange", "dropped")
 # The stage an agent runs in each state that runs one.
 STAGE_OF = {"planning": "plan", "working": "implement", "fixing": "fix", "reviewing": "review"}
 ACCESS = {"triage": "none", "plan": "read", "review": "read", "implement": "write", "fix": "write"}
+# The texts each stage's prompt is written from (`prompt.write`), by the kinds of runAgent's
+# `inputs`: the host fetches them for the `prompt` call.
 INPUTS = {
-    "plan": ["item", "discussion", "notes", "previousPlan", "linked", "evidence", "parts"],
-    "implement": ["item", "discussion", "notes", "plan", "linked", "evidence", "parts"],
-    "fix": ["item", "discussion", "notes", "plan", "rounds", "checks", "findings", "diff"],
-    "review": ["item", "discussion", "notes", "plan", "rounds", "checks", "findings", "diff"],
+    "triage": ["item", "discussion", "notes", "previousPlan"],
+    "plan": [
+        "item",
+        "discussion",
+        "notes",
+        "previousPlan",
+        "linked",
+        "evidence",
+        "parts",
+        "workspace",
+    ],
+    "implement": ["item", "discussion", "notes", "plan", "linked", "evidence", "workspace"],
+    "fix": [
+        "item",
+        "notes",
+        "plan",
+        "rounds",
+        "checks",
+        "findings",
+        "linked",
+        "evidence",
+        "diff",
+        "workspace",
+    ],
+    "review": [
+        "item",
+        "discussion",
+        "plan",
+        "rounds",
+        "checks",
+        "findings",
+        "linked",
+        "diff",
+        "workspace",
+    ],
 }
 # Actions that act on one version of the change: their result is stale once it moved.
 BOUND = ("runChecks", "accept")

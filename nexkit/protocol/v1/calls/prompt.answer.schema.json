@@ -1,0 +1,69 @@
+{
+  "$comment": "The answer to a prompt call: the prompt, the texts it shortened or left out, the links it lists as not read, and the files the host writes into the folder for texts before the agent runs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "text",
+    "shortened",
+    "notRead",
+    "files"
+  ],
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "text": {
+      "type": "string"
+    },
+    "shortened": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kept": {
+            "type": "integer"
+          },
+          "length": {
+            "type": "integer"
+          },
+          "leftOut": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "notRead": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

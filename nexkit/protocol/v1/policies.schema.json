@@ -50,6 +50,39 @@
         "replan",
         "newItem"
       ]
+    },
+    "checklist": {
+      "$comment": "Items the plan and the review answer, each a text or {text, person} for one only a person decides.",
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "person": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "profiles": {
+      "$comment": "The profiles triage chooses from, each name with when it fits.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
     }
   }
 }

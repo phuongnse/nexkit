@@ -27,6 +27,7 @@ from pathlib import Path, PurePosixPath
 
 from .autopilot import CI_RUNS, FAILED, on_default_branch
 from .checks import _is_text, size_text
+from .engine.text import since_text
 from .github import LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError
 from .state import by_bot
 
@@ -384,13 +385,3 @@ def summary_lines(found):
         limit = size_text(EVIDENCE_LIMIT)
         lines.append(f"Left out, past the {limit} a round keeps: " + "; ".join(found["left_out"]))
     return lines
-
-
-def since_text(run):
-    """Whether a newer run of a named run's workflow passed on the default branch, in words."""
-    name, branch, passed = run["workflow"], run["branch"], run.get("passed_since")
-    if not passed:
-        return f"no newer run of `{name}` has passed on `{branch}` since"
-    commit = f" at {passed['sha'][:7]}" if passed.get("sha") else ""
-    link = f", {passed['url']}" if passed.get("url") else ""
-    return f"run {passed['id']} of `{name}` passed on `{branch}` since{commit}{link}"

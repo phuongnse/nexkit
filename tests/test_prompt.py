@@ -14,13 +14,16 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent
+from nexkit import agent, engine, protocol
 from nexkit.context import gather
+from nexkit.engine import cli, prompt
+from nexkit.engine.machine import INPUTS
 from nexkit.publish import pull_body
 from nexkit.state import answers_marker, empty_state, profile_record, render_state
 from tests.support import (
@@ -34,12 +37,14 @@ from tests.support import (
     make_config,
     profile_config,
 )
+from tests.test_serve import send, server
 
-PROMPTS = Path(__file__).resolve().parent / "prompts"
+ROOT = Path(__file__).resolve().parent.parent
+PROMPTS = ROOT / "tests" / "prompts"
 WRITE = os.environ.get("NEXKIT_WRITE_PROMPTS") == "1"
 # Fixed dates, so each commit, and the hashes the prompts show, is the same in every run.
 DATES = {"GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"}
-ROOT = "/nexkit-test"
+SHOWN_ROOT = "/nexkit-test"
 CHECKLIST = [
     "Docs change with the code",
     {"text": "No check loosens", "person": True},
@@ -101,7 +106,7 @@ class World:
         return git(self.repo, "rev-parse", "HEAD")
 
     def shown(self, text):
-        return text.replace(str(self.root), ROOT)
+        return text.replace(str(self.root), SHOWN_ROOT)
 
 
 # Each case sets up `world` and answers how its round runs: the stage, the decision, and
@@ -458,57 +463,114 @@ CASES = {
 AGAIN = {"plan": "`summary` is missing", "review": "value.verdict must be one of approve"}
 
 
-def nexkit_prompt(world, found):
-    """The prompt that a GitHub round writes for the case, as `prompt.md` keeps it."""
-    stage = found["stage"]
-    cfg = found.get("cfg") or make_config()
-    decision = {"action": stage, "issue": 5, "note": "", **found.get("decision", {})}
-    if stage == "triage":
-        decision["action"] = "plan"
-    if getattr(world, "branch", None):
-        world.checkout(world.branch)
-    ci = found.get("ci")
-    stdout = io.StringIO()
-    with (
-        contextlib.redirect_stdout(stdout),
-        mock.patch("nexkit.context.ci_evidence", return_value=ci),
-        mock.patch.object(agent, "run_agent", side_effect=Stop),
-        mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}),
-    ):
-        context = gather(
-            world.gh,
-            decision,
-            stage="plan" if stage == "triage" else stage,
-            fix_result=found.get("fix_result"),
-            results=world.results,
-            ci=world.root / "ci" if ci else None,
-            cfg=cfg if ci else None,
-            texts=world.out / "texts",
-        )
-        # As the round passes it from one step to the next.
-        context = json.loads(json.dumps(context))
-        try:
-            if stage == "triage":
-                agent.run_triage(context, cfg, found["previous"], world.out)
-            else:
-                agent.run_stage(
-                    stage,
-                    context,
-                    cfg,
-                    world.repo,
-                    world.out,
-                    checks=found.get("checks"),
-                    base="main",
-                )
-        except Stop:
-            pass
-    folder = world.out / "triage" if stage == "triage" else world.out
-    return world.shown((folder / "prompt.md").read_text(encoding="utf-8"))
+class Round:
+    """A GitHub round of a case, up to its prompt: what it wrote, and what it fetched."""
+
+    def __init__(self, world, found):
+        self.world, self.found = world, found
+        self.stage = found["stage"]
+        self.cfg = found.get("cfg") or make_config()
+        decision = {"action": self.stage, "issue": 5, "note": "", **found.get("decision", {})}
+        if self.stage == "triage":
+            decision["action"] = "plan"
+            if found["previous"]:
+                decision["previous_profile"] = found["previous"]
+        self.decision = decision
+        self.fetched, self.facts = {}, {}
+
+    def run(self):
+        """The prompt the round writes, as `prompt.md` keeps it."""
+        world, found, stage, cfg = self.world, self.found, self.stage, self.cfg
+        if getattr(world, "branch", None):
+            world.checkout(world.branch)
+        ci = found.get("ci")
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            mock.patch("nexkit.context.ci_evidence", return_value=ci),
+            mock.patch.object(agent, "run_agent", side_effect=Stop),
+            mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}),
+            mock.patch.object(prompt, "texts", side_effect=self.texts),
+            mock.patch.object(prompt, "extras", side_effect=self.extras),
+        ):
+            context = gather(
+                world.gh,
+                self.decision,
+                stage="plan" if stage == "triage" else stage,
+                fix_result=found.get("fix_result"),
+                results=world.results,
+                ci=world.root / "ci" if ci else None,
+                cfg=cfg if ci else None,
+                texts=world.out / "texts",
+            )
+            # As the round passes it from one step to the next.
+            context = json.loads(json.dumps(context))
+            self.context = context
+            try:
+                if stage == "triage":
+                    agent.run_triage(context, cfg, found["previous"], world.out)
+                else:
+                    agent.run_stage(
+                        stage,
+                        context,
+                        cfg,
+                        world.repo,
+                        world.out,
+                        checks=found.get("checks"),
+                        base="main",
+                    )
+            except Stop:
+                pass
+        folder = world.out / "triage" if stage == "triage" else world.out
+        return world.shown((folder / "prompt.md").read_text(encoding="utf-8"))
+
+    def texts(self, stage, inputs, shelf, real=prompt.texts):
+        self.fetched = json.loads(json.dumps(inputs))
+        return real(stage, inputs, shelf)
+
+    def extras(self, stage, context, real=prompt.extras, **facts):
+        self.facts = json.loads(json.dumps({k: v for k, v in facts.items() if k != "shelf"}))
+        return real(stage, context, **facts)
+
+    def request(self):
+        """The `prompt` call with what the round fetched: from GitHub, the checkout and its
+        checks, and the configuration. Only the kinds that runAgent names for the stage."""
+        inputs = dict(self.fetched)
+        facts = self.facts
+        if self.stage != "triage":
+            inputs["diff"] = {
+                "base": facts["base"],
+                "text": facts.get("diff"),
+                "since": facts.get("since"),
+                "merging": facts.get("merging"),
+                "sides": facts.get("sides"),
+            }
+        if facts.get("checks") is not None:
+            inputs["checks"] = {"results": facts["checks"]}
+        settings = agent.settings(self.cfg)
+        inputs["workspace"] = {
+            key: settings[key] for key in ("checks", "protected_paths", "implement_minutes")
+        }
+        inputs = {
+            kind: value
+            for kind, value in prompt.camel(inputs).items()
+            if kind in INPUTS[self.stage]
+        }
+        profiles = {name: p["when"] for name, p in self.cfg["profiles"].items()}
+        return {
+            "protocol": 1,
+            "call": "prompt",
+            "state": None,
+            "stage": self.stage,
+            "inputs": inputs,
+            "policies": {"checklist": settings["checklist"], "profiles": profiles},
+            "texts": str((self.world.out / "texts").resolve()),
+        }
 
 
 def golden(name, text):
+    """The prompt NexKit 6 wrote for the case `name`; with WRITE, `text` becomes it."""
     path = PROMPTS / f"{name}.md"
-    if WRITE:
+    if WRITE and text is not None:
         PROMPTS.mkdir(exist_ok=True)
         path.write_text(text, encoding="utf-8")
     return path.read_text(encoding="utf-8")
@@ -521,8 +583,7 @@ class NexKit6PromptTests(unittest.TestCase):
         for name, case in CASES.items():
             with self.subTest(name):
                 world = World(self)
-                found = case(world)
-                text = nexkit_prompt(world, found)
+                text = Round(world, case(world)).run()
                 self.assertEqual(text, golden(name, text))
 
     def test_a_session_asked_again_for_its_result_gets_nexkit_6s_prompt(self):
@@ -530,6 +591,99 @@ class NexKit6PromptTests(unittest.TestCase):
             with self.subTest(stage):
                 text = agent.result_prompt(stage, wrong)
                 self.assertEqual(text, golden(f"result-again-{stage}", text))
+
+
+class PromptCallTests(unittest.TestCase):
+    """`nexkit-engine prompt` writes, from the texts a GitHub round fetched, the prompt that
+    NexKit 6 wrote, and names the files that a round writes."""
+
+    def test_every_case_writes_nexkit_6s_prompt(self):
+        for name, case in CASES.items():
+            with self.subTest(name):
+                world = World(self)
+                round = Round(world, case(world))
+                round.run()
+                request = round.request()
+                answer = engine.reply("prompt", json.dumps(request))
+                self.assertNotIn("error", answer)
+                self.assertEqual(world.shown(answer["text"]), golden(name, None))
+                # The files a round writes, which the prompt names.
+                for item in answer["files"]:
+                    self.assertEqual(Path(item["path"]).read_text(encoding="utf-8"), item["text"])
+                if round.stage == "triage":
+                    continue  # its round's comment names what the plan's prompt shortened
+                # What the round's comment names as shortened and not read.
+                self.assertEqual(
+                    answer["shortened"], prompt.camel(agent.shortened_names(round.context))
+                )
+                linked = round.context.get("linked") or {}
+                self.assertEqual(answer["notRead"], linked.get("skipped") or [])
+
+    def test_a_session_asked_again_for_its_result_gets_nexkit_6s_prompt(self):
+        for stage, wrong in AGAIN.items():
+            with self.subTest(stage):
+                request = {
+                    "protocol": 1,
+                    "call": "prompt",
+                    "state": None,
+                    "stage": stage,
+                    "inputs": {"unfit": wrong},
+                    "policies": {},
+                }
+                answer = engine.answer(request)
+                self.assertEqual(answer["text"], golden(f"result-again-{stage}", None))
+                self.assertEqual(answer["files"], [])
+
+
+EXAMPLE = protocol.ROOT / "examples" / "calls"
+
+
+def example():
+    return json.loads((EXAMPLE / "prompt.json").read_text(encoding="utf-8"))
+
+
+class PromptProgramTests(unittest.TestCase):
+    """`nexkit-engine prompt` on standard input, `POST /prompt` over HTTP, and its inputs."""
+
+    def test_the_example_gets_the_example_answer(self):
+        answer = json.loads((EXAMPLE / "prompt.answer.json").read_text(encoding="utf-8"))
+        self.assertEqual(engine.answer(example()), answer)
+        self.assertIn("- acme/other#9: not this repository", answer["text"])
+        self.assertIn("do not guess", answer["text"])
+
+    def test_the_program_reads_standard_input_and_serve_answers_the_same(self):
+        text = json.dumps({k: v for k, v in example().items() if k != "call"})
+        out = io.StringIO()
+        self.assertEqual(cli.main(["prompt"], io.StringIO(text), out), 0)
+        done = subprocess.run(
+            [sys.executable, str(ROOT / "bin" / "nexkit-engine"), "prompt"],
+            input=text,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(done.stdout, out.getvalue())
+        with server() as port:
+            status, body = send(port, "/prompt", text.encode())
+        self.assertEqual((status, body.decode()), (200, out.getvalue()))
+
+    def test_a_request_without_what_its_stage_needs_is_refused(self):
+        request = example()
+        del request["inputs"]["workspace"]
+        self.assertEqual(engine.answer(request)["error"], "request.inputs.workspace is missing")
+        request["inputs"] = {"notes": "x"}
+        triage = engine.answer({**request, "stage": "triage"})
+        self.assertEqual(triage["error"], "request.inputs.item is missing")
+        request["inputs"] = {"item": {"id": 1}}
+        self.assertIn("request.inputs.item.title is missing", engine.answer(request)["error"])
+
+    def test_the_kinds_of_inputs_are_one_list(self):
+        kinds = protocol.load("actions/runAgent.schema.json")["properties"]["inputs"]["items"]
+        named = protocol.load("calls/prompt.schema.json")["$defs"]["inputs"]["properties"]
+        self.assertEqual(kinds["enum"], list(named))
+        for stage, needs in INPUTS.items():
+            self.assertLessEqual(set(needs), set(named), stage)
+            self.assertLessEqual(set(prompt.NEEDS.get(stage, prompt.NEEDS_DEFAULT)), set(needs))
 
 
 if __name__ == "__main__":

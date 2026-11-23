@@ -1,13 +1,14 @@
 """Collect the GitHub material an agent stage needs, before the agent runs.
 
-Gathering happens in its own step so the agent process never holds a GitHub token.
+Gathering happens in its own step so the agent process never holds a GitHub token. This
+module only reads: it fetches the texts a stage's prompt needs, as the inputs of the engine's
+`prompt` call (docs/engine.md#the-engine), and the engine writes the prompt's texts from them.
 """
 
 from __future__ import annotations
 
 import os
 import re
-from functools import partial
 from pathlib import Path
 
 from .autopilot import (
@@ -18,36 +19,26 @@ from .autopilot import (
     part_of_parent,
     vouch,
 )
-from .checks import RESULTS_DIR, failing_signatures, output_text, shown_command
+from .checks import RESULTS_DIR, failing_signatures, results_limit
 from .config import NAME
-from .evidence import collect, named_runs, summary_lines
+from .engine import prompt
+from .engine.prompt import NO_PLAN as NO_PLAN
+from .engine.prompt import PERSON_PLAN as PERSON_PLAN
+from .evidence import EVIDENCE_LIMIT, collect, named_runs, summary_lines
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .redact import Redactor
 from .route import parse_command
 from .runlog import write_summary
 from .state import (
     PLAN_MARKER,
-    TEXT_LIMIT,
     answers_text,
     by_bot,
-    clip,
     latest_plan,
     plan_text,
     read_state,
 )
+from .state import TEXT_LIMIT as TEXT_LIMIT
 
-MAX_COMMENTS = 30
-# What one block of comments, such as a discussion, keeps in a prompt; above TEXT_LIMIT, so
-# the latest comment always comes whole. Older comments past it keep their start, with the
-# whole text in a file.
-BLOCK_LIMIT = 80_000
-SHORT = 1_000
-# What the fix prompt shows of a failing check's output: its end, and before it this many
-# lines that report a failure.
-FIX_OUTPUT_TAIL = 6_000
-FIX_FAILURE_LINES = 20
-NO_PLAN = "No plan was posted. Implement the issue as described."
-PERSON_PLAN = "None: a person wrote this pull request."
 # The section of a NexKit pull request description that `publish.pull_body` writes from the
 # implement result's `outside_plan`.
 OUTSIDE_PLAN = re.compile(r"^## Outside the plan\n(.*?)(?=^## |^---$|\Z)", re.M | re.S)
@@ -57,128 +48,32 @@ def _trusted(item):
     return item.get("author_association") in TRUSTED_ASSOCIATIONS and not by_bot(item)
 
 
-class Shelf:
-    """The texts that a prompt keeps only the start of, or leaves out. Each whole text goes
-    to a file in `folder`, outside the working tree, which the agent reads; `cut` names
-    them for the prompt and the round's comment. Without a folder no file is written."""
-
-    def __init__(self, folder=None):
-        self.folder = Path(folder).resolve() if folder else None
-        self.cut = []
-        self.stored = []
-
-    def store(self, key, text):
-        """Write `text` whole to a file of its own, for a text that the prompt shows part of
-        in its own way, such as a failing check's output, and names the file of. Its path,
-        or "" without a folder."""
-        if not self.folder:
-            return ""
-        self.folder.mkdir(parents=True, exist_ok=True)
-        path = self.folder / f"{re.sub(r'[^A-Za-z0-9._-]+', '-', key)}.txt"
-        path.write_text(text, encoding="utf-8")
-        self.stored.append(str(path))
-        return str(path)
-
-    def _write(self, key, text):
-        """The file that holds `text` whole, or "" without a folder."""
-        if not self.folder:
-            return ""
-        self.folder.mkdir(parents=True, exist_ok=True)
-        path = self.folder / f"{key}.md"
-        path.write_text(text, encoding="utf-8")
-        return str(path)
-
-    def _note(self, item):
-        if not any(known["key"] == item["key"] for known in self.cut):
-            self.cut.append(item)
-
-    def put(self, name, key, text, keep):
-        """`text` with at most `keep` characters, and where the rest is when it has more.
-        `name` says which text it is, `key` names its file."""
-        if len(text) <= keep:
-            return text
-        path = self._write(key, text)
-        self._note({"name": name, "key": key, "path": path, "kept": keep, "length": len(text)})
-        where = f"The whole text is in `{path}`." if path else "The rest was left out."
-        return (
-            f"{text[:keep]}\n[NexKit shortened this text here: this prompt has the first "
-            f"{keep:,} of its {len(text):,} characters. {where}]"
-        )
-
-    def leave_out(self, name, key, text, count):
-        """Where `text`, `count` texts that the prompt leaves out, is whole: a path, or ""
-        without a folder. `name` says which texts they are, `key` names their file."""
-        path = self._write(key, text)
-        self._note({"name": name, "key": key, "path": path, "left_out": count})
-        return path
-
-
-def _fit(entries, shelf, limit=BLOCK_LIMIT):
-    """Texts of `entries`, each `(header, body, name, key)`, with at most `limit`
-    characters in all, latest first: a body that no longer fits keeps its first SHORT
-    characters, and its whole text goes to `shelf`."""
-    left = limit
-    shown = []
-    for header, body, name, key in reversed(entries):
-        body = body or ""
-        whole = min(len(body), TEXT_LIMIT)
-        keep = whole if len(header) + whole <= left else SHORT
-        text = header + shelf.put(name, key, body, keep)
-        left -= len(text)
-        shown.append(text)
-    return shown[::-1]
-
-
-def _discussion(comments, notes=False, shelf=None, limit=BLOCK_LIMIT):
-    """Collaborators' comments, and the answers autopilot gave for the owner. Command
-    comments are left out, or with `notes` kept when they carry a note: the agent that acts
-    on a command gets its note through the decision, the reviewer only through the
-    discussion. The latest MAX_COMMENTS count, each whole as long as the block fits (see
-    `_fit`); older ones go whole to `shelf`, and a note says how many were left out."""
-    entries, times = [], []
+def entries(comments):
+    """A discussion as the prompt reads it: collaborators' comments, and the answers
+    autopilot gave for the owner (`prompt.discussion`). A command's comment counts only
+    with a note: the agent that acts on a command gets its note as the round's note."""
+    found = []
     for comment in comments:
-        when = comment["created_at"]
-        key = f"comment-{comment['id']}"
+        entry = {"id": comment["id"], "at": comment["created_at"]}
         answered = answers_text(comment)
         if answered is not None:
-            # Autopilot answered for the owner, with the options NexKit recommended.
-            header = f"NexKit autopilot for the owner ({when}):\n"
-            entries.append((header, answered, f"autopilot's answers of {when}", key))
-            times.append(when)
+            login = (comment.get("user") or {}).get("login") or ""
+            found.append({**entry, "author": login, "text": answered, "kind": "answers"})
             continue
         if not _trusted(comment):
             continue
         command, note = parse_command(comment.get("body"))
-        if command and not (notes and note):
+        if command and not note:
             continue
-        login = comment["user"]["login"]
-        name = f"the comment of `@{login}` of {when}"
-        entries.append((f"@{login} ({when}):\n", comment["body"], name, key))
-        times.append(when)
-    shelf = shelf or Shelf()
-    older, entries = entries[:-MAX_COMMENTS], entries[-MAX_COMMENTS:]
-    texts = _fit(entries, shelf, limit)
-    if older:
-        texts.insert(0, _left_out(older, times[0], times[len(older) - 1], shelf))
-    return "\n\n---\n\n".join(texts) if texts else "No discussion."
-
-
-def _left_out(older, first, last, shelf):
-    """The note that stands for the `older` entries a discussion leaves out, of the times
-    `first` to `last`, which go whole to `shelf`."""
-    count = len(older)
-    span = first if first == last else f"{first} to {last}"
-    comments = "comment" if count == 1 else "comments"
-    name = f"{count} older {comments} of a discussion, of {span}"
-    whole = "\n\n---\n\n".join(header + (body or "") for header, body, _, _ in older)
-    path = shelf.leave_out(name, f"older-{older[-1][3]}", whole, count)
-    where = ""
-    if path:
-        where = f" {'It is' if count == 1 else f'All {count} are'} whole in `{path}`."
-    return (
-        f"[NexKit left out the {count} older {comments} of this discussion here: this "
-        f"prompt keeps its latest {MAX_COMMENTS}.{where}]"
-    )
+        found.append(
+            {
+                **entry,
+                "author": comment["user"]["login"],
+                "text": comment.get("body") or "",
+                "kind": "note" if command else "comment",
+            }
+        )
+    return found
 
 
 def _saved_feedback(comments):
@@ -256,42 +151,11 @@ def evidence(feedback, decision, folder):
     return {"folder": str(root), "checks": found}
 
 
-def _failing_text(fix):
-    """Which checks still failed after a recorded fix round, or "" when unknown."""
-    failing = fix.get("failing")
-    if not isinstance(failing, list):
-        return ""  # the checks did not run, or the round was recorded before NexKit kept them
-    if not failing:
-        return "Every check passed after it."
-    items = [f"`{item.get('name')}` (`{clip(item.get('signature'), 200)}`)" for item in failing]
-    return "Checks that still failed after it, with their first failure: " + ", ".join(items)
-
-
 def earlier_fixes(comments):
-    """The fix prompt's list of the pull request's earlier fix rounds, oldest first: who
-    started each, its note, the fix agent's summary and cause, and the checks that still
-    failed after it. "" before the first."""
+    """The fix prompt's list of the pull request's earlier fix rounds (`prompt.earlier_fixes`),
+    from NexKit's state on it."""
     _, state = read_state(comments)
-    lines = []
-    for fix in (state or {}).get("fixes") or []:
-        who = "automatic" if fix.get("auto") else "requested by a person"
-        kind = ", a diagnosis round" if fix.get("diagnosis") else ""
-        lines += [
-            f"### Round {fix.get('round')}: fix ({who}{kind})",
-            "",
-            f"Note: {clip(fix.get('note'), 2000) or 'None.'}",
-            "",
-            "Summary from the fix agent:",
-            "",
-            clip(fix.get("summary")) or "None.",
-            "",
-        ]
-        if fix.get("cause"):
-            lines += ["Cause it found:", "", clip(fix["cause"], 2000), ""]
-        failing = _failing_text(fix)
-        if failing:
-            lines += [failing, ""]
-    return "\n".join(lines).strip()
+    return prompt.earlier_fixes((state or {}).get("fixes"))
 
 
 def diagnosis(decision, feedback):
@@ -302,141 +166,84 @@ def diagnosis(decision, feedback):
     return [{"name": name, "signature": signatures[name]} for name in names if name in signatures]
 
 
-def _required_text(item):
-    """A required check that failed, so GitHub refused the merge, after NexKit's own
-    checks and review passed: its job's failed commands and the tests it names."""
-    name = item.get("name") or "a required check"
-    lines = [f"### Required check `{name}` failed, so GitHub refused the merge", ""]
-    lines.append(
-        "NexKit's own checks and review passed on this commit, but this check of the "
-        "repository's CI, which branch protection requires, failed."
-    )
-    if item.get("url"):
-        lines.append(f"Its job: {item['url']}")
-    commands = [f"`{clip(command, 300)}`" for command in item.get("commands") or []]
-    if commands:
-        lines.append(f"Commands that failed in it: {', '.join(commands)}.")
-    tests = [f"`{clip(test, 300)}`" for test in (item.get("tests") or [])[:30]]
-    if tests:
-        lines.append(f"Tests its annotations name: {', '.join(tests)}.")
-    return "\n".join(lines)
+def people(gh, decision):
+    """What collaborators said on the pull request's head: their reviews with a text, then
+    their review comments on a line."""
+    pr, head = decision["pr"], decision["head"]
+    found = []
+    for review in gh.reviews(pr):
+        if _trusted(review) and review.get("commit_id") == head and (review.get("body") or ""):
+            found.append(
+                {
+                    "kind": "review",
+                    "id": review.get("id"),
+                    "author": review["user"]["login"],
+                    "state": review["state"],
+                    "text": review["body"],
+                }
+            )
+    for comment in gh.review_comments(pr):
+        if _trusted(comment) and comment.get("line") is not None:
+            found.append(
+                {
+                    "kind": "comment",
+                    "id": comment.get("id"),
+                    "author": comment["user"]["login"],
+                    "path": comment["path"],
+                    "line": comment["line"],
+                    "text": comment["body"],
+                }
+            )
+    return found
 
 
 def _feedback(gh, decision, comments, shelf=None):
     """Earlier NexKit results plus current human review feedback on the pull request."""
-    pr = decision["pr"]
-    head = decision["head"]
-    parts = []
     saved = _saved_feedback(comments)
-    shelf = shelf or Shelf()
-    for number, check in enumerate(saved.get("checks") or [], 1):
-        if not check.get("passed"):
-            key = f"check-{number}-{check['name']}"
-            output = output_text(
-                check,
-                FIX_OUTPUT_TAIL,
-                FIX_FAILURE_LINES,
-                partial(shelf.store, key),
-            )
-            parts.append(
-                f"### Failing check `{check['name']}` (`{shown_command(check)}`)\n\n"
-                f"Exit code {check.get('exit_code')}. {output}"
-            )
-    for item in saved.get("required") or []:
-        parts.append(_required_text(item))
-    review = saved.get("review") or {}
-    findings = [f for f in review.get("findings") or [] if f.get("severity") == "blocking"]
-    if findings:
-        lines = ["### Blocking findings from the NexKit review"]
-        for f in findings:
-            where = f"{f.get('file')}:{f.get('line')}" if f.get("file") else "general"
-            lines.append(f"- `{where}`: {f.get('body')}")
-        parts.append("\n".join(lines))
+    return prompt.feedback(
+        saved.get("checks"),
+        saved.get("required"),
+        saved.get("review"),
+        people(gh, decision),
+        shelf,
+    )
 
-    entries = []
-    for review in gh.reviews(pr):
-        if _trusted(review) and review.get("commit_id") == head and (review.get("body") or ""):
-            login = review["user"]["login"]
-            name = f"the review of `@{login}`"
-            key = f"review-{review.get('id') or len(entries)}"
-            entries.append((f"@{login} ({review['state']}): ", review["body"], name, key))
-    for comment in gh.review_comments(pr):
-        if _trusted(comment) and comment.get("line") is not None:
-            login = comment["user"]["login"]
-            where = f"{comment['path']}:{comment['line']}"
-            name = f"the review comment of `@{login}` on `{where}`"
-            key = f"review-comment-{comment.get('id') or len(entries)}"
-            entries.append((f"@{login} on `{where}`: ", comment["body"], name, key))
-    human = _fit(entries, shelf)
-    if human:
-        parts.append("### Review comments from collaborators\n\n" + "\n\n".join(human))
-    return "\n\n".join(parts) if parts else "No recorded feedback. Follow the note."
+
+def current_fix(decision, fix_result):
+    """This run's fix round, which the review after it reads, or None."""
+    if not _fixed(decision, fix_result):
+        return None
+    return {
+        "auto": decision.get("auto"),
+        "summary": fix_result.get("summary"),
+        "cause": (fix_result.get("output") or {}).get("cause"),
+        "note": decision.get("note"),
+        "conflicts": fix_result.get("conflicts"),
+        "head": fix_result.get("start_head"),
+        "base": fix_result.get("start_base"),
+    }
 
 
 def previous_review(gh, decision, fix_result):
     """The last NexKit review of the pull request and the fix rounds since, or None."""
     _, state = read_state(gh.comments(decision["pr"]))
-    last = (state or {}).get("last_review")
-    if not last:
-        return None
-    fixes = [f for f in state.get("fixes") or [] if f["round"] > last["round"]]
-    if _fixed(decision, fix_result):
-        fixes.append(
-            {
-                "auto": decision.get("auto"),
-                "summary": fix_result.get("summary"),
-                "cause": (fix_result.get("output") or {}).get("cause"),
-                "note": decision.get("note"),
-                "conflicts": fix_result.get("conflicts") if fix_result.get("start_base") else None,
-            }
-        )
-    lines = [f"### Findings of the review of commit {last['head'][:7]} ({last['verdict']})", ""]
-    for number, f in enumerate(last["findings"], 1):
-        where = f"{f['file']}:{f['line']}" if f.get("file") else "general"
-        lines.append(f"{number}. {f['severity']}, `{where}`: {clip(f['body'], 1500)}")
-    if not last["findings"]:
-        lines.append("No findings.")
-    left_out = last.get("left_out") or 0
-    if left_out:
-        lines += [
-            "",
-            f"That review had {left_out} more finding{'s' if left_out != 1 else ''}, left out "
-            "here: NexKit keeps a bounded number, blocking findings first. Report previous "
-            "findings only for those listed.",
-        ]
-    lines += ["", "### Fix rounds since that review"]
-    if not fixes:
-        lines += ["", "None. Any later commits were pushed without a NexKit fix round."]
-    for number, fix in enumerate(fixes, 1):
-        who = "automatic" if fix.get("auto") else "requested by a person"
-        lines += [
-            "",
-            f"#### Fix {number} ({who})",
-            "",
-            "Note from the person who requested it:",
-            "",
-            clip(fix.get("note")) or "None.",
-            "",
-            "Summary from the fix agent:",
-            "",
-            clip(fix.get("summary")) or "None.",
-        ]
-        if str(fix.get("cause") or "").strip():
-            lines += ["", "Cause the fix agent found:", "", clip(fix["cause"], 2000)]
-        if fix.get("conflicts"):
-            files = ", ".join(f"`{name}`" for name in fix["conflicts"])
-            lines += ["", f"This round merged the base branch and resolved conflicts in {files}."]
-        elif fix.get("conflicts") == []:
-            lines += ["", "This round merged the base branch, which merged without conflicts."]
-    return {"previous_head": last["head"], "previous_round": "\n".join(lines)}
+    state = state or {}
+    current = current_fix(decision, fix_result)
+    return prompt.previous_review(state.get("last_review"), state.get("fixes"), current)
+
+
+def outside_section(pull):
+    """The section of the pull request description that NexKit wrote about what the
+    implementation agent did outside the plan, or None."""
+    body = ((pull or {}).get("body") or "").replace("\r\n", "\n")
+    match = OUTSIDE_PLAN.search(body)
+    return match.group(1) if match else None
 
 
 def outside_plan(pull):
     """What the implementation agent did outside the plan, and why, from the pull request
     description that NexKit wrote."""
-    body = ((pull or {}).get("body") or "").replace("\r\n", "\n")
-    match = OUTSIDE_PLAN.search(body)
-    return clip(match.group(1)) if match and match.group(1).strip() else "None."
+    return prompt.outside_plan(outside_section(pull))
 
 
 def _fixed(decision, fix_result):
@@ -465,10 +272,8 @@ def ci_evidence(gh, cfg, issue, comments, folder, workflow=""):
     return found
 
 
-# The most earlier parts a part's plan reads, and what it keeps of each one's text.
+# The most earlier parts a part's plan reads.
 MAX_EARLIER = 6
-EARLIER_BODY = 3_000
-EARLIER_PLAN = 6_000
 
 
 def _part_of(issue):
@@ -480,8 +285,8 @@ def _part_of(issue):
 def earlier_parts(gh, issue):
     """{parent, parts} for a part of a split that needs earlier parts first: the issues
     that block it and are parts of the same issue, oldest first, each with its title,
-    state, text and latest plan. None for any other issue. A failed read leaves out what
-    it could not read: the plan goes on without it."""
+    state, text and latest plan, as `prompt.earlier_parts` reads them. None for any other
+    issue. A failed read leaves out what it could not read: the plan goes on without it."""
     parent = _part_of(issue)
     if parent is None:
         return None
@@ -495,11 +300,11 @@ def earlier_parts(gh, issue):
             plan = latest_plan(gh.comments(earlier["number"]))
             found.append(
                 {
-                    "number": earlier["number"],
+                    "id": earlier["number"],
                     "title": earlier.get("title") or "",
                     "state": earlier.get("state") or "",
-                    "body": clip(PART.sub("", earlier["body"]), EARLIER_BODY),
-                    "plan": clip(plan_text(plan), EARLIER_PLAN) if plan else "",
+                    "body": PART.sub("", earlier["body"]),
+                    "plan": plan_text(plan) if plan else None,
                 }
             )
     except GitHubError:
@@ -633,8 +438,8 @@ def _issue_number(comment):
 
 
 def _linked_comment(gh, comment_id):
-    """(the entry `_fit` shows of a linked comment, what people read it as) or (None, why
-    it was not read)."""
+    """(the linked comment as `prompt.linked` reads it, what people read it as) or (None,
+    why it was not read)."""
     try:
         comment = gh.issue_comment(comment_id)
     except GitHubError as exc:
@@ -642,27 +447,28 @@ def _linked_comment(gh, comment_id):
     plan = by_bot(comment) and (comment.get("body") or "").startswith(PLAN_MARKER)
     if not (_trusted(comment) or plan):
         return None, f"comment {comment_id}: not written by a collaborator"
-    login, when = comment["user"]["login"], comment["created_at"]
     number = _issue_number(comment)
     where = f" on #{number}" if number else ""
-    # NexKit's own plan, as the agents read a plan: without the records for people.
-    who, body = (
-        ("NexKit's plan", plan_text(comment)) if plan else (f"@{login}", comment.get("body") or "")
-    )
-    header = f"{who}{where} ({when}), comment {comment_id}:\n"
-    name = f"the comment {comment_id} of {'NexKit' if plan else f'`@{login}`'}{where}"
-    read = f"{'NexKit plan' if plan else 'comment'} {comment_id}{where}"
-    return (header, body, name, f"linked-{comment_id}"), read
+    found = {
+        "kind": "plan" if plan else "comment",
+        "id": comment_id,
+        "author": comment["user"]["login"],
+        "at": comment["created_at"],
+        "on": number,
+        # NexKit's own plan, as the agents read a plan: without the records for people.
+        "text": plan_text(comment) if plan else (comment.get("body") or ""),
+    }
+    return found, f"{'NexKit plan' if plan else 'comment'} {comment_id}{where}"
 
 
 def _text(item):
     """The text of an issue or pull request without NexKit's markers and other HTML
     comments, which nobody reading the page sees."""
-    return HTML_COMMENT.sub("", item.get("body") or "").strip() or "No description."
+    return HTML_COMMENT.sub("", item.get("body") or "").strip()
 
 
 def _linked_issue(gh, number):
-    """(the entry `_fit` shows of the text of a linked issue or pull request, what people
+    """(the text of a linked issue or pull request as `prompt.linked` reads it, what people
     read it as) or (None, why it was not read)."""
     try:
         item = gh.issue(number)
@@ -670,11 +476,16 @@ def _linked_issue(gh, number):
         return None, f"#{number}: could not be read ({exc.status})"
     if not (_trusted(item) or by_bot(item)):
         return None, f"#{number}: not written by a collaborator"
-    kind = "pull request" if item.get("pull_request") else "issue"
-    login = (item.get("user") or {}).get("login") or "someone"
-    who = "NexKit" if by_bot(item) else f"@{login}"
-    header = f"#{number}, {kind} of {who}: {item.get('title') or ''}\n"
-    return (header, _text(item), f"the text of #{number}", f"issue-{number}"), f"#{number}"
+    found = {
+        "kind": "item",
+        "id": number,
+        "title": item.get("title") or "",
+        "change": bool(item.get("pull_request")),
+        "author": (item.get("user") or {}).get("login"),
+        "nexkit": by_bot(item),
+        "text": _text(item),
+    }
+    return found, f"#{number}"
 
 
 def _vouched_text(gh, issue):
@@ -687,17 +498,17 @@ def _vouched_text(gh, issue):
         return False
 
 
-def linked(gh, issue, comments, shelf, chain=(), problems=(), skip=(), own=None):
-    """What the issue refers to and the agent cannot open itself, since it holds no GitHub
-    token. `chain` are the issues it was split from, nearest first (`ancestors`): each
+def linked(gh, issue, comments, chain=(), problems=(), skip=(), own=None):
+    """(what the issue refers to and the agent cannot open itself, since it holds no GitHub
+    token, as `prompt.linked` reads it, or None when there is nothing; what was read, in
+    words). `chain` are the issues it was split from, nearest first (`ancestors`): each
     with its text and its collaborators' discussion. Then the comments and the issues or
     pull requests of this repository that the texts of the issue, of `chain` and of their
     collaborators' comments link to: comments of collaborators and NexKit's plans, texts of
     issues that collaborators or NexKit wrote, the first linked first. Comments in `own`
-    (by default all of the issue's) and issues in `skip` are shown elsewhere. Each block
-    keeps at most BLOCK_LIMIT characters, and texts past that go whole to `shelf`. Each
-    link that was not read is listed with why, as `problems` are, in the log and the run
-    summary too; the round goes on. None when there is nothing."""
+    (by default all of the issue's) and issues in `skip` are shown elsewhere. Each link that
+    was not read is listed with why, as `problems` are, in the log and the run summary too;
+    the round goes on."""
     skipped = list(problems)
     talks, counts = {}, {}
     for above in chain:
@@ -720,7 +531,7 @@ def linked(gh, issue, comments, shelf, chain=(), problems=(), skip=(), own=None)
     own = {c["id"] for c in comments} if own is None else own
     refs, outside = _references(gh, texts, own, shown)
     skipped += outside
-    entries, read, names = [], set(), []
+    found, names = [], []
     tried = {"comment": 0, "issue": 0}
     most = {"comment": MAX_LINKED, "issue": MAX_LINKED_ISSUES}
     for kind, number in refs:
@@ -731,33 +542,23 @@ def linked(gh, issue, comments, shelf, chain=(), problems=(), skip=(), own=None)
         if entry is None:
             skipped.append(line)
             continue
-        if kind == "comment":
-            read.add(number)
-        entries.append(entry)
+        found.append(entry)
         names.append(line)
     beyond = []
     for kind, label in (("comment", "comments"), ("issue", "issues or pull requests")):
         left_over = sum(1 for ref in refs if ref[0] == kind) - tried[kind]
         if left_over:
             beyond.append(f"{left_over} more linked {label}: past the {most[kind]} a round reads")
-    # The first linked first: `_fit` keeps the last entries whole.
-    texts_shown = _fit(entries[::-1], shelf)[::-1] if entries else []
-    found = {"comments": "\n\n---\n\n".join(texts_shown), "chain": []}
-    # The issues above share one block, the nearest first, each text before its discussion.
-    left = BLOCK_LIMIT
-    for above in chain:
-        number = above["number"]
-        text = _text(above) if counts[number] else "NexKit did not read this issue's text."
-        keep = max(SHORT, min(TEXT_LIMIT, left))
-        body = shelf.put(f"the body of #{number}", f"issue-{number}", text, keep)
-        left -= len(body)
-        # A comment already shown above, whole, is not repeated in the discussion.
-        rest = [c for c in talks[number] if c["id"] not in read]
-        discussion = _discussion(rest, notes=True, shelf=shelf, limit=max(0, left))
-        left -= len(discussion)
-        title = (above.get("title") or "") if counts[number] else "(not read)"
-        found["chain"].append(
-            {"number": number, "title": title, "body": body, "discussion": discussion}
+    above = []
+    for issue_above in chain:
+        number = issue_above["number"]
+        above.append(
+            {
+                "id": number,
+                "title": issue_above.get("title") or "",
+                "body": _text(issue_above) if counts[number] else None,
+                "discussion": entries(talks[number]),
+            }
         )
         names.append(f"#{number} with its discussion")
     skipped = list(dict.fromkeys(skipped))
@@ -765,17 +566,116 @@ def linked(gh, issue, comments, shelf, chain=(), problems=(), skip=(), own=None)
         more = len(skipped) - MAX_SKIPPED
         skipped = skipped[:MAX_SKIPPED] + [f"{more} more links not read: not listed here"]
     skipped += beyond
-    found["skipped"], found["read"] = skipped, names
     redact = Redactor()
     for name in names:
         print(redact(f"Texts the issue links to: read: {name}."), flush=True)
     for line in skipped:
         print(redact(f"Texts the issue links to: not read: {line}."), flush=True)
     if not names and not skipped:
-        return None
+        return None, []
     lines = [f"- Read: {name}." for name in names] + [f"- Not read: {line}." for line in skipped]
     write_summary("\n".join(["### NexKit: texts the issue links to", "", *lines]) + "\n", redact)
-    return found
+    return {"texts": found, "chain": above, "not_read": skipped}, names
+
+
+def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None, workflow=""):
+    """(the inputs of `stage`'s prompt, by kind, as the engine's `prompt` reads them; what
+    only the GitHub host keeps of the round: an edit nobody vouched for, the names of the
+    texts the issue links to that were read, and whether a fix round merges a moved base).
+    See `gather` for the arguments."""
+    issue = gh.issue(decision["issue"])
+    comments = gh.comments(decision["issue"])
+    plan = latest_plan(comments)
+    on_item = entries(comments)
+    inputs = {
+        "item": {
+            "id": decision["issue"],
+            "title": issue["title"],
+            "body": issue.get("body") or "",
+            "change": decision.get("pr") or None,
+            "person": bool(decision.get("person")),
+        },
+        "notes": decision.get("note") or "",
+        "discussion": {"item": on_item, "change": []},
+    }
+    host = {}
+    if stage != "plan":
+        inputs["plan"] = plan_text(plan) if plan else None
+    reads = stage in ("plan", "implement", "fix", "review")
+    chain, problems = ancestors(gh, issue) if reads else ([], [])
+    if stage in ("plan", "implement", "fix") and (
+        decision.get("auto") or decision.get("autopilot")
+    ):
+        # After the issue's text was read, so this round acts on no edit it does not see. A
+        # person who starts a round answers for the text themselves. A part's round also
+        # reads the issues it was split from.
+        edited = edited_after_vouch(gh, issue) or chain_edited(gh, chain)
+        if edited:
+            host["untrusted"] = edited
+    evidence_found = {}
+    if stage in ("plan", "implement", "fix") and ci and cfg:
+        found = ci_evidence(gh, cfg, issue, comments, ci, workflow)
+        evidence_found["ci"] = {**found, "keeps": EVIDENCE_LIMIT} if found else None
+    if reads:
+        pull = [decision["pr"]] if decision.get("pr") else []
+        # Links to the issue's own comments that its discussion shows are not read again.
+        # The fix prompt shows no discussion, and a command's comment shows only with a note.
+        own = (
+            set()
+            if stage == "fix"
+            else {c["id"] for c in comments if _trusted(c) and not parse_command(c.get("body"))[0]}
+        )
+        inputs["linked"], host["read"] = linked(gh, issue, comments, chain, problems, pull, own)
+    if stage == "plan":
+        earlier = earlier_parts(gh, issue)
+        if earlier:
+            inputs["parts"] = earlier
+        previous = {}
+        if plan:
+            at = comments.index(plan)
+            previous.update(text=plan_text(plan), before=len(entries(comments[:at])))
+        if decision.get("previous_profile"):
+            previous["profile"] = decision["previous_profile"]
+        if previous:
+            inputs["previous_plan"] = previous
+    if decision.get("person") or (stage == "review" and decision.get("pr")):
+        _, state = read_state(gh.comments(decision["pr"]))
+        state = state or {}
+        inputs["findings"] = {"review": state.get("last_review")}
+        inputs["rounds"] = {
+            "fixes": state.get("fixes") or [],
+            "current": current_fix(decision, fix_result),
+        }
+        if not decision.get("person"):
+            inputs["discussion"]["change"] = entries(gh.comments(decision["pr"]))
+            inputs["rounds"]["outside_plan"] = outside_section(gh.pull(decision["pr"]))
+    elif stage == "fix":
+        pr_comments = gh.comments(decision["pr"])
+        saved = _saved_feedback(pr_comments)
+        _, state = read_state(pr_comments)
+        inputs["checks"] = {"results": saved.get("checks"), "required": saved.get("required")}
+        inputs["findings"] = {"review": saved.get("review"), "people": people(gh, decision)}
+        host["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
+        kept = evidence(saved, decision, results)
+        keeps = {"one": results_limit(1), "several": results_limit(2)}
+        evidence_found["results"] = {**kept, "keeps": keeps} if kept else None
+        inputs["rounds"] = {
+            "fixes": (state or {}).get("fixes") or [],
+            "diagnose": diagnosis(decision, saved),
+        }
+        inputs["discussion"]["change"] = entries(pr_comments)
+    if evidence_found:
+        inputs["evidence"] = evidence_found
+    return inputs, host
+
+
+def keep_texts(files):
+    """Write the whole texts that a prompt names, each `{path, text}`, before the agent
+    reads them."""
+    for item in files:
+        path = Path(item["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(item["text"], encoding="utf-8")
 
 
 def gather(
@@ -795,100 +695,18 @@ def gather(
     into the folder `results`. With `ci` and `cfg`, a plan, implement or fix round also
     gets the evidence of the CI runs the issue names, downloaded into the folder `ci`,
     other than runs of NexKit's own workflow, the file `workflow`. A text that the prompt
-    keeps only the start of goes whole to the folder `texts`, and `shortened` names it."""
-    issue = gh.issue(decision["issue"])
-    comments = gh.comments(decision["issue"])
-    plan = latest_plan(comments)
-    shelf = Shelf(texts)
-    number = decision["issue"]
-    body = issue.get("body") or "No description."
-    context = {
-        "issue": number,
-        "pr": decision.get("pr") or "",
-        "title": issue["title"],
-        "body": shelf.put(f"the body of #{number}", f"issue-{number}", body, TEXT_LIMIT),
-        "plan": plan_text(plan) if plan else NO_PLAN,
-        "note": decision.get("note") or "None.",
-        "feedback": "",
-        "outside_plan": "None.",
-    }
+    keeps only the start of goes whole to the folder `texts`, and `shortened` names it.
+
+    The engine writes the texts from what `fetch` fetched (`prompt.texts`)."""
     stage = stage or decision["action"]
-    discussion = None
-    reads = stage in ("plan", "implement", "fix", "review")
-    chain, problems = ancestors(gh, issue) if reads else ([], [])
-    if stage in ("plan", "implement", "fix") and (
-        decision.get("auto") or decision.get("autopilot")
-    ):
-        # After the issue's text was read, so this round acts on no edit it does not see. A
-        # person who starts a round answers for the text themselves. A part's round also
-        # reads the issues it was split from.
-        edited = edited_after_vouch(gh, issue) or chain_edited(gh, chain)
-        if edited:
-            context["untrusted"] = edited
-    if stage in ("plan", "implement", "fix") and ci and cfg:
-        context["ci_evidence"] = ci_evidence(gh, cfg, issue, comments, ci, workflow)
-    if reads:
-        pull = [decision["pr"]] if decision.get("pr") else []
-        # Links to the issue's own comments that its discussion shows are not read again.
-        # The fix prompt shows no discussion, and a command's comment shows only with a note.
-        own = (
-            set()
-            if stage == "fix"
-            else {c["id"] for c in comments if _trusted(c) and not parse_command(c.get("body"))[0]}
-        )
-        context["linked"] = linked(gh, issue, comments, shelf, chain, problems, pull, own)
-    if stage == "plan":
-        earlier = earlier_parts(gh, issue)
-        if earlier:
-            context["earlier"] = earlier
-        # Triage reads the notes on earlier commands too: a later note can change the
-        # profile that an earlier comment asked for.
-        # Its prompt has no tools to read a file with, so it names nothing it shortened.
-        context["requests"] = _discussion(comments, notes=True, shelf=Shelf())
-        if plan:
-            # A re-plan revises the latest plan with what was said since it.
-            at = comments.index(plan)
-            discussion = _discussion(comments[:at], shelf=shelf)
-            context["since_plan"] = _discussion(comments[at + 1 :], notes=True, shelf=shelf)
-    if decision.get("person"):
-        # Its issue is the pull request itself, with its description and comments, so the
-        # review needs neither a plan nor the same discussion twice.
-        discussion = _discussion(comments, notes=True, shelf=shelf)
-        context.update(person=True, plan=PERSON_PLAN)
-        context.update(previous_review(gh, decision, fix_result) or {})
-    elif stage == "review" and decision.get("pr"):
-        pr_comments = gh.comments(decision["pr"])
-        discussion = (
-            _discussion(comments, notes=True, shelf=shelf)
-            + "\n\n---\n\nOn the pull request:\n\n"
-            + _discussion(pr_comments, notes=True, shelf=shelf)
-        )
-        context["outside_plan"] = outside_plan(gh.pull(decision["pr"]))
-        context.update(previous_review(gh, decision, fix_result) or {})
-        if _fixed(decision, fix_result) and fix_result.get("start_base"):
-            context["merged"] = {
-                "head": fix_result.get("start_head"),
-                "base": fix_result["start_base"],
-                "conflicts": fix_result.get("conflicts") or [],
-            }
-    elif stage == "fix":
-        pr_comments = gh.comments(decision["pr"])
-        context["feedback"] = _feedback(gh, decision, pr_comments, shelf)
-        context["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
-        saved = _saved_feedback(pr_comments)
-        context["evidence"] = evidence(saved, decision, results)
-        context["earlier_fixes"] = earlier_fixes(pr_comments)
-        context["diagnose"] = diagnosis(decision, saved)
-        # The fix prompt shows the feedback rather than the discussion, so it names nothing
-        # shortened here.
-        discussion = (
-            _discussion(comments, shelf=Shelf())
-            + "\n\n---\n\nOn the pull request:\n\n"
-            + _discussion(pr_comments, shelf=Shelf())
-        )
-    context["discussion"] = discussion or _discussion(comments, shelf=shelf)
-    if shelf.cut:
-        context["shortened"] = shelf.cut
-    if shelf.stored:
-        context["check_outputs"] = shelf.stored
+    inputs, host = fetch(gh, decision, stage, fix_result, results, ci, cfg, workflow)
+    shelf = prompt.Shelf(Path(texts).resolve() if texts else None)
+    context = prompt.texts(stage, inputs, shelf)
+    keep_texts({"path": path, "text": text} for path, text in shelf.files.items())
+    if host.get("untrusted"):
+        context["untrusted"] = host["untrusted"]
+    if context.get("linked") is not None:
+        context["linked"]["read"] = host["read"]
+    if "merge_moved_base" in host:
+        context["merge_moved_base"] = host["merge_moved_base"]
     return context

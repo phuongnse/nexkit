@@ -1,0 +1,1078 @@
+{
+  "$comment": "A prompt call: the prompt of one stage, written from the texts the host fetched for it, by the kinds runAgent names. `texts` is the folder outside the working tree where the host keeps the whole texts a prompt shortens, which the agent reads; null when it reads no files.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "call",
+    "state",
+    "stage",
+    "inputs",
+    "policies"
+  ],
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "call": {
+      "const": "prompt"
+    },
+    "state": {
+      "anyOf": [
+        {
+          "$ref": "../state.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stage": {
+      "$ref": "../common.schema.json#/$defs/stage"
+    },
+    "inputs": {
+      "$ref": "#/$defs/inputs"
+    },
+    "policies": {
+      "$ref": "../policies.schema.json"
+    },
+    "texts": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "$defs": {
+    "number": {
+      "$comment": "An id as the host shows it to people, such as an issue's number.",
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "inputs": {
+      "$comment": "The texts the host fetched, by the kinds that runAgent names (machine.INPUTS). Every stage needs `item`, and every stage but triage `workspace`; a kind left out is empty.",
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/item"
+        },
+        "discussion": {
+          "$ref": "#/$defs/discussion"
+        },
+        "notes": {
+          "$comment": "The note of the request that started the stage, \"\" without one.",
+          "type": "string"
+        },
+        "plan": {
+          "$comment": "The approved plan, null without one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previousPlan": {
+          "$ref": "#/$defs/previousPlan"
+        },
+        "rounds": {
+          "$ref": "#/$defs/rounds"
+        },
+        "checks": {
+          "$ref": "#/$defs/checks"
+        },
+        "findings": {
+          "$ref": "#/$defs/findings"
+        },
+        "linked": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/linked"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "parts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/parts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diff": {
+          "$ref": "#/$defs/diff"
+        },
+        "workspace": {
+          "$ref": "#/$defs/workspace"
+        },
+        "unfit": {
+          "$comment": "Why the session's result did not fit its schema: the prompt then asks the same session for its result alone.",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "item": {
+      "$comment": "The work item: its text, and its change when it has one.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "change": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "person": {
+          "$comment": "A change a person made, reviewed as its own work item, with no plan.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "entry": {
+      "$comment": "One entry of a discussion, oldest first. The host leaves out what nobody it trusts wrote, and commands without a note.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/number"
+        },
+        "author": {
+          "type": "string"
+        },
+        "at": {
+          "$ref": "../common.schema.json#/$defs/time"
+        },
+        "text": {
+          "type": "string"
+        },
+        "kind": {
+          "$comment": "A person's comment, a note on a command, which only some stages read, or the answers a policy gave for the people who decide.",
+          "enum": [
+            "comment",
+            "note",
+            "answers"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "author",
+        "at",
+        "text",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "discussion": {
+      "$comment": "The discussion on the work item and on its change.",
+      "type": "object",
+      "properties": {
+        "item": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        },
+        "change": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "previousPlan": {
+      "$comment": "The latest plan, which a new plan revises.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "before": {
+          "$comment": "How many entries of the item's discussion came before it.",
+          "type": "integer"
+        },
+        "profile": {
+          "$comment": "The profile it used, which triage reads.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "fix": {
+      "$comment": "A fix round: who started it, its note, what the agent found, the checks that still failed after it.",
+      "type": "object",
+      "properties": {
+        "round": {
+          "type": "integer"
+        },
+        "auto": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cause": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diagnosis": {
+          "type": "boolean"
+        },
+        "failing": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "signature": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "conflicts": {
+          "$comment": "The files a merge of the base had conflicts in; [] when it merged cleanly, null without a merge.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "head": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": []
+    },
+    "rounds": {
+      "$comment": "Earlier rounds: the recorded fix rounds, the fix round of this run that the review follows, and the checks a diagnosis round looks into.",
+      "type": "object",
+      "properties": {
+        "fixes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fix"
+          }
+        },
+        "current": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/fix"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outsidePlan": {
+          "$comment": "What the implement round did outside the plan, as it wrote it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diagnose": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "signature"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "check": {
+      "$comment": "A check's result with the end of its output and earlier lines that report a failure.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "run": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "exitCode": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "output": {
+          "type": "string"
+        },
+        "failureLines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outputCut": {
+          "type": "boolean"
+        },
+        "shard": {
+          "type": "string"
+        },
+        "skipped": {
+          "$comment": "The version it passed on, when it did not run again.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "run",
+        "passed"
+      ]
+    },
+    "required": {
+      "$comment": "A required check of the host's CI that failed, so the accept was refused.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": []
+    },
+    "checks": {
+      "$comment": "The results of the checks: in a fix round the last recorded, in a review this round's.",
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        },
+        "required": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/required"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "properties": {
+        "severity": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "body": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "severity",
+        "body"
+      ]
+    },
+    "review": {
+      "$comment": "The last review of the change.",
+      "type": "object",
+      "properties": {
+        "round": {
+          "type": "integer"
+        },
+        "head": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "leftOut": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "findings"
+      ]
+    },
+    "said": {
+      "$comment": "What a person said on the change's version: a review with its state, or a comment on a line.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "review",
+            "comment"
+          ]
+        },
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "author": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "author",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "findings": {
+      "type": "object",
+      "properties": {
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/review"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "people": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/said"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "linkedText": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$comment": "A comment, the engine's plan, or the text of an item or a change.",
+          "enum": [
+            "comment",
+            "plan",
+            "item"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/number"
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "$ref": "../common.schema.json#/$defs/time"
+        },
+        "on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "change": {
+          "type": "boolean"
+        },
+        "nexkit": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "above": {
+      "$comment": "An item a part was split from.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "$comment": "Null when the host did not read its text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "discussion": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "body",
+        "discussion"
+      ],
+      "additionalProperties": false
+    },
+    "linked": {
+      "$comment": "What the item refers to and the agent cannot open itself.",
+      "type": "object",
+      "properties": {
+        "texts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/linkedText"
+          }
+        },
+        "chain": {
+          "$comment": "The items the item was split from, nearest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/above"
+          }
+        },
+        "notRead": {
+          "$comment": "Each link the host did not read, and why, in its words.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/number"
+        },
+        "url": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "missing": {
+                "type": "string"
+              },
+              "count": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "passedSince": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/number"
+                },
+                "sha": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "files",
+        "missing"
+      ]
+    },
+    "ciEvidence": {
+      "$comment": "What the CI runs the item names left, downloaded outside the working tree.",
+      "type": "object",
+      "properties": {
+        "folder": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/run"
+          }
+        },
+        "leftOut": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keeps": {
+          "$comment": "The most bytes a round keeps of the runs.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "folder",
+        "runs"
+      ]
+    },
+    "resultsEvidence": {
+      "$comment": "The result files the failing checks kept, downloaded outside the working tree.",
+      "type": "object",
+      "properties": {
+        "folder": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "run": {
+                "type": "string"
+              },
+              "folder": {
+                "type": "string"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "folder": {
+                      "type": "boolean"
+                    },
+                    "files": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "folder",
+                    "files"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "leftOut": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "run",
+              "folder",
+              "paths"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "keeps": {
+          "$comment": "The most bytes of result files one check job keeps, and each of several.",
+          "type": "object",
+          "properties": {
+            "one": {
+              "type": "integer"
+            },
+            "several": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "one",
+            "several"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "folder",
+        "checks"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "ci": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ciEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "results": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/resultsEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "parts": {
+      "$comment": "The earlier parts of the same split that a part relies on, oldest first.",
+      "type": "object",
+      "properties": {
+        "parent": {
+          "$ref": "#/$defs/number"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/number"
+              },
+              "title": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "plan": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "state",
+              "body"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "parent",
+        "parts"
+      ],
+      "additionalProperties": false
+    },
+    "diff": {
+      "$comment": "The change, from the host's workspace. `merging` is the version of the base a fix round merges in and the files it conflicts in.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "$comment": "What the change goes onto, such as a branch.",
+          "type": "string"
+        },
+        "text": {
+          "$comment": "The change against its base.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "$comment": "The change since the version the last review read; null when the host cannot show it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "merging": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "commit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "files": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "commit",
+                "files"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sides": {
+          "$comment": "In the files a merge of the base in this run's fix round conflicted in: the base's changes, then the change's.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "workspace": {
+      "$comment": "What the agent's workspace gives it: the checks it can run, the paths only a person changes, and the time the implement stage has.",
+      "type": "object",
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "run": {
+                "type": "string"
+              },
+              "slow": {
+                "type": "boolean"
+              },
+              "shards": {
+                "type": "object",
+                "properties": {
+                  "max": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "max"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "name",
+              "run"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "protectedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "implementMinutes": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "checks",
+        "protectedPaths",
+        "implementMinutes"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -19,7 +19,7 @@ nexkit-engine = "nexkit.engine.cli:main"
 include = ["nexkit*"]
 
 [tool.setuptools.package-data]
-nexkit = ["prompts/*.md", "templates/*", "protocol/v1/*.json", "protocol/v1/*/*.json"]
+nexkit = ["engine/prompts/*.md", "templates/*", "protocol/v1/*.json", "protocol/v1/*/*.json"]
 
 [tool.ruff]
 target-version = "py312"

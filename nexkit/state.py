@@ -13,11 +13,11 @@ import hashlib
 import json
 import re
 
+from .engine.text import MAX_PARTS, clip
+from .engine.text import TEXT_LIMIT as TEXT_LIMIT
 from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
 from .schema import filled
 
-# GitHub keeps at most this many characters in an issue's body or a comment.
-TEXT_LIMIT = 65_536
 ACTIONS_BOT = "github-actions[bot]"
 # Who writes as NexKit: the App that `use_app` names, and only it. A pull request's own CI
 # can write as the Actions bot, and NexKit's App starts that CI on code that an agent wrote,
@@ -83,10 +83,6 @@ def conflict_rounds_used(rounds):
 
 
 RUN_LABELS = {RUNNING: "running", PAUSED: "paused", CONTINUED: "continued"}
-# The most parts a split may have. The plan prompt says so, and autopilot files a split
-# whole or not at all: a plan with more parts is asked again for fewer, larger ones, which
-# may split again in turn (see `autopilot.MAX_DEPTH`).
-MAX_PARTS = 10
 # Where the docs say what a person does at each stop.
 TROUBLESHOOTING = "https://github.com/phuongnse/nexkit/blob/main/docs/troubleshooting.md"
 PROTECTED_ENTRY = f"{TROUBLESHOOTING}#the-plans-change-is-in-protected-paths"
@@ -107,11 +103,6 @@ def is_bot(login):
 
 def by_bot(comment):
     return is_bot((comment.get("user") or {}).get("login"))
-
-
-def clip(text, limit=4000):
-    text = (text or "").strip()
-    return text if len(text) <= limit else text[:limit] + "\n[truncated]"
 
 
 def latest_plan(comments):

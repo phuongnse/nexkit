@@ -7,6 +7,7 @@ import json
 import re
 from pathlib import Path
 
+from .engine.text import checklist_item
 from .globs import GlobError, compile_globs
 from .runtimes import PROVIDERS, REMOVED, RUNTIMES, SECRET_SLOTS
 from .runtimes.base import SECRET_NAME, AgentConfigError
@@ -426,17 +427,6 @@ def _secret_slots(cfg):
                 f"The {job} stage can need {len(names)} agent secrets ({', '.join(names)}); "
                 f"NexKit passes at most {SECRET_SLOTS} to one job"
             )
-
-
-def checklist_item(item):
-    """The text of a `review.checklist` item: a string, or {"text", "person"}."""
-    return item["text"] if isinstance(item, dict) else item
-
-
-def person_decides(item):
-    """Whether only a person decides a `review.checklist` item that is not met, such as one
-    that accepts a risk: NexKit starts no fix round for it, and merges on their approval."""
-    return isinstance(item, dict) and item.get("person") is True
 
 
 def _checklist(items):

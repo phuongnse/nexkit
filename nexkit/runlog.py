@@ -13,6 +13,7 @@ import secrets
 import time
 from pathlib import Path
 
+from .engine.text import fence
 from .runtimes.base import TOKENS
 
 HEAD_LINES = 20
@@ -92,12 +93,6 @@ def stopped(text):
     while token in text:
         token = secrets.token_hex(16)
     return f"::stop-commands::{token}\n{text}\n::{token}::"
-
-
-def fence(text, char="`"):
-    """A code fence longer than any run of `char` in the text."""
-    runs = re.findall(f"{re.escape(char)}+", text)
-    return char * max([3, *(len(run) + 1 for run in runs)])
 
 
 def code(text):

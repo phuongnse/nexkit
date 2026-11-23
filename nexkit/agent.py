@@ -13,40 +13,35 @@ import threading
 import time
 import uuid
 from dataclasses import replace
-from functools import partial
-from importlib import resources
 from pathlib import Path
-from string import Template
 
 from . import config as configuration
 from . import protocol
-from .checks import (
-    BASE_SHA,
-    SHARD,
-    environment,
-    known_base,
-    output_text,
-    results_limit,
-    shown_command,
-)
-from .context import Shelf
-from .evidence import EVIDENCE_LIMIT, since_text
+from .checks import BASE_SHA, environment, known_base, results_limit
+from .context import keep_texts
+from .engine import prompt as engine_prompt
+from .engine.prompt import check_results_text as check_results_text
+from .engine.prompt import conflicts_text as conflicts_text
+from .engine.prompt import diagnosis_text as diagnosis_text
+from .engine.prompt import previous_plan as previous_plan
+from .engine.prompt import result_prompt as result_prompt
+from .engine.prompt import shortened_names as shortened_names
+from .engine.prompt import shortened_text as shortened_text
+from .engine.text import checklist_item, person_decides
+from .evidence import EVIDENCE_LIMIT
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import AgentConfigError, Spec
 from .schema import filled, problems
-from .state import MAX_PARTS
 from .usage import schedule
 
-MAX_DIFF = 80_000
 # The most time a session gets to give its result alone, after a run without one that fits.
 RESULT_SECONDS = 600
 NO_RESULT_AGAIN = (
     "NexKit asked the same session for its result alone, and it gave none that fits either."
 )
-NO_EARLIER_FIXES = "None. This is the first fix round of this pull request."
 # A conflict marker at the start of a line: `<<<<<<< ours`, `>>>>>>> theirs`, `||||||| base`.
 CONFLICT_MARKER = re.compile(rb"^(<{7}|>{7}|\|{7})( |$)", re.M)
 BOT = ("-c", "user.name=nexkit", "-c", "user.email=nexkit@localhost")
@@ -59,6 +54,9 @@ HOLDING_TRIES = 50
 # recommends and the one that only closes the issue (`route.closing_answer`), counting from
 # 1, and a blocked round's the options that change the issue's scope, which a new plan
 # carries out (`autopilot._stopped`).
+# The prompts' templates are the engine's.
+_template = engine_prompt.template
+
 SCHEMAS = {
     stage: protocol.load(f"results/{stage}.schema.json")
     for stage in ("plan", "implement", "fix", "triage", "review")
@@ -110,10 +108,6 @@ CHECKLIST = {
 }
 
 
-# How the prompts mark a checklist item that a person decides.
-PERSON_MARK = "(a person decides)"
-
-
 def with_checklist(schema, stage, cfg):
     """`schema` with the checklist field, when this stage answers a checklist."""
     if stage not in CHECKLIST or not cfg["review"]["checklist"]:
@@ -128,21 +122,8 @@ def with_checklist(schema, stage, cfg):
 
 
 def checklist_text(stage, cfg):
-    """The prompt's section about `review.checklist`, or "" without items or for a stage
-    that does not answer them, so that its prompt stays as it is."""
-    items = cfg["review"]["checklist"]
-    if stage not in CHECKLIST or not items:
-        return ""
-    numbered = "\n".join(
-        f"{number}. {configuration.checklist_item(item)}"
-        + (f" {PERSON_MARK}" if configuration.person_decides(item) else "")
-        for number, item in enumerate(items, 1)
-    )
-    text = Template(_template(f"{stage}_checklist")).safe_substitute(items=numbered).rstrip()
-    if any(configuration.person_decides(item) for item in items):
-        person = Template(_template(f"{stage}_checklist_person")).safe_substitute(mark=PERSON_MARK)
-        text = f"{text}\n\n{person.rstrip()}"
-    return text
+    """The prompt's section about `review.checklist` (`engine.prompt.checklist_text`)."""
+    return engine_prompt.checklist_text(stage, cfg["review"]["checklist"])
 
 
 def drop_criteria(result, stage, context):
@@ -187,87 +168,12 @@ def answer_checklist(result, stage, cfg):
             # Only the fields the schema asks for: what a person decides comes from the
             # configuration, never from the agent.
             **{key: given[number][key] for key in CHECKLIST[stage] if key in given[number]},
-            "item": configuration.checklist_item(item),
-            **({"person": True} if configuration.person_decides(item) else {}),
+            "item": checklist_item(item),
+            **({"person": True} if person_decides(item) else {}),
         }
         for number, item in enumerate(items, 1)
         if number in given
     ]
-
-
-def _check_lines(checks, indent="  "):
-    return [
-        f"{indent}- `{c['name']}`: `{c['run']}`"
-        + (
-            f" (NexKit runs it in up to {c['shards']['max']} shards, each with `{SHARD}=k/N`)"
-            if c.get("shards")
-            else ""
-        )
-        for c in checks
-    ]
-
-
-def _checks_text(cfg):
-    if not cfg["checks"]:
-        return "  - No checks are configured. Run the project's usual tests if there are any."
-    return "\n".join(_check_lines(cfg["checks"]))
-
-
-def _round_checks_text(cfg):
-    """The checks of the implement and fix prompts. The agent runs the fast ones in full; of
-    a slow check, only the tests that cover its change, since NexKit runs every check after
-    the round. With no check marked slow, the list is the same as `_checks_text`."""
-    slow = [c for c in cfg["checks"] if c["slow"]]
-    if not slow:
-        return _checks_text(cfg)
-    lines = _check_lines([c for c in cfg["checks"] if not c["slow"]])
-    lines.append(
-        "  - NexKit runs these slow checks after your round. Do not run them in full. Run\n"
-        "    only the tests in them that cover your change or that failed, as narrowly as\n"
-        "    the repository's instructions allow (for example one test file):"
-    )
-    return "\n".join(lines + _check_lines(slow, indent="    "))
-
-
-# What the review prompt shows of a failing check's output: its end, and before it this many
-# lines that report a failure.
-REVIEW_OUTPUT_TAIL = 3_000
-REVIEW_FAILURE_LINES = 10
-
-
-def check_results_text(results, shelf=None):
-    """The review prompt's check results. The whole output of a failing check that it does
-    not show whole goes to `shelf`, and the prompt names its file."""
-    if not results:
-        return "No checks are configured."
-    shelf = shelf or Shelf()
-    lines = []
-    for number, item in enumerate(results, 1):
-        state = "passed" if item["passed"] else f"FAILED (exit {item['exit_code']})"
-        if item["passed"] and item.get("skipped"):
-            # NexKit did not run it: no path it reads changed since it passed there.
-            state = f"passed on `{item['skipped'][:7]}`; no path it reads changed since"
-        lines.append(f"- `{item['name']}` (`{shown_command(item)}`): {state}")
-        if not item["passed"]:
-            key = f"check-{number}-{item['name']}"
-            output = output_text(
-                item,
-                REVIEW_OUTPUT_TAIL,
-                REVIEW_FAILURE_LINES,
-                partial(shelf.store, key),
-            )
-            lines.append(f"\n{output}\n")
-    return "\n".join(lines).strip()
-
-
-def _clip_diff(diff, limit=MAX_DIFF):
-    if len(diff) > limit:
-        diff = diff[:limit] + "\n[diff truncated; read the changed files directly]"
-    return diff
-
-
-def _files(files):
-    return "\n".join(f"- `{name}`" for name in files)
 
 
 def _since(repo, commit, base):
@@ -284,163 +190,45 @@ def _since(repo, commit, base):
 
 
 def review_diff(repo, base):
-    return _clip_diff(git(repo, "diff", f"origin/{base}...HEAD")) or "(no changes)"
+    return engine_prompt.diff_text(git(repo, "diff", f"origin/{base}...HEAD"))
+
+
+def since_review(repo, context, base):
+    """The diff from the previously reviewed commit to HEAD, or None when the checkout does
+    not have that commit or there was no previous review."""
+    commit = context.get("previous_head") or ""
+    if not engine_prompt.COMMIT.fullmatch(commit):
+        return None
+    try:
+        return git(repo, "diff", _since(repo, commit, base), "HEAD")
+    except GitError:
+        return None
 
 
 def previous_round(repo, context, base):
     """The review prompt's section about the previous review round, or "" for the first."""
-    commit = context.get("previous_head") or ""
-    if not commit:
-        return ""
-    if not re.fullmatch(r"[0-9a-f]{40}", commit):
-        changes = "(the previously reviewed commit is unknown; use the full diff)"
-    else:
-        try:
-            changes = _clip_diff(git(repo, "diff", _since(repo, commit, base), "HEAD"))
-            changes = changes or "(no changes since the previous review)"
-        except GitError:
-            changes = f"(commit {commit[:7]} is not in this checkout; use the full diff)"
-    return Template(_template("review_previous")).safe_substitute(
-        previous_head=commit[:7],
-        previous_round=context["previous_round"],
-        changes=changes,
-        base=base,
-    )
+    return engine_prompt.previous_round(context, base, since_review(repo, context, base))
 
 
-def previous_plan(context):
-    """The plan prompt's section about the latest plan, or "" for a first plan."""
-    if "since_plan" not in context:
-        return ""
-    return Template(_template("plan_previous")).safe_substitute(
-        plan=context["plan"], since_plan=context["since_plan"]
-    )
-
-
-def earlier_parts_text(context):
-    """The plan prompt's section about the earlier parts that a part of a split relies
-    on, or "" for an issue that is not such a part."""
-    earlier = context.get("earlier") or {}
-    if not earlier.get("parts"):
-        return ""
-    blocks = []
-    for part in earlier["parts"]:
-        state = "closed" if part.get("state") == "closed" else "still open"
-        lines = [f"### #{part['number']}: {part['title']} ({state})", "", part["body"]]
-        if part.get("plan"):
-            lines += ["", "Its latest plan:", "", part["plan"]]
-        blocks.append("\n".join(lines))
-    return Template(_template("plan_parts")).safe_substitute(
-        parent=earlier["parent"], parts="\n\n".join(blocks)
-    )
-
-
-# What each stage does with the texts NexKit read for it, and with those it could not read.
-LINKED_USE = {
-    "plan": "When what this issue asks depends on a text listed under *Links NexKit did not "
-    "read*, and nothing shown here, in the discussion or in the repository settles it, do not "
-    "guess: ask a question about it with `recommended` 0, so that a person answers it.",
-    "implement": "When what this issue asks depends on a text listed under *Links NexKit did "
-    "not read*, and nothing shown here, in the plan, in the discussion or in the repository "
-    "settles it, do not guess: stop and return `status: blocked` with a question about it, "
-    "with `recommended` 0, so that a person answers it.",
-    "review": "Check the change against what these texts require, as you check the plan's "
-    "criteria: a change that breaks a rule they set is a blocking finding. When a text listed "
-    "under *Links NexKit did not read* may hold a rule the change must follow, say so in a "
-    "finding that is not blocking.",
-}
-LINKED_USE["fix"] = LINKED_USE["implement"]
-
-
-def linked_text(context, stage=None):
-    """The plan, implement, fix and review prompts' section about what the issue refers to:
-    for a part of a split, the issues it was split from, root first, and the texts that the
-    issue and those issues link to, with what NexKit could not read, or "" without any.
-    `context["linked"]` comes from `context.linked`."""
-    found = context.get("linked") or {}
-    blocks = []
-    chain = found.get("chain") or []
-    if chain:
-        names = ["this issue"] + [f"#{above['number']}" for above in chain]
-        steps = ", and ".join(
-            f"{names[index]} from {names[index + 1]}" for index in range(len(chain))
-        )
-        lines = [
-            "### The issues this issue was split from",
-            "",
-            f"NexKit or a person split {steps}: each is a sub-issue of the next. Their texts "
-            "and their discussions hold what this issue refers to, such as rules agreed there. "
-            "Where they differ, the nearer issue decides, and this issue's own text decides "
-            "over all of them.",
-        ]
-        for index in range(len(chain) - 1, -1, -1):
-            above = chain[index]
-            number = above["number"]
-            lines += [
-                "",
-                f"#### #{number}: {above['title']}",
-                "",
-                f"The issue {names[index]} was split from.",
-                "",
-                above["body"],
-                "",
-                f"##### Discussion of #{number}",
-                "",
-                above["discussion"],
-            ]
-        blocks.append("\n".join(lines))
-    if found.get("comments"):
-        sources = (
-            "the issue, the issues above or a collaborator's comment on them"
-            if chain
-            else "the issue or a collaborator's comment on it"
-        )
-        blocks.append(
-            "### Texts linked from these issues\n\n"
-            f"Each comment, issue and pull request of this repository that {sources} links "
-            "to, the first linked first. Of an issue or a pull request, NexKit read only its "
-            "text: a comment of its discussion counts only when it is linked itself.\n\n"
-            f"{found['comments']}"
-        )
-    skipped = found.get("skipped") or []
-    if skipped:
-        lines = "\n".join(f"- {line}" for line in skipped)
-        blocks.append(f"### Links NexKit did not read\n\n{lines}")
-    if not blocks:
-        return ""
-    use = LINKED_USE.get(stage, "")
-    if stage != "review" and not skipped:
-        use = ""
-    return (
-        Template(_template("linked")).safe_substitute(
-            texts="\n\n".join(blocks), use=f"\n{use}\n" if use else ""
-        )
-        + "\n"
-    )
+def merge_sides(repo, context):
+    """What the base and the pull request each changed, since their fork, in the files a
+    merge of the base branch in this run's fix round conflicted in; None when the checkout
+    cannot show them or there was no such merge."""
+    merged = context.get("merged") or {}
+    head, commit, files = merged.get("head"), merged.get("base"), merged.get("conflicts")
+    if not files or not all(engine_prompt.COMMIT.fullmatch(c or "") for c in (head, commit)):
+        return None
+    try:
+        fork = git(repo, "merge-base", head, commit).strip()
+        return [git(repo, "diff", fork, side, "--", *files) for side in (commit, head)]
+    except GitError:
+        return None
 
 
 def merge_review(repo, context, base):
     """The review prompt's section about a merge of the base branch in this run's fix round,
     with what each side changed in the conflicted files, or ""."""
-    merged = context.get("merged") or {}
-    head, commit, files = merged.get("head"), merged.get("base"), merged.get("conflicts")
-    if not files or not all(re.fullmatch(r"[0-9a-f]{40}", c or "") for c in (head, commit)):
-        return ""
-    try:
-        fork = git(repo, "merge-base", head, commit).strip()
-        sides = [
-            _clip_diff(git(repo, "diff", fork, side, "--", *files), MAX_DIFF // 4) or "(none)"
-            for side in (commit, head)
-        ]
-    except GitError:
-        sides = ["(not available in this checkout; read the files directly)"] * 2
-    return Template(_template("review_merge")).safe_substitute(
-        base=base,
-        base_commit=commit[:7],
-        files=_files(files),
-        base_side=sides[0],
-        pr_side=sides[1],
-    )
+    return engine_prompt.merge_review(context, base, merge_sides(repo, context))
 
 
 def _patch_id(repo, old, new):
@@ -584,88 +372,20 @@ def own_merge(repo, base, merged):
     return heads[0], None
 
 
-def conflicts_text(base, commit, files):
-    """The fix prompt's section about a merge of the base branch, or ""."""
-    if not commit:
-        return ""
-    text = Template(_template("fix_conflicts" if files else "fix_merged")).safe_substitute(
-        base=base, base_commit=commit[:7], files=_files(files)
-    )
-    return text + "\n"
+# What the host keeps of evidence, which the prompts name.
+KEEPS = {"ci": EVIDENCE_LIMIT, "results": {"one": results_limit(1), "several": results_limit(2)}}
 
 
 def evidence_text(found):
-    """The fix prompt's section about the failing checks' result files, or "" without any.
-    `found` comes from `context.evidence`."""
-    if not found:
-        return ""
-    lines = []
-    for check in found["checks"]:
-        name, run, folder = check["name"], check["run"], check["folder"]
-        lines.append(f"- Failing check `{name}` (`{run}`): `{folder}/`")
-        for item in check["paths"]:
-            if item["folder"]:
-                files = "1 file" if item["files"] == 1 else f"{item['files']} files"
-                lines.append(f"  - `{item['path']}/`: a folder with {files}")
-            else:
-                lines.append(f"  - `{item['path']}`: a file")
-        if check.get("left_out"):
-            lines.append(
-                f"  - {check['left_out']} more files were left out: a check job keeps at most "
-                f"{results_limit(1) // 1_000_000} MB of result files, "
-                f"{results_limit(2) // 1_000_000} MB when the checks run in several jobs."
-            )
-    text = Template(_template("fix_evidence")).safe_substitute(
-        folder=found["folder"], checks="\n".join(lines)
-    )
-    return text + "\n"
+    """The fix prompt's section about the failing checks' result files
+    (`engine.prompt.evidence_text`)."""
+    return engine_prompt.evidence_text(found, KEEPS["results"])
 
 
 def ci_evidence_text(found):
-    """The plan, implement and fix prompts' section about the CI runs the issue names, or
-    "" without any. `found` comes from `evidence.collect`."""
-    if not found or not (found["runs"] or found.get("skipped")):
-        return ""
-    lines = []
-    for run in found["runs"]:
-        lines.append(f"- Run {run['id']}" + (f", {run['url']}" if run["url"] else "") + ":")
-        for item in run["files"]:
-            if "missing" in item:
-                lines.append(f"  - `{item['path']}`: missing, {item['missing']}")
-            elif item.get("count"):
-                lines.append(f"  - `{item['path']}`: an artifact, {item['count']}")
-            else:
-                lines.append(f"  - `{item['path']}`")
-        lines += [f"  - Missing: {reason}." for reason in run["missing"]]
-        if run.get("workflow"):
-            lines.append(f"  - Since: {since_text(run)}.")
-    if found.get("left_out"):
-        limit = EVIDENCE_LIMIT // 1_000_000
-        lines.append(
-            f"- Left out, past the {limit} MB a round keeps: " + "; ".join(found["left_out"])
-        )
-    lines += [f"- Not collected: {reason}." for reason in found.get("skipped") or []]
-    text = Template(_template("ci_evidence")).safe_substitute(
-        folder=found["folder"], runs="\n".join(lines)
-    )
-    return text + "\n"
-
-
-def shortened_text(context):
-    """The plan, implement, fix and review prompts' section about the texts the prompt
-    keeps only the start of or leaves out, or "" without any. `context["shortened"]` comes
-    from `context.gather`."""
-    items = [item for item in context.get("shortened") or [] if item.get("path")]
-    if not items:
-        return ""
-    lines = [
-        f"- {item['name']}: left out here, all {item['left_out']} whole in `{item['path']}`"
-        if item.get("left_out")
-        else f"- {item['name']}: the first {item['kept']:,} of {item['length']:,} characters "
-        f"here, the whole text in `{item['path']}`"
-        for item in items
-    ]
-    return Template(_template("shortened")).safe_substitute(texts="\n".join(lines)) + "\n"
+    """The plan, implement and fix prompts' section about the CI runs the issue names
+    (`engine.prompt.ci_evidence_text`). `found` comes from `evidence.collect`."""
+    return engine_prompt.ci_evidence_text(found, KEEPS["ci"])
 
 
 def shortened_folders(context):
@@ -675,24 +395,6 @@ def shortened_folders(context):
     paths += context.get("check_outputs") or []
     found = {str(Path(path).parent) for path in paths}
     return sorted(folder for folder in found if folder != "." and Path(folder).is_dir())
-
-
-def shortened_names(context):
-    """For the round's comment: which texts the prompt shortened, and by how much, or how
-    many it left out."""
-    return [
-        {key: item[key] for key in ("name", "kept", "length", "left_out") if key in item}
-        for item in context.get("shortened") or []
-    ]
-
-
-def diagnosis_text(repeated):
-    """The fix prompt's section for a diagnosis round, or "" for any other round.
-    `repeated` comes from `context.diagnosis`."""
-    if not repeated:
-        return ""
-    items = "\n".join(f"- `{item['name']}`: `{item['signature']}`" for item in repeated)
-    return Template(_template("fix_diagnosis")).safe_substitute(repeated=items)
 
 
 def _cause(result):
@@ -824,31 +526,27 @@ def leftover_markers(repo, files):
     return found
 
 
-def _template(name):
-    return resources.files("nexkit").joinpath(f"prompts/{name}.md").read_text()
+def settings(cfg):
+    """What a prompt reads of the configuration: the workspace's checks, protected paths
+    and the implement stage's time, and `review.checklist`."""
+    return {
+        "checks": [
+            {
+                "name": check["name"],
+                "run": check["run"],
+                "slow": bool(check.get("slow")),
+                **({"shards": {"max": check["shards"]["max"]}} if check.get("shards") else {}),
+            }
+            for check in cfg["checks"]
+        ],
+        "protected_paths": list(cfg["protected_paths"]),
+        "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
+        "checklist": cfg["review"]["checklist"],
+    }
 
 
 def build_prompt(stage, context, cfg, extra=None):
-    template = _template(stage)
-    protected = ", ".join(f"`{p}`" for p in cfg["protected_paths"])
-    person = bool(context.get("person"))
-    limits = Template(_template("review_limits_person" if person else "review_limits"))
-    values = {
-        **context,
-        "checks": _checks_text(cfg),
-        "round_checks": _round_checks_text(cfg),
-        "writing": _template("writing"),
-        "protected": protected,
-        "limits": limits.safe_substitute(protected=protected).rstrip(),
-        "person": _template("review_person") if person else "",
-        "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
-        "checklist": checklist_text(stage, cfg),
-        "earlier_parts": earlier_parts_text(context),
-        "linked": linked_text(context, stage),
-        "max_parts": MAX_PARTS,
-        **(extra or {}),
-    }
-    return Template(template).safe_substitute({k: str(v) for k, v in values.items()})
+    return engine_prompt.build(stage, context, settings(cfg), extra)
 
 
 def stage_schema(stage, cfg):
@@ -1153,11 +851,6 @@ def unfit(result):
     return result["status"] == "error" and bool(result.get("unfit")) and not result.get("transient")
 
 
-def result_prompt(stage, wrong):
-    """The prompt that asks a session that did its work for its result alone."""
-    return Template(_template("result_again")).safe_substitute(stage=stage, wrong=wrong)
-
-
 def asked_again(first, second):
     """The result of a session asked for its result alone: the second answer, with the time
     and tokens of both runs. `asked_again` says it was asked. A request that ran out of its
@@ -1298,21 +991,16 @@ def run_triage(context, cfg, previous, out_dir, *, program=None):
     out = Path(out_dir) / "triage"
     out.mkdir(parents=True, exist_ok=True)
     profiles = cfg["profiles"]
-    extra = {
-        "requests": context.get("requests") or context["discussion"],
-        "profiles": "\n".join(f"- `{name}`: {p['when'].strip()}" for name, p in profiles.items()),
-        "previous": f"The latest plan of this issue used the profile `{previous}`."
-        if previous
-        else "None. This is the first plan of this issue with a profile.",
-    }
-    prompt = build_prompt("triage", context, cfg, extra)
-    (out / "prompt.md").write_text(prompt, encoding="utf-8")
+    whens = {name: p["when"] for name, p in profiles.items()}
+    extra = engine_prompt.triage_extras(context, whens, previous)
+    text = build_prompt("triage", context, cfg, extra)
+    (out / "prompt.md").write_text(text, encoding="utf-8")
     redact = Redactor()
     # An empty directory, so the repository's agent settings and instructions do not load.
     with tempfile.TemporaryDirectory() as empty:
         result, calls = run_agent(
             "triage",
-            prompt,
+            text,
             cfg,
             cwd=empty,
             redact=redact,
@@ -1357,39 +1045,32 @@ def run_stage(
     `commits` gives NEXKIT_BASE_SHA and NEXKIT_VERIFIED_SHA (see `checks.find_commits`)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    extra = {}
     start = base_commit = merged = None
     conflicts = []
     if stage in ("implement", "fix"):
         start, base_commit = baseline(repo)
     found = context.get("ci_evidence") if stage in ("plan", "implement", "fix") else None
-    if stage in ("plan", "implement", "fix"):
-        extra["ci_evidence"] = ci_evidence_text(found)
     if stage == "fix":
         merged, conflicts = merge_base_branch(repo, base, bool(context.get("merge_moved_base")))
-        extra["conflicts"] = conflicts_text(base, merged, conflicts)
-        extra["evidence"] = evidence_text(context.get("evidence"))
-        extra["earlier_fixes"] = context.get("earlier_fixes") or NO_EARLIER_FIXES
-        extra["diagnosis"] = diagnosis_text(context.get("diagnose"))
         if merged:
             # Once committed, the merge has the merged base commit as its merge base.
             commits = {**(commits or {}), BASE_SHA: known_base(repo, merged)}
-    if stage == "plan":
-        extra["previous"] = previous_plan(context)
+    # Beside the context's texts, outside the working tree; the agent's artifact keeps them.
+    outputs = engine_prompt.Shelf((out / "texts").resolve())
+    facts = {"base": base or "", "merging": {"commit": merged, "files": conflicts}}
     if stage == "review":
-        # Beside the context's texts, outside the working tree; the agent's artifact keeps them.
-        outputs = Shelf(out / "texts")
-        extra = {
-            "base": base,
-            "diff": review_diff(repo, base),
-            "check_results": check_results_text(checks, outputs),
-            "previous": previous_round(repo, context, base),
-            "merge": merge_review(repo, context, base),
-        }
+        facts.update(
+            diff=git(repo, "diff", f"origin/{base}...HEAD"),
+            since=since_review(repo, context, base),
+            sides=merge_sides(repo, context),
+            checks=checks,
+        )
+    extra = engine_prompt.extras(stage, context, keeps=KEEPS, shelf=outputs, **facts)
+    keep_texts({"path": path, "text": text} for path, text in outputs.files.items())
+    if stage == "review":
         context = {**context, "check_outputs": outputs.stored}
-    extra["shortened"] = shortened_text(context)
-    prompt = build_prompt(stage, context, cfg, extra)
-    (out / "prompt.md").write_text(prompt, encoding="utf-8")
+    text = build_prompt(stage, context, cfg, extra)
+    (out / "prompt.md").write_text(text, encoding="utf-8")
 
     redact = Redactor()
     protected = [name for name in conflicts if configuration.is_protected(name, cfg)]
@@ -1413,7 +1094,7 @@ def run_stage(
 
     result, calls = run_agent(
         stage,
-        prompt,
+        text,
         cfg,
         cwd=repo,
         redact=redact,

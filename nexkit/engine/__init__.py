@@ -6,9 +6,10 @@ from __future__ import annotations
 import json
 
 from .. import protocol
+from . import prompt
 from .machine import EngineError, step
 
-CALLS = ("step",)
+CALLS = ("step", "prompt")
 
 
 def answer(request):
@@ -37,6 +38,8 @@ def _answer(request):
     if not isinstance(request, dict) or request.get("call") not in CALLS:
         raise EngineError(f"A request's call must be one of {', '.join(CALLS)}.")
     found = protocol.check(request, f"calls/{request['call']}.schema.json", "request")
+    if request["call"] == "prompt":
+        return _prompt(request, found)
     event = request.get("event") or {}
     kind = event.get("kind")
     if kind not in protocol.names("events"):
@@ -58,3 +61,16 @@ def _result_problems(state, event):
     return protocol.check(
         event["result"], f"actions/{pending['kind']}.result.schema.json", "request.event.result"
     )
+
+
+def _prompt(request, found):
+    """The answer to a `prompt` call: the stage's prompt, from the texts the host fetched."""
+    if not found:
+        missing = prompt.missing(request["stage"], request["inputs"])
+        found = [f"request.inputs.{kind} is missing" for kind in missing]
+    if found:
+        raise EngineError("; ".join(found))
+    written = prompt.answer(
+        request["stage"], request["inputs"], request["policies"], request.get("texts")
+    )
+    return {"protocol": protocol.VERSION, **written}

@@ -19,9 +19,10 @@ from .cli import text
 
 HOST = "127.0.0.1"
 PORT = 8080
-# A request carries one state document, which the protocol keeps small enough for one GitHub
-# comment, with one event and the policies: far below this.
-MAX_BODY = 1 << 20
+# A step request carries one state document, which the protocol keeps small enough for one
+# GitHub comment, with one event and the policies. A prompt request carries the texts a stage
+# reads, each at most GitHub's limit on a comment's length, and its diff: below this.
+MAX_BODY = 16 << 20
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -325,5 +325,348 @@
     ],
     "findings": [],
     "previous_findings": []
+  },
+  "planRecommended": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [
+      {
+        "question": "Read again or retry?",
+        "options": [
+          "Read again",
+          "Retry",
+          "Close it as not reproduced"
+        ],
+        "recommended": 1,
+        "closes": 3
+      }
+    ],
+    "too_large": false,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planClosing": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [
+      {
+        "question": "Read again or retry?",
+        "options": [
+          "Read again",
+          "Retry",
+          "Close it as not reproduced"
+        ],
+        "recommended": 3,
+        "closes": 3
+      }
+    ],
+    "too_large": false,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planCloses": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [
+      {
+        "question": "Read again or retry?",
+        "options": [
+          "Read again",
+          "Retry",
+          "Close it as not reproduced"
+        ],
+        "recommended": 0,
+        "closes": 3
+      }
+    ],
+    "too_large": false,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planNoParts": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": true,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planManyParts": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": true,
+    "split": [
+      {
+        "title": "Part 1",
+        "body": "Part 1.",
+        "depends_on": []
+      },
+      {
+        "title": "Part 2",
+        "body": "Part 2.",
+        "depends_on": [
+          1
+        ]
+      },
+      {
+        "title": "Part 3",
+        "body": "Part 3.",
+        "depends_on": [
+          2
+        ]
+      },
+      {
+        "title": "Part 4",
+        "body": "Part 4.",
+        "depends_on": [
+          3
+        ]
+      },
+      {
+        "title": "Part 5",
+        "body": "Part 5.",
+        "depends_on": [
+          4
+        ]
+      },
+      {
+        "title": "Part 6",
+        "body": "Part 6.",
+        "depends_on": [
+          5
+        ]
+      },
+      {
+        "title": "Part 7",
+        "body": "Part 7.",
+        "depends_on": [
+          6
+        ]
+      },
+      {
+        "title": "Part 8",
+        "body": "Part 8.",
+        "depends_on": [
+          7
+        ]
+      },
+      {
+        "title": "Part 9",
+        "body": "Part 9.",
+        "depends_on": [
+          8
+        ]
+      },
+      {
+        "title": "Part 10",
+        "body": "Part 10.",
+        "depends_on": [
+          9
+        ]
+      },
+      {
+        "title": "Part 11",
+        "body": "Part 11.",
+        "depends_on": [
+          10
+        ]
+      }
+    ],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planSplitAnyOrder": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": true,
+    "split": [
+      {
+        "title": "The schemas",
+        "body": "Part one.",
+        "depends_on": [
+          2
+        ]
+      },
+      {
+        "title": "The step",
+        "body": "Part two.",
+        "depends_on": [
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "title": "The host",
+        "body": "Part three.",
+        "depends_on": [
+          1,
+          2
+        ]
+      }
+    ],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planRepeatsTheTitle": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": true,
+    "split": [
+      {
+        "title": "A work item: the schemas",
+        "body": "Part one.",
+        "depends_on": []
+      },
+      {
+        "title": "The step",
+        "body": "Part two.",
+        "depends_on": [
+          1
+        ]
+      }
+    ],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
   }
 }

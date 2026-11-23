@@ -1,0 +1,64 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "accept": "autoWhenPassed"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planProtected"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "attention": "handMadeChange"
+    },
+    {
+      "event": {
+        "kind": "commented",
+        "by": {
+          "id": "reader",
+          "role": "reader"
+        }
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "show",
+        "runAgent"
+      ]
+    }
+  ]
+}

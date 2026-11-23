@@ -1,0 +1,101 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "accept": "autoWhenPassed",
+    "answers": "recommended"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "show",
+        "runAgent"
+      ],
+      "asked": [
+        "answers"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "attention": "askedAgain",
+      "asked": []
+    },
+    {
+      "event": {
+        "kind": "commented",
+        "by": {
+          "id": "octocat",
+          "role": "writer"
+        }
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "show",
+        "runAgent"
+      ],
+      "asked": [
+        "answers"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "show",
+        "runAgent"
+      ],
+      "asked": []
+    }
+  ]
+}

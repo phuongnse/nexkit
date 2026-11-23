@@ -17,6 +17,14 @@
         "reviewOnly"
       ]
     },
+    "title": {
+      "$comment": "The work item's title, at most 256 characters, as the latest request carried it: the parts of a split may not repeat it.",
+      "type": "string"
+    },
+    "depth": {
+      "$comment": "How many levels of parts the item is below the item first split, as the latest request carried it; 0 when left out.",
+      "type": "integer"
+    },
     "state": {
       "$ref": "common.schema.json#/$defs/state"
     },

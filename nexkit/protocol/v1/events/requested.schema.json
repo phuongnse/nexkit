@@ -38,6 +38,14 @@
     },
     "note": {
       "type": "string"
+    },
+    "title": {
+      "$comment": "The work item's title as it is now, which the parts of a split may not repeat. A request that starts a plan carries it.",
+      "type": "string"
+    },
+    "depth": {
+      "$comment": "For a part of a split, how many levels it is below the item first split, 0 for an item that is no part. A request that starts a plan carries it.",
+      "type": "integer"
     }
   },
   "required": [

@@ -1,0 +1,45 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "attention": "approval"
+    },
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "attention": null
+    }
+  ]
+}

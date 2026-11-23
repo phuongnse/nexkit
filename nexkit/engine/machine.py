@@ -8,6 +8,7 @@ time is the event's, and everything else comes with the call.
 from __future__ import annotations
 
 import copy
+import string
 
 from ..protocol.size import MOST, STATE_LIMIT, fit
 from ..schema import filled
@@ -36,8 +37,14 @@ DEFAULTS = {
     "conflicts": "person",
     "conflictRounds": 3,
     "splits": True,
+    "splitParts": 10,
+    "splitDepth": 3,
     "afterFailure": "person",
 }
+# The most characters of a work item's title that the state keeps, GitHub's own limit.
+TITLE = 256
+# Who may decide for the item, by the role the host gives them.
+WRITERS = ("decides", "writer")
 
 
 class EngineError(ValueError):
@@ -233,6 +240,13 @@ class Step:
 
     def on_requested(self, event):
         what, state = event["what"], self.state
+        if event["by"] is not None:
+            # A person acted, so answers the engine gives next are not given twice in a row.
+            self.forget_answers()
+        if "title" in event:
+            self.s["title"] = event["title"][:TITLE]
+        if "depth" in event:
+            self.s["depth"] = event["depth"]
         if what in ("plan", "planFromScratch", "start") and state in (
             "new",
             "awaitingApproval",
@@ -277,10 +291,33 @@ class Step:
         return True
 
     def on_answered(self, event):
-        if self.state != "awaitingApproval":
+        if self.state != "awaitingApproval" or event["by"]["role"] == "outside":
             return False
+        if self.picks_closing(event["answers"]) and event["by"]["role"] in WRITERS:
+            if self.s["change"]:
+                # A change that exists stays with its item: a person ends both.
+                return False
+            # Another plan could only stop at the same place, so no agent runs.
+            self.cancel_all()
+            self.move("dropped")
+            self.close("notPlanned")
+            return True
+        self.forget_answers()
         self.start_plan()
         return True
+
+    def picks_closing(self, answers):
+        """Whether `answers` pick, for a question of the plan that waits for its answers,
+        the option that only closes the item."""
+        plan = self.s["plan"]
+        if plan is None or plan["approved"]:
+            return False
+        asked = plan["questions"]
+        return any(
+            0 < answer["question"] <= len(asked)
+            and asked[answer["question"] - 1].get("closes", 0) == answer["option"] > 0
+            for answer in answers
+        )
 
     def on_changesRequested(self, event):
         if self.state != "ready" or not self.s["change"]:
@@ -398,7 +435,23 @@ class Step:
         return False
 
     def on_commented(self, event):
-        return False
+        """A person's comment after a plan that waits: with automatic approval, the plan
+        did not hold it, so the item is planned again."""
+        if event["by"]["role"] == "outside":
+            return False
+        # A person acted, so answers the engine gives next are not given twice in a row.
+        answered = "answers" in self.s["asked"]
+        self.forget_answers()
+        plan = self.s["plan"]
+        if (
+            self.state != "awaitingApproval"
+            or self.p["planApproval"] != "autoWhenClean"
+            or plan is None
+            or plan["approved"]
+        ):
+            return answered
+        self.start_plan()
+        return True
 
     def on_blockerClosed(self, event):
         return False
@@ -433,8 +486,13 @@ class Step:
     def take_plan(self, output, text):
         found = output.get("questions", [])[: MOST["questions"]]
         questions = [_question(question) for question in found]
+        # A part needs only earlier parts, so the parts never wait for each other in a cycle.
         split = [
-            {"key": number, "title": part["title"], "needs": part["depends_on"]}
+            {
+                "key": number,
+                "title": part["title"],
+                "needs": sorted({need for need in part["depends_on"] if 0 < need < number}),
+            }
             for number, part in enumerate(output.get("split", []), 1)
         ]
         self.s["plan"] = {
@@ -466,31 +524,96 @@ class Step:
         getattr(self, f"finished_{stage}")(result["output"], number)
 
     def finished_plan(self, output, number):
+        """What follows a plan, as NexKit 6 decides it (docs/how-it-works.md#autopilot):
+        with automatic approval, a plan that is too large splits or is asked again, one that
+        finds no change closes the item, one that needs paths only a person changes waits,
+        questions are answered once in a row or wait, and a clean plan starts the change.
+        Otherwise a person decides every plan."""
+        again = "answers" in self.s["asked"]
+        self.forget_answers()
         self.take_plan(output, {"name": "plan", "ref": number})
         plan = self.s["plan"]
         self.do("show", what="plan", text=plan["text"])
-        if plan["noChange"]:
+        if self.p["planApproval"] != "autoWhenClean":
+            if plan["questions"]:
+                self.ask("question", "The plan has questions for a person.")
+            elif plan["protectedPaths"]:
+                self.ask("handMadeChange", "The change needs paths that only a person changes.")
+            else:
+                self.ask("approval", "The plan waits for its approval.")
+        elif plan["tooLarge"]:
+            self.split_or_ask()
+        elif plan["noChange"]:
             self.move("noChange")
             self.close("completed", {"name": "noChange", "ref": number})
-        elif plan["questions"]:
-            self.move("awaitingApproval")
-            self.need("question", "The plan has questions for a person.")
         elif plan["protectedPaths"]:
-            self.move("awaitingApproval")
-            self.need("handMadeChange", "The change needs paths that only a person changes.")
-        elif self.p["planApproval"] == "autoWhenClean" and plan["tooLarge"]:
-            if plan["split"] and self.p["splits"]:
-                plan["approved"] = True
-                self.start_split()
-            else:
-                self.move("awaitingApproval")
-                self.need("approval", "The plan is too large and names no parts.")
-        elif self.p["planApproval"] == "autoWhenClean":
+            self.ask("handMadeChange", "The change needs paths that only a person changes.")
+        elif plan["questions"]:
+            self.answer_or_ask(again)
+        else:
             plan["approved"] = True
             self.start_change()
+
+    def ask(self, reason, text):
+        self.move("awaitingApproval")
+        self.need(reason, text)
+
+    def forget_answers(self):
+        self.s["asked"] = [name for name in self.s["asked"] if name != "answers"]
+
+    def answer_or_ask(self, again):
+        """Answer the plan's questions with their recommended options, when the policy lets
+        the engine and every question has one, at most once in a row: when the plan that
+        its answers started asks again and no person acted since, a person decides. An
+        answer that only closes the item is always a person's."""
+        plan = self.s["plan"]
+        asked = plan["questions"]
+        if self.p["answers"] != "recommended" or not all(item["recommended"] for item in asked):
+            self.ask("question", "The plan has questions for a person.")
+        elif any(item.get("closes", 0) == item["recommended"] for item in asked):
+            self.ask("closeRecommended", "A recommended answer only closes the work item.")
+        elif again:
+            self.ask("askedAgain", "The plan asks again after the engine's answers.")
         else:
-            self.move("awaitingApproval")
-            self.need("approval", "The plan waits for its approval.")
+            self.s["asked"].append("answers")
+            self.do("show", what="answers", text={"name": "answers", "ref": plan["text"]["ref"]})
+            self.start_plan()
+
+    def split_or_ask(self):
+        """File the parts of a plan that is too large, all or none, or ask for its plan
+        once more: for fewer parts, for parts at all, or for parts titled by their own
+        behaviour. After a second such plan, or at the deepest level of parts, a person
+        decides."""
+        plan = self.s["plan"]
+        if not self.p["splits"]:
+            self.ask("approval", "The plan is too large, and the engine splits no work item.")
+        elif self.s.get("depth", 0) >= self.p["splitDepth"]:
+            self.ask("splitDepth", "The plan is too large, at the deepest level of parts.")
+        elif plan["parts"] > self.p["splitParts"]:
+            self.plan_again("fewer", "tooManyParts", "The plan has too many parts again.")
+        elif not plan["split"]:
+            self.plan_again("parts", "noParts", "The plan is too large and names no parts again.")
+        elif self.repeated_titles():
+            self.plan_again("titles", "partTitles", "Parts repeat the item's title again.")
+        else:
+            plan["approved"] = True
+            self.start_split()
+
+    def plan_again(self, name, reason, text):
+        """Plan once more for what `name` asks, or wait for a person when it was asked."""
+        if name in self.s["asked"]:
+            self.ask(reason, text)
+        else:
+            self.s["asked"].append(name)
+            self.start_plan()
+
+    def repeated_titles(self):
+        """Whether a part is titled by the item's own title, or starts with it, ignoring
+        case, spaces and trailing punctuation: a part is titled by its own behaviour."""
+        own = _bare(self.s.get("title", ""))
+        return bool(own) and any(
+            _bare(part["title"]).startswith(own) for part in self.s["plan"]["split"]
+        )
 
     def finished_implement(self, output, number):
         self.finished_change(output, number)
@@ -593,6 +716,10 @@ class Step:
     def finished_createParts(self, result, number):
         self.s["parts"] = [{"item": part["item"], "state": None} for part in result["parts"]]
         self.s["waits"].append({"id": "parts", "for": "parts", "until": None, "on": None})
+
+
+def _bare(title):
+    return title.strip().rstrip(string.punctuation + string.whitespace).casefold()
 
 
 def _question(question):

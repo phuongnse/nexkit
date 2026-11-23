@@ -44,6 +44,14 @@
     "splits": {
       "type": "boolean"
     },
+    "splitParts": {
+      "$comment": "The most parts a split files; a plan with more is asked once more for fewer.",
+      "type": "integer"
+    },
+    "splitDepth": {
+      "$comment": "How deep parts go: the item first split is at depth 0, and an item at this depth is not split again.",
+      "type": "integer"
+    },
     "afterFailure": {
       "enum": [
         "person",

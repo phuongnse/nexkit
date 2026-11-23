@@ -1,0 +1,50 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "change": {
+          "id": "308",
+          "version": "v1"
+        }
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planCloses"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "answered",
+        "answers": [
+          {
+            "question": 1,
+            "option": 3
+          }
+        ]
+      },
+      "state": "awaitingApproval",
+      "changed": false
+    }
+  ]
+}

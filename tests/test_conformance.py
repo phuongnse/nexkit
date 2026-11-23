@@ -1,9 +1,11 @@
 """The engine's conformance suite (docs/engine.md#conformance).
 
 Each file in tests/conformance/ is a case: the host's policies and events in order, each with
-the state and the kinds of actions it must give. Events name only what a case needs; the
-runner fills in the rest. Every answer is checked against the protocol, and after every call
-each work item that is not final must have an action that runs, a wait, a hold or attention.
+the state and the kinds of actions it must give, and where a case names them, the reason of
+its attention, what the engine asked for, and the earlier parts each part of a split needs.
+Events name only what a case needs; the runner fills in the rest. Every answer is checked
+against the protocol, and after every call each work item that is not final must have an
+action that runs, a wait, a hold or attention.
 """
 
 import copy
@@ -33,6 +35,7 @@ DEFAULTS = {
     "requested": {"by": PERSON, "note": ""},
     "planApproved": {"by": PERSON},
     "answered": {"by": PERSON, "answers": [{"question": 1, "option": 1}], "note": ""},
+    "commented": {"by": PERSON, "text": {"name": "comment", "ref": "9"}},
     "changesRequested": {"by": PERSON, "note": {"name": "comment", "ref": "9"}},
     "changeApproved": {"by": PERSON},
     "dropRequested": {"by": PERSON, "reason": ""},
@@ -146,6 +149,14 @@ class ConformanceTest(unittest.TestCase):
             self.assertEqual(new["state"], step["state"], where)
             if "actions" in step:
                 self.assertEqual([a["kind"] for a in answer["actions"]], step["actions"], where)
+            if "attention" in step:
+                reason = (new["attention"] or {}).get("reason")
+                self.assertEqual(reason, step["attention"], where)
+            if "asked" in step:
+                self.assertEqual(new["asked"], step["asked"], where)
+            if "needs" in step:
+                [parts] = [a["parts"] for a in answer["actions"] if a["kind"] == "createParts"]
+                self.assertEqual([part["needs"] for part in parts], step["needs"], where)
             if new["state"] not in FINAL:
                 carried = new["pending"] or new["waits"] or new["hold"] or new["attention"]
                 self.assertTrue(carried, f"{where}: nothing carries the item on")

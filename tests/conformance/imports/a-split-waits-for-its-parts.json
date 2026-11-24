@@ -1,4 +1,5 @@
 {
+  "kind": "parts open",
   "nexkit6": {
     "issue": {
       "number": 42
@@ -34,7 +35,9 @@
                 "title": "The step",
                 "body": "Part two.",
                 "depends_on": [
-                  1
+                  1,
+                  2,
+                  7
                 ]
               }
             ]
@@ -62,7 +65,7 @@
     "hold": false,
     "waits": [
       {
-        "id": "parts",
+        "id": "w1.1",
         "for": "parts",
         "until": null,
         "on": null
@@ -116,6 +119,8 @@
         "cached": 0,
         "output": 0
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
@@ -129,6 +134,21 @@
         "state": null
       }
     ],
-    "policies": {}
-  }
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "partEnded",
+        "part": "44",
+        "state": "accepted"
+      },
+      "state": "accepted",
+      "changed": true,
+      "actions": [
+        "close"
+      ]
+    }
+  ]
 }

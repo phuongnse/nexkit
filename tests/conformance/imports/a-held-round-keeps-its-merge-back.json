@@ -1,4 +1,5 @@
 {
+  "kind": "held",
   "nexkit6": {
     "issue": {
       "number": 42,
@@ -141,10 +142,26 @@
         "cached": 500,
         "output": 200
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
-  }
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "released",
+        "label": "on-hold"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ]
+    }
+  ]
 }

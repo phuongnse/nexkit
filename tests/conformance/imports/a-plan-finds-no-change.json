@@ -1,4 +1,5 @@
 {
+  "kind": "no change",
   "nexkit6": {
     "issue": {
       "number": 42
@@ -71,10 +72,25 @@
         "cached": 0,
         "output": 0
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
-  }
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "reopened"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ]
+    }
+  ]
 }

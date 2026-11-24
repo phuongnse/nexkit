@@ -1,4 +1,5 @@
 {
+  "kind": "retrying",
   "nexkit6": {
     "issue": {
       "number": 42
@@ -138,7 +139,7 @@
     "hold": false,
     "waits": [
       {
-        "id": "retry",
+        "id": "w1.1",
         "for": "time",
         "until": "2026-11-23T16:00:00Z",
         "on": null
@@ -183,10 +184,26 @@
         "cached": 1000,
         "output": 400
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
-  }
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w1.1"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
 }

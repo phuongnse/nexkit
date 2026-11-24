@@ -1,0 +1,78 @@
+{
+  "kind": "review only",
+  "nexkit6": {
+    "issue": {
+      "number": 400,
+      "pull_request": {}
+    },
+    "pull": {
+      "number": 400,
+      "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "comments": []
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "400",
+    "itemKind": "reviewOnly",
+    "state": "new",
+    "change": {
+      "id": "400",
+      "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "w1.1",
+        "for": "start",
+        "until": null,
+        "on": null
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "person",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    }
+  ]
+}

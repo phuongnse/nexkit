@@ -1,4 +1,5 @@
 {
+  "kind": "new",
   "nexkit6": {
     "issue": {
       "number": 42
@@ -23,16 +24,16 @@
     "hold": false,
     "waits": [
       {
-        "id": "start",
-        "for": "start",
-        "until": null,
-        "on": null
-      },
-      {
-        "id": "blocker-41",
+        "id": "w1.1",
         "for": "blocker",
         "until": null,
         "on": "41"
+      },
+      {
+        "id": "w1.2",
+        "for": "start",
+        "until": null,
+        "on": null
       }
     ],
     "pending": [],
@@ -57,10 +58,45 @@
         "cached": 0,
         "output": 0
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
-  }
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "41",
+        "completed": true
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
 }

@@ -2,8 +2,9 @@
 
 _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`, and the
 engine's `step` call with its states, as `nexkit-engine step`, whose decisions are a frame that
-takes NexKit 6's own rules one group at a time. The rest of this page is not built yet, and
-NexKit 6 runs as [How it works](how-it-works.md) says._
+takes NexKit 6's own rules one group at a time; and the GitHub host's state comment and its
+import of NexKit 6's open work, which nothing calls yet. The rest of this page is not built
+yet, and NexKit 6 runs as [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
 **hosts** that store the work, carry out what the engine decides and show it to people. GitHub
@@ -83,15 +84,22 @@ needed.
   signatures, counts, and the tokens, time and money its agents spent. Long texts, such as a
   plan's prose, check output, a discussion and evidence, stay with the host as texts that the
   state names, and reach the engine only in `prompt`.
-- **It has a size.** The protocol sets the largest state document: 48,000 characters as JSON in
-  ASCII with its keys sorted and no spaces, so that its base64 fits one GitHub comment of
-  65,536 characters. The state keeps at most 10 questions of 6 options each, 20 protected paths,
-  30 findings, the blocking ones first, and 30 failure signatures. When a document would still
-  pass the limit, the engine shortens its texts to the most that fits, in this order: the
-  findings, the questions and their options, the split's titles, the protected paths, the
-  failure signatures and the attention's text. Past the lists' limits it shortens only texts,
-  never a count, a status, an id or how long a list is, which decisions read, and a host that
-  builds a first document shortens it the same way.
+- **It has a size.** The protocol sets the largest state document: 48,000 bytes as JSON in
+  UTF-8 with its keys sorted and no spaces, so that its base64 fits one GitHub comment of
+  65,536 characters. What results and events bring is bounded as it comes in. Each list keeps
+  at most as many items as `maxItems` in its schema says: 10 questions of 6 options each, 20
+  protected paths, 10 split parts, each needing only earlier parts, 30 findings with the
+  blocking ones first, 30 failure signatures, and 50 criteria and 50 checklist answers with
+  those a decision reads first. A split of more parts keeps none of them, only how many it
+  named, so a split is never filed cut. Each text is clipped as NexKit 6 clips it: a question
+  at 1,500 characters, an option at 500, a part's title at 256, a path at 300, a finding at 300
+  and a reason for a person at 1,000. A long failure signature is kept as its hash, never cut,
+  because rounds compare signatures. When a document would still pass the limit, the engine
+  shortens texts that a person reads in full where the host keeps them, each to the most that
+  fits, in this order: the findings, the questions and their options, the protected paths and
+  the attention's text. It never shortens a count, a status, an id, a part's title or a
+  signature, which decisions read, and a host that builds a first document keeps it the same
+  way.
 - **It is the truth.** A host may keep columns or markers that copy parts of it, for its own
   lists and pages, written in the same transaction, but the engine reads only the document.
 
@@ -178,7 +186,12 @@ Three things sit beside the state, never in place of it:
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has
   (`baseFailure`); or required checks before a merge (`requiredChecks`). Each wait has an id that
   is new each time, and the event that ends it names it. A tick ends only a wait for a time:
-  `time`, `usageLimit` or `requiredChecks`.
+  `time`, `usageLimit` or `requiredChecks`. When a blocker, or the bug issue of a base failure,
+  closes, the waits on it end, and an item does not start while a blocker is open.
+  When the last wait or hold on a state whose work does not run ends, as after a usage limit,
+  a transient stop or a hold that kept a round back, the engine starts that state's work again:
+  the same round, which counts nothing again. A request to start does the same for a state
+  that waits to start.
 
 ## Events
 
@@ -315,10 +328,14 @@ clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review o
 and up-to-date rules. Each reaches the engine as an event or a result: a failure the base branch
 has is a `runChecks` result, and a branch behind its base is an `accept` refused as `behind`.
 
-GitHub has no compare-and-set. The GitHub host reads the stored revision again just before it
-edits the state comment, and makes no write when the revision moved since its caller read it. A
-write by anyone else between that read and the edit is still overwritten: the check narrows the
-race to that moment and does not close it.
+GitHub has no compare-and-set. The GitHub host writes a state only as the next revision of the
+one its caller read, and reads the comment again by its id just before it edits it, making no
+write when the stored revision moved. A write by anyone else between that read and the edit is
+still overwritten: the check narrows the race to that moment and does not close it. So every
+writer of one item's state, an issue's commands and its pull request's rounds alike, runs in one
+concurrency group keyed by the work item. A write that loses reads the state again and sends the
+event again, after a short wait of random length, a few times; then the event goes back to its
+caller, which sends it again later and never drops it.
 
 ## Conformance
 
@@ -354,12 +371,17 @@ adapter. A new rule of the engine comes with a case.
   does not name, and a new field is a new schema version of the state document.
 - **A host's first state document is the host's to build.** The GitHub host builds each open
   item's document from NexKit 6's markers, open pull requests, paused runs and waits included, and
-  an application that had a loop of its own builds each request's from its records. A NexKit 6
-  run on its way becomes the action the engine waits for, and a run paused at a usage limit or
-  until it runs again after a transient stop becomes a wait with its time. A merge that waits
-  for required checks is `accepting` with that wait, and a round that waits for a failure the
-  base branch has is `fixing` with that wait. A conformance case in `tests/conformance/imports/`
-  checks each import: a NexKit 6 situation in, the state document out.
+  an application that had a loop of its own builds each request's from its records. The import reads
+  NexKit 6's markers only from NexKit's App, each only where it ends its comment. A NexKit 6
+  run on its way becomes the action the engine waits for. A run paused at a usage limit, or
+  until it runs again after a transient stop, becomes a wait with its time, unless NexKit 6
+  would no longer resume it, which fails for a person; an automatic run that ended without a
+  report waits to start again, later each time. A merge that waits for required checks is
+  `accepting` with that wait, and a round that waits for a failure the base branch has is
+  `fixing` with that wait. A round that a hold label kept back is in the state of the step it
+  kept back, held, or waiting to start once the label is gone. Each imported item is one the
+  engine moves on from: a case in `tests/conformance/imports/` takes a NexKit 6 situation in,
+  gives the state document out, and sends the events that carry the item on from there.
 
 ## Getting there
 

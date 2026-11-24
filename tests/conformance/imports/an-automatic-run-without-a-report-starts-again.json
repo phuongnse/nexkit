@@ -1,0 +1,127 @@
+{
+  "kind": "lost",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "comments": [
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [],
+            "too_large": false
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "planned"
+        }
+      },
+      {
+        "run": {
+          "command": "go",
+          "status": "failure",
+          "url": "https://github.com/acme/app/actions/runs/2",
+          "outcome": "lost",
+          "autopilot": true,
+          "attention": "the run ended without a report"
+        }
+      },
+      {
+        "autopilot": {
+          "command": "go",
+          "basis": [
+            1,
+            0
+          ],
+          "target": 42,
+          "note": "",
+          "at": "2026-11-23T15:00:00Z",
+          "url": "https://github.com/acme/app/actions/runs/9",
+          "tries": 1
+        }
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "working",
+    "change": null,
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "w1.1",
+        "for": "time",
+        "until": "2026-11-23T15:30:00Z",
+        "on": null
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": {
+      "text": {
+        "name": "plan",
+        "ref": "1"
+      },
+      "questions": [],
+      "criteria": 1,
+      "tooLarge": false,
+      "parts": 0,
+      "noChange": false,
+      "protectedPaths": [],
+      "approved": true,
+      "split": []
+    },
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w1.1"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "kind": "parts ended",
+  "config": {
+    "close_parent_issues": true
+  },
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "parts": [
+      {
+        "number": 43,
+        "state": "closed",
+        "reason": "completed"
+      },
+      {
+        "number": 44,
+        "state": "closed",
+        "reason": "not_planned"
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "accepted",
+    "change": null,
+    "attention": null,
+    "hold": false,
+    "waits": [],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [
+      {
+        "item": "43",
+        "state": "accepted"
+      },
+      {
+        "item": "44",
+        "state": "dropped"
+      }
+    ],
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "reopened"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ]
+    }
+  ]
+}

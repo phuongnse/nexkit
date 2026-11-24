@@ -1,4 +1,5 @@
 {
+  "kind": "no round yet",
   "nexkit6": {
     "issue": {
       "number": 42
@@ -52,7 +53,8 @@
     "waits": [],
     "pending": [
       {
-        "id": "a0.1",
+        "id": "a1.1",
+        "next": null,
         "kind": "runChecks",
         "changeVersion": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
       }
@@ -91,10 +93,37 @@
         "cached": 0,
         "output": 0
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
-  }
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
 }

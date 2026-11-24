@@ -1,0 +1,245 @@
+{
+  "kind": "planned",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "pull": {
+      "number": 308,
+      "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "comments": [
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [],
+            "too_large": false
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "planned"
+        }
+      },
+      {
+        "run": {
+          "command": "go",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/2",
+          "outcome": "planned"
+        }
+      },
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [],
+            "too_large": false
+          }
+        },
+        "id": 150
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/3",
+          "outcome": "planned"
+        },
+        "id": 151
+      }
+    ],
+    "pullComments": [
+      {
+        "state": {
+          "version": 2,
+          "issue": 42,
+          "auto_fixes": 1,
+          "feedback": {
+            "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+            "checks": [
+              {
+                "name": "test",
+                "passed": false,
+                "signature": "test_close: AssertionError"
+              },
+              {
+                "name": "lint",
+                "passed": true
+              }
+            ],
+            "review": {
+              "verdict": "request_changes",
+              "criteria": [
+                {
+                  "criterion": "A test shows it.",
+                  "status": "unmet"
+                }
+              ],
+              "findings": []
+            }
+          },
+          "last_review": {
+            "round": 1,
+            "head": "0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e",
+            "verdict": "request_changes",
+            "findings": [
+              {
+                "severity": "suggestion",
+                "file": "a.py",
+                "line": 3,
+                "body": "Name the helper after what it reads."
+              },
+              {
+                "severity": "blocking",
+                "file": "b.py",
+                "line": 9,
+                "body": "The close is not read again after a 422."
+              }
+            ]
+          }
+        }
+      },
+      {
+        "run": {
+          "round": 1,
+          "trigger": "implement",
+          "action": "implement",
+          "kinds": [],
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/101",
+          "head": "0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e",
+          "checks": "passed",
+          "verdict": "approve",
+          "tokens": {
+            "input": 1000,
+            "cached": 500,
+            "output": 200
+          },
+          "next": {
+            "command": "fix",
+            "number": "308",
+            "note": "",
+            "auto": "true"
+          },
+          "outcome": "auto_fix"
+        }
+      },
+      {
+        "run": {
+          "round": 2,
+          "trigger": "fix",
+          "action": "fix",
+          "kinds": [
+            "auto"
+          ],
+          "status": "failure",
+          "url": "https://github.com/acme/app/actions/runs/102",
+          "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+          "checks": "passed",
+          "verdict": "approve",
+          "tokens": {
+            "input": 1000,
+            "cached": 500,
+            "output": 200
+          },
+          "outcome": "agent_error"
+        }
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "awaitingApproval",
+    "change": {
+      "id": "308",
+      "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "attention": {
+      "reason": "approval",
+      "text": "The plan waits for its approval."
+    },
+    "hold": false,
+    "waits": [],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": {
+      "text": {
+        "name": "plan",
+        "ref": "150"
+      },
+      "questions": [],
+      "criteria": 1,
+      "tooLarge": false,
+      "parts": 0,
+      "noChange": false,
+      "protectedPaths": [],
+      "approved": false,
+      "split": []
+    },
+    "rounds": {
+      "started": 2,
+      "counted": 1,
+      "conflicts": 0,
+      "signatures": [
+        "test_close: AssertionError"
+      ],
+      "findings": [
+        {
+          "severity": "blocking",
+          "text": "The close is not read again after a 422."
+        },
+        {
+          "severity": "suggestion",
+          "text": "Name the helper after what it reads."
+        }
+      ],
+      "criteria": [
+        "unmet"
+      ],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 2000,
+        "cached": 1000,
+        "output": 400
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

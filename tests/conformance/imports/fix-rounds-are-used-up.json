@@ -1,4 +1,5 @@
 {
+  "kind": "needs a person",
   "nexkit6": {
     "issue": {
       "number": 42
@@ -221,10 +222,26 @@
         "cached": 1500,
         "output": 600
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
-  }
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
 }

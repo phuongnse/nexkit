@@ -1,4 +1,5 @@
 {
+  "kind": "base failure",
   "nexkit6": {
     "issue": {
       "number": 42
@@ -113,7 +114,7 @@
     "hold": false,
     "waits": [
       {
-        "id": "baseFailure",
+        "id": "w1.1",
         "for": "baseFailure",
         "until": null,
         "on": "77"
@@ -158,10 +159,27 @@
         "cached": 500,
         "output": 200
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
-  }
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "77",
+        "completed": true
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
 }

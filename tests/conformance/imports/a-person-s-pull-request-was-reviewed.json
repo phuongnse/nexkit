@@ -1,4 +1,5 @@
 {
+  "kind": "reviewed",
   "nexkit6": {
     "issue": {
       "number": 400,
@@ -71,7 +72,7 @@
     "hold": false,
     "waits": [
       {
-        "id": "start",
+        "id": "w1.1",
         "for": "start",
         "until": null,
         "on": null
@@ -99,10 +100,26 @@
         "cached": 500,
         "output": 200
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
-  }
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    }
+  ]
 }

@@ -5,8 +5,8 @@ The schemas are the contract every host and runner reads, so they live as JSON f
 `v1/`, and NexKit reads its stages' result schemas from them too. Each file names its dialect
 (`$schema`) and its URI (`$id`, under `BASE`), so that a standard validator in any language
 resolves their relative `$ref`s; `$comment` keys explain a schema to people, and `x-since` names
-the minor version that added a field or value (docs/engine.md#versions). `load` leaves these
-out, so a schema given to an agent is the one NexKit 6 gave.
+the minor version that added a field; a new value is a new major (docs/engine.md#versions).
+`load` leaves these out, so a schema given to an agent is the one NexKit 6 gave.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from ..schema import problems
 # The protocol's version. The state document has a schema version of its own
 # (`state.schema.json`), so that a state can move on without a new protocol.
 VERSION = 1
-# The protocol's minor version: the one place it lives. Each field or value added after 1.0
+# The protocol's minor version: the one place it lives. Each field added after 1.0
 # carries `"x-since": "1.<minor>"`, and `describe` reports it.
 MINOR = 0
 ROOT = Path(__file__).parent / f"v{VERSION}"

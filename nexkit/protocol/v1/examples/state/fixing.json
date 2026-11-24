@@ -8,8 +8,13 @@
     "id": "308",
     "version": "5a54e2b"
   },
-  "conflict": null,
-  "pushes": [],
+  "observed": {
+    "changeId": "308",
+    "version": "5a54e2b",
+    "conflicts": false,
+    "merged": false,
+    "empty": false
+  },
   "attention": null,
   "hold": false,
   "waits": [],

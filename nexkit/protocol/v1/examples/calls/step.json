@@ -8,8 +8,7 @@
     "itemKind": "change",
     "state": "new",
     "change": null,
-    "conflict": null,
-    "pushes": [],
+    "observed": null,
     "attention": null,
     "hold": false,
     "waits": [

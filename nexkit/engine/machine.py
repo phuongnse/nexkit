@@ -143,8 +143,8 @@ class Step:
         """Go to `name`: stop the work the old state asked for, and end its waits and attention.
         A round's state keeps the policies the round started with."""
         issued = {action["id"] for action in self.actions}
-        # A step that ends final tells no person what it asked of them earlier in the step.
-        withdrawn = WORK + (("needPerson",) if name in FINAL else ())
+        # A step that moves on tells no person what it asked of them earlier in the step.
+        withdrawn = WORK + ("needPerson",)
         for action in list(self.s["pending"]):
             if action["kind"] in withdrawn and action["id"] in issued:
                 self.withdraw(action)
@@ -339,7 +339,7 @@ class Step:
         if observed and observed["changeId"] != result["change"]["id"]:
             raise EngineError(
                 f"The result of a {result['change']['id']!r} change observes "
-                f"{observed['changeId']!r}."
+                f"{observed['changeId']!r}; the host reports the action lost instead."
             )
         self.s["change"] = result["change"]
         self.s["observed"] = {key: observed[key] for key in OBSERVED} if observed else None
@@ -406,6 +406,16 @@ class Step:
         return True
 
     def on_requested(self, event):
+        observed = self.observed()
+        if observed and observed["version"] != self.version:
+            # Only a failed or reopened item keeps a version observed meanwhile, for the request
+            # that takes it on: the work it asks for starts on that version
+            # (docs/engine.md#states). A refused request changes nothing, as `step` keeps the
+            # state it got unless reconciling acts, which a merge or an emptied change alone do.
+            self.s["change"] = {**self.s["change"], "version": observed["version"]}
+        return self.requested(event)
+
+    def requested(self, event):
         what, state, change = event["what"], self.state, self.s["change"]
         if what == "start":
             # Only an item that waits to start starts, and a hold keeps it waiting.
@@ -788,7 +798,10 @@ class Step:
             self.need("failed", result["refused"] or "The change could not be published.")
             return
         self.took_change(result)
-        self.check()
+        # The observation may name a later version: take it before the checks, so that a
+        # conflict on it follows the policy once.
+        if not self.reconcile():
+            self.check()
 
     def check(self):
         if self.conflicted():
@@ -877,7 +890,8 @@ def step(state, event, policies, check):
         # person's request catches up. A stop, or a step that fails the item, keeps its
         # attention: a new version observed meanwhile waits for the next event
         # (docs/engine.md#states).
-        halted = event["kind"] == "stopped" or (work.state == "failed" and was != "failed")
+        observed_anew = was == "failed" and event["kind"] == "changeObserved" and changed
+        halted = event["kind"] == "stopped" or (work.state == "failed" and not observed_anew)
         changed = work.reconcile(whole=not halted) or changed
     if not changed:
         return before, [], False

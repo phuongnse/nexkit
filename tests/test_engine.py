@@ -197,6 +197,14 @@ class ProgramTest(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         self.assertNotIn(first["id"], ids)
 
+    def test_a_move_withdraws_a_notice_given_earlier_in_the_step(self):
+        # No rule moves on after a notice in the same step today; `move` keeps it so.
+        work = machine.Step(machine.blank("42"), {}, protocol.check)
+        work.need("approval", "The plan waits for its approval.", "a1.1")
+        work.move("checking")
+        self.assertEqual([a for a in work.actions if a["kind"] == "needPerson"], [])
+        self.assertEqual(work.s["pending"], [])
+
     def test_the_defaults_are_the_protocol_s(self):
         properties = protocol.load("policies.schema.json")["properties"]
         defaults = {name: policy["default"] for name, policy in properties.items()}

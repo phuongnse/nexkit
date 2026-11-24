@@ -122,7 +122,8 @@
         "runChecks"
       ],
       "expect": {
-        "change.version": "n2"
+        "change.version": "n2",
+        "rounds.started": 1
       }
     }
   ]

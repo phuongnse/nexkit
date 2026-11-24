@@ -102,11 +102,7 @@
       },
       "state": "fixing",
       "changed": true,
-      "actions": [],
-      "expect": {
-        "observed.version": "v1b",
-        "pending.0.kind": "publish"
-      }
+      "actions": []
     },
     {
       "event": {
@@ -117,25 +113,22 @@
       "actions": [
         "cancel",
         "needPerson"
-      ],
-      "expect": {
-        "attention.reason": "failed",
-        "change.version": "v1"
-      }
+      ]
     },
     {
       "event": {
-        "kind": "changeObserved",
-        "version": "v1b",
-        "id": "sweep-2"
+        "kind": "requested",
+        "what": "retry"
       },
-      "state": "checking",
+      "state": "fixing",
       "changed": true,
       "actions": [
-        "runChecks"
+        "runAgent"
       ],
       "expect": {
-        "change.version": "v1b"
+        "change.version": "v1b",
+        "pending.-1.changeVersion": "v1b",
+        "pending.-1.stage": "fix"
       }
     }
   ]

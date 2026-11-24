@@ -1,5 +1,7 @@
 {
-  "policies": {},
+  "policies": {
+    "conflicts": "resolve"
+  },
   "steps": [
     {
       "event": {
@@ -97,36 +99,32 @@
     },
     {
       "event": {
-        "kind": "changeObserved",
-        "version": "v1b"
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v2"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v3",
+            "conflicts": true,
+            "merged": false,
+            "empty": false
+          }
+        }
       },
       "state": "fixing",
       "changed": true,
-      "actions": []
-    },
-    {
-      "event": {
-        "kind": "stopped"
-      },
-      "state": "failed",
-      "changed": true,
       "actions": [
-        "cancel",
-        "needPerson"
-      ]
-    },
-    {
-      "event": {
-        "kind": "requested",
-        "what": "retry"
-      },
-      "state": "checking",
-      "changed": true,
-      "actions": [
-        "runChecks"
+        "runAgent"
       ],
       "expect": {
-        "change.version": "v1b"
+        "change.version": "v3",
+        "rounds.conflicts": 1,
+        "pending.-1.changeVersion": "v3"
       }
     }
   ]

@@ -129,14 +129,15 @@
         "kind": "requested",
         "what": "fix"
       },
-      "state": "checking",
+      "state": "fixing",
       "changed": true,
       "actions": [
-        "runChecks"
+        "runAgent"
       ],
       "expect": {
         "change.version": "v1b",
-        "rounds.started": 2
+        "pending.-1.changeVersion": "v1b",
+        "rounds.started": 3
       }
     }
   ]

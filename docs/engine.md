@@ -107,7 +107,8 @@ The protocol is built for delivery at least once, in any order a host's queues g
   such as a push, a move of the base, a merge or a sweep, and may send one at any time. The state
   keeps the latest observation, and after each event the engine reconciles the item with it,
   even after an event that changes nothing else, so the next observation, or a repeated one,
-  mends one that was lost; a failed item waits for a new observation or a person.
+  mends one that was lost. A failed item waits for a person, whatever is observed, but for a
+  merge or an emptied change.
 - **A host's duties make the latest observation the truth.**
   - It handles one item's events one at a time, in the order it handles them, and stores each
     answer with the revision's compare-and-set. When its write loses, it reads the state again and
@@ -130,10 +131,11 @@ The protocol is built for delivery at least once, in any order a host's queues g
     carries the observation in the result. A result with a change and `observed` null leaves the
     item with no observation, so nothing reconciles until the next one; a change that the host
     finds closed unmerged is sent so, and the host tells a person, as for a change closed
-    unmerged below. The engine refuses a result whose observation names another change; the
-    host then reports the action lost, which fails the item for a person. An accept may be
-    observed as merged before its result: the engine then cancels it, and a host treats the
-    cancel of an action that already finished as done.
+    unmerged below; the engine's work on the change goes on until that person decides. The
+    engine refuses a result whose observation names another change; the host then reports the
+    action lost, which fails the item for a person. An accept may be observed as merged before
+    its result: the engine then cancels it, and a host treats the cancel of an action that
+    already finished as done.
 - **Every action has an id**, and the result event of an action carries that id and the action's
   own change version: the one it acts on, or null for an action that has none, such as `publish`
   or an agent started with no change. The version an agent produced is in its result. The state
@@ -144,7 +146,10 @@ The protocol is built for delivery at least once, in any order a host's queues g
   pending until its result arrives, the engine cancels it, or the host reports it lost. A host
   that crashed between storing the state and carrying out its actions carries out the pending
   ones when it starts again, from the state alone. A late result of a cancelled action changes
-  nothing, so the result of the `cancel` says what the cancelled action spent.
+  nothing, so the result of the `cancel` says what the cancelled action spent. A notice to a
+  person stays pending only while the item's attention says it: when attention changes, the
+  engine cancels a notice it answered earlier, or withdraws one of the same answer, so every
+  pending action is still one to carry out.
 - **Every action can be repeated.** A host carries out an action with the same id once: parts
   already filed are not filed again, and a person already told is not told again.
 
@@ -156,7 +161,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 
 | State | What happens | Next |
 | --- | --- | --- |
-| `new` | The item waits to be started | `planning`, `working`, `checking` |
+| `new` | The item waits to be started | `planning`, `working`, `checking`, and `fixing` for an item reopened with its change |
 | `planning` | An agent writes a plan | `awaitingApproval`, `working` or `fixing`, `split`, `noChange` |
 | `awaitingApproval` | The plan, or a split, waits for its approval or for answers | `planning`, `working` or `fixing`, `split`, `dropped` |
 | `working` | An agent makes the change | `checking`, `awaitingApproval`, `planning`, `noChange`, `failed` |
@@ -169,7 +174,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `split` | The work is carried by its parts | `accepted`, `dropped` |
 | `noChange` | Nothing needs to change, and the item says why | none |
 | `dropped` | A person ended the work | none |
-| `failed` | A step failed in a way that waiting does not help, or a token, time or money budget ran out. The change is kept | `dropped`, and by the host's policy `planning` or `fixing` |
+| `failed` | A step failed in a way that waiting does not help, or a token, time or money budget ran out. The change is kept, and the item waits for a person whatever is observed of it, but a merge or an emptied change | `dropped`, and by the host's policy `planning` or `fixing` |
 
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
@@ -189,12 +194,11 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   stays in `ready` for them even if the conflict clears without a push. An observation of another
   change changes nothing, and a publish or a replace that ends sets the change with the
   observation its result carries, which replaces the latest one: one of a change the engine
-  replaced never touches the new one, even when the new one keeps its id and version. A stop,
-  and an item in `failed` or, if it is not review-only, in `new`, take only a merge or an emptied
-  change, so the failure's or the reopen's attention stands: a new version observed meanwhile
-  applies when a new observation arrives for a failed item, or when a person's request takes the
-  item on, which then starts its work on that version. A step that moves the item on withdraws
-  the notice it gave a person earlier in that step.
+  replaced never touches the new one, even when the new one keeps its id and version. An item in
+  `failed`, and one in `new` that is not review-only, take only a merge or an emptied change, so
+  the failure's or the reopen's attention stands whatever else is observed: a new version waits
+  in the observation until a person's request takes the item on, such as a review, a retry or a
+  fix, which then starts its work on that version.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
@@ -357,7 +361,7 @@ time to time.
 | Observed as empty | No file differs between the base and the head | The draft changes nothing any more |
 | Observes on | `pull_request` synchronize, closed and reopened; a push to the base, for each open change; each sweep | A change of the draft or of the release; its worker, from time to time |
 | A change closed unmerged | Not an observation: the host tells a person, who drops the item or asks for the work again | The draft was discarded: the same |
-| One event at a time | Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares one concurrency group keyed by the item, which a routing job derives and passes on; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and gives each a stable id from its source, such as the comment's id. The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item and the stable ids are criteria of #332. Today NexKit groups runs by issue, by pull request, and in separate autopilot and approved-command groups (`templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
+| One event at a time | Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares one concurrency group keyed by the item, which a routing job derives and passes on; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and gives each a stable id from its source, such as the comment's id. The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item and the stable ids are criteria of #332. Today NexKit groups runs by issue, by pull request, and in separate autopilot and `approved-N` review groups (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
 
 What exists only because of GitHub stays in the GitHub host: the GitHub App, statuses, branch
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,

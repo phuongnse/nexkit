@@ -33,11 +33,32 @@
       ]
     },
     "conflict": {
-      "$comment": "The change version a conflict was reported on while a step ran, or null. The engine applies the conflict policy once nothing runs (docs/engine.md#states).",
+      "$comment": "The change version a conflict was reported on while it had to wait, or null. The engine applies the conflict policy when the item would next go to its checks or be ready, and only while this is still the change's version; a fix round, which merges the base, and a person's push drop it (docs/engine.md#states).",
       "type": [
         "string",
         "null"
       ]
+    },
+    "pushes": {
+      "$comment": "Pushes that did not start from the change's version when they arrived, oldest first, at most 10. Each applies once the change reaches its `previousVersion`.",
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "properties": {
+          "previousVersion": {
+            "type": "string"
+          },
+          "changeVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "previousVersion",
+          "changeVersion"
+        ],
+        "additionalProperties": false
+      }
     },
     "attention": {
       "anyOf": [
@@ -438,6 +459,7 @@
     "state",
     "change",
     "conflict",
+    "pushes",
     "attention",
     "hold",
     "waits",

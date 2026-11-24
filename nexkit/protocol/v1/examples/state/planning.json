@@ -6,6 +6,7 @@
   "state": "planning",
   "change": null,
   "conflict": null,
+  "pushes": [],
   "attention": null,
   "hold": false,
   "waits": [],

@@ -15,6 +15,10 @@
       "$comment": "Which plan a person decided on: the ref of the plan's text, `plan.text.ref` in the state.",
       "type": "string"
     },
+    "askedRef": {
+      "$comment": "Which questions a person answers: the ref that asked them, `attention.ref` in the state. That is the plan's text ref for a plan's questions, and the id of the runAgent action of a round's questions.",
+      "type": "string"
+    },
     "time": {
       "$comment": "A UTC time in ISO 8601, such as 2026-11-23T15:01:11Z. The engine reads time only from these.",
       "type": "string"

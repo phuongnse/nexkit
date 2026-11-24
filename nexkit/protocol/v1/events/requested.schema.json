@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/requested.schema.json",
-  "$comment": "A person, or the sweep with `by` null, asks for something.",
+  "$comment": "A person, or the sweep with `by` null, asks for something. A `go` names the plan the person approves by it, `plan.text.ref` in the state, or null when the item has no plan; a go for another plan changes nothing. Other requests send null.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -43,6 +43,16 @@
     },
     "note": {
       "type": "string"
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/planRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -53,6 +63,7 @@
     "at",
     "what",
     "by",
-    "note"
+    "note",
+    "plan"
   ]
 }

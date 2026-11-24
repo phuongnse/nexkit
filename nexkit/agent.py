@@ -45,7 +45,7 @@ HOLDING_TRIES = 50
 # runner and host reads the same one. A plan's or a round's question names the option it
 # recommends and the one that only closes the issue (`route.closing_answer`), counting from
 # 1, and a blocked round's the options that change the issue's scope, which a new plan
-# carries out (`autopilot._stopped`).
+# carries out (`host.stopped`, `host.after_go`).
 SCHEMAS = {
     stage: protocol.load(f"results/{stage}.schema.json")
     for stage in ("plan", "implement", "fix", "triage", "review")

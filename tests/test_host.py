@@ -9,8 +9,8 @@ from unittest import mock
 from nexkit import autopilot, engine, host, item_state
 from nexkit.report import TOO_LARGE, needs_person
 from nexkit.route import route
-from nexkit.state import PLAN_MARKER, answers_marker, plan_data_record, questions
-from tests.support import make_config
+from nexkit.state import PLAN_MARKER, answers_marker, plan_data_record, questions, render_run
+from tests.support import BOT_LOGIN, make_config
 from tests.test_autopilot import AutopilotCase, pilot
 from tests.test_report import ReportCase, review_result
 
@@ -494,3 +494,89 @@ class AfterRoundTest(ReportCase):
         self.assertEqual(outcome["outcome"], "needs_human")
         self.assertIn("refused to decide", outcome["attention"])
         self.assertEqual(self.gh.dispatches, [])
+
+
+class StoppedTest(HostCase):
+    """What follows a fix round that stopped as blocked, and a round that ran out of time, is
+    the engine's answer, in NexKit 6's words."""
+
+    def fix_stopped(self, number, pull, asked=(), **fields):
+        """A plan, a pull request, and its fix round that stopped with the questions `asked`."""
+        self.issue(number)
+        self.plan(number)
+        self.gh.add_pull(pull, number, head_sha="c" * 40)
+        self.run_comment(number, "go", outcome="pr_opened")
+        found = questions([dict(item) for item in asked])
+        row = {"round": 2, "trigger": "fix", "url": "https://github.com/acme/app/actions/runs/9"}
+        row["head"] = "c" * 40
+        row.update(status="failure", action="fix", outcome="agent_blocked", questions=found)
+        self.gh.comment(pull, render_run({**row, **fields}, "Stopped."))
+
+    def test_the_engine_answers_a_fix_round_on_its_change(self):
+        cfg = pilot(answer="recommended")
+        self.fix_stopped(5, 6, [{**ASKED, "closes": 0}])
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            step = self.step(5, cfg)
+        [call] = answer.call_args_list
+        request = call.args[0]
+        self.assertEqual(
+            (request["state"]["state"], request["state"]["change"]["id"]), ("fixing", "6")
+        )
+        self.assertEqual((step["state"], step["command"], step["target"]), ("start", "fix", 6))
+        self.assertEqual(step["answers"], [{"question": ASKED["question"], "answer": "Keep it"}])
+
+    def test_each_wait_after_a_fix_round_is_said_in_nexkit_6_s_words(self):
+        cfg = pilot(answer="recommended")
+        replans = {**ASKED, "closes": 0, "recommended": 2, "replans": [2]}
+        self.fix_stopped(5, 6, [replans])
+        self.assertEqual(self.step(5, cfg)["reason"], autopilot.REPLAN_IN_PULL)
+        self.fix_stopped(7, 8, [{**ASKED, "recommended": 3}])
+        self.assertEqual(self.step(7, cfg)["reason"], autopilot.CLOSE_UNFOUNDED)
+        self.fix_stopped(9, 10, [ASKED], protected_paths=["a.yml"])
+        self.assertEqual(self.step(9, cfg)["reason"], autopilot.protected_reason(["a.yml"]))
+        self.fix_stopped(11, 12, [{**ASKED, "recommended": 0}], attention="Answer them.")
+        self.assertEqual(self.step(11, cfg)["reason"], "Answer them.")
+
+    def test_a_round_that_ran_out_of_time_asks_once_for_a_split(self):
+        self.issue(5)
+        self.plan(5)
+        self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            step = self.step(5)
+        [call] = answer.call_args_list
+        self.assertTrue(call.args[0]["event"]["result"]["timedOut"])
+        self.assertEqual((step["command"], step["remember"]), ("plan", {"split_asked": True}))
+        self.assertEqual(step["note"], autopilot.SPLIT_NOTE)
+        with mock.patch.object(host, "step", return_value={"actions": [], "state": {}}):
+            self.assertIn("refused to decide", self.step(5)["reason"])
+
+    def test_a_part_whose_parent_asked_for_a_split_waits_for_a_person(self):
+        self.issue(4)
+        record = {"split_asked": True, "command": "plan", "basis": [0, 0]}
+        self.gh.comment(4, "NexKit autopilot record\n\n" + autopilot.record_marker(record))
+        self.issue(5, body="<!-- nexkit:part 4 -->\nPart.", user=BOT_LOGIN)
+        self.gh.parents[5] = 4
+        self.plan(5)
+        self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
+        [request] = self.requests(5)
+        self.assertIn("split", request["state"]["asked"])
+        self.assertIn("after #4 asked for a split", self.step(5)["reason"])
+
+    def test_the_round_carries_on_as_the_engine_answers_it(self):
+        cfg = pilot(answer="recommended")
+        self.issue(5)
+        self.gh.add_pull(6, 5)
+        fix = {"issue": 5, "pr": 6, "action": "fix", "head": "c" * 40}
+
+        def carries_on(decision, outcome, **agent):
+            return autopilot.carries_on(self.gh, cfg, decision, outcome, agent)
+
+        output = {"questions": [{**ASKED, "closes": 0}]}
+        self.assertTrue(carries_on(fix, "agent_blocked", status="blocked", output=output))
+        replans = {"questions": [{**ASKED, "closes": 0, "recommended": 2, "replans": [2]}]}
+        self.assertFalse(carries_on(fix, "agent_blocked", status="blocked", output=replans))
+        self.assertTrue(carries_on(fix, "agent_error", timed_out=True))
+        go = {"issue": 5, "pr": None, "action": "implement"}
+        self.assertTrue(carries_on(go, "agent_error", timed_out=True))
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            self.assertFalse(carries_on(go, "agent_error", timed_out=True))

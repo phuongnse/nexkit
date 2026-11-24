@@ -27,6 +27,12 @@ that changed nothing, the rounds used up, and a change that passes, which a pers
 decides or merges, or which merges by `merge.auto` unless a hold keeps it back. A round whose
 next step the engine refuses to decide waits for a person.
 
+Last, it decides what follows a fix round that stopped as blocked with questions or protected
+paths, as after a blocked `/nexkit go` but on the pull request, where an answer that changes
+the issue's scope is a person's; and what follows an implement or fix round that ran out of
+time: one plan that splits the issue, unless the issue asked before, a parent asked, or it is a
+part at the deepest level.
+
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
 """
@@ -738,6 +744,160 @@ def round_carried_on(gh, cfg, issue, decision, agent):
     )
     actions = step(doc, event, policies(cfg))["actions"]
     kinds = {action["kind"]: action for action in actions}
+    if "runAgent" in kinds or "close" in kinds:
+        return True
+    if "needPerson" in kinds:
+        return kinds["needPerson"]["reason"] == "closeRecommended" and not again
+    return False
+
+
+# -- a fix round that stopped, and a round that ran out of time --------------------------
+
+
+def fix_output(run):
+    """The result of the fix round that stopped as blocked, whose marker is `run`, for what the
+    engine decides from: its questions, its conflicts among them, and the protected paths its
+    change needs."""
+    return {
+        "status": "blocked",
+        "summary": "",
+        "blocker": "",
+        "questions": asked_of(run),
+        "checks_run": [],
+        "protected_paths": list(run.get("protected_paths") or []),
+        "cause": "",
+        "cause_outside": False,
+        "open_conflicts": [],
+    }
+
+
+def _split_place(gh, issue, record):
+    """(depth, asked) of `issue` for a round that ran out of time: how deep a part it is, and
+    whether an issue above it asked for a split, which a part inherits
+    (`autopilot.split_refused`). Not read once the issue itself asked, as NexKit 6 reads it."""
+    if record.get("split_asked"):
+        return 0, False
+    above = autopilot.lineage(gh, issue)
+    asked = any(
+        autopilot.find_record(gh.comments(parent["number"]))[1].get("split_asked")
+        for parent in above
+    )
+    return autopilot.depth(issue, above), asked
+
+
+def _round_doc(issue, record, again, pull=None, head=None, place=(0, False)):
+    """`issue`'s document while its `/nexkit go`, or with `pull` a fix round of that pull
+    request on `head`, runs, which the engine waits for. `again` says that autopilot's
+    answers started it and no person commented since (`autopilot.asked_again`); `place` is
+    what `_split_place` reads."""
+    change = {"id": str(pull), "version": str(head or pull)} if pull else None
+    doc = _document(issue, record, change=change)
+    doc["state"] = "fixing" if pull else "working"
+    stage = "fix" if pull else "implement"
+    doc["pending"] = [first_state.agent_run(stage, (change or {}).get("version"))]
+    doc["asked"] += ["answers"] * again
+    doc["depth"] = place[0]
+    if place[1] and "split" not in doc["asked"]:
+        doc["asked"].append("split")
+    return doc
+
+
+def _stop_event(number, name, doc, output, timed_out):
+    version = (doc["change"] or {}).get("version")
+    result = {**AGENT, "timedOut": timed_out, "output": None if timed_out else output}
+    return _event(
+        "actionFinished",
+        number,
+        None,
+        name,
+        action=first_state.RUN_ID,
+        changeVersion=version,
+        result=result,
+    )
+
+
+def stopped(gh, cfg, issue, run, record, start, comments, pull=None, pull_comments=()):
+    """The step after a round that stopped, whose marker is `run`, as the engine decides it:
+    with `pull`, a fix round of that pull request that stopped as blocked with questions or
+    protected paths (`autopilot.engine_round`); or a fix round or a `/nexkit go` that ran out
+    of time, after which autopilot asks once for a split. `comments` are the issue's,
+    `pull_comments` the pull request's, `record` autopilot's record and `start` what a
+    command that the step starts begins from. Raises `Refused`."""
+    number = issue["number"]
+    timed_out = bool(run.get("timed_out"))
+    place = _split_place(gh, issue, record) if timed_out else (0, False)
+    again = False
+    if not timed_out:
+        again = autopilot.asked_again(pull_comments, comments)
+    doc = _round_doc(issue, record, again, pull, run.get("head"), place)
+    event = _stop_event(number, f"stop-{pull or number}", doc, fix_output(run), timed_out)
+    actions = step(doc, event, policies(cfg))["actions"]
+    kinds = {action["kind"]: action for action in actions}
+    found = [
+        {"question": item["question"], "answer": item["recommended"]}
+        for item in questions(run.get("questions"))
+    ]
+    if timed_out and (kinds.get("runAgent") or {}).get("stage") == "plan":
+        fields = {**start, "note": autopilot.SPLIT_NOTE, "remember": {"split_asked": True}}
+        reason = "the agent ran out of time, so autopilot asks for a split"
+        return autopilot._step(issue, "start", reason, command="plan", **fields)
+    if not timed_out and (kinds.get("runAgent") or {}).get("stage") == "fix":
+        fields = {**start, "target": pull, "note": autopilot.answer_note(found)}
+        reason = "autopilot answers the questions of the blocked round"
+        return autopilot._step(issue, "start", reason, command="fix", answers=found, **fields)
+    reason = (kinds.get("needPerson") or {}).get("reason")
+    if pull:
+        failed = autopilot.person(
+            f"read the last round's comment on #{pull} for why, then post its command again",
+            f"the last round of #{pull} failed",
+        )
+    else:
+        failed = autopilot.failed_reason("go")
+    if timed_out and reason == "failed":
+        refused = None if record.get("split_asked") else autopilot.split_refused(gh, issue)
+        text = refused or run.get("attention") or failed
+    elif not timed_out and reason in ROUND_WAITS:
+        text = ROUND_WAITS[reason](run) or run.get("attention") or failed
+    else:
+        raise Refused(f"The engine answers {sorted(kinds)} after a stopped round.")
+    return autopilot._step(issue, "waits", text)
+
+
+# What a sweep says of a fix round's questions that wait for a person, by the engine's reason,
+# in NexKit 6's words; "" for the round's own attention.
+ROUND_WAITS = {
+    "handMadeChange": lambda run: autopilot.protected_reason(run["protected_paths"]),
+    "askedAgain": lambda run: autopilot.REPEATED,
+    "closeRecommended": lambda run: autopilot.CLOSE_UNFOUNDED,
+    "replanRecommended": lambda run: autopilot.REPLAN_IN_PULL,
+    "question": lambda run: "",
+    "blocked": lambda run: "",
+}
+
+
+def stop_carried_on(gh, cfg, issue, decision, agent):
+    """Whether autopilot carries on after a fix round of `decision` that stopped as blocked,
+    or an implement or fix round that ran out of time, with the agent's result `agent`, as
+    the engine decides what follows it, so that `report` mentions nobody. As in NexKit 6,
+    autopilot's answers whose recommended option only closes the issue carry on unless they
+    were asked again. Raises `Refused`."""
+    from .report import _autopilot_fields
+
+    comments = gh.comments(issue["number"])
+    record = autopilot.find_record(comments)[1]
+    timed_out = bool(agent.get("timed_out"))
+    pr = decision.get("pr") if decision["action"] == "fix" else None
+    again = False
+    if not timed_out:
+        again = autopilot.asked_again(gh.comments(pr) if pr else comments, comments if pr else ())
+    place = _split_place(gh, issue, record) if timed_out else (0, False)
+    found = _autopilot_fields(agent)
+    run = {**found, "protected_paths": ((agent.get("output") or {}).get("protected_paths") or [])}
+    doc = _round_doc(issue, record, again, pr, decision.get("head"), place)
+    output = fix_output(run) if pr else round_output(run)
+    name = f"run-{decision.get('run_id') or issue['number']}"
+    actions = step(doc, _stop_event(issue["number"], name, doc, output, timed_out), policies(cfg))
+    kinds = {action["kind"]: action for action in actions["actions"]}
     if "runAgent" in kinds or "close" in kinds:
         return True
     if "needPerson" in kinds:

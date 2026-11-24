@@ -353,8 +353,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   request takes it to `checking`, and a drop ends the engine's work without closing it.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
-  otherwise, and the second time, it goes to `failed` for a person, as NexKit 6 does. An item
-  that has a change asks too, as NexKit 6 does after a fix round, but the engine never splits
+  otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
+  split, it goes to `failed` for a person, as NexKit 6 does. A host marks a part whose parent
+  already asked as having asked, since NexKit 6's parts inherit that. An item that has a change
+  asks too, as NexKit 6 does after a fix round, but the engine never splits
   it: its new plan goes on as one change on it, where NexKit 6 may instead split it and close
   the pull request as superseded.
 - **A final item that a person reopens** waits for a person, with attention, as NexKit 6 does.
@@ -634,8 +636,9 @@ adapter. A new rule of the engine comes with a case.
    which NexKit 6 still splits, closing the pull request as superseded. They are also the
    decisions that follow a `/nexkit go` that stopped as blocked with questions or with paths
    only a person changes, a writer's command that answers its questions with the option that
-   only closes the issue, the reason a plan waits for without autopilot, and what follows the
-   checks and the review of a round on a pull request (`report`). A `/nexkit go`
+   only closes the issue, the reason a plan waits for without autopilot, what follows the
+   checks and the review of a round on a pull request (`report`), and what follows a fix round
+   that stopped as blocked with questions or protected paths and a round that ran out of time. A `/nexkit go`
    that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as
    the policy after a failure, which the protocol does not hold yet, says. Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the

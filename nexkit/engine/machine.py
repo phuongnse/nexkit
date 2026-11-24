@@ -495,9 +495,11 @@ class Step:
 
     def timed_out(self):
         """An implement or fix agent ran out of time. With splits on, as autopilot does, the
-        item asks once for a plan that splits it; otherwise, or the second time, a person
-        decides (`autopilot._stopped`)."""
-        if self.p["splits"] and "split" not in self.s["asked"]:
+        item asks once for a plan that splits it; otherwise, the second time, or for an item
+        at the deepest level of parts, which is not split, a person decides
+        (`autopilot._stopped`, `split_refused`)."""
+        deepest = self.s.get("depth", 0) >= self.p["splitDepth"]
+        if self.p["splits"] and "split" not in self.s["asked"] and not deepest:
             # NexKit 6 asks after a fix round too. An item with a change is never split, so its
             # new plan goes on as one change on it, with the plan revised.
             self.s["asked"].append("split")

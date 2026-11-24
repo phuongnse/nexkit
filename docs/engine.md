@@ -1,7 +1,9 @@
 # The engine
 
-_Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`. The rest of
-this page is not built yet, and NexKit 6 runs as [How it works](how-it-works.md) says._
+_Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`, and the
+engine's `step` call with its states, as `nexkit-engine step`, whose decisions are a frame that
+takes NexKit 6's own rules one group at a time. The rest of this page is not built yet, and
+NexKit 6 runs as [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
 **hosts** that store the work, carry out what the engine decides and show it to people. GitHub
@@ -96,7 +98,12 @@ The protocol is built for delivery at least once, in any order a host's queues g
   of the change it applies to. The state records the actions it waits for, and the engine
   ignores a result whose action it no longer waits for, or whose change version is old. A step
   that runs twice, a late result after a cancel, and a run started again after it was lost are
-  then each harmless.
+  then each harmless. A result for an action that is still pending names the version that
+  action acts on; one that names another is an error the engine refuses.
+- **Leaving a state cancels its work.** An item that moves on cancels the actions of the state it
+  left that still run, such as a plan when a conflict sends the item to a fix round, so their
+  late results find nothing pending. A lost action that only tells, shows, waits or ends is
+  carried out again under a new id; a lost action that works fails the step, for a person.
 - **The state is an outbox.** Each action the engine answered stays in the state, whole, as
   pending until its result arrives, the engine cancels it, or the host reports it lost. A host
   that crashed between storing the state and carrying out its actions carries out the pending
@@ -137,9 +144,12 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
-- **A review-only item** starts in `checking` and is never fixed or accepted by the engine: a
-  person's own pull request, which NexKit only checks and reviews. A new review request takes it
-  back to `checking`.
+- **A review-only item** comes with its change and is never planned, fixed, replaced or accepted
+  by the engine: a person's own pull request, which NexKit only checks and reviews. Each review
+  request takes it to `checking`.
+- **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
+  has them, the item asks once for a plan that splits it, and the state records that it asked;
+  otherwise, and the second time, it goes to `failed` for a person, as NexKit 6 does.
 - **A final item that a person reopens** waits for a person, with attention, as NexKit 6 does.
 
 Three things sit beside the state, never in place of it:
@@ -152,7 +162,9 @@ Three things sit beside the state, never in place of it:
   rounds used up (`roundsUsedUp`), a split that is not complete (`splitIncomplete`), a round that
   was blocked (`blocked`), a step that failed (`failed`), a final item opened again
   (`reopened`), or an action the host lost (`outage`).
-- **Hold:** nothing new starts. A step that runs finishes and records what it held back.
+- **Hold:** nothing new starts by itself: the sweep's start waits, while a person's own request
+  still runs, as NexKit 6's hold label does. A step that runs finishes and records what it held
+  back.
 - **Wait:** the next step waits for something named: a request to start (`start`); a time, such
   as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has
@@ -270,7 +282,9 @@ available, leaves the accept to a person.
 Waits, holds and *blocked by* links live in each item's state, so `step` decides whether an item
 may start. `sweep` only chooses among the items that may: it orders them by priority, wave,
 milestone and age, applies how many items run at once and which accounts are at a usage limit,
-and answers the items to start. The host sends each a `requested` event of the kind `start`.
+and answers the items to start. The host sends each a `requested` event of the kind `start`,
+which `step` takes only for an item in `new` that waits to start and is not held, so a late or
+repeated start changes nothing.
 A host that starts each item when it is made, as an application may, needs no sweep, but still sends
 `blockerClosed` when a part's earlier part ends.
 
@@ -300,9 +314,14 @@ give. They come from the decisions that `tests/test_scenarios.py` plays today. I
 are about GitHub alone, such as vouching, Dependabot, shards, branch updates and carried reviews,
 stay as tests of the GitHub host.
 
-After every call, the suite also checks NexKit's rule: every item that is not final has an action
-that runs, a wait, a hold or attention, and a round counts only when its agent ran to its end or
-published. The engine passes the suite in this repository, and each host runs it through its own
+A case may start from an example state of the protocol. After every call, the suite checks the
+answer against the protocol, that the same request gives the same answer, and the outbox: every
+action of the answer is pending, and an action leaves `pending` only with its result, its cancel
+or its loss. It also checks NexKit's rule: every item that is not final has an action that works
+on it (`runAgent`, `runChecks`, `publish`, `accept`, `createParts`, `replaceChange` or `wait`), a
+wait, a hold or attention. The rule that a round counts only when its agent ran to its end or
+published joins these checks with the engine's rules of rounds. Across the cases, every transition of the states table is played, no case makes one that the
+page does not name for its policies, and an item is dropped from every state that is not final. The engine passes the suite in this repository, and each host runs it through its own
 adapter. A new rule of the engine comes with a case.
 
 ## Versions

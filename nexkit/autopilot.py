@@ -955,6 +955,9 @@ REPLANNED_NOTE = (
 UNCHANGED = {"retry", RETRY_WAITING, "lost", "up_to_date"}
 # What every comment that mentions the people in `notify` says before its reason.
 NEEDED = "a person is needed: "
+# A mention of `notify` starts with the people it mentions, then `NEEDED`: only there, so
+# agent text in a plan or answers comment does not pass for one.
+MENTION_START = re.compile(r"(?:@\S+ )+" + re.escape(NEEDED))
 
 
 def person(do, why):
@@ -1778,7 +1781,7 @@ def mentioned(*groups):
     in any of them."""
     latest = max((c["id"] for found in groups for c, _ in run_comments(found)), default=0)
     return any(
-        by_bot(c) and NEEDED in (c.get("body") or "") and c["id"] > latest
+        by_bot(c) and MENTION_START.match(c.get("body") or "") and c["id"] > latest
         for found in groups
         for c in found
     )
@@ -2257,8 +2260,11 @@ def split(gh, step, now=None):
     mark = f"{DEPENDABOT_PART_PREFIX}{ghsa} -->\n" if ghsa else ""
     created = []
     for index, part in enumerate(step["parts"], 1):
+        # The agent's text follows the part marker, where the advisory's marker stands, and
+        # the record of a plan published before `render_plan` escaped it holds it as the
+        # agent wrote it.
         body = (
-            f"<!-- nexkit:part {number} -->\n{mark}{part['body'].strip()}\n\n"
+            f"<!-- nexkit:part {number} -->\n{mark}{inert_markers(part['body'].strip())}\n\n"
             f"Part {index} of #{number}{plan}, which was too large for one session."
         )
         issue = gh.create_issue(part["title"].strip(), body, milestone, labels)

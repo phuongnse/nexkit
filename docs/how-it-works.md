@@ -1554,8 +1554,8 @@ holds its commit, whether its checks passed, and which of them passed on that co
 each with a digest of its `run` command, and a digest of its `setup` commands. `nexkit status` reads these markers, not
 the text people read, to list the open NexKit work and what each item waits for. NexKit
 reads a marker only from a comment by its App, and only where it ends the comment:
-text before it can quote agent output. The same holds for every marker NexKit reads (see
-[Security notes](#security-notes)). The latest commit whose checks passed becomes the
+text before it can quote agent output. Every other marker, too, counts only where NexKit
+writes it (see [Security notes](#security-notes)). The latest commit whose checks passed becomes the
 next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
 with its current command and the current `setup` becomes its `NEXKIT_CHECK_VERIFIED_SHA`
 (see [Skipping work that a change cannot
@@ -1743,7 +1743,10 @@ for a reason outside the work, before it published anything.
   such text never passes for NexKit's own record: a record, such as the state of a pull
   request, a run's or autopilot's record, a plan's record and the markers that end a CI
   report, only where it ends the comment or issue; a marker that names what an issue or
-  comment is, only at the start of its text; a plan's profile only on the line after the
-  plan marker. Where agent text stands on both sides of a marker, as around a plan's
-  profile lines, or ends a comment of NexKit's, as the finding autopilot closes an issue
-  with, NexKit writes `<!-- nexkit:` in it as `‹!-- nexkit:`.
+  comment is, and the people a mention names, only at the start of its text; a plan's
+  profile record and an advisory part's marker only on the line after the first marker.
+  Where agent text stands on both sides of a marker, as around a plan's profile lines,
+  follows a part's marker, or ends a comment of NexKit's, as the finding autopilot closes
+  an issue with, NexKit writes `<!-- nexkit:` in it as `‹!-- nexkit:`. That covers all
+  of a plan's agent text, so the plan text the agents read and the parts filed from a split
+  show it so too.

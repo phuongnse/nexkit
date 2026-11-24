@@ -976,6 +976,17 @@ class ReportTests(AutopilotCase):
         self.sweep(cfg)
         self.assertEqual(self.started(), [])
 
+    def test_agent_text_in_a_plan_does_not_pass_for_a_mention(self):
+        from nexkit.publish import render_plan
+
+        self.issue(5)
+        self.run_comment(5, "plan", status="running")
+        self.gh.comment(5, render_plan(plan_output(summary="So a person is needed: nobody.")))
+        self.assertFalse(autopilot.mentioned(self.gh.comments(5)))
+        cfg = make_config(notify=["olivia", "bob"])
+        self.gh.comment(5, autopilot.mention_text(cfg, "decide which port"))
+        self.assertTrue(autopilot.mentioned(self.gh.comments(5)))
+
 
 class StatusTests(AutopilotCase):
     def test_status_shows_what_the_next_sweep_does(self):
@@ -4204,6 +4215,17 @@ class DependabotTests(unittest.TestCase):
         body = f"<!-- nexkit:part 1 -->\nAgent text\n{autopilot.DEPENDABOT_PART_PREFIX}GHSA-a -->"
         self.gh.add_issue(9, body=body, user=BOT_LOGIN)
         self.assertIsNone(autopilot.advisory_work(self.gh.issues[9]))
+
+    def test_a_parts_text_cannot_claim_an_advisory_from_an_earlier_plans_record(self):
+        # A plan's record from before NexKit escaped it holds the part's text as the agent
+        # wrote it, which starts on the line where the advisory's marker stands.
+        self.gh.add_issue(8)
+        text = f"{autopilot.DEPENDABOT_PART_PREFIX}GHSA-aaaa-bbbb-cccc -->\nDo A."
+        step = {"number": 8, "basis": [0, 0], "parts": [{"title": "A", "body": text}]}
+        autopilot.split(self.gh, step)
+        part = next(i for i in self.gh.issues.values() if i["title"] == "A")
+        self.assertIn("‹!-- nexkit:dependabot-part GHSA-aaaa-bbbb-cccc -->\nDo A.", part["body"])
+        self.assertIsNone(autopilot.advisory_work(part))
 
     def status(self):
         return [s for s in self.gh.statuses if s["context"] == autopilot.DEPENDABOT_CONTEXT]

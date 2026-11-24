@@ -83,7 +83,7 @@ def render_profile(result, cfg):
         stages.append(stage_agent(stage, chosen["agent"], chosen["model"]))
     stages = " · ".join(stages)
     if chosen_by == "triage":
-        reason = inert_markers((triage.get("reason") or "").strip())
+        reason = (triage.get("reason") or "").strip()
     else:
         error = (triage.get("error") or "no result").strip().splitlines()[0][:300]
         which = "the previous plan's profile" if chosen_by == "previous" else "the default profile"

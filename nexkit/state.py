@@ -49,7 +49,8 @@ PLAN_DATA = re.compile(r"\n*<!-- nexkit:plan-data ([A-Za-z0-9+/=]+) -->\s*\Z")
 ANSWERS_PREFIX = "<!-- nexkit:answers "
 ANSWERS = re.compile(r"\n*<!-- nexkit:answers ([A-Za-z0-9+/=]+) -->\s*\Z")
 # What opens a NexKit marker in text that NexKit copies where no position pins its markers:
-# agent text on both sides of a plan's profile lines, and a finding that ends a comment.
+# agent text on both sides of a plan's profile lines, a part's text after its marker, and
+# a finding that ends a comment.
 MARKER_OPENING = re.compile(r"<!--(?=\s*/?nexkit:)")
 
 RUNNING, SUCCESS, FAILURE, PAUSED = "running", "success", "failure", "paused"
@@ -121,7 +122,11 @@ def clip(text, limit=4000):
 
 def inert_markers(value):
     """`value`, a text or the texts in a dict or list, with nothing that opens a NexKit
-    marker: `<!-- nexkit:` shows as `‹!-- nexkit:`, so NexKit never reads it as its own."""
+    marker: `<!-- nexkit:` shows as `‹!-- nexkit:`, so NexKit never reads it as its own.
+    `publish.render_plan` passes a plan's whole output through it, so the plan text the
+    agents read, the plan's record and the parts filed from a split show it so too. Only
+    marker openings change: a mention escapes more (`autopilot._unmentioned`), since any
+    HTML comment there would hide the rest of it."""
     if isinstance(value, dict):
         return {key: inert_markers(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -437,8 +442,9 @@ def profile_record(record):
 
 
 def profile_text(text):
-    """The profile lines of a plan comment, marked so the agents do not receive them."""
-    return f"{PROFILE_TEXT[0]}\n\n{text.strip()}\n\n{PROFILE_TEXT[1]}"
+    """The profile lines of a plan comment, marked so the agents do not receive them. They
+    hold agent text, the triage's reason or error, so none of it opens a marker."""
+    return f"{PROFILE_TEXT[0]}\n\n{inert_markers(text.strip())}\n\n{PROFILE_TEXT[1]}"
 
 
 def plan_profile(comment):

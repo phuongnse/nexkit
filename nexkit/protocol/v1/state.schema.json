@@ -39,19 +39,19 @@
           "type": "object",
           "properties": {
             "changeId": {
-              "type": "string"
+              "$ref": "common.schema.json#/$defs/observation/properties/changeId"
             },
             "version": {
-              "type": "string"
+              "$ref": "common.schema.json#/$defs/observation/properties/version"
             },
             "conflicts": {
-              "type": "boolean"
+              "$ref": "common.schema.json#/$defs/observation/properties/conflicts"
             },
             "merged": {
-              "type": "boolean"
+              "$ref": "common.schema.json#/$defs/observation/properties/merged"
             },
             "empty": {
-              "type": "boolean"
+              "$ref": "common.schema.json#/$defs/observation/properties/empty"
             }
           },
           "required": [

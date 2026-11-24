@@ -105,8 +105,9 @@ The protocol is built for delivery at least once, in any order a host's queues g
   conflicts with what it was made on, and whether it was merged or became empty, as the host
   reads them while it handles the event. A host sends one whenever something may have changed,
   such as a push, a move of the base, a merge or a sweep, and may send one at any time. The state
-  keeps the latest observation, and after each event that changes the state the engine
-  reconciles the item with it, so the next observation mends one that was lost or repeated.
+  keeps the latest observation, and after each event the engine reconciles the item with it,
+  even after an event that changes nothing else, so the next observation, or a repeated one,
+  mends one that was lost.
 - **A host's duties make the latest observation the truth.**
   - It handles one item's events one at a time, in the order it handles them, and stores each
     answer with the revision's compare-and-set. When its write loses, it reads the state again and
@@ -117,13 +118,16 @@ The protocol is built for delivery at least once, in any order a host's queues g
     rather than a cached pull request. A stale read would take the change back to a version it
     left.
   - It sends an observation only when it knows each field. While a forge still computes whether
-    the change conflicts, the host waits and observes again later.
+    the change conflicts, the host waits and reads again, also for the observation a result
+    carries. A merged change needs no reading of conflicts: the host sends `conflicts` false.
   - It observes every open change from time to time, such as on each sweep, since only a next
     observation mends one that was lost. After a reopen it observes the change, since a final
     item takes no observation.
   - Its own actions change the change outside that order. A publish or a replace is the one the
     engine waits for, so the host reads the change when it handles that action's result and
-    carries the observation in the result. An accept may be observed as merged before its
+    carries the observation in the result. A publish's result with a change and no observation
+    leaves the item with none, so nothing reconciles until the next one. An accept may be
+    observed as merged before its
     result: the engine then cancels it, and a host treats the cancel of an action that already
     finished as done.
 - **Every action has an id**, and the result event of an action carries that id and the action's
@@ -167,24 +171,25 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
   round.
 - **From every state that has a change,** the engine reconciles the item with the latest
-  observation of that change, after each event that changes the state and once no publish or
-  replace is on its way. A change that was merged, such as by a person's hand, goes to
-  `accepted`; one that became empty, because the same change landed another way, goes to
-  `noChange`; a version other than the engine's, such as a person's push, cancels what acts on the
-  old version and goes to `checking`, or follows the conflict policy when that version conflicts.
-  A change that conflicts
-  follows the conflict policy at once where nothing runs that it must wait for: in `ready` and
-  `accepting`, and in `checking` when a conflict round can start (`redo`, or `resolve` with rounds
-  left), since those checks can no longer lead to an accept. Otherwise the policy applies when the
-  item would next go to its checks or be ready, as NexKit 6 starts no conflict round while another
-  runs, and only if the latest observation still says that version conflicts; a question or a
-  failure keeps its attention meanwhile. A person told of a conflict on a version is told once,
-  and the item stays in `ready` for them even if the conflict clears without a push. An
-  observation of another change changes nothing, and a publish or a replace that ends sets the
-  change with the observation its result carries, which replaces the latest one: one of a change
-  the engine replaced never touches the new one, even when the new one keeps its id and version.
-  An event that stops the item, or fails it for a lost action, keeps its attention: a new version
-  observed meanwhile applies with the item's next event.
+  observation of that change after each event, once no publish or replace is on its way. A change
+  that was merged, such as by a person's hand, goes to `accepted`; one that became empty, because
+  the same change landed another way, goes to `noChange`; a version other than the engine's, such
+  as a person's push, withdraws or cancels what acts on the old version and goes to `checking`, or
+  follows the conflict policy when that version conflicts. A change that conflicts follows the
+  conflict policy at once where nothing runs that it must wait for: in `ready` and `accepting`,
+  and in `checking` when a conflict round can start (`redo`, or `resolve` with rounds left), since
+  those checks can no longer lead to an accept. Otherwise the policy applies when the item would
+  next go to its checks or be ready, as NexKit 6 starts no conflict round while another runs, and
+  only if the latest observation still says that version conflicts; a question or a failure keeps
+  its attention meanwhile. A person told of a conflict on a version is told once, and the item
+  stays in `ready` for them even if the conflict clears without a push. An observation of another
+  change changes nothing, and a publish or a replace that ends sets the change with the
+  observation its result carries, which replaces the latest one: one of a change the engine
+  replaced never touches the new one, even when the new one keeps its id and version. In a step
+  that fails the item, such as a stop, a lost action or a refused publish, and in `new` for an
+  item that is not review-only, only a merge or an emptied change acts: a new version observed
+  meanwhile waits for the item's next event, so the failure's or the reopen's attention stands. A
+  step that ends final withdraws the notice it gave a person in that step.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
@@ -324,8 +329,9 @@ Waits, holds and *blocked by* links live in each item's state, so `step` decides
 may start. `sweep` only chooses among the items that may: it orders them by priority, wave,
 milestone and age, applies how many items run at once and which accounts are at a usage limit,
 and answers the items to start. The host sends each a `requested` event of the kind `start`.
-A host that starts each item when it is made, as an application may, needs no sweep, but still sends
-`blockerClosed` when a part's earlier part ends.
+A host that starts each item when it is made, as an application may, needs no sweep, but still
+sends `blockerClosed` when a part's earlier part ends, and still observes every open change from
+time to time.
 
 ## Hosts
 
@@ -340,13 +346,13 @@ A host that starts each item when it is made, as an application may, needs no sw
 | Accept | A squash merge | The application's own accept of the draft |
 | People who decide | `notify` | The person who sent the request |
 | Tells people | A mention | A notification |
-| Observed version | The head commit of the pull request's branch, read from the branch's ref | The draft's newest revision |
-| Observed conflict | `mergeable` is false (`mergeable_state` is `dirty`); nothing is sent while `mergeable` is still null | The draft no longer applies to the latest release of what it changes |
-| Observed merge | The pull request's `merged` | The draft was published outside the engine |
+| Observed version | The head commit of the pull request's branch, read from the branch's ref; the pull request's `head.sha` once the branch is deleted, as after a merge, or for a fork | The draft's newest revision |
+| Observed conflict | `mergeable` is false (`mergeable_state` is `dirty`). While `mergeable` is null, as just after a push, the host reads again before it sends; a merged pull request keeps it null, and its observation says `conflicts` false | The draft no longer applies to the latest release of what it changes |
+| Observed merge | The pull request's `merged`, which needs no `mergeable` | The draft was published outside the engine |
 | Observed as empty | No file differs between the base and the head | The draft changes nothing any more |
 | Observes on | `pull_request` synchronize, closed and reopened; a push to the base, for each open change; each sweep | A change of the draft or of the release; its worker, from time to time |
 | A change closed unmerged | Not an observation: the host tells a person, who drops the item or asks for the work again | The draft was discarded: the same |
-| One event at a time | One concurrency group per item, so one run handles the item's events. A run that waits may be replaced by a newer one; that newer run reads the change itself, and the other events wait in NexKit's comments and markers, which it reads, so none is lost. The run is the state comment's only writer, which stands for the compare-and-set | The request's row, locked while its event is handled |
+| One event at a time | Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares one concurrency group keyed by the item, which a routing job derives and passes on; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and gives each a stable id from its source, such as the comment's id. The run is then the state comment's only writer, which stands for the compare-and-set. Today NexKit groups runs by issue and by pull request, and the sweep writes many items in one run | The request's row, locked while its event is handled |
 
 What exists only because of GitHub stays in the GitHub host: the GitHub App, statuses, branch
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,

@@ -109,9 +109,10 @@ The protocol is built for delivery at least once, in any order a host's queues g
   then each harmless. A result for an action that is still pending names the version that
   action acts on; one that names another is an error the engine refuses.
 - **Leaving a state cancels its work.** An item that moves on cancels the actions of the state it
-  left that still run, such as a plan when a conflict sends the item to a fix round, so their
-  late results find nothing pending. A lost action that only tells, shows, waits or ends is
-  carried out again under a new id; a lost action that works fails the step, for a person.
+  left that still run, such as its checks when a person pushes to the change, so their late
+  results find nothing pending. A lost action that only tells, shows, waits or ends is carried
+  out again under a new id while it still stands: a lost notice whose reason the item no longer
+  has is not sent again. A lost action that works fails the step, for a person.
 - **The state is an outbox.** Each action the engine answered stays in the state, whole, as
   pending until its result arrives, the engine cancels it, or the host reports it lost. A host
   that crashed between storing the state and carrying out its actions carries out the pending
@@ -145,7 +146,9 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
-  round.
+  round. An item that has a change is never split, since nothing would then end the change: its
+  split plan goes on as one change. A plan that asks questions waits for answers, even one an
+  item was made with.
 - **From every state that has a change:** a `conflict` follows the conflict policy once nothing
   runs. In `ready` and `accepting` it does so at once, and in `checking` too, since checks of a
   change that conflicts can no longer lead to an accept. In any other state the state records the
@@ -159,11 +162,12 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   person who was disabled, goes to `failed`.
 - **A review-only item** comes with its change and is never planned, fixed, replaced or accepted
   by the engine: a person's own pull request, which NexKit only checks and reviews. Each review
-  request takes it to `checking`.
+  request takes it to `checking`, and a drop ends the engine's work without closing it.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, and the second time, it goes to `failed` for a person, as NexKit 6 does.
 - **A final item that a person reopens** waits for a person, with attention, as NexKit 6 does.
+  One whose change went in or became empty starts again without it.
 
 Three things sit beside the state, never in place of it:
 
@@ -334,8 +338,10 @@ action of the answer is pending, and an action leaves `pending` only with its re
 or its loss. It also checks NexKit's rule: every item that is not final has an action that works
 on it (`runAgent`, `runChecks`, `publish`, `accept`, `createParts`, `replaceChange` or `wait`), a
 wait, a hold or attention. The rule that a round counts only when its agent ran to its end or
-published joins these checks with the engine's rules of rounds. Across the cases, every transition of the states table is played, no case makes one that the
-page does not name for its policies, and an item is dropped from every state that is not final. The engine passes the suite in this repository, and each host runs it through its own
+published joins these checks with the engine's rules of rounds. Across the cases, every
+transition of the states table is played, no case makes one that the page does not name for its
+policies and for whether the item had a change, and an item is dropped from every state that is
+not final. The engine passes the suite in this repository, and each host runs it through its own
 adapter. A new rule of the engine comes with a case.
 
 ## Versions

@@ -140,8 +140,9 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **From every state that has a change:** a `conflict` follows the conflict policy once nothing
   runs. In `ready` and `accepting` it does so at once, and in `checking` too, since checks of a
   change that conflicts can no longer lead to an accept. In any other state the state records the
-  conflict, and the policy applies when the running step ends and the item would go on to
-  checks, its accept or a person, as NexKit 6 starts no conflict round while another round runs.
+  conflict, and the policy applies once the running step has ended and the item would go on to
+  its checks or be ready, as NexKit 6 starts no conflict round while another round runs; a
+  question or a failure keeps its attention meanwhile.
   A change that a person accepted, such as a merge by hand, goes to `accepted`; a change that
   became empty, because the same change landed another way, goes to `noChange`; a change that a
   person pushed to goes to `checking`.

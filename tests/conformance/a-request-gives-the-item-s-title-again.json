@@ -1,0 +1,45 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan",
+        "title": "The schemas."
+      },
+      "state": "planning",
+      "changed": true,
+      "expect": {
+        "title": "The schemas."
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplit"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "titles"
+        ]
+      }
+    }
+  ]
+}

@@ -50,6 +50,7 @@ DEFAULTS = {
     "requested": {"by": PERSON, "note": ""},
     "planApproved": {"by": PERSON},
     "answered": {"by": PERSON, "answers": [{"question": 1, "option": 1}], "note": ""},
+    "commented": {"by": PERSON, "text": {"name": "comment", "ref": "9"}},
     "changesRequested": {"by": PERSON, "note": {"name": "comment", "ref": "9"}},
     "changeApproved": {"by": PERSON},
     "dropRequested": {"by": PERSON, "reason": ""},

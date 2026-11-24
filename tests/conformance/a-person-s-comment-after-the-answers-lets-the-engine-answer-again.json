@@ -1,0 +1,77 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true,
+    "answers": "recommended"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "answers"
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "commented",
+        "by": {
+          "id": "octocat",
+          "role": "reader"
+        }
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "asked": []
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "answers"
+        ]
+      }
+    }
+  ]
+}

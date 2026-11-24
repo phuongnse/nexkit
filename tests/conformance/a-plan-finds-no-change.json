@@ -1,5 +1,7 @@
 {
-  "policies": {},
+  "policies": {
+    "planApproval": "autoWhenClean"
+  },
   "steps": [
     {
       "event": {

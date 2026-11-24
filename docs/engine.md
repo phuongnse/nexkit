@@ -3,9 +3,11 @@
 _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`; the engine's
 `step` call with its states, whose decisions are a frame that takes NexKit 6's own rules one group
 at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 does, as
-`nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; and the
-GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet. The
-rest of this page is not built yet, and NexKit 6 runs as [How it works](how-it-works.md) says._
+`nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; the
+GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
+the decisions that follow a plan, which NexKit 6's autopilot and `route` take from `step` (see
+[getting there](#getting-there)). The rest of this page is not built yet, and NexKit 6 runs as
+[How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
 **hosts** that store the work, carry out what the engine decides and show it to people. GitHub
@@ -150,14 +152,14 @@ needed.
   blocking ones first, 30 failure signatures, and 50 criteria and 50 checklist answers with
   those a decision reads first. A split of more parts keeps none of them, only how many it
   named, so a split is never filed cut. Each text is clipped as NexKit 6 clips it: a question
-  at 1,500 characters, an option at 500, a part's title at 256, a path at 300, a finding at 300
-  and a reason for a person at 1,000. A long failure signature is kept as its hash, never cut,
-  because rounds compare signatures. When a document would still pass the limit, the engine
-  shortens texts that a person reads in full where the host keeps them, each to the most that
-  fits, in this order: the findings, the questions and their options, the protected paths and
-  the attention's text. It never shortens a count, a status, an id, a part's title or a
-  signature, which decisions read, and a host that builds a first document keeps it the same
-  way. The engine never answers a state that its own schema refuses, such as an outbox past
+  at 1,500 characters, an option at 500, the item's title and a part's at 256, a path at 300, a
+  finding at 300 and a reason for a person at 1,000. A long failure signature is kept as its
+  hash, never cut, because rounds compare signatures. When a document would still pass the
+  limit, the engine shortens texts that a person reads in full where the host keeps them, each
+  to the most that fits, in this order: the findings, the questions and their options, the
+  protected paths and the attention's text. It never shortens a count, a status, an id, a title
+  or a signature, which decisions read, and a host that builds a first document keeps it the
+  same way. The engine never answers a state that its own schema refuses, such as an outbox past
   its `maxItems` when a host never reports its actions: it refuses that event instead.
 - **It is the truth.** A host may keep columns or markers that copy parts of it, for its own
   lists and pages, written in the same transaction, but the engine reads only the document.
@@ -267,8 +269,27 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
   round. An item that has a change is never split, since nothing would then end the change: once
   a person approves its split plan, it goes on as one change, and under `autoWhenClean` the plan
-  waits for a person. A plan that asks questions waits for answers, even one an item was made
-  with.
+  waits for a person. A split goes on as one change too when its rules refuse it, as below. A
+  plan that asks questions waits for answers, even one an item was made with.
+- **What follows a plan.** Under `person`, every plan waits for a person: for answers, a hand-made
+  change or its approval, a plan that finds no change too. Under `autoWhenClean`, as NexKit 6's
+  autopilot decides:
+  - A plan that is too large is split into its parts, all of them, when splits are on and the
+    item has no change. A split is refused for an item at `splitDepth` levels of parts, which
+    waits for a person, and for a plan with more parts than `splitParts`, with no parts, or with a
+    part titled by the item's own title or starting with it, ignoring case, spaces and punctuation
+    at its end. For each of these three the item is planned once more, and a second such plan
+    waits for a person.
+  - Otherwise, a plan that finds no change ends the item in `noChange`, one that needs paths only
+    a person changes waits for that person, and a clean plan is approved and starts the change.
+  - Questions wait for a person unless `answers` is `recommended` and every question has a
+    recommended option. Then the engine answers with them and plans again, once in a row: when
+    the plan its answers started asks again and no person acted since, a person decides. A
+    recommended option that only closes the item is always a person's to pick.
+  - A person's comment on a plan that waits, on an item with no change, plans it again, since the
+    plan did not hold what the comment says. A writer's answer that picks the option that only
+    closes the item drops it, with no agent run, since another plan could only stop at the same
+    place; on an item with a change, the answer goes to the next plan.
 - **From every state that has a change,** the engine reconciles the item with the latest
   observation of that change after each event, once no publish or replace is on its way. A change
   that was merged, such as by a person's hand, goes to `accepted`; one that became empty, because
@@ -309,7 +330,11 @@ Three things sit beside the state, never in place of it:
 
 - **Attention:** a person is needed, with what the person decides on, such as the plan whose
   questions are open, and the reason: a plan that waits for its approval
-  (`approval`), a question with no recommended answer (`question`), a change that needs paths
+  (`approval`), a question with no recommended answer (`question`), a plan that asks again right
+  after the engine answered it (`askedAgain`), a recommended answer that only closes the item
+  (`closeRecommended`), a plan too large for an item at the deepest level of parts
+  (`splitDepth`), a second plan that still has too many parts (`tooManyParts`), no parts
+  (`noParts`) or parts titled by the item's title (`partTitles`), a change that needs paths
   only a person changes (`handMadeChange`), a criterion the review could not verify
   (`unverifiableCriterion`), a checklist item only a person decides (`personChecklistItem`), a
   change that waits for a person's accept (`accept`), a refused accept or a conflict
@@ -337,9 +362,9 @@ Three things sit beside the state, never in place of it:
 
 | Event | Sent when |
 | --- | --- |
-| `created` | A work item is made, with its kind, its text, who does each stage and, for an item made with a plan, the plan |
+| `created` | A work item is made, with its kind, its title and text, how deep a part it is, who does each stage and, for an item made with a plan, the plan |
 | `textChanged`, `commented` | A work item's text is edited, or a person writes on it, with their role |
-| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note |
+| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them |
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |
 | `actionFinished` | An action ended, with its id, the change version and its result |
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |
@@ -408,8 +433,8 @@ shapes, and a host shows them in its own words.
 
 A host gives the engine its policies in its configuration. Each has a default, and the
 protocol's `policies.schema.json` names it, as the first column does below. The policies with no
-name there, start, answers, budgets, retries, usage limits, agents, splits' sizes, a parent's
-end, after a failure and the checklist, are not in the protocol yet: they come into it as the
+name there, start, budgets, retries, usage limits, agents, a parent's end, after a failure and
+the checklist, are not in the protocol yet: they come into it as the
 engine takes over the decisions that read them, and until then the host applies them itself. The
 `prompt` call already reads three of them beside the host's policies, as its schema names them:
 `checklist`, the items the plan and the review answer; `profiles`, the profiles triage chooses
@@ -419,7 +444,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | --- | --- | --- | --- |
 | Start | `onRequest`, `bySweep` | `onRequest`; `bySweep` with autopilot | `onRequest`: a request starts when it is sent |
 | Plan approval (`planApproval`) | `person`, `autoWhenClean` | `person`; `autoWhenClean` with autopilot | `person`, always |
-| Answers | `never`, `recommended` | `never` (`autopilot.answer`) | `never` |
+| Answers (`answers`) | `never`, `recommended` | `never`; `recommended` with `autopilot.answer` | `never` |
 | Review after failing checks (`reviewAfterFailingChecks`) | `always`, `onlyAfterPassing` | `always`: one fix round takes the failures and the findings | `onlyAfterPassing` |
 | Accept (`accept`) | `person`, `autoWhenPassed` | `person`; `autoWhenPassed` with `merge.auto` | `autoWhenPassed` only when the application and the request allow it, else the person who sent it |
 | Fix rounds (`fixRounds`) | 0–10, and which rounds count | 2: rounds a person asked for, resumed, retried and stopped rounds do not count | 3; a request for changes and a retry start the count again |
@@ -429,7 +454,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | Retries | Waits after a transient stop; when a lost action starts again | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
 | Usage limits | Resume after the reset, and how long to wait | `usage_limit.*` | Resume after the reset |
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
-| Splits (`splits`) | Off or on, with the most parts and the depth | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
+| Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10 | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
 | A parent's end | When its parts' ends end it | `close_parent_issues`, when one part was completed | When its parts end |
 | After a failure | `person`, `replan`, `newItem` | `person`, then `replan` on a comment | `newItem`: the person sends the request again |
 | Checklist | Items the plan and the review answer, some for a person | `review.checklist` | The application's own checklist |
@@ -565,8 +590,14 @@ adapter. A new rule of the engine comes with a case.
 ## Getting there
 
 1. The engine grows inside NexKit 6: decisions move behind the protocol one by one, and the
-   GitHub host calls them. Every existing test passes after each step, and the engine's part of
-   `tests/test_scenarios.py` becomes the conformance suite as it goes.
+   GitHub host calls them. While NexKit 6's code still moves an item between the decisions that
+   the engine holds, the GitHub host builds the item's document for each of them from NexKit 6's
+   markers, as its import reads them, sends the event that GitHub shows, and carries out the
+   answer with NexKit 6's code and in its words. So far these are the decisions that follow a
+   plan, but one: a plan that splits an item whose round ran out of time on its pull request,
+   which NexKit 6 still splits, closing the pull request as superseded. Every existing test
+   passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the
+   conformance suite as it goes.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on
    NexKit 6 move to it with the usual upgrade steps, and the GitHub host imports their open work.
 3. An application can then be a host, with its adapter in its own language and, when it keeps

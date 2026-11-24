@@ -1,0 +1,97 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true,
+    "answers": "recommended"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "answers"
+        ],
+        "plan.approved": false
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "askedAgain",
+        "asked": []
+      }
+    },
+    {
+      "event": {
+        "kind": "answered",
+        "answers": [
+          {
+            "question": 1,
+            "option": 2
+          }
+        ]
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "answers"
+        ]
+      }
+    }
+  ]
+}

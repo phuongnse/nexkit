@@ -53,6 +53,15 @@
           "type": "null"
         }
       ]
+    },
+    "title": {
+      "$comment": "The work item's title as it is now, when the host gives it again, such as on a request that starts a plan.",
+      "type": "string"
+    },
+    "depth": {
+      "$comment": "How many levels of parts the item is below the item first split, when the host gives it again.",
+      "type": "integer",
+      "minimum": 0
     }
   },
   "required": [

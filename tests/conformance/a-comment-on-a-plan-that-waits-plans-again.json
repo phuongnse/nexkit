@@ -1,0 +1,59 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planProtected"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "commented",
+        "by": {
+          "id": "eve",
+          "role": "outside"
+        }
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "commented"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    }
+  ]
+}

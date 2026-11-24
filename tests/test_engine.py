@@ -263,6 +263,42 @@ class ProgramTest(unittest.TestCase):
         self.assertEqual(machine.DEFAULTS, defaults)
         self.assertFalse(machine.DEFAULTS["splits"])
 
+    def test_the_answers_and_split_policies_are_refused_outside_their_values(self):
+        cases = [
+            ({"answers": "always"}, "request.policies.answers must be one of"),
+            ({"splitParts": 11}, "request.policies.splitParts must be at most 10"),
+            ({"splitParts": 0}, "request.policies.splitParts must be at least 1"),
+            ({"splitDepth": 0}, "request.policies.splitDepth must be at least 1"),
+        ]
+        for policies, found in cases:
+            with self.subTest(policies=policies):
+                answer = engine.answer({**request(policies=policies), "call": "step"})
+                self.assertIn(found, answer["error"])
+
+    def test_created_gives_the_title_and_depth_and_a_request_gives_them_again(self):
+        event = {**created(), "title": "T" * 300, "depth": 2}
+        state = engine.answer({**request(event=event), "call": "step"})["state"]
+        self.assertEqual((state["title"], state["depth"]), ("T" * 256, 2))
+        again = {
+            **json.loads((EXAMPLES / "events" / "requested.json").read_text()),
+            "item": state["item"],
+            "what": "plan",
+            "title": "Another title",
+            "depth": 1,
+        }
+        found = engine.answer({**request(state=state, event=again), "call": "step"})
+        self.assertEqual((found["state"]["title"], found["state"]["depth"]), ("Another title", 1))
+        # The state keeps no more of a title than GitHub allows, and no depth below 0.
+        for name, value, problem in (
+            ("title", "T" * 257, "value.title has more than 256 characters"),
+            ("depth", -1, "value.depth must be at least 0"),
+        ):
+            with self.subTest(name=name):
+                broken = {**state, name: value}
+                self.assertIn(problem, protocol.check(broken, "state.schema.json"))
+        answer = engine.answer({**request(event={**created(), "depth": -1}), "call": "step"})
+        self.assertIn("request.event.depth must be at least 0", answer["error"])
+
 
 class PurityTest(unittest.TestCase):
     def test_nothing_in_the_engine_reads_the_world(self):

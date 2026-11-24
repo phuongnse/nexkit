@@ -20,7 +20,7 @@ from . import autopilot, item_state, protocol
 from .autopilot import CHAINED, CI_WAITING, HELD, PULL_CLOSED, UNTRUSTED_MERGE, UNTRUSTED_ROUND
 from .engine.machine import ACCESS, INPUTS
 from .github import TRUSTED_ASSOCIATIONS
-from .protocol.size import MOST, clip, fit, signature
+from .protocol.size import LONGEST, MOST, clip, fit, signature
 from .schema import filled
 from .state import (
     COMMIT,
@@ -169,6 +169,10 @@ def situation(
     sub-issues `parts`; the open issues that block it, `blockers`; whether a label holds it,
     `held`; the configuration `cfg`, and the time `now`."""
     doc = empty(str(issue["number"]))
+    if issue.get("title") is not None:
+        # The engine keeps the title for a split's parts. How deep a part the item is waits
+        # for the host to read its parents, so the import leaves it out.
+        doc["title"] = str(issue["title"])[: LONGEST["title"]]
     doc["hold"] = bool(held)
     if "pull_request" in issue:
         pull, pull_comments = pull or issue, comments
@@ -231,7 +235,7 @@ class Item:
             after = [c for c, run in self.runs if run["command"] == "go"]
             after += [c for c, _ in self.rows]
             approved = any(c["id"] > self.plan["id"] for c in after)
-            doc["plan"] = _plan(self.plan, self.data, approved)
+            doc["plan"] = plan_of(self.plan, self.data, approved)
         doc["asked"] = _asked(self.record, comments if review_only else [*comments, *pull_comments])
         doc["used"]["tokens"] = _tokens([run for _, run in self.runs + self.rows])
         if pull and not review_only:
@@ -524,27 +528,13 @@ class Item:
     def running(self, kind, name):
         """A command or round on its way: the action the engine waits for."""
         version = (self.doc["change"] or {}).get("version")
-        action = {"id": RUN_ID, "next": None}
         if name == "checking":
-            action.update(kind="runChecks", changeVersion=version)
+            action = {"id": RUN_ID, "next": None, "kind": "runChecks", "changeVersion": version}
         elif name == "accepting":
-            action.update(kind="accept", changeVersion=version, by="engine")
+            action = {"id": RUN_ID, "next": None, "kind": "accept", "changeVersion": version}
+            action["by"] = "engine"
         else:
-            stage = STAGES[name]
-            action.update(
-                kind="runAgent",
-                stage=stage,
-                changeVersion=version,
-                access=ACCESS[stage],
-                inputs=INPUTS[stage],
-                result=f"results/{stage}.schema.json",
-                agent=None,
-                model=None,
-                effort=None,
-                budget={"tokens": None, "seconds": None, "usd": None},
-                session=None,
-                resume=False,
-            )
+            action = agent_run(STAGES[name], version)
         self.doc["pending"].append(action)
         return self.be(kind, name)
 
@@ -594,6 +584,27 @@ class Item:
         ]
 
 
+def agent_run(stage, version):
+    """The `runAgent` action that a NexKit 6 run of `stage` on its way stands for, on the change
+    version `version`, as the engine asks for it."""
+    return {
+        "id": RUN_ID,
+        "next": None,
+        "kind": "runAgent",
+        "stage": stage,
+        "changeVersion": version,
+        "access": ACCESS[stage],
+        "inputs": INPUTS[stage],
+        "result": f"results/{stage}.schema.json",
+        "agent": None,
+        "model": None,
+        "effort": None,
+        "budget": {"tokens": None, "seconds": None, "usd": None},
+        "session": None,
+        "resume": False,
+    }
+
+
 def _latest(rows):
     """(comment, round) of the latest round that says something about the pull request: one
     that found nothing to merge does not (`autopilot._meaningful`)."""
@@ -622,7 +633,7 @@ def _ended(part):
     return "dropped" if part.get("state_reason") not in (None, "completed") else "accepted"
 
 
-def _plan(comment, data, approved):
+def plan_of(comment, data, approved):
     """The plan as the engine keeps it, from the plan comment and its record, each list to
     MOST and each text clipped as the engine keeps them."""
     data = data or {}

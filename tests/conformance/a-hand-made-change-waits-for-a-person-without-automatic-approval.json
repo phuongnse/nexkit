@@ -1,0 +1,36 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planProtected"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "handMadeChange"
+      }
+    }
+  ]
+}

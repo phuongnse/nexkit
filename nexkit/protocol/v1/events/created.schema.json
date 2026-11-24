@@ -26,7 +26,13 @@
       ]
     },
     "title": {
-      "type": "string"
+      "type": "string",
+      "$comment": "The work item's title, which the parts of a split may not repeat. The state keeps its first 256 characters."
+    },
+    "depth": {
+      "$comment": "For a part of a split, how many levels it is below the item first split; 0, or left out, for an item that is no part.",
+      "type": "integer",
+      "minimum": 0
     },
     "text": {
       "$ref": "../common.schema.json#/$defs/text"

@@ -125,7 +125,9 @@
     },
     {
       "event": {
-        "kind": "held"
+        "kind": "changeObserved",
+        "version": "v1b",
+        "id": "sweep-2"
       },
       "state": "checking",
       "changed": true,
@@ -133,8 +135,7 @@
         "runChecks"
       ],
       "expect": {
-        "change.version": "v1b",
-        "hold": true
+        "change.version": "v1b"
       }
     }
   ]

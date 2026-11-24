@@ -111,6 +111,7 @@ class Step:
         running = state["state"] in ROUND and state["policies"]
         self.p = {**DEFAULTS, **state["policies"]} if running else self.given
         self.actions = []
+        self.issued = 0
         self.waits = 0
 
     # What every rule uses.
@@ -133,12 +134,21 @@ class Step:
     def number(self, prefix, count):
         return f"{prefix}{self.s['revision'] + 1}.{count}"
 
+    def next_action(self):
+        """The id of the next action: one a withdrawn action had is never given again."""
+        self.issued += 1
+        return self.number("a", self.issued)
+
     def move(self, name):
-        """Go to `name`: cancel the work the old state asked for in earlier steps, and end its
-        waits and attention. A round's state keeps the policies the round started with."""
+        """Go to `name`: stop the work the old state asked for, and end its waits and attention.
+        A round's state keeps the policies the round started with."""
         issued = {action["id"] for action in self.actions}
+        # A step that ends final tells no person what it asked of them earlier in the step.
+        withdrawn = WORK + (("needPerson",) if name in FINAL else ())
         for action in list(self.s["pending"]):
-            if action["kind"] in WORK and action["id"] not in issued:
+            if action["kind"] in withdrawn and action["id"] in issued:
+                self.withdraw(action)
+            elif action["kind"] in WORK:
                 self.cancel(action)
         if name not in ROUND:
             self.s["policies"] = {}
@@ -151,11 +161,18 @@ class Step:
         self.s["attention"] = None
 
     def do(self, kind, **fields):
-        action = {"id": self.number("a", len(self.actions) + 1), "kind": kind, "next": None}
+        action = {"id": self.next_action(), "kind": kind, "next": None}
         action.update(fields)
         self.actions.append(action)
         self.s["pending"].append(copy.deepcopy(action))
         return action
+
+    def withdraw(self, action):
+        """Take back an action asked for earlier in this step: the host never got it."""
+        self.s["pending"].remove(action)
+        self.actions = [item for item in self.actions if item["id"] != action["id"]]
+        if action["kind"] == "runAgent" and action["stage"] in ("implement", "fix"):
+            self.s["rounds"]["started"] -= 1
 
     def cancel(self, action):
         self.s["pending"].remove(action)
@@ -277,11 +294,10 @@ class Step:
         return True
 
     def observed(self):
-        """The latest observation, when it is of the change the item has."""
-        observed, change = self.s["observed"], self.s["change"]
-        if observed and change and observed["changeId"] == change["id"]:
-            return observed
-        return None
+        """The latest observation, always of the change the item has: `on_changeObserved` keeps
+        only those, `took_change` refuses a result that observes another change, and a reopen
+        that drops the change drops it too."""
+        return self.s["observed"]
 
     def coming(self):
         """Whether a publish or a replace is on its way, which sets the change."""
@@ -294,6 +310,8 @@ class Step:
         observed = self.observed()
         if self.final() or self.coming() or not observed:
             return False
+        # A reopened item waits for a person, who starts it; a review-only one is reviewed.
+        whole = whole and (self.state != "new" or self.review_only)
         if observed["merged"]:
             self.move("accepted")
             self.close("completed")
@@ -316,10 +334,14 @@ class Step:
     def took_change(self, result):
         """A publish or a replace set the change. It changed the change outside the order of
         the item's events, so the observation its result carries, read when the host handled
-        the result, replaces the latest one."""
+        the result, replaces the latest one; `step` reconciles with it after the handler."""
         observed = result["observed"]
+        if observed and observed["changeId"] != result["change"]["id"]:
+            raise EngineError(
+                f"The result of a {result['change']['id']!r} change observes "
+                f"{observed['changeId']!r}."
+            )
         self.s["change"] = result["change"]
-        # One of another change stays in the slot unused: `observed` reads only the item's.
         self.s["observed"] = {key: observed[key] for key in OBSERVED} if observed else None
 
     def at_once(self):
@@ -766,8 +788,7 @@ class Step:
             self.need("failed", result["refused"] or "The change could not be published.")
             return
         self.took_change(result)
-        if not self.reconcile():
-            self.check()
+        self.check()
 
     def check(self):
         if self.conflicted():
@@ -806,8 +827,6 @@ class Step:
 
     def finished_replaceChange(self, result, action):
         self.took_change(result)
-        if self.reconcile():
-            return
         self.run("implement")
 
     def finished_createParts(self, result, action):
@@ -852,17 +871,16 @@ def step(state, event, policies, check):
     ):
         changed = False
     else:
-        # What waited for an earlier event, such as a push observed while the item was stopped.
-        caught_up = work.reconcile()
-        changed = handler(event) or caught_up
+        was = work.state
+        changed = handler(event)
+        # Even after an event that changed nothing else, so that a repeated observation or a
+        # person's request catches up. A stop, or a step that fails the item, keeps its
+        # attention: a new version observed meanwhile waits for the next event
+        # (docs/engine.md#states).
+        halted = event["kind"] == "stopped" or (work.state == "failed" and was != "failed")
+        changed = work.reconcile(whole=not halted) or changed
     if not changed:
         return before, [], False
-    # An event that stops the item, or fails it for a lost action, keeps its attention: a new
-    # version observed meanwhile waits for the next event (docs/engine.md#states).
-    halted = event["kind"] == "stopped" or (
-        event["kind"] == "actionLost" and (work.s["attention"] or {}).get("reason") == "outage"
-    )
-    work.reconcile(whole=not halted)
     if work.review_only:
         _never_writes(work.actions)
     work.s["revision"] += 1

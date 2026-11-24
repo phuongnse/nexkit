@@ -187,6 +187,16 @@ class ProgramTest(unittest.TestCase):
                 machine._never_writes([action])
         machine._never_writes([{"kind": "runAgent", "stage": "review"}, {"kind": "show"}])
 
+    def test_an_action_withdrawn_in_a_step_leaves_its_id_unused(self):
+        work = machine.Step(machine.blank("42"), {}, protocol.check)
+        first = work.do("runChecks", changeVersion="v1")
+        work.do("show", what="plan", text={"name": "plan", "ref": "a1.1"})
+        work.withdraw(work.s["pending"][0])
+        work.do("runChecks", changeVersion="v2")
+        ids = [action["id"] for action in work.actions]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertNotIn(first["id"], ids)
+
     def test_the_defaults_are_the_protocol_s(self):
         properties = protocol.load("policies.schema.json")["properties"]
         defaults = {name: policy["default"] for name, policy in properties.items()}

@@ -144,10 +144,11 @@ The protocol is built for delivery at least once, in any order a host's queues g
   names another is an error the engine refuses.
 - **Leaving a state cancels its work.** An item that moves on cancels the actions of the state it
   left that still run, such as its checks when a person pushes to the change, so their late
-  results find nothing pending. A lost action that only tells, shows, waits or ends is carried
-  out again under a new id while it still stands: a lost notice is not sent again once attention
-  has another reason or is about something else. A lost action that works fails the step, for a
-  person.
+  results find nothing pending. One it asked for earlier in the same step is withdrawn from the
+  answer instead, since the host never got it. A lost action that only tells, shows, waits or
+  ends is carried out again under a new id while it still stands: a lost notice is not sent again
+  once attention has another reason or is about something else. A lost action that works fails
+  the step, for a person.
 - **The state is an outbox.** Each action the engine answered stays in the state, whole, as
   pending until its result arrives, the engine cancels it, or the host reports it lost. A host
   that crashed between storing the state and carrying out its actions carries out the pending

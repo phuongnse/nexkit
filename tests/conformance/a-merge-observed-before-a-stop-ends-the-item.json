@@ -112,7 +112,6 @@
       "changed": true,
       "actions": [
         "cancel",
-        "needPerson",
         "close"
       ]
     }

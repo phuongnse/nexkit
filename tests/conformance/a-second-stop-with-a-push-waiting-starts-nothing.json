@@ -1,8 +1,5 @@
 {
-  "policies": {
-    "accept": "autoWhenPassed",
-    "conflicts": "redo"
-  },
+  "policies": {},
   "steps": [
     {
       "event": {
@@ -78,60 +75,67 @@
       "event": {
         "kind": "actionFinished",
         "action": "runAgent",
-        "result": "@agent:review"
+        "result": "@agent:reviewChanges"
       },
-      "state": "accepting",
+      "state": "fixing",
       "changed": true,
       "actions": [
-        "accept"
-      ]
-    },
-    {
-      "event": {
-        "kind": "changeObserved",
-        "conflicts": true
-      },
-      "state": "working",
-      "changed": true,
-      "actions": [
-        "cancel",
-        "replaceChange"
+        "runAgent"
       ]
     },
     {
       "event": {
         "kind": "actionFinished",
-        "action": "replaceChange",
-        "result": {
-          "change": {
-            "id": "309",
-            "version": "n1"
-          },
-          "observed": {
-            "changeId": "308",
-            "version": "v1",
-            "conflicts": false,
-            "merged": true,
-            "empty": false
-          }
-        }
+        "action": "runAgent",
+        "result": "@agent:fix"
       },
-      "state": "working",
+      "state": "fixing",
       "changed": true,
       "actions": [
-        "runAgent"
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1b"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "stopped"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "needPerson"
       ],
       "expect": {
-        "change.id": "309"
+        "change.version": "v1"
       }
     },
     {
       "event": {
-        "kind": "held"
+        "kind": "stopped",
+        "text": "Again."
       },
-      "state": "working",
-      "changed": true,
+      "state": "failed",
+      "changed": false,
       "actions": []
+    },
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "close"
+      ]
     }
   ]
 }

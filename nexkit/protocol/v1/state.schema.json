@@ -312,6 +312,63 @@
         }
       ]
     },
+    "questions": {
+      "$comment": "The questions of the implement or fix round that stopped as blocked and asked them, while they wait: `ref` is the agent action that asked, as attention names it, and `noChange` whether the round, an implement round, found that no change is needed. Left out while no round's questions wait.",
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "common.schema.json#/$defs/id"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$comment": "A question as the state keeps it. `recommended` and `closes` count options from 1; 0 is none. A round's question names in `replans` the options that only a new plan carries out.",
+            "type": "object",
+            "properties": {
+              "question": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 6
+              },
+              "recommended": {
+                "type": "integer"
+              },
+              "closes": {
+                "type": "integer"
+              },
+              "replans": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 6
+              }
+            },
+            "required": [
+              "question",
+              "options",
+              "recommended"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 10
+        },
+        "noChange": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ref",
+        "items",
+        "noChange"
+      ],
+      "additionalProperties": false
+    },
     "rounds": {
       "type": "object",
       "properties": {
@@ -428,7 +485,8 @@
           "titles",
           "parts",
           "fewer",
-          "answers"
+          "answers",
+          "replan"
         ]
       },
       "maxItems": 16

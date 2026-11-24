@@ -8,10 +8,17 @@ answer with NexKit 6's code, in NexKit 6's words.
 
 So far the engine decides what follows a plan: its approval by autopilot, the answers to its
 questions, once in a row, a writer's answer that only closes the issue, a plan that finds no
-change or needs a hand-made change, splits and their rules, and a new plan after a
-collaborator's comment. One stays NexKit 6's (`autopilot._replanned`): a plan that splits an
-issue whose pull request's round ran out of time, since the engine never splits an item that has
-a change (docs/engine.md#states).
+change or needs a hand-made change, splits and their rules, a new plan after a collaborator's
+comment, and what a plan waits for without autopilot. One stays NexKit 6's
+(`autopilot._replanned`): a plan that splits an issue whose pull request's round ran out of
+time, since the engine never splits an item that has a change (docs/engine.md#states).
+
+It also decides what follows a `/nexkit go` that stopped as blocked with questions or with
+protected paths its change needs (`autopilot.engine_round`): the answers to its questions, once
+in a row, a recommended option that only closes the issue, with the round's finding that no
+change is needed or without it, one that only a new plan carries out, a writer's answer that
+only closes the issue, by a comment or a command, and a new plan after a collaborator's comment
+or the close of an issue that blocks it.
 
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
@@ -35,6 +42,8 @@ from .state import (
     plan_record,
     planned_parts,
     questions,
+    recommended_option,
+    replanning_options,
     run_comments,
 )
 
@@ -234,7 +243,7 @@ def _depth(gh, issue, data):
 
 def _picked(text, data):
     """(question, option, text) of the option that only closes the issue that a person's
-    `text` picks among the questions of the plan record `data`, or None
+    `text` picks among the questions of the plan record or run marker `data`, or None
     (`state.closing_answer`)."""
     items = (data or {}).get("questions")
     option = closing_answer(text, items) if items else None
@@ -447,30 +456,310 @@ def plan_carried_on(gh, cfg, issue, decision, output):
     return True
 
 
+def plan_waits_for(output):
+    """Why the plan `output` that a run posted waits for a person without automatic approval,
+    as the engine's attention names it: `approval`, of a plan that is too large, finds no
+    change or is clean, `handMadeChange` or `question`. A plan whose questions name no
+    question still asks, as NexKit 6 reads it. Raises `Refused`."""
+    data = plan_record(output)
+    found = plan_output({}, data, {})
+    if output.get("questions") and not found["questions"]:
+        found["questions"] = [{"question": "", "options": [], "recommended": 0, "closes": 0}]
+    doc = _planning(_document({"number": 0}, {}), 0, False)
+    result = {**AGENT, "output": found}
+    event = _event("actionFinished", 0, None, "plan", action=first_state.RUN_ID, **_NO_CHANGE)
+    answer = step(doc, {**event, "result": result}, {})
+    return (answer["state"]["attention"] or {}).get("reason")
+
+
+_NO_CHANGE = {"changeVersion": None}
+
+
+# -- a blocked round ------------------------------------------------------------------
+
+
+def asked_of(run):
+    """The questions of the blocked round whose marker is `run`, as its agent named them:
+    options by their numbers from 1, as the round's result gives them."""
+    asked = []
+    for item in questions(run.get("questions")):
+        options = item["options"]
+        replans = replanning_options(item)
+        asked.append(
+            {
+                "question": item["question"],
+                "options": options,
+                "recommended": _number(options, recommended_option(item)),
+                "closes": _number(options, closing_option(item)),
+                "replans": [_number(options, option) for option in replans],
+            }
+        )
+    return asked
+
+
+def round_output(run):
+    """The result of the implement round that stopped as blocked, whose marker is `run`, for
+    what the engine decides from: its questions, the protected paths its change needs, and
+    its finding that no change is needed."""
+    return {
+        "status": "blocked",
+        "summary": "",
+        "blocker": "",
+        "questions": asked_of(run),
+        "checks_run": [],
+        "protected_paths": list(run.get("protected_paths") or []),
+        "changes": [],
+        "testing": "",
+        "outside_plan": [],
+        "reviewer_notes": [],
+        "no_change": run.get("no_change") or "",
+    }
+
+
+def _working(doc, again):
+    """`doc` while its `/nexkit go` runs, which the engine waits for. `again` says that
+    autopilot's answers started this round and no person commented since
+    (`autopilot.asked_again`)."""
+    doc["state"] = "working"
+    doc["pending"] = [first_state.agent_run("implement", None)]
+    doc["asked"] += ["answers"] * again
+    if doc["plan"]:
+        doc["plan"]["approved"] = True
+    return doc
+
+
+def _asks(doc, comment, run):
+    """`doc` while the questions of the blocked round whose run comment is `comment` wait:
+    a comment that came before NexKit 6's next sweep is taken on them as they wait."""
+    ref = str(comment["id"])
+    items = [
+        {**item, "replans": sorted(set(item["replans"]) - {0, item["closes"]})}
+        for item in asked_of(run)
+    ]
+    found = bool(run.get("no_change"))
+    doc["state"] = "awaitingApproval"
+    doc["questions"] = {"ref": ref, "items": items, "noChange": found}
+    doc["attention"] = {"reason": "question", "text": "The round has questions.", "ref": ref}
+    if doc["plan"]:
+        doc["plan"]["approved"] = True
+    return doc
+
+
+def _plan_doc(issue, record, comments):
+    plan = latest_plan(comments)
+    return _document(issue, record, plan, plan_data(plan)) if plan else _document(issue, record)
+
+
+def after_go(gh, cfg, issue, comment, run, record, start, comments):
+    """The step after the `/nexkit go` of `issue` whose run comment `comment`, with the
+    marker `run`, says it stopped as blocked with questions or protected paths
+    (`autopilot.engine_round`), as the engine decides it: a writer's comment since that
+    picks the option that only closes the issue closes it; otherwise the round's result,
+    then a collaborator's comment since, or the close of an issue that blocked it after the
+    round started (`autopilot._since_stop`). `record` is autopilot's record and `start` what
+    a command that the step starts begins from. Raises `Refused`."""
+    number = issue["number"]
+    said = autopilot._commented_after(comments, comment)
+    picked = _picked(said[-1].get("body"), run) if said else None
+    by = ((said[-1].get("user") or {}).get("login") or "") if picked else ""
+    view = _RoundView(issue, run, start, said, picked)
+    if picked and by and gh.can_write(by):
+        # Closing is a write: a collaborator who may only read comments on the questions.
+        doc = _asks(_plan_doc(issue, record, comments), comment, run)
+        answers = [{"question": picked[0], "option": picked[1]}]
+        asked = doc["attention"]["ref"]
+        fields = {"by": _person(by, "writer"), "answers": answers, "note": "", "asked": asked}
+        at, name = said[-1].get("created_at"), f"answer-{said[-1]['id']}"
+        event = _event("answered", number, at, name, **fields)
+        return view.carry(step(doc, event, policies(cfg))["actions"])
+    doc = _working(_plan_doc(issue, record, comments), autopilot.asked_again(comments))
+    events = [_round_result(number, comment, run)]
+    if said:
+        # A collaborator, as `autopilot._commented_after` reads them.
+        login = (said[-1].get("user") or {}).get("login") or ""
+        text = {"name": "comment", "ref": str(said[-1]["id"])}
+        at, name = said[-1].get("created_at"), f"comment-{said[-1]['id']}"
+        events.append(_event("commented", number, at, name, by=_person(login, "reader"), text=text))
+    else:
+        closed = _closed_since(gh, issue, comment)
+        view.closed = list(closed)
+        events += [
+            _event(
+                "blockerClosed",
+                number,
+                None,
+                f"blocker-{found}",
+                blocker=str(found),
+                completed=done,
+            )
+            for found, done in closed.items()
+        ]
+    actions = []
+    for event in events:
+        found = step(doc, event, policies(cfg))
+        doc = found["state"]
+        if found["actions"]:
+            actions = found["actions"]
+            view.by_event = event["kind"]
+        if any(action["kind"] in ("runAgent", "close", "createParts") for action in actions):
+            break
+    return view.carry(actions)
+
+
+def _round_result(number, comment, run):
+    """The end of the `/nexkit go` whose run comment `comment` holds the marker `run`."""
+    return _event(
+        "actionFinished",
+        number,
+        comment.get("created_at"),
+        f"go-{comment.get('id')}",
+        action=first_state.RUN_ID,
+        changeVersion=None,
+        result={**AGENT, "output": round_output(run)},
+    )
+
+
+def _closed_since(gh, issue, comment):
+    """{number: completed} of the issues that block `issue` and closed after the round of the
+    run comment `comment` started, as `autopilot._since_stop` reads them."""
+    started = autopilot.parse_iso(comment.get("created_at"))
+    return {
+        blocker["number"]: blocker.get("state_reason") in (None, "completed")
+        for blocker in sorted(gh.blocked_by(issue["number"]), key=lambda found: found["number"])
+        if blocker.get("state") == "closed" and autopilot._later(blocker.get("closed_at"), started)
+    }
+
+
+class _RoundView:
+    """What autopilot does for one answer of the engine after a blocked `/nexkit go`, in
+    NexKit 6's words."""
+
+    def __init__(self, issue, run, start, said, picked):
+        self.issue, self.run, self.start, self.said, self.picked = issue, run, start, said, picked
+        self.closed, self.by_event = [], None
+
+    def step(self, state, reason="", **fields):
+        return autopilot._step(self.issue, state, reason, **fields)
+
+    def carry(self, actions):
+        kinds = {action["kind"]: action for action in actions}
+        run = self.run
+        if "close" in kinds and kinds["close"]["outcome"] == "notPlanned":
+            by = (self.said[-1].get("user") or {}).get("login") or ""
+            reason = f"@{by} answered with the option that only closes the issue"
+            fields = {"answer": self.picked[2], "by": by, "asked": run.get("url") or ""}
+            return self.step("close", reason, **fields)
+        if "close" in kinds:
+            # The recommended answer only closes the issue: another round would find the same.
+            reason = "the last round found no change is needed and recommends closing the issue"
+            return self.step("close", reason, finding=run["no_change"], run_url=run.get("url"))
+        if "runAgent" in kinds:
+            shown = any(a["kind"] == "show" and a["what"] == "answers" for a in actions)
+            return self.started(kinds["runAgent"]["stage"], shown)
+        if "needPerson" in kinds:
+            return self.waits(kinds["needPerson"]["reason"])
+        raise Refused("The engine answered nothing to carry out.")
+
+    def started(self, stage, shown):
+        start, number = self.start, self.issue["number"]
+        found = [
+            {"question": item["question"], "answer": item["recommended"]}
+            for item in questions(self.run.get("questions"))
+        ]
+        if shown and stage == "plan":
+            note = f"{autopilot.REPLAN_NOTE}\n\n{autopilot.answer_note(found)}"
+            fields = {**start, "target": number, "note": note}
+            reason = (
+                "autopilot answers the blocked round with an option that a new plan carries out"
+            )
+            return self.step("start", reason, command="plan", answers=found, replan=True, **fields)
+        if shown:
+            fields = {**start, "target": number, "note": autopilot.answer_note(found)}
+            reason = "autopilot answers the questions of the blocked round"
+            return self.step("start", reason, command="go", answers=found, **fields)
+        if stage != "plan":
+            raise Refused(f"The engine starts {stage} after a blocked round with no answers.")
+        if self.by_event == "commented":
+            reason = "collaborators commented after the stopped `/nexkit go`"
+        else:
+            listed = ", ".join(f"#{n}" for n in self.closed)
+            reason = f"{listed}, which blocked it, closed after the stopped `/nexkit go`"
+        reason += ", so autopilot plans again"
+        return self.step("start", reason, command="plan", **start)
+
+    def waits(self, reason):
+        if reason == "handMadeChange":
+            text = autopilot.protected_reason(self.run["protected_paths"])
+        elif reason == "askedAgain":
+            text = autopilot.REPEATED
+        elif reason == "closeRecommended":
+            text = autopilot.CLOSE_UNFOUNDED
+        elif reason == "question":
+            text = self.run.get("attention") or autopilot.failed_reason("go")
+        else:
+            raise Refused(f"The engine waits for a person for {reason!r} after a blocked round.")
+        return self.step("waits", text)
+
+
+def round_carried_on(gh, cfg, issue, decision, agent):
+    """Whether autopilot carries on after the `/nexkit go` that a run of `decision` ran and
+    that stopped as blocked, with the agent's result `agent`, as the engine decides what
+    follows it, so that `report` mentions nobody. As in NexKit 6, autopilot's answers whose
+    recommended option only closes the issue carry on unless they were asked again: the
+    sweep then waits for a person and mentions them itself. Raises `Refused`."""
+    from .report import _autopilot_fields
+
+    comments = gh.comments(issue["number"])
+    again = autopilot.asked_again(comments)
+    found = _autopilot_fields(agent)
+    run = {**found, "protected_paths": ((agent.get("output") or {}).get("protected_paths") or [])}
+    doc = _working(_document(issue, autopilot.find_record(comments)[1]), again)
+    event = _event(
+        "actionFinished",
+        issue["number"],
+        None,
+        f"run-{decision.get('run_id') or issue['number']}",
+        action=first_state.RUN_ID,
+        changeVersion=None,
+        result={**AGENT, "output": round_output(run)},
+    )
+    actions = step(doc, event, policies(cfg))["actions"]
+    kinds = {action["kind"]: action for action in actions}
+    if "runAgent" in kinds or "close" in kinds:
+        return True
+    if "needPerson" in kinds:
+        return kinds["needPerson"]["reason"] == "closeRecommended" and not again
+    return False
+
+
 # -- a person's command ----------------------------------------------------------------
 
 
-def asked_by_plan(comments):
-    """Whether what NexKit asked last on an issue, if anything, is its latest plan's
-    questions, rather than a blocked round's (`state.asked_last`)."""
-    runs = [run for _, run in run_comments(comments) if "command" in run]
-    return bool(runs) and runs[-1].get("command") == "plan" and asked_last(comments) is not None
-
-
 def closing_command(gh, decision, comments):
-    """A writer's `/nexkit plan` or `/nexkit go` on an issue whose latest plan's questions
-    NexKit asked last: when its note picks the option that only closes the issue and the
+    """A writer's `/nexkit plan` or `/nexkit go` on an issue whose questions NexKit asked
+    last, those of its latest plan or of a `/nexkit go` that stopped as blocked
+    (`state.asked_last`): when its note picks the option that only closes the issue and the
     engine drops the issue for it, the `maintain` job closes the issue as not planned, with
     no agent run. Otherwise the command goes to its round as it is."""
     number = decision["issue"]
-    plan = latest_plan(comments)
-    data = plan_data(plan)
-    picked = _picked(decision["note"], data)
+    asked = asked_last(comments)
+    if asked is None:
+        return decision
+    runs = [(comment, run) for comment, run in run_comments(comments) if "command" in run]
+    comment, run = runs[-1]
+    plan = data = None
+    if run.get("command") == "plan":
+        plan = latest_plan(comments)
+        data = plan_data(plan)
+    picked = _picked(decision["note"], data or run)
     if not picked:
         return decision
     pulls = gh.open_pulls(decision["branch"])
     change = {"id": str(pulls[0]["number"]), "version": pulls[0]["head"]["sha"]} if pulls else None
-    doc = _waiting(_document({"number": number}, {}, plan, data, change))
+    if plan:
+        doc = _waiting(_document({"number": number}, {}, plan, data, change))
+    else:
+        doc = _asks(_document({"number": number}, {}, change=change), comment, run)
     answers = [{"question": picked[0], "option": picked[1]}]
     fields = {"answers": answers, "note": "", "asked": doc["attention"]["ref"]}
     by = _person(decision.get("actor"), "writer")
@@ -487,5 +776,5 @@ def closing_command(gh, decision, comments):
         "task": "close_answer",
         "issue": number,
         "answer": picked[2],
-        "asked": plan.get("html_url") or "",
+        "asked": asked[0],
     }

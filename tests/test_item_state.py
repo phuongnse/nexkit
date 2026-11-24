@@ -267,6 +267,21 @@ def largest():
             for n in range(1, most("plan.split") + 1)
         ],
     }
+    # The questions of the round that asked, beside the plan's.
+    state["questions"] = {
+        "ref": "9" * 20,
+        "items": [
+            {
+                "question": worst(LONGEST["question"]),
+                "options": [worst(LONGEST["option"])] * MOST["options"],
+                "recommended": 1,
+                "closes": MOST["options"],
+                "replans": list(range(1, MOST["options"])),
+            }
+            for _ in range(most("questions.items"))
+        ],
+        "noChange": True,
+    }
     rounds = state["rounds"]
     rounds.update(started=13, counted=10, conflicts=3)
     rounds["signatures"] = ["sha256:" + "f" * 64] * most("rounds.signatures")
@@ -276,7 +291,8 @@ def largest():
     ]
     rounds["criteria"] = ["unverifiable"] * most("rounds.criteria")
     rounds["checklist"] = ["not_applicable"] * most("rounds.checklist")
-    state["asked"] = (["split", "titles", "parts", "fewer", "answers"] * 4)[: most("asked")]
+    asked = ["split", "titles", "parts", "fewer", "answers", "replan"]
+    state["asked"] = (asked * 4)[: most("asked")]
     state["parts"] = [{"item": str(4300 + n), "state": None} for n in range(most("parts"))]
     parts = [
         {**part, "body": {"name": f"part-{part['key']}", "ref": "9" * 20}}
@@ -314,6 +330,11 @@ def decisions(state):
         state["depth"],
         state["attention"]["reason"],
         [(q["recommended"], q.get("closes"), len(q["options"])) for q in plan["questions"]],
+        [
+            (q["recommended"], q["closes"], q["replans"], len(q["options"]))
+            for q in state["questions"]["items"]
+        ],
+        state["questions"]["noChange"],
         plan["split"],
         len(plan["protectedPaths"]),
         [item["severity"] for item in state["rounds"]["findings"]],

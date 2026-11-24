@@ -175,7 +175,8 @@
         "splitDepth",
         "tooManyParts",
         "noParts",
-        "partTitles"
+        "partTitles",
+        "replanRecommended"
       ]
     },
     "observation": {

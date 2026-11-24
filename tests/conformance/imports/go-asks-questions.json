@@ -80,6 +80,21 @@
       "approved": true,
       "split": []
     },
+    "questions": {
+      "ref": "3",
+      "items": [
+        {
+          "question": "Keep the old API?",
+          "options": [
+            "Keep it",
+            "Drop it"
+          ],
+          "recommended": 0,
+          "replans": []
+        }
+      ],
+      "noChange": false
+    },
     "rounds": {
       "started": 0,
       "counted": 0,

@@ -972,8 +972,10 @@ def resolve_conflicts(
 
 def close_answered(gh, decision):
     """Close an issue as not planned, as a writer's answer to NexKit's questions picked the
-    option that only closes it (see `route._closing`). The issues event that the close
-    starts closes parents and starts a sweep. Returns lines for the log."""
+    option that only closes it: `route._closing` took the decision from the engine's `close`
+    (`host.closing_command`), and this carries it out, storing no state document. The issues
+    event that the close starts closes parents and starts a sweep. Returns lines for the
+    log."""
     number, actor = decision["issue"], decision.get("actor") or "someone"
     if decision.get("comment_id"):
         gh.react(decision["comment_id"], "rocket")

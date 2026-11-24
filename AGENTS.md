@@ -22,7 +22,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `checks.py`, `cache.py` | Setup and checks with `NEXKIT_BASE_SHA`/`NEXKIT_VERIFIED_SHA`; the keys of cache restore and of the `cache/` action |
 | `report.py`, `state.py`, `progress.py` | Statuses, review, run and state comments and their markers |
 | `item_state.py`, `first_state.py` | The engine's state document of each work item in a comment of the App, written only as the next revision of the one read; the first one, built from NexKit 6's markers. Each kind of import (`first_state.KINDS`) comes with a case in `tests/conformance/imports/` |
-| `host.py` | The GitHub host's calls of the engine's `step`: for each decision the engine holds, so far what follows a plan, the document built from NexKit 6's markers, the event GitHub shows, and the answer that autopilot and `route` carry out, storing nothing |
+| `host.py` | The GitHub host's calls of the engine's `step`: for each decision the engine holds, so far what follows a plan and a blocked `/nexkit go`, the document built from NexKit 6's markers, the event GitHub shows, and the answer that autopilot, `route` and `report` carry out, storing nothing |
 | `refusal.py` | Why GitHub refused a merge, and what unblocks it |
 | `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; resuming runs paused at a usage limit; autopilot sweeps |
 | `config.py`, `globs.py`, `scaffold.py`, `app.py`, `templates/` | Config schema and defaults, path globs; `nexkit init` and `doctor`; the GitHub App |

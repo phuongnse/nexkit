@@ -325,7 +325,7 @@ class Item:
             return self.be("go again", "awaitingApproval", "approval", run, ref=ref)
         if outcome == "agent_blocked" and run.get("questions"):
             # The run's comment asked: a person's answer names it.
-            return self.be("asks", "awaitingApproval", "question", run, ref=str(comment["id"]))
+            return self.asks(comment, run)
         blocked = outcome in ("agent_blocked", UNTRUSTED_ROUND)
         return self.be("failed", "failed", "blocked" if blocked else "failed", run)
 
@@ -396,12 +396,20 @@ class Item:
         if outcome in named:
             return self.be("needs a person", "ready", named[outcome], latest)
         if outcome == "agent_blocked" and latest.get("questions"):
-            ref = str(comment["id"])
-            return self.be("asks", "awaitingApproval", "question", latest, ref=ref)
+            return self.asks(comment, latest)
         if status == FAILURE:
             blocked = outcome in ("agent_blocked", UNTRUSTED_ROUND)
             return self.be("failed", "failed", "blocked" if blocked else "failed", latest)
         return self.ready(latest)
+
+    def asks(self, comment, run):
+        """A round that stopped as blocked and asked, in the comment `comment` whose marker is
+        `run`: its questions wait for answers, which name that comment."""
+        ref = str(comment["id"])
+        asked = [_question(item, True) for item in questions(run["questions"])]
+        found = bool(filled(run.get("no_change")))
+        self.doc["questions"] = {"ref": ref, "items": asked[: MOST["questions"]], "noChange": found}
+        return self.be("asks", "awaitingApproval", "question", run, ref=ref)
 
     def ready(self, row):
         rounds = self.doc["rounds"]
@@ -663,9 +671,9 @@ def plan_of(comment, data, approved):
     }
 
 
-def _question(item):
-    """A question of a plan's record, which names options by their texts, as the state
-    keeps it, naming them by their numbers from 1."""
+def _question(item, round_=False):
+    """A question of a plan's or, with `round_`, a round's record, which names options by
+    their texts, as the state keeps it, naming them by their numbers from 1."""
     options = [clip(option, "option") for option in item["options"][: MOST["options"]]]
     texts = item["options"][: MOST["options"]]
 
@@ -676,6 +684,8 @@ def _question(item):
     found["recommended"] = number(item["recommended"])
     if item.get("closing"):
         found["closes"] = number(item["closing"])
+    if round_:
+        found["replans"] = sorted({number(text) for text in item.get("replanning") or []} - {0})
     return found
 
 

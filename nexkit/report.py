@@ -774,19 +774,7 @@ def needs_person(
     `timed_out`."""
     found = found or {}
     if outcome == "planned":
-        plan = plan or {}
-        if plan.get("too_large"):
-            return TOO_LARGE
-        if filled(plan.get("no_change")):
-            return NO_CHANGE_PLAN
-        if plan.get("protected_paths"):
-            return autopilot.protected_reason(plan["protected_paths"])
-        if not plan.get("questions"):
-            return None
-        why = "the plan asks for decisions that are the owner's to make"
-        if questions(plan["questions"]):
-            why = _listed(why, _question_lines(plan["questions"]), "the plan comment")
-        return autopilot.person("answer the plan's questions with `/nexkit plan <answers>`", why)
+        return _planned(plan or {})
     if outcome == "merge_waiting":
         # Only a round whose issue autopilot's sweeps look at waits like this.
         return None
@@ -886,6 +874,30 @@ def needs_person(
     if outcome == "merge_refused" and found.get("refused"):
         do, why = found["refused"]
     return autopilot.person(do, why)
+
+
+def _planned(plan):
+    """Why a person is needed after the plan `plan`, without automatic approval: what the
+    engine waits for, in NexKit 6's words (`host.plan_waits_for`). A clean plan waits for
+    the `/nexkit go` of whoever asked for it, and mentions nobody."""
+    from .host import Refused, plan_waits_for, refused_reason
+
+    try:
+        reason = plan_waits_for(plan)
+    except Refused as error:
+        return refused_reason(error)
+    if reason == "approval" and plan.get("too_large"):
+        return TOO_LARGE
+    if reason == "approval" and filled(plan.get("no_change")):
+        return NO_CHANGE_PLAN
+    if reason == "handMadeChange":
+        return autopilot.protected_reason(plan["protected_paths"])
+    if reason != "question":
+        return None
+    why = "the plan asks for decisions that are the owner's to make"
+    if questions(plan["questions"]):
+        why = _listed(why, _question_lines(plan["questions"]), "the plan comment")
+    return autopilot.person("answer the plan's questions with `/nexkit plan <answers>`", why)
 
 
 def notify(gh, cfg, number, reason):

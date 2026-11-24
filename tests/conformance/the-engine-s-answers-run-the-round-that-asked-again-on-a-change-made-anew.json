@@ -1,0 +1,120 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "answers": "recommended",
+    "conflicts": "redo"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "changeId": "308",
+        "version": "v1",
+        "conflicts": true,
+        "merged": false,
+        "empty": false
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "replaceChange"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "replaceChange",
+        "result": {
+          "change": {
+            "id": "309",
+            "version": "w1"
+          },
+          "observed": null
+        }
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implementRecommended"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "state": "working",
+        "asked": [
+          "answers"
+        ],
+        "pending.-1.stage": "implement",
+        "pending.-1.changeVersion": "w1"
+      }
+    }
+  ]
+}

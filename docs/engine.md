@@ -5,8 +5,8 @@ _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol
 at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 does, as
 `nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; the
 GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
-the decisions that follow a plan, which NexKit 6's autopilot and `route` take from `step` (see
-[getting there](#getting-there)). The rest of this page is not built yet, and NexKit 6 runs as
+the decisions that follow a plan and a blocked `/nexkit go`, which NexKit 6's autopilot, `route`
+and `report` take from `step` (see [getting there](#getting-there)). The rest of this page is not built yet, and NexKit 6 runs as
 [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
@@ -252,7 +252,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | --- | --- | --- |
 | `new` | The item waits to be started | `planning`, `working`, `checking`, and `fixing` for an item reopened with its change |
 | `planning` | An agent writes a plan | `awaitingApproval`, `working` or `fixing`, `split`, `noChange` |
-| `awaitingApproval` | The plan, or a split, waits for its approval or for answers | `planning`, `working` or `fixing`, `split`, `dropped` |
+| `awaitingApproval` | The plan, or a split, waits for its approval or for answers, or a round's questions wait for answers | `planning`, `working` or `fixing`, `split`, `noChange`, `dropped` |
 | `working` | An agent makes the change | `checking`, `awaitingApproval`, `planning`, `noChange`, `failed` |
 | `checking` | The host's checks run on the change | `reviewing`, `fixing` |
 | `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `accepting`, `fixing` |
@@ -271,9 +271,11 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   a person approves its split plan, it goes on as one change, and under `autoWhenClean` the plan
   waits for a person. A split goes on as one change too when its rules refuse it, as below. A
   plan that asks questions waits for answers, even one an item was made with.
-- **What follows a plan.** Under `person`, every plan waits for a person: for answers, a hand-made
-  change or its approval, a plan that finds no change too. Under `autoWhenClean`, as NexKit 6's
-  autopilot decides:
+- **What follows a plan.** Under `person`, every plan waits for a person, a plan that finds no
+  change too, for what NexKit 6 asks of them first: the approval of a plan that is too large or
+  finds no change, a hand-made change, answers, or the approval of a clean plan. A person may
+  answer a plan's questions whatever its attention names first. Under `autoWhenClean`, as NexKit
+  6's autopilot decides:
   - A plan that is too large is split into its parts, all of them, when splits are on and the
     item has no change. A split is refused for an item at `splitDepth` levels of parts, which
     waits for a person, and for a plan with more parts than `splitParts`, with no parts, or with a
@@ -290,6 +292,27 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
     plan did not hold what the comment says. A writer's answer that picks the option that only
     closes the item drops it, with no agent run, since another plan could only stop at the same
     place; on an item with a change, the answer goes to the next plan.
+- **A round that stops as blocked.** An implement or fix round that asks questions waits in
+  `awaitingApproval` for their answers, and the state keeps the round's questions while they
+  wait. One whose change needs paths only a person changes waits for that person
+  (`handMadeChange`), whatever it asks, and one that neither asks nor needs such paths fails, for
+  a person. Under `autoWhenClean`, with `answers` `recommended` and a recommended option for
+  every question, the engine answers, once in a row as for a plan:
+  - An implement round whose one question recommends only closing the item, with its finding
+    that no change is needed, ends the item in `noChange`, unless the item has a change, such as
+    one made anew after a conflict, which a person closes. Any other recommended option that only
+    closes the item is a person's to pick (`closeRecommended`).
+  - A recommended option that changes the item's scope, such as a split, plans the item again,
+    and the round that plan leads to is the one the answers started, so it may not be answered
+    again. On an item with a change a person decides (`replanRecommended`), since a new plan
+    would leave the change behind.
+  - Otherwise the round runs again with the answers.
+- **What a person does on a round's questions.** A writer's answer that picks the option that
+  only closes the item drops it, on an item with no change, as for a plan; any other answer
+  plans the item again. Under `autoWhenClean`, a person's comment on questions the engine could
+  not answer, on an item with no change, plans it again, since the round stopped where the plan
+  did not say what the comment says, and so does the end of an item that blocks it; a comment on
+  questions asked again lets the engine answer them again.
 - **From every state that has a change,** the engine reconciles the item with the latest
   observation of that change after each event, once no publish or replace is on its way. A change
   that was merged, such as by a person's hand, goes to `accepted`; one that became empty, because
@@ -332,7 +355,8 @@ Three things sit beside the state, never in place of it:
   questions are open, and the reason: a plan that waits for its approval
   (`approval`), a question with no recommended answer (`question`), a plan that asks again right
   after the engine answered it (`askedAgain`), a recommended answer that only closes the item
-  (`closeRecommended`), a plan too large for an item at the deepest level of parts
+  (`closeRecommended`), a recommended answer to a round's questions that changes the scope of an
+  item with a change (`replanRecommended`), a plan too large for an item at the deepest level of parts
   (`splitDepth`), a second plan that still has too many parts (`tooManyParts`), no parts
   (`noParts`) or parts titled by the item's title (`partTitles`), a change that needs paths
   only a person changes (`handMadeChange`), a criterion the review could not verify
@@ -595,7 +619,12 @@ adapter. A new rule of the engine comes with a case.
    markers, as its import reads them, sends the event that GitHub shows, and carries out the
    answer with NexKit 6's code and in its words. So far these are the decisions that follow a
    plan, but one: a plan that splits an item whose round ran out of time on its pull request,
-   which NexKit 6 still splits, closing the pull request as superseded. Every existing test
+   which NexKit 6 still splits, closing the pull request as superseded. They are also the
+   decisions that follow a `/nexkit go` that stopped as blocked with questions or with paths
+   only a person changes, a writer's command that answers its questions with the option that
+   only closes the issue, and the reason a plan waits for without autopilot. A `/nexkit go`
+   that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as
+   the policy after a failure, which the protocol does not hold yet, says. Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the
    conformance suite as it goes.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on

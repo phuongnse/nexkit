@@ -96,7 +96,9 @@ def _findings(severity):
 
 def _questions(state):
     found = []
-    for question in (state["plan"] or {}).get("questions") or []:
+    asked = (state["plan"] or {}).get("questions") or []
+    asked = [*asked, *(state.get("questions") or {}).get("items", [])]
+    for question in asked:
         found.append((question, "question"))
         found += [(question["options"], index) for index in range(len(question["options"]))]
     return found

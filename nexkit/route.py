@@ -13,11 +13,9 @@ from .state import (
     RUNNING,
     SUCCESS,
     approved_head,
-    asked_last,
     by_bot,
     check_fingerprint,
     check_heads,
-    closing_answer,
     latest_plan,
     plan_profile,
     repeated_failures,
@@ -321,24 +319,9 @@ def _closing(gh, decision):
     stop at the same place. Any other note goes to its round as it is."""
     if decision["action"] not in ("plan", "implement") or not decision.get("note"):
         return decision
-    comments = gh.comments(decision["issue"])
-    # The latest plan's questions are the engine's to answer; a blocked round's stay here.
-    from .host import asked_by_plan, closing_command
+    from .host import closing_command
 
-    if asked_by_plan(comments):
-        return closing_command(gh, decision, comments)
-    asked = asked_last(comments)
-    option = closing_answer(decision["note"], asked[1]) if asked else None
-    if not option or gh.open_pulls(decision["branch"]):
-        # A pull request that is open stays with its issue: a person closes both.
-        return decision
-    return {
-        "action": "maintain",
-        "task": "close_answer",
-        "issue": decision["issue"],
-        "answer": option,
-        "asked": asked[0],
-    }
+    return closing_command(gh, decision, gh.comments(decision["issue"]))
 
 
 def _trust(issue, note):

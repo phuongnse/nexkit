@@ -7,9 +7,9 @@ import json
 from unittest import mock
 
 from nexkit import autopilot, engine, host, item_state
-from nexkit.report import TOO_LARGE
+from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person
 from nexkit.route import route
-from nexkit.state import PLAN_MARKER, answers_marker, plan_data_record
+from nexkit.state import PLAN_MARKER, answers_marker, plan_data_record, questions
 from tests.test_autopilot import AutopilotCase, pilot
 
 # The engine's own answer, which a test that stands in for it calls.
@@ -264,3 +264,182 @@ class PoliciesTest(HostCase):
         found = host.policies(self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}})
         found = (found["planApproval"], found["answers"], found["splits"])
         self.assertEqual(found, ("person", "never", False))
+
+
+class AfterGoTest(HostCase):
+    """What follows a `/nexkit go` that stopped as blocked with questions or protected paths
+    is the engine's answer, in NexKit 6's words."""
+
+    def stopped(self, number, asked=(), **fields):
+        """A plan, then a `/nexkit go` that stopped as blocked with the questions `asked`, as
+        the round's marker keeps them."""
+        self.issue(number)
+        self.plan(number)
+        found = questions([dict(item) for item in asked])
+        run = {"outcome": "agent_blocked", "questions": found, **fields}
+        return self.run_comment(number, "go", status="failure", attention="Answer them.", **run)
+
+    def test_the_engine_hears_the_round_s_result_then_a_comment_after_it(self):
+        self.stopped(5, [{**ASKED, "recommended": 0}])
+        [request] = self.requests(5)
+        self.assertEqual(request["event"]["kind"], "actionFinished")
+        self.assertEqual(request["state"]["state"], "working")
+        self.assertEqual(request["event"]["result"]["output"]["questions"][0]["closes"], 3)
+        self.assertEqual(self.step(5)["reason"], "Answer them.")
+        self.gh.human_comment(5, "Keep it, but only for a day.")
+        kinds = [request["event"]["kind"] for request in self.requests(5)]
+        self.assertEqual(kinds, ["actionFinished", "commented"])
+        step = self.step(5)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertIn("collaborators commented after the stopped", step["reason"])
+
+    def test_a_writer_s_closing_comment_is_an_answer_and_a_reader_s_a_comment(self):
+        self.stopped(5, [ASKED])
+        self.gh.human_comment(5, "close the issue.", login="bob")
+        self.assertEqual(
+            self.requests(5, pilot(answer="recommended"))[-1]["event"]["kind"], "actionFinished"
+        )
+        step = self.step(5, pilot(answer="recommended"))
+        self.assertEqual((step["state"], step["command"]), ("start", "go"))
+        self.gh.human_comment(5, "Close the issue")
+        [request] = self.requests(5)
+        self.assertEqual(request["event"]["kind"], "answered")
+        self.assertEqual(request["event"]["answers"], [{"question": 1, "option": 3}])
+        step = self.step(5)
+        self.assertEqual(
+            (step["state"], step["answer"], step["by"]), ("close", "Close the issue", "alice")
+        )
+
+    def test_answers_follow_the_answers_policy_once_in_a_row(self):
+        cfg = pilot(answer="recommended")
+        self.stopped(5, [ASKED])
+        step = self.step(5, cfg)
+        self.assertEqual((step["command"], step["target"]), ("go", 5))
+        self.assertEqual(step["answers"], [{"question": ASKED["question"], "answer": "Keep it"}])
+        self.answered(5)
+        self.run_comment(
+            5, "go", status="failure", outcome="agent_blocked", questions=questions([ASKED])
+        )
+        self.assertEqual(self.step(5, cfg)["reason"], autopilot.REPEATED)
+
+    def test_a_comment_on_questions_asked_again_lets_the_engine_answer_them_again(self):
+        cfg = pilot(answer="recommended")
+        self.stopped(5, [ASKED])
+        self.answered(5)
+        self.run_comment(
+            5, "go", status="failure", outcome="agent_blocked", questions=questions([ASKED])
+        )
+        self.assertEqual(self.step(5, cfg)["reason"], autopilot.REPEATED)
+        self.gh.human_comment(5, "Keep it, the other one changed.")
+        # A person commented since the answers: the round's result is no longer asked again.
+        [request] = self.requests(5, cfg)
+        self.assertNotIn("answers", request["state"]["asked"])
+        step = self.step(5, cfg)
+        self.assertEqual((step["state"], step["command"]), ("start", "go"))
+
+    def test_each_answer_the_engine_gives_is_carried_out_in_nexkit_6_s_words(self):
+        cfg = pilot(answer="recommended")
+        replans = {**ASKED, "question": "Split it?", "recommended": 2, "replans": [2]}
+        self.stopped(5, [replans])
+        step = self.step(5, cfg)
+        self.assertEqual((step["command"], step["replan"]), ("plan", True))
+        self.assertTrue(step["note"].startswith(autopilot.REPLAN_NOTE))
+        closing = {**ASKED, "recommended": 3}
+        self.stopped(6, [closing], no_change="Run 7 passed.")
+        step = self.step(6, cfg)
+        self.assertEqual((step["state"], step["finding"]), ("close", "Run 7 passed."))
+        self.stopped(7, [closing])
+        self.assertEqual(self.step(7, cfg)["reason"], autopilot.CLOSE_UNFOUNDED)
+        self.stopped(8, [ASKED], protected_paths=["a.yml"])
+        self.assertEqual(self.step(8, cfg)["reason"], autopilot.protected_reason(["a.yml"]))
+
+    def test_a_blocker_that_closed_after_the_round_plans_again(self):
+        comment = self.stopped(5, [{**ASKED, "recommended": 0}])
+        comment["created_at"] = "2026-01-02T00:00:00Z"
+        self.issue(7, state="closed", reason="not_planned")
+        self.gh.issues[7]["closed_at"] = "2026-01-03T00:00:00Z"
+        self.gh.blockers[5] = [7]
+        [_, request] = self.requests(5)
+        self.assertEqual((request["event"]["blocker"], request["event"]["completed"]), ("7", False))
+        step = self.step(5)
+        self.assertEqual(step["command"], "plan")
+        self.assertIn("#7, which blocked it, closed after the stopped", step["reason"])
+
+    def test_a_reason_the_host_has_no_words_for_is_refused_for_that_issue_alone(self):
+        self.stopped(5, [ASKED])
+        answer = {"actions": [{"kind": "needPerson", "reason": "accept"}], "state": {}}
+        with mock.patch.object(host, "step", return_value=answer):
+            self.assertIn("refused to decide", self.step(5)["reason"])
+
+    def test_the_round_carries_on_as_the_engine_answers_it(self):
+        cfg = pilot(answer="recommended")
+        self.issue(5)
+        decision = {"issue": 5, "pr": None, "action": "implement"}
+
+        def carries_on(*asked, **output):
+            agent = {"status": "blocked", "stage": "implement"}
+            agent["output"] = {"questions": list(asked), **output}
+            return autopilot.carries_on(self.gh, cfg, decision, "agent_blocked", agent)
+
+        self.assertTrue(carries_on(ASKED))
+        self.assertTrue(carries_on({**ASKED, "recommended": 3}))
+        self.assertFalse(carries_on({**ASKED, "recommended": 0}))
+        self.assertFalse(carries_on(ASKED, protected_paths=["a.yml"]))
+        self.answered(5)
+        self.run_comment(5, "go", status="running")
+        self.assertFalse(carries_on(ASKED))
+        self.assertFalse(carries_on({**ASKED, "recommended": 3}))
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            self.assertFalse(
+                autopilot.carries_on(self.gh, cfg, decision, "agent_blocked", {"output": {}})
+            )
+
+
+class RoundClosingCommandTest(HostCase):
+    def setUp(self):
+        super().setUp()
+        self.issue(5)
+        self.plan(5)
+        run = {"outcome": "agent_blocked", "questions": questions([{**ASKED, "recommended": 0}])}
+        self.asked = self.run_comment(5, "go", status="failure", **run)
+
+    def decide(self, body):
+        return route(self.gh, "issue_comment", comment_event(5, body))
+
+    def test_a_writer_s_closing_answer_to_a_round_is_the_engine_s_to_close(self):
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            decision = self.decide("/nexkit go 3")
+        self.assertEqual(
+            (decision["task"], decision["answer"]), ("close_answer", "Close the issue")
+        )
+        [call] = answer.call_args_list
+        self.assertEqual(call.args[0]["event"]["kind"], "answered")
+        self.assertEqual(call.args[0]["state"]["questions"]["ref"], str(self.asked["id"]))
+
+    def test_an_open_pull_request_keeps_the_issue_for_a_person(self):
+        self.gh.add_pull(6, 5)
+        self.assertEqual(self.decide("/nexkit plan Close the issue")["action"], "plan")
+
+
+class PlanWaitsForTest(HostCase):
+    def test_a_plan_without_autopilot_waits_for_what_the_engine_names(self):
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            reason = needs_person(
+                "planned", self.cfg, plan={"questions": [ASKED], "too_large": True}
+            )
+        self.assertEqual(reason, TOO_LARGE)
+        [call] = answer.call_args_list
+        self.assertEqual(call.args[0]["policies"], {})
+        found = {"questions": [ASKED], "protected_paths": ["a.yml"]}
+        self.assertEqual(
+            needs_person("planned", self.cfg, plan=found), autopilot.protected_reason(["a.yml"])
+        )
+        with mock.patch.object(host, "plan_waits_for", return_value="approval"):
+            self.assertIsNone(needs_person("planned", self.cfg, plan={"questions": [ASKED]}))
+
+    def test_a_plan_that_finds_no_change_or_asks_blank_questions_names_a_person_s_step(self):
+        found = {"questions": [], "no_change": "The base branch has it."}
+        self.assertEqual(needs_person("planned", self.cfg, plan=found), NO_CHANGE_PLAN)
+        # Questions that name no question still ask, as NexKit 6 reads them.
+        reason = needs_person("planned", self.cfg, plan={"questions": [{"question": ""}]})
+        self.assertIn("/nexkit plan <answers>", reason)

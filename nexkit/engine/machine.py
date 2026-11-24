@@ -100,8 +100,9 @@ ENDS = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ \t\n\r\x0b\x0c"
 # Who may close the item by an answer: closing is a write, so a reader's answer that picks
 # the option that only closes it plans it again (`autopilot._closing_comment`).
 WRITERS = ("decides", "writer")
-# The reasons of attention on a plan's questions, which a person's answers end.
-ASKS = ("question", "askedAgain", "closeRecommended")
+# What the engine's answers to a round's questions keep in `asked`: that it answered, and that
+# its answers started a new plan, whose round they start too (`autopilot.asked_again`).
+ANSWERED = ("answers", "replan")
 # What the engine asks a plan once more for, when a plan that is too large is not split, and
 # the attention after a second such plan (`autopilot._split`).
 AGAIN_FOR = {
@@ -210,6 +211,8 @@ class Step:
         self.s["waits"] = [wait for wait in self.s["waits"] if wait["for"] in kept]
         self.s["state"] = name
         self.s["attention"] = None
+        # A round's questions wait only while the item does, after the round that asked.
+        self.s.pop("questions", None)
 
     def do(self, kind, **fields):
         action = {"id": self.next_action(), "kind": kind, "next": None}
@@ -520,7 +523,7 @@ class Step:
             self.s["depth"] = event["depth"]
 
     def forget_answers(self):
-        self.s["asked"] = [name for name in self.s["asked"] if name != "answers"]
+        self.s["asked"] = [name for name in self.s["asked"] if name not in ANSWERED]
 
     def requested(self, event):
         what, state, change = event["what"], self.state, self.s["change"]
@@ -630,16 +633,13 @@ class Step:
 
     def on_answered(self, event):
         attention = self.s["attention"] or {}
-        if (
-            self.state != "awaitingApproval"
-            or attention.get("reason") not in ASKS
-            or attention.get("ref") != event["asked"]
-        ):
+        asked = self.waiting_questions()
+        if self.state != "awaitingApproval" or not asked or attention.get("ref") != event["asked"]:
             return False
         if (
             event["by"]["role"] in WRITERS
             and not self.s["change"]
-            and self.picks_closing(event["answers"])
+            and self.picks_closing(event["answers"], asked)
         ):
             # Another plan could only stop at the same place, so no agent runs. A change that
             # exists stays with its item: its answer goes to the next plan.
@@ -650,13 +650,32 @@ class Step:
         self.start_plan()
         return True
 
-    def picks_closing(self, answers):
-        """Whether `answers` pick, for a question of the plan whose answers attention waits
-        for, the option that only closes the item (`state.closing_answer`)."""
-        plan = self.s["plan"]
-        if plan is None or (self.s["attention"] or {}).get("ref") != plan["text"]["ref"]:
-            return False
-        asked = plan["questions"]
+    def waiting_questions(self):
+        """The questions that attention waits for answers to, whatever its reason: the plan's,
+        or those of the round that asked, as attention names them by their ref; or none."""
+        ref = (self.s["attention"] or {}).get("ref")
+        plan, round_ = self.s["plan"], self.s.get("questions")
+        if ref is None:
+            return []
+        if round_ and round_["ref"] == ref:
+            return round_["items"]
+        if plan and plan["text"]["ref"] == ref:
+            return plan["questions"]
+        return []
+
+    def round_waits(self, *reasons):
+        """Whether the questions of the round that asked wait, for one of `reasons`."""
+        attention, round_ = self.s["attention"] or {}, self.s.get("questions")
+        return (
+            self.state == "awaitingApproval"
+            and bool(round_)
+            and attention.get("ref") == round_["ref"]
+            and attention.get("reason") in reasons
+        )
+
+    def picks_closing(self, answers, asked):
+        """Whether `answers` pick, for a question of those `asked` that attention waits for,
+        the option that only closes the item (`state.closing_answer`)."""
         return any(
             0 < answer["question"] <= len(asked)
             and 0 < answer["option"] == asked[answer["question"] - 1].get("closes", 0)
@@ -789,6 +808,8 @@ class Step:
             return False
         answered = "answers" in self.s["asked"]
         self.forget_answers()
+        if self.round_commented():
+            return True
         plan = self.s["plan"]
         if (
             self.state != "awaitingApproval"
@@ -801,11 +822,33 @@ class Step:
         self.start_plan()
         return True
 
+    def round_commented(self):
+        """A person's comment on the questions of a round that wait, with automatic approval.
+        On an item with no change, questions the engine could not answer are planned again,
+        since the round stopped where the plan did not say what the comment says; questions
+        it answered once in a row are answered again, since a person acted
+        (`autopilot._stopped`, `_since_stop`). Whether it did either."""
+        if self.p["planApproval"] != "autoWhenClean":
+            return False
+        if self.round_waits("question") and not self.s["change"]:
+            self.start_plan()
+            return True
+        if self.round_waits("askedAgain"):
+            self.answer_round(False)
+            return True
+        return False
+
     def on_blockerClosed(self, event):
         """An item that blocks this one ended, or the bug issue of a failure that the base
-        branch has: the waits on it end."""
+        branch has: the waits on it end. With automatic approval, the questions of a round on
+        an item with no change, which the engine could not answer, are planned again: the
+        round may have stopped for that work (`autopilot._since_stop`)."""
         ends = ("blocker", "baseFailure")
         waits = [w for w in self.s["waits"] if w["for"] in ends and w["on"] == event["blocker"]]
+        if not waits and self.p["planApproval"] == "autoWhenClean" and not self.s["change"]:
+            if self.round_waits("question"):
+                self.start_plan()
+                return True
         if not waits:
             return False
         self.s["waits"] = [wait for wait in self.s["waits"] if wait not in waits]
@@ -929,9 +972,13 @@ class Step:
         or wait; and a clean plan starts the change. Otherwise a person decides every plan,
         one that finds no change too, as NexKit 6 closes an item by itself only with
         autopilot."""
-        # Whether the engine's answers started this plan, with no person acting since.
+        # Whether the engine's answers started this plan, with no person acting since. Answers
+        # to a round that only a new plan carries out start that plan's round too.
         again = "answers" in self.s["asked"]
+        replan = "replan" in self.s["asked"]
         self.forget_answers()
+        if replan:
+            self.s["asked"] += list(ANSWERED)
         self.take_plan(output, {"name": "plan", "ref": number})
         plan = self.s["plan"]
         self.do("show", what="plan", text=plan["text"])
@@ -994,14 +1041,22 @@ class Step:
             self.start_plan()
 
     def plan_waits(self):
-        """The plan waits for a person: for answers, a hand-made change or its approval."""
+        """The plan waits for a person, for what NexKit 6 asks of them first
+        (`report.needs_person`): its approval, of a plan that is too large or finds no change;
+        a hand-made change; answers; or its approval. A person answers a plan's questions
+        whatever attention says first."""
         plan = self.s["plan"]
         ref = plan["text"]["ref"]
         self.move("awaitingApproval")
-        if plan["questions"]:
-            self.need("question", "The plan has questions for a person.", ref)
+        if plan["tooLarge"]:
+            self.need("approval", "The plan is too large, and a person decides how to go on.", ref)
+        elif plan["noChange"]:
+            text = "The plan finds that no change is needed, and a person decides."
+            self.need("approval", text, ref)
         elif plan["protectedPaths"]:
             self.need("handMadeChange", "The change needs paths that only a person changes.", ref)
+        elif plan["questions"]:
+            self.need("question", "The plan has questions for a person.", ref)
         else:
             self.need("approval", "The plan waits for its approval.", ref)
 
@@ -1012,18 +1067,83 @@ class Step:
         self.finished_change(output, number, "fix")
 
     def finished_change(self, output, number, stage):
+        # Whether the engine's answers started this round, with no person acting since.
+        again = "answers" in self.s["asked"]
+        self.forget_answers()
         if output["status"] == "blocked":
-            if output.get("questions"):
-                self.move("awaitingApproval")
-                self.need("question", "The round has questions for a person.", number)
-            else:
-                self.move("failed")
-                self.need("blocked", filled(output.get("blocker")) or "The agent was blocked.")
+            self.blocked(output, number, stage, again)
         elif stage == "implement" and filled(output.get("no_change")) and not self.s["change"]:
             self.move("noChange")
             self.close("completed", {"name": "noChange", "ref": number})
         else:
             self.do("publish", stage=stage)
+
+    def blocked(self, output, number, stage, again):
+        """A round that stopped as blocked: one whose change needs paths only a person changes
+        waits for that person, whatever it asks; one that asks waits for answers, which the
+        engine may give (`answer_round`); one that neither asks nor needs such paths fails
+        (`autopilot._stopped`)."""
+        conflicts = [
+            {**item, "question": f"`{item['file']}`: {item['question']}"}
+            for item in output.get("open_conflicts", [])
+        ]
+        named = [*output.get("questions", []), *conflicts]
+        # A question with no text asks nothing (`state.questions`).
+        asked = [_question(item) for item in named if str(item["question"]).strip()]
+        asked = asked[: MOST["questions"]]
+        if not asked and not output.get("protected_paths"):
+            self.move("failed")
+            self.need("blocked", filled(output.get("blocker")) or "The agent was blocked.")
+            return
+        self.move("awaitingApproval")
+        # The round's finding that no change is needed counts only with an implement round's
+        # recommendation to close the item (`report._autopilot_fields`).
+        found = stage == "implement" and bool(filled(output.get("no_change")))
+        self.s["questions"] = {"ref": number, "stage": stage, "items": asked, "noChange": found}
+        if output.get("protected_paths"):
+            self.need(
+                "handMadeChange", "The change needs paths that only a person changes.", number
+            )
+        else:
+            self.answer_round(again)
+
+    def answer_round(self, again):
+        """Answer a blocked round's questions with their recommended options, with automatic
+        approval when the `answers` policy lets the engine and every question has one, at most
+        once in a row, as `answer_or_ask` does for a plan (`autopilot._stopped`): an implement
+        round that found no change is needed and recommends only closing the item ends it, unless
+        a change exists, which a person then closes; a
+        recommended option that only closes the item is a person's to pick; one that changes
+        the item's scope plans it again, which on an item with a change a person decides, as
+        the change was made for the scope it had; and the others start the round that asked
+        again."""
+        round_ = self.s["questions"]
+        ref, asked = round_["ref"], round_["items"]
+        answers = self.p["planApproval"] == "autoWhenClean" and self.p["answers"] == "recommended"
+        if not answers or not all(item["recommended"] for item in asked):
+            self.need("question", "The round has questions for a person.", ref)
+        elif again:
+            self.need("askedAgain", "The round asks again after the engine's answers.", ref)
+        elif len(asked) == 1 and _closes(asked[0]) and round_["noChange"] and not self.s["change"]:
+            self.move("noChange")
+            self.close("completed", {"name": "noChange", "ref": ref})
+        elif any(_closes(item) for item in asked):
+            self.need("closeRecommended", "A recommended answer only closes the work item.", ref)
+        elif any(item["recommended"] in item.get("replans", []) for item in asked):
+            if self.s["change"]:
+                text = "A recommended answer changes the scope of an item that has a change."
+                self.need("replanRecommended", text, ref)
+                return
+            self.s["asked"] += list(ANSWERED)
+            self.do("show", what="answers", text={"name": "answers", "ref": ref})
+            self.start_plan()
+        else:
+            # The round that asked runs again, on the change it ran on.
+            self.s["asked"].append("answers")
+            self.do("show", what="answers", text={"name": "answers", "ref": ref})
+            stage = round_["stage"]
+            self.move(RUNS[stage])
+            self.run(stage)
 
     def finished_review(self, output, number):
         rounds = self.s["rounds"]
@@ -1127,16 +1247,33 @@ def _bare(title):
 
 def _question(question):
     """A question as the state keeps it: its texts clipped, at most MOST["options"] options,
-    and no number that names an option it left out."""
+    and no number that names an option it left out. A round's question keeps the options that
+    only a new plan carries out, but the one that only closes the item
+    (`state.replanning_options`)."""
     options = [clip(option, "option") for option in question["options"][: MOST["options"]]]
     kept = {
         "question": clip(question["question"], "question"),
         "options": options,
-        "recommended": question["recommended"] if question["recommended"] <= len(options) else 0,
+        "recommended": _option(question["recommended"], options),
     }
     if "closes" in question:
-        kept["closes"] = question["closes"] if question["closes"] <= len(options) else 0
+        kept["closes"] = _option(question["closes"], options)
+    if "replans" in question:
+        closes = kept.get("closes", 0)
+        kept["replans"] = sorted(
+            {n for n in question["replans"] if 0 < n <= len(options) and n != closes}
+        )
     return kept
+
+
+def _option(number, options):
+    """An option's number from 1 if the question keeps that option, else 0 for none."""
+    return number if 0 < number <= len(options) else 0
+
+
+def _closes(question):
+    """Whether a question's recommended option only closes the item."""
+    return 0 < question["recommended"] == question.get("closes", 0)
 
 
 def _most(answers, kind, first):

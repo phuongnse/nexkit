@@ -578,5 +578,369 @@
     },
     "protected_paths": [],
     "no_change": "The base branch does it."
+  },
+  "implementRecommended": {
+    "status": "blocked",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "Two ways to read.",
+    "questions": [
+      {
+        "question": "Keep the old API?",
+        "options": [
+          "Keep it",
+          "Drop it"
+        ],
+        "recommended": 1,
+        "closes": 0,
+        "replans": []
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": ""
+  },
+  "implementCloseRecommended": {
+    "status": "blocked",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "Two ways to read.",
+    "questions": [
+      {
+        "question": "Keep the old API?",
+        "options": [
+          "Keep it",
+          "Close the work item"
+        ],
+        "recommended": 2,
+        "closes": 2,
+        "replans": []
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": "Nothing to change, as the test shows."
+  },
+  "implementCloses": {
+    "status": "blocked",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "Two ways to read.",
+    "questions": [
+      {
+        "question": "Keep the old API?",
+        "options": [
+          "Keep it",
+          "Close the work item"
+        ],
+        "recommended": 2,
+        "closes": 2,
+        "replans": []
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": ""
+  },
+  "implementReplans": {
+    "status": "blocked",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "Two ways to read.",
+    "questions": [
+      {
+        "question": "Keep the old API?",
+        "options": [
+          "Keep it",
+          "Split it into two"
+        ],
+        "recommended": 2,
+        "closes": 0,
+        "replans": [
+          2
+        ]
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": ""
+  },
+  "implementProtected": {
+    "status": "blocked",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "Two ways to read.",
+    "questions": [
+      {
+        "question": "Keep the old API?",
+        "options": [
+          "Keep it",
+          "Drop it"
+        ],
+        "recommended": 1,
+        "closes": 0,
+        "replans": []
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [
+      ".github/workflows/ci.yml"
+    ],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": ""
+  },
+  "fixReplans": {
+    "status": "blocked",
+    "summary": "Fix the failing test.",
+    "blocker": "A choice.",
+    "questions": [
+      {
+        "question": "Keep the old API?",
+        "options": [
+          "Keep it",
+          "Split it into two"
+        ],
+        "recommended": 2,
+        "replans": [
+          2
+        ]
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "cause": "The test read a stale fake issue.",
+    "cause_outside": false,
+    "open_conflicts": []
+  },
+  "fixRecommended": {
+    "status": "blocked",
+    "summary": "Fix the failing test.",
+    "blocker": "A choice.",
+    "questions": [
+      {
+        "question": "Keep the old API?",
+        "options": [
+          "Keep it",
+          "Drop it"
+        ],
+        "recommended": 1,
+        "replans": []
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "cause": "The test read a stale fake issue.",
+    "cause_outside": false,
+    "open_conflicts": []
+  },
+  "planManyPartsQuestions": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [
+      {
+        "question": "Read again or retry?",
+        "options": [
+          "Read again",
+          "Retry"
+        ],
+        "recommended": 0,
+        "closes": 0
+      }
+    ],
+    "too_large": true,
+    "split": [
+      {
+        "title": "Part 1",
+        "body": "Part 1.",
+        "depends_on": []
+      },
+      {
+        "title": "Part 2",
+        "body": "Part 2.",
+        "depends_on": [
+          1
+        ]
+      },
+      {
+        "title": "Part 3",
+        "body": "Part 3.",
+        "depends_on": [
+          2
+        ]
+      },
+      {
+        "title": "Part 4",
+        "body": "Part 4.",
+        "depends_on": [
+          3
+        ]
+      },
+      {
+        "title": "Part 5",
+        "body": "Part 5.",
+        "depends_on": [
+          4
+        ]
+      },
+      {
+        "title": "Part 6",
+        "body": "Part 6.",
+        "depends_on": [
+          5
+        ]
+      },
+      {
+        "title": "Part 7",
+        "body": "Part 7.",
+        "depends_on": [
+          6
+        ]
+      },
+      {
+        "title": "Part 8",
+        "body": "Part 8.",
+        "depends_on": [
+          7
+        ]
+      },
+      {
+        "title": "Part 9",
+        "body": "Part 9.",
+        "depends_on": [
+          8
+        ]
+      },
+      {
+        "title": "Part 10",
+        "body": "Part 10.",
+        "depends_on": [
+          9
+        ]
+      },
+      {
+        "title": "Part 11",
+        "body": "Part 11.",
+        "depends_on": [
+          10
+        ]
+      }
+    ],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [],
+    "no_change": ""
+  },
+  "planNoChangeProtected": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": false,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected_paths": [
+      ".github/workflows/ci.yml"
+    ],
+    "no_change": "The base branch already does this, as run 5 shows."
+  },
+  "implementBlankQuestion": {
+    "status": "blocked",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "Two ways to read.",
+    "questions": [
+      {
+        "question": "  ",
+        "options": [
+          "Keep it",
+          "Drop it"
+        ],
+        "recommended": 1,
+        "closes": 0,
+        "replans": []
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": ""
   }
 }

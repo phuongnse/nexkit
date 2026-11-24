@@ -46,7 +46,6 @@ from .state import (
     answers_text,
     by_bot,
     ci_wait_reason,
-    closing_answer,
     conflict_rounds_used,
     inert_markers,
     is_bot,
@@ -1185,24 +1184,11 @@ def _later(text, since):
     return at is not None and since is not None and at > since
 
 
-def _closing_comment(gh, comments, since, items, asked):
-    """A function that gives the step closing the issue, when the latest of collaborators'
-    comments after `since`, the run comment of a `/nexkit go` that stopped as blocked, other
-    than commands, answers its questions `items` with the option that only closes it, as a
-    person answers with autopilot (see `state.closing_answer`); otherwise None. `asked` is
-    that run. A plan's questions are the engine's (`host.after_plan`)."""
-    said = _commented_after(comments, since)
-    option = closing_answer(said[-1].get("body"), items) if said and items else None
-    by = ((said[-1].get("user") or {}).get("login") or "") if option else ""
-    if not by or not gh.can_write(by):
-        # Closing is a write: a collaborator who may only read changes the plan at most.
-        return None
-
-    def step(issue):
-        reason = f"@{by} answered with the option that only closes the issue"
-        return _step(issue, "close", reason, answer=option, by=by, asked=asked.get("url") or "")
-
-    return step
+def engine_round(run):
+    """Whether the engine decides what follows the `/nexkit go` whose marker is `run`: one
+    that stopped as blocked with questions or with protected paths its change needs."""
+    blocked = run.get("outcome") == "agent_blocked"
+    return blocked and bool(run.get("questions") or run.get("protected_paths"))
 
 
 def _since_stop(gh, issue, comments, stop):
@@ -1720,6 +1706,18 @@ def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
     return _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull)
 
 
+def _after_go(gh, cfg, issue, comment, last, record, start, comments):
+    """The step after a `/nexkit go` that stopped as blocked with questions or protected
+    paths, which the engine decides (`host.after_go`). An issue whose next step the engine
+    refuses to decide waits for a person, alone."""
+    from .host import Refused, after_go, refused_reason
+
+    try:
+        return after_go(gh, cfg, issue, comment, last, record, start, comments)
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+
+
 def _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull=None):
     """The step after the latest plan, which the engine decides (`host.after_plan`). An
     issue whose next step the engine refuses to decide waits for a person, alone."""
@@ -1930,9 +1928,8 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
                 "its pull request was closed, and autopilot opens no other by itself",
             )
             return _step(issue, "waits", reason)
-        closing = _closing_comment(gh, comments, found[-1][0], last.get("questions"), last)
-        if closing:
-            return closing(issue)
+        if engine_round(last):
+            return _after_go(gh, cfg, issue, *found[-1], record, start, comments)
         step = _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,))
         if step:
             return step
@@ -1956,6 +1953,8 @@ def carries_on(gh, cfg, decision, outcome, agent):
     output = agent.get("output") or {}
     if outcome == "planned":
         return _plan_carried_on(gh, cfg, decision, output)
+    if outcome == "agent_blocked" and decision["action"] == "implement":
+        return _round_carried_on(gh, cfg, decision, agent)
     if output.get("protected_paths"):
         # Only a person changes protected paths.
         handled = False
@@ -1982,6 +1981,19 @@ def carries_on(gh, cfg, decision, outcome, agent):
         target = gh.comments(pr or issue["number"])
         return not asked_again(target, gh.comments(issue["number"]) if pr else ())
     except GitHubError:
+        return False
+
+
+def _round_carried_on(gh, cfg, decision, agent):
+    """Whether autopilot carries on after a `/nexkit go` that stopped as blocked, as the
+    engine decides what follows it (`host.round_carried_on`). One whose next step the
+    engine refuses to decide needs a person."""
+    from .host import Refused, round_carried_on
+
+    try:
+        issue = gh.issue(decision["issue"])
+        return taken(gh, cfg, issue) and round_carried_on(gh, cfg, issue, decision, agent)
+    except (GitHubError, Refused):
         return False
 
 

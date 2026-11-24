@@ -1,0 +1,78 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "answers": "recommended",
+    "splits": true
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implementRecommended"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "answers"
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implementCloseRecommended"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "askedAgain"
+      }
+    },
+    {
+      "event": {
+        "kind": "commented"
+      },
+      "state": "noChange",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "close"
+      ],
+      "expect": {
+        "pending.-1.finding": {
+          "name": "noChange",
+          "ref": "a3.2"
+        }
+      }
+    }
+  ]
+}

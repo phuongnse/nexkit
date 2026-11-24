@@ -173,6 +173,22 @@
       "approved": true,
       "split": []
     },
+    "questions": {
+      "ref": "103",
+      "stage": "fix",
+      "items": [
+        {
+          "question": "Merge main first?",
+          "options": [
+            "Yes",
+            "No"
+          ],
+          "recommended": 0,
+          "replans": []
+        }
+      ],
+      "noChange": false
+    },
     "rounds": {
       "started": 2,
       "counted": 1,

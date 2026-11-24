@@ -111,11 +111,15 @@ def event_of(short, state, number):
         event.setdefault("changeVersion", version)
     if kind == "changePushed":
         event.setdefault("previousVersion", version)
-    if kind in ("planApproved", "answered"):
-        # The plan the person decides on: the one that asked, or the item's plan.
-        asked = (state.get("attention") or {}).get("ref") if kind == "answered" else None
-        plan = (state.get("plan") or {}).get("text", {}).get("ref")
-        event.setdefault("plan", asked or plan or "none")
+    plan = ((state or {}).get("plan") or {}).get("text", {}).get("ref")
+    if kind == "planApproved":
+        event.setdefault("plan", plan or "none")
+    if kind == "requested":
+        # A go names the item's plan; other requests name none.
+        event.setdefault("plan", plan if event["what"] == "go" else None)
+    if kind == "answered":
+        # The questions are those attention names, whatever the plan.
+        event.setdefault("asked", ((state or {}).get("attention") or {}).get("ref") or "none")
     return event
 
 

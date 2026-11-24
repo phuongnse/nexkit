@@ -84,7 +84,7 @@
     {
       "event": {
         "kind": "answered",
-        "plan": "a2.1"
+        "asked": "a2.1"
       },
       "state": "awaitingApproval",
       "changed": false,
@@ -93,7 +93,7 @@
     {
       "event": {
         "kind": "answered",
-        "plan": "a4.1"
+        "asked": "a4.1"
       },
       "state": "planning",
       "changed": true,

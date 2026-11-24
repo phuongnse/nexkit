@@ -174,9 +174,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   by the engine: a person's own pull request, which NexKit only checks and reviews. Each review
   request takes it to `checking`, and a drop ends the engine's work without closing it.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
-  has them, an item with no change asks once for a plan that splits it, and the state records
-  that it asked; otherwise, the second time, and for an item that has a change, which is never
-  split, it goes to `failed` for a person, as NexKit 6 does after its one split plan.
+  has them, the item asks once for a plan that splits it, and the state records that it asked;
+  otherwise, and the second time, it goes to `failed` for a person, as NexKit 6 does. An item
+  that has a change asks too, as NexKit 6 does after a fix round, but is never split: its new
+  plan goes on as one change on it.
 - **A final item that a person reopens** waits for a person, with attention, as NexKit 6 does.
   One whose change went in or became empty starts again without it and with its rounds
   counted afresh.

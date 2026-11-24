@@ -87,7 +87,8 @@
       "event": {
         "kind": "changePushed",
         "changeVersion": "v2",
-        "previousVersion": "v1"
+        "previousVersion": "v1",
+        "id": "push-v2"
       },
       "state": "checking",
       "changed": true,
@@ -115,7 +116,8 @@
       "event": {
         "kind": "changePushed",
         "changeVersion": "v2",
-        "previousVersion": "v1"
+        "previousVersion": "v1",
+        "id": "push-v2"
       },
       "state": "checking",
       "changed": false,

@@ -130,7 +130,7 @@
         "runAgent"
       ],
       "expect": {
-        "conflict": "v1"
+        "conflict": null
       }
     },
     {
@@ -157,14 +157,14 @@
           "refused": null
         }
       },
-      "state": "fixing",
+      "state": "checking",
       "changed": true,
       "actions": [
-        "runAgent"
+        "runChecks"
       ],
       "expect": {
         "conflict": null,
-        "rounds.conflicts": 1
+        "rounds.conflicts": 0
       }
     }
   ]

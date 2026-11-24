@@ -1,0 +1,82 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implementQuestions"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.ref": "a4.1",
+        "pending.-1.ref": "a4.1"
+      }
+    },
+    {
+      "event": {
+        "kind": "answered",
+        "asked": "a2.1"
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "answered",
+        "asked": "a4.1"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

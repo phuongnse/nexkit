@@ -104,7 +104,10 @@
       ],
       "expect": {
         "change": null,
-        "attention.reason": "reopened"
+        "attention.reason": "reopened",
+        "rounds.started": 0,
+        "rounds.counted": 0,
+        "rounds.findings": []
       }
     },
     {

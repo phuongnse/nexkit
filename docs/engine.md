@@ -357,31 +357,31 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   agent it may not run, a change already on the base branch, or checks that the base branch's
   move stopped. One whose agent stopped by itself, such as blocked, out of time or with an
   error, keeps its count.
-- **From every state that has a change,** the engine reconciles the item with the latest
-  observation of that change after each event, once no publish or replace is on its way. A change
-  that was merged, such as by a person's hand, goes to `accepted`; one that became empty, because
-  the same change landed another way, goes to `noChange`; a version other than the engine's, such
-  as a person's push, withdraws or cancels what acts on the old version and goes to `checking`, or
+- **From every state that has a change,** the engine reconciles the item with the latest observation
+  of that change after each event, once no publish or replace is on its way. A change that was
+  merged, such as by a person's hand, goes to `accepted`; one that became empty, because the same
+  change landed another way, goes to `noChange`; a version other than the engine's, such as a
+  person's push, withdraws or cancels what acts on the old version and goes to `checking`, or
   follows the conflict policy when that version conflicts. A change that conflicts follows the
-  conflict policy at once where nothing runs that it must wait for: in `ready` and `accepting`,
-  and in `checking` when a conflict round can start (`redo`, or `resolve` with rounds left), since
-  those checks can no longer lead to an accept. Otherwise the policy applies when the item would
-  next go to its checks or be ready, as NexKit 6 starts no conflict round while another runs, and
-  only if the latest observation still says that version conflicts; a question or a failure keeps
-  its attention meanwhile. A person told of a conflict on a version is told once, and the item
-  stays in `ready` for them even if the conflict clears without a push. A hold keeps the round
-  that the conflict policy would start back, whatever rounds are left, as NexKit 6's hold label
-  does: the item waits in `checking` with nothing running, and the policy applies, with its
-  count then, once the hold ends; in `ready` and `accepting` it applies when the hold ends. A
-  round that resolves a conflict is no automatic fix round: the count of an automatic fix round
-  whose change conflicts at its publish stands, and the conflict round counts toward
-  `conflictRounds` alone. An observation of another change changes nothing, and a publish or a replace that ends sets the change with the
-  observation its result carries, which replaces the latest one: one of a change the engine
-  replaced never touches the new one, even when the new one keeps its id and version. An item in
-  `failed`, and one in `new` that is not review-only, take only a merge or an emptied change, so
-  the failure's or the reopen's attention stands whatever else is observed: a new version waits
-  in the observation until a person's request takes the item on, such as a review, a retry or a
-  fix, which then starts its work on that version.
+  conflict policy at once where nothing runs that it must wait for: in `ready` and `accepting`, and
+  in `checking` when a conflict round can start (`redo`, or `resolve` with rounds left), since those
+  checks can no longer lead to an accept. Otherwise the policy applies when the item would next go
+  to its checks or be ready, as NexKit 6 starts no conflict round while another runs, and only if
+  the latest observation still says that version conflicts; a question or a failure keeps its
+  attention meanwhile. A person told of a conflict on a version is told once, and the item stays in
+  `ready` for them even if the conflict clears without a push. A hold keeps the round that the
+  conflict policy would start back, whatever rounds are left, as NexKit 6's hold label does: the
+  item waits in `checking` with nothing running, and the policy applies, with its count then, once
+  the hold ends; in `ready` and `accepting` it applies when the hold ends. A round that resolves a
+  conflict is no automatic fix round: the count of an automatic fix round whose change conflicts at
+  its publish stands, and the conflict round counts toward `conflictRounds` alone. An observation of
+  another change changes nothing, and a publish or a replace that ends sets the change with the
+  observation its result carries, which replaces the latest one: one of a change the engine replaced
+  never touches the new one, even when the new one keeps its id and version. An item in `failed`,
+  and one in `new` that is not review-only, take only a merge or an emptied change, so the failure's
+  or the reopen's attention stands whatever else is observed: a new version waits in the observation
+  until a person's request takes the item on, such as a review, a retry or a fix, which then starts
+  its work on that version.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
@@ -484,14 +484,15 @@ id. NexKit 6's round, from `route` to `report`, stays one workflow run.
 ## Runners
 
 A runner runs one agent session for one stage. Its contract is part of the protocol: `runAgent`
-gives it the stage, the version of the change it starts from, the stage's access, the prompt
-that `prompt` writes from the inputs it names, the name of the stage's result schema, the agent,
-the model and effort, the budget left in tokens, time and money, a session id to ask the same
-session again, and for a fix round the checks it looks into first (`diagnose`). Until the protocol holds the checklist and agents policies, the host adds to that
-schema what they add: a checklist field, and the names of triage's profiles. Its result gives the stage's result, the
-tokens as input, cached and output, the seconds and money it spent, a usage limit with its reset,
-whether the stop was transient, whether it ran out of time, whether no result fit the schema, and
-the version of the change it produced.
+gives it the stage, the version of the change it starts from, the stage's access, the prompt that
+`prompt` writes from the inputs it names, the name of the stage's result schema, the agent, the
+model and effort, the budget left in tokens, time and money, a session id to ask the same session
+again, and for a fix round the checks it looks into first (`diagnose`). Until the protocol holds the
+checklist and agents policies, the host adds to that schema what they add: a checklist field, and
+the names of triage's profiles. Its result gives the stage's result, the tokens as input, cached and
+output, the seconds and money it spent, a usage limit with its reset, whether the stop was
+transient, whether it ran out of time, whether no result fit the schema, and the version of the
+change it produced.
 
 Each stage has its access, which the runner enforces: none for triage, read for plan and review,
 write for implement and fix. There are two kinds of runner:

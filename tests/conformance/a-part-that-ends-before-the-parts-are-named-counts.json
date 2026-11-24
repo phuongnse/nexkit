@@ -1,0 +1,103 @@
+{
+  "policies": {
+    "splits": true
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplit"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "split",
+      "changed": true,
+      "actions": [
+        "createParts"
+      ]
+    },
+    {
+      "event": {
+        "kind": "partEnded",
+        "part": "43",
+        "state": "accepted"
+      },
+      "state": "split",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "parts": [
+          {
+            "item": "43",
+            "state": "accepted"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "createParts",
+        "result": {
+          "parts": [
+            {
+              "key": 1,
+              "item": "43"
+            },
+            {
+              "key": 2,
+              "item": "44"
+            }
+          ]
+        }
+      },
+      "state": "split",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "parts.0.state": "accepted",
+        "parts.1.state": null
+      }
+    },
+    {
+      "event": {
+        "kind": "partEnded",
+        "part": "44",
+        "state": "dropped"
+      },
+      "state": "accepted",
+      "changed": true,
+      "actions": [
+        "close"
+      ]
+    }
+  ]
+}

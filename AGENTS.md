@@ -89,6 +89,68 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   indexes `secrets` itself, since that puts every secret on its runner. Agent
   secret names may not start with `GITHUB_` or `NEXKIT_`, the App's not with `GITHUB_`.
 
+## Moving decisions into the engine
+
+Until NexKit 7.0 ships, changes move NexKit 6's decisions into the engine one by one
+([Getting there](docs/engine.md#getting-there)). Each such change:
+
+- Keeps GitHub's behaviour: NexKit 6 at 8bf5190 and the change behave alike on GitHub, unless
+  the change fixes a NexKit 6 bug, which its pull request calls out. A differential check proves
+  it. Scenarios of what the change moves run on both trees, each on a fresh `FakeGitHub`. The
+  check compares the command's result, everything on GitHub after it (comments with markers
+  decoded, statuses, reviews, dispatches with their inputs, merges, issues, pull requests,
+  labels), the preview and `nexkit status`. Sequences of several rounds and sweeps matter most.
+  The pull request gives the scenario counts and explains every difference.
+- Walks the engine at random against invariants, including the invariants of its own rules:
+  - the protocol's schemas;
+  - only the transitions that the states table names;
+  - the outbox;
+  - every open item is carried on, so none is stuck or brought back;
+  - counts within the policies.
+- Comes with a conformance case for each engine rule it adds or changes. Every other test passes
+  unchanged, or the pull request says why one changed. It brings its rules in
+  [The engine](docs/engine.md), *Getting there* and the Layout's `host.py` row up to date.
+- Gets an independent review before it merges. A separate session reviews it, given the issue and
+  the diff but not the author's conclusions. The review builds or extends the checks above on
+  its own, adds mutation checks of the new rules, and writes a verdict.
+  - Only wrong behaviour or instability blocks the merge: a decision that differs from NexKit 6, an
+    item stuck or brought back, a round counted wrongly, a crash, a lost event or action, work on
+    the wrong change, a transition the states table does not name, or the engine contradicting
+    [The engine](docs/engine.md).
+  - The author fixes these and checks each fix with the reviewer's own reproducers.
+  - Other findings are fixed when cheap. The rest go into one issue in the milestone, blocked by
+    the change's issue and blocking the milestone's release issue (#320 for 7.0), and get no
+    further review round.
+  - The pull request then gains an *Independent review* section: what the review ran, what it
+    found, and how each finding was settled.
+
+Its pull request has the sections *What moved*, *Left for #N* when the issue stays open,
+*Differential check*, *Random walks*, *Existing tests that changed*, *Independent review* and
+*Checks*: the commands under [Verify](#verify), and the smoke test when that section asks for it.
+
+## Issues and pull requests
+
+- A pull request closes at most one issue, with one closing keyword. One that does only part of
+  its issue says "Part of #N", lists what is left under *Left for #N*, and writes "#N stays
+  open". A closing keyword closes its issue even inside a negation, so never write "does not
+  close #N".
+- A pull request that builds on one not merged yet branches from it, targets its branch, and
+  says near the top "Stacked on #N: review and merge that first." Pull requests are
+  squash-merged. After a squash merge, the next pull request merges `main` into its branch,
+  without a rebase, so that its reviewed commits stay, and then targets `main`.
+- The next work is the open issues of the milestone that no open issue blocks (GitHub's
+  blocked-by), where a blocking issue with an open pull request counts as done and the work
+  stacks on that pull request. Of those, take the lowest number, unless the owner names
+  another. A question
+  for the owner is a comment on the issue it concerns, and work goes on with the issues that do
+  not depend on it. Issues, pull requests and their links hold the state of this work, never a
+  local note.
+- Agent sessions never merge, push a tag or release: the owner does.
+- Code, docs, commits, issues and pull requests are in English. NexKit's docs describe NexKit for
+  any repository and name no product that uses it, except the README's *Built with NexKit* list
+  and the changelog, which may cite a case. Issues, pull requests and code comments may name one
+  as context.
+
 ## Releases
 
 Feature pull requests change neither the version nor `CHANGELOG.md`. A release pull request

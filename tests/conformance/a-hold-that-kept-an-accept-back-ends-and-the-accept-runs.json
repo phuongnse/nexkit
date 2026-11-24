@@ -1,0 +1,33 @@
+{
+  "policies": {},
+  "state": {
+    "example": "accepting",
+    "set": {
+      "pending": [],
+      "waits": [],
+      "hold": true
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w7.1"
+      },
+      "state": "accepting",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "released",
+        "label": "on-hold"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "policies": {},
+  "state": {
+    "example": "checking",
+    "set": {
+      "pending": [],
+      "waits": [
+        {
+          "id": "w7.1",
+          "for": "start",
+          "until": null,
+          "on": null
+        }
+      ],
+      "observed": {
+        "changeId": "308",
+        "version": "5a54e2b",
+        "conflicts": true,
+        "merged": false,
+        "empty": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "acceptRefused"
+      }
+    }
+  ]
+}

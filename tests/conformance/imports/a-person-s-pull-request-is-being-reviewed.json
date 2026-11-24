@@ -1,0 +1,109 @@
+{
+  "kind": "started",
+  "nexkit6": {
+    "issue": {
+      "number": 400,
+      "pull_request": {}
+    },
+    "pull": {
+      "number": 400,
+      "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "comments": [
+      {
+        "run": {
+          "round": 1,
+          "trigger": "review",
+          "action": "review",
+          "kinds": [],
+          "status": "running",
+          "url": "https://github.com/acme/app/actions/runs/101",
+          "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+          "checks": "passed",
+          "verdict": "approve",
+          "tokens": {
+            "input": 1000,
+            "cached": 500,
+            "output": 200
+          }
+        }
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "400",
+    "itemKind": "reviewOnly",
+    "state": "checking",
+    "change": {
+      "id": "400",
+      "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "observed": null,
+    "attention": null,
+    "hold": false,
+    "waits": [],
+    "pending": [
+      {
+        "id": "a1.1",
+        "next": null,
+        "kind": "runChecks",
+        "changeVersion": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+      }
+    ],
+    "actors": {
+      "plan": "engine",
+      "change": "person",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 1000,
+        "cached": 500,
+        "output": 200
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

@@ -27,7 +27,8 @@ EXAMPLES = protocol.ROOT / "examples"
 # either of those two but `cli`. Any other import fails the test.
 ALLOWED = {
     "nexkit": set(),
-    "nexkit.engine.machine": {"__future__", "copy", "nexkit.schema"},
+    "nexkit.engine.machine": {"__future__", "copy", "nexkit.protocol.size", "nexkit.schema"},
+    "nexkit.protocol.size": {"__future__", "hashlib", "json"},
     "nexkit.engine": {
         "__future__",
         "json",

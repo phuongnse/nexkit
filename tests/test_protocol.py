@@ -205,11 +205,11 @@ class ProtocolTest(unittest.TestCase):
         )
         # check tells at most LIMIT problems, and stops looking soon after; without a limit,
         # as an agent's result is checked, every problem is told.
-        many = {**new, "parts": [{}] * 1000}
+        many = {**new, "waits": [{}] * 60}
         found = protocol.check(many, "state.schema.json")
         self.assertEqual(len(found), protocol.LIMIT + 1)
         self.assertEqual(found[-1], "and more")
-        self.assertEqual(found[0], "value.parts[0].item is missing")
+        self.assertEqual(found[0], "value.waits[0].id is missing")
         items = {"items": {"type": "string"}}
         self.assertEqual(len(problems([1] * 30, items)), 30)
         self.assertEqual(len(problems([1] * 30, items, limit=5)), 6)

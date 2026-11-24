@@ -1,0 +1,164 @@
+{
+  "kind": "planned",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "comments": [
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [
+              {
+                "question": "Read again or retry?",
+                "options": [
+                  "Read again",
+                  "Retry"
+                ],
+                "recommended": "Read again"
+              }
+            ],
+            "too_large": false
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "planned"
+        }
+      },
+      {
+        "answers": {
+          "answers": [
+            {
+              "question": "Read again or retry?",
+              "answer": "Read again"
+            }
+          ]
+        }
+      },
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [
+              {
+                "question": "Read once or in a loop?",
+                "options": [
+                  "Once",
+                  "In a loop",
+                  "Close the issue"
+                ],
+                "recommended": "Once",
+                "closing": "Close the issue"
+              }
+            ],
+            "too_large": false
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/5",
+          "outcome": "planned",
+          "autopilot": true,
+          "attention": "Answer the plan's questions with `/nexkit plan <answers>`. The plan asks again right after autopilot's answers"
+        }
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "awaitingApproval",
+    "change": null,
+    "observed": null,
+    "attention": {
+      "reason": "question",
+      "text": "Answer the plan's questions with `/nexkit plan <answers>`. The plan asks again right after autopilot's answers",
+      "ref": "4"
+    },
+    "hold": false,
+    "waits": [],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": {
+      "text": {
+        "name": "plan",
+        "ref": "4"
+      },
+      "questions": [
+        {
+          "question": "Read once or in a loop?",
+          "options": [
+            "Once",
+            "In a loop",
+            "Close the issue"
+          ],
+          "recommended": 1,
+          "closes": 3
+        }
+      ],
+      "criteria": 1,
+      "tooLarge": false,
+      "parts": 0,
+      "noChange": false,
+      "protectedPaths": [],
+      "approved": false,
+      "split": []
+    },
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [
+      "answers"
+    ],
+    "parts": [],
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "answered"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

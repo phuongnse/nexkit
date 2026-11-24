@@ -82,8 +82,8 @@
     },
     {
       "event": {
-        "kind": "changePushed",
-        "changeVersion": "v2"
+        "kind": "changeObserved",
+        "version": "v2"
       },
       "state": "checking",
       "changed": true,
@@ -93,8 +93,8 @@
     },
     {
       "event": {
-        "kind": "changePushed",
-        "changeVersion": "v2"
+        "kind": "changeObserved",
+        "version": "v2"
       },
       "state": "checking",
       "changed": false,

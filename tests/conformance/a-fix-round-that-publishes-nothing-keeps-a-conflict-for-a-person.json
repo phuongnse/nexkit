@@ -75,15 +75,13 @@
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
+        "kind": "changeObserved",
+        "conflicts": true,
+        "version": "v1"
       },
       "state": "reviewing",
       "changed": true,
-      "actions": [],
-      "expect": {
-        "conflict": "v1"
-      }
+      "actions": []
     },
     {
       "event": {
@@ -95,10 +93,7 @@
       "changed": true,
       "actions": [
         "runAgent"
-      ],
-      "expect": {
-        "conflict": "v1"
-      }
+      ]
     },
     {
       "event": {
@@ -110,10 +105,7 @@
       "changed": true,
       "actions": [
         "needPerson"
-      ],
-      "expect": {
-        "conflict": "v1"
-      }
+      ]
     },
     {
       "event": {
@@ -126,8 +118,7 @@
         "needPerson"
       ],
       "expect": {
-        "attention.reason": "acceptRefused",
-        "conflict": null
+        "attention.reason": "acceptRefused"
       }
     }
   ]

@@ -1,5 +1,7 @@
 {
-  "policies": {},
+  "policies": {
+    "accept": "autoWhenPassed"
+  },
   "steps": [
     {
       "event": {
@@ -73,53 +75,30 @@
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:review"
       },
-      "state": "reviewing",
+      "state": "accepting",
       "changed": true,
-      "actions": [],
-      "expect": {
-        "conflict": "v1"
-      }
+      "actions": [
+        "accept"
+      ]
     },
     {
       "event": {
-        "kind": "dropRequested"
+        "kind": "changeObserved",
+        "conflicts": true
       },
-      "state": "dropped",
+      "state": "ready",
       "changed": true,
       "actions": [
         "cancel",
-        "close"
-      ],
-      "expect": {
-        "conflict": null
-      }
-    },
-    {
-      "event": {
-        "kind": "reopened"
-      },
-      "state": "new",
-      "changed": true,
-      "actions": [
         "needPerson"
       ],
       "expect": {
-        "change.version": "v1"
+        "attention.reason": "acceptRefused"
       }
-    },
-    {
-      "event": {
-        "kind": "requested",
-        "what": "review"
-      },
-      "state": "checking",
-      "changed": true,
-      "actions": [
-        "runChecks"
-      ]
     }
   ]
 }

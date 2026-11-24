@@ -62,15 +62,15 @@
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
+        "kind": "changeObserved",
+        "conflicts": true,
+        "version": "v1"
       },
       "state": "failed",
       "changed": true,
       "actions": [],
       "expect": {
-        "attention.reason": "failed",
-        "conflict": "v1"
+        "attention.reason": "failed"
       }
     },
     {
@@ -84,8 +84,7 @@
         "needPerson"
       ],
       "expect": {
-        "attention.reason": "acceptRefused",
-        "conflict": null
+        "attention.reason": "acceptRefused"
       }
     }
   ]

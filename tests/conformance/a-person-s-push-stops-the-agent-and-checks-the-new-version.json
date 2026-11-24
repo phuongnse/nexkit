@@ -75,38 +75,28 @@
       "event": {
         "kind": "actionFinished",
         "action": "runAgent",
-        "result": "@agent:review"
+        "result": "@agent:reviewChanges"
       },
-      "state": "ready",
+      "state": "fixing",
       "changed": true,
       "actions": [
-        "needPerson"
+        "runAgent"
       ]
     },
     {
       "event": {
-        "kind": "changePushed",
-        "previousVersion": "v2",
-        "changeVersion": "v3"
-      },
-      "state": "ready",
-      "changed": true,
-      "actions": []
-    },
-    {
-      "event": {
-        "kind": "changePushed",
-        "previousVersion": "v1",
-        "changeVersion": "v3"
+        "kind": "changeObserved",
+        "version": "v2"
       },
       "state": "checking",
       "changed": true,
       "actions": [
+        "cancel",
         "runChecks"
       ],
       "expect": {
-        "change.version": "v3",
-        "pushes": []
+        "change.version": "v2",
+        "pending.-1.changeVersion": "v2"
       }
     }
   ]

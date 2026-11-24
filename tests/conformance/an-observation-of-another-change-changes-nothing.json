@@ -73,63 +73,24 @@
     },
     {
       "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:reviewChanges"
+        "kind": "changeObserved",
+        "changeId": "999",
+        "version": "v9",
+        "merged": true
       },
-      "state": "fixing",
-      "changed": true,
-      "actions": [
-        "runAgent"
-      ]
+      "state": "reviewing",
+      "changed": false,
+      "actions": []
     },
     {
       "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:fix"
+        "kind": "changeObserved",
+        "changeId": "999",
+        "conflicts": true
       },
-      "state": "fixing",
-      "changed": true,
-      "actions": [
-        "publish"
-      ]
-    },
-    {
-      "event": {
-        "kind": "changePushed",
-        "changeVersion": "v3",
-        "previousVersion": "v2"
-      },
-      "state": "fixing",
-      "changed": true,
-      "actions": [],
-      "expect": {
-        "pending.0.kind": "publish"
-      }
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "publish",
-        "result": {
-          "change": {
-            "id": "308",
-            "version": "v2"
-          },
-          "refused": null
-        }
-      },
-      "state": "checking",
-      "changed": true,
-      "actions": [
-        "runChecks"
-      ],
-      "expect": {
-        "change.version": "v3",
-        "pushes": [],
-        "pending.0.changeVersion": "v3"
-      }
+      "state": "reviewing",
+      "changed": false,
+      "actions": []
     }
   ]
 }

@@ -54,8 +54,9 @@
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
+        "kind": "changeObserved",
+        "conflicts": true,
+        "version": "v1"
       },
       "state": "fixing",
       "changed": true,
@@ -99,15 +100,13 @@
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v2"
+        "kind": "changeObserved",
+        "conflicts": true,
+        "version": "v2"
       },
       "state": "checking",
       "changed": true,
-      "actions": [],
-      "expect": {
-        "conflict": "v2"
-      }
+      "actions": []
     },
     {
       "event": {

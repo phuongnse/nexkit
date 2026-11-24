@@ -85,7 +85,8 @@
     },
     {
       "event": {
-        "kind": "changeAccepted"
+        "kind": "changeObserved",
+        "merged": true
       },
       "state": "accepted",
       "changed": true,

@@ -1,5 +1,7 @@
 {
-  "policies": {},
+  "policies": {
+    "conflicts": "resolve"
+  },
   "steps": [
     {
       "event": {
@@ -73,9 +75,8 @@
     },
     {
       "event": {
-        "kind": "changePushed",
-        "changeVersion": "v3",
-        "previousVersion": "v2"
+        "kind": "changeObserved",
+        "conflicts": true
       },
       "state": "reviewing",
       "changed": true,
@@ -83,16 +84,27 @@
     },
     {
       "event": {
-        "kind": "dropRequested"
+        "kind": "changeObserved",
+        "conflicts": false
       },
-      "state": "dropped",
+      "state": "reviewing",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:review"
+      },
+      "state": "ready",
       "changed": true,
       "actions": [
-        "cancel",
-        "close"
+        "needPerson"
       ],
       "expect": {
-        "pushes": []
+        "attention.reason": "accept",
+        "rounds.conflicts": 0
       }
     }
   ]

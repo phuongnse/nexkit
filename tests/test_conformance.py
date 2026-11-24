@@ -52,10 +52,7 @@ DEFAULTS = {
     "changesRequested": {"by": PERSON, "note": {"name": "comment", "ref": "9"}},
     "changeApproved": {"by": PERSON},
     "dropRequested": {"by": PERSON, "reason": ""},
-    "changeAccepted": {"by": PERSON},
-    "changeEmptied": {"landedIn": None},
-    "changePushed": {"by": PERSON},
-    "conflict": {"files": []},
+    "changeObserved": {"conflicts": False, "merged": False, "empty": False},
     "stopped": {"outcome": "keyRefused", "text": "The provider refused the key."},
     "held": {"label": "on-hold"},
     "reopened": {"by": PERSON},
@@ -107,11 +104,14 @@ def event_of(short, state, number):
         event.setdefault("changeVersion", action.get("changeVersion") if action else version)
     if kind == "actionFinished":
         event["result"] = result_of(event["result"])
-    if kind in ("changeAccepted", "changeEmptied", "changeApproved"):
+    change_id = ((state or {}).get("change") or {}).get("id") or "none"
+    if kind == "changeApproved":
+        event.setdefault("changeId", change_id)
         event.setdefault("changeVersion", version)
-    if kind == "changePushed":
-        event.setdefault("previousVersion", version)
-        event.setdefault("changeId", ((state or {}).get("change") or {}).get("id") or "none")
+    if kind == "changeObserved":
+        # The change as the host reads it now: unless the case says otherwise, as it stands.
+        event.setdefault("changeId", change_id)
+        event.setdefault("version", version or "none")
     plan = ((state or {}).get("plan") or {}).get("text", {}).get("ref")
     if kind == "planApproved":
         event.setdefault("plan", plan or "none")
@@ -155,7 +155,7 @@ def table_transitions():
 def allowed(policies, had_change):
     """The table's transitions, and those the page's rules below it allow, under `policies`:
     from every state that is not final, a drop and a stop; a final item reopened; and, when the
-    item had a change before the step, a change that went in, became empty or was pushed to, a
+    item has a change, a change that went in, became empty or was pushed to, a
     review asked for, and a conflict as the conflict policy says."""
     conflicts = {**_defaults(), **policies}["conflicts"]
     pairs = table_transitions() | {(name, "new") for name in FINAL}
@@ -223,7 +223,8 @@ class ConformanceTest(unittest.TestCase):
                 self.assertTrue(carried, f"{where}: nothing carries the item on")
             if state is not None and new["state"] != state["state"]:
                 pair = (state["state"], new["state"])
-                names = allowed(policies, bool(state["change"]))
+                # A change the step itself set, as a publish does, counts too.
+                names = allowed(policies, bool(state["change"] or new["change"]))
                 self.assertIn(pair, names, f"{where}: the page names no {pair}")
                 seen.add(pair)
             if event["kind"] == "dropRequested" and answer["changed"]:

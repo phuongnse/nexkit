@@ -56,6 +56,11 @@ def _describe(request):
     found = protocol.check(request, "calls/describe.schema.json", "request")
     if found:
         raise EngineError("; ".join(found))
+    if request["protocol"] != protocol.VERSION:
+        # The host speaks a major version this engine does not serve.
+        raise EngineError(
+            f"This engine serves protocol {protocol.VERSION}, not {request['protocol']}."
+        )
     return {
         "protocol": {"major": protocol.VERSION, "minor": protocol.MINOR},
         "engine": __version__,

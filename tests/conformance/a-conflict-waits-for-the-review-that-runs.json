@@ -73,51 +73,22 @@
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v0"
+        "kind": "changeObserved",
+        "conflicts": true
       },
       "state": "reviewing",
       "changed": true,
       "actions": [],
       "expect": {
-        "conflict": "v0"
-      }
-    },
-    {
-      "event": {
-        "kind": "conflict",
-        "changeVersion": "v0"
-      },
-      "state": "reviewing",
-      "changed": false,
-      "actions": []
-    },
-    {
-      "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
-      },
-      "state": "reviewing",
-      "changed": true,
-      "actions": [],
-      "expect": {
-        "conflict": "v1",
+        "observed.conflicts": true,
         "pending.0.stage": "review"
       }
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v7"
-      },
-      "state": "reviewing",
-      "changed": false,
-      "actions": []
-    },
-    {
-      "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
+        "kind": "changeObserved",
+        "conflicts": true,
+        "id": "again"
       },
       "state": "reviewing",
       "changed": false,
@@ -136,7 +107,18 @@
       ],
       "expect": {
         "attention.reason": "acceptRefused",
-        "conflict": null
+        "attention.ref": "v1"
+      }
+    },
+    {
+      "event": {
+        "kind": "held"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "attention.reason": "acceptRefused"
       }
     }
   ]

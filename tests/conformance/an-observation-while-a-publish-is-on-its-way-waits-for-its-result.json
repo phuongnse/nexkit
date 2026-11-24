@@ -75,38 +75,52 @@
       "event": {
         "kind": "actionFinished",
         "action": "runAgent",
-        "result": "@agent:review"
+        "result": "@agent:reviewChanges"
       },
-      "state": "ready",
+      "state": "fixing",
       "changed": true,
       "actions": [
-        "needPerson"
+        "runAgent"
       ]
     },
     {
       "event": {
-        "kind": "changePushed",
-        "changeVersion": "v3",
-        "previousVersion": "v2"
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:fix"
       },
-      "state": "ready",
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v9",
+        "conflicts": true
+      },
+      "state": "fixing",
       "changed": true,
       "actions": [],
       "expect": {
+        "pending.0.kind": "publish",
         "change.version": "v1",
-        "pushes": [
-          {
-            "previousVersion": "v2",
-            "changeVersion": "v3"
-          }
-        ]
+        "observed.version": "v9"
       }
     },
     {
       "event": {
-        "kind": "changePushed",
-        "changeVersion": "v2",
-        "previousVersion": "v1"
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v2"
+          },
+          "refused": null
+        }
       },
       "state": "checking",
       "changed": true,
@@ -114,9 +128,8 @@
         "runChecks"
       ],
       "expect": {
-        "change.version": "v3",
-        "pushes": [],
-        "pending.-1.changeVersion": "v3"
+        "observed": null,
+        "change.version": "v2"
       }
     }
   ]

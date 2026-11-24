@@ -55,8 +55,8 @@ CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("wor
 # a change that conflicts can no longer lead to an accept, so they stop for it too, when a
 # conflict round can start (`Step.at_once`).
 CONFLICT_AT_ONCE = ("ready", "accepting")
-# How many pushes that did not start from the change's version the state keeps.
-PUSHES = 10
+# The fields of a changeObserved event that the state keeps as its `observed`.
+OBSERVED = ("changeId", "version", "conflicts", "merged", "empty")
 
 
 class EngineError(ValueError):
@@ -72,8 +72,7 @@ def blank(item):
         "itemKind": "change",
         "state": "new",
         "change": None,
-        "conflict": None,
-        "pushes": [],
+        "observed": None,
         "attention": None,
         "hold": False,
         "waits": [],
@@ -146,9 +145,6 @@ class Step:
         elif self.state not in ROUND or not self.s["policies"]:
             self.s["policies"] = dict(self.given)
             self.p = self.given
-        if name in FINAL:
-            self.s["conflict"] = None
-            self.s["pushes"] = []
         kept = () if name in FINAL else ("blocker",)
         self.s["waits"] = [wait for wait in self.s["waits"] if wait["for"] in kept]
         self.s["state"] = name
@@ -271,15 +267,54 @@ class Step:
             self.need("accept", "The change passed, and a person decides its accept.")
 
     def conflicted(self):
-        """Apply a conflict that waited for the running step to end, now that the item would go
-        on to its checks or be ready (docs/engine.md#states). Whether it did."""
-        conflict, self.s["conflict"] = self.s["conflict"], None
-        if conflict is None or self.review_only or conflict != self.version:
-            # A conflict on a version the change left says nothing about the one it has now;
-            # the host reports a conflict again for a version that still has one.
+        """Apply the conflict policy when the item would go on to its checks or be ready and the
+        latest observation says this version of the change conflicts (docs/engine.md#states).
+        Whether it did."""
+        observed = self.observed()
+        if self.review_only or not observed or not observed["conflicts"]:
             return False
         self.on_conflict_found()
         return True
+
+    def observed(self):
+        """The latest observation of the change the item has. Only one of this change, or of
+        the one a publish or replace on its way sets, is kept, `took_change` drops one older than
+        such a result, and `reconcile` takes a new version at once, so it is of this version."""
+        return self.s["observed"] if self.s["change"] else None
+
+    def coming(self):
+        """Whether a publish or a replace is on its way, which sets the change."""
+        return any(a["kind"] in ("publish", "replaceChange") for a in self.s["pending"])
+
+    def reconcile(self):
+        """Bring the item in line with the latest observation of its change, after each event
+        that changed the state; doing so again changes nothing (docs/engine.md#states)."""
+        observed = self.observed()
+        if self.final() or self.coming() or not observed:
+            return
+        if observed["merged"]:
+            self.move("accepted")
+            self.close("completed")
+        elif observed["empty"]:
+            self.move("noChange")
+            self.close("completed")
+        elif observed["version"] != self.version:
+            # A person's push: what acts on the old version stops, and the new one is checked.
+            self.s["change"] = {**self.s["change"], "version": observed["version"]}
+            self.check()
+        elif observed["conflicts"] and not self.review_only and self.at_once():
+            self.on_conflict_found()
+
+    def took_change(self, change):
+        """A publish or a replace set the change. An observation that arrived first counts
+        only when it is of that change and version; any other is older than the result."""
+        self.s["change"] = change
+        observed = self.s["observed"]
+        if observed and (observed["changeId"], observed["version"]) != (
+            change["id"],
+            change["version"],
+        ):
+            self.s["observed"] = None
 
     def at_once(self):
         """Whether a conflict acts now: where nothing runs that it must wait for, and in checks
@@ -295,16 +330,23 @@ class Step:
         policy, rounds = self.p["conflicts"], self.s["rounds"]
         if policy == "redo":
             self.move("working")
-            # Pushes that wait belong to the change this replaces.
-            self.s["pushes"] = []
             self.do("replaceChange", reason="The change no longer applies to what it was made on.")
         elif policy == "resolve" and rounds["conflicts"] < self.p["conflictRounds"]:
             rounds["conflicts"] += 1
             self.move("fixing")
             self.run("fix")
         else:
+            attention = self.s["attention"] or {}
+            if self.state == "ready" and (attention.get("reason"), attention.get("ref")) == (
+                "acceptRefused",
+                self.version,
+            ):
+                # A person was told already: reconciling again changes nothing.
+                return
             self.move("ready")
-            self.need("acceptRefused", "The change conflicts with what it was made on.")
+            self.need(
+                "acceptRefused", "The change conflicts with what it was made on.", self.version
+            )
 
     def timed_out(self):
         """An implement or fix agent ran out of time. With splits on, as autopilot does, the
@@ -419,6 +461,7 @@ class Step:
         attention = self.s["attention"] or {}
         if (
             self.state != "ready"
+            or event["changeId"] != (self.s["change"] or {}).get("id")
             or event["changeVersion"] != self.version
             or attention.get("reason") not in ("unverifiableCriterion", "personChecklistItem")
         ):
@@ -489,6 +532,7 @@ class Step:
             # Its change went in or became empty: the work starts again without it, and with
             # its rounds counted afresh.
             self.s["change"] = None
+            self.s["observed"] = None
             self.s["rounds"] = blank(self.s["item"])["rounds"]
         self.move("new")
         self.need("reopened", "The work item was opened again.")
@@ -503,85 +547,16 @@ class Step:
         self.s["waits"].remove(waits[0])
         return True
 
-    def on_conflict(self, event):
-        if not self.s["change"] or self.review_only:
-            return False
-        if event["changeVersion"] != self.version:
-            # A conflict may arrive before its version, such as one the host found while it
-            # published: it waits for that version, unless one on the current version waits.
-            if self.s["conflict"] in (self.version, event["changeVersion"]):
-                return False
-            self.s["conflict"] = event["changeVersion"]
-            return True
-        if self.at_once():
-            self.s["conflict"] = None
-            self.on_conflict_found()
-            return True
-        if self.s["conflict"] == event["changeVersion"]:
-            return False
-        # Something runs or waits for a person: the conflict waits for it (`conflicted`).
-        self.s["conflict"] = event["changeVersion"]
-        return True
-
-    def on_changeAccepted(self, event):
-        if not self.s["change"]:
-            return False
-        self.move("accepted")
-        self.close("completed")
-        return True
-
-    def on_changeEmptied(self, event):
-        if not self.s["change"]:
-            return False
-        self.move("noChange")
-        self.close("completed")
-        return True
-
-    def on_changePushed(self, event):
-        push = {
-            "previousVersion": event["previousVersion"],
-            "changeVersion": event["changeVersion"],
-        }
-        change = self.s["change"] or {}
+    def on_changeObserved(self, event):
+        observed = {key: event[key] for key in OBSERVED}
+        change = self.s["change"]
+        ours = change and observed["changeId"] == change["id"]
         # While a publish or a replace is on its way, the change may get an id the engine has
-        # not seen yet: a push to it waits like one that starts from a later version.
-        coming = any(a["kind"] in ("publish", "replaceChange") for a in self.s["pending"])
-        ours = change.get("id") == event["changeId"]
-        if not (ours or coming) or push["changeVersion"] == self.version:
+        # not seen yet; any other change, such as one the engine replaced, is not this item's.
+        if not (ours or self.coming()) or observed == self.s["observed"]:
             return False
-        if push["previousVersion"] != self.version or not ours:
-            # Pushes arrive in any order: this one waits until the change reaches the version
-            # it started from, such as when an earlier push or the agent's publish arrives.
-            if push in self.s["pushes"]:
-                return False
-            if len(self.s["pushes"]) >= PUSHES:
-                # The engine can no longer follow the change: the host sends a push from the
-                # change's version to its head (docs/engine.md).
-                self.s["pushes"] = []
-                self.move("failed")
-                self.need("outage", "More pushes wait than the engine keeps.")
-                return True
-            self.s["pushes"] = [*self.s["pushes"], push]
-            return True
-        self.pushed(push["changeVersion"])
-        self.check()
+        self.s["observed"] = observed
         return True
-
-    def pushed(self, version):
-        """The change is at `version` by a person's push, and at the end of the pushes that
-        waited for it. A conflict that waited names an older version now, so `check` drops it:
-        the push may have resolved it, and the host reports it again if not."""
-        self.s["change"] = {**self.s["change"], "version": version}
-        for _ in range(len(self.s["pushes"])):
-            later = [push for push in self.s["pushes"] if push["previousVersion"] == self.version]
-            if not later:
-                break
-            self.s["pushes"].remove(later[0])
-            self.s["change"]["version"] = later[0]["changeVersion"]
-        # A push seen again that led where the change already went no longer waits.
-        self.s["pushes"] = [
-            push for push in self.s["pushes"] if push["changeVersion"] != self.version
-        ]
 
     def on_textChanged(self, event):
         return False
@@ -785,10 +760,7 @@ class Step:
             self.move("failed")
             self.need("failed", result["refused"] or "The change could not be published.")
             return
-        self.s["change"] = result["change"]
-        if any(push["previousVersion"] == self.version for push in self.s["pushes"]):
-            # A person pushed on top of the agent's work before its result arrived.
-            self.pushed(self.version)
+        self.took_change(result["change"])
         self.check()
 
     def check(self):
@@ -827,13 +799,7 @@ class Step:
             self.need("acceptRefused", result["text"] or "The accept was refused.")
 
     def finished_replaceChange(self, result, action):
-        replaced = self.version
-        self.s["change"] = result["change"]
-        # A push that starts from the replaced change's version is that change's.
-        self.s["pushes"] = [p for p in self.s["pushes"] if p["previousVersion"] != replaced]
-        if any(push["previousVersion"] == self.version for push in self.s["pushes"]):
-            # A person pushed to the new change before its result arrived.
-            self.pushed(self.version)
+        self.took_change(result["change"])
         self.run("implement")
 
     def finished_createParts(self, result, action):
@@ -881,6 +847,7 @@ def step(state, event, policies, check):
         changed = handler(event)
     if not changed:
         return before, [], False
+    work.reconcile()
     if work.review_only:
         _never_writes(work.actions)
     work.s["revision"] += 1

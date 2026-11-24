@@ -73,53 +73,33 @@
     },
     {
       "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:review"
+        "kind": "changeObserved",
+        "merged": true
       },
-      "state": "ready",
-      "changed": true,
-      "actions": [
-        "needPerson"
-      ]
-    },
-    {
-      "event": {
-        "kind": "changePushed",
-        "changeVersion": "v2",
-        "previousVersion": "v1",
-        "id": "push-v2"
-      },
-      "state": "checking",
-      "changed": true,
-      "actions": [
-        "runChecks"
-      ]
-    },
-    {
-      "event": {
-        "kind": "changePushed",
-        "changeVersion": "v3",
-        "previousVersion": "v2"
-      },
-      "state": "checking",
+      "state": "accepted",
       "changed": true,
       "actions": [
         "cancel",
-        "runChecks"
-      ],
-      "expect": {
-        "change.version": "v3"
-      }
+        "close"
+      ]
     },
     {
       "event": {
-        "kind": "changePushed",
-        "changeVersion": "v2",
-        "previousVersion": "v1",
-        "id": "push-v2"
+        "kind": "actionFinished",
+        "action": "close",
+        "result": {}
       },
-      "state": "checking",
+      "state": "accepted",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "merged": true,
+        "id": "again"
+      },
+      "state": "accepted",
       "changed": false,
       "actions": []
     }

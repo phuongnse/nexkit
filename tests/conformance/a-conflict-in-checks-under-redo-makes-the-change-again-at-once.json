@@ -53,18 +53,16 @@
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
+        "kind": "changeObserved",
+        "conflicts": true,
+        "version": "v1"
       },
       "state": "working",
       "changed": true,
       "actions": [
         "cancel",
         "replaceChange"
-      ],
-      "expect": {
-        "conflict": null
-      }
+      ]
     }
   ]
 }

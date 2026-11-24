@@ -76,15 +76,13 @@
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
+        "kind": "changeObserved",
+        "conflicts": true,
+        "version": "v1"
       },
       "state": "reviewing",
       "changed": true,
-      "actions": [],
-      "expect": {
-        "conflict": "v1"
-      }
+      "actions": []
     },
     {
       "event": {
@@ -99,8 +97,7 @@
       ],
       "expect": {
         "rounds.conflicts": 1,
-        "rounds.counted": 0,
-        "conflict": null
+        "rounds.counted": 0
       }
     }
   ]

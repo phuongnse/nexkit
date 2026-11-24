@@ -1,5 +1,7 @@
 {
-  "policies": {},
+  "policies": {
+    "conflicts": "resolve"
+  },
   "steps": [
     {
       "event": {
@@ -33,14 +35,17 @@
     },
     {
       "event": {
-        "kind": "changePushed",
-        "previousVersion": "v1",
-        "changeVersion": "v2",
-        "changeId": "308"
+        "kind": "changeObserved",
+        "changeId": "308",
+        "version": "v1",
+        "conflicts": true
       },
       "state": "working",
       "changed": true,
-      "actions": []
+      "actions": [],
+      "expect": {
+        "observed.version": "v1"
+      }
     },
     {
       "event": {
@@ -54,14 +59,13 @@
           "refused": null
         }
       },
-      "state": "checking",
+      "state": "fixing",
       "changed": true,
       "actions": [
-        "runChecks"
+        "runAgent"
       ],
       "expect": {
-        "change.version": "v2",
-        "pushes": []
+        "rounds.conflicts": 1
       }
     }
   ]

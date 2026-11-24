@@ -33,7 +33,7 @@
       ]
     },
     "observed": {
-      "$comment": "The latest observation of the change, as changeObserved gave it, or null. The engine reconciles the item with it after each event (docs/engine.md#states).",
+      "$comment": "The latest observation of the item's change, from changeObserved or from the result of a publish or replace, or null. The engine reconciles the item with it after each event that changes the state (docs/engine.md#states).",
       "anyOf": [
         {
           "type": "object",

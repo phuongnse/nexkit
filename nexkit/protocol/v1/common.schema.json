@@ -171,6 +171,34 @@
         "reopened",
         "outage"
       ]
+    },
+    "observation": {
+      "$comment": "The change as the host reads it: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way.",
+      "type": "object",
+      "properties": {
+        "changeId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "conflicts": {
+          "type": "boolean"
+        },
+        "merged": {
+          "type": "boolean"
+        },
+        "empty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "changeId",
+        "version",
+        "conflicts",
+        "merged",
+        "empty"
+      ]
     }
   }
 }

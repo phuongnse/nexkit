@@ -258,9 +258,17 @@ class ProtocolTest(unittest.TestCase):
         )
 
     def test_a_change_is_observed_whole_never_as_a_delta(self):
-        observed = protocol.load("events/changeObserved.schema.json")["required"]
-        for field in ("changeId", "version", "conflicts", "merged", "empty"):
-            self.assertIn(field, observed)
+        shape = protocol.load("common.schema.json")["$defs"]["observation"]
+        fields = shape["required"]
+        self.assertEqual(sorted(fields), sorted(shape["properties"]))
+        event = protocol.load("events/changeObserved.schema.json")
+        state = protocol.load("state.schema.json")["properties"]["observed"]["anyOf"][0]
+        for schema, base in ((event, "../common.schema.json"), (state, "common.schema.json")):
+            # One shape: each field refers to the observation's own.
+            self.assertLessEqual(set(fields), set(schema["required"]))
+            for field in fields:
+                ref = f"{base}#/$defs/observation/properties/{field}"
+                self.assertEqual(schema["properties"][field], {"$ref": ref})
         for kind in ("publish", "replaceChange"):
             # The host reads the change when it handles the result of an action that changed it.
             self.assertIn(

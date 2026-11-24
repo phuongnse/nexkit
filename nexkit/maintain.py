@@ -189,7 +189,7 @@ def close_parent(gh, number):
     # After the close, so that only a run whose close went through comments. The latest
     # comment guards a run whose close went through after another's.
     latest = gh.comments(number)[-1:]
-    if not (latest and by_bot(latest[0]) and CLOSED in latest[0]["body"]):
+    if not (latest and by_bot(latest[0]) and latest[0]["body"].startswith(CLOSED)):
         gh.comment(
             number,
             f"{CLOSED}\nNexKit closed this issue because all its sub-issues are "
@@ -297,7 +297,7 @@ def _stale(gh, name, sha, number):
 def _reported(gh, number, name):
     """Whether NexKit said on issue `number` that it could not delete the branch `name`."""
     return any(
-        by_bot(c) and BRANCH_KEPT in (c.get("body") or "") and f"`{name}`" in c["body"]
+        by_bot(c) and (c.get("body") or "").startswith(BRANCH_KEPT) and f"`{name}`" in c["body"]
         for c in gh.comments(number)
     )
 

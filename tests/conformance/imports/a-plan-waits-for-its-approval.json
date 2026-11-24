@@ -33,7 +33,7 @@
     "itemKind": "change",
     "state": "awaitingApproval",
     "change": null,
-    "conflict": null,
+    "observed": null,
     "attention": {
       "reason": "approval",
       "text": "The plan waits for its approval.",

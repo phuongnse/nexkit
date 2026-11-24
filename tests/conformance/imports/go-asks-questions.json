@@ -52,7 +52,7 @@
     "itemKind": "change",
     "state": "awaitingApproval",
     "change": null,
-    "conflict": null,
+    "observed": null,
     "attention": {
       "reason": "question",
       "text": "Answer the questions in the run's comment. The agent stopped at a decision that is the owner's to make",

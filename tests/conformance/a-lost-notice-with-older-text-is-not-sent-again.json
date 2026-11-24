@@ -1,0 +1,97 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@error"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "retry"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": null,
+          "limit": null,
+          "transient": false,
+          "noResult": false,
+          "error": "Second error",
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": null,
+          "usd": null,
+          "output": null
+        }
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.text": "Second error"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "a3.1"
+      },
+      "state": "failed",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "a5.1"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "pending.-1.text": "Second error"
+      }
+    }
+  ]
+}

@@ -42,7 +42,7 @@
     "itemKind": "change",
     "state": "failed",
     "change": null,
-    "conflict": null,
+    "observed": null,
     "attention": {
       "reason": "failed",
       "text": "Post the command again once the usage limit has reset. The agent hit its usage limit, and NexKit does not resume this run",

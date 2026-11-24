@@ -8,7 +8,7 @@
     "itemKind": "change",
     "state": "new",
     "change": null,
-    "conflict": null,
+    "observed": null,
     "attention": null,
     "hold": false,
     "waits": [
@@ -63,7 +63,8 @@
       "id": "octocat",
       "role": "decides"
     },
-    "note": ""
+    "note": "",
+    "plan": null
   },
   "policies": {
     "planApproval": "person",

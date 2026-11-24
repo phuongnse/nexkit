@@ -21,7 +21,7 @@
       "id": "400",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
     },
-    "conflict": null,
+    "observed": null,
     "attention": null,
     "hold": false,
     "waits": [

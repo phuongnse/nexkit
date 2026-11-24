@@ -30,7 +30,7 @@
     "itemKind": "change",
     "state": "planning",
     "change": null,
-    "conflict": null,
+    "observed": null,
     "attention": null,
     "hold": false,
     "waits": [

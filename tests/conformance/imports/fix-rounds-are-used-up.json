@@ -35,7 +35,9 @@
     ],
     "pull": {
       "number": 308,
-      "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+      "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+      "mergeable": true,
+      "changed_files": 2
     },
     "pullComments": [
       {
@@ -168,7 +170,13 @@
       "id": "308",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
     },
-    "conflict": null,
+    "observed": {
+      "changeId": "308",
+      "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+      "conflicts": false,
+      "merged": false,
+      "empty": false
+    },
     "attention": {
       "reason": "roundsUsedUp",
       "text": "Comment `/nexkit fix <instructions>` for what still fails, push a commit yourself, or close the pull request. Check \"test\" fails, and no automatic fix rounds remain",

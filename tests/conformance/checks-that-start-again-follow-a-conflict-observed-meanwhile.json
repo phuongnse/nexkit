@@ -12,7 +12,13 @@
           "on": null
         }
       ],
-      "conflict": "5a54e2b"
+      "observed": {
+        "changeId": "308",
+        "version": "5a54e2b",
+        "conflicts": true,
+        "merged": false,
+        "empty": false
+      }
     }
   },
   "steps": [
@@ -27,7 +33,6 @@
         "needPerson"
       ],
       "expect": {
-        "conflict": null,
         "attention.reason": "acceptRefused"
       }
     }

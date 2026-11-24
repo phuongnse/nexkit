@@ -127,7 +127,7 @@ def empty(item):
         "itemKind": "change",
         "state": "new",
         "change": None,
-        "conflict": None,
+        "observed": None,
         "attention": None,
         "hold": False,
         "waits": [],
@@ -179,6 +179,7 @@ def situation(
         doc["itemKind"], doc["actors"]["change"] = "reviewOnly", "person"
     if pull:
         doc["change"] = {"id": str(pull["number"]), "version": pull["head"]["sha"]}
+        doc["observed"] = observed(pull)
     item = Item(doc, issue, list(comments), pull, list(pull_comments), cfg, now)
     item.place(list(parts), list(blockers))
     if fit(doc) is None:
@@ -187,6 +188,23 @@ def situation(
     if found:
         raise item_state.StateError("; ".join(found))
     return item.kind, doc
+
+
+def observed(pull):
+    """The observation of a pull request, as the engine keeps the latest one: its head commit,
+    whether it conflicts, was merged or changes no file. None while GitHub has not said whether
+    it conflicts, or no count of its files was read: an observation holds only what is known
+    (docs/engine.md#hosts)."""
+    mergeable, files = pull.get("mergeable"), pull.get("changed_files")
+    if not isinstance(mergeable, bool) or not isinstance(files, int) or isinstance(files, bool):
+        return None
+    return {
+        "changeId": str(pull["number"]),
+        "version": pull["head"]["sha"],
+        "conflicts": not mergeable,
+        "merged": bool(pull.get("merged")),
+        "empty": files == 0,
+    }
 
 
 def imported(*args, **fields):

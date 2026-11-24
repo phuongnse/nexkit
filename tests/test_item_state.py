@@ -30,7 +30,7 @@ CREATED = event(
     plan=None,
     change=None,
 )
-PLAN = event("requested", 2, what="plan", by=PERSON, note="")
+PLAN = event("requested", 2, what="plan", by=PERSON, note="", plan=None)
 HELD = event("held", 3, label="on-hold")
 RELEASED = event("released", 4, label="on-hold")
 
@@ -217,7 +217,13 @@ def largest():
         change={"id": "9" * 20, "version": "f" * 40},
         attention={"reason": "question", "text": worst(LONGEST["reason"]), "ref": "9" * 20},
         hold=True,
-        conflict="e" * 40,
+        observed={
+            "changeId": "9" * 20,
+            "version": "e" * 40,
+            "conflicts": True,
+            "merged": False,
+            "empty": False,
+        },
     )
     # A round that runs keeps every policy it started with.
     state["policies"] = {
@@ -283,7 +289,7 @@ def largest():
         },
         {"id": "a99.4", "kind": "runChecks", "next": None, "changeVersion": "f" * 40},
     ]
-    state["pending"][1]["text"] = worst(LONGEST["reason"])
+    state["pending"][1].update(text=worst(LONGEST["reason"]), ref="9" * 20)
     state["recentEvents"] = [f"event-{n:040}" for n in range(most("recentEvents"))]
     return state
 

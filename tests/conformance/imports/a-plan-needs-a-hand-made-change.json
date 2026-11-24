@@ -36,7 +36,7 @@
     "itemKind": "change",
     "state": "awaitingApproval",
     "change": null,
-    "conflict": null,
+    "observed": null,
     "attention": {
       "reason": "handMadeChange",
       "text": "The change needs paths that only a person changes.",

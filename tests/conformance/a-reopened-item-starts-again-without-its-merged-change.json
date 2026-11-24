@@ -40,7 +40,14 @@
             "id": "308",
             "version": "v1"
           },
-          "refused": null
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
         }
       },
       "state": "checking",
@@ -85,11 +92,13 @@
     },
     {
       "event": {
-        "kind": "changeAccepted"
+        "kind": "changeObserved",
+        "merged": true
       },
       "state": "accepted",
       "changed": true,
       "actions": [
+        "cancel",
         "close"
       ]
     },
@@ -100,11 +109,15 @@
       "state": "new",
       "changed": true,
       "actions": [
+        "cancel",
         "needPerson"
       ],
       "expect": {
         "change": null,
-        "attention.reason": "reopened"
+        "attention.reason": "reopened",
+        "rounds.started": 0,
+        "rounds.counted": 0,
+        "rounds.findings": []
       }
     },
     {
@@ -125,6 +138,7 @@
       "state": "working",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ],
       "expect": {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/answered.schema.json",
-  "$comment": "A person answers the questions of the plan that `plan` names, or of a round's, counting from 1. Answers to another plan, or when no question is open, change nothing.",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/answered.schema.json",
+  "$comment": "A person answers the questions that `asked` names, counting from 1: a plan's or a round's, as attention names them. Answers to other questions, or when none is open, change nothing.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -43,8 +43,8 @@
     "note": {
       "type": "string"
     },
-    "plan": {
-      "$ref": "../common.schema.json#/$defs/planRef"
+    "asked": {
+      "$ref": "../common.schema.json#/$defs/askedRef"
     }
   },
   "required": [
@@ -56,6 +56,6 @@
     "by",
     "answers",
     "note",
-    "plan"
+    "asked"
   ]
 }

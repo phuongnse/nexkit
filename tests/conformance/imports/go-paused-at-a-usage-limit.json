@@ -48,7 +48,7 @@
     "itemKind": "change",
     "state": "working",
     "change": null,
-    "conflict": null,
+    "observed": null,
     "attention": null,
     "hold": false,
     "waits": [

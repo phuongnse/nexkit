@@ -52,6 +52,7 @@
       "state": "planning",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     },
@@ -69,7 +70,7 @@
       ],
       "expect": {
         "attention.reason": "question",
-        "attention.ref": "a4.1"
+        "attention.ref": "a4.2"
       }
     },
     {
@@ -84,7 +85,7 @@
     {
       "event": {
         "kind": "answered",
-        "plan": "a2.1"
+        "asked": "a2.1"
       },
       "state": "awaitingApproval",
       "changed": false,
@@ -93,11 +94,12 @@
     {
       "event": {
         "kind": "answered",
-        "plan": "a4.1"
+        "asked": "a4.2"
       },
       "state": "planning",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     },
@@ -117,7 +119,7 @@
     {
       "event": {
         "kind": "planApproved",
-        "plan": "a4.1"
+        "plan": "a4.2"
       },
       "state": "awaitingApproval",
       "changed": false,
@@ -126,11 +128,12 @@
     {
       "event": {
         "kind": "planApproved",
-        "plan": "a6.1"
+        "plan": "a6.2"
       },
       "state": "working",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     }

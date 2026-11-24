@@ -1,5 +1,8 @@
 {
-  "policies": {},
+  "policies": {
+    "accept": "autoWhenPassed",
+    "conflicts": "redo"
+  },
   "steps": [
     {
       "event": {
@@ -37,10 +40,17 @@
         "action": "publish",
         "result": {
           "change": {
-            "id": "308",
-            "version": "v1"
+            "id": "d1",
+            "version": "1"
           },
-          "refused": null
+          "refused": null,
+          "observed": {
+            "changeId": "d1",
+            "version": "1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
         }
       },
       "state": "checking",
@@ -77,7 +87,58 @@
         "action": "runAgent",
         "result": "@agent:review"
       },
-      "state": "ready",
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "conflicts": true
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "replaceChange"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "replaceChange",
+        "result": {
+          "change": {
+            "id": "d1",
+            "version": "1"
+          },
+          "observed": {
+            "changeId": "d1",
+            "version": "1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "observed.conflicts": false
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@timeout"
+      },
+      "state": "failed",
       "changed": true,
       "actions": [
         "needPerson"
@@ -85,41 +146,15 @@
     },
     {
       "event": {
-        "kind": "changePushed",
-        "changeVersion": "v2",
-        "previousVersion": "v1"
-      },
-      "state": "checking",
-      "changed": true,
-      "actions": [
-        "runChecks"
-      ]
-    },
-    {
-      "event": {
-        "kind": "changePushed",
-        "changeVersion": "v3",
-        "previousVersion": "v2"
+        "kind": "requested",
+        "what": "review"
       },
       "state": "checking",
       "changed": true,
       "actions": [
         "cancel",
         "runChecks"
-      ],
-      "expect": {
-        "change.version": "v3"
-      }
-    },
-    {
-      "event": {
-        "kind": "changePushed",
-        "changeVersion": "v2",
-        "previousVersion": "v1"
-      },
-      "state": "checking",
-      "changed": false,
-      "actions": []
+      ]
     }
   ]
 }

@@ -35,7 +35,7 @@
     "itemKind": "change",
     "state": "dropped",
     "change": null,
-    "conflict": null,
+    "observed": null,
     "attention": null,
     "hold": false,
     "waits": [],

@@ -76,7 +76,8 @@ def situation(case):
     issue = {"state": "open", "state_reason": None, **given["issue"]}
     pull = given.get("pull")
     if pull:
-        pull = {"number": pull["number"], "head": {"sha": pull["head"]}}
+        known = {key: pull[key] for key in ("mergeable", "changed_files", "merged") if key in pull}
+        pull = {"number": pull["number"], "head": {"sha": pull["head"]}, **known}
     now = datetime.fromisoformat(case.get("now", NOW).replace("Z", "+00:00")).astimezone(UTC)
     return {
         "issue": issue,
@@ -237,6 +238,7 @@ class ImportTest(unittest.TestCase):
             "what": "plan",
             "by": {"id": "octocat", "role": "decides"},
             "note": "",
+            "plan": None,
         }
         answer = json.loads(
             run_program(

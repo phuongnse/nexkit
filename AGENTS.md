@@ -75,6 +75,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   workflows). A person's pull request has no such limit on workflows, since a person wrote
   them; `/nexkit review` there never pushes, starts a round or merges.
 - A config key, command or prompt contract changes together with its tests, docs and skills.
+- `tests/prompts/` is NexKit 6's own record of the prompts each stage wrote before they moved into the engine: never write it again with `NEXKIT_WRITE_PROMPTS` from today's code. A change to a prompt changes its golden by hand, in the same pull request, and says why.
 - Pins live only in `nexkit/__init__.py`. The pipeline installs exactly those versions;
   test only them, without matrices. `update-agents.yml` proposes runtime updates, and each
   needs its runtime's smoke test to pass.

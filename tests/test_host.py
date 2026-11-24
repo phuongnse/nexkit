@@ -7,7 +7,7 @@ import json
 from unittest import mock
 
 from nexkit import autopilot, engine, host, item_state
-from nexkit.report import TOO_LARGE, needs_person
+from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person
 from nexkit.route import route
 from nexkit.state import PLAN_MARKER, answers_marker, plan_data_record, questions
 from tests.test_autopilot import AutopilotCase, pilot
@@ -436,3 +436,10 @@ class PlanWaitsForTest(HostCase):
         )
         with mock.patch.object(host, "plan_waits_for", return_value="approval"):
             self.assertIsNone(needs_person("planned", self.cfg, plan={"questions": [ASKED]}))
+
+    def test_a_plan_that_finds_no_change_or_asks_blank_questions_names_a_person_s_step(self):
+        found = {"questions": [], "no_change": "The base branch has it."}
+        self.assertEqual(needs_person("planned", self.cfg, plan=found), NO_CHANGE_PLAN)
+        # Questions that name no question still ask, as NexKit 6 reads them.
+        reason = needs_person("planned", self.cfg, plan={"questions": [{"question": ""}]})
+        self.assertIn("/nexkit plan <answers>", reason)

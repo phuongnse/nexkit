@@ -299,7 +299,8 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   a person. Under `autoWhenClean`, with `answers` `recommended` and a recommended option for
   every question, the engine answers, once in a row as for a plan:
   - An implement round whose one question recommends only closing the item, with its finding
-    that no change is needed, ends the item in `noChange`. Any other recommended option that only
+    that no change is needed, ends the item in `noChange`, unless the item has a change, such as
+    one made anew after a conflict, which a person closes. Any other recommended option that only
     closes the item is a person's to pick (`closeRecommended`).
   - A recommended option that changes the item's scope, such as a split, plans the item again,
     and the round that plan leads to is the one the answers started, so it may not be answered

@@ -277,44 +277,50 @@ class Step:
         return True
 
     def observed(self):
-        """The latest observation of the change the item has. Only one of this change, or of
-        the one a publish or replace on its way sets, is kept, `took_change` drops one older than
-        such a result, and `reconcile` takes a new version at once, so it is of this version."""
-        return self.s["observed"] if self.s["change"] else None
+        """The latest observation, when it is of the change the item has."""
+        observed, change = self.s["observed"], self.s["change"]
+        if observed and change and observed["changeId"] == change["id"]:
+            return observed
+        return None
 
     def coming(self):
         """Whether a publish or a replace is on its way, which sets the change."""
         return any(a["kind"] in ("publish", "replaceChange") for a in self.s["pending"])
 
-    def reconcile(self):
-        """Bring the item in line with the latest observation of its change, after each event
-        that changed the state; doing so again changes nothing (docs/engine.md#states)."""
+    def reconcile(self, whole=True):
+        """Bring the item in line with the latest observation of its change; doing so again
+        changes nothing (docs/engine.md#states). Not `whole`, only a merge or an emptied change
+        acts. Whether it did anything."""
         observed = self.observed()
         if self.final() or self.coming() or not observed:
-            return
+            return False
         if observed["merged"]:
             self.move("accepted")
             self.close("completed")
         elif observed["empty"]:
             self.move("noChange")
             self.close("completed")
+        elif not whole:
+            return False
         elif observed["version"] != self.version:
             # A person's push: what acts on the old version stops, and the new one is checked.
             self.s["change"] = {**self.s["change"], "version": observed["version"]}
             self.check()
         elif observed["conflicts"] and not self.review_only and self.at_once():
-            self.on_conflict_found()
+            if not self.on_conflict_found():
+                return False
+        else:
+            return False
+        return True
 
-    def took_change(self, change):
-        """A publish or a replace set the change. An observation that arrived first counts
-        only when it is of that change and version; any other is older than the result."""
-        self.s["change"] = change
-        observed = self.s["observed"]
-        if observed and (observed["changeId"], observed["version"]) != (
-            change["id"],
-            change["version"],
-        ):
-            self.s["observed"] = None
+    def took_change(self, result):
+        """A publish or a replace set the change. It changed the change outside the order of
+        the item's events, so the observation its result carries, read when the host handled
+        the result, replaces the latest one."""
+        observed = result["observed"]
+        self.s["change"] = result["change"]
+        # One of another change stays in the slot unused: `observed` reads only the item's.
+        self.s["observed"] = {key: observed[key] for key in OBSERVED} if observed else None
 
     def at_once(self):
         """Whether a conflict acts now: where nothing runs that it must wait for, and in checks
@@ -342,11 +348,12 @@ class Step:
                 self.version,
             ):
                 # A person was told already: reconciling again changes nothing.
-                return
+                return False
             self.move("ready")
             self.need(
                 "acceptRefused", "The change conflicts with what it was made on.", self.version
             )
+        return True
 
     def timed_out(self):
         """An implement or fix agent ran out of time. With splits on, as autopilot does, the
@@ -550,10 +557,8 @@ class Step:
     def on_changeObserved(self, event):
         observed = {key: event[key] for key in OBSERVED}
         change = self.s["change"]
-        ours = change and observed["changeId"] == change["id"]
-        # While a publish or a replace is on its way, the change may get an id the engine has
-        # not seen yet; any other change, such as one the engine replaced, is not this item's.
-        if not (ours or self.coming()) or observed == self.s["observed"]:
+        # Only the item's change: one a publish or a replace sets comes with its result.
+        if not change or observed["changeId"] != change["id"] or observed == self.s["observed"]:
             return False
         self.s["observed"] = observed
         return True
@@ -760,8 +765,9 @@ class Step:
             self.move("failed")
             self.need("failed", result["refused"] or "The change could not be published.")
             return
-        self.took_change(result["change"])
-        self.check()
+        self.took_change(result)
+        if not self.reconcile():
+            self.check()
 
     def check(self):
         if self.conflicted():
@@ -799,7 +805,9 @@ class Step:
             self.need("acceptRefused", result["text"] or "The accept was refused.")
 
     def finished_replaceChange(self, result, action):
-        self.took_change(result["change"])
+        self.took_change(result)
+        if self.reconcile():
+            return
         self.run("implement")
 
     def finished_createParts(self, result, action):
@@ -844,10 +852,17 @@ def step(state, event, policies, check):
     ):
         changed = False
     else:
-        changed = handler(event)
+        # What waited for an earlier event, such as a push observed while the item was stopped.
+        caught_up = work.reconcile()
+        changed = handler(event) or caught_up
     if not changed:
         return before, [], False
-    work.reconcile()
+    # An event that stops the item, or fails it for a lost action, keeps its attention: a new
+    # version observed meanwhile waits for the next event (docs/engine.md#states).
+    halted = event["kind"] == "stopped" or (
+        event["kind"] == "actionLost" and (work.s["attention"] or {}).get("reason") == "outage"
+    )
+    work.reconcile(whole=not halted)
     if work.review_only:
         _never_writes(work.actions)
     work.s["revision"] += 1

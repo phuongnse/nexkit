@@ -1,5 +1,8 @@
 {
-  "policies": {},
+  "policies": {
+    "accept": "autoWhenPassed",
+    "conflicts": "redo"
+  },
   "steps": [
     {
       "event": {
@@ -75,61 +78,48 @@
       "event": {
         "kind": "actionFinished",
         "action": "runAgent",
-        "result": "@agent:reviewChanges"
+        "result": "@agent:review"
       },
-      "state": "fixing",
+      "state": "accepting",
       "changed": true,
       "actions": [
-        "runAgent"
-      ]
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:fix"
-      },
-      "state": "fixing",
-      "changed": true,
-      "actions": [
-        "publish"
+        "accept"
       ]
     },
     {
       "event": {
         "kind": "changeObserved",
-        "version": "v9",
         "conflicts": true
       },
-      "state": "fixing",
+      "state": "working",
       "changed": true,
-      "actions": [],
-      "expect": {
-        "pending.0.kind": "publish",
-        "change.version": "v1",
-        "observed.version": "v9"
-      }
+      "actions": [
+        "cancel",
+        "replaceChange"
+      ]
     },
     {
       "event": {
-        "kind": "actionFinished",
-        "action": "publish",
-        "result": {
-          "change": {
-            "id": "308",
-            "version": "v2"
-          },
-          "refused": null
-        }
+        "kind": "changeObserved",
+        "version": "v2"
       },
-      "state": "checking",
+      "state": "working",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "replaceChange"
+      },
+      "state": "failed",
       "changed": true,
       "actions": [
-        "runChecks"
+        "needPerson"
       ],
       "expect": {
-        "observed": null,
-        "change.version": "v2"
+        "attention.reason": "outage",
+        "change.version": "v1"
       }
     }
   ]

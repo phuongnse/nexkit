@@ -104,6 +104,12 @@ def event_of(short, state, number):
         event.setdefault("changeVersion", action.get("changeVersion") if action else version)
     if kind == "actionFinished":
         event["result"] = result_of(event["result"])
+        kinds = {item["id"]: item["kind"] for item in (state or {}).get("pending", [])}
+        if kinds.get(event["action"]) in ("publish", "replaceChange"):
+            # The host reads the change it set when it handles the result: unless the case says
+            # otherwise, as the result gives it.
+            change = event["result"].get("change")
+            event["result"].setdefault("observed", change and observation(change))
     change_id = ((state or {}).get("change") or {}).get("id") or "none"
     if kind == "changeApproved":
         event.setdefault("changeId", change_id)
@@ -122,6 +128,17 @@ def event_of(short, state, number):
         # The questions are those attention names, whatever the plan.
         event.setdefault("asked", ((state or {}).get("attention") or {}).get("ref") or "none")
     return event
+
+
+def observation(change):
+    """A change as a host reads it with nothing else to say: no conflict, merge or emptiness."""
+    return {
+        "changeId": change["id"],
+        "version": change["version"],
+        "conflicts": False,
+        "merged": False,
+        "empty": False,
+    }
 
 
 def start_of(case):

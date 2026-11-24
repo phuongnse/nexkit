@@ -35,20 +35,6 @@
     },
     {
       "event": {
-        "kind": "changeObserved",
-        "changeId": "308",
-        "version": "v1",
-        "conflicts": true
-      },
-      "state": "working",
-      "changed": true,
-      "actions": [],
-      "expect": {
-        "observed.version": "v1"
-      }
-    },
-    {
-      "event": {
         "kind": "actionFinished",
         "action": "publish",
         "result": {
@@ -59,12 +45,59 @@
           "refused": null
         }
       },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:review"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v2",
+        "conflicts": true
+      },
       "state": "fixing",
       "changed": true,
       "actions": [
         "runAgent"
       ],
       "expect": {
+        "change.version": "v2",
         "rounds.conflicts": 1
       }
     }

@@ -116,7 +116,8 @@
       ],
       "expect": {
         "change.id": "d2",
-        "observed": null
+        "observed.changeId": "d2",
+        "observed.conflicts": false
       }
     },
     {

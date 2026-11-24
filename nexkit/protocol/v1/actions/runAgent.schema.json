@@ -113,6 +113,14 @@
     },
     "resume": {
       "type": "boolean"
+    },
+    "diagnose": {
+      "$comment": "For a fix round, the checks it looks into first: for an automatic fix round, those that failed with the same signature before and after the fix round before it; empty for any other fix round. Left out for the other stages.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10
     }
   },
   "required": [

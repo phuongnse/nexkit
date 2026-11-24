@@ -1598,22 +1598,34 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now):
 def _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details):
     """The step once no label holds an issue whose pull request's round held back its
     conflict round: the round, now, while the pull request still conflicts and a conflict
-    round is left; `/nexkit review` of a head that moved or that no longer conflicts."""
+    round is left; `/nexkit review` of a head that moved or that no longer conflicts, as the
+    engine decides (`host.conflicts_released`). An issue whose next step the engine refuses
+    to decide waits for a person."""
     # `maintain` imports this module.
+    from .host import Refused, conflicts_released, refused_reason
     from .maintain import conflict_note
 
     gone = "the label that held it is gone"
     head = (details.get("head") or {}).get("sha")
     review = {**start, "target": pull, "auto": "true"}
-    if head != run.get("head"):
+    rounds = [r for _, r in run_comments(pull_comments) if "round" in r]
+    conflicts = details.get("mergeable") is False
+    try:
+        ends = conflicts_released(
+            cfg, issue["number"], pull, run, head, conflicts, conflict_rounds_used(rounds)
+        )
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+    if ends == "review" and head != run.get("head"):
         reason = f"{gone}, and pull request #{pull} got the new commit `{str(head)[:7]}`"
         return _step(issue, "start", reason, command="review", **review)
-    if details.get("mergeable") is not False:
+    if ends == "review":
         reason = f"{gone}, and pull request #{pull} no longer conflicts, so it is checked"
         return _step(issue, "start", reason, command="review", **review)
-    rounds = [r for _, r in run_comments(pull_comments) if "round" in r]
-    waits = _conflict_wait(gh, cfg, pull, rounds)
-    if waits:
+    if ends == "waits":
+        waits = _conflict_wait(gh, cfg, pull, rounds)
+        if not waits:
+            return _step(issue, "waits", refused_reason("It waits for a person, for no reason."))
         return _step(issue, "waits", waits)
     base = (details.get("base") or {}).get("ref") or ""
     fields = {**start, "target": pull, "auto": "conflicts", "note": conflict_note(base)}

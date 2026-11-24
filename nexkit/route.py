@@ -262,7 +262,9 @@ def route(gh, event_name, event, inputs=None):
         on_pull = "pull_request" in issue
         kinds = auto_kinds(inputs.get("auto"))
         auto = bool(kinds & {"true", "conflicts"})
-        decision = _decide(gh, command, int(number), on_pull, inputs.get("note") or "", auto=auto)
+        note = inputs.get("note") or ""
+        conflicts = "conflicts" in kinds
+        decision = _decide(gh, command, int(number), on_pull, note, auto=auto, conflicts=conflicts)
         decision["actor"] = event.get("sender", {}).get("login")
         if decision["action"] not in ("none", "maintain"):
             decision.update(
@@ -279,8 +281,6 @@ def route(gh, event_name, event, inputs=None):
         if decision.get("conflicts"):
             # Which base commit this round resolves, so the same conflict is tried once.
             decision["base_sha"] = gh.branch_sha(decision["base"])
-            # A conflict round merges the base branch; it diagnoses nothing.
-            decision.pop("diagnose", None)
             if _conflicts_tried(gh, decision):
                 return _none(
                     f"A conflict round already ran on `{decision['base']}` at "
@@ -405,7 +405,7 @@ def head_config_error(gh, number, base, head):
     return ""
 
 
-def _decide(gh, command, number, on_pull, note, *, auto):
+def _decide(gh, command, number, on_pull, note, *, auto, conflicts=False):
     if on_pull:
         if command not in PR_COMMANDS:
             return _none(f"`/nexkit {command}` is not a pull request command. {USAGE}", number)
@@ -474,10 +474,20 @@ def _decide(gh, command, number, on_pull, note, *, auto):
             # The agent job downloads that run's `nexkit-checks` artifact for the prompt.
             decision["results_run"] = run_id
         repeated = repeated_failures(comments)
-        if repeated and auto and decision["action"] == "fix":
-            # Checks that failed the same way before and after the last fix round: this
-            # automatic round looks for their cause first.
-            decision["diagnose"] = repeated
+        if repeated and decision["action"] == "fix":
+            # Checks that failed the same way before and after the last fix round: an
+            # automatic round looks for their cause first, as the engine runs it; a person's
+            # round and a conflict round, which merges the base branch, do not.
+            from .host import Refused, diagnosis
+
+            try:
+                found = diagnosis(
+                    decision["issue"], number, pull["head"]["sha"], auto and not conflicts, repeated
+                )
+            except Refused:
+                found = []
+            if found:
+                decision["diagnose"] = found
         return decision
 
     if command not in ISSUE_COMMANDS:

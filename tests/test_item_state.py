@@ -465,5 +465,23 @@ class SizeTest(unittest.TestCase):
             item_state.render(state)
 
 
+class FailingChecksSizeTest(unittest.TestCase):
+    """The failing checks that rounds compare, and those that repeated, fit the limit too."""
+
+    def test_the_largest_state_with_the_failing_checks_is_shortened_to_fit(self):
+        state = largest()
+        name = worst(LONGEST["check"])
+        rounds = state["rounds"]
+        rounds["failing"] = [{"check": name, "signature": "sha256:" + "f" * 64}] * MOST["failing"]
+        rounds["repeated"] = [name] * MOST["repeated"]
+        rounds["fixed"] = "f" * 40
+        self.assertEqual(protocol.check(state, "state.schema.json"), [])
+        found = fit(copy.deepcopy(state))
+        self.assertIsNotNone(found)
+        self.assertLessEqual(size(found), STATE_LIMIT)
+        for key in ("failing", "repeated", "fixed"):
+            self.assertEqual(found["rounds"][key], rounds[key])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -557,6 +557,15 @@ class Item:
             for check in feedback.get("checks") or []
             if isinstance(check, dict) and not check.get("passed") and not check.get("skipped")
         ][: MOST["signatures"]]
+        # The checks that failed the same way before and after the last fix round, which the
+        # next automatic fix round diagnoses. The failing checks that the checks after a fix
+        # round compare with are not imported: the first fix round after the import starts
+        # its comparison anew.
+        found = feedback.get("repeated")
+        found = found if isinstance(found, list) else []
+        repeated = [clip(name, "check") for name in found if isinstance(name, str)]
+        if repeated:
+            rounds["repeated"] = repeated[: MOST["repeated"]]
         review = feedback.get("review") or {}
         review = review if isinstance(review, dict) else {}
         rounds["criteria"] = [

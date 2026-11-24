@@ -7,19 +7,29 @@ import json
 from unittest import mock
 
 from nexkit import autopilot, engine, host, item_state
-from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person
+from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person, report
 from nexkit.route import route
 from nexkit.state import (
     PLAN_MARKER,
     answers_marker,
+    empty_state,
     plan_data_record,
     questions,
+    read_state,
     render_run,
     render_state,
 )
 from tests.support import BOT_LOGIN, make_config
 from tests.test_autopilot import AutopilotCase, pilot
-from tests.test_report import ReportCase, review_result
+from tests.test_report import (
+    HEAD,
+    LIMIT,
+    TOKENS,
+    WORKFLOW,
+    ReportCase,
+    decision,
+    review_result,
+)
 
 # The engine's own answer, which a test that stands in for it calls.
 ANSWER = engine.answer
@@ -692,3 +702,153 @@ class CountTest(ReportCase):
         # A person's round counts nothing, and an agent that stopped by itself keeps its count.
         self.assertEqual(host.stopped_counts(5, 6, head, 2, False, True), 2)
         self.assertEqual(host.stopped_counts(5, 6, head, 2, True, False), 2)
+
+
+class RoundEndTest(ReportCase):
+    """`report` sends every round's checks and review to the engine: a person's own pull
+    request, a review that paused, failed or runs again, and a round whose change conflicts,
+    and keeps the checks the engine finds repeated for the next automatic fix round."""
+
+    def answers(self, **kw):
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            outcome = self.run_report(**kw)
+        return outcome, [call.args[0] for call in answer.call_args_list]
+
+    def fix(self, **kw):
+        return decision("fix", pr=6, target=6, head=HEAD, **kw)
+
+    def test_a_person_s_own_pull_request_is_a_review_only_item(self):
+        self.gh.add_pull(7, 0, head_sha=HEAD, branch="feature/x")
+        self.candidate(checks_pass=False)
+        d = decision("review", issue=7, pr=7, target=7, head=HEAD, person=True)
+        outcome, calls = self.answers(d=d, published=False)
+        self.assertEqual(outcome["outcome"], "person_reviewed")
+        self.assertEqual([c["state"]["itemKind"] for c in calls], ["reviewOnly"] * 2)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_a_paused_review_waits_for_the_reset_the_host_gives_or_for_a_person(self):
+        for resume, reset in ((True, "2026-10-11T04:40:00Z"), (False, None)):
+            with self.subTest(resume=resume):
+                self.candidate(review=LIMIT)
+                cfg = make_config(usage_limit={"resume": resume})
+                outcome, calls = self.answers(d=self.fix(), cfg=cfg)
+                self.assertEqual(outcome["outcome"], "paused")
+                self.assertEqual(calls[-1]["event"]["result"]["limit"]["reset"], reset)
+
+    def test_a_failed_review_waits_for_a_person_and_a_retried_one_is_the_host_s(self):
+        self.candidate(review={"status": "error", "error": "Review crashed", "tokens": TOKENS})
+        outcome, calls = self.answers(d=self.fix())
+        self.assertEqual(outcome["outcome"], "review_failed")
+        self.assertEqual(calls[-1]["event"]["result"]["error"], "Review crashed")
+        transient = {"status": "error", "error": "Overloaded", "transient": True}
+        self.candidate(review={**transient, "tokens": TOKENS})
+        outcome, calls = self.answers(d=self.fix(), cfg=make_config(retry={"wait_minutes": [0]}))
+        self.assertEqual(outcome["outcome"], "retry")
+        # Only the checks: the review runs again, and its end is the next report's.
+        self.assertEqual(len(calls), 1)
+
+    def test_a_refused_review_end_asks_a_person_why(self):
+        self.candidate(review=LIMIT)
+        with mock.patch.object(host, "_review_end", side_effect=host.Refused("No.")):
+            outcome = self.run_report(d=self.fix())
+        self.assertIn("refused", outcome["attention"])
+
+    def test_checks_that_failed_the_same_way_after_a_fix_round_are_kept_for_diagnosis(self):
+        state = {
+            **empty_state(5),
+            "feedback": {
+                "head": "b" * 40,
+                "review": None,
+                "checks": [{"name": "test", "passed": False, "signature": "AssertionError"}],
+            },
+        }
+        self.gh.comment(6, render_state(state))
+        self.candidate(checks_pass=False)
+        self.run_report(d=self.fix(auto=True, autopilot="true"))
+        _, found = read_state(self.gh.comments(6))
+        self.assertEqual(found["feedback"]["repeated"], ["test"])
+        self.assertIn("run_id", found["feedback"])
+        # A review round's checks are no fix round's.
+        self.candidate(checks_pass=False)
+        self.run_report(d=decision("review", pr=6, target=6, head=HEAD))
+        _, found = read_state(self.gh.comments(6))
+        self.assertNotIn("repeated", found["feedback"])
+
+
+class ConflictingTest(ReportCase):
+    """A round whose change conflicts with its base branch, and a hold on its conflict
+    round, follow the engine."""
+
+    def conflicting(self, cfg, used=0):
+        self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
+        result = {"published": True, "pr": 6, "head": HEAD, "conflicts": ["a.py"]}
+        needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
+        for n in range(used):
+            self.gh.round_comment(6, n + 1, "b" * 40, "failed", conflicts=True, base_sha="d" * 40)
+        d = decision("fix", pr=6, target=6, head="b" * 40)
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            found = report(
+                self.gh, d, cfg, needs, self.artifacts, workflow_ref=WORKFLOW, default_branch="main"
+            )
+        return found, [call.args[0] for call in answer.call_args_list]
+
+    def test_the_engine_starts_the_conflict_round_or_leaves_it_to_a_person(self):
+        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
+        self.assertEqual(
+            host.conflicting(cfg, decision("fix", head="b"), 6, HEAD, None, 1), "round"
+        )
+        self.assertEqual(
+            host.conflicting(cfg, decision("fix", head="b"), 6, HEAD, None, 2), "used_up"
+        )
+        self.assertEqual(host.conflicting(cfg, decision(), 6, HEAD, "on-hold", 2), "held")
+        found, calls = self.conflicting(cfg, used=2)
+        self.assertEqual(found["outcome"], "conflicting")
+        self.assertEqual(calls[-1]["state"]["rounds"]["conflicts"], 2)
+        self.assertNotIn("fix", [x["inputs"]["command"] for x in self.gh.dispatches])
+
+    def test_a_refused_conflict_asks_a_person_why(self):
+        cfg = make_config(conflicts={"auto_resolve": True})
+        with mock.patch.object(host, "conflicting", side_effect=host.Refused("No.")):
+            found, _ = self.conflicting(cfg)
+        self.assertEqual(found["outcome"], "needs_human")
+        self.assertIn("refused", found["attention"])
+
+    def test_a_held_conflict_round_released_follows_the_engine(self):
+        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
+        run = {"head": HEAD, "held_back": "conflicts"}
+        ends = host.conflicts_released
+        self.assertEqual(ends(cfg, 5, 6, run, HEAD, True, 1), "round")
+        self.assertEqual(ends(cfg, 5, 6, run, HEAD, True, 2), "waits")
+        self.assertEqual(ends(cfg, 5, 6, run, HEAD, False, 2), "review")
+        # A head that moved is checked, and the round after it finds any conflict.
+        self.assertEqual(ends(cfg, 5, 6, run, "d" * 40, True, 0), "review")
+        off = make_config(conflicts={"auto_resolve": False})
+        self.assertEqual(ends(off, 5, 6, run, HEAD, True, 0), "waits")
+
+
+class DiagnosisTest(HostCase):
+    """The fix round that `route` starts diagnoses what the engine names."""
+
+    def test_only_an_automatic_round_diagnoses_the_repeated_failures(self):
+        self.assertEqual(host.diagnosis(5, 6, "c" * 40, True, ["test"]), ["test"])
+        self.assertEqual(host.diagnosis(5, 6, "c" * 40, False, ["test"]), [])
+        self.assertEqual(host.diagnosis(5, 6, "c" * 40, True, []), [])
+
+    def test_route_takes_the_diagnosis_from_the_engine(self):
+        self.gh.add_pull(6, 5, head_sha="c" * 40)
+        state = {**empty_state(5), "feedback": {"head": "c" * 40, "repeated": ["test"]}}
+        self.gh.comment(6, render_state(state))
+        found = {}
+        for auto in ("true", "conflicts", "false"):
+            event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": auto}}
+            with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+                found[auto] = route(self.gh, "workflow_dispatch", event, event["inputs"])
+            self.assertEqual(len(answer.call_args_list), 1)
+        self.assertEqual(found["true"]["diagnose"], ["test"])
+        self.assertNotIn("diagnose", found["conflicts"])
+        self.assertNotIn("diagnose", found["false"])
+        with mock.patch.object(host, "diagnosis", side_effect=host.Refused("No.")):
+            event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
+            self.assertNotIn(
+                "diagnose", route(self.gh, "workflow_dispatch", event, event["inputs"])
+            )

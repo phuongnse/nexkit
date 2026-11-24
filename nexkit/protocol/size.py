@@ -29,11 +29,14 @@ MOST = {
     "split": 10,
     "findings": 30,
     "signatures": 30,
+    "failing": 30,
+    "repeated": 30,
     "criteria": 50,
     "checklist": 50,
 }
 # The most characters of each text that comes in: NexKit 6's own (`state.questions`,
-# `state.plan_data_record`), and for a reason a person reads, enough to say it.
+# `state.plan_data_record`), for a reason a person reads, enough to say it, and for a check's
+# name, which rounds compare failures by, as long as NexKit's own may be (`config.NAME`).
 LONGEST = {
     "question": 1500,
     "option": 500,
@@ -41,6 +44,7 @@ LONGEST = {
     "path": 300,
     "finding": 300,
     "reason": 1000,
+    "check": 40,
 }
 # The most bytes of a failure signature as JSON writes it; a longer one is named by its hash.
 SIGNATURE = 80

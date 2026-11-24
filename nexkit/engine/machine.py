@@ -73,6 +73,8 @@ TIMED = ("time", "usageLimit", "requiredChecks")
 COUNTING = ("fixing", "checking", "reviewing")
 # How many event ids the state keeps, to take each event once.
 RECENT = 20
+# The most checks a diagnosis round looks into (`state.repeated_failures`).
+DIAGNOSES = 10
 # A host's policies when it leaves one out: NexKit 6's on GitHub without autopilot, as
 # `policies.schema.json` gives each as its default (docs/engine.md#what-a-host-decides).
 DEFAULTS = {
@@ -252,10 +254,11 @@ class Step:
         if work and rounds.pop("automatic", None):
             rounds["counted"] = max(rounds["counted"] - 1, 0)
 
-    def wait(self, kind, on=None):
+    def wait(self, kind, on=None, until=None):
         self.waits += 1
-        wait = {"id": self.number("w", self.waits), "for": kind, "until": None, "on": on}
+        wait = {"id": self.number("w", self.waits), "for": kind, "until": until, "on": on}
         self.s["waits"].append(wait)
+        return wait
 
     def waiting(self, kind):
         return any(wait["for"] == kind for wait in self.s["waits"])
@@ -286,10 +289,16 @@ class Step:
         used["seconds"] += source.get("seconds") or 0
         used["usd"] += source.get("usd") or 0
 
-    def run(self, stage, again=False):
+    def run(self, stage, again=False, diagnose=False):
+        """Run `stage`'s agent. A fix round names the checks it looks into first: with
+        `diagnose`, an automatic fix round, those that failed the same way before and after the
+        fix round before it, as NexKit 6's `route` makes it a diagnosis round; a person's round,
+        a conflict round and the round that the engine's answers run again name none."""
         if self.review_only and stage != "review":
             raise EngineError("A review-only item is only checked and reviewed.")
         self.s["rounds"]["started"] += stage in ("implement", "fix") and not again
+        repeated = self.s["rounds"].get("repeated") or []
+        fields = {"diagnose": repeated[:DIAGNOSES] if diagnose else []} if stage == "fix" else {}
         self.do(
             "runAgent",
             stage=stage,
@@ -303,6 +312,7 @@ class Step:
             budget={"tokens": None, "seconds": None, "usd": None},
             session=None,
             resume=False,
+            **fields,
         )
 
     def close(self, outcome, finding=None):
@@ -356,6 +366,9 @@ class Step:
             self.move("fixing")
             rounds["due"] = True
             if base:
+                # The failure is the base branch's, which its own item fixes: the round after
+                # the wait looks into nothing that repeated (`report._report`, `ci_waiting`).
+                rounds.pop("repeated", None)
                 self.wait("baseFailure", base)
             elif not self.s["hold"]:
                 self.issue_fix()
@@ -377,7 +390,7 @@ class Step:
             return
         rounds["counted"] += 1
         rounds["automatic"] = True
-        self.run("fix")
+        self.run("fix", diagnose=True)
 
     def used_up(self):
         if self.conflicted():
@@ -483,12 +496,17 @@ class Step:
 
     def on_conflict_found(self):
         policy, rounds = self.p["conflicts"], self.s["rounds"]
+        if self.s["hold"] and policy != "person":
+            return self.conflict_held()
         if policy == "redo":
             self.move("working")
             self.do("replaceChange", reason="The change no longer applies to what it was made on.")
         elif policy == "resolve" and rounds["conflicts"] < self.p["conflictRounds"]:
             rounds["conflicts"] += 1
             self.move("fixing")
+            # The round that resolves the conflict is no automatic fix round: the count of
+            # one whose change conflicts stands, as it published (`report._skipped_conflicting`).
+            rounds.pop("automatic", None)
             self.run("fix")
         else:
             attention = self.s["attention"] or {}
@@ -502,6 +520,20 @@ class Step:
             self.need(
                 "acceptRefused", "The change conflicts with what it was made on.", self.version
             )
+        return True
+
+    def conflict_held(self):
+        """A hold keeps the round that the conflict policy would start back, whatever rounds
+        are left, as NexKit 6's hold label does (`report._skipped_conflicting`): the item waits
+        in `checking`, with nothing running, and the policy applies with its count once the
+        hold ends (`resume`). In `ready` and `accepting`, it applies when the hold ends, as
+        the reconcile after `released` finds the conflict. Whether it did anything."""
+        if self.state in CONFLICT_AT_ONCE:
+            return False
+        running = any(a["kind"] in WORK for a in self.s["pending"])
+        if self.state == "checking" and not running:
+            return False
+        self.move("checking")
         return True
 
     def held_back(self, ignore=()):
@@ -524,7 +556,8 @@ class Step:
         if stage == "fix" and self.s["rounds"].get("due"):
             self.issue_fix(fresh=True)
         elif stage:
-            self.run(stage, again=True)
+            automatic = stage == "fix" and bool(self.s["rounds"].get("automatic"))
+            self.run(stage, again=True, diagnose=automatic)
         elif self.state == "checking":
             self.check()
         elif self.state == "accepting":
@@ -578,8 +611,10 @@ class Step:
         if not self.requested(event):
             return False
         # A request starts work anew: what a fix round that changed nothing left is no longer
-        # the last word on its version (`report._report` reads `recheck` of a fix round only).
+        # the last word on its version (`report._report` reads `recheck` of a fix round only),
+        # and checks it asks for are not a fix round's, whatever ran last.
         self.s["rounds"].pop("recheck", None)
+        self.s["rounds"].pop("fixed", None)
         return True
 
     def take_place(self, event):
@@ -626,14 +661,17 @@ class Step:
         elif what == "fix":
             if self.review_only or not change or not self.takes_request(("ready", "failed")):
                 return False
-            # A round of its own, with the policies given now.
-            self.s["policies"] = {}
+            # A round of its own, with the policies given now. It is no automatic round, even
+            # in place of one that waits: the count that one took stands.
+            self.s["policies"], self.p = {}, self.given
             self.move("fixing")
+            self.s["rounds"].pop("automatic", None)
             self.run("fix")
         elif what == "review":
             if not change or not self.takes_request(("new", "ready", "failed")):
                 return False
-            self.s["policies"] = {}
+            # Its checks, and a conflict found before them, follow the policies given now.
+            self.s["policies"], self.p = {}, self.given
             self.check()
         elif what == "retry" and state == "failed":
             if self.review_only and not change:
@@ -1034,6 +1072,9 @@ class Step:
             # `move` cancels the agent of a state the item leaves, so this is a state that a
             # host changed by hand.
             raise EngineError(f"{action['id']} runs {stage}, which {self.state} does not run.")
+        if result["limit"]:
+            self.limited(result["limit"])
+            return
         if result["timedOut"] and stage in ("implement", "fix"):
             self.timed_out()
             return
@@ -1045,6 +1086,18 @@ class Step:
             self.need("failed", result["error"] or f"The agent gave no result that fits. {text}")
             return
         getattr(self, f"finished_{stage}")(output, action["id"])
+
+    def limited(self, limit):
+        """The agent stopped at a usage limit: the item waits for its reset, and then the same
+        stage runs again, counting nothing again (`resume`). A limit whose reset the host does
+        not give, as when it does not resume such runs, waits for a person
+        (`report.pause`)."""
+        if limit["reset"] is None:
+            self.move("failed")
+            self.need("failed", limit["message"] or "The agent stopped at its usage limit.")
+            return
+        wait = self.wait("usageLimit", until=limit["reset"])
+        self.do("wait", wait=wait["id"], until=limit["reset"])
 
     def finished_plan(self, output, number):
         """What follows a plan, as NexKit 6 decides it (`autopilot._planned`). With automatic
@@ -1272,10 +1325,19 @@ class Step:
         rounds.pop("recheck", None)
         if action["stage"] == "fix" and self.version == before:
             rounds["recheck"] = self.version
+        # The checks of the version a fix round published compare with the checks before it.
+        rounds.pop("fixed", None)
+        if action["stage"] == "fix":
+            rounds["fixed"] = self.version
         # The observation may name a later version: take it before the checks, so that a
         # conflict on it follows the policy once.
         if not self.reconcile():
             self.check()
+        if not any(item["kind"] == "runChecks" for item in self.s["pending"]):
+            # The change conflicts, so its checks do not run: the checks after the next round
+            # have none of this round's to compare with (`report._skipped_conflicting`).
+            for key in ("failing", "repeated", "fixed"):
+                rounds.pop(key, None)
 
     def check(self):
         if self.conflicted():
@@ -1292,12 +1354,33 @@ class Step:
         ][: MOST["signatures"]]
         # The item about a failure the base branch has, which every failing check matches.
         self.s["rounds"]["baseFailure"] = (result.get("baseFailure") or None) if failing else None
+        self.repeats(failing)
         if self.review_only or not failing:
             self.review()
         elif self.p["reviewAfterFailingChecks"] == "always":
             self.review()
         else:
             self.next_fix()
+
+    def repeats(self, failing):
+        """Keep the failing checks with their signatures, and, for the checks of a fix round,
+        which of them failed with the same signature before it: the next automatic fix round
+        diagnoses those first (`report._report`'s `feedback.repeated`). A check named twice
+        counts by its last result."""
+        rounds = self.s["rounds"]
+        before = {item["check"]: item["signature"] for item in rounds.pop("failing", [])}
+        now = {
+            clip(check["name"], "check"): signature(check["signature"] or check["name"])
+            for check in failing
+        }
+        after_fix = rounds.pop("fixed", None) == self.version
+        repeated = [name for name, found in now.items() if after_fix and before.get(name) == found]
+        kept = [{"check": name, "signature": found} for name, found in now.items()]
+        rounds.pop("repeated", None)
+        if kept:
+            rounds["failing"] = kept[: MOST["failing"]]
+        if repeated:
+            rounds["repeated"] = repeated[: MOST["repeated"]]
 
     def review(self):
         self.move("reviewing")

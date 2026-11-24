@@ -20,6 +20,7 @@ from .maintain import (
     close_or_find_closed,
     close_parents_safely,
     closed_line,
+    conflict_rounds_of,
     delete_head_branch,
     is_conflicting,
     reach,
@@ -1717,20 +1718,26 @@ def _skipped_conflicting(gh, cfg, decision, pr, head, files, row, workflow_ref, 
     """(outcome, message) for a round whose commit conflicts with the base branch's tip as
     `publish` saw it: such a head cannot merge, so its checks and review did not run, and
     the conflict round starts at once, within `conflicts.max_rounds`, unless a label holds
-    its issue."""
+    its issue, as the engine decides (`host.conflicting`). Raises `host.Refused`."""
     base = decision["base"]
     listed = ", ".join(f"`{name}`" for name in files)
     message = (
         f"`{head[:7]}` conflicts with `{base}` in {listed}, so NexKit skipped its checks and "
         f"AI review: the pull request cannot merge until the conflict is resolved."
     )
+    from .host import conflicting
+
     label = _held(gh, cfg, decision["issue"])
     if label:
+        # A hold keeps the round back, whatever rounds are left (`host.conflicting`).
+        conflicting(cfg, decision, pr, head, label, 0)
         row["held_back"] = "conflicts"
         later = "starts the round that resolves it"
         held = "starts no round to resolve it"
         return autopilot.HELD, f"{message} {_held_line(decision['issue'], label, held, later)}"
     try:
+        used = conflict_rounds_of(gh, pr, row)
+        left = conflicting(cfg, decision, pr, head, None, used) == "round"
         started = start_conflict_round(
             gh,
             pr,
@@ -1739,6 +1746,7 @@ def _skipped_conflicting(gh, cfg, decision, pr, head, files, row, workflow_ref, 
             default_branch,
             cfg["conflicts"]["max_rounds"],
             row=row,
+            left=left,
         )
     except GitHubError as exc:
         started = f"NexKit could not start a round to merge `{base}`: {exc}"
@@ -1897,6 +1905,18 @@ def _record(state, decision, row, agent, review, checks):
                 item: clip(found, DECIDE_EVIDENCE)
                 for item, found in decide_evidence(review).items()
             }
+
+
+def _with_repeated(feedback, repeated):
+    """The state comment's `feedback` with the checks that failed the same way before and
+    after a fix round, which the engine names: the next automatic fix round diagnoses them
+    first (`route`)."""
+    found = {key: value for key, value in feedback.items() if key not in ("repeated", "run_id")}
+    if repeated:
+        found["repeated"] = repeated
+    if "run_id" in feedback:
+        found["run_id"] = feedback["run_id"]
+    return found
 
 
 def _ci_wait(gh, cfg, decision, checks, default_branch):
@@ -2230,35 +2250,64 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         row["carried"] = reviewed["carried"]
     _record(state, decision, row, agent or {}, review, checks)
     # The checks this round's fix was asked to fix, before they are replaced.
-    before = failing_signatures((state.get("feedback") or {}).get("checks"))
+    before = (state.get("feedback") or {}).get("checks")
     state["feedback"] = {"head": head, "checks": recorded(checks), "review": review}
-    repeated = [
-        name
-        for name, signature in failing_signatures(checks).items()
-        if action == "fix" and before.get(name) == signature
-    ]
-    if repeated:
-        # Failed the same way before and after this fix: the next automatic round
-        # diagnoses them first.
-        state["feedback"]["repeated"] = repeated
     run_id = os.environ.get("GITHUB_RUN_ID") or ""
     if checks is not None and run_id.isdigit():
         # The run whose `nexkit-checks` artifact holds the failing checks' result files.
         state["feedback"]["run_id"] = int(run_id)
 
+    from .host import Refused, after_round, round_ended
+
+    def ended(given):
+        """What the engine answers to this round's checks and a review that is not a
+        verdict on a NexKit pull request (`host.round_ended`), with the checks that failed
+        the same way before and after a fix round, which the next automatic fix round
+        diagnoses first, kept in the state comment."""
+        found_end, repeated = round_ended(
+            cfg, decision, pr, head, state["auto_fixes"], checks, before, given, recheck
+        )
+        state["feedback"] = _with_repeated(state["feedback"], repeated)
+        return found_end
+
     found, refused = {}, None
     if conflicting:
-        outcome, message = _skipped_conflicting(
-            gh, cfg, decision, pr, head, publish["conflicts"], row, workflow_ref, default_branch
-        )
+        try:
+            outcome, message = _skipped_conflicting(
+                gh,
+                cfg,
+                decision,
+                pr,
+                head,
+                publish["conflicts"],
+                row,
+                workflow_ref,
+                default_branch,
+            )
+        except Refused as error:
+            outcome, refused = "needs_human", error
+            message = (
+                f"`{head[:7]}` conflicts with `{decision['base']}`, so NexKit skipped its "
+                "checks and AI review."
+            )
     elif review_paused:
+        # The review waits for the usage limit's reset, or for a person when NexKit does not
+        # run it again (`pause`).
         outcome = "paused"
         row["verdict"] = "paused"
         if resume:
             row["resume"] = resume
+        try:
+            outcome = ended(("paused", resume and resume["at"]))
+        except Refused as error:
+            refused = error
     elif person and verdict:
         # A person's pull request: nothing here pushes, starts a fix round or merges.
         outcome = "person_reviewed"
+        try:
+            outcome = ended(("done", review))
+        except Refused as error:
+            refused = error
         if checks_ok and verdict == "approve" and not decide:
             message = f"✅ Checks passed and the AI review approved `{head[:7]}`."
         else:
@@ -2275,6 +2324,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
         again = error and _retry(gh, cfg, decision, "review", pr, workflow_ref, default_branch)
+        try:
+            # A review that runs again after a transient error is the host's own retry, which
+            # the engine does not see end; one that failed otherwise waits for a person.
+            ended(("again", None) if again else ("failed", found["error"]))
+        except Refused as error_:
+            refused = error_
         if again:
             outcome, message, fields = _retrying(gh, cfg, decision, reviewed, error, again, message)
             row.update(fields)
@@ -2290,14 +2345,25 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         # What follows the checks and the review is the engine's (`host.after_round`).
         wait = _ci_wait(gh, cfg, decision, checks, default_branch)
         label = _held(gh, cfg, decision["issue"])
-        from .host import Refused, after_round
-
+        seen = {}
         try:
             ends = after_round(
-                cfg, decision, pr, head, state["auto_fixes"], checks, review, recheck, wait, label
+                cfg,
+                decision,
+                pr,
+                head,
+                state["auto_fixes"],
+                checks,
+                review,
+                recheck,
+                wait,
+                label,
+                before,
+                seen,
             )
         except Refused as error:
             ends, refused = "needs_human", error
+        state["feedback"] = _with_repeated(state["feedback"], seen.get("repeated"))
         if ends in ("ready", "merge", "held_merge"):
             outcome = "ready"
             approved = f"the AI review approved `{head[:7]}`"
@@ -2336,7 +2402,6 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             # and a fix round here would only fix it again, or change nothing.
             outcome = autopilot.CI_WAITING
             state["ci_wait"] = row["ci_wait"] = wait
-            state["feedback"].pop("repeated", None)
             message = autopilot.ci_wait_message(wait)
         elif ends == "held_fix":
             outcome, row["held_back"] = autopilot.HELD, "fix"

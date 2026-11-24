@@ -1,0 +1,62 @@
+{
+  "note": "What follows the end of a wait for a time, such as resuming after a usage limit, comes with the engine's rules of waits; this case shows only which waits a tick ends.",
+  "policies": {},
+  "state": {
+    "example": "new",
+    "set": {
+      "waits": [
+        {
+          "id": "w1.1",
+          "for": "start",
+          "until": null,
+          "on": null
+        },
+        {
+          "id": "w1.2",
+          "for": "usageLimit",
+          "until": "2026-11-23T20:00:00Z",
+          "on": null
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w1.1"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w1.2"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "waits": [
+          {
+            "id": "w1.1",
+            "for": "start",
+            "until": null,
+            "on": null
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w1.2"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

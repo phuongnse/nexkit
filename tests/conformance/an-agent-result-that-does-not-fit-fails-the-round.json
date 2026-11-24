@@ -1,0 +1,125 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": null,
+          "limit": null,
+          "transient": false,
+          "noResult": false,
+          "error": null,
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": 60,
+          "usd": 0.5,
+          "output": {
+            "status": "done"
+          }
+        }
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "failed",
+        "used.seconds": 60,
+        "used.usd": 0.5
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "retry"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": null,
+          "limit": null,
+          "transient": false,
+          "noResult": false,
+          "error": null,
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": 60,
+          "usd": 0.5,
+          "output": {
+            "summary": "Close an issue that GitHub closed at the same moment.",
+            "changes": [
+              "Read the issue again after a failed close."
+            ],
+            "decisions": [
+              {
+                "decision": "Read once more, not in a loop",
+                "reason": "GitHub's close is done when it answers."
+              }
+            ],
+            "risks": [],
+            "acceptance_criteria": [
+              "A test shows the round says the issue is closed."
+            ],
+            "implementation_notes": [
+              "nexkit/report.py"
+            ],
+            "questions": [
+              {
+                "question": "Which way?"
+              }
+            ],
+            "too_large": false,
+            "split": [],
+            "revision": {
+              "started_over": false,
+              "changes": []
+            },
+            "protected_paths": [],
+            "no_change": ""
+          }
+        }
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "failed",
+        "plan": null
+      }
+    }
+  ]
+}

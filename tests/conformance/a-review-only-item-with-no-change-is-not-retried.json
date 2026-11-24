@@ -1,0 +1,62 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "itemKind": "reviewOnly",
+        "change": {
+          "id": "9",
+          "version": "v1"
+        }
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "empty": true
+      },
+      "state": "noChange",
+      "changed": true,
+      "actions": [
+        "close"
+      ]
+    },
+    {
+      "event": {
+        "kind": "reopened"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "needPerson"
+      ],
+      "expect": {
+        "change": null
+      }
+    },
+    {
+      "event": {
+        "kind": "stopped"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "retry"
+      },
+      "state": "failed",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

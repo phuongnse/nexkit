@@ -66,14 +66,12 @@
   },
   "policies": {
     "planApproval": "person",
-    "answers": "never",
     "reviewAfterFailingChecks": "always",
     "accept": "person",
     "fixRounds": 2,
     "whenRoundsRunOut": "person",
     "conflicts": "person",
     "conflictRounds": 3,
-    "splits": false,
-    "afterFailure": "person"
+    "splits": false
   }
 }

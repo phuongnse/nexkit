@@ -3,11 +3,12 @@
 Agent output is untrusted, and runtimes enforce schemas differently, so NexKit checks the
 result itself before anything uses it. The same check reads the engine's protocol
 (`nexkit/protocol/`). Only the parts of JSON Schema that those schemas use are supported:
-`type` (one name or a list), `enum`, `const`, `properties`, `required`, `items`,
-`additionalProperties`, `anyOf` and `$ref`, each as JSON Schema 2020-12 reads it: the keywords
-beside a `$ref` or an `anyOf` apply too, and `const` and `enum` compare JSON values, so `true`
-is not `1`. Keys that a schema does not name are left as they are unless
-`additionalProperties` is false.
+`type` (one name or a list), `enum`, `const`, `properties`, `required`, `items`, `maxItems`,
+`minimum`, `maximum`, `additionalProperties`, `anyOf` and `$ref`, each as JSON Schema 2020-12
+reads it: the keywords beside a `$ref` or an `anyOf` apply too, and `const` and `enum` compare
+JSON values, so `true` is not `1`. Keys that a schema does not name are left as they are unless
+`additionalProperties` is false. One difference is deliberate: an integer is written without a
+fraction, so `1.0` is not one, because NexKit counts and indexes with integers.
 """
 
 from __future__ import annotations
@@ -55,6 +56,10 @@ def problems(value, schema, where="result", refs=None, base=None):
             return [*found, f"{where} must be {names}"]
     if "const" in schema and not _same(value, schema["const"]):
         found.append(f"{where} must be {schema['const']!r}")
+    if _is(value, "number") and "minimum" in schema and value < schema["minimum"]:
+        found.append(f"{where} must be at least {schema['minimum']}")
+    if _is(value, "number") and "maximum" in schema and value > schema["maximum"]:
+        found.append(f"{where} must be at most {schema['maximum']}")
     if "enum" in schema and not any(_same(value, item) for item in schema["enum"]):
         allowed = ", ".join(repr(item) for item in schema["enum"])
         found.append(f"{where} must be one of {allowed}")
@@ -68,6 +73,8 @@ def problems(value, schema, where="result", refs=None, base=None):
                 found += problems(value[key], sub, f"{where}.{key}", refs, base)
         if schema.get("additionalProperties") is False:
             found += [f"{where}.{key} is not allowed" for key in value if key not in properties]
+    if isinstance(value, list) and len(value) > schema.get("maxItems", len(value)):
+        found.append(f"{where} must hold at most {schema['maxItems']} items")
     if isinstance(value, list) and "items" in schema:
         for index, item in enumerate(value):
             found += problems(item, schema["items"], f"{where}[{index}]", refs, base)

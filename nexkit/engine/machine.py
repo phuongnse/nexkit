@@ -402,7 +402,8 @@ class Step:
         """Start the work of the item's state again once nothing holds it back, as after a
         wait for a time, a usage limit, required checks or the base branch, or a hold
         (docs/engine.md#states). It is the same round, so it counts nothing again. Checks and
-        an accept follow what the latest observation of the change says first."""
+        an accept follow what the latest observation of the change says first: `check` before
+        its checks, and the reconcile after the step for an accept."""
         if self.held_back():
             return
         stage = next((stage for stage, name in RUNS.items() if name == self.state), None)
@@ -410,7 +411,9 @@ class Step:
             self.run(stage, again=True)
         elif self.state == "checking":
             self.check()
-        elif self.state == "accepting" and not self.conflicted():
+        elif self.state == "accepting":
+            # A conflict observed meanwhile acts at once in `accepting`: `step` reconciles
+            # after this and takes the accept back.
             self.do("accept", changeVersion=self.version, by="engine")
 
     def timed_out(self):

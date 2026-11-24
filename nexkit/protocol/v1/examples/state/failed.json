@@ -49,9 +49,20 @@
       "cached": 0,
       "output": 1000
     },
+    "seconds": 640,
+    "usd": 2.37,
     "since": "2026-11-23T15:01:11Z"
   },
   "asked": [],
   "parts": [],
-  "policies": {}
+  "policies": {},
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
 }

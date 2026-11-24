@@ -1,9 +1,10 @@
 {
   "protocol": 1,
   "kind": "actionFinished",
+  "id": "d-actionFinished-1",
   "item": "42",
   "at": "2026-11-23T15:01:11Z",
-  "action": "a3",
+  "action": "a3.1",
   "changeVersion": "3e37c53",
   "result": {
     "checks": [

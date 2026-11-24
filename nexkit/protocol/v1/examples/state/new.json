@@ -9,7 +9,7 @@
   "hold": false,
   "waits": [
     {
-      "id": "start",
+      "id": "w1.1",
       "for": "start",
       "until": null,
       "on": null
@@ -37,9 +37,14 @@
       "cached": 0,
       "output": 0
     },
+    "seconds": 0,
+    "usd": 0,
     "since": null
   },
   "asked": [],
   "parts": [],
-  "policies": {}
+  "policies": {},
+  "recentEvents": [
+    "d-1"
+  ]
 }

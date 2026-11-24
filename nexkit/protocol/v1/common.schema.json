@@ -1,8 +1,14 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/common.schema.json",
   "$comment": "Shapes that the events, actions, results and state document share.",
   "$defs": {
     "id": {
       "$comment": "An id the host or the engine gives, unique for its kind within a work item.",
+      "type": "string"
+    },
+    "eventId": {
+      "$comment": "The host's id of an event, the same each time it sends that event again, such as a webhook's delivery id. The engine takes an event once.",
       "type": "string"
     },
     "time": {
@@ -23,8 +29,7 @@
       "required": [
         "id",
         "version"
-      ],
-      "additionalProperties": false
+      ]
     },
     "text": {
       "$comment": "A long text that the host keeps, named for `prompt`. The engine never holds its words.",
@@ -40,8 +45,7 @@
       "required": [
         "name",
         "ref"
-      ],
-      "additionalProperties": false
+      ]
     },
     "person": {
       "$comment": "Who acted, with the role the host gives them.",
@@ -62,8 +66,7 @@
       "required": [
         "id",
         "role"
-      ],
-      "additionalProperties": false
+      ]
     },
     "tokens": {
       "type": "object",
@@ -82,8 +85,7 @@
         "input",
         "cached",
         "output"
-      ],
-      "additionalProperties": false
+      ]
     },
     "question": {
       "$comment": "A question for a person. `recommended`, `closes` and `replans` count options from 1; 0 is none.",
@@ -115,8 +117,7 @@
         "question",
         "options",
         "recommended"
-      ],
-      "additionalProperties": false
+      ]
     },
     "stage": {
       "enum": [
@@ -146,6 +147,7 @@
       ]
     },
     "attentionReason": {
+      "$comment": "Why a person is needed, as docs/engine.md#states lists the reasons.",
       "enum": [
         "approval",
         "question",

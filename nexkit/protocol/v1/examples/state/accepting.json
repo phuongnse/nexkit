@@ -12,7 +12,7 @@
   "hold": false,
   "waits": [
     {
-      "id": "w1",
+      "id": "w7.1",
       "for": "requiredChecks",
       "until": "2026-11-23T21:01:11Z",
       "on": null
@@ -20,9 +20,11 @@
   ],
   "pending": [
     {
-      "id": "a9.1",
-      "kind": "accept",
-      "changeVersion": "5a54e2b"
+      "id": "a7.1",
+      "kind": "wait",
+      "next": null,
+      "wait": "w7.1",
+      "until": "2026-11-23T21:01:11Z"
     }
   ],
   "actors": {
@@ -61,9 +63,20 @@
       "cached": 0,
       "output": 0
     },
+    "seconds": 640,
+    "usd": 2.37,
     "since": null
   },
   "asked": [],
   "parts": [],
-  "policies": {}
+  "policies": {},
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
 }

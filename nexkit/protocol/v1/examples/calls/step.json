@@ -12,7 +12,7 @@
     "hold": false,
     "waits": [
       {
-        "id": "start",
+        "id": "w1.1",
         "for": "start",
         "until": null,
         "on": null
@@ -40,15 +40,21 @@
         "cached": 0,
         "output": 0
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
+    "policies": {},
+    "recentEvents": [
+      "d-1"
+    ]
   },
   "event": {
     "protocol": 1,
     "kind": "requested",
+    "id": "d-requested-1",
     "item": "42",
     "at": "2026-11-23T15:01:11Z",
     "what": "go",
@@ -58,5 +64,16 @@
     },
     "note": ""
   },
-  "policies": {}
+  "policies": {
+    "planApproval": "person",
+    "answers": "never",
+    "reviewAfterFailingChecks": "always",
+    "accept": "person",
+    "fixRounds": 2,
+    "whenRoundsRunOut": "person",
+    "conflicts": "person",
+    "conflictRounds": 3,
+    "splits": false,
+    "afterFailure": "person"
+  }
 }

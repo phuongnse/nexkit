@@ -1,0 +1,4 @@
+{
+  "protocol": 1,
+  "error": "request.state.schemaVersion must be 1"
+}

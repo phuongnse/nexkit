@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/conflict.schema.json",
   "$comment": "The change no longer applies to what it was made on.",
   "type": "object",
   "properties": {
@@ -7,6 +9,9 @@
     },
     "kind": {
       "const": "conflict"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
     },
     "item": {
       "$ref": "../common.schema.json#/$defs/id"
@@ -27,10 +32,10 @@
   "required": [
     "protocol",
     "kind",
+    "id",
     "item",
     "at",
     "changeVersion",
     "files"
-  ],
-  "additionalProperties": false
+  ]
 }

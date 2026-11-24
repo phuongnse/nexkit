@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 import nexkit
+from nexkit import protocol
 from nexkit.engine import cli, serve
 from tests.test_conformance import every_request
 
@@ -120,25 +121,27 @@ class ServeTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first, again)
 
-    def test_what_is_not_a_request_is_refused(self):
+    def assertRefused(self, answer, status, words=""):
+        """`answer` is an error answer of the protocol with `status`, and says `words`."""
+        self.assertEqual(answer[0], status)
+        body = json.loads(answer[1])
+        self.assertEqual(protocol.check(body, "calls/error.schema.json"), [], body)
+        self.assertIn(words, body["error"])
+
+    def test_what_is_not_a_request_is_refused_with_an_error_answer(self):
         with server() as port:
-            status, body = send(port, "/dance", b"{}")
-            self.assertEqual(status, 404)
-            self.assertIn("the calls are /step", json.loads(body)["error"])
+            self.assertRefused(send(port, "/dance", b"{}"), 404, "the calls are /step")
             for method in ("GET", "PUT", "DELETE", "PATCH", "OPTIONS"):
-                status, body = send(port, "/step", method=method)
-                self.assertEqual(status, 405, method)
-                self.assertIn("with POST", json.loads(body)["error"])
+                self.assertRefused(send(port, "/step", method=method), 405, "with POST")
             self.assertEqual(send(port, "/step", method="HEAD"), (405, b""))
             too_long = {"Content-Length": str(serve.MAX_BODY + 1)}
-            status, body = send(port, "/step", b"{}", headers=too_long)
-            self.assertEqual(status, 413)
-            self.assertEqual(json.loads(body)["protocol"], 1)
+            self.assertRefused(send(port, "/step", b"{}", headers=too_long), 413, "at most")
             # A length too long to be a number Python reads is refused all the same.
-            status, _ = send(port, "/step", b"{}", headers={"Content-Length": "9" * 5000})
-            self.assertEqual(status, 413)
-            status, _ = send(port, "/step", b"{}", headers={"Transfer-Encoding": "chunked"})
-            self.assertEqual(status, 411)
+            digits = {"Content-Length": "9" * 5000}
+            self.assertRefused(send(port, "/step", b"{}", headers=digits), 413, "at most")
+            chunked = {"Transfer-Encoding": "chunked"}
+            self.assertRefused(send(port, "/step", b"{}", headers=chunked), 411, "Content-Length")
+            self.assertRefused(send(port, "/step", b"{"), 400, "not JSON")
 
     def test_a_failure_of_the_engine_is_answered(self):
         with (
@@ -146,9 +149,8 @@ class ServeTest(unittest.TestCase):
             mock.patch.object(serve.Handler, "log_message") as log,
             server_in_this_process() as port,
         ):
-            status, body = send(port, "/step", b"{}")
-        self.assertEqual(status, 500)
-        self.assertEqual(json.loads(body)["error"], "The engine failed on this request.")
+            answer = send(port, "/step", b"{}")
+        self.assertRefused(answer, 500, "The engine failed on this request.")
         logged = "".join(str(call.args[1:]) for call in log.call_args_list)
         self.assertIn("RuntimeError: boom", logged)
 

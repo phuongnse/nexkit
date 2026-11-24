@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/cancel.schema.json",
   "$comment": "Stop an action that runs. A result that comes after it is ignored.",
   "type": "object",
   "properties": {
@@ -27,6 +29,5 @@
     "kind",
     "next",
     "action"
-  ],
-  "additionalProperties": false
+  ]
 }

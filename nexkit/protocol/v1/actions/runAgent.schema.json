@@ -1,5 +1,7 @@
 {
-  "$comment": "Run one agent session for a stage. `result` names the stage's result schema; `inputs` name what `prompt` needs.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/runAgent.schema.json",
+  "$comment": "Run one agent session for a stage, on `changeVersion` of the change, or with no change when null. `result` names the stage's result schema; `inputs` name what `prompt` needs.",
   "type": "object",
   "properties": {
     "id": {
@@ -20,6 +22,12 @@
     },
     "stage": {
       "$ref": "../common.schema.json#/$defs/stage"
+    },
+    "changeVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "access": {
       "enum": [
@@ -94,8 +102,7 @@
         "tokens",
         "seconds",
         "usd"
-      ],
-      "additionalProperties": false
+      ]
     },
     "session": {
       "type": [
@@ -112,6 +119,7 @@
     "kind",
     "next",
     "stage",
+    "changeVersion",
     "access",
     "inputs",
     "result",
@@ -121,6 +129,5 @@
     "budget",
     "session",
     "resume"
-  ],
-  "additionalProperties": false
+  ]
 }

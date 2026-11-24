@@ -1,0 +1,20 @@
+{
+  "policies": {},
+  "state": {
+    "example": "reviewing"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "close"
+      ],
+      "expect": {}
+    }
+  ]
+}

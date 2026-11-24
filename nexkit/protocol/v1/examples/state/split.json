@@ -9,7 +9,7 @@
   "hold": false,
   "waits": [
     {
-      "id": "parts",
+      "id": "w7.1",
       "for": "parts",
       "until": null,
       "on": null
@@ -63,6 +63,8 @@
       "cached": 0,
       "output": 0
     },
+    "seconds": 640,
+    "usd": 2.37,
     "since": null
   },
   "asked": [
@@ -71,12 +73,21 @@
   "parts": [
     {
       "item": "43",
-      "state": null
+      "state": "accepted"
     },
     {
       "item": "44",
       "state": null
     }
   ],
-  "policies": {}
+  "policies": {},
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
 }

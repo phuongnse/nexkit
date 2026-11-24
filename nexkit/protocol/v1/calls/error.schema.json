@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/calls/error.schema.json",
+  "$comment": "The answer to a call the engine refuses, such as one that breaks the protocol, a state newer than the engine knows, or a result whose action is pending on another version of the change. The host changes nothing and stores nothing.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol",
+    "error"
+  ]
+}

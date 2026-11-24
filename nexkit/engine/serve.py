@@ -14,8 +14,7 @@ import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .. import protocol
-from . import CALLS, reply, text
+from . import CALLS, error_answer, reply, text
 
 HOST = "127.0.0.1"
 PORT = 8080
@@ -35,24 +34,24 @@ class Handler(BaseHTTPRequestHandler):
             status, answer = self.answer()
         except Exception:
             self.log_error("%s", traceback.format_exc())
-            status, answer = 500, refusal("The engine failed on this request.")
+            status, answer = 500, error_answer("The engine failed on this request.")
         self.respond(status, answer)
 
     def answer(self):
         call = self.path.removeprefix("/")
         if call not in CALLS:
-            return 404, refusal(f"No call is at {self.path}; the calls are {calls()}.")
+            return 404, error_answer(f"No call is at {self.path}; the calls are {calls()}.")
         length = self.headers.get("Content-Length", "")
         if self.headers.get("Transfer-Encoding") or not (length.isascii() and length.isdigit()):
-            return 411, refusal("Send the request with a Content-Length.")
+            return 411, error_answer("Send the request with a Content-Length.")
         # A length with more digits than any request needs is refused before it is a number.
         if len(length) > len(str(MAX_BODY)) or int(length) > MAX_BODY:
-            return 413, refusal(f"A request has at most {MAX_BODY} bytes.")
+            return 413, error_answer(f"A request has at most {MAX_BODY} bytes.")
         answer = reply(call, self.rfile.read(int(length)))
         return (400 if "error" in answer else 200), answer
 
     def refuse_method(self):
-        self.respond(405, refusal(f"Send each request with POST to one of {calls()}."))
+        self.respond(405, error_answer(f"Send each request with POST to one of {calls()}."))
 
     do_GET = do_HEAD = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = refuse_method
 
@@ -69,10 +68,6 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
         self.close_connection = True
-
-
-def refusal(error):
-    return {"protocol": protocol.VERSION, "error": error}
 
 
 def calls():

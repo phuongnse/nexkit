@@ -2,19 +2,42 @@
   "protocol": 1,
   "state": {
     "schemaVersion": 1,
-    "revision": 7,
+    "revision": 2,
     "item": "42",
     "itemKind": "change",
-    "state": "planning",
+    "state": "working",
     "change": null,
     "attention": null,
     "hold": false,
     "waits": [],
     "pending": [
       {
-        "id": "a1",
+        "id": "a2.1",
         "kind": "runAgent",
-        "changeVersion": null
+        "next": null,
+        "stage": "implement",
+        "changeVersion": null,
+        "access": "write",
+        "inputs": [
+          "item",
+          "discussion",
+          "notes",
+          "plan",
+          "linked",
+          "evidence",
+          "parts"
+        ],
+        "result": "results/implement.schema.json",
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "budget": {
+          "tokens": null,
+          "seconds": null,
+          "usd": null
+        },
+        "session": null,
+        "resume": false
       }
     ],
     "actors": {
@@ -38,31 +61,53 @@
         "cached": 0,
         "output": 0
       },
+      "seconds": 0,
+      "usd": 0,
       "since": null
     },
     "asked": [],
     "parts": [],
-    "policies": {}
+    "policies": {
+      "planApproval": "person",
+      "answers": "never",
+      "reviewAfterFailingChecks": "always",
+      "accept": "person",
+      "fixRounds": 2,
+      "whenRoundsRunOut": "person",
+      "conflicts": "person",
+      "conflictRounds": 3,
+      "splits": false,
+      "afterFailure": "person"
+    },
+    "recentEvents": [
+      "d-1",
+      "d-requested-1"
+    ]
   },
   "actions": [
     {
-      "id": "a1",
+      "id": "a2.1",
       "kind": "runAgent",
       "next": null,
-      "stage": "plan",
-      "access": "read",
+      "stage": "implement",
+      "changeVersion": null,
+      "access": "write",
       "inputs": [
         "item",
         "discussion",
-        "notes"
+        "notes",
+        "plan",
+        "linked",
+        "evidence",
+        "parts"
       ],
-      "result": "results/plan.schema.json",
-      "agent": "claude",
-      "model": "sonnet",
+      "result": "results/implement.schema.json",
+      "agent": null,
+      "model": null,
       "effort": null,
       "budget": {
         "tokens": null,
-        "seconds": 900,
+        "seconds": null,
         "usd": null
       },
       "session": null,

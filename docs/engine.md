@@ -5,9 +5,10 @@ _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol
 at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 does, as
 `nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; the
 GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
-the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, the end of
-a round's wait and which rounds count, which NexKit 6's autopilot, `route`, `report` and
-`maintain` take from `step` (see [getting there](#getting-there)). The rest of this page is not built yet, and NexKit 6 runs as
+the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
+review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, which
+NexKit 6's autopilot, `route`, `report` and `maintain` take from `step` (see
+[getting there](#getting-there)). The rest of this page is not built yet, and NexKit 6 runs as
 [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
@@ -145,23 +146,25 @@ needed.
   signatures, counts, and the tokens, time and money its agents spent. Long texts, such as a
   plan's prose, check output, a discussion and evidence, stay with the host as texts that the
   state names, and reach the engine only in `prompt`.
-- **It has a size.** The protocol sets the largest state document: 48,000 bytes as JSON in
-  UTF-8 with its keys sorted and no spaces, so that its base64 fits one GitHub comment of
-  65,536 characters. What results and events bring is bounded as it comes in. Each list keeps
-  at most as many items as `maxItems` in its schema says: 10 questions of 6 options each, 20
-  protected paths, 10 split parts, each needing only earlier parts, 30 findings with the
-  blocking ones first, 30 failure signatures, and 50 criteria and 50 checklist answers with
-  those a decision reads first. A split of more parts keeps none of them, only how many it
-  named, so a split is never filed cut. Each text is clipped as NexKit 6 clips it: a question
-  at 1,500 characters, an option at 500, the item's title and a part's at 256, a path at 300, a
-  finding at 300 and a reason for a person at 1,000. A long failure signature is kept as its
-  hash, never cut, because rounds compare signatures. When a document would still pass the
-  limit, the engine shortens texts that a person reads in full where the host keeps them, each
-  to the most that fits, in this order: the findings, the questions and their options, the
-  protected paths and the attention's text. It never shortens a count, a status, an id, a title
-  or a signature, which decisions read, and a host that builds a first document keeps it the
-  same way. The engine never answers a state that its own schema refuses, such as an outbox past
-  its `maxItems` when a host never reports its actions: it refuses that event instead.
+- **It has a size.** The protocol sets the largest state document: 48,000 bytes as JSON in UTF-8
+  with its keys sorted and no spaces, so that its base64 fits one GitHub comment of 65,536
+  characters. What results and events bring is bounded as it comes in. Each list keeps at most as
+  many items as `maxItems` in its schema says: 10 questions of 6 options each, 20 protected paths,
+  10 split parts, each needing only earlier parts, 30 findings with the blocking ones first, 30
+  failure signatures, 300 failing checks, each kept as a 12-digit digest of its name and signature,
+  150 checks that repeated, and 50 criteria and 50 checklist answers with those a decision reads
+  first. A split of more parts keeps none of them, only how many it named, so a split is never filed
+  cut. Each text is clipped as NexKit 6 clips it: a question at 1,500 characters, an option at 500,
+  the item's title and a part's at 256, a path at 300, a finding at 300, a reason for a person at
+  1,000 and a check's name at 40, as long as NexKit's own may be. A long failure signature is kept
+  as its hash, never cut, because rounds compare signatures. When a document would still pass the
+  limit, the engine shortens texts that a person reads in full where the host keeps them, each to
+  the most that fits, in this order: the findings, the questions and their options, the protected
+  paths, the attention's text, and the names of repeated checks past the ten that a diagnosis round
+  looks into, which no name of NexKit's own ever needs. It never shortens a count, a status, an id,
+  a title or a signature, which decisions read, and a host that builds a first document keeps it the
+  same way. The engine never answers a state that its own schema refuses, such as an outbox past its
+  `maxItems` when a host never reports its actions: it refuses that event instead.
 - **It is the truth.** A host may keep columns or markers that copy parts of it, for its own
   lists and pages, written in the same transaction, but the engine reads only the document.
 
@@ -332,6 +335,19 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   policy decides, and a hold keeps the engine's accept back until it ends. A required check
   that fails at the accept (`checkFailed`) leads to a fix round as a failing check of the round
   does, waiting while it fails as the base branch does, which the accept's result says.
+- **Diagnosis rounds.** The checks keep each failing check by a digest of its name and failure
+  signature, at most 300 of them, which 15 checks of 20 shards each reach. When a check of the
+  checks after a fix round fails with the same signature as in the checks before it, the fix round
+  did not find its cause, so the next automatic fix round looks into that cause first: its
+  `runAgent` names those checks in `diagnose`, as NexKit 6's `route` makes it a diagnosis round, the
+  first ten of them as NexKit 6 does. The checks after an implement round, a person's push or a
+  person's request for a review are no fix round's, so nothing repeats in them; a conflict round is
+  a fix round, and its checks compare too. Only an automatic fix round diagnoses, and so does the
+  same round run again after a wait; a person's fix round, a conflict round and the round that the
+  engine's answers run again name no check. A fix round that waits for the base branch's failure
+  forgets what repeated, since that failure is the base branch's, and a round whose change conflicts
+  at its publish runs no checks, so the checks after the next round have none of it to compare with.
+  A hold keeps a diagnosis round back as any fix round, and it diagnoses when it runs.
 - **While a fix round waits** for a hold or the base branch, a person's push is checked, and so
   is a person's request for a review; a person's request for a fix runs that fix. The round
   that waited no longer waits, and none of these counts: the checks and the review that follow
@@ -343,32 +359,41 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   agent it may not run, a change already on the base branch, or checks that the base branch's
   move stopped. One whose agent stopped by itself, such as blocked, out of time or with an
   error, keeps its count.
-- **From every state that has a change,** the engine reconciles the item with the latest
-  observation of that change after each event, once no publish or replace is on its way. A change
-  that was merged, such as by a person's hand, goes to `accepted`; one that became empty, because
-  the same change landed another way, goes to `noChange`; a version other than the engine's, such
-  as a person's push, withdraws or cancels what acts on the old version and goes to `checking`, or
+- **From every state that has a change,** the engine reconciles the item with the latest observation
+  of that change after each event, once no publish or replace is on its way. A change that was
+  merged, such as by a person's hand, goes to `accepted`; one that became empty, because the same
+  change landed another way, goes to `noChange`; a version other than the engine's, such as a
+  person's push, withdraws or cancels what acts on the old version and goes to `checking`, or
   follows the conflict policy when that version conflicts. A change that conflicts follows the
-  conflict policy at once where nothing runs that it must wait for: in `ready` and `accepting`,
-  and in `checking` when a conflict round can start (`redo`, or `resolve` with rounds left), since
-  those checks can no longer lead to an accept. Otherwise the policy applies when the item would
-  next go to its checks or be ready, as NexKit 6 starts no conflict round while another runs, and
-  only if the latest observation still says that version conflicts; a question or a failure keeps
-  its attention meanwhile. A person told of a conflict on a version is told once, and the item
-  stays in `ready` for them even if the conflict clears without a push. An observation of another
-  change changes nothing, and a publish or a replace that ends sets the change with the
-  observation its result carries, which replaces the latest one: one of a change the engine
-  replaced never touches the new one, even when the new one keeps its id and version. An item in
-  `failed`, and one in `new` that is not review-only, take only a merge or an emptied change, so
-  the failure's or the reopen's attention stands whatever else is observed: a new version waits
-  in the observation until a person's request takes the item on, such as a review, a retry or a
-  fix, which then starts its work on that version.
+  conflict policy at once where nothing runs that it must wait for: in `ready` and `accepting`, and
+  in `checking` when a conflict round can start (`redo`, or `resolve` with rounds left), since those
+  checks can no longer lead to an accept. Otherwise the policy applies when the item would next go
+  to its checks or be ready, as NexKit 6 starts no conflict round while another runs, and only if
+  the latest observation still says that version conflicts; a question or a failure keeps its
+  attention meanwhile. A person told of a conflict on a version is told once, and the item stays in
+  `ready` for them even if the conflict clears without a push. A hold keeps the round that the
+  conflict policy would start back, whatever rounds are left, as NexKit 6's hold label does: the
+  item waits in `checking` with nothing running, and the policy applies, with its count then, once
+  the hold ends; in `ready` and `accepting` it applies when the hold ends. A round that resolves a
+  conflict is no automatic fix round: the count of an automatic fix round whose change conflicts at
+  its publish stands, and the conflict round counts toward `conflictRounds` alone. An observation of
+  another change changes nothing, and a publish or a replace that ends sets the change with the
+  observation its result carries, which replaces the latest one: one of a change the engine replaced
+  never touches the new one, even when the new one keeps its id and version. An item in `failed`,
+  and one in `new` that is not review-only, take only a merge or an emptied change, so the failure's
+  or the reopen's attention stands whatever else is observed: a new version waits in the observation
+  until a person's request takes the item on, such as a review, a retry or a fix, which then starts
+  its work on that version.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
 - **A review-only item** comes with its change and is never planned, fixed, replaced or accepted
   by the engine: a person's own pull request, which NexKit only checks and reviews. Each review
   request takes it to `checking`, and a drop ends the engine's work without closing it.
+- **An agent that stops at a usage limit** waits for the reset its result gives, and then
+  the same stage runs again, as the same round, which counts nothing again and diagnoses
+  again if it did. A limit with no reset, as when the host does not resume such runs, waits
+  for a person in `failed`.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
@@ -400,7 +425,9 @@ Three things sit beside the state, never in place of it:
   action the host lost (`outage`).
 - **Hold:** nothing new starts by itself: the sweep's start waits, while a person's own request
   still runs, as NexKit 6's hold label does. A step that runs finishes and records what it held
-  back.
+  back. A request that would lead to the conflict policy's work, such as a person's request for a
+  review of a change that conflicts, is taken but that work still waits: the hold wins, and the item
+  waits in `checking` until it ends.
 - **Wait:** the next step waits for something named: a request to start (`start`); a time, such
   as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has
@@ -440,7 +467,7 @@ Three things sit beside the state, never in place of it:
 
 | Action | The host | Its result |
 | --- | --- | --- |
-| `runAgent` | Runs a runner for a stage, see [runners](#runners) | The stage's result, tokens, a usage limit, a transient stop |
+| `runAgent` | Runs a runner for a stage, see [runners](#runners); for a fix round, the checks it diagnoses first | The stage's result, tokens, a usage limit with its reset, a transient stop |
 | `publish` | Makes the agent's work the change: a commit and a pull request, or a draft | The change's id and version, or why it could not |
 | `replaceChange` | Drops the change and starts a new one from what is current | The new change |
 | `runChecks` | Runs its checks on a version of the change | Each result, its failure signature, and whether the failure matches a known failure of the base; the item about that failure when every failing check matches it |
@@ -461,14 +488,15 @@ id. NexKit 6's round, from `route` to `report`, stays one workflow run.
 ## Runners
 
 A runner runs one agent session for one stage. Its contract is part of the protocol: `runAgent`
-gives it the stage, the version of the change it starts from, the stage's access, the prompt
-that `prompt` writes from the inputs it names, the name of the stage's result schema, the agent,
-the model and effort, the budget left in tokens, time and money, and a session id to ask the same
-session again. Until the protocol holds the checklist and agents policies, the host adds to that
-schema what they add: a checklist field, and the names of triage's profiles. Its result gives the stage's result, the
-tokens as input, cached and output, the seconds and money it spent, a usage limit with its reset,
-whether the stop was transient, whether it ran out of time, whether no result fit the schema, and
-the version of the change it produced.
+gives it the stage, the version of the change it starts from, the stage's access, the prompt that
+`prompt` writes from the inputs it names, the name of the stage's result schema, the agent, the
+model and effort, the budget left in tokens, time and money, a session id to ask the same session
+again, and for a fix round the checks it looks into first (`diagnose`). Until the protocol holds the
+checklist and agents policies, the host adds to that schema what they add: a checklist field, and
+the names of triage's profiles. Its result gives the stage's result, the tokens as input, cached and
+output, the seconds and money it spent, a usage limit with its reset, whether the stop was
+transient, whether it ran out of time, whether no result fit the schema, and the version of the
+change it produced.
 
 Each stage has its access, which the runner enforces: none for triage, read for plan and review,
 write for implement and fix. There are two kinds of runner:
@@ -513,7 +541,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | Conflicts (`conflicts`, `conflictRounds`) | `person`, `resolve`, `redo`, by who accepted; the most rounds that resolve, 1–10 | `person`; `resolve` with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
 | Budgets | Tokens, time, money and model calls, per item and per stage | Time and money per stage | Tokens and time per request, model calls per stage |
 | Retries | Waits after a transient stop; when a lost action starts again | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
-| Usage limits | Resume after the reset, and how long to wait | `usage_limit.*` | Resume after the reset |
+| Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
 | Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10 | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
 | A parent's end | When its parts' ends end it | `close_parent_issues`, when one part was completed | When its parts end |
@@ -640,6 +668,10 @@ adapter. A new rule of the engine comes with a case.
   start once the label is gone; a conflict round waits in its checks, where the conflict policy
   applies with its count, and a fix round that a hold or a base failure kept back waits to be
   issued (`rounds.due`), counted when it starts or left to a person when none is left then.
+  The checks that NexKit 6 found failing the same way before and after the last fix round are
+  kept for the next automatic fix round to diagnose (`rounds.repeated`); the failing checks
+  that later checks compare with are not, so the first fix round after the import compares
+  with none.
   What a round decided on its head keeps that head as the change's version, and a head pushed
   since is in the observation, so the engine checks it before it goes on. A run that waits to run again runs its own command again, and a lost round
   runs a fix round's command or a review, as NexKit 6 does; autopilot's record of tries counts
@@ -664,8 +696,20 @@ adapter. A new rule of the engine comes with a case.
    that stopped as blocked with questions or protected paths and a round that ran out of time,
    the end of a fix round's or a merge's wait for a hold or for the base branch's failure
    (`autopilot`'s sweep), which rounds count after a round that NexKit stopped (`report`,
-   `maintain`), and what follows required checks that fail at the merge (`report`). A conflict
-   round that a hold kept back stays NexKit 6's, with the conflict rounds. A `/nexkit go`
+   `maintain`), and what follows required checks that fail at the merge (`report`). `report`
+   sends every round's checks and review to `step`: a review that paused at a usage limit,
+   with the reset when NexKit 6 resumes it, a review that failed, a person's own pull request
+   as an item that is only reviewed, and a round whose commit conflicts with its base branch,
+   whose conflict round a hold keeps back until the sweep sends the hold's end
+   (`autopilot._conflicts_released`). The engine finds the checks that failed the same way
+   before and after a fix round, which the state comment keeps, and `route` asks it which of
+   them the fix round it starts diagnoses. A review that NexKit 6 runs again after a
+   transient error is the host's own retry, which the protocol does not hold yet, and so is
+   whether a usage limit is resumed. A conflict that the base branch's move makes, found
+   after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
+   as does the merge itself (`report.merge_pull`) but for required checks that fail. A
+   person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
+   sweep does not read the head then either. A `/nexkit go`
    that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as
    the policy after a failure, which the protocol does not hold yet, says. Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the

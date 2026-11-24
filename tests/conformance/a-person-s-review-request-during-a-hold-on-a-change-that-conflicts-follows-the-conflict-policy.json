@@ -122,6 +122,20 @@
         "kind": "requested",
         "what": "review"
       },
+      "state": "checking",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "state": "checking",
+        "pending": [],
+        "rounds.counted": 0
+      },
+      "note": "The hold keeps the change made again back, as it keeps a conflict round back."
+    },
+    {
+      "event": {
+        "kind": "released"
+      },
       "state": "working",
       "changed": true,
       "actions": [

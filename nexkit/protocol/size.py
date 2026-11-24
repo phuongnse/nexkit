@@ -29,11 +29,16 @@ MOST = {
     "split": 10,
     "findings": 30,
     "signatures": 30,
+    # The failing checks of the latest checks, each by a short digest: 15 checks of 20 shards
+    # each fail at most 300 ways at once.
+    "failing": 300,
+    "repeated": 150,
     "criteria": 50,
     "checklist": 50,
 }
 # The most characters of each text that comes in: NexKit 6's own (`state.questions`,
-# `state.plan_data_record`), and for a reason a person reads, enough to say it.
+# `state.plan_data_record`), for a reason a person reads, enough to say it, and for a check's
+# name, which rounds compare failures by, as long as NexKit's own may be (`config.NAME`).
 LONGEST = {
     "question": 1500,
     "option": 500,
@@ -41,9 +46,14 @@ LONGEST = {
     "path": 300,
     "finding": 300,
     "reason": 1000,
+    "check": 40,
 }
 # The most bytes of a failure signature as JSON writes it; a longer one is named by its hash.
 SIGNATURE = 80
+# The most checks a diagnosis round looks into (NexKit 6's `state.MAX_QUESTIONS`).
+DIAGNOSES = 10
+# The hex digits of a failing check's digest (`failure_key`).
+KEY = 12
 # What ends a text that was shortened.
 CUT = "..."
 
@@ -85,6 +95,14 @@ def signature(text):
     return f"sha256:{found}"
 
 
+def failure_key(name, text):
+    """A failing check as rounds compare it: a short digest of its name and its failure
+    signature, the same for the same failure of the same check, so that the checks before a
+    fix round keep little room each however many failed."""
+    found = f"{name}\n{text}".encode("utf-8", "surrogatepass")
+    return hashlib.sha256(found).hexdigest()[:KEY]
+
+
 def _findings(severity):
     def found(state):
         return [
@@ -113,6 +131,13 @@ def _attention(state):
     return [(state["attention"], "text")] if state["attention"] else []
 
 
+def _repeated(state):
+    """The names of repeated checks past those a diagnosis round looks into, which only the
+    host keeps for people; NexKit's own names never need it, being short."""
+    names = state["rounds"].get("repeated") or []
+    return [(names, index) for index in range(DIAGNOSES, len(names))]
+
+
 # What is shortened, in this order, while a document does not fit: texts that a person reads
 # in full where the host keeps them, never a count, a status, an id, a list's length, a split
 # part's title, which names the part it files, or a failure signature, which rounds compare.
@@ -124,6 +149,7 @@ SHORTENED = (
     _questions,
     _paths,
     _attention,
+    _repeated,
 )
 
 

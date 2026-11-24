@@ -36,11 +36,20 @@ part at the deepest level.
 It decides the end of a round's wait too, in the sweep: once the label that held back a merge
 or an automatic fix round is gone, a head pushed meanwhile is reviewed, and the fix round runs,
 counted only now, while `fix.max_auto_rounds` has one left; once the base branch's failure
-that a fix round waited for ends, its bug issue closed or the base passing again, the same. A
-conflict round that a label held back stays NexKit 6's. And it decides which rounds count: an
-automatic fix round that NexKit stopped gives its count back (`report._stop_round`,
-`maintain._give_back`), and required checks that fail at the merge start a counted fix round,
-wait for the base branch, or leave the rounds used up (`report._required_failed`).
+that a fix round waited for ends, its bug issue closed or the base passing again, the same.
+And it decides which rounds count: an automatic fix round that NexKit stopped gives its count
+back (`report._stop_round`, `maintain._give_back`), and required checks that fail at the merge
+start a counted fix round, wait for the base branch, or leave the rounds used up
+(`report._required_failed`).
+
+Every round's checks and review reach it (`round_ended`): a review that paused at a usage
+limit, a review that failed, and a person's own pull request, which is only reviewed; a
+review that runs again after a transient error is the host's own retry. It finds the checks
+that failed the same way before and after a fix round, which the state comment keeps, and
+names those that the fix round `route` starts diagnoses (`diagnosis`). A round whose commit
+conflicts with its base branch starts the round that resolves it, within
+`conflicts.max_rounds`, unless a label holds the issue, which keeps it back until the sweep
+finds the label gone (`conflicting`, `conflicts_released`).
 
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
@@ -51,7 +60,8 @@ from __future__ import annotations
 import json
 
 from . import autopilot, engine, first_state
-from .protocol.size import LONGEST
+from .checks import failing_signatures
+from .protocol.size import LONGEST, MOST, failure_key
 from .report import TOO_LARGE
 from .schema import filled
 from .state import (
@@ -990,17 +1000,72 @@ ROUND_ENDS = (
 )
 
 
-def after_round(cfg, decision, pr, head, auto_fixes, checks, review, recheck, wait, label):
+def after_round(
+    cfg,
+    decision,
+    pr,
+    head,
+    auto_fixes,
+    checks,
+    review,
+    recheck,
+    wait,
+    label,
+    before=None,
+    seen=None,
+):
     """What follows a round of the NexKit pull request `pr` whose checks and review ended on
     `head`, as the engine decides it: one of `ROUND_ENDS`. `auto_fixes` is how many automatic
     fix rounds the pull request used, `checks` the checks' results (None: they did not run),
     `review` the review NexKit acts on (`report.apply_criteria`), `recheck` whether the round
     is a fix round that changed nothing and checked the same head again, `wait` what a fix
     round would wait for while the base branch has the same failure (`autopilot.ci_wait`),
-    and `label` the label that holds the issue. Raises `Refused`."""
+    `label` the label that holds the issue, and `before` the checks of the round before, as
+    the state comment recorded them. `seen`, a dict, gets the checks that failed the same
+    way before and after a fix round as `repeated` (`round_ended`). Raises `Refused`."""
+    end, repeated = round_ended(
+        cfg, decision, pr, head, auto_fixes, checks, before, ("done", review), recheck, wait, label
+    )
+    if seen is not None:
+        seen["repeated"] = repeated
+    return end
+
+
+# What `report` does after a round's review that is not a verdict on a NexKit pull request,
+# by what the engine answers: a person's own pull request reviewed, a review paused at a
+# usage limit or failed, or one that the host runs again after a transient error.
+REVIEW_ENDS = ("person_reviewed", "paused", "review_failed", "again")
+
+
+def round_ended(
+    cfg,
+    decision,
+    pr,
+    head,
+    auto_fixes,
+    checks,
+    before,
+    review,
+    recheck=False,
+    wait=None,
+    label=None,
+):
+    """What follows the checks and the review of the round of `decision` on the pull request
+    `pr`, which ended on `head`, as the engine decides it: (end, repeated). `review` is
+    (`done`, the review NexKit acts on), (`paused`, the time the host runs it again after
+    its usage limit resets, or None when it does not), (`failed`, why), or (`again`, None)
+    for a review that the host runs again after a transient error, as its own retries do,
+    which the engine does not see end. `before` are the checks of the round before, as the
+    state comment recorded them (`checks.recorded`). The end is one of `ROUND_ENDS` after a
+    verdict on a NexKit pull request, else one of `REVIEW_ENDS`; `repeated` names the checks
+    that failed the same way before and after a fix round, for the next automatic fix round
+    to diagnose. Raises `Refused`."""
     number = decision["issue"]
     found = policies(cfg)
+    person = bool(decision.get("person"))
     doc = first_state.empty(str(number))
+    if person:
+        doc["itemKind"] = "reviewOnly"
     doc["state"] = "checking"
     doc["change"] = {"id": str(pr), "version": head}
     doc["hold"] = bool(label)
@@ -1008,6 +1073,12 @@ def after_round(cfg, decision, pr, head, auto_fixes, checks, review, recheck, wa
     doc["rounds"]["counted"] = auto_fixes
     if recheck:
         doc["rounds"]["recheck"] = head
+    failing = _failing(before)
+    if failing:
+        doc["rounds"]["failing"] = failing
+    if decision["action"] == "fix":
+        # The checks of a fix round compare with the round's before it.
+        doc["rounds"]["fixed"] = head
     run = {"id": first_state.RUN_ID, "next": None, "kind": "runChecks", "changeVersion": head}
     doc["pending"] = [run]
     results = {"checks": _checks(checks), "baseFailure": str(wait["bug"]) if wait else None}
@@ -1024,6 +1095,16 @@ def after_round(cfg, decision, pr, head, auto_fixes, checks, review, recheck, wa
     review_run = [a for a in answer["actions"] if a["kind"] == "runAgent"]
     if not review_run or review_run[0]["stage"] != "review":
         raise Refused("The engine runs no review after a round's checks.")
+    kind, given = review
+    if kind == "again":
+        return "again", _repeated(answer)
+    if kind == "done":
+        result = {**AGENT, "output": _review_output(given)}
+    elif kind == "paused":
+        message = "The review stopped at its usage limit."
+        result = {**AGENT, "output": None, "limit": {"message": message, "reset": _time(given)}}
+    else:
+        result = {**AGENT, "output": None, "error": str(given or "The review failed.")}
     event = _event(
         "actionFinished",
         number,
@@ -1031,25 +1112,67 @@ def after_round(cfg, decision, pr, head, auto_fixes, checks, review, recheck, wa
         f"review-{pr}-{head}",
         action=review_run[0]["id"],
         changeVersion=head,
-        result={**AGENT, "output": _review_output(review)},
+        result=result,
     )
     answer = step(answer["state"], event, found)
-    return _round_end(answer, recheck)
+    if kind == "done" and not person:
+        return _round_end(answer, recheck), _repeated(answer)
+    return _review_end(answer, kind, person), _repeated(answer)
+
+
+def _failing(recorded):
+    """The engine's `rounds.failing` for checks as the state comment recorded them: each
+    failing check by the digest of its name and signature (`checks.failing_signatures`)."""
+    return [
+        failure_key(name, found or name) for name, found in failing_signatures(recorded).items()
+    ][: MOST["failing"]]
+
+
+def _repeated(answer):
+    return list(answer["state"]["rounds"].get("repeated") or [])
+
+
+def _time(at):
+    """`at` as the protocol writes a time, or None when it is none."""
+    found = autopilot.parse_iso(at) if at else None
+    return found.strftime("%Y-%m-%dT%H:%M:%SZ") if found else None
+
+
+def _review_end(answer, kind, person):
+    """`REVIEW_ENDS`' name for the engine's `answer` after a review that is not a verdict on a
+    NexKit pull request."""
+    state, actions = answer["state"], answer["actions"]
+    kinds = {action["kind"]: action for action in actions}
+    reason = (kinds.get("needPerson") or {}).get("reason")
+    if kind == "done" and person and state["state"] == "ready" and "show" in kinds:
+        return "person_reviewed"
+    if kind == "paused" and (reason == "failed" or "wait" in kinds):
+        return "paused"
+    if kind == "failed" and reason == "failed":
+        return "review_failed"
+    raise Refused(f"The engine answers {sorted(kinds)} after a review, which the host cannot do.")
 
 
 def _checks(checks):
-    """The checks' results as `runChecks` gives them; checks that did not run fail as one."""
+    """The checks' results as `runChecks` gives them, each failing one with its signature
+    (`checks.failing_signatures`); checks that did not run fail as one."""
     if checks is None:
         return [_check("checks", False)]
-    return [_check(str(check.get("name") or ""), bool(check.get("passed"))) for check in checks]
+    found = []
+    for check in checks:
+        # Named as `checks.failing_signatures` names it, which the checks before compare by.
+        name, passed = str(check.get("name")), bool(check.get("passed"))
+        sign = None if passed else failing_signatures([check]).get(name)
+        found.append(_check(name, passed, sign or None))
+    return found
 
 
-def _check(name, passed):
+def _check(name, passed, sign=None):
     return {
         "name": name,
         "passed": passed,
         "skipped": False,
-        "signature": None,
+        "signature": sign,
         "knownBaseFailure": False,
     }
 
@@ -1114,6 +1237,100 @@ def _round_end(answer, recheck):
     raise Refused(
         f"The engine answers {sorted(kinds)} after a round, which the host does not carry out."
     )
+
+
+# -- a round whose change conflicts, and a hold on its conflict round ----------------------
+
+
+def conflicting(cfg, decision, pr, head, held, used):
+    """What follows a round of `decision` whose commit `head` on the pull request `pr`
+    conflicts with its base branch's tip, as `publish` found, so that its checks and review
+    did not run, as the engine decides it (`report._skipped_conflicting`): `round`, the
+    round that resolves the conflict; `held` while a label `held` the issue, which keeps it
+    back; or `used_up` when its `used` conflict rounds leave none, or when
+    `conflicts.auto_resolve` is off. `publish` finds a conflict only with it on, so that
+    answer comes only when the configuration changed between the two jobs, where NexKit 6
+    started the round all the same. Raises `Refused`."""
+    number = decision["issue"]
+    stage = "fix" if decision["action"] == "fix" else "implement"
+    before = {"id": str(pr), "version": str(decision.get("head"))} if stage == "fix" else None
+    doc = _pull_doc(cfg, number, pr, None, RUNS_OF[stage], 0)
+    doc.update(change=before, observed=None, hold=bool(held))
+    doc["rounds"]["conflicts"] = max(int(used or 0), 0)
+    doc["pending"] = [{"id": first_state.RUN_ID, "next": None, "kind": "publish", "stage": stage}]
+    seen = {"changeId": str(pr), "version": head, "conflicts": True}
+    seen.update(merged=False, empty=False)
+    result = {"change": {"id": str(pr), "version": head}, "refused": None, "observed": seen}
+    fields = {"action": first_state.RUN_ID, "changeVersion": None, "result": result}
+    event = _event("actionFinished", number, None, f"publish-{pr}-{head}", **fields)
+    answer = step(doc, event, policies(cfg))
+    state, kinds = answer["state"], {action["kind"]: action for action in answer["actions"]}
+    if (kinds.get("runAgent") or {}).get("stage") == "fix":
+        return "round"
+    if state["state"] == "checking" and state["hold"] and not state["pending"]:
+        return "held"
+    if (kinds.get("needPerson") or {}).get("reason") == "acceptRefused":
+        return "used_up"
+    raise Refused(f"The engine answers {sorted(kinds)} after a conflict, which the host cannot do.")
+
+
+# The state of the item while a round's agent runs, by its stage.
+RUNS_OF = {"implement": "working", "fix": "fixing"}
+
+
+def conflicts_released(cfg, issue, pull, run, head, conflicts, used):
+    """What follows once no label holds `issue` whose pull request's round, the marker `run`,
+    held back the round that resolves its conflict, as the engine decides it
+    (`autopilot._conflicts_released`): `review` of a head that moved, which the next round
+    checks for a conflict, or of one that no longer `conflicts`; `round`, while its `used`
+    conflict rounds leave one; or `waits` for a person, with `conflicts.auto_resolve` off or
+    no conflict round left. Raises `Refused`."""
+    version = str(run.get("head") or pull)
+    doc = _pull_doc(None, issue, pull, version, "checking", 0)
+    doc["hold"] = True
+    doc["observed"]["conflicts"] = True
+    doc["rounds"]["conflicts"] = max(int(used or 0), 0)
+    moved = head != run.get("head")
+    seen = {"changeId": str(pull), "version": str(head or "none") if moved else version}
+    seen.update(conflicts=bool(conflicts) and not moved, merged=False, empty=False)
+    events = [
+        _event("changeObserved", issue, None, f"head-{pull}-{seen['version']}", **seen),
+        _event("released", issue, None, f"released-{pull}-{version}"),
+    ]
+    _, actions = _answers(doc, events, policies(cfg))
+    kinds = {action["kind"]: action for action in actions}
+    if "runChecks" in kinds:
+        return "review"
+    if (kinds.get("runAgent") or {}).get("stage") == "fix":
+        return "round"
+    if (kinds.get("needPerson") or {}).get("reason") == "acceptRefused":
+        return "waits"
+    raise Refused(f"The engine answers {sorted(kinds)} after a held conflict, which it cannot do.")
+
+
+# -- the checks a fix round diagnoses ------------------------------------------------------
+
+
+def diagnosis(issue, pr, head, automatic, repeated):
+    """The checks that the fix round `route` starts on the pull request `pr` looks into first,
+    as the engine runs that round: the `repeated` ones that failed the same way before and
+    after the fix round before it, which the state comment keeps, for an `automatic` round;
+    none for a person's round or a conflict round, which NexKit 6's markers say it is.
+    Raises `Refused`."""
+    if not repeated:
+        return []
+    doc = _pull_doc(None, issue, pr, head, "fixing", 1)
+    doc["rounds"]["repeated"] = list(repeated)[: MOST["repeated"]]
+    if automatic:
+        doc["rounds"]["automatic"] = True
+    # The round runs as the engine starts a round it issued again, as after a wait.
+    doc["waits"] = [{"id": "w1.1", "for": "time", "until": NO_TIME, "on": None}]
+    event = _event("tick", issue, None, f"route-{pr}-{head}", wait="w1.1")
+    _, actions = _answers(doc, [event], {})
+    runs = [action for action in actions if action["kind"] == "runAgent"]
+    if not runs or runs[0]["stage"] != "fix":
+        raise Refused("The engine runs no fix round for the command.")
+    return list(runs[0].get("diagnose") or [])
 
 
 # -- the end of a round's wait, and which rounds count ----------------------------------

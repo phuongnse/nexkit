@@ -1,0 +1,134 @@
+{
+  "policies": {
+    "fixRounds": 1,
+    "conflicts": "redo"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": false,
+              "skipped": false,
+              "signature": "FAIL A",
+              "knownBaseFailure": false
+            }
+          ],
+          "baseFailure": "9"
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:review"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "rounds.due": true,
+        "policies.conflicts": "redo"
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1",
+        "conflicts": true
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "state": "fixing"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "state": "ready",
+        "attention.reason": "acceptRefused"
+      },
+      "policies": {
+        "fixRounds": 1,
+        "conflicts": "person"
+      },
+      "note": "The round that waited started under redo; the request's round takes the person policy given now."
+    }
+  ]
+}

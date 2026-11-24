@@ -620,8 +620,18 @@ def _rounds(gh, number):
     return [(c, run) for c, run in run_comments(gh.comments(number)) if "round" in run]
 
 
+def conflict_rounds_of(gh, number, row=None):
+    """How many conflict rounds of the pull request `number` count against
+    `conflicts.max_rounds`, with `row`, the round that reports, among them."""
+    own = (row or {}).get("url")
+    rounds = [run for _, run in _rounds(gh, number)]
+    if own and not any(run.get("url") == own for run in rounds):
+        rounds.append(row)
+    return conflict_rounds_used([run for run in rounds if run.get("conflicts")])
+
+
 def start_conflict_round(
-    gh, number, base, workflow, ref, max_rounds, row=None, now=None, settle=False
+    gh, number, base, workflow, ref, max_rounds, row=None, now=None, settle=False, left=None
 ):
     """Start an automatic fix round that merges `base` into the pull request, unless one
     started since the base branch last moved and since the pull request's last round
@@ -633,8 +643,10 @@ def start_conflict_round(
     A start is recorded on the pull request's latest round (`conflicts_started`), so a
     sweep that looks before the new round posts its comment does not start it twice.
     With `settle`, when autopilot does not, a latest round whose run ended without a
-    report is shown as ended first, so it holds nothing up. Returns a line saying what
-    happened, or "" when nothing was started for a known reason that needs no line."""
+    report is shown as ended first, so it holds nothing up. With `left`, whether a conflict
+    round is left is the engine's answer (`host.conflicting`), not counted here. Returns a
+    line saying what happened, or "" when nothing was started for a known reason that needs
+    no line."""
     now = now or datetime.now(UTC)
     own = (row or {}).get("url")
     rounds = _rounds(gh, number)
@@ -667,7 +679,7 @@ def start_conflict_round(
         # that pushed now would make its merge fail. Its report, or a later check, starts
         # this round with the branch as that round left it.
         return ""
-    if conflict_rounds_used(tried) >= max_rounds:
+    if (conflict_rounds_used(tried) >= max_rounds) if left is None else not left:
         return (
             f"#{number} conflicts with `{base}`, but its {max_rounds} automatic "
             "conflict rounds are used up."

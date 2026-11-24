@@ -1,0 +1,15 @@
+import sys, os, json
+sys.path.insert(0, os.path.dirname(__file__))
+from eng import Item, chk, pub
+it = Item({"fixRounds": 2, "conflicts": "resolve", "conflictRounds": 2})
+it.send({"kind": "created"})
+it.send({"kind": "requested", "what": "go"})
+it.send({"kind": "actionFinished", "action": "runAgent", "result": "@agent:implement"})
+it.send({"kind": "actionFinished", "action": "publish", "result": pub("308", "v1")})
+it.send({"kind": "actionFinished", "action": "runChecks", "result": {"checks": [chk("test", True)]}})
+it.send({"kind": "actionFinished", "action": "runAgent", "result": "@agent:review"})
+it.send({"kind": "held"})
+it.send({"kind": "changeObserved", "conflicts": True})
+print("before request: att", it.state["attention"], "pending", it.state["pending"])
+a = it.send({"kind": "requested", "what": "review"})
+print("changed", a["changed"], "att", it.state["attention"], "pending", it.state["pending"], "waits", it.state["waits"])

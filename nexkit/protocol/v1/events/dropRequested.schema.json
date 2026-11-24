@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/dropRequested.schema.json",
+  "$comment": "A person ends the work item.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "dropRequested"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "by": {
+      "$ref": "../common.schema.json#/$defs/person"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "id",
+    "item",
+    "at",
+    "by",
+    "reason"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/results/checklist.schema.json",
+  "$comment": "What a stage returns for each checklist item, by stage, when the host has a checklist.",
+  "$defs": {
+    "plan": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer"
+        },
+        "how": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "how"
+      ]
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer"
+        },
+        "answer": {
+          "enum": [
+            "met",
+            "not_met",
+            "not_applicable"
+          ]
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "answer",
+        "evidence"
+      ]
+    }
+  }
+}

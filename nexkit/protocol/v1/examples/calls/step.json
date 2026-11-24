@@ -1,0 +1,79 @@
+{
+  "protocol": 1,
+  "call": "step",
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "new",
+    "change": null,
+    "observed": null,
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "w1.1",
+        "for": "start",
+        "until": null,
+        "on": null
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {},
+    "recentEvents": [
+      "d-1"
+    ]
+  },
+  "event": {
+    "protocol": 1,
+    "kind": "requested",
+    "id": "d-requested-1",
+    "item": "42",
+    "at": "2026-11-23T15:01:11Z",
+    "what": "go",
+    "by": {
+      "id": "octocat",
+      "role": "decides"
+    },
+    "note": "",
+    "plan": null
+  },
+  "policies": {
+    "planApproval": "person",
+    "reviewAfterFailingChecks": "always",
+    "accept": "person",
+    "fixRounds": 2,
+    "whenRoundsRunOut": "person",
+    "conflicts": "person",
+    "conflictRounds": 3,
+    "splits": false
+  }
+}

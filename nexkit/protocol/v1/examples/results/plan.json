@@ -1,0 +1,28 @@
+{
+  "summary": "Close an issue that GitHub closed at the same moment.",
+  "changes": [
+    "Read the issue again after a failed close."
+  ],
+  "decisions": [
+    {
+      "decision": "Read once more, not in a loop",
+      "reason": "GitHub's close is done when it answers."
+    }
+  ],
+  "risks": [],
+  "acceptance_criteria": [
+    "A test shows the round says the issue is closed."
+  ],
+  "implementation_notes": [
+    "nexkit/report.py"
+  ],
+  "questions": [],
+  "too_large": false,
+  "split": [],
+  "revision": {
+    "started_over": false,
+    "changes": []
+  },
+  "protected_paths": [],
+  "no_change": ""
+}

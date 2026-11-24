@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/changesRequested.schema.json",
+  "$comment": "A person asks for other changes to a ready change.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "changesRequested"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "by": {
+      "$ref": "../common.schema.json#/$defs/person"
+    },
+    "note": {
+      "$ref": "../common.schema.json#/$defs/text"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "id",
+    "item",
+    "at",
+    "by",
+    "note"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "change": {
+    "id": "308",
+    "version": "5a54e2b"
+  },
+  "refused": null,
+  "observed": {
+    "changeId": "308",
+    "version": "5a54e2b",
+    "conflicts": false,
+    "merged": false,
+    "empty": false
+  }
+}

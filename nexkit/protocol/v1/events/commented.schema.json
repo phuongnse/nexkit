@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/commented.schema.json",
+  "$comment": "A person writes on the work item.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "commented"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "by": {
+      "$ref": "../common.schema.json#/$defs/person"
+    },
+    "text": {
+      "$ref": "../common.schema.json#/$defs/text"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "id",
+    "item",
+    "at",
+    "by",
+    "text"
+  ]
+}

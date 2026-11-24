@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/calls/step.answer.schema.json",
+  "$comment": "The answer to a step call. `changed` is false when the event changed nothing, such as a duplicate or stale result: the state is then the one the call sent, and there are no actions.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "state": {
+      "$ref": "../state.schema.json"
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "../action.schema.json"
+      }
+    },
+    "changed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "protocol",
+    "state",
+    "actions",
+    "changed"
+  ]
+}

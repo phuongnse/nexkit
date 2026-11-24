@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/publish.result.schema.json",
+  "$comment": "The result of publish, in actionFinished. A publish changes the change outside the order of the item's events, so `observed` is the change as the host reads it when it handles this result, once it knows each field. It is null when nothing was published, and with a change when the host could not read each field in time or found it closed unmerged: the item then has no observation until the next one.",
+  "type": "object",
+  "properties": {
+    "change": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/change"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "refused": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/observation"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "change",
+    "refused",
+    "observed"
+  ]
+}

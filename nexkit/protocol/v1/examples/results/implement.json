@@ -1,0 +1,17 @@
+{
+  "status": "done",
+  "summary": "Read the issue again after a failed close.",
+  "blocker": "",
+  "questions": [],
+  "checks_run": [
+    "python3 -m unittest"
+  ],
+  "protected_paths": [],
+  "changes": [
+    "report.py reads the issue again."
+  ],
+  "testing": "tests/test_report.py covers the race.",
+  "outside_plan": [],
+  "reviewer_notes": [],
+  "no_change": ""
+}

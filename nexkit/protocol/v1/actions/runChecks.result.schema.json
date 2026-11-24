@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/runChecks.result.schema.json",
+  "$comment": "The result of runChecks, in actionFinished.",
+  "type": "object",
+  "properties": {
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "signature": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "knownBaseFailure": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "passed",
+          "skipped",
+          "signature",
+          "knownBaseFailure"
+        ]
+      }
+    }
+  },
+  "required": [
+    "checks"
+  ]
+}

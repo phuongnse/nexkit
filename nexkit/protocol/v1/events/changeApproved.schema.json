@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/changeApproved.schema.json",
+  "$comment": "A person accepts what only a person decides, on this change and version, as the person saw them.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "changeApproved"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "by": {
+      "$ref": "../common.schema.json#/$defs/person"
+    },
+    "changeId": {
+      "type": "string"
+    },
+    "changeVersion": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "id",
+    "item",
+    "at",
+    "by",
+    "changeId",
+    "changeVersion"
+  ]
+}

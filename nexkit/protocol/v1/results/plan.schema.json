@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/results/plan.schema.json",
+  "$comment": "The plan stage's result. `questions[].closes` names the option that only closes the work item; `split[].depends_on` the earlier parts a part needs, from 1; `no_change` the finding when nothing needs to change, or empty.",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string"
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "reason"
+        ]
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "implementation_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recommended": {
+            "type": "integer"
+          },
+          "closes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "question",
+          "options",
+          "recommended",
+          "closes"
+        ]
+      }
+    },
+    "too_large": {
+      "type": "boolean"
+    },
+    "split": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "title",
+          "body",
+          "depends_on"
+        ]
+      }
+    },
+    "revision": {
+      "type": "object",
+      "properties": {
+        "started_over": {
+          "type": "boolean"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "started_over",
+        "changes"
+      ]
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "no_change": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "summary",
+    "changes",
+    "decisions",
+    "risks",
+    "acceptance_criteria",
+    "implementation_notes",
+    "revision"
+  ]
+}

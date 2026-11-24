@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/requested.schema.json",
+  "$comment": "A person, or the sweep with `by` null, asks for something. A `go` names the plan the person approves by it, `plan.text.ref` in the state, or null when the item has no plan; a go for another plan changes nothing. Other requests send null.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "requested"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "what": {
+      "enum": [
+        "plan",
+        "planFromScratch",
+        "go",
+        "fix",
+        "review",
+        "retry",
+        "trust",
+        "start"
+      ]
+    },
+    "by": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/person"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "note": {
+      "type": "string"
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/planRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "id",
+    "item",
+    "at",
+    "what",
+    "by",
+    "note",
+    "plan"
+  ]
+}

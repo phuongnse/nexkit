@@ -1,0 +1,14 @@
+{
+  "verdict": "approve",
+  "summary": "The change does what the plan says.",
+  "criteria": [
+    {
+      "criterion": "A test shows the round says the issue is closed.",
+      "status": "met",
+      "test": "tests/test_report.py",
+      "evidence": "The test passes."
+    }
+  ],
+  "findings": [],
+  "previous_findings": []
+}

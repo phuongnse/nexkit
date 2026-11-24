@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/created.schema.json",
+  "$comment": "A work item is made. An item made with its plan, such as by an outside app, starts in awaitingApproval; a review-only item, such as a person's own pull request, comes with its change.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "created"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "itemKind": {
+      "enum": [
+        "change",
+        "reviewOnly"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "text": {
+      "$ref": "../common.schema.json#/$defs/text"
+    },
+    "actors": {
+      "type": "object",
+      "properties": {
+        "plan": {
+          "enum": [
+            "engine",
+            "person",
+            "outside"
+          ]
+        },
+        "change": {
+          "enum": [
+            "engine",
+            "person",
+            "outside"
+          ]
+        },
+        "review": {
+          "enum": [
+            "engine"
+          ]
+        }
+      },
+      "required": [
+        "plan",
+        "change",
+        "review"
+      ]
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "$ref": "../results/plan.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "change": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/change"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "id",
+    "item",
+    "at",
+    "itemKind",
+    "title",
+    "text",
+    "actors",
+    "plan",
+    "change"
+  ]
+}

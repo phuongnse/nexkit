@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/cancel.schema.json",
+  "$comment": "Stop an action that runs. A result that comes after it is ignored.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "kind": {
+      "const": "cancel"
+    },
+    "next": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "action": {
+      "$ref": "../common.schema.json#/$defs/id"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "next",
+    "action"
+  ]
+}

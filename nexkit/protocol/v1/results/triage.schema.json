@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/results/triage.schema.json",
+  "$comment": "The triage stage's result. A host adds its profile names to `profile` as an enum.",
+  "type": "object",
+  "properties": {
+    "profile": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "profile",
+    "reason"
+  ]
+}

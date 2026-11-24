@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/common.schema.json",
+  "$comment": "Shapes that the events, actions, results and state document share.",
+  "$defs": {
+    "id": {
+      "$comment": "An id the host or the engine gives, unique for its kind within a work item.",
+      "type": "string"
+    },
+    "eventId": {
+      "$comment": "The host's id of one event, the same each time it sends that event again. One delivery of a webhook may give several events for one item, so an id names the event, such as <delivery>:<kind>. The engine takes an event once.",
+      "type": "string"
+    },
+    "planRef": {
+      "$comment": "Which plan a person decided on: the ref of the plan's text, `plan.text.ref` in the state.",
+      "type": "string"
+    },
+    "askedRef": {
+      "$comment": "Which questions a person answers: the ref that asked them, `attention.ref` in the state. That is the plan's text ref for a plan's questions, and the id of the runAgent action of a round's questions.",
+      "type": "string"
+    },
+    "time": {
+      "$comment": "A UTC time in ISO 8601, such as 2026-11-23T15:01:11Z. The engine reads time only from these.",
+      "type": "string"
+    },
+    "change": {
+      "$comment": "A pull request or a draft, and its version, such as a commit or a revision.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ]
+    },
+    "text": {
+      "$comment": "A long text that the host keeps, named for `prompt`. The engine never holds its words.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "ref"
+      ]
+    },
+    "person": {
+      "$comment": "Who acted, with the role the host gives them.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "decides",
+            "writer",
+            "reader",
+            "outside"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "role"
+      ]
+    },
+    "tokens": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "integer"
+        },
+        "cached": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input",
+        "cached",
+        "output"
+      ]
+    },
+    "question": {
+      "$comment": "A question for a person. `recommended`, `closes` and `replans` count options from 1; 0 is none.",
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recommended": {
+          "type": "integer"
+        },
+        "closes": {
+          "type": "integer"
+        },
+        "replans": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "question",
+        "options",
+        "recommended"
+      ]
+    },
+    "stage": {
+      "enum": [
+        "triage",
+        "plan",
+        "implement",
+        "fix",
+        "review"
+      ]
+    },
+    "state": {
+      "enum": [
+        "new",
+        "planning",
+        "awaitingApproval",
+        "working",
+        "checking",
+        "reviewing",
+        "fixing",
+        "ready",
+        "accepting",
+        "accepted",
+        "split",
+        "noChange",
+        "dropped",
+        "failed"
+      ]
+    },
+    "attentionReason": {
+      "$comment": "Why a person is needed, as docs/engine.md#states lists the reasons.",
+      "enum": [
+        "approval",
+        "question",
+        "handMadeChange",
+        "unverifiableCriterion",
+        "personChecklistItem",
+        "accept",
+        "acceptRefused",
+        "roundsUsedUp",
+        "splitIncomplete",
+        "blocked",
+        "failed",
+        "reopened",
+        "outage"
+      ]
+    },
+    "observation": {
+      "$comment": "The change as the host reads it: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way.",
+      "type": "object",
+      "properties": {
+        "changeId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "conflicts": {
+          "type": "boolean"
+        },
+        "merged": {
+          "type": "boolean"
+        },
+        "empty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "changeId",
+        "version",
+        "conflicts",
+        "merged",
+        "empty"
+      ]
+    }
+  }
+}

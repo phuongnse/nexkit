@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/results/implement.schema.json",
+  "$comment": "The implement stage's result. `no_change` is the finding only when no file changed because no change is needed.",
+  "type": "object",
+  "properties": {
+    "status": {
+      "enum": [
+        "done",
+        "blocked"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "blocker": {
+      "type": "string"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recommended": {
+            "type": "integer"
+          },
+          "closes": {
+            "type": "integer"
+          },
+          "replans": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "question",
+          "options",
+          "recommended",
+          "closes",
+          "replans"
+        ]
+      }
+    },
+    "checks_run": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "testing": {
+      "type": "string"
+    },
+    "outside_plan": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reviewer_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "no_change": {
+      "type": "string",
+      "description": "Only when you changed no file because no change is needed: the finding and its evidence. Otherwise an empty string, always in a round that changes files; notes on what you did or skipped go in outside_plan or reviewer_notes."
+    }
+  },
+  "required": [
+    "status",
+    "summary",
+    "checks_run",
+    "changes",
+    "testing"
+  ]
+}

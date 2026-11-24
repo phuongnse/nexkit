@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/actionLost.schema.json",
+  "$comment": "An action the host started never reported, with `changeVersion` as actionFinished has it, with what it is known to have spent: tokens, seconds and US dollars, each null when not known.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "actionLost"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "action": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "changeVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tokens": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/tokens"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "seconds": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "usd": {
+      "type": [
+        "number",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "id",
+    "item",
+    "at",
+    "action",
+    "changeVersion",
+    "tokens",
+    "seconds",
+    "usd"
+  ]
+}

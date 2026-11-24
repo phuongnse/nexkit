@@ -1,0 +1,9 @@
+{
+  "protocol": 1,
+  "kind": "blockerClosed",
+  "id": "d-blockerClosed-1",
+  "item": "42",
+  "at": "2026-11-23T15:01:11Z",
+  "blocker": "41",
+  "completed": true
+}

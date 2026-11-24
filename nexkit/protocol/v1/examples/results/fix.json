@@ -1,0 +1,13 @@
+{
+  "status": "done",
+  "summary": "Fix the failing test.",
+  "blocker": "",
+  "questions": [],
+  "checks_run": [
+    "python3 -m unittest"
+  ],
+  "protected_paths": [],
+  "cause": "The test read a stale fake issue.",
+  "cause_outside": false,
+  "open_conflicts": []
+}

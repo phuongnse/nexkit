@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/accept.result.schema.json",
+  "$comment": "The result of accept, in actionFinished.",
+  "type": "object",
+  "properties": {
+    "accepted": {
+      "type": "boolean"
+    },
+    "refusal": {
+      "anyOf": [
+        {
+          "enum": [
+            "transient",
+            "waitingForChecks",
+            "checkFailed",
+            "behind",
+            "headMoved",
+            "conflict",
+            "notAccepted",
+            "needsPerson"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "accepted",
+    "refusal",
+    "text"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "protocol": 1,
+  "kind": "dropRequested",
+  "id": "d-dropRequested-1",
+  "item": "42",
+  "at": "2026-11-23T15:01:11Z",
+  "by": {
+    "id": "octocat",
+    "role": "decides"
+  },
+  "reason": "No longer needed."
+}

@@ -1,0 +1,12 @@
+{
+  "protocol": 1,
+  "kind": "changeObserved",
+  "id": "d-changeObserved-1",
+  "item": "42",
+  "at": "2026-11-23T15:01:11Z",
+  "changeId": "308",
+  "version": "5a54e2b",
+  "conflicts": false,
+  "merged": false,
+  "empty": false
+}

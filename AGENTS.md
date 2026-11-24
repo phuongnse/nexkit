@@ -16,6 +16,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `context.py`, `evidence.py`, `agent.py`, `prompts/` | `agent` and `review`: context, CI runs' evidence, prompt, agent run, patch |
 | `runtimes/` | Everything specific to one CLI or model provider |
 | `schema.py`, `redact.py`, `runlog.py` | Result validation, secret removal, log and run summary |
+| `protocol/` | The engine's protocol as JSON Schemas (`v1/`), stage result schemas included, with an example of each; see [The engine](docs/engine.md) |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py`, `cache.py` | Setup and checks with `NEXKIT_BASE_SHA`/`NEXKIT_VERIFIED_SHA`; the keys of cache restore and of the `cache/` action |
 | `report.py`, `state.py`, `progress.py` | Statuses, review, run and state comments and their markers |

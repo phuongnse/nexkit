@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/policies.schema.json",
+  "$comment": "A host's policies, which come with every call, as docs/engine.md#what-a-host-decides lists them. A policy left out takes its default, NexKit 6's on GitHub without autopilot. These are the policies the engine decides with so far; the page says which are not in this version yet.",
+  "type": "object",
+  "properties": {
+    "planApproval": {
+      "enum": [
+        "person",
+        "autoWhenClean"
+      ],
+      "default": "person"
+    },
+    "reviewAfterFailingChecks": {
+      "enum": [
+        "always",
+        "onlyAfterPassing"
+      ],
+      "default": "always"
+    },
+    "accept": {
+      "enum": [
+        "person",
+        "autoWhenPassed"
+      ],
+      "default": "person"
+    },
+    "fixRounds": {
+      "$comment": "How many fix rounds run before a person decides, from 0 to 10.",
+      "type": "integer",
+      "default": 2,
+      "minimum": 0,
+      "maximum": 10
+    },
+    "whenRoundsRunOut": {
+      "enum": [
+        "person",
+        "failed"
+      ],
+      "default": "person"
+    },
+    "conflicts": {
+      "enum": [
+        "person",
+        "resolve",
+        "redo"
+      ],
+      "default": "person"
+    },
+    "conflictRounds": {
+      "$comment": "How many rounds may resolve conflicts, when `conflicts` is resolve, from 1 to 10.",
+      "type": "integer",
+      "default": 3,
+      "minimum": 1,
+      "maximum": 10
+    },
+    "splits": {
+      "$comment": "Whether an approved plan that is too large and names its parts is split into them.",
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": []
+}

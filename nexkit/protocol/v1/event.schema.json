@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/event.schema.json",
+  "$comment": "Any event.",
+  "anyOf": [
+    {
+      "$ref": "events/actionFinished.schema.json"
+    },
+    {
+      "$ref": "events/actionLost.schema.json"
+    },
+    {
+      "$ref": "events/answered.schema.json"
+    },
+    {
+      "$ref": "events/blockerClosed.schema.json"
+    },
+    {
+      "$ref": "events/changeApproved.schema.json"
+    },
+    {
+      "$ref": "events/changeObserved.schema.json"
+    },
+    {
+      "$ref": "events/changesRequested.schema.json"
+    },
+    {
+      "$ref": "events/commented.schema.json"
+    },
+    {
+      "$ref": "events/created.schema.json"
+    },
+    {
+      "$ref": "events/dropRequested.schema.json"
+    },
+    {
+      "$ref": "events/held.schema.json"
+    },
+    {
+      "$ref": "events/partEnded.schema.json"
+    },
+    {
+      "$ref": "events/planApproved.schema.json"
+    },
+    {
+      "$ref": "events/released.schema.json"
+    },
+    {
+      "$ref": "events/reopened.schema.json"
+    },
+    {
+      "$ref": "events/requested.schema.json"
+    },
+    {
+      "$ref": "events/stopped.schema.json"
+    },
+    {
+      "$ref": "events/textChanged.schema.json"
+    },
+    {
+      "$ref": "events/tick.schema.json"
+    }
+  ]
+}

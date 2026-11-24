@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/planApproved.schema.json",
+  "$comment": "A person approves the plan, or a split: the plan that `plan` names. An approval of another plan changes nothing.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "planApproved"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "by": {
+      "$ref": "../common.schema.json#/$defs/person"
+    },
+    "plan": {
+      "$ref": "../common.schema.json#/$defs/planRef"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "id",
+    "item",
+    "at",
+    "by",
+    "plan"
+  ]
+}

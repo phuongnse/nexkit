@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/runAgent.schema.json",
+  "$comment": "Run one agent session for a stage, on `changeVersion` of the change, or with no change when null. `result` names the stage's result schema; `inputs` name what `prompt` needs.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "kind": {
+      "const": "runAgent"
+    },
+    "next": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stage": {
+      "$ref": "../common.schema.json#/$defs/stage"
+    },
+    "changeVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "access": {
+      "enum": [
+        "none",
+        "read",
+        "write"
+      ]
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "item",
+          "discussion",
+          "notes",
+          "plan",
+          "previousPlan",
+          "rounds",
+          "checks",
+          "findings",
+          "linked",
+          "evidence",
+          "parts",
+          "diff"
+        ]
+      }
+    },
+    "result": {
+      "type": "string"
+    },
+    "agent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "effort": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "tokens": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "seconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "tokens",
+        "seconds",
+        "usd"
+      ]
+    },
+    "session": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resume": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "next",
+    "stage",
+    "changeVersion",
+    "access",
+    "inputs",
+    "result",
+    "agent",
+    "model",
+    "effort",
+    "budget",
+    "session",
+    "resume"
+  ]
+}

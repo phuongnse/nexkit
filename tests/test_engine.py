@@ -8,6 +8,7 @@ import io
 import json
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -21,12 +22,31 @@ EXAMPLES = protocol.ROOT / "examples"
 # What each module of the engine may import, and the modules of NexKit those import in turn,
 # with relative imports resolved. Nothing here reads the network or the clock: `machine`
 # reads nothing, `nexkit.protocol` reads only its own schemas, which ship inside the `nexkit`
-# package, and `nexkit.engine.cli` reads only standard input. Any other import fails the test.
+# package, `nexkit.engine.cli` reads only standard input, and `nexkit.engine.serve`, the program
+# around the engine as `cli` is, only the requests that come to its socket. Nothing imports
+# either of those two but `cli`. Any other import fails the test.
 ALLOWED = {
     "nexkit": set(),
     "nexkit.engine.machine": {"__future__", "copy", "nexkit.schema"},
-    "nexkit.engine": {"__future__", "nexkit", "nexkit.protocol", "nexkit.engine.machine"},
-    "nexkit.engine.cli": {"__future__", "json", "sys", "nexkit.engine"},
+    "nexkit.engine": {
+        "__future__",
+        "json",
+        "re",
+        "nexkit",
+        "nexkit.protocol",
+        "nexkit.engine.machine",
+    },
+    "nexkit.engine.cli": {"__future__", "sys", "nexkit.engine", "nexkit.engine.serve"},
+    "nexkit.engine.serve": {
+        "__future__",
+        "argparse",
+        "signal",
+        "socket",
+        "sys",
+        "traceback",
+        "http.server",
+        "nexkit.engine",
+    },
     "nexkit.schema": {"__future__", "string"},
     "nexkit.protocol": {"__future__", "functools", "json", "pathlib", "nexkit.schema"},
 }
@@ -85,10 +105,27 @@ def impurities(module, source=None):
     return found
 
 
+class LargeRequestTest(unittest.TestCase):
+    def test_a_large_request_that_breaks_the_protocol_is_refused_fast_and_briefly(self):
+        # About 1 MiB, the most serve reads: a crowded outbox, and a long array of wrong items.
+        start = json.loads((EXAMPLES / "state" / "planning.json").read_text())
+        for field, items in (("pending", [{}] * 340_000), ("parts", [{}] * 250_000)):
+            with self.subTest(field=field):
+                state = {**start, field: items}
+                held = json.loads((EXAMPLES / "events" / "held.json").read_text())
+                held["item"] = state["item"]
+                data = json.dumps(request(state=state, event=held))
+                began = time.monotonic()
+                answer = engine.reply("step", data.encode())
+                self.assertLess(time.monotonic() - began, 5)
+                self.assertLess(len(answer["error"]), 2000)
+                self.assertIn(f"request.state.{field}", answer["error"])
+
+
 class ProgramTest(unittest.TestCase):
     def run_program(self, text):
         out = io.StringIO()
-        code = cli.main(["step"], io.StringIO(text), out)
+        code = cli.main(["step"], io.BytesIO(text.encode()), out)
         return code, json.loads(out.getvalue())
 
     def test_the_same_request_gives_the_same_answer(self):
@@ -130,7 +167,7 @@ class ProgramTest(unittest.TestCase):
 
     def test_describe_says_which_protocol_the_engine_speaks(self):
         out = io.StringIO()
-        code = cli.main(["describe"], io.StringIO('{"protocol": 1}'), out)
+        code = cli.main(["describe"], io.BytesIO(b'{"protocol": 1}'), out)
         answer = json.loads(out.getvalue())
         self.assertEqual(code, 0)
         self.assertEqual(protocol.check(answer, "calls/describe.answer.schema.json"), [])
@@ -231,6 +268,8 @@ class PurityTest(unittest.TestCase):
             "from .. import github, gitutil",
             "from ..agent import run_stage",
             "from . import cli",
+            "from . import serve",
+            "from .serve import Handler",
             "import os.path",
         ):
             with self.subTest(line=line):

@@ -188,32 +188,54 @@ def allowed(policies, had_change):
 
 
 def run_program(request):
-    """The program's answer to `request`, as text."""
+    """The program's answer to `request`, as text. It reads standard input as bytes."""
     out = io.StringIO()
-    cli.main(["step"], io.StringIO(json.dumps(request)), out)
+    cli.main(["step"], io.BytesIO(json.dumps(request).encode()), out)
     return out.getvalue()
+
+
+def cases():
+    return sorted(path for path in CASES.glob("*.json") if path.name != "fixtures.json")
+
+
+def play(case):
+    """Each step of a case with the state it starts from and the request the suite sends,
+    which the program answers with `text`. The next step starts from the answer's state,
+    unless the step expects an error."""
+    policies = case["policies"]
+    state = start_of(case)
+    for number, step in enumerate(case["steps"], 1):
+        policies = step.get("policies", policies)
+        request = {
+            "protocol": 1,
+            "call": "step",
+            "state": state,
+            "event": event_of(step["event"], state, number),
+            "policies": policies,
+        }
+        text = run_program(request)
+        yield number, step, request, text
+        if "error" not in step:
+            state = json.loads(text)["state"]
+
+
+def every_request():
+    """Every request the suite sends, case by case."""
+    for path in cases():
+        for _, _, request, _ in play(json.loads(path.read_text())):
+            yield request
 
 
 class ConformanceTest(unittest.TestCase):
     def run_case(self, path, seen, dropped):
         case = json.loads(path.read_text())
-        policies = case["policies"]
         state = start_of(case)
         if state is not None:
             self.assertEqual(protocol.check(state, "state.schema.json"), [], path.stem)
         open_ = {action["id"]: action for action in (state or {}).get("pending", [])}
-        for number, step in enumerate(case["steps"], 1):
+        for number, step, request, text in play(case):
             where = f"{path.stem} step {number} ({step['event']['kind']})"
-            policies = step.get("policies", policies)
-            event = event_of(step["event"], state, number)
-            request = {
-                "protocol": 1,
-                "call": "step",
-                "state": state,
-                "event": event,
-                "policies": policies,
-            }
-            text = run_program(request)
+            state, event, policies = request["state"], request["event"], request["policies"]
             self.assertEqual(run_program(request), text, f"{where}: the same request")
             answer = json.loads(text)
             if "error" in step:
@@ -259,7 +281,6 @@ class ConformanceTest(unittest.TestCase):
                 seen.add(pair)
             if event["kind"] == "dropRequested" and answer["changed"]:
                 dropped.add(state["state"])
-            state = new
 
     def check_outbox(self, open_, event, answer, where):
         """The pending actions after `answer`: each action it gives is pending, whole, and
@@ -282,7 +303,7 @@ class ConformanceTest(unittest.TestCase):
 
     def test_the_cases(self):
         seen, dropped = set(), set()
-        paths = sorted(path for path in CASES.glob("*.json") if path.name != "fixtures.json")
+        paths = cases()
         self.assertTrue(paths)
         for path in paths:
             with self.subTest(case=path.stem):

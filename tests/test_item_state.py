@@ -470,17 +470,26 @@ class FailingChecksSizeTest(unittest.TestCase):
 
     def test_the_largest_state_with_the_failing_checks_is_shortened_to_fit(self):
         state = largest()
-        name = worst(LONGEST["check"])
         rounds = state["rounds"]
-        rounds["failing"] = [{"check": name, "signature": "sha256:" + "f" * 64}] * MOST["failing"]
-        rounds["repeated"] = [name] * MOST["repeated"]
+        rounds["failing"] = ["f" * 12] * MOST["failing"]
+        rounds["repeated"] = [worst(LONGEST["check"])] * MOST["repeated"]
         rounds["fixed"] = "f" * 40
         self.assertEqual(protocol.check(state, "state.schema.json"), [])
         found = fit(copy.deepcopy(state))
         self.assertIsNotNone(found)
         self.assertLessEqual(size(found), STATE_LIMIT)
-        for key in ("failing", "repeated", "fixed"):
-            self.assertEqual(found["rounds"][key], rounds[key])
+        self.assertEqual(found["rounds"]["failing"], rounds["failing"])
+        self.assertEqual(found["rounds"]["fixed"], rounds["fixed"])
+        # Only the names past those a diagnosis round looks into are shortened.
+        self.assertEqual(found["rounds"]["repeated"][:10], rounds["repeated"][:10])
+
+    def test_nexkit_s_own_names_of_repeated_checks_are_kept_whole(self):
+        state = largest()
+        rounds = state["rounds"]
+        rounds["failing"] = ["f" * 12] * MOST["failing"]
+        rounds["repeated"] = ["c" * 40] * MOST["repeated"]
+        found = fit(copy.deepcopy(state))
+        self.assertEqual(found["rounds"]["repeated"], rounds["repeated"])
 
 
 if __name__ == "__main__":

@@ -22,10 +22,7 @@
           "test"
         ],
         "failing": [
-          {
-            "check": "test",
-            "signature": "FAIL A"
-          }
+          "9e6d8cb93a58"
         ]
       },
       "attention": {

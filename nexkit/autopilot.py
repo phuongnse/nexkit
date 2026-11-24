@@ -1479,10 +1479,11 @@ def settle(gh, step):
                 )
 
 
-def _conflict_wait(gh, cfg, pull, rounds):
+def _conflict_wait(gh, cfg, pull, rounds, details=None):
     """Why a pull request that conflicts with its base branch waits for a person, or None:
-    without `conflicts.auto_resolve`, or when its automatic conflict rounds are used up."""
-    details = gh.pull(pull)
+    without `conflicts.auto_resolve`, or when its automatic conflict rounds are used up.
+    `details` is the pull request as already read, else it is read now."""
+    details = details if details is not None else gh.pull(pull)
     if details.get("mergeable") is not False:
         return None
     base = (details.get("base") or {}).get("ref") or "its base branch"
@@ -1623,10 +1624,9 @@ def _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details
         reason = f"{gone}, and pull request #{pull} no longer conflicts, so it is checked"
         return _step(issue, "start", reason, command="review", **review)
     if ends == "waits":
-        waits = _conflict_wait(gh, cfg, pull, rounds)
-        if not waits:
-            return _step(issue, "waits", refused_reason("It waits for a person, for no reason."))
-        return _step(issue, "waits", waits)
+        # Why, from the same read of the pull request that the engine decided on: GitHub may
+        # say otherwise a moment later while it works out the conflict again.
+        return _step(issue, "waits", _conflict_wait(gh, cfg, pull, rounds, details))
     base = (details.get("base") or {}).get("ref") or ""
     fields = {**start, "target": pull, "auto": "conflicts", "note": conflict_note(base)}
     reason = f"{gone}, so pull request #{pull} gets the round that resolves its conflicts"

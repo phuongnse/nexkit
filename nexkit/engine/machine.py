@@ -10,7 +10,16 @@ from __future__ import annotations
 
 import copy
 
-from ..protocol.size import LONGEST, MOST, STATE_LIMIT, clip, fit, signature
+from ..protocol.size import (
+    DIAGNOSES,
+    LONGEST,
+    MOST,
+    STATE_LIMIT,
+    clip,
+    failure_key,
+    fit,
+    signature,
+)
 from ..schema import filled
 
 FINAL = ("accepted", "noChange", "dropped")
@@ -73,8 +82,6 @@ TIMED = ("time", "usageLimit", "requiredChecks")
 COUNTING = ("fixing", "checking", "reviewing")
 # How many event ids the state keeps, to take each event once.
 RECENT = 20
-# The most checks a diagnosis round looks into (`state.repeated_failures`).
-DIAGNOSES = 10
 # A host's policies when it leaves one out: NexKit 6's on GitHub without autopilot, as
 # `policies.schema.json` gives each as its default (docs/engine.md#what-a-host-decides).
 DEFAULTS = {
@@ -535,6 +542,10 @@ class Step:
         if self.state in CONFLICT_AT_ONCE:
             return False
         running = any(a["kind"] in WORK for a in self.s["pending"])
+        if not running:
+            # Nothing of an automatic fix round stops: its count stands, as when a conflict
+            # round takes over, while a stop of its checks gives it back (`move`).
+            self.s["rounds"].pop("automatic", None)
         if self.state == "checking" and not running:
             return False
         self.move("checking")
@@ -675,8 +686,10 @@ class Step:
             if not change or not self.takes_request(("new", "ready", "failed")):
                 return False
             self.s["rounds"].pop("automatic", None)
-            # Its checks, and a conflict found before them, follow the policies given now.
+            # Its checks, and a conflict found before them, follow the policies given now. It
+            # leaves `ready` and its attention even when a hold keeps the conflict policy back.
             self.s["policies"], self.p = {}, self.given
+            self.move("checking")
             self.check()
         elif what == "retry" and state == "failed":
             if self.review_only and not change:
@@ -1368,22 +1381,20 @@ class Step:
             self.next_fix()
 
     def repeats(self, failing):
-        """Keep the failing checks with their signatures, and, for the checks of a fix round,
-        which of them failed with the same signature before it: the next automatic fix round
-        diagnoses those first (`report._report`'s `feedback.repeated`). A check named twice
-        counts by its last result."""
+        """Keep the failing checks, each by the digest of its name and signature, and, for the
+        checks of a fix round, which of them failed with the same signature before it: the
+        next automatic fix round diagnoses those first (`report._report`'s
+        `feedback.repeated`). A check that fails twice in one result counts by its last
+        failing result."""
         rounds = self.s["rounds"]
-        before = {item["check"]: item["signature"] for item in rounds.pop("failing", [])}
-        now = {
-            clip(check["name"], "check"): signature(check["signature"] or check["name"])
-            for check in failing
-        }
+        before = set(rounds.pop("failing", []))
+        now = {check["name"]: check["signature"] or check["name"] for check in failing}
+        now = {name: failure_key(name, text) for name, text in now.items()}
         after_fix = rounds.pop("fixed", None) == self.version
-        repeated = [name for name, found in now.items() if after_fix and before.get(name) == found]
-        kept = [{"check": name, "signature": found} for name, found in now.items()]
+        repeated = [clip(name, "check") for name, key in now.items() if after_fix and key in before]
         rounds.pop("repeated", None)
-        if kept:
-            rounds["failing"] = kept[: MOST["failing"]]
+        if now:
+            rounds["failing"] = list(now.values())[: MOST["failing"]]
         if repeated:
             rounds["repeated"] = repeated[: MOST["repeated"]]
 

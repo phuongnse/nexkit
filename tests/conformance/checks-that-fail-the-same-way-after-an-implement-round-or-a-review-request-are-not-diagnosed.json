@@ -215,7 +215,9 @@
         "runAgent"
       ],
       "expect": {
-        "rounds.failing.0.signature": "FAIL A"
+        "rounds.failing": [
+          "9e6d8cb93a58"
+        ]
       }
     },
     {

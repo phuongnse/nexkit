@@ -146,23 +146,25 @@ needed.
   signatures, counts, and the tokens, time and money its agents spent. Long texts, such as a
   plan's prose, check output, a discussion and evidence, stay with the host as texts that the
   state names, and reach the engine only in `prompt`.
-- **It has a size.** The protocol sets the largest state document: 48,000 bytes as JSON in
-  UTF-8 with its keys sorted and no spaces, so that its base64 fits one GitHub comment of
-  65,536 characters. What results and events bring is bounded as it comes in. Each list keeps
-  at most as many items as `maxItems` in its schema says: 10 questions of 6 options each, 20
-  protected paths, 10 split parts, each needing only earlier parts, 30 findings with the
-  blocking ones first, 30 failure signatures, and 50 criteria and 50 checklist answers with
-  those a decision reads first. A split of more parts keeps none of them, only how many it
-  named, so a split is never filed cut. Each text is clipped as NexKit 6 clips it: a question
-  at 1,500 characters, an option at 500, the item's title and a part's at 256, a path at 300, a
-  finding at 300 and a reason for a person at 1,000. A long failure signature is kept as its
-  hash, never cut, because rounds compare signatures. When a document would still pass the
-  limit, the engine shortens texts that a person reads in full where the host keeps them, each
-  to the most that fits, in this order: the findings, the questions and their options, the
-  protected paths and the attention's text. It never shortens a count, a status, an id, a title
-  or a signature, which decisions read, and a host that builds a first document keeps it the
-  same way. The engine never answers a state that its own schema refuses, such as an outbox past
-  its `maxItems` when a host never reports its actions: it refuses that event instead.
+- **It has a size.** The protocol sets the largest state document: 48,000 bytes as JSON in UTF-8
+  with its keys sorted and no spaces, so that its base64 fits one GitHub comment of 65,536
+  characters. What results and events bring is bounded as it comes in. Each list keeps at most as
+  many items as `maxItems` in its schema says: 10 questions of 6 options each, 20 protected paths,
+  10 split parts, each needing only earlier parts, 30 findings with the blocking ones first, 30
+  failure signatures, 300 failing checks, each kept as a 12-digit digest of its name and signature,
+  150 checks that repeated, and 50 criteria and 50 checklist answers with those a decision reads
+  first. A split of more parts keeps none of them, only how many it named, so a split is never filed
+  cut. Each text is clipped as NexKit 6 clips it: a question at 1,500 characters, an option at 500,
+  the item's title and a part's at 256, a path at 300, a finding at 300, a reason for a person at
+  1,000 and a check's name at 40, as long as NexKit's own may be. A long failure signature is kept
+  as its hash, never cut, because rounds compare signatures. When a document would still pass the
+  limit, the engine shortens texts that a person reads in full where the host keeps them, each to
+  the most that fits, in this order: the findings, the questions and their options, the protected
+  paths, the attention's text, and the names of repeated checks past the ten that a diagnosis round
+  looks into, which no name of NexKit's own ever needs. It never shortens a count, a status, an id,
+  a title or a signature, which decisions read, and a host that builds a first document keeps it the
+  same way. The engine never answers a state that its own schema refuses, such as an outbox past its
+  `maxItems` when a host never reports its actions: it refuses that event instead.
 - **It is the truth.** A host may keep columns or markers that copy parts of it, for its own
   lists and pages, written in the same transaction, but the engine reads only the document.
 
@@ -333,19 +335,19 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   policy decides, and a hold keeps the engine's accept back until it ends. A required check
   that fails at the accept (`checkFailed`) leads to a fix round as a failing check of the round
   does, waiting while it fails as the base branch does, which the accept's result says.
-- **Diagnosis rounds.** The checks keep each failing check with its failure signature. When
-  a check of the checks after a fix round fails with the same signature as in the checks
-  before it, the fix round did not find its cause, so the next automatic fix round looks into
-  that cause first: its `runAgent` names those checks in `diagnose`, as NexKit 6's `route`
-  makes it a diagnosis round. The checks after an implement round, a person's push or a
-  person's request for a review are no fix round's, so nothing repeats in them; a conflict
-  round is a fix round, and its checks compare too. Only an automatic fix round diagnoses, and
-  so does the same round run again after a wait; a person's fix round, a conflict round and
-  the round that the engine's answers run again name no check. A fix round that waits for the
-  base branch's failure forgets what repeated, since that failure is the base branch's, and a
-  round whose change conflicts at its publish runs no checks, so the checks after the next
-  round have none of it to compare with. A hold keeps a diagnosis round back as any fix
-  round, and it diagnoses when it runs.
+- **Diagnosis rounds.** The checks keep each failing check by a digest of its name and failure
+  signature, at most 300 of them, which 15 checks of 20 shards each reach. When a check of the
+  checks after a fix round fails with the same signature as in the checks before it, the fix round
+  did not find its cause, so the next automatic fix round looks into that cause first: its
+  `runAgent` names those checks in `diagnose`, as NexKit 6's `route` makes it a diagnosis round, the
+  first ten of them as NexKit 6 does. The checks after an implement round, a person's push or a
+  person's request for a review are no fix round's, so nothing repeats in them; a conflict round is
+  a fix round, and its checks compare too. Only an automatic fix round diagnoses, and so does the
+  same round run again after a wait; a person's fix round, a conflict round and the round that the
+  engine's answers run again name no check. A fix round that waits for the base branch's failure
+  forgets what repeated, since that failure is the base branch's, and a round whose change conflicts
+  at its publish runs no checks, so the checks after the next round have none of it to compare with.
+  A hold keeps a diagnosis round back as any fix round, and it diagnoses when it runs.
 - **While a fix round waits** for a hold or the base branch, a person's push is checked, and so
   is a person's request for a review; a person's request for a fix runs that fix. The round
   that waited no longer waits, and none of these counts: the checks and the review that follow
@@ -423,7 +425,9 @@ Three things sit beside the state, never in place of it:
   action the host lost (`outage`).
 - **Hold:** nothing new starts by itself: the sweep's start waits, while a person's own request
   still runs, as NexKit 6's hold label does. A step that runs finishes and records what it held
-  back.
+  back. A request that would lead to the conflict policy's work, such as a person's request for a
+  review of a change that conflicts, is taken but that work still waits: the hold wins, and the item
+  waits in `checking` until it ends.
 - **Wait:** the next step waits for something named: a request to start (`start`); a time, such
   as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has

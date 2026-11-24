@@ -1,0 +1,53 @@
+{
+  "policies": {
+    "conflicts": "resolve"
+  },
+  "state": {
+    "example": "ready",
+    "set": {
+      "hold": true,
+      "attention": {
+        "reason": "accept",
+        "text": "The change passed, and a person decides its accept.",
+        "ref": null
+      },
+      "observed": {
+        "changeId": "308",
+        "version": "5a54e2b",
+        "conflicts": true,
+        "merged": false,
+        "empty": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "state": "checking",
+        "attention": null,
+        "pending": []
+      }
+    },
+    {
+      "event": {
+        "kind": "released"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.conflicts": 1,
+        "pending.-1.stage": "fix"
+      }
+    }
+  ]
+}

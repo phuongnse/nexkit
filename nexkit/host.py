@@ -61,7 +61,7 @@ import json
 
 from . import autopilot, engine, first_state
 from .checks import failing_signatures
-from .protocol.size import LONGEST, MOST, clip, signature
+from .protocol.size import LONGEST, MOST, failure_key
 from .report import TOO_LARGE
 from .schema import filled
 from .state import (
@@ -1122,10 +1122,9 @@ def round_ended(
 
 def _failing(recorded):
     """The engine's `rounds.failing` for checks as the state comment recorded them: each
-    failing check with its signature (`checks.failing_signatures`)."""
+    failing check by the digest of its name and signature (`checks.failing_signatures`)."""
     return [
-        {"check": clip(name, "check"), "signature": signature(found or name)}
-        for name, found in failing_signatures(recorded).items()
+        failure_key(name, found or name) for name, found in failing_signatures(recorded).items()
     ][: MOST["failing"]]
 
 
@@ -1248,7 +1247,10 @@ def conflicting(cfg, decision, pr, head, held, used):
     conflicts with its base branch's tip, as `publish` found, so that its checks and review
     did not run, as the engine decides it (`report._skipped_conflicting`): `round`, the
     round that resolves the conflict; `held` while a label `held` the issue, which keeps it
-    back; or `used_up` when its `used` conflict rounds leave none. Raises `Refused`."""
+    back; or `used_up` when its `used` conflict rounds leave none, or when
+    `conflicts.auto_resolve` is off. `publish` finds a conflict only with it on, so that
+    answer comes only when the configuration changed between the two jobs, where NexKit 6
+    started the round all the same. Raises `Refused`."""
     number = decision["issue"]
     stage = "fix" if decision["action"] == "fix" else "implement"
     before = {"id": str(pr), "version": str(decision.get("head"))} if stage == "fix" else None

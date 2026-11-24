@@ -464,33 +464,21 @@
           "const": true
         },
         "failing": {
-          "$comment": "The checks that failed in the latest checks, each with its failure signature, kept as the signatures are: the checks after a fix round compare with them. Left out when none failed.",
+          "$comment": "The checks that failed in the latest checks, each as a short digest of its name and failure signature (`protocol.size.failure_key`): the checks after a fix round compare with them. Left out when none failed.",
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "check": {
-                "type": "string"
-              },
-              "signature": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "check",
-              "signature"
-            ],
-            "additionalProperties": false
+            "type": "string",
+            "pattern": "^[0-9a-f]{12}$"
           },
-          "maxItems": 30
+          "maxItems": 300
         },
         "repeated": {
-          "$comment": "The checks that failed with the same signature before and after the latest fix round, by name: the next automatic fix round diagnoses them first (`runAgent`'s `diagnose`). Left out when none did.",
+          "$comment": "The checks that failed with the same signature before and after the latest fix round, by name: the next automatic fix round diagnoses the first ten (`runAgent`'s `diagnose`). Left out when none did.",
           "type": "array",
           "items": {
             "type": "string"
           },
-          "maxItems": 30
+          "maxItems": 150
         },
         "fixed": {
           "$comment": "The version of the change that a fix round published, until its checks end: those checks are compared with the ones before it.",

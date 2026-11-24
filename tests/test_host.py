@@ -7,6 +7,7 @@ import json
 from unittest import mock
 
 from nexkit import autopilot, engine, host, item_state
+from nexkit.checks import recorded
 from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person, report
 from nexkit.route import route
 from nexkit.state import (
@@ -778,6 +779,56 @@ class RoundEndTest(ReportCase):
         self.assertNotIn("repeated", found["feedback"])
 
 
+class ManyChecksTest(ReportCase):
+    """The checks that repeat are found however many checks a pull request runs, and a
+    diagnosis round looks into the first ten, as in NexKit 6."""
+
+    def checks(self, failing):
+        return [
+            {
+                "name": f"c{n:02}",
+                "run": f"make c{n}",
+                "exit_code": 1 if n in failing else 0,
+                "passed": n not in failing,
+                "output": f"FAIL test_{chr(97 + n % 26)}{chr(97 + n // 26)}"
+                if n in failing
+                else "",
+            }
+            for n in range(40)
+        ]
+
+    def round_with(self, before, after, d):
+        state = {**empty_state(5), "feedback": {"head": "b" * 40, "review": None}}
+        state["feedback"]["checks"] = recorded(self.checks(before))
+        self.gh.comment(6, render_state(state))
+        self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
+        self.write("nexkit-checks", "checks.json", self.checks(after))
+        self.write("nexkit-review", "result.json", review_result())
+        self.run_report(d=d)
+        return read_state(self.gh.comments(6))[1]["feedback"].get("repeated")
+
+    def fix(self, **kw):
+        return decision("fix", pr=6, target=6, head=HEAD, **kw)
+
+    def test_checks_past_the_thirtieth_that_fail_the_same_way_are_found(self):
+        repeated = self.round_with(range(40), (32, 33, 34, 35), self.fix(auto=True))
+        self.assertEqual(repeated, ["c32", "c33", "c34", "c35"])
+        event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
+        found = route(self.gh, "workflow_dispatch", event, event["inputs"])
+        self.assertEqual(found["diagnose"], ["c32", "c33", "c34", "c35"])
+
+    def test_a_diagnosis_round_looks_into_the_first_ten_of_more(self):
+        repeated = self.round_with(range(40), range(5, 40), self.fix(auto=True))
+        self.assertEqual(repeated, [f"c{n:02}" for n in range(5, 40)])
+        event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
+        found = route(self.gh, "workflow_dispatch", event, event["inputs"])
+        self.assertEqual(found["diagnose"], [f"c{n:02}" for n in range(5, 15)])
+
+    def test_a_person_s_fix_round_s_checks_compare_too(self):
+        repeated = self.round_with((3,), (3,), self.fix())
+        self.assertEqual(repeated, ["c03"])
+
+
 class ConflictingTest(ReportCase):
     """A round whose change conflicts with its base branch, and a hold on its conflict
     round, follow the engine."""
@@ -855,3 +906,21 @@ class DiagnosisTest(HostCase):
             self.assertNotIn(
                 "diagnose", route(self.gh, "workflow_dispatch", event, event["inputs"])
             )
+
+
+class HeldConflictReleasedTest(HostCase):
+    """A held conflict round released waits for a person by the read the engine decided on,
+    though GitHub says otherwise a moment later while it works the conflict out again."""
+
+    def test_the_reason_comes_from_the_same_read(self):
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5, head_sha="c" * 40)
+        self.gh.pulls[6]["mergeable"] = True
+        details = {**self.gh.pull(6), "mergeable": False}
+        cfg = make_config(conflicts={"auto_resolve": False})
+        run = {"head": "c" * 40, "held_back": "conflicts"}
+        step = autopilot._conflicts_released(
+            self.gh, cfg, self.gh.issue(5), 6, run, [], {}, details
+        )
+        self.assertEqual(step["state"], "waits")
+        self.assertIn("auto_resolve", step["reason"])

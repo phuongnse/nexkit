@@ -1557,10 +1557,20 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now):
     """The step once no label holds an issue any more whose pull request's round held
     back its merge, its automatic fix round or its conflict round (`HELD`): that, now, for
     what is still so. A head that moved meanwhile, such as by a person's own commit, gets
-    `/nexkit review` instead, as does a conflict that is gone."""
+    `/nexkit review` instead, as does a conflict that is gone. The engine decides what
+    follows a held merge or fix round (`host.released`): the fix round is counted only now,
+    while `fix.max_auto_rounds` has one left. An issue whose next step the engine refuses
+    to decide waits for a person, alone."""
+    from .host import Refused, refused_reason
+
     back = run.get("held_back")
     gone = "the label that held it is gone"
     if back == "merge":
+        try:
+            # `_merge_step` reads the head, and reviews one that moved.
+            _held_end(cfg, issue, pull, run, pull_comments, run.get("head"))
+        except Refused as error:
+            return _step(issue, "waits", refused_reason(error))
         step = _merge_step(gh, cfg, issue, pull, comment, run, start, now)
         if step["state"] == "merge":
             step["reason"] = f"{gone}, so autopilot merges pull request #{pull}"
@@ -1568,31 +1578,58 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now):
     details = gh.pull(pull)
     head = (details.get("head") or {}).get("sha")
     review = {**start, "target": pull, "auto": "true"}
-    if head != run.get("head"):
-        reason = f"{gone}, and pull request #{pull} got the new commit `{str(head)[:7]}`"
-        return _step(issue, "start", reason, command="review", **review)
-    rounds = [r for _, r in run_comments(pull_comments) if "round" in r]
+    moved = f"{gone}, and pull request #{pull} got the new commit `{str(head)[:7]}`"
     if back == "conflicts":
-        # `maintain` imports this module.
-        from .maintain import conflict_note
-
-        if details.get("mergeable") is not False:
-            reason = f"{gone}, and pull request #{pull} no longer conflicts, so it is checked"
-            return _step(issue, "start", reason, command="review", **review)
-        waits = _conflict_wait(gh, cfg, pull, rounds)
-        if waits:
-            return _step(issue, "waits", waits)
-        base = (details.get("base") or {}).get("ref") or ""
-        fields = {**start, "target": pull, "auto": "conflicts", "note": conflict_note(base)}
-        reason = f"{gone}, so pull request #{pull} gets the round that resolves its conflicts"
-        return _step(issue, "start", reason, command="fix", **fields)
-    _, state = read_state(pull_comments)
-    if (state or {}).get("auto_fixes", 0) >= cfg["fix"]["max_auto_rounds"]:
+        return _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details)
+    try:
+        ends = _held_end(cfg, issue, pull, run, pull_comments, head)
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+    if ends == "review":
+        return _step(issue, "start", moved, command="review", **review)
+    if ends == "used_up":
         do = f"comment `/nexkit fix` on pull request #{pull} for what still fails"
         return _step(issue, "waits", person(do, f"{gone}, but it has no automatic fix rounds left"))
     fields = {**start, "target": pull, "auto": "true", "count": True}
     reason = f"{gone}, so pull request #{pull} gets the automatic fix round it held back"
     return _step(issue, "start", reason, command="fix", **fields)
+
+
+def _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details):
+    """The step once no label holds an issue whose pull request's round held back its
+    conflict round: the round, now, while the pull request still conflicts and a conflict
+    round is left; `/nexkit review` of a head that moved or that no longer conflicts."""
+    # `maintain` imports this module.
+    from .maintain import conflict_note
+
+    gone = "the label that held it is gone"
+    head = (details.get("head") or {}).get("sha")
+    review = {**start, "target": pull, "auto": "true"}
+    if head != run.get("head"):
+        reason = f"{gone}, and pull request #{pull} got the new commit `{str(head)[:7]}`"
+        return _step(issue, "start", reason, command="review", **review)
+    if details.get("mergeable") is not False:
+        reason = f"{gone}, and pull request #{pull} no longer conflicts, so it is checked"
+        return _step(issue, "start", reason, command="review", **review)
+    rounds = [r for _, r in run_comments(pull_comments) if "round" in r]
+    waits = _conflict_wait(gh, cfg, pull, rounds)
+    if waits:
+        return _step(issue, "waits", waits)
+    base = (details.get("base") or {}).get("ref") or ""
+    fields = {**start, "target": pull, "auto": "conflicts", "note": conflict_note(base)}
+    reason = f"{gone}, so pull request #{pull} gets the round that resolves its conflicts"
+    return _step(issue, "start", reason, command="fix", **fields)
+
+
+def _held_end(cfg, issue, pull, run, pull_comments, head):
+    """What the engine answers once the label that held back the merge or the automatic fix
+    round of `pull` is gone (`host.released`). `head` is the pull request's head now, which
+    a held merge reads in `_merge_step` instead. Raises `host.Refused`."""
+    from .host import released
+
+    _, state = read_state(pull_comments)
+    found = (state or {}).get("auto_fixes", 0)
+    return released(cfg, issue["number"], pull, run, head, found)
 
 
 def _refused_step(gh, issue, pull, comment, run):
@@ -3572,14 +3609,22 @@ def ci_wait_over(gh, wait):
 def _ci_step(gh, cfg, issue, pull, run, pull_comments, start):
     """The step for a pull request whose round waits for a bug issue about the default
     branch: it waits while the wait lasts, then gets the automatic fix round it waited
-    for, which merges the base branch and counts toward `fix.max_auto_rounds`."""
+    for, which merges the base branch and counts toward `fix.max_auto_rounds`, as the
+    engine decides once the wait ends (`host.base_passes`). An issue whose next step the
+    engine refuses to decide waits for a person, alone."""
+    from .host import Refused, base_passes, refused_reason
+
     wait = run.get("ci_wait") or {}
     over = ci_wait_over(gh, wait)
     if over is None:
         reason = f"pull request #{pull} {ci_wait_reason(wait)}"
         return _step(issue, "waits", reason, person=False, ci_bug=wait["bug"])
     _, state = read_state(pull_comments)
-    if (state or {}).get("auto_fixes", 0) >= cfg["fix"]["max_auto_rounds"]:
+    try:
+        ends = base_passes(cfg, issue["number"], pull, run, (state or {}).get("auto_fixes", 0))
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+    if ends == "used_up":
         do = f"comment `/nexkit fix` on pull request #{pull} for its failing checks"
         reason = person(do, f"{over}, but it has no automatic fix rounds left")
         return _step(issue, "waits", reason)
@@ -3589,9 +3634,9 @@ def _ci_step(gh, cfg, issue, pull, run, pull_comments, start):
 
 
 def _count_round(gh, pull):
-    """Count the automatic fix round a pull request waited for, as `report` counts one it
-    starts, and end the wait in its state comment. Returns what takes that back, or None
-    when there is no state comment."""
+    """Count the automatic fix round a pull request waited for, which the engine counts when
+    it starts it (`host.released`, `host.base_passes`), and end the wait in its state
+    comment. Returns what takes that back, or None when there is no state comment."""
     comment_id, state = read_state(gh.comments(pull))
     if not state:
         return None

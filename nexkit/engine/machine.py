@@ -69,6 +69,8 @@ WRITES = ("publish", "replaceChange", "accept", "createParts")
 ROUND = ("working", "fixing", "checking", "reviewing")
 # The waits that a tick ends: those for a time.
 TIMED = ("time", "usageLimit", "requiredChecks")
+# The states of a fix round: a count it took stands only once its review ends.
+COUNTING = ("fixing", "checking", "reviewing")
 # How many event ids the state keeps, to take each event once.
 RECENT = 20
 # A host's policies when it leaves one out: NexKit 6's on GitHub without autopilot, as
@@ -209,6 +211,11 @@ class Step:
             self.p = self.given
         kept = () if name in FINAL else ("blocker",)
         self.s["waits"] = [wait for wait in self.s["waits"] if wait["for"] in kept]
+        # A fix round that waited to be issued no longer waits once the item moves, and a
+        # counted fix round ends once the item leaves its states.
+        self.s["rounds"].pop("due", None)
+        if name not in COUNTING:
+            self.s["rounds"].pop("automatic", None)
         self.s["state"] = name
         self.s["attention"] = None
         # A round's questions wait only while the item does, after the round that asked.
@@ -227,10 +234,23 @@ class Step:
         self.actions = [item for item in self.actions if item["id"] != action["id"]]
         if action["kind"] == "runAgent" and action["stage"] in ("implement", "fix"):
             self.s["rounds"]["started"] -= 1
+        self.give_back(action)
 
     def cancel(self, action):
         self.s["pending"].remove(action)
         self.do("cancel", action=action["id"])
+        self.give_back(action)
+
+    def give_back(self, action):
+        """An automatic fix round that the engine stops before its review ends gives its count
+        back: it can no longer lead to an accept, and its work was not judged
+        (`report._stop_round`, `maintain._give_back`)."""
+        rounds = self.s["rounds"]
+        work = action["kind"] in ("runChecks", "publish") or (
+            action["kind"] == "runAgent" and action["stage"] in ("fix", "review")
+        )
+        if work and rounds.pop("automatic", None):
+            rounds["counted"] = max(rounds["counted"] - 1, 0)
 
     def wait(self, kind, on=None):
         self.waits += 1
@@ -317,12 +337,12 @@ class Step:
         self.do("createParts", parts=parts)
 
     def next_fix(self):
-        """The checks or the review fail: an automatic fix round, counted, while one is left
+        """The checks or the review fail: an automatic fix round while one is left
         (`report._report`). A fix round that changed nothing is not run again, since another
-        could only change nothing too. A counted round waits while the base branch has the
-        same failure, for the item about it to close, since a fix here would only fix that
-        again; and while a hold is on, as nothing new starts by itself. Either starts it when
-        it ends, as the same round."""
+        could only change nothing too. The round waits while the base branch has the same
+        failure, for the item about it to close or the base to pass again, since a fix here
+        would only fix that again; and while a hold is on, as nothing new starts by itself
+        (`due`). It is counted when its run is issued (`issue_fix`)."""
         rounds = self.s["rounds"]
         if rounds.get("recheck") == self.version:
             if self.conflicted():
@@ -332,17 +352,34 @@ class Step:
             self.need("roundsUsedUp", text)
             return
         if rounds["counted"] < self.p["fixRounds"]:
-            rounds["counted"] += 1
             base = rounds.get("baseFailure")
             self.move("fixing")
+            rounds["due"] = True
             if base:
-                rounds["started"] += 1
                 self.wait("baseFailure", base)
-            elif self.s["hold"]:
-                rounds["started"] += 1
-            else:
-                self.run("fix")
+            elif not self.s["hold"]:
+                self.issue_fix()
             return
+        self.used_up()
+
+    def issue_fix(self, fresh=False):
+        """Issue the automatic fix round that is due, counted now, while `fixRounds` has one
+        left; otherwise a person decides. `fresh`: the round was kept back, so it starts with
+        the policies the host gives now, as NexKit 6 reads `fix.max_auto_rounds` again when
+        it starts it (`autopilot._released`, `_ci_step`)."""
+        rounds = self.s["rounds"]
+        rounds.pop("due", None)
+        if fresh:
+            self.s["policies"] = dict(self.given)
+            self.p = self.given
+        if rounds["counted"] >= self.p["fixRounds"]:
+            self.used_up()
+            return
+        rounds["counted"] += 1
+        rounds["automatic"] = True
+        self.run("fix")
+
+    def used_up(self):
         if self.conflicted():
             return
         self.move("failed" if self.p["whenRoundsRunOut"] == "failed" else "ready")
@@ -484,7 +521,9 @@ class Step:
         if self.held_back():
             return
         stage = next((stage for stage, name in RUNS.items() if name == self.state), None)
-        if stage:
+        if stage == "fix" and self.s["rounds"].get("due"):
+            self.issue_fix(fresh=True)
+        elif stage:
             self.run(stage, again=True)
         elif self.state == "checking":
             self.check()
@@ -536,7 +575,12 @@ class Step:
         if event["by"] is not None:
             # A person acted, so the engine may answer the next plan's questions again.
             self.forget_answers()
-        return self.requested(event)
+        if not self.requested(event):
+            return False
+        # A request starts work anew: what a fix round that changed nothing left is no longer
+        # the last word on its version (`report._report` reads `recheck` of a fix round only).
+        self.s["rounds"].pop("recheck", None)
+        return True
 
     def take_place(self, event):
         """The item's title and how deep a part it is, as `created` gives them and a request
@@ -580,13 +624,16 @@ class Step:
                 self.s["plan"]["approved"] = True
             self.start_change()
         elif what == "fix":
-            if self.review_only or not change or state not in ("ready", "failed"):
+            if self.review_only or not change or not self.takes_request(("ready", "failed")):
                 return False
+            # A round of its own, with the policies given now.
+            self.s["policies"] = {}
             self.move("fixing")
             self.run("fix")
         elif what == "review":
-            if not change or state not in ("new", "ready", "failed"):
+            if not change or not self.takes_request(("new", "ready", "failed")):
                 return False
+            self.s["policies"] = {}
             self.check()
         elif what == "retry" and state == "failed":
             if self.review_only and not change:
@@ -601,6 +648,15 @@ class Step:
         else:
             return False
         return True
+
+    def takes_request(self, states):
+        """Whether a person's fix or review request is taken: in `states`, or in `fixing`
+        while no run is pending there, as when a fix round waits for a hold or the base
+        branch: NexKit 6 runs a person's command then."""
+        if self.state in states:
+            return True
+        busy = ("runAgent", "publish", "replaceChange")
+        return self.state == "fixing" and not any(a["kind"] in busy for a in self.s["pending"])
 
     def splits(self, plan):
         """Whether `plan` is split into its parts: only an item with no change is, since a
@@ -710,6 +766,7 @@ class Step:
     def on_changesRequested(self, event):
         if self.state != "ready" or not self.s["change"] or self.review_only:
             return False
+        self.s["rounds"].pop("recheck", None)
         self.move("fixing")
         self.run("fix")
         return True
@@ -1172,6 +1229,8 @@ class Step:
 
     def finished_review(self, output, number):
         rounds = self.s["rounds"]
+        # The round's review ended, so its count stands.
+        rounds.pop("automatic", None)
         if self.review_only:
             # A person's own change is only checked and reviewed: it waits for its next request.
             self.move("ready")
@@ -1250,6 +1309,14 @@ class Step:
             self.close("completed")
         elif result["refusal"] == "conflict":
             self.on_conflict_found()
+        elif result["refusal"] == "checkFailed":
+            # A required check failed at the accept: a fix round, as after the round's own
+            # checks, which waits while that failure is the base branch's
+            # (`report._required_failed`). Not a recheck: those checks are not the round's.
+            rounds = self.s["rounds"]
+            rounds["baseFailure"] = result.get("baseFailure") or None
+            rounds.pop("recheck", None)
+            self.next_fix()
         elif result["refusal"] == "notAccepted":
             self.move("failed")
             self.need("failed", result["text"] or "The accept failed.")

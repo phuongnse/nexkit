@@ -141,8 +141,8 @@
       "split": []
     },
     "rounds": {
-      "started": 2,
-      "counted": 2,
+      "started": 1,
+      "counted": 1,
       "conflicts": 0,
       "signatures": [
         "test_close: AssertionError"
@@ -151,7 +151,8 @@
       "criteria": [
         "unmet"
       ],
-      "checklist": []
+      "checklist": [],
+      "due": true
     },
     "used": {
       "tokens": {

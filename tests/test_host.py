@@ -9,7 +9,14 @@ from unittest import mock
 from nexkit import autopilot, engine, host, item_state
 from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person
 from nexkit.route import route
-from nexkit.state import PLAN_MARKER, answers_marker, plan_data_record, questions, render_run
+from nexkit.state import (
+    PLAN_MARKER,
+    answers_marker,
+    plan_data_record,
+    questions,
+    render_run,
+    render_state,
+)
 from tests.support import BOT_LOGIN, make_config
 from tests.test_autopilot import AutopilotCase, pilot
 from tests.test_report import ReportCase, review_result
@@ -593,3 +600,95 @@ class StoppedTest(HostCase):
         self.assertTrue(carries_on(go, "agent_error", timed_out=True))
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             self.assertFalse(carries_on(go, "agent_error", timed_out=True))
+
+
+class WaitEndTest(HostCase):
+    """The end of a round's wait for a hold label or for the base branch's failure is the
+    engine's answer, which the sweep carries out in NexKit 6's words: the fix round that
+    waited is counted only when it starts."""
+
+    def waiting(self, used, **fields):
+        """Issue 5's pull request 6, its automatic fix rounds `used`, and a round that waits."""
+        self.issue(5)
+        self.plan(5)
+        self.run_comment(5, "go", outcome="pr_opened")
+        self.gh.add_pull(6, 5, head_sha="c" * 40)
+        state = {"version": 2, "issue": 5, "auto_fixes": used, "feedback": None}
+        if fields.get("ci_wait"):
+            state["ci_wait"] = fields["ci_wait"]
+        self.gh.comment(6, render_state(state))
+        self.gh.round_comment(6, 1, "c" * 40, "failed", action="fix", kinds=["auto"], **fields)
+
+    def test_a_held_fix_round_is_counted_only_when_it_runs(self):
+        self.waiting(1, outcome="held", held_back="fix")
+        [request] = self.requests(5)
+        self.assertEqual(request["event"]["kind"], "released")
+        state = request["state"]
+        self.assertEqual((state["rounds"]["counted"], state["rounds"]["due"]), (1, True))
+        step = self.step(5)
+        self.assertEqual((step["state"], step["command"], step["count"]), ("start", "fix", True))
+        # `fix.max_auto_rounds` lowered while it waited: a person decides, as NexKit 6 does.
+        step = self.step(5, pilot_with(fix={"max_auto_rounds": 1}))
+        self.assertEqual(step["state"], "waits")
+        self.assertIn("it has no automatic fix rounds left", step["reason"])
+
+    def test_a_head_pushed_while_the_label_held_it_is_reviewed(self):
+        self.waiting(2, outcome="held", held_back="fix")
+        self.gh.pulls[6]["head"]["sha"] = "d" * 40
+        kinds = [request["event"]["kind"] for request in self.requests(5)]
+        self.assertEqual(kinds, ["changeObserved", "released"])
+        step = self.step(5)
+        self.assertEqual((step["state"], step["command"]), ("start", "review"))
+
+    def test_the_base_failure_wait_ends_as_the_engine_answers(self):
+        wait = {"bug": 77, "workflow": "ci.yml", "branch": "main", "run": 50}
+        self.waiting(0, outcome="ci_waiting", ci_wait=wait)
+        with mock.patch.object(autopilot, "ci_wait_over", return_value="#77 is closed"):
+            [request] = self.requests(5)
+            self.assertEqual(
+                (request["event"]["kind"], request["event"]["blocker"]),
+                (
+                    "blockerClosed",
+                    "77",
+                ),
+            )
+            step = self.step(5)
+            self.assertEqual((step["state"], step["command"]), ("start", "fix"))
+            step = self.step(5, pilot_with(fix={"max_auto_rounds": 0}))
+            self.assertEqual(step["state"], "waits")
+            self.assertIn("#77 is closed, but it has no automatic fix rounds left", step["reason"])
+        # While the wait lasts, nothing ends, and the engine hears nothing.
+        with mock.patch.object(autopilot, "ci_wait_over", return_value=None):
+            self.assertEqual(self.requests(5), [])
+
+    def test_a_wait_whose_end_the_engine_refuses_waits_for_a_person(self):
+        self.waiting(0, outcome="held", held_back="fix")
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            step = self.step(5)
+        self.assertEqual(step["state"], "waits")
+        self.assertIn("refused to decide", step["reason"])
+
+
+def pilot_with(**settings):
+    return make_config(autopilot={"enabled": True}, **settings)
+
+
+class CountTest(ReportCase):
+    """Which rounds count is the engine's: required checks that fail at the merge start a
+    counted round or wait, and an automatic fix round that NexKit stopped gives its count
+    back."""
+
+    def test_required_checks_that_fail_at_the_merge_follow_the_engine(self):
+        cfg = make_config(merge={"auto": True}, fix={"max_auto_rounds": 2})
+        wait = {"bug": 77, "workflow": "ci.yml", "branch": "main", "run": 50}
+        self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 1, None), "auto_fix")
+        self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 1, wait), "ci_waiting")
+        self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 2, wait), "needs_human")
+
+    def test_a_round_nexkit_stopped_gives_its_count_back_only_when_automatic(self):
+        head = "c" * 40
+        self.assertEqual(host.stopped_counts(5, 6, head, 2, True, True), 1)
+        self.assertEqual(host.stopped_counts(5, 6, head, 2, True, True, checking=True), 1)
+        # A person's round counts nothing, and an agent that stopped by itself keeps its count.
+        self.assertEqual(host.stopped_counts(5, 6, head, 2, False, True), 2)
+        self.assertEqual(host.stopped_counts(5, 6, head, 2, True, False), 2)

@@ -1,5 +1,5 @@
 {
-  "kind": "needs a person",
+  "kind": "held, label gone",
   "nexkit6": {
     "issue": {
       "number": 42
@@ -125,7 +125,7 @@
     "revision": 1,
     "item": "42",
     "itemKind": "change",
-    "state": "ready",
+    "state": "fixing",
     "change": {
       "id": "308",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
@@ -137,13 +137,16 @@
       "merged": false,
       "empty": false
     },
-    "attention": {
-      "reason": "roundsUsedUp",
-      "text": "The checks or the review still fail, and no fix round is left.",
-      "ref": null
-    },
+    "attention": null,
     "hold": false,
-    "waits": [],
+    "waits": [
+      {
+        "id": "w1.1",
+        "for": "start",
+        "until": null,
+        "on": null
+      }
+    ],
     "pending": [],
     "actors": {
       "plan": "engine",
@@ -175,7 +178,8 @@
       "criteria": [
         "unmet"
       ],
-      "checklist": []
+      "checklist": [],
+      "due": true
     },
     "used": {
       "tokens": {
@@ -196,12 +200,13 @@
     {
       "event": {
         "kind": "requested",
-        "what": "fix"
+        "what": "start",
+        "by": null
       },
-      "state": "fixing",
+      "state": "ready",
       "changed": true,
       "actions": [
-        "runAgent"
+        "needPerson"
       ]
     }
   ]

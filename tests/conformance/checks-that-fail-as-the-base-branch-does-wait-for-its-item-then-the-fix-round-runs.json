@@ -103,7 +103,8 @@
             "until": null
           }
         ],
-        "rounds.counted": 1
+        "rounds.counted": 0,
+        "rounds.due": true
       }
     },
     {

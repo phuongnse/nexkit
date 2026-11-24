@@ -912,13 +912,23 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
 
 
 def _give_back(gh, number, comments, run):
-    """An automatic fix round that NexKit stopped gives its `fix.max_auto_rounds` back."""
+    """An automatic fix round whose checks NexKit stopped gives its `fix.max_auto_rounds`
+    back, as the engine decides (`host.stopped_counts`). A conflict round, and a retried or
+    resumed one, counts toward no automatic fix round here."""
+    from .host import Refused, stopped_counts
+
     automatic = run_action(run) == "fix" and "auto" in run_kinds(run)
-    if not automatic or run.get("conflicts") or run.get("retry") or run.get("resumed"):
-        return
+    automatic = automatic and not (run.get("conflicts") or run.get("retry") or run.get("resumed"))
     state_id, state = read_state(comments)
-    if state and state.get("auto_fixes"):
-        state["auto_fixes"] -= 1
+    if not (state and state.get("auto_fixes")):
+        return
+    try:
+        found = state["auto_fixes"]
+        counted = stopped_counts(number, number, run.get("head"), found, automatic, True, True)
+    except Refused:
+        return
+    if counted != state["auto_fixes"]:
+        state["auto_fixes"] = counted
         progress.save_state(gh, number, state_id, state)
 
 

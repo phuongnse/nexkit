@@ -1,11 +1,13 @@
 """`nexkit-engine serve`: the same requests and answers as standard input, over HTTP, and no
 state between requests (docs/engine.md#the-parts)."""
 
+import concurrent.futures
 import contextlib
 import http.client
 import io
 import json
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -52,6 +54,23 @@ def send(port, path, body=b"", headers=None, method="POST"):
         connection.close()
 
 
+def send_raw(port, data):
+    """The status and body of the answer to `data` sent as it is, for what a client of the
+    standard library never sends."""
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+        connection.sendall(data)
+        answer = b""
+        while chunk := connection.recv(65536):
+            answer += chunk
+    head, _, body = answer.partition(b"\r\n\r\n")
+    return int(head.split()[1]), body
+
+
+def nested(depth):
+    """Arrays `depth` deep."""
+    return json.loads("[" * depth + "]" * depth)
+
+
 def on_standard_input(call, data):
     """The exit code and output of `nexkit-engine <call>` given `data` on standard input."""
     out = io.StringIO()
@@ -62,7 +81,7 @@ def on_standard_input(call, data):
 @contextlib.contextmanager
 def server_in_this_process():
     """`serve`'s server on a thread of this process, so a test can change what it calls."""
-    with serve.ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler) as httpd:
+    with serve.Server(("127.0.0.1", 0), serve.Handler) as httpd:
         thread = threading.Thread(target=httpd.serve_forever)
         thread.start()
         try:
@@ -124,6 +143,52 @@ class ServeTest(unittest.TestCase):
             self.assertEqual(answer["calls"], list(engine.CALLS))
             self.assertRefused(send(port, "/describe", b'{"protocol": 2}'), 400, "not 2")
 
+    def test_nesting_is_refused_alike_past_a_fixed_depth(self):
+        # Beyond the bound the program and the server would each stop where their own stack
+        # ends, which differs; within it, the protocol's documents nest less than ten deep.
+        request = next(r for r in every_request() if r["state"] and r["state"]["pending"])
+
+        def under_a_pending_action(depth):
+            """The request with arrays under an extra key of a pending action, `depth` deep
+            in all, or deeper when the extra arrays alone are."""
+            for inner in range(1, depth + 1):
+                changed = json.loads(json.dumps(request))
+                changed["state"]["pending"][0]["extra"] = nested(inner)
+                data = json.dumps(changed).encode()
+                if engine._depth(data) >= depth:
+                    return data
+            raise AssertionError(depth)
+
+        program = [sys.executable, str(ROOT / "bin" / "nexkit-engine"), "step"]
+        bound = engine.MAX_DEPTH
+        cases = {
+            under_a_pending_action(bound): False,
+            under_a_pending_action(bound + 1): True,
+            under_a_pending_action(490): True,
+            json.dumps(nested(bound)).encode(): False,
+            json.dumps(nested(bound + 1)).encode(): True,
+            json.dumps(nested(9995)).encode(): True,
+        }
+        with server() as port:
+            for data, refused in cases.items():
+                done = subprocess.run(program, input=data, capture_output=True, check=False)
+                status, body = send(port, "/step", data)
+                where = (engine._depth(data), data[:60])
+                self.assertEqual(body, done.stdout, where)
+                self.assertEqual(status, 400 if done.returncode else 200, where)
+                deep = f"it nests deeper than {bound}." in json.loads(body).get("error", "")
+                self.assertEqual(deep, refused, where)
+        self.assertEqual(engine._depth(b'[{"a": "[[{\\"[", "b": [1]}]'), 3)
+
+    def test_many_hosts_at_once_get_the_answers_of_standard_input(self):
+        texts = [json.dumps(request).encode() for request in every_request()][:64]
+        with server() as port, concurrent.futures.ThreadPoolExecutor(len(texts)) as pool:
+            answers = list(pool.map(lambda text: send(port, "/step", text), texts))
+        for text, (status, body) in zip(texts, answers, strict=True):
+            code, expected = on_standard_input("step", text)
+            self.assertEqual(body, expected)
+            self.assertEqual(status, 400 if code else 200)
+
     def test_one_request_to_two_processes_gets_one_answer(self):
         texts = [json.dumps(request) for request in every_request()]
         middle = len(texts) // 2
@@ -159,6 +224,31 @@ class ServeTest(unittest.TestCase):
             chunked = {"Transfer-Encoding": "chunked"}
             self.assertRefused(send(port, "/step", b"{}", headers=chunked), 411, "Content-Length")
             self.assertRefused(send(port, "/step", b"{"), 400, "not JSON")
+            # What the standard library refuses itself is an error answer too.
+            for method in ("TRACE", "CONNECT", "BREW"):
+                self.assertRefused(send(port, "/step", method=method), 501, "Unsupported method")
+            self.assertRefused(
+                send_raw(port, b"POST /step HTTP/1.x\r\n\r\n"), 400, "Bad request version"
+            )
+            too_many = b"".join(b"X-%d: 1\r\n" % n for n in range(200))
+            self.assertRefused(send_raw(port, b"POST /step HTTP/1.1\r\n" + too_many + b"\r\n"), 431)
+            # One Content-Length, with spaces around it or sent twice alike; never two.
+            describe = b'{"protocol": 1}'
+            head = b"POST /describe HTTP/1.1\r\nContent-Length: %s\r\n"
+            self.assertEqual(send_raw(port, head % b" 15 " + b"\r\n" + describe)[0], 200)
+            twice = head % b"15" + b"Content-Length: 15\r\n\r\n" + describe
+            self.assertEqual(send_raw(port, twice)[0], 200)
+            two = head % b"15" + b"Content-Length: 14\r\n\r\n" + describe
+            self.assertRefused(send_raw(port, two), 400, "more than one Content-Length")
+
+    def test_a_body_that_stops_coming_is_the_request_s_fault(self):
+        with (
+            mock.patch.object(serve.Handler, "timeout", 0.5),
+            mock.patch.object(serve.Handler, "log_message"),
+            server_in_this_process() as port,
+        ):
+            data = b"POST /step HTTP/1.1\r\nContent-Length: 100\r\n\r\n{}"
+            self.assertRefused(send_raw(port, data), 408, "did not all come in time")
 
     def test_a_failure_of_the_engine_is_answered(self):
         with (

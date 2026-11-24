@@ -52,10 +52,13 @@ without a change to any host, as long as the conformance suite passes.
 
 - **Over HTTP**, `POST /<call>` takes the request as its body and answers with the same JSON
   text as standard input: status `200`, or `400` when the engine refuses the request. Both read
-  the request as UTF-8. `serve` answers each request on its own and keeps nothing between them.
-  It refuses a body over 1 MiB or without a `Content-Length`, a method other than `POST` and a
-  call it does not know, each with an error answer (`calls/error.schema.json`) and its own
-  status. It listens on `127.0.0.1:8080` unless `--host` and `--port` say otherwise.
+  the request as UTF-8 and refuse one that nests deeper than 64 arrays and objects. An error
+  answer names at most 20 ways in which a request breaks the protocol. `serve` answers each
+  request on its own and keeps nothing between them. It refuses a body over 1 MiB, without one
+  `Content-Length` or that stops coming, a method other than `POST`, a call it does not know and
+  a request that HTTP does not allow. Each refusal is an error answer
+  (`calls/error.schema.json`) with its own status. It listens on `127.0.0.1:8080` unless
+  `--host` and `--port` say otherwise.
 - **Only for its host.** `serve` asks no one who they are, and does not limit how many clients
   connect or how slowly they send. Put it where only its host reaches it, such as the host's
   own machine or a private network beside it.

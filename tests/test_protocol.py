@@ -193,6 +193,26 @@ class ProtocolTest(unittest.TestCase):
             protocol.check(crowded, "state.schema.json"),
             ["value.recentEvents must hold at most 20 items"],
         )
+        # Past maxItems the items are not checked one by one; the state bounds its outbox.
+        self.assertEqual(
+            problems([{}, {}], {"maxItems": 1, "items": {"type": "string"}}),
+            ["result must hold at most 1 items"],
+        )
+        outbox = {**new, "pending": [{}] * 65}
+        self.assertEqual(
+            protocol.check(outbox, "state.schema.json"),
+            ["value.pending must hold at most 64 items"],
+        )
+        # check tells at most LIMIT problems, and stops looking soon after; without a limit,
+        # as an agent's result is checked, every problem is told.
+        many = {**new, "parts": [{}] * 1000}
+        found = protocol.check(many, "state.schema.json")
+        self.assertEqual(len(found), protocol.LIMIT + 1)
+        self.assertEqual(found[-1], "and more")
+        self.assertEqual(found[0], "value.parts[0].item is missing")
+        items = {"items": {"type": "string"}}
+        self.assertEqual(len(problems([1] * 30, items)), 30)
+        self.assertEqual(len(problems([1] * 30, items, limit=5)), 6)
         # An integer has no fraction written, deliberately (nexkit/schema.py).
         self.assertEqual(problems(1.0, {"type": "integer"}), ["result must be an integer"])
         self.assertEqual(problems(True, {"enum": [1, "1"]}), ["result must be one of 1, '1'"])

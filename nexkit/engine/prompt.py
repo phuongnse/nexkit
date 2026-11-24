@@ -1,10 +1,15 @@
-"""`prompt(state, stage, inputs) -> text`: the prompt of a stage, written from the texts the
-host fetched for it, with the limits each text keeps and the list of what was shortened or
-not read (docs/engine.md#the-engine).
+"""`prompt(state, stage, inputs, policies, texts) -> (text, shortened, notRead, files)`: the
+prompt of a stage, written from the texts the host fetched for it, with the limits each text
+keeps and the list of what was shortened or not read (docs/engine.md#the-engine).
 
 The host fetches; the engine writes. The inputs are named by kind, as `runAgent` names them
 (`machine.INPUTS`). Inside the engine they are snake_case, as NexKit's records are; the
 protocol's call sends them in camelCase, and `answer` converts them.
+
+A prompt is written in two parts, which `write` runs one after the other: `texts`, from what
+the host read about the work item, and `finish`, from what its round adds: the change's diff,
+the checks' results and the workspace. The GitHub host runs them in two jobs, since the job
+that reads GitHub holds a token and the one with the checkout holds none.
 
 A text that a prompt keeps only the start of goes whole to a file in the host's folder for
 texts, which the agent reads: the engine names the file in the prompt and answers its path
@@ -18,6 +23,7 @@ import re
 from importlib import resources
 from string import Template
 
+from .. import protocol
 from .text import (
     MAX_PARTS,
     SHARD,
@@ -53,12 +59,19 @@ PERSON_PLAN = "None: a person wrote this pull request."
 NO_EARLIER_FIXES = "None. This is the first fix round of this pull request."
 # How the prompts mark a checklist item that a person decides.
 PERSON_MARK = "(a person decides)"
-# The stages whose prompts answer `review.checklist`.
-CHECKLIST_STAGES = ("plan", "review")
+# The stages whose prompts answer `review.checklist`: those with a checklist result.
+CHECKLIST_STAGES = tuple(protocol.load("results/checklist.schema.json")["$defs"])
 COMMIT = re.compile(r"[0-9a-f]{40}")
-# The inputs a stage's prompt cannot be written without.
-NEEDS = {"triage": ("item",)}
-NEEDS_DEFAULT = ("item", "workspace")
+# The inputs a stage's prompt cannot be written without; `plan` may be null.
+NEEDS = {
+    "triage": ("item",),
+    "plan": ("item", "workspace"),
+    "implement": ("item", "plan", "workspace"),
+    "fix": ("item", "plan", "diff", "workspace"),
+    "review": ("item", "plan", "diff", "workspace"),
+}
+# What a file of whole texts may be named: anything else in a host's id becomes `-`.
+UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 @functools.cache
@@ -109,8 +122,9 @@ class Shelf:
         self.stored = []
         self.files = {}
 
-    def _path(self, name, text):
-        path = f"{self.folder}/{name}"
+    def _path(self, key, suffix, text):
+        # A key holds a host's ids, so it is cleaned: no file lands outside the folder.
+        path = f"{self.folder}/{UNSAFE.sub('-', key)}{suffix}"
         self.files[path] = text
         return path
 
@@ -120,13 +134,13 @@ class Shelf:
         or "" without a folder."""
         if not self.folder:
             return ""
-        path = self._path(f"{re.sub(r'[^A-Za-z0-9._-]+', '-', key)}.txt", text)
+        path = self._path(key, ".txt", text)
         self.stored.append(path)
         return path
 
     def _write(self, key, text):
         """The file that holds `text` whole, or "" without a folder."""
-        return self._path(f"{key}.md", text) if self.folder else ""
+        return self._path(key, ".md", text) if self.folder else ""
 
     def _note(self, item):
         if not any(known["key"] == item["key"] for known in self.cut):
@@ -506,12 +520,13 @@ def texts(stage, inputs, shelf):
             shown = discussion(on_item[:before], shelf=shelf)
             context["since_plan"] = discussion(on_item[before:], notes=True, shelf=shelf)
     current = rounds.get("current")
+    reviewed = previous_review(findings.get("last_review"), rounds.get("fixes"), current)
     if item.get("person"):
         # Its item is the change itself, with its description and comments, so the review
         # needs neither a plan nor the same discussion twice.
         shown = discussion(on_item, notes=True, shelf=shelf)
         context.update(person=True, plan=PERSON_PLAN)
-        context.update(previous_review(findings.get("review"), rounds.get("fixes"), current) or {})
+        context.update(reviewed or {})
     elif stage == "review" and item.get("change"):
         shown = (
             discussion(on_item, notes=True, shelf=shelf)
@@ -519,7 +534,7 @@ def texts(stage, inputs, shelf):
             + discussion(on_change, notes=True, shelf=shelf)
         )
         context["outside_plan"] = outside_plan(rounds.get("outside_plan"))
-        context.update(previous_review(findings.get("review"), rounds.get("fixes"), current) or {})
+        context.update(reviewed or {})
         if current and current.get("base"):
             context["merged"] = {
                 "head": current.get("head"),
@@ -622,7 +637,7 @@ def check_results_text(results, shelf=None):
     shelf = shelf or Shelf()
     lines = []
     for number, item in enumerate(results, 1):
-        state = "passed" if item["passed"] else f"FAILED (exit {item['exit_code']})"
+        state = "passed" if item["passed"] else f"FAILED (exit {item.get('exit_code')})"
         if item["passed"] and item.get("skipped"):
             # NexKit did not run it: no path it reads changed since it passed there.
             state = f"passed on `{item['skipped'][:7]}`; no path it reads changed since"
@@ -959,10 +974,12 @@ def extras(
 
 def triage_extras(context, profiles, previous):
     """The triage prompt's texts: the requests, the `profiles` to choose from, each
-    {name: when}, and the profile the `previous` plan used."""
+    {name: {when}}, and the profile the `previous` plan used."""
     return {
         "requests": context.get("requests") or context["discussion"],
-        "profiles": "\n".join(f"- `{name}`: {when.strip()}" for name, when in profiles.items()),
+        "profiles": "\n".join(
+            f"- `{name}`: {profile['when'].strip()}" for name, profile in profiles.items()
+        ),
         "previous": f"The latest plan of this issue used the profile `{previous}`."
         if previous
         else "None. This is the first plan of this issue with a profile.",
@@ -999,36 +1016,51 @@ def result_prompt(stage, wrong):
     return Template(template("result_again")).safe_substitute(stage=stage, wrong=wrong)
 
 
-def missing(stage, inputs):
-    """The inputs that a prompt of `stage` needs and `inputs` lacks."""
-    if inputs.get("unfit") is not None:
-        return []
-    return [kind for kind in NEEDS.get(stage, NEEDS_DEFAULT) if kind not in inputs]
+def missing(stage, inputs, policies):
+    """What a prompt of `stage` needs and the call lacks, as the protocol names it."""
+    found = [f"inputs.{kind}" for kind in NEEDS[stage] if kind not in inputs]
+    if stage == "plan" and _implement_seconds(policies) is None:
+        found.append("policies.budgets.implement.seconds")
+    return found
 
 
-def write(stage, inputs, policies=None, folder=None):
-    """The `prompt` call, on inputs in snake_case: {text, shortened, not_read, files}. The
-    prompt of `stage` from `inputs`, or with `unfit` the prompt that asks the same session
-    for its result alone. `folder` is where the host keeps the texts the prompt shortens;
-    `files` are those the host writes there before the agent runs."""
-    if inputs.get("unfit") is not None:
-        text = result_prompt(stage, inputs["unfit"])
-        return {"text": text, "shortened": [], "not_read": [], "files": []}
-    policies = policies or {}
+def _implement_seconds(policies):
+    return ((policies.get("budgets") or {}).get("implement") or {}).get("seconds")
+
+
+def settings(inputs, policies):
+    """What `build` reads beside the texts: the workspace's `checks` and `protected_paths`,
+    the implement stage's time and the host's `checklist`."""
     workspace = inputs.get("workspace") or {}
-    settings = {**workspace, "checklist": policies.get("checklist") or []}
-    shelf, outputs = Shelf(folder), Shelf(folder)
-    context = texts(stage, inputs, shelf)
+    seconds = _implement_seconds(policies)
+    return {
+        "checks": workspace.get("checks") or [],
+        "protected_paths": workspace.get("protected_paths") or [],
+        "implement_minutes": seconds // 60 if seconds is not None else None,
+        "checklist": policies.get("checklist") or [],
+    }
+
+
+def _keeps(inputs):
+    evidence = inputs.get("evidence") or {}
+    return {
+        "ci": (evidence.get("ci") or {}).get("keeps"),
+        "results": (evidence.get("results") or {}).get("keeps"),
+    }
+
+
+def finish(stage, context, inputs, policies, folder=None, keeps=None):
+    """The prompt of `stage` from what `texts` wrote, `context`, and what its round adds in
+    `inputs`: the `diff`, a review's `checks` and the `workspace`, with the `policies`.
+    {text, shortened, not_read, files}: `files` are the whole outputs of the checks a review
+    shows part of. `keeps` says what the host keeps of evidence, by default as its inputs
+    say."""
+    shelf = Shelf(folder)
     if stage == "triage":
         previous = (inputs.get("previous_plan") or {}).get("profile")
         extra = triage_extras(context, policies.get("profiles") or {}, previous)
     else:
         diff = inputs.get("diff") or {}
-        evidence = inputs.get("evidence") or {}
-        keeps = {
-            "ci": (evidence.get("ci") or {}).get("keeps"),
-            "results": (evidence.get("results") or {}).get("keeps"),
-        }
         extra = extras(
             stage,
             context,
@@ -1037,20 +1069,40 @@ def write(stage, inputs, policies=None, folder=None):
             since=diff.get("since"),
             merging=diff.get("merging"),
             sides=diff.get("sides"),
-            checks=(inputs.get("checks") or {}).get("results"),
-            keeps=keeps,
-            shelf=outputs,
+            checks=(inputs.get("checks") or {}).get("results") if stage == "review" else None,
+            keeps=keeps or _keeps(inputs),
+            shelf=shelf,
         )
     return {
-        "text": build(stage, context, settings, extra),
+        "text": build(stage, context, settings(inputs, policies), extra),
         "shortened": shortened_names(context),
         "not_read": list((context.get("linked") or {}).get("skipped") or []),
-        "files": [
-            {"path": path, "text": text} for path, text in {**shelf.files, **outputs.files}.items()
-        ],
+        "files": [{"path": path, "text": text} for path, text in shelf.files.items()],
     }
 
 
-def answer(stage, inputs, policies, folder=None):
-    """The `prompt` call's answer to inputs in the protocol's camelCase."""
-    return camel(write(stage, snake(inputs), policies, folder))
+def write(stage, inputs, policies=None, folder=None, unfit=None):
+    """The `prompt` call, on inputs in snake_case: {text, shortened, not_read, files}. The
+    prompt of `stage` from `inputs`, or, with `unfit`, the prompt that asks the same session
+    for its result alone. `folder` is where the host keeps the texts the prompt shortens;
+    `files` are those the host writes there before the agent runs."""
+    if unfit is not None:
+        text = result_prompt(stage, unfit)
+        return {"text": text, "shortened": [], "not_read": [], "files": []}
+    shelf = Shelf(folder)
+    context = texts(stage, inputs, shelf)
+    done = finish(stage, context, inputs, policies or {}, folder)
+    kept = [{"path": path, "text": text} for path, text in shelf.files.items()]
+    return {**done, "files": kept + done["files"]}
+
+
+def answer(request):
+    """The answer of the `prompt` call to a request in the protocol's camelCase."""
+    written = write(
+        request["stage"],
+        snake(request["inputs"]),
+        request["policies"],
+        request.get("texts"),
+        request.get("unfit"),
+    )
+    return camel(written)

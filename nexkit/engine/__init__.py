@@ -18,6 +18,12 @@ def answer(request):
         return _answer(request)
     except EngineError as error:
         return {"protocol": protocol.VERSION, "error": str(error)}
+    except Exception as error:  # noqa: BLE001 - a request the schemas let through
+        # An answer, never a crash: on standard input and over HTTP the host reads why.
+        return {
+            "protocol": protocol.VERSION,
+            "error": f"The engine could not answer: {type(error).__name__}: {error}",
+        }
 
 
 def reply(call, text):
@@ -65,12 +71,14 @@ def _result_problems(state, event):
 
 def _prompt(request, found):
     """The answer to a `prompt` call: the stage's prompt, from the texts the host fetched."""
-    if not found:
-        missing = prompt.missing(request["stage"], request["inputs"])
-        found = [f"request.inputs.{kind} is missing" for kind in missing]
+    if not found and request.get("unfit") is None:
+        found = [
+            f"request.{name} is missing"
+            for name in prompt.missing(request["stage"], request["inputs"], request["policies"])
+        ]
+        texts = request.get("texts")
+        if texts is not None and not texts.startswith("/"):
+            found.append("request.texts must be an absolute path")
     if found:
         raise EngineError("; ".join(found))
-    written = prompt.answer(
-        request["stage"], request["inputs"], request["policies"], request.get("texts")
-    )
-    return {"protocol": protocol.VERSION, **written}
+    return {"protocol": protocol.VERSION, **prompt.answer(request)}

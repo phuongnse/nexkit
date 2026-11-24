@@ -19,9 +19,6 @@ from pathlib import Path
 
 # What a prompt shows of a check is the engine's, as the prompts are.
 from .engine.text import FAILURE_LINE, FAILURE_LINES, OUTPUT_TAIL, SHARD, failing_lines
-from .engine.text import FAILURE_LINE_WIDTH as FAILURE_LINE_WIDTH
-from .engine.text import output_text as output_text
-from .engine.text import shown_command as shown_command
 from .gitutil import GitError, git, has_commit, is_ancestor
 from .gitutil import names as file_names
 from .globs import unaffected

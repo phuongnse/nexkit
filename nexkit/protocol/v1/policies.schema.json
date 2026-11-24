@@ -78,11 +78,151 @@
       }
     },
     "profiles": {
-      "$comment": "The profiles triage chooses from, each name with when it fits.",
+      "$comment": "The profiles triage chooses from: each name, with when it fits.",
       "type": "object",
       "additionalProperties": {
-        "type": "string"
+        "type": "object",
+        "properties": {
+          "when": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "when"
+        ]
       }
+    },
+    "budgets": {
+      "$comment": "What each stage may spend, by stage. The plan prompt names the implement stage's time.",
+      "type": "object",
+      "properties": {
+        "triage": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "usd": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "plan": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "usd": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "implement": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "usd": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "fix": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "usd": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "review": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "usd": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

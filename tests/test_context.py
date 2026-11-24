@@ -6,23 +6,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nexkit.agent import (
-    build_prompt,
-    check_results_text,
-    diagnosis_text,
-    evidence_text,
-    shortened_folders,
-    shortened_names,
-    shortened_text,
-)
+from nexkit.agent import shortened_folders
 from nexkit.checks import run_checks
-from nexkit.context import (
-    MAX_LINKED,
-    MAX_LINKED_ISSUES,
+from nexkit.context import MAX_LINKED, MAX_LINKED_ISSUES, gather
+from nexkit.engine.prompt import (
     NO_PLAN,
     PERSON_PLAN,
-    gather,
-    outside_plan,
+    check_results_text,
+    diagnosis_text,
+    shortened_names,
+    shortened_text,
 )
 from nexkit.github import GitHubError
 from nexkit.publish import pull_body
@@ -33,7 +26,14 @@ from nexkit.state import (
     render_run,
     render_state,
 )
-from tests.support import BOT_LOGIN, FakeGitHub, make_config
+from tests.support import (
+    BOT_LOGIN,
+    FakeGitHub,
+    build_prompt,
+    evidence_text,
+    make_config,
+    outside_plan,
+)
 
 HEAD = "d" * 40
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import checks
+from nexkit.engine import text as engine_text
 from nexkit.state import check_fingerprint
 from tests.support import GitRepos, git, make_config
 
@@ -860,7 +861,7 @@ class OutputTextTests(unittest.TestCase):
 
     def test_a_short_output_shows_whole_without_a_file(self):
         kept = []
-        text = checks.output_text({"output": "E1 bad\n"}, 100, 5, kept.append)
+        text = engine_text.output_text({"output": "E1 bad\n"}, 100, 5, kept.append)
         self.assertEqual(text, "Output:\n\n```\nE1 bad\n```")
         self.assertEqual(kept, [])
 
@@ -874,13 +875,13 @@ class OutputTextTests(unittest.TestCase):
             + "Tests: 3 failed\n"
         )
         kept = []
-        text = checks.output_text(
+        text = engine_text.output_text(
             {"output": output}, 200, 2, lambda whole: kept.append(whole) or "/t/x.txt"
         )
         self.assertEqual(kept, [output.rstrip()])
         lines, end = text.split("End of output")
         self.assertIn("(the first 2):", lines)
-        first = ("FAIL test 0 " + "x" * 400)[: checks.FAILURE_LINE_WIDTH]
+        first = ("FAIL test 0 " + "x" * 400)[: engine_text.FAILURE_LINE_WIDTH]
         self.assertIn(f"````\nError: ``` the first\n{first} […]\n````", lines)
         self.assertNotIn("FAIL test 1", text)
         self.assertNotIn("teardown", lines)
@@ -893,7 +894,7 @@ class OutputTextTests(unittest.TestCase):
         self.assertNotIn("Tests: 3 failed", lines)
 
     def test_without_a_file_or_a_failure_line_only_the_end_shows(self):
-        text = checks.output_text({"output": "x" * 300}, 100, 5)
+        text = engine_text.output_text({"output": "x" * 300}, 100, 5)
         self.assertEqual(
             text, f"End of output (the last 100 of 300 characters):\n\n```\n{'x' * 100}\n```"
         )
@@ -911,7 +912,9 @@ class OutputTextTests(unittest.TestCase):
         output = "FAIL late\n" + "teardown ok\n" * 1_000 + "1 failed"
         check = {"output": output, "failure_lines": ["FAIL early"]}
         kept = []
-        text = checks.output_text(check, 100, 5, lambda whole: kept.append(whole) or "/t/x.txt")
+        text = engine_text.output_text(
+            check, 100, 5, lambda whole: kept.append(whole) or "/t/x.txt"
+        )
         self.assertIn("(all):\n\n```\nFAIL early\nFAIL late\n```", text)
         self.assertIn(
             f"the output NexKit kept (its last {len(output):,} characters, with the lines "
@@ -922,20 +925,22 @@ class OutputTextTests(unittest.TestCase):
         self.assertTrue(whole.startswith("Lines before the output that NexKit kept"))
         self.assertIn("FAIL early", whole)
         self.assertTrue(whole.endswith(output))
-        text = checks.output_text(check, 100, 1)
+        text = engine_text.output_text(check, 100, 1)
         self.assertIn("(the first 1):\n\n```\nFAIL early\n```", text)
 
     def test_an_output_the_state_comment_shortened_says_so(self):
         check = {"output": "teardown ok\n1 failed", "output_cut": True, "failure_lines": ["FAIL a"]}
-        text = checks.output_text(check, 100, 5, lambda _: "/t/x")
+        text = engine_text.output_text(check, 100, 5, lambda _: "/t/x")
         self.assertIn("(the first 1):\n\n```\nFAIL a\n```", text)
         self.assertIn("the output NexKit kept (its last 20 characters, with the lines", text)
         self.assertNotIn("whole output", text)
-        text = checks.output_text({"output": "", "output_cut": True}, 100, 5)
+        text = engine_text.output_text({"output": "", "output_cut": True}, 100, 5)
         self.assertIn("left its output out of the state comment", text)
 
     def test_a_kept_tail_is_not_called_the_whole_output(self):
-        text = checks.output_text({"output": "x" * checks.OUTPUT_TAIL}, 100, 5, lambda _: "/t/x")
+        text = engine_text.output_text(
+            {"output": "x" * checks.OUTPUT_TAIL}, 100, 5, lambda _: "/t/x"
+        )
         self.assertIn("the output NexKit kept (its last 12,000 characters) is in `/t/x`", text)
 
 
@@ -1200,7 +1205,7 @@ class ShardTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         # A fix round's prompt shows how to run that shard alone.
         self.assertEqual(
-            checks.shown_command(result), 'NEXKIT_SHARD=2/3 echo "shard $NEXKIT_SHARD"'
+            engine_text.shown_command(result), 'NEXKIT_SHARD=2/3 echo "shard $NEXKIT_SHARD"'
         )
 
     def test_a_count_that_fails_or_is_out_of_range_fails_the_check_and_runs_no_shard(self):

@@ -51,7 +51,7 @@ def person_decides(item):
 
 def since_text(run):
     """Whether a newer run of a named run's workflow passed on the default branch, in words."""
-    name, branch, passed = run["workflow"], run["branch"], run.get("passed_since")
+    name, branch, passed = run["workflow"], run.get("branch"), run.get("passed_since")
     if not passed:
         return f"no newer run of `{name}` has passed on `{branch}` since"
     commit = f" at {passed['sha'][:7]}" if passed.get("sha") else ""

@@ -22,7 +22,7 @@ from unittest import mock
 
 from nexkit import agent, engine, protocol
 from nexkit.context import gather
-from nexkit.engine import cli, prompt
+from nexkit.engine import cli, prompt, serve, text
 from nexkit.engine.machine import INPUTS
 from nexkit.publish import pull_body
 from nexkit.state import answers_marker, empty_state, profile_record, render_state
@@ -454,6 +454,79 @@ def case_review_person(world):
     }
 
 
+def case_implement_linked(world):
+    gh = world.gh
+    gh.add_issue(3, title="Design review")
+    gh.comment(3, "<!-- nexkit:plan -->\n## Plan\n\nKeep tokens in `theme.css`.")
+    plan = gh.issue_comments[3][-1]
+    rule = gh.human_comment(3, "Rule: no inline colours.", login="olivia", association="OWNER")
+    gh.add_issue(4, title="The API", body="The API stays stable.", user="olivia")
+    gh.issues[4]["author_association"] = "OWNER"
+    gh.add_issue(7, title="Theme tokens", body="Tokens only.", user=BOT_LOGIN)
+    gh.add_pull(6, 7)
+    gh.issues[6].update(
+        title="Add tokens", body="<!-- nexkit -->Adds the tokens.", user={"login": BOT_LOGIN}
+    )
+    gh.issues[6]["pull_request"] = {"url": "https://api.github.com/repos/acme/app/pulls/6"}
+    gh.add_issue(
+        5,
+        title="Add a dark theme",
+        body=(
+            f"Follow (#issuecomment-{plan['id']}) and (#issuecomment-{rule['id']}), "
+            "keep #4, build on #6 and #7, and see #99."
+        ),
+    )
+    gh.comment(5, "<!-- nexkit:plan -->\n## Plan\n\nAdd a dark theme.")
+    return {"stage": "implement"}
+
+
+def case_implement_chain(world):
+    gh = world.gh
+    gh.add_issue(3, title="Eval everything", body="Root text nobody vouched for.", user="eve")
+    gh.human_comment(3, "Rule R: keep it small.", login="olivia", association="OWNER")
+    gh.add_issue(8, title="Power means", body="<!-- nexkit:part 3 -->\nTwo means.", user=BOT_LOGIN)
+    gh.human_comment(8, "Rule M: name them `*_mean`.", login="olivia", association="OWNER")
+    gh.add_issue(
+        9, title="Cubic mean", body="<!-- nexkit:part 8 -->\n`cubic_mean`.", user=BOT_LOGIN
+    )
+    gh.parents[8], gh.parents[9] = 3, 8
+    gh.comment(9, "<!-- nexkit:plan -->\n## Plan\n\nAdd `cubic_mean`.")
+    return {"stage": "implement", "decision": {"issue": 9}}
+
+
+def review_with_last(world, head):
+    gh = world.gh
+    world.repos.push_commit("dev", "nexkit/issue-5", {"calc.py": CALC + SUB}, "Add sub")
+    world.branch = "nexkit/issue-5"
+    gh.add_issue(5, title="Fix add", body="add() subtracts.")
+    gh.comment(5, "<!-- nexkit:plan -->\n## Plan\n\nChange add to return a + b.")
+    gh.add_pull(6, 5, head_sha=HEAD)
+    state = empty_state(5)
+    finding = {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Wrong sign"}
+    state["last_review"] = {
+        "round": 1,
+        "head": head,
+        "verdict": "request_changes",
+        "findings": [finding],
+    }
+    gh.comment(6, render_state(state))
+    return {"stage": "review", "decision": {"action": "fix", "pr": 6, "head": HEAD}, "checks": []}
+
+
+def case_review_since_unavailable(world):
+    return review_with_last(world, "e" * 40)
+
+
+def case_review_head_unknown(world):
+    return review_with_last(world, "not-a-commit")
+
+
+def case_triage_long(world):
+    world.gh.add_issue(5, title="Copy the files", body="B" * 70_000)
+    world.gh.human_comment(5, "/nexkit plan Use the hard profile.")
+    return {"stage": "triage", "cfg": profile_config(), "previous": None}
+
+
 CASES = {
     name.removeprefix("case_").replace("_", "-"): case
     for name, case in globals().items()
@@ -476,7 +549,7 @@ class Round:
             if found["previous"]:
                 decision["previous_profile"] = found["previous"]
         self.decision = decision
-        self.fetched, self.facts = {}, {}
+        self.fetched, self.added = {}, {}
 
     def run(self):
         """The prompt the round writes, as `prompt.md` keeps it."""
@@ -490,7 +563,7 @@ class Round:
             mock.patch.object(agent, "run_agent", side_effect=Stop),
             mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}),
             mock.patch.object(prompt, "texts", side_effect=self.texts),
-            mock.patch.object(prompt, "extras", side_effect=self.extras),
+            mock.patch.object(prompt, "finish", side_effect=self.finish),
         ):
             context = gather(
                 world.gh,
@@ -527,42 +600,26 @@ class Round:
         self.fetched = json.loads(json.dumps(inputs))
         return real(stage, inputs, shelf)
 
-    def extras(self, stage, context, real=prompt.extras, **facts):
-        self.facts = json.loads(json.dumps({k: v for k, v in facts.items() if k != "shelf"}))
-        return real(stage, context, **facts)
+    def finish(self, stage, context, inputs, policies, *rest, real=prompt.finish):
+        self.added = json.loads(json.dumps(inputs))
+        return real(stage, context, inputs, policies, *rest)
 
     def request(self):
-        """The `prompt` call with what the round fetched: from GitHub, the checkout and its
-        checks, and the configuration. Only the kinds that runAgent names for the stage."""
-        inputs = dict(self.fetched)
-        facts = self.facts
-        if self.stage != "triage":
-            inputs["diff"] = {
-                "base": facts["base"],
-                "text": facts.get("diff"),
-                "since": facts.get("since"),
-                "merging": facts.get("merging"),
-                "sides": facts.get("sides"),
-            }
-        if facts.get("checks") is not None:
-            inputs["checks"] = {"results": facts["checks"]}
-        settings = agent.settings(self.cfg)
-        inputs["workspace"] = {
-            key: settings[key] for key in ("checks", "protected_paths", "implement_minutes")
-        }
+        """The `prompt` call with what the round fetched: from GitHub, and from the checkout,
+        its checks and the configuration. Only the kinds that runAgent names for the stage."""
+        inputs = {**self.fetched, **self.added}
         inputs = {
             kind: value
             for kind, value in prompt.camel(inputs).items()
             if kind in INPUTS[self.stage]
         }
-        profiles = {name: p["when"] for name, p in self.cfg["profiles"].items()}
         return {
             "protocol": 1,
             "call": "prompt",
             "state": None,
             "stage": self.stage,
             "inputs": inputs,
-            "policies": {"checklist": settings["checklist"], "profiles": profiles},
+            "policies": agent.policies(self.cfg),
             "texts": str((self.world.out / "texts").resolve()),
         }
 
@@ -589,7 +646,7 @@ class NexKit6PromptTests(unittest.TestCase):
     def test_a_session_asked_again_for_its_result_gets_nexkit_6s_prompt(self):
         for stage, wrong in AGAIN.items():
             with self.subTest(stage):
-                text = agent.result_prompt(stage, wrong)
+                text = prompt.result_prompt(stage, wrong)
                 self.assertEqual(text, golden(f"result-again-{stage}", text))
 
 
@@ -614,7 +671,7 @@ class PromptCallTests(unittest.TestCase):
                     continue  # its round's comment names what the plan's prompt shortened
                 # What the round's comment names as shortened and not read.
                 self.assertEqual(
-                    answer["shortened"], prompt.camel(agent.shortened_names(round.context))
+                    answer["shortened"], prompt.camel(prompt.shortened_names(round.context))
                 )
                 linked = round.context.get("linked") or {}
                 self.assertEqual(answer["notRead"], linked.get("skipped") or [])
@@ -627,7 +684,8 @@ class PromptCallTests(unittest.TestCase):
                     "call": "prompt",
                     "state": None,
                     "stage": stage,
-                    "inputs": {"unfit": wrong},
+                    "inputs": {"item": {"id": 5, "title": "Fix add", "body": ""}},
+                    "unfit": wrong,
                     "policies": {},
                 }
                 answer = engine.answer(request)
@@ -671,10 +729,35 @@ class PromptProgramTests(unittest.TestCase):
         request = example()
         del request["inputs"]["workspace"]
         self.assertEqual(engine.answer(request)["error"], "request.inputs.workspace is missing")
-        request["inputs"] = {"notes": "x"}
-        triage = engine.answer({**request, "stage": "triage"})
-        self.assertEqual(triage["error"], "request.inputs.item is missing")
-        request["inputs"] = {"item": {"id": 1}}
+        for stage, needs in (
+            ("implement", ["plan"]),
+            ("fix", ["plan", "diff"]),
+            ("review", ["plan", "diff"]),
+        ):
+            with self.subTest(stage):
+                request = {**example(), "stage": stage}
+                request["inputs"] = {
+                    k: v for k, v in request["inputs"].items() if k not in ("plan", "diff")
+                }
+                error = engine.answer(request)["error"]
+                self.assertEqual(
+                    error, "; ".join(f"request.inputs.{kind} is missing" for kind in needs)
+                )
+        # A null plan is a plan the item does not have.
+        request = example()
+        request["inputs"]["plan"] = None
+        self.assertIn("No plan was posted", engine.answer(request)["text"])
+        request = {**example(), "stage": "plan"}
+        self.assertEqual(
+            engine.answer(request)["error"],
+            "request.policies.budgets.implement.seconds is missing",
+        )
+        request["policies"] = {"budgets": {"implement": {"seconds": 2700}}}
+        self.assertIn("45 minutes", engine.answer(request)["text"])
+        triage = {**example(), "stage": "triage", "inputs": {"notes": "x"}}
+        self.assertEqual(engine.answer(triage)["error"], "request.inputs.item is missing")
+        request = example()
+        request["inputs"]["item"] = {"id": 1}
         self.assertIn("request.inputs.item.title is missing", engine.answer(request)["error"])
 
     def test_the_kinds_of_inputs_are_one_list(self):
@@ -683,7 +766,131 @@ class PromptProgramTests(unittest.TestCase):
         self.assertEqual(kinds["enum"], list(named))
         for stage, needs in INPUTS.items():
             self.assertLessEqual(set(needs), set(named), stage)
-            self.assertLessEqual(set(prompt.NEEDS.get(stage, prompt.NEEDS_DEFAULT)), set(needs))
+            self.assertLessEqual({prompt.camel(k) for k in prompt.NEEDS[stage]}, set(needs))
+
+
+def minimal(schema, defs, option=0):
+    """The smallest value that fits `schema`: only its required fields, one item in each
+    list, and the `option`-th choice of the first `anyOf` that offers more than one."""
+    if "$ref" in schema:
+        ref = schema["$ref"]
+        if ref.startswith("#/$defs/"):
+            return minimal(defs[ref.removeprefix("#/$defs/")], defs, option)
+        return "2026-11-23T15:01:11Z"  # the protocol's time, the one outside reference
+    if "anyOf" in schema:
+        options = [sub for sub in schema["anyOf"] if sub.get("type") != "null"]
+        return minimal(options[min(option, len(options) - 1)], defs)
+    if "const" in schema:
+        return schema["const"]
+    if "enum" in schema:
+        return schema["enum"][0]
+    kind = schema.get("type")
+    kind = next(k for k in kind if k != "null") if isinstance(kind, list) else kind
+    if kind == "object":
+        properties = schema.get("properties", {})
+        return {key: minimal(properties[key], defs) for key in schema.get("required", [])}
+    if kind == "array":
+        return [minimal(schema["items"], defs, option)]
+    return {"string": "x", "integer": 1, "boolean": False, "number": 1}[kind]
+
+
+class PromptInputTests(unittest.TestCase):
+    """The engine answers every request its schema lets through, and refuses the rest with
+    an answer, never a crash."""
+
+    def setUp(self):
+        self.schema = protocol.load("calls/prompt.schema.json")
+        self.defs = self.schema["$defs"]
+
+    def request(self, stage, inputs):
+        policies = {"budgets": {"implement": {"seconds": 2700}}}
+        request = {
+            "protocol": 1,
+            "call": "prompt",
+            "state": None,
+            "stage": stage,
+            "inputs": inputs,
+            "policies": policies,
+            "texts": "/runner/texts",
+        }
+        self.assertEqual(protocol.check(request, "calls/prompt.schema.json"), [])
+        return request
+
+    def needs(self, stage):
+        """The inputs `stage` needs, each with only its required fields."""
+        kinds = self.defs["inputs"]["properties"]
+        return {
+            kind: minimal(kinds[kind], self.defs)
+            for kind in (prompt.camel(need) for need in prompt.NEEDS[stage])
+        }
+
+    def test_each_input_with_only_its_required_fields_gets_a_prompt(self):
+        kinds = self.defs["inputs"]["properties"]
+        for stage, needs in INPUTS.items():
+            for kind in needs:
+                choices = 2 if kind in ("findings", "linked") else 1
+                for option in range(choices):
+                    with self.subTest(stage=stage, kind=kind, option=option):
+                        inputs = self.needs(stage)
+                        inputs[kind] = minimal(kinds[kind], self.defs, option)
+                        answer = engine.answer(self.request(stage, inputs))
+                        self.assertNotIn("error", answer)
+                        self.assertTrue(answer["text"])
+
+    def test_every_choice_of_a_definition_is_read_with_only_its_required_fields(self):
+        # Every input a stage reads at once, with each `anyOf` taking its first or second shape.
+        kinds = self.defs["inputs"]["properties"]
+        for stage, needs in INPUTS.items():
+            for option in (0, 1):
+                with self.subTest(stage=stage, option=option):
+                    inputs = {kind: minimal(kinds[kind], self.defs, option) for kind in needs}
+                    answer = engine.answer(self.request(stage, inputs))
+                    self.assertNotIn("error", answer)
+
+    def test_a_request_the_engine_cannot_answer_gets_an_error_answer(self):
+        with mock.patch.object(prompt, "texts", side_effect=KeyError("head")):
+            answer = engine.answer(self.request("review", self.needs("review")))
+        self.assertEqual(answer["error"], "The engine could not answer: KeyError: 'head'")
+
+    def test_no_id_names_a_file_outside_the_folder_for_texts(self):
+        inputs = {
+            "item": {"id": "/../../../home/runner/.bashrc#", "title": "x", "body": "B" * 70_000},
+            "plan": None,
+            "workspace": {"checks": [], "protectedPaths": []},
+        }
+        answer = engine.answer(self.request("implement", inputs))
+        [kept] = answer["files"]
+        self.assertEqual(kept["path"], "/runner/texts/issue--..-..-..-home-runner-.bashrc-.md")
+        relative = {**self.request("implement", inputs), "texts": "out/texts"}
+        self.assertEqual(engine.answer(relative)["error"], "request.texts must be an absolute path")
+
+    def test_diffs_and_outputs_come_no_longer_than_a_prompt_shows(self):
+        defs = self.defs
+        self.assertEqual(defs["diff"]["properties"]["text"]["maxLength"], prompt.MAX_DIFF + 1)
+        self.assertEqual(defs["diff"]["properties"]["since"]["maxLength"], prompt.MAX_DIFF + 1)
+        sides = defs["diff"]["properties"]["sides"]["items"]["maxLength"]
+        self.assertEqual(sides, prompt.MAX_DIFF // 4 + 1)
+        self.assertEqual(defs["check"]["properties"]["output"]["maxLength"], text.OUTPUT_TAIL)
+        request = self.request("review", self.needs("review"))
+        request["inputs"]["diff"] = {"base": "main", "text": "x" * (prompt.MAX_DIFF + 2)}
+        self.assertIn(
+            f"request.inputs.diff.text has more than {prompt.MAX_DIFF + 1} characters",
+            engine.answer(request)["error"],
+        )
+        # Clipped to that, the prompt is the one the whole diff gives.
+        whole = prompt.diff_text("x" * (prompt.MAX_DIFF + 2))
+        self.assertEqual(prompt.diff_text("x" * (prompt.MAX_DIFF + 1)), whole)
+
+    def test_a_prompt_request_may_be_larger_than_a_step_request(self):
+        self.assertEqual(serve.MAX_BODY, 1 << 20)
+        self.assertGreater(serve.MAX_BODIES["prompt"], serve.MAX_BODY)
+        with server() as port:
+            too_long = {"Content-Length": str(serve.MAX_BODY + 1)}
+            self.assertEqual(send(port, "/step", b"{}", headers=too_long)[0], 413)
+            body = json.dumps({**example(), "padding": "x" * serve.MAX_BODY}).encode()
+            status, answer = send(port, "/prompt", body)
+        self.assertEqual(status, 400)
+        self.assertIn("request.padding is not allowed", json.loads(answer)["error"])
 
 
 if __name__ == "__main__":

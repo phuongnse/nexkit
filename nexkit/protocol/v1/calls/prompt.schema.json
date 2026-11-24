@@ -1,5 +1,5 @@
 {
-  "$comment": "A prompt call: the prompt of one stage, written from the texts the host fetched for it, by the kinds runAgent names. `texts` is the folder outside the working tree where the host keeps the whole texts a prompt shortens, which the agent reads; null when it reads no files.",
+  "$comment": "A prompt call: the prompt of one stage, written from the texts the host fetched for it, by the kinds runAgent names. `texts` is the absolute path of the folder outside the working tree where the host keeps the whole texts a prompt shortens, which the agent reads; null when it reads no files. With `unfit`, why a session's result did not fit its schema, the answer is the prompt that asks the same session for its result alone. The policies `checklist`, `profiles` and `budgets` feed the prompts.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -41,6 +41,12 @@
         "string",
         "null"
       ]
+    },
+    "unfit": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "$defs": {
@@ -52,7 +58,7 @@
       ]
     },
     "inputs": {
-      "$comment": "The texts the host fetched, by the kinds that runAgent names (machine.INPUTS). Every stage needs `item`, and every stage but triage `workspace`; a kind left out is empty.",
+      "$comment": "The texts the host fetched, by the kinds that runAgent names (machine.INPUTS). Every stage needs `item`; implement, fix and review need `plan`, which may be null; fix and review need `diff`; every stage but triage needs `workspace`. A kind left out is empty.",
       "type": "object",
       "properties": {
         "item": {
@@ -112,10 +118,6 @@
         },
         "workspace": {
           "$ref": "#/$defs/workspace"
-        },
-        "unfit": {
-          "$comment": "Why the session's result did not fit its schema: the prompt then asks the same session for its result alone.",
-          "type": "string"
         }
       },
       "required": [],
@@ -236,7 +238,7 @@
       "additionalProperties": false
     },
     "fix": {
-      "$comment": "A fix round: who started it, its note, what the agent found, the checks that still failed after it.",
+      "$comment": "A recorded fix round: who started it, its note, what the agent found, the checks that still failed after it.",
       "type": "object",
       "properties": {
         "round": {
@@ -301,24 +303,69 @@
           "items": {
             "type": "string"
           }
+        }
+      },
+      "required": [
+        "round"
+      ]
+    },
+    "current": {
+      "$comment": "The fix round of this run, which the review follows.",
+      "type": "object",
+      "properties": {
+        "auto": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cause": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conflicts": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
         },
         "head": {
+          "$comment": "The version the round started from.",
           "type": [
             "string",
             "null"
           ]
         },
         "base": {
+          "$comment": "The version of the base it merged in, null without a merge.",
           "type": [
             "string",
             "null"
           ]
         }
       },
-      "required": []
+      "required": [],
+      "additionalProperties": false
     },
     "rounds": {
-      "$comment": "Earlier rounds: the recorded fix rounds, the fix round of this run that the review follows, and the checks a diagnosis round looks into.",
+      "$comment": "Earlier rounds: the recorded fix rounds, the fix round of this run that the review follows, and the checks a diagnosis round looks into. Interim: the host sends it until it keeps the engine's state document, which then holds it.",
       "type": "object",
       "properties": {
         "fixes": {
@@ -330,7 +377,7 @@
         "current": {
           "anyOf": [
             {
-              "$ref": "#/$defs/fix"
+              "$ref": "#/$defs/current"
             },
             {
               "type": "null"
@@ -387,13 +434,16 @@
           ]
         },
         "output": {
-          "type": "string"
+          "$comment": "The end of its output, at most the last 12000 characters.",
+          "type": "string",
+          "maxLength": 12000
         },
         "failureLines": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "maxItems": 20
         },
         "outputCut": {
           "type": "boolean"
@@ -481,11 +531,28 @@
       },
       "required": [
         "severity",
+        "file",
+        "line",
         "body"
       ]
     },
-    "review": {
-      "$comment": "The last review of the change.",
+    "toFix": {
+      "$comment": "The review whose blocking findings a fix round addresses.",
+      "type": "object",
+      "properties": {
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        }
+      },
+      "required": [
+        "findings"
+      ]
+    },
+    "lastReview": {
+      "$comment": "The last review of the change, which the next review reads.",
       "type": "object",
       "properties": {
         "round": {
@@ -508,59 +575,107 @@
         }
       },
       "required": [
+        "round",
+        "head",
+        "verdict",
         "findings"
       ]
     },
     "said": {
       "$comment": "What a person said on the change's version: a review with its state, or a comment on a line.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "review"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "author": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "author",
+            "state",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "comment"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "author": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "line": {
+              "type": "integer"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "author",
+            "path",
+            "line",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "findings": {
+      "$comment": "The findings a fix round addresses, the last review a review reads, and what people said. Interim: the host sends it until it keeps the engine's state document, which then holds it.",
       "type": "object",
       "properties": {
-        "kind": {
-          "enum": [
-            "review",
-            "comment"
-          ]
-        },
-        "id": {
+        "review": {
           "anyOf": [
             {
-              "$ref": "#/$defs/number"
+              "$ref": "#/$defs/toFix"
             },
             {
               "type": "null"
             }
           ]
         },
-        "author": {
-          "type": "string"
-        },
-        "state": {
-          "type": "string"
-        },
-        "path": {
-          "type": "string"
-        },
-        "line": {
-          "type": "integer"
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "kind",
-        "author",
-        "text"
-      ],
-      "additionalProperties": false
-    },
-    "findings": {
-      "type": "object",
-      "properties": {
-        "review": {
+        "lastReview": {
           "anyOf": [
             {
-              "$ref": "#/$defs/review"
+              "$ref": "#/$defs/lastReview"
             },
             {
               "type": "null"
@@ -578,57 +693,85 @@
       "additionalProperties": false
     },
     "linkedText": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "$comment": "A comment, the engine's plan, or the text of an item or a change.",
-          "enum": [
-            "comment",
-            "plan",
-            "item"
-          ]
-        },
-        "id": {
-          "$ref": "#/$defs/number"
-        },
-        "author": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "at": {
-          "$ref": "../common.schema.json#/$defs/time"
-        },
-        "on": {
-          "anyOf": [
-            {
+      "$comment": "A text the item links to: a comment, the engine's plan, or the text of an item or a change.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "comment",
+                "plan"
+              ]
+            },
+            "id": {
               "$ref": "#/$defs/number"
             },
-            {
-              "type": "null"
+            "author": {
+              "type": "string"
+            },
+            "at": {
+              "$ref": "../common.schema.json#/$defs/time"
+            },
+            "on": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {
+              "type": "string"
             }
-          ]
+          },
+          "required": [
+            "kind",
+            "id",
+            "author",
+            "at",
+            "text"
+          ],
+          "additionalProperties": false
         },
-        "title": {
-          "type": "string"
-        },
-        "change": {
-          "type": "boolean"
-        },
-        "nexkit": {
-          "type": "boolean"
-        },
-        "text": {
-          "type": "string"
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "item"
+            },
+            "id": {
+              "$ref": "#/$defs/number"
+            },
+            "author": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "change": {
+              "type": "boolean"
+            },
+            "nexkit": {
+              "type": "boolean"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "text"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "kind",
-        "id",
-        "text"
-      ],
-      "additionalProperties": false
+      ]
     },
     "above": {
       "$comment": "An item a part was split from.",
@@ -680,7 +823,7 @@
           }
         },
         "notRead": {
-          "$comment": "Each link the host did not read, and why, in its words.",
+          "$comment": "Each link the host did not read, and why, in its words; the host bounds how many it lists.",
           "type": "array",
           "items": {
             "type": "string"
@@ -796,7 +939,8 @@
       },
       "required": [
         "folder",
-        "runs"
+        "runs",
+        "keeps"
       ]
     },
     "resultsEvidence": {
@@ -876,7 +1020,8 @@
       },
       "required": [
         "folder",
-        "checks"
+        "checks",
+        "keeps"
       ],
       "additionalProperties": false
     },
@@ -963,18 +1108,20 @@
           "type": "string"
         },
         "text": {
-          "$comment": "The change against its base.",
+          "$comment": "The change against its base. At most 80001 characters: the prompt shows 80000 and says so when there are more, so the host sends no more.",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "maxLength": 80001
         },
         "since": {
-          "$comment": "The change since the version the last review read; null when the host cannot show it.",
+          "$comment": "The change since the version the last review read; null when the host cannot show it. At most 80001 characters: the prompt shows 80000 and says so when there are more, so the host sends no more.",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "maxLength": 80001
         },
         "merging": {
           "anyOf": [
@@ -1006,21 +1153,25 @@
           ]
         },
         "sides": {
-          "$comment": "In the files a merge of the base in this run's fix round conflicted in: the base's changes, then the change's.",
+          "$comment": "In the files a merge of the base in this run's fix round conflicted in: the base's changes, then the change's, each at most 20001 characters; null when the host cannot show them.",
           "type": [
             "array",
             "null"
           ],
+          "maxItems": 2,
           "items": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 20001
           }
         }
       },
-      "required": [],
+      "required": [
+        "base"
+      ],
       "additionalProperties": false
     },
     "workspace": {
-      "$comment": "What the agent's workspace gives it: the checks it can run, the paths only a person changes, and the time the implement stage has.",
+      "$comment": "What the agent's workspace gives it: the checks it can run and the paths only a person changes.",
       "type": "object",
       "properties": {
         "checks": {
@@ -1062,15 +1213,11 @@
           "items": {
             "type": "string"
           }
-        },
-        "implementMinutes": {
-          "type": "integer"
         }
       },
       "required": [
         "checks",
-        "protectedPaths",
-        "implementMinutes"
+        "protectedPaths"
       ],
       "additionalProperties": false
     }

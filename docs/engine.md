@@ -49,8 +49,8 @@ without a change to any host, as long as the conformance suite passes.
 
 - **Over HTTP**, `POST /<call>` takes the request as its body and answers with the same JSON
   text as standard input: status `200`, or `400` when the engine refuses the request. `serve`
-  answers each request on its own and keeps nothing between them. It refuses a body over 16 MiB
-  or without a `Content-Length`, and listens on `127.0.0.1:8080` unless `--host` and `--port`
+  answers each request on its own and keeps nothing between them. It refuses a body without a
+  `Content-Length`, or over 1 MiB, or 16 MiB for `prompt`, and listens on `127.0.0.1:8080` unless `--host` and `--port`
   say otherwise.
 - **The image.** Each release publishes `ghcr.io/phuongnse/nexkit-engine:<version>`, built from
   the release's commit. It runs `serve` on port 8080 of the container.
@@ -60,8 +60,9 @@ without a change to any host, as long as the conformance suite passes.
 The engine answers three calls, each a pure function:
 
 - **`step(state, event) -> (state, actions)`** decides what happens to one work item.
-- **`prompt(state, stage, inputs) -> text`** writes the prompt of a stage from the texts the host
-  fetched for it, so the prompts and their rules stay in the engine while the host does the reading.
+- **`prompt(state, stage, inputs, policies, texts) -> (text, shortened, notRead, files)`** writes
+  the prompt of a stage from the texts the host fetched for it, so the prompts and their rules
+  stay in the engine while the host does the reading.
 - **`sweep(items) -> starts`** chooses which waiting work items start, and in what order.
 
 All three read no network, no clock and no files but the engine's own prompt templates: the time
@@ -82,21 +83,30 @@ with.
 | `plan`, `previousPlan` | The approved plan; for a new plan, the latest one, where it falls in the discussion and the profile it used |
 | `rounds` | The fix rounds so far, the fix round the review follows, what the change did outside the plan, and the checks a diagnosis round looks into |
 | `checks` | The checks' results, with the end of each output, and the required checks that refused an accept |
-| `findings` | The last review of the change, and what people said on its version |
-| `linked` | The texts the item links to, the items it was split from with their discussions, and each link not read, with why |
+| `findings` | The findings a fix round addresses, the last review of the change, and what people said on its version |
+| `linked` | The texts the item links to, the items it was split from with their discussions, and each link not read, with why in the host's words. The host bounds how many it lists |
 | `evidence` | What the CI runs the item names left, and the result files of failing checks, with what the host keeps of each |
 | `parts` | The earlier parts of the same split that a part relies on |
 | `diff` | The change against its base, since the last review, a merge of the base and its conflicted files |
-| `workspace` | The checks the agent can run, the paths only a person changes, and the time the implement stage has |
-| `unfit` | Why a session's result did not fit: the prompt asks the same session for its result alone |
+| `workspace` | The checks the agent can run, and the paths only a person changes |
 
-The engine applies the limits: how much of each text and block a prompt keeps, how many comments,
-and in what order. A text that a prompt keeps only the start of, or leaves out, goes whole to a
-file in the folder that the request names, outside the working tree, where the agent reads it.
-The answer holds the prompt, the texts it shortened or left out, the links it lists as not read,
-and the files with their texts, which the host writes before the agent runs. The policies
-`checklist` and `profiles` give the items the plan and the review answer and the profiles triage
-chooses from.
+- **What a stage needs.** Every stage needs `item`, and every stage but triage `workspace`.
+  Implement, fix and review need `plan`, which is null when the item has none, and fix and review
+  need `diff`. The engine refuses a call without them.
+- **Rounds and findings are interim.** `rounds` and `findings` hold what the state document will
+  hold once a host keeps it. Until then the host sends them, and `prompt` does not read `state`.
+- **Limits.** The engine applies them: how much of each text and block a prompt keeps, how many
+  comments, and in what order. A text that a prompt keeps only the start of, or leaves out, goes
+  whole to a file in the folder that `texts` names, an absolute path outside the working tree,
+  where the agent reads it. So the texts come whole, but a diff and a check's output come cut to
+  what a prompt shows of them, and the schema refuses more.
+- **The answer** holds the prompt, the texts it shortened or left out, the links it lists as not
+  read, and the files with their texts, which the host writes before the agent runs.
+- **Policies.** `checklist` gives the items the plan and the review answer, `profiles` the
+  profiles triage chooses from, and `budgets` the implement stage's time, which the plan prompt
+  names.
+- **A result that did not fit.** With `unfit`, why a session's result did not fit its schema, the
+  call writes the prompt that asks the same session for its result alone.
 
 Every decision of NexKit 6 that is not about GitHub moves into the engine: plans, questions and
 answers, splits, approval, fix and diagnosis rounds and how they are counted, the review's

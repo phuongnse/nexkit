@@ -22,8 +22,6 @@ from .autopilot import (
 from .checks import RESULTS_DIR, failing_signatures, results_limit
 from .config import NAME
 from .engine import prompt
-from .engine.prompt import NO_PLAN as NO_PLAN
-from .engine.prompt import PERSON_PLAN as PERSON_PLAN
 from .evidence import EVIDENCE_LIMIT, collect, named_runs, summary_lines
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .redact import Redactor
@@ -37,11 +35,18 @@ from .state import (
     plan_text,
     read_state,
 )
-from .state import TEXT_LIMIT as TEXT_LIMIT
 
 # The section of a NexKit pull request description that `publish.pull_body` writes from the
 # implement result's `outside_plan`.
 OUTSIDE_PLAN = re.compile(r"^## Outside the plan\n(.*?)(?=^## |^---$|\Z)", re.M | re.S)
+
+
+# What the GitHub host keeps of evidence, which the prompts name: of the CI runs an issue
+# names, and of the result files of failing checks in one check job and in each of several.
+KEEPS = {
+    "ci": EVIDENCE_LIMIT,
+    "results": {"one": results_limit(1), "several": results_limit(2)},
+}
 
 
 def _trusted(item):
@@ -151,13 +156,6 @@ def evidence(feedback, decision, folder):
     return {"folder": str(root), "checks": found}
 
 
-def earlier_fixes(comments):
-    """The fix prompt's list of the pull request's earlier fix rounds (`prompt.earlier_fixes`),
-    from NexKit's state on it."""
-    _, state = read_state(comments)
-    return prompt.earlier_fixes((state or {}).get("fixes"))
-
-
 def diagnosis(decision, feedback):
     """The checks that this automatic round diagnoses, each with the failure it repeated,
     or []. `route` named them in the decision."""
@@ -197,18 +195,6 @@ def people(gh, decision):
     return found
 
 
-def _feedback(gh, decision, comments, shelf=None):
-    """Earlier NexKit results plus current human review feedback on the pull request."""
-    saved = _saved_feedback(comments)
-    return prompt.feedback(
-        saved.get("checks"),
-        saved.get("required"),
-        saved.get("review"),
-        people(gh, decision),
-        shelf,
-    )
-
-
 def current_fix(decision, fix_result):
     """This run's fix round, which the review after it reads, or None."""
     if not _fixed(decision, fix_result):
@@ -224,26 +210,12 @@ def current_fix(decision, fix_result):
     }
 
 
-def previous_review(gh, decision, fix_result):
-    """The last NexKit review of the pull request and the fix rounds since, or None."""
-    _, state = read_state(gh.comments(decision["pr"]))
-    state = state or {}
-    current = current_fix(decision, fix_result)
-    return prompt.previous_review(state.get("last_review"), state.get("fixes"), current)
-
-
 def outside_section(pull):
     """The section of the pull request description that NexKit wrote about what the
     implementation agent did outside the plan, or None."""
     body = ((pull or {}).get("body") or "").replace("\r\n", "\n")
     match = OUTSIDE_PLAN.search(body)
     return match.group(1) if match else None
-
-
-def outside_plan(pull):
-    """What the implementation agent did outside the plan, and why, from the pull request
-    description that NexKit wrote."""
-    return prompt.outside_plan(outside_section(pull))
 
 
 def _fixed(decision, fix_result):
@@ -615,7 +587,7 @@ def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None,
     evidence_found = {}
     if stage in ("plan", "implement", "fix") and ci and cfg:
         found = ci_evidence(gh, cfg, issue, comments, ci, workflow)
-        evidence_found["ci"] = {**found, "keeps": EVIDENCE_LIMIT} if found else None
+        evidence_found["ci"] = {**found, "keeps": KEEPS["ci"]} if found else None
     if reads:
         pull = [decision["pr"]] if decision.get("pr") else []
         # Links to the issue's own comments that its discussion shows are not read again.
@@ -641,7 +613,7 @@ def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None,
     if decision.get("person") or (stage == "review" and decision.get("pr")):
         _, state = read_state(gh.comments(decision["pr"]))
         state = state or {}
-        inputs["findings"] = {"review": state.get("last_review")}
+        inputs["findings"] = {"last_review": state.get("last_review")}
         inputs["rounds"] = {
             "fixes": state.get("fixes") or [],
             "current": current_fix(decision, fix_result),
@@ -657,8 +629,7 @@ def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None,
         inputs["findings"] = {"review": saved.get("review"), "people": people(gh, decision)}
         host["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
         kept = evidence(saved, decision, results)
-        keeps = {"one": results_limit(1), "several": results_limit(2)}
-        evidence_found["results"] = {**kept, "keeps": keeps} if kept else None
+        evidence_found["results"] = {**kept, "keeps": KEEPS["results"]} if kept else None
         inputs["rounds"] = {
             "fixes": (state or {}).get("fixes") or [],
             "diagnose": diagnosis(decision, saved),

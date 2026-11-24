@@ -17,18 +17,10 @@ from pathlib import Path
 
 from . import config as configuration
 from . import protocol
-from .checks import BASE_SHA, environment, known_base, results_limit
-from .context import keep_texts
+from .checks import BASE_SHA, environment, known_base
+from .context import KEEPS, keep_texts
 from .engine import prompt as engine_prompt
-from .engine.prompt import check_results_text as check_results_text
-from .engine.prompt import conflicts_text as conflicts_text
-from .engine.prompt import diagnosis_text as diagnosis_text
-from .engine.prompt import previous_plan as previous_plan
-from .engine.prompt import result_prompt as result_prompt
-from .engine.prompt import shortened_names as shortened_names
-from .engine.prompt import shortened_text as shortened_text
 from .engine.text import checklist_item, person_decides
-from .evidence import EVIDENCE_LIMIT
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, one_line, summary, write_summary
@@ -54,9 +46,6 @@ HOLDING_TRIES = 50
 # recommends and the one that only closes the issue (`route.closing_answer`), counting from
 # 1, and a blocked round's the options that change the issue's scope, which a new plan
 # carries out (`autopilot._stopped`).
-# The prompts' templates are the engine's.
-_template = engine_prompt.template
-
 SCHEMAS = {
     stage: protocol.load(f"results/{stage}.schema.json")
     for stage in ("plan", "implement", "fix", "triage", "review")
@@ -119,11 +108,6 @@ def with_checklist(schema, stage, cfg):
         "properties": {**schema["properties"], "checklist": {"type": "array", "items": entry}},
         "required": [*schema["required"], "checklist"],
     }
-
-
-def checklist_text(stage, cfg):
-    """The prompt's section about `review.checklist` (`engine.prompt.checklist_text`)."""
-    return engine_prompt.checklist_text(stage, cfg["review"]["checklist"])
 
 
 def drop_criteria(result, stage, context):
@@ -189,8 +173,15 @@ def _since(repo, commit, base):
         return commit
 
 
+def _clipped(diff, limit=engine_prompt.MAX_DIFF):
+    """A diff cut to one character past what a prompt shows of it, which it then clips the
+    same way: no more reaches the engine than a request may carry."""
+    return diff[: limit + 1]
+
+
 def review_diff(repo, base):
-    return engine_prompt.diff_text(git(repo, "diff", f"origin/{base}...HEAD"))
+    """The change against its base, as a review reads it."""
+    return _clipped(git(repo, "diff", f"origin/{base}...HEAD"))
 
 
 def since_review(repo, context, base):
@@ -200,14 +191,9 @@ def since_review(repo, context, base):
     if not engine_prompt.COMMIT.fullmatch(commit):
         return None
     try:
-        return git(repo, "diff", _since(repo, commit, base), "HEAD")
+        return _clipped(git(repo, "diff", _since(repo, commit, base), "HEAD"))
     except GitError:
         return None
-
-
-def previous_round(repo, context, base):
-    """The review prompt's section about the previous review round, or "" for the first."""
-    return engine_prompt.previous_round(context, base, since_review(repo, context, base))
 
 
 def merge_sides(repo, context):
@@ -220,15 +206,10 @@ def merge_sides(repo, context):
         return None
     try:
         fork = git(repo, "merge-base", head, commit).strip()
-        return [git(repo, "diff", fork, side, "--", *files) for side in (commit, head)]
+        sides = [git(repo, "diff", fork, side, "--", *files) for side in (commit, head)]
+        return [_clipped(side, engine_prompt.MAX_DIFF // 4) for side in sides]
     except GitError:
         return None
-
-
-def merge_review(repo, context, base):
-    """The review prompt's section about a merge of the base branch in this run's fix round,
-    with what each side changed in the conflicted files, or ""."""
-    return engine_prompt.merge_review(context, base, merge_sides(repo, context))
 
 
 def _patch_id(repo, old, new):
@@ -372,22 +353,6 @@ def own_merge(repo, base, merged):
     return heads[0], None
 
 
-# What the host keeps of evidence, which the prompts name.
-KEEPS = {"ci": EVIDENCE_LIMIT, "results": {"one": results_limit(1), "several": results_limit(2)}}
-
-
-def evidence_text(found):
-    """The fix prompt's section about the failing checks' result files
-    (`engine.prompt.evidence_text`)."""
-    return engine_prompt.evidence_text(found, KEEPS["results"])
-
-
-def ci_evidence_text(found):
-    """The plan, implement and fix prompts' section about the CI runs the issue names
-    (`engine.prompt.ci_evidence_text`). `found` comes from `evidence.collect`."""
-    return engine_prompt.ci_evidence_text(found, KEEPS["ci"])
-
-
 def shortened_folders(context):
     """The folders that hold the whole texts a prompt shortened, and the whole outputs of
     the failing checks it shows."""
@@ -526,9 +491,9 @@ def leftover_markers(repo, files):
     return found
 
 
-def settings(cfg):
-    """What a prompt reads of the configuration: the workspace's checks, protected paths
-    and the implement stage's time, and `review.checklist`."""
+def workspace(cfg):
+    """The `workspace` input of a prompt: the checks the agent can run and the paths only a
+    person changes."""
     return {
         "checks": [
             {
@@ -540,13 +505,18 @@ def settings(cfg):
             for check in cfg["checks"]
         ],
         "protected_paths": list(cfg["protected_paths"]),
-        "implement_minutes": cfg["stages"]["implement"]["timeout_minutes"],
-        "checklist": cfg["review"]["checklist"],
     }
 
 
-def build_prompt(stage, context, cfg, extra=None):
-    return engine_prompt.build(stage, context, settings(cfg), extra)
+def policies(cfg):
+    """The policies a prompt reads: `review.checklist`, the profiles triage chooses from,
+    and the implement stage's time, which the plan prompt names."""
+    minutes = cfg["stages"]["implement"]["timeout_minutes"]
+    return {
+        "checklist": cfg["review"]["checklist"],
+        "profiles": {name: {"when": profile["when"]} for name, profile in cfg["profiles"].items()},
+        "budgets": {"implement": {"seconds": minutes * 60}},
+    }
 
 
 def stage_schema(stage, cfg):
@@ -822,7 +792,7 @@ def _run_one(
                 )
                 folder = out / "result-again"
                 folder.mkdir(exist_ok=True)
-                text = result_prompt(stage, redact(result["unfit"]))
+                text = engine_prompt.result_prompt(stage, redact(result["unfit"]))
                 (folder / "prompt.md").write_text(text, encoding="utf-8")
                 again = RunLog(
                     redact,
@@ -991,9 +961,8 @@ def run_triage(context, cfg, previous, out_dir, *, program=None):
     out = Path(out_dir) / "triage"
     out.mkdir(parents=True, exist_ok=True)
     profiles = cfg["profiles"]
-    whens = {name: p["when"] for name, p in profiles.items()}
-    extra = engine_prompt.triage_extras(context, whens, previous)
-    text = build_prompt("triage", context, cfg, extra)
+    inputs = {"previous_plan": {"profile": previous}}
+    text = engine_prompt.finish("triage", context, inputs, policies(cfg))["text"]
     (out / "prompt.md").write_text(text, encoding="utf-8")
     redact = Redactor()
     # An empty directory, so the repository's agent settings and instructions do not load.
@@ -1055,21 +1024,26 @@ def run_stage(
         if merged:
             # Once committed, the merge has the merged base commit as its merge base.
             commits = {**(commits or {}), BASE_SHA: known_base(repo, merged)}
-    # Beside the context's texts, outside the working tree; the agent's artifact keeps them.
-    outputs = engine_prompt.Shelf((out / "texts").resolve())
-    facts = {"base": base or "", "merging": {"commit": merged, "files": conflicts}}
+    # The rest of the prompt's inputs, which the context job could not read: the engine
+    # writes the prompt from them and the texts it wrote there (`context.gather`).
+    inputs = {
+        "diff": {"base": base or "", "merging": {"commit": merged, "files": conflicts}},
+        "workspace": workspace(cfg),
+    }
     if stage == "review":
-        facts.update(
-            diff=git(repo, "diff", f"origin/{base}...HEAD"),
+        inputs["diff"].update(
+            text=review_diff(repo, base),
             since=since_review(repo, context, base),
             sides=merge_sides(repo, context),
-            checks=checks,
         )
-    extra = engine_prompt.extras(stage, context, keeps=KEEPS, shelf=outputs, **facts)
-    keep_texts({"path": path, "text": text} for path, text in outputs.files.items())
-    if stage == "review":
-        context = {**context, "check_outputs": outputs.stored}
-    text = build_prompt(stage, context, cfg, extra)
+        inputs["checks"] = {"results": checks}
+    # Beside the context's texts, outside the working tree; the agent's artifact keeps them.
+    folder = (out / "texts").resolve()
+    written = engine_prompt.finish(stage, context, inputs, policies(cfg), folder, KEEPS)
+    keep_texts(written["files"])
+    if written["files"]:
+        context = {**context, "check_outputs": [item["path"] for item in written["files"]]}
+    text = written["text"]
     (out / "prompt.md").write_text(text, encoding="utf-8")
 
     redact = Redactor()
@@ -1175,7 +1149,7 @@ def run_stage(
     if triage:
         result.update(profile=triage["profile"], triage=triage)
     if context.get("shortened"):
-        result["shortened"] = shortened_names(context)
+        result["shortened"] = engine_prompt.shortened_names(context)
     refers = context.get("linked") or {}
     if refers.get("read") or refers.get("skipped"):
         result["linked"] = {key: refers.get(key) or [] for key in ("read", "skipped")}

@@ -62,8 +62,7 @@
       ],
       "protectedPaths": [
         ".github/"
-      ],
-      "implementMinutes": 45
+      ]
     }
   },
   "policies": {},

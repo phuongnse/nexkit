@@ -8,9 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import evidence
-from nexkit.agent import build_prompt, ci_evidence_text
 from nexkit.context import gather
-from tests.support import FakeGitHub, make_config
+from tests.support import FakeGitHub, build_prompt, ci_evidence_text, make_config
 
 TOKEN = "ghp_" + "a" * 36
 

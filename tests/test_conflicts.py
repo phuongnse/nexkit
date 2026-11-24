@@ -986,8 +986,9 @@ class MergeRefusalTests(ReportCase):
 
     def test_a_merge_waiting_whose_required_check_fails_gets_an_automatic_fix_round(self):
         from nexkit import autopilot
-        from nexkit.context import _after_failed_checks, _feedback
+        from nexkit.context import _after_failed_checks
         from nexkit.state import read_state
+        from tests.support import feedback as _feedback
 
         self.waiting_merge()
         self.e2e_fails()

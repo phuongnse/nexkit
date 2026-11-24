@@ -4,8 +4,8 @@ Agent output is untrusted, and runtimes enforce schemas differently, so NexKit c
 result itself before anything uses it. The same check reads the engine's protocol
 (`nexkit/protocol/`). Only the parts of JSON Schema that those schemas use are supported:
 `type` (one name or a list), `enum`, `const`, `properties`, `required`, `items`,
-`additionalProperties`, `anyOf` and `$ref`. Keys that a schema does not name are left as they
-are unless `additionalProperties` is false.
+`additionalProperties`, `anyOf`, `$ref`, `maxLength` and `maxItems`. Keys that a schema does
+not name are left as they are unless `additionalProperties` is false.
 """
 
 from __future__ import annotations
@@ -63,6 +63,10 @@ def problems(value, schema, where="result", refs=None, base=None):
                 found += problems(value[key], sub, f"{where}.{key}", refs, base)
         if schema.get("additionalProperties") is False:
             found += [f"{where}.{key} is not allowed" for key in value if key not in properties]
+    if isinstance(value, str) and len(value) > schema.get("maxLength", len(value)):
+        found.append(f"{where} has more than {schema['maxLength']} characters")
+    if isinstance(value, list) and len(value) > schema.get("maxItems", len(value)):
+        found.append(f"{where} has more than {schema['maxItems']} items")
     if isinstance(value, list) and "items" in schema:
         for index, item in enumerate(value):
             found += problems(item, schema["items"], f"{where}[{index}]", refs, base)

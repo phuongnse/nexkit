@@ -20,9 +20,11 @@ from .cli import text
 HOST = "127.0.0.1"
 PORT = 8080
 # A step request carries one state document, which the protocol keeps small enough for one
-# GitHub comment, with one event and the policies. A prompt request carries the texts a stage
-# reads, each at most GitHub's limit on a comment's length, and its diff: below this.
-MAX_BODY = 16 << 20
+# GitHub comment, with one event and the policies: far below MAX_BODY. A prompt request
+# carries the texts a stage reads, each kept whole since a prompt names the file that holds
+# it; its diffs and outputs come clipped to what the prompt shows (`calls/prompt.schema.json`).
+MAX_BODY = 1 << 20
+MAX_BODIES = {"prompt": 16 << 20}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -38,8 +40,9 @@ class Handler(BaseHTTPRequestHandler):
         length = self.headers.get("Content-Length", "")
         if self.headers.get("Transfer-Encoding") or not (length.isascii() and length.isdigit()):
             return self.respond(411, refusal("Send the request with a Content-Length."))
-        if int(length) > MAX_BODY:
-            return self.respond(413, refusal(f"A request has at most {MAX_BODY} bytes."))
+        most = MAX_BODIES.get(call, MAX_BODY)
+        if int(length) > most:
+            return self.respond(413, refusal(f"A {call} request has at most {most} bytes."))
         answer = reply(call, self.rfile.read(int(length)))
         self.respond(400 if "error" in answer else 200, answer)
 

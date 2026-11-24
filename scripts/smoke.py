@@ -30,12 +30,14 @@ sys.path.insert(0, str(ROOT))
 from nexkit import agent  # noqa: E402
 from nexkit.agent import run_stage, run_triage  # noqa: E402
 from nexkit.config import validate  # noqa: E402
-from nexkit.context import PERSON_PLAN, previous_review  # noqa: E402
+from nexkit.context import current_fix  # noqa: E402
+from nexkit.engine import prompt  # noqa: E402
+from nexkit.engine.prompt import PERSON_PLAN  # noqa: E402
 from nexkit.publish import pull_body, render_plan  # noqa: E402
 from nexkit.report import review_body  # noqa: E402
 from nexkit.runtimes import RUNTIMES  # noqa: E402
 from nexkit.runtimes.base import TOKENS  # noqa: E402
-from nexkit.state import ACTIONS_BOT, PLAN_MARKER, empty_state, render_state  # noqa: E402
+from nexkit.state import PLAN_MARKER, empty_state  # noqa: E402
 
 CHECKS = [{"name": "test", "run": "python3 -m unittest -v"}]
 CHECKLIST = [
@@ -96,16 +98,6 @@ def make_repo(root):
     work = root / "work"
     git(root, "clone", "-q", str(origin), str(work))
     return work
-
-
-class StateComments:
-    """Just enough of the GitHub client for `previous_review`."""
-
-    def __init__(self, state):
-        self.body = render_state(state)
-
-    def comments(self, number):
-        return [{"id": 1, "body": self.body, "user": {"login": ACTIONS_BOT}}]
 
 
 def stage(name, work, out, program, context=None, *, want="done", **kw):
@@ -463,7 +455,10 @@ def main():
             "status": "done",
             "summary": "Added test_add_negative. Kept the name add(), as the note asks.",
         }
-        context = {**CONTEXT, "pr": 2, **previous_review(StateComments(state), decision, fix)}
+        # No fix round was recorded since that review; this run's fix is the one it reads.
+        current = current_fix(decision, fix)
+        reviewed = prompt.previous_review(state["last_review"], [], current)
+        context = {**CONTEXT, "pr": 2, **reviewed}
         second = stage(
             "review", work, root / "second", args.program, context, checks=checks, base="main"
         )

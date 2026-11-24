@@ -5,8 +5,10 @@ Each case sets up an issue on GitHub, and a checkout where a stage needs one, an
 its prompt twice: as the GitHub host does in a round (`context.gather`, then
 `agent.run_stage` or `agent.run_triage`), and with the engine's `prompt` call from the
 inputs the GitHub host fetches. Both must equal the prompt NexKit 6 wrote for the case,
-kept in `tests/prompts/`. Set NEXKIT_WRITE_PROMPTS=1 to write those files again, only for a
-change that means to change a prompt.
+kept in `tests/prompts/`. Those files are NexKit 6's record, written by its code at f9b83c7
+before the prompts moved: never write them again with NEXKIT_WRITE_PROMPTS from this code. Set
+it only to add a case's file, from NexKit 6's code, or for a change that means to change a
+prompt, which then says so.
 """
 
 import contextlib
@@ -750,7 +752,7 @@ class PromptProgramTests(unittest.TestCase):
         request = {**example(), "stage": "plan"}
         self.assertEqual(
             engine.answer(request)["error"],
-            "request.policies.budgets.implement.seconds is missing",
+            "request.policies.budgets.implement.seconds must be an integer for a plan",
         )
         request["policies"] = {"budgets": {"implement": {"seconds": 2700}}}
         self.assertIn("45 minutes", engine.answer(request)["text"])
@@ -759,6 +761,46 @@ class PromptProgramTests(unittest.TestCase):
         request = example()
         request["inputs"]["item"] = {"id": 1}
         self.assertIn("request.inputs.item.title is missing", engine.answer(request)["error"])
+
+    def test_a_plan_needs_an_integer_implement_time(self):
+        cases = (
+            ({}, "must be an integer for a plan"),
+            ({"implement": {}}, "must be an integer for a plan"),
+            ({"implement": {"seconds": None}}, "must be an integer for a plan"),
+            # The schema refuses what is no number at all.
+            ({"implement": {"seconds": "2700"}}, "must be an integer or a null"),
+            ({"implement": {"seconds": True}}, "must be an integer or a null"),
+        )
+        for budgets, words in cases:
+            with self.subTest(budgets=budgets):
+                request = {**example(), "stage": "plan", "policies": {"budgets": budgets}}
+                self.assertEqual(
+                    engine.answer(request)["error"],
+                    f"request.policies.budgets.implement.seconds {words}",
+                )
+        # Other stages read no time, so a null one is no matter.
+        request = example()
+        request["policies"] = {"budgets": {"implement": {"seconds": None}}}
+        self.assertNotIn("error", engine.answer(request))
+
+    def test_a_profile_triage_cannot_read_is_refused(self):
+        triage = {
+            **example(),
+            "stage": "triage",
+            "inputs": {"item": {"id": 5, "title": "Fix add", "body": "add() subtracts."}},
+        }
+        for profiles, error in (
+            ({"x": {}}, "request.policies.profiles.x.when must be a string"),
+            ({"x": "s"}, "request.policies.profiles.x must be an object"),
+            ({"x": {"when": None}}, "request.policies.profiles.x.when must be a string"),
+            ({"x": {"when": 3}}, "request.policies.profiles.x.when must be a string"),
+            ([], "request.policies.profiles must be an object"),
+        ):
+            with self.subTest(profiles=profiles):
+                answer = engine.answer({**triage, "policies": {"profiles": profiles}})
+                self.assertIn(error, answer.get("error", ""))
+        answer = engine.answer({**triage, "policies": {"profiles": {"x": {"when": " Small. "}}}})
+        self.assertIn("- `x`: Small.", answer["text"])
 
     def test_the_kinds_of_inputs_are_one_list(self):
         kinds = protocol.load("actions/runAgent.schema.json")["properties"]["inputs"]["items"]

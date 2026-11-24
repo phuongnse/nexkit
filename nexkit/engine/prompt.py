@@ -1016,11 +1016,22 @@ def result_prompt(stage, wrong):
     return Template(template("result_again")).safe_substitute(stage=stage, wrong=wrong)
 
 
-def missing(stage, inputs, policies):
-    """What a prompt of `stage` needs and the call lacks, as the protocol names it."""
-    found = [f"inputs.{kind}" for kind in NEEDS[stage] if kind not in inputs]
-    if stage == "plan" and _implement_seconds(policies) is None:
-        found.append("policies.budgets.implement.seconds")
+def refusals(stage, inputs, policies):
+    """Why a call cannot have a prompt of `stage`, beyond what its schema says: an input the
+    stage needs, a plan's implement time, a profile triage could not read."""
+    found = [f"request.inputs.{kind} is missing" for kind in NEEDS[stage] if kind not in inputs]
+    seconds = _implement_seconds(policies)
+    if stage == "plan" and (not isinstance(seconds, int) or isinstance(seconds, bool)):
+        found.append("request.policies.budgets.implement.seconds must be an integer for a plan")
+    profiles = policies.get("profiles")
+    if profiles is not None and not isinstance(profiles, dict):
+        found.append("request.policies.profiles must be an object")
+    for name, profile in (profiles if isinstance(profiles, dict) else {}).items():
+        where = f"request.policies.profiles.{name}"
+        if not isinstance(profile, dict):
+            found.append(f"{where} must be an object")
+        elif not isinstance(profile.get("when"), str):
+            found.append(f"{where}.when must be a string")
     return found
 
 

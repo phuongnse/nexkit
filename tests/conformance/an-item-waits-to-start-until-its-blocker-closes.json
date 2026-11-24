@@ -1,0 +1,54 @@
+{
+  "policies": {},
+  "state": {
+    "example": "new",
+    "set": {
+      "waits": [
+        {
+          "id": "w1.1",
+          "for": "start",
+          "until": null,
+          "on": null
+        },
+        {
+          "id": "w1.2",
+          "for": "blocker",
+          "until": null,
+          "on": "41"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "41",
+        "completed": true
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

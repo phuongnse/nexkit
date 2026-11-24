@@ -1,0 +1,88 @@
+{
+  "kind": "retrying",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "comments": [
+      {
+        "run": {
+          "command": "plan",
+          "status": "paused",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "retry_waiting",
+          "resume": {
+            "command": "plan",
+            "number": "42",
+            "note": "",
+            "auto": "retry1",
+            "at": "2026-11-23T16:00:00Z",
+            "retry": 1
+          }
+        }
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "planning",
+    "change": null,
+    "observed": null,
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "w1.1",
+        "for": "time",
+        "until": "2026-11-23T16:00:00Z",
+        "on": null
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w1.1"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "kind": "parts ended for a person",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "parts": [
+      {
+        "number": 43,
+        "state": "closed",
+        "reason": "completed"
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "split",
+    "change": null,
+    "observed": null,
+    "attention": {
+      "reason": "splitIncomplete",
+      "text": "Every part of the split ended. A person closes the item, or opens parts for what is left: NexKit closes a parent only with `close_parent_issues` on and a part completed.",
+      "ref": null
+    },
+    "hold": false,
+    "waits": [],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [
+      {
+        "item": "43",
+        "state": "accepted"
+      }
+    ],
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "close"
+      ]
+    }
+  ]
+}

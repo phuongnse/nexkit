@@ -16,11 +16,12 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `context.py`, `evidence.py`, `agent.py` | `agent` and `review`: the texts a prompt needs, CI runs' evidence, agent run, patch |
 | `runtimes/` | Everything specific to one CLI or model provider |
 | `schema.py`, `redact.py`, `runlog.py` | Result validation, secret removal, log and run summary |
-| `protocol/` | The engine's protocol as JSON Schemas (`v1/`), stage result schemas included, with an example of each; see [The engine](docs/engine.md) |
-| `engine/` | The engine: `machine.py` holds the states and what moves an item between them, as pure functions; `prompt.py`, `textutil.py` and `prompts/` write each stage's prompt from the texts the host fetched; `cli.py` is `nexkit-engine` and `serve.py` its HTTP server, the program around them. Its rules come with a case in `tests/conformance/`, its prompts with NexKit 6's in `tests/prompts/` |
+| `protocol/` | The engine's protocol as JSON Schemas (`v1/`), stage result schemas included, with an example of each; `size.py`, the largest state document and how what comes in is kept within it; see [The engine](docs/engine.md) |
+| `engine/` | The engine: `machine.py` holds the states and what moves an item between them, as pure functions; `prompt.py`, `textutil.py` and `prompts/` write each stage's prompt from the texts the host fetched; `cli.py` is `nexkit-engine` and `serve.py` its HTTP server, the program around them. Its rules come with a case in `tests/conformance/`, its prompts with NexKit 6's in `tests/prompts/`, a record of NexKit 6 that is never written again |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py`, `cache.py` | Setup and checks with `NEXKIT_BASE_SHA`/`NEXKIT_VERIFIED_SHA`; the keys of cache restore and of the `cache/` action |
 | `report.py`, `state.py`, `progress.py` | Statuses, review, run and state comments and their markers |
+| `item_state.py`, `first_state.py` | The engine's state document of each work item in a comment of the App, written only as the next revision of the one read; the first one, built from NexKit 6's markers. Each kind of import (`first_state.KINDS`) comes with a case in `tests/conformance/imports/` |
 | `refusal.py` | Why GitHub refused a merge, and what unblocks it |
 | `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; resuming runs paused at a usage limit; autopilot sweeps |
 | `config.py`, `globs.py`, `scaffold.py`, `app.py`, `templates/` | Config schema and defaults, path globs; `nexkit init` and `doctor`; the GitHub App |

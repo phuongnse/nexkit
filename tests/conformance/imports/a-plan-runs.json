@@ -1,0 +1,104 @@
+{
+  "kind": "started",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "comments": [
+      {
+        "run": {
+          "command": "plan",
+          "status": "running",
+          "url": "https://github.com/acme/app/actions/runs/1"
+        }
+      }
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "planning",
+    "change": null,
+    "observed": null,
+    "attention": null,
+    "hold": false,
+    "waits": [],
+    "pending": [
+      {
+        "id": "a1.1",
+        "next": null,
+        "kind": "runAgent",
+        "stage": "plan",
+        "changeVersion": null,
+        "access": "read",
+        "inputs": [
+          "item",
+          "discussion",
+          "notes",
+          "previousPlan",
+          "linked",
+          "evidence",
+          "parts",
+          "workspace"
+        ],
+        "result": "results/plan.schema.json",
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "budget": {
+          "tokens": null,
+          "seconds": null,
+          "usd": null
+        },
+        "session": null,
+        "resume": false
+      }
+    ],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {},
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    }
+  ]
+}

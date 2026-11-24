@@ -1,0 +1,56 @@
+{
+  "policies": {},
+  "state": {
+    "example": "reviewing"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "a7.1",
+        "result": {
+          "tokens": null,
+          "limit": null,
+          "transient": false,
+          "noResult": false,
+          "error": null,
+          "session": null,
+          "changeVersion": "5a54e2b",
+          "timedOut": false,
+          "seconds": 60,
+          "usd": 0.5,
+          "output": {
+            "verdict": "approve",
+            "summary": "The change does what the plan says.",
+            "criteria": [
+              {
+                "criterion": "A test shows the round says the issue is closed.",
+                "status": "met",
+                "test": "tests/test_report.py",
+                "evidence": "The test passes."
+              }
+            ],
+            "findings": [],
+            "previous_findings": [],
+            "checklist": [
+              {
+                "number": 1,
+                "answer": "maybe",
+                "evidence": ""
+              }
+            ]
+          }
+        }
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "failed",
+        "rounds.checklist": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "policies": {},
+  "state": {
+    "example": "planning"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "close"
+      ],
+      "expect": {
+        "pending.0.kind": "cancel",
+        "pending.0.action": "a7.1"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "a7.1",
+        "result": "@agent:plan"
+      },
+      "state": "dropped",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

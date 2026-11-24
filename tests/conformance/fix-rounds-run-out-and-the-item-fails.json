@@ -1,5 +1,8 @@
 {
-  "policies": {},
+  "policies": {
+    "fixRounds": 0,
+    "whenRoundsRunOut": "failed"
+  },
   "steps": [
     {
       "event": {
@@ -77,53 +80,14 @@
         "action": "runAgent",
         "result": "@agent:reviewChanges"
       },
-      "state": "fixing",
-      "changed": true
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@timeout"
-      },
-      "state": "planning",
-      "changed": true
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:plan"
-      },
-      "state": "awaitingApproval",
-      "changed": true
-    },
-    {
-      "event": {
-        "kind": "planApproved"
-      },
-      "state": "fixing",
-      "changed": true
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@error"
-      },
       "state": "failed",
-      "changed": true
-    },
-    {
-      "event": {
-        "kind": "requested",
-        "what": "retry"
-      },
-      "state": "fixing",
       "changed": true,
       "actions": [
-        "runAgent"
-      ]
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "roundsUsedUp"
+      }
     }
   ]
 }

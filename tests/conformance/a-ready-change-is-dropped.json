@@ -1,0 +1,21 @@
+{
+  "policies": {},
+  "state": {
+    "example": "ready"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "close"
+      ],
+      "expect": {
+        "attention": null
+      }
+    }
+  ]
+}

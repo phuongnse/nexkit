@@ -1,5 +1,7 @@
 {
-  "$comment": "The result of runAgent, in actionFinished.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/runAgent.result.schema.json",
+  "$comment": "The result of runAgent, in actionFinished. `changeVersion` is the version the session produced; `timedOut` says it ran out of its time; `seconds` and `usd` are what it spent, null when not known.",
   "type": "object",
   "properties": {
     "output": {
@@ -40,8 +42,7 @@
           "required": [
             "message",
             "reset"
-          ],
-          "additionalProperties": false
+          ]
         },
         {
           "type": "null"
@@ -74,6 +75,18 @@
     },
     "timedOut": {
       "type": "boolean"
+    },
+    "seconds": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "usd": {
+      "type": [
+        "number",
+        "null"
+      ]
     }
   },
   "required": [
@@ -85,7 +98,8 @@
     "error",
     "session",
     "changeVersion",
-    "timedOut"
-  ],
-  "additionalProperties": false
+    "timedOut",
+    "seconds",
+    "usd"
+  ]
 }

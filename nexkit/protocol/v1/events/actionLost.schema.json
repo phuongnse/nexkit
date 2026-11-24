@@ -1,5 +1,7 @@
 {
-  "$comment": "An action the host started never reported.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/actionLost.schema.json",
+  "$comment": "An action the host started never reported, with what it is known to have spent: tokens, seconds and US dollars, each null when not known.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -7,6 +9,9 @@
     },
     "kind": {
       "const": "actionLost"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
     },
     "item": {
       "$ref": "../common.schema.json#/$defs/id"
@@ -32,16 +37,30 @@
           "type": "null"
         }
       ]
+    },
+    "seconds": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "usd": {
+      "type": [
+        "number",
+        "null"
+      ]
     }
   },
   "required": [
     "protocol",
     "kind",
+    "id",
     "item",
     "at",
     "action",
     "changeVersion",
-    "tokens"
-  ],
-  "additionalProperties": false
+    "tokens",
+    "seconds",
+    "usd"
+  ]
 }

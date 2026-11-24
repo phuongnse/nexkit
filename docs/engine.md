@@ -490,7 +490,14 @@ adapter. A new rule of the engine comes with a case.
   start again, later each time. A merge that waits for required checks is `accepting` with that
   wait, and a round that waits for a failure the base branch has is `fixing` with that wait. A
   round that a hold label kept back is in the state of the step it kept back, held, or waiting to
-  start once the label is gone. Each imported item is one the engine moves on from: a case in
+  start once the label is gone; a conflict round waits in its checks, where the conflict policy
+  applies with its count, and a fix round that a hold or a base failure kept back is counted, or
+  goes to a person when none is left. What a round decided on its head keeps that head as the
+  change's version, and a head pushed since is in the observation, so the engine checks it
+  before it goes on. A run that waits to run again runs its own command again, and a lost round
+  runs a fix round's command or a review, as NexKit 6 does; autopilot's record of tries counts
+  only for the same command and target within six hours, and allows one start more once the
+  agent ran. Each imported item is one the engine moves on from: a case in
   `tests/conformance/imports/` takes a NexKit 6 situation in, gives the state document out, and
   sends the events that carry the item on from there.
 

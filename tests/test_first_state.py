@@ -248,6 +248,29 @@ class ImportTest(unittest.TestCase):
         made = copy.deepcopy(answer["actions"][0])
         self.assertEqual(state["pending"], [{**made, "id": first_state.RUN_ID}])
 
+    def test_the_import_keeps_lists_and_signatures_within_the_state_s_bounds(self):
+        part = {"title": "A part", "body": "Part.", "depends_on": []}
+        record = {"questions": [], "too_large": True, "parts": 12, "split": [part] * 12}
+        run = {"command": "plan", "status": "success", "outcome": "planned", "url": "https://x/1"}
+        given = {"issue": {"number": 42}, "comments": [{"plan": {"record": record}}, {"run": run}]}
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertEqual((state["plan"]["parts"], state["plan"]["split"]), (12, []))
+        parts = [{"number": 100 + n, "state": "open"} for n in range(12)]
+        given = {"issue": {"number": 42}, "parts": parts}
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertEqual(len(state["parts"]), 10)
+        check = {"name": "test", "passed": False, "signature": "x" * 10_000}
+        feedback = {"head": "a" * 40, "checks": [check]}
+        given = {
+            "issue": {"number": 42},
+            "pull": {"number": 308, "head": "a" * 40},
+            "pullComments": [
+                {"state": {"version": 2, "issue": 42, "auto_fixes": 0, "feedback": feedback}}
+            ],
+        }
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertTrue(state["rounds"]["signatures"][0].startswith("sha256:"))
+
 
 if __name__ == "__main__":
     unittest.main()

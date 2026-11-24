@@ -150,8 +150,8 @@
       "split": []
     },
     "rounds": {
-      "started": 1,
-      "counted": 0,
+      "started": 2,
+      "counted": 1,
       "conflicts": 0,
       "signatures": [
         "test_close: AssertionError"

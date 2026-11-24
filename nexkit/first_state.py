@@ -22,6 +22,7 @@ from .github import TRUSTED_ASSOCIATIONS
 from .protocol.size import MOST, clip, fit, signature
 from .schema import filled
 from .state import (
+    COMMIT,
     FAILURE,
     PAUSED,
     SUCCESS,
@@ -268,7 +269,7 @@ class Item:
         if last and not handed_on and last.get("status") in autopilot.ACTIVE:
             return self.active(last_comment, last, OF_COMMAND.get(last["command"], "planning"))
         if last and not handed_on and last.get("outcome") == "lost":
-            return self.lost(last, OF_COMMAND.get(last["command"], "planning"))
+            return self.lost(last, last["command"], self.issue["number"])
         if self.pull and (handed_on or last is None or last["command"] != "plan"):
             return self.round(latest_comment, latest)
         if last is None or self.plan is None:
@@ -354,7 +355,13 @@ class Item:
         if outcome in CHAINED:
             return self.running("next round", _next_state(latest, name))
         if outcome == "lost":
-            return self.lost(latest, name)
+            # `autopilot._reportless`: a fix round's command again, or a review for any other.
+            command = "fix" if run_action(latest) == "fix" else "review"
+            return self.lost(latest, command, self.pull["number"])
+        # What follows was decided on the head the round checked: a head pushed since is in
+        # the observation, which the engine checks before it goes on (`_released`,
+        # `_merge_step`).
+        self.on_checked_head(latest)
         if outcome == HELD:
             return self.held_back(latest)
         if outcome == "merge_waiting":
@@ -368,6 +375,11 @@ class Item:
             return self.be("required checks", "accepting")
         if outcome == CI_WAITING:
             # The fix round waits until the base branch's failure ends: its bug issue closes.
+            # NexKit 6 counts it when it starts it, and a person decides when none is left.
+            if self.kept_round_used_up():
+                return self.be(
+                    "needs a person", "ready", "roundsUsedUp", None, SAYS["roundsUsedUp"]
+                )
             wait = latest.get("ci_wait") or self.pr_state.get("ci_wait") or {}
             self.wait("baseFailure", on=str(wait["bug"]) if wait.get("bug") else None)
             return self.be("base failure", "fixing")
@@ -407,13 +419,45 @@ class Item:
 
     def held_back(self, row):
         """A round that a label held back from its merge, its fix round or its conflict
-        round: the item is in the state of that step, which starts once the hold ends, or,
-        when the label is already gone, on the sweep's start."""
-        name = "accepting" if row.get("held_back") == "merge" else "fixing"
+        round, as `autopilot._released` starts it: the item is in the state of that step,
+        which starts once the hold ends, or, when the label is already gone, on the sweep's
+        start. A conflict round waits in its checks, where the engine follows the conflict
+        policy, with its count and limit, if the change still conflicts, and checks it if
+        not. A fix round is counted, as NexKit 6 counts it when it starts it. A head pushed
+        since the label is gone is checked first, as `/nexkit review`."""
+        back = row.get("held_back")
+        name = {"merge": "accepting", "conflicts": "checking"}.get(back, "fixing")
+        if not self.doc["hold"] and self.head_moved():
+            self.doc["change"]["version"] = self.pull["head"]["sha"]
+            self.wait("start")
+            return self.be("held, label gone", "checking")
+        if name == "fixing" and self.kept_round_used_up():
+            text = SAYS["roundsUsedUp"]
+            return self.be("needs a person", "ready", "roundsUsedUp", None, text)
         if self.doc["hold"]:
             return self.be("held", name)
         self.wait("start")
         return self.be("held, label gone", name)
+
+    def kept_round_used_up(self):
+        """Count the automatic fix round that a hold or a base failure kept back, as NexKit 6
+        does when it starts it (`count`), or answer that none is left for it."""
+        rounds = self.doc["rounds"]
+        if rounds["counted"] >= self.cfg["fix"]["max_auto_rounds"]:
+            return True
+        rounds["counted"] += 1
+        rounds["started"] += 1
+        return False
+
+    def on_checked_head(self, row):
+        """Keep the head the round checked as the change's version, while the observation
+        carries the head the pull request has now."""
+        head = str(row.get("head") or "")
+        if COMMIT.fullmatch(head):
+            self.doc["change"]["version"] = head
+
+    def head_moved(self):
+        return self.pull["head"]["sha"] != self.doc["change"]["version"]
 
     # A run that is on its way, paused or lost.
 
@@ -431,6 +475,8 @@ class Item:
         if resume.get("retry"):
             if at is None or self.now - at > autopilot.LOST:
                 return self.be("pause for a person", "failed", "failed", run, SAYS["overdue"])
+            # The command that runs again, such as `review` after a review's transient error.
+            name = OF_COMMAND.get(resume.get("command"), name)
             self.wait("time", until=iso(at))
             return self.be("retrying", name)
         paused_at = parse_iso(comment.get("created_at"))
@@ -442,21 +488,27 @@ class Item:
         self.wait("usageLimit", until=iso(at))
         return self.be("paused", name)
 
-    def lost(self, run, name):
-        """A run that ended without a report: one NexKit started by itself starts again,
-        later each time, as `autopilot._again` does; a person's, or one out of tries, waits
-        for a person."""
+    def lost(self, run, command, target):
+        """A run that ended without a report: one NexKit started by itself starts its
+        `command` on `target` again, later each time, as `autopilot._reportless` and `_again`
+        do; a person's, or one out of tries, waits for a person. Autopilot's record counts
+        only when it is of the same command and target and started within six hours; one
+        that says the agent ran (`once`) allows one more start."""
         automatic = bool(run.get("autopilot")) or bool(
             autopilot.run_kinds(run) & {"auto", "autopilot"}
         )
-        tries = self.record.get("tries")
+        record = self.record
+        at = parse_iso(record.get("at"))
+        same = (record.get("command"), str(record.get("target"))) == (command, str(target))
+        record = record if same and at is not None and self.now - at <= autopilot.LOST else {}
+        tries = record.get("tries")
         tries = tries if isinstance(tries, int) and not isinstance(tries, bool) else 0
-        if not automatic or tries >= len(autopilot.AGAIN):
+        limit = 1 if record.get("once") else len(autopilot.AGAIN)
+        if not automatic or tries >= limit:
             return self.be("lost for a person", "failed", "outage", run, SAYS["outage"])
-        since = parse_iso(self.record.get("at")) or self.now
-        due = max(since + autopilot.AGAIN[tries], self.now)
+        due = max((at or self.now) + autopilot.AGAIN[tries], self.now) if tries else self.now
         self.wait("time", until=iso(due))
-        return self.be("lost", name)
+        return self.be("lost", OF_COMMAND.get(command, "planning"))
 
     # What the state holds beside its name.
 

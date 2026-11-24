@@ -32,6 +32,13 @@
         }
       ]
     },
+    "conflict": {
+      "$comment": "The change version a conflict was reported on while a step ran, or null. The engine applies the conflict policy once nothing runs (docs/engine.md#states).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "attention": {
       "anyOf": [
         {
@@ -42,11 +49,19 @@
             },
             "text": {
               "type": "string"
+            },
+            "ref": {
+              "$comment": "What the person decides on: the ref of the text that asked, for a question or an approval; null otherwise. A decision that names another changes nothing.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
             "reason",
-            "text"
+            "text",
+            "ref"
           ],
           "additionalProperties": false
         },
@@ -375,15 +390,44 @@
       }
     },
     "policies": {
-      "$comment": "The policies the running round started with, so that a change of the host's configuration applies from the next round. Empty while no round runs.",
-      "$ref": "policies.schema.json"
+      "$comment": "The policies the running round started with, so that a change of the host's configuration applies from the next round. Empty while no round runs. Only the policies of policies.schema.json, each as it has it.",
+      "type": "object",
+      "properties": {
+        "planApproval": {
+          "$ref": "policies.schema.json#/properties/planApproval"
+        },
+        "reviewAfterFailingChecks": {
+          "$ref": "policies.schema.json#/properties/reviewAfterFailingChecks"
+        },
+        "accept": {
+          "$ref": "policies.schema.json#/properties/accept"
+        },
+        "fixRounds": {
+          "$ref": "policies.schema.json#/properties/fixRounds"
+        },
+        "whenRoundsRunOut": {
+          "$ref": "policies.schema.json#/properties/whenRoundsRunOut"
+        },
+        "conflicts": {
+          "$ref": "policies.schema.json#/properties/conflicts"
+        },
+        "conflictRounds": {
+          "$ref": "policies.schema.json#/properties/conflictRounds"
+        },
+        "splits": {
+          "$ref": "policies.schema.json#/properties/splits"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
     },
     "recentEvents": {
       "$comment": "The ids of the latest events that changed the state, newest last, at most 20. An event whose id is here changes nothing.",
       "type": "array",
       "items": {
         "$ref": "common.schema.json#/$defs/eventId"
-      }
+      },
+      "maxItems": 20
     }
   },
   "required": [
@@ -393,6 +437,7 @@
     "itemKind",
     "state",
     "change",
+    "conflict",
     "attention",
     "hold",
     "waits",

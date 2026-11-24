@@ -1,0 +1,38 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "itemKind": "reviewOnly",
+        "change": {
+          "id": "9",
+          "version": "v1"
+        }
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "cancel"
+      ]
+    }
+  ]
+}

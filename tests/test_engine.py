@@ -125,6 +125,8 @@ class ProgramTest(unittest.TestCase):
         code, answer = self.run_program(json.dumps(request(policies={"fixRounds": "two"})))
         self.assertEqual(code, 1)
         self.assertIn("request.policies.fixRounds must be an integer", answer["error"])
+        code, answer = self.run_program(json.dumps(request(policies={"fixRounds": -1})))
+        self.assertIn("request.policies.fixRounds must be at least 0", answer["error"])
 
     def test_an_answer_names_the_protocol_version(self):
         with mock.patch.object(protocol, "VERSION", 9):
@@ -151,8 +153,33 @@ class ProgramTest(unittest.TestCase):
         state["itemKind"] = "reviewOnly"
         state["plan"]["questions"] = []
         event = json.loads((EXAMPLES / "events" / "planApproved.json").read_text())
+        event["plan"] = state["plan"]["text"]["ref"]
         answer = engine.answer({**request(state=state, event=event), "call": "step"})
         self.assertIn("review-only", answer["error"])
+
+    def test_a_state_that_would_accept_a_review_only_item_is_refused(self):
+        # No rule leads a review-only item to wait for a person in ready; a state built by
+        # hand that does meets the last check of `step`.
+        state = json.loads((EXAMPLES / "state" / "ready.json").read_text())
+        state["itemKind"] = "reviewOnly"
+        event = json.loads((EXAMPLES / "events" / "changeApproved.json").read_text())
+        event["changeVersion"] = state["change"]["version"]
+        policies = {"accept": "autoWhenPassed"}
+        answer = engine.answer(
+            {**request(state=state, event=event, policies=policies), "call": "step"}
+        )
+        self.assertIn("review-only", answer.get("error", ""), answer)
+
+    def test_an_answer_that_writes_to_a_review_only_item_is_refused(self):
+        # Rules guard each path; this is the last check before an answer leaves.
+        for action in (
+            {"kind": "publish", "stage": "fix"},
+            {"kind": "accept"},
+            {"kind": "runAgent", "stage": "plan"},
+        ):
+            with self.assertRaisesRegex(machine.EngineError, "review-only"):
+                machine._never_writes([action])
+        machine._never_writes([{"kind": "runAgent", "stage": "review"}, {"kind": "show"}])
 
     def test_the_defaults_are_the_protocol_s(self):
         properties = protocol.load("policies.schema.json")["properties"]

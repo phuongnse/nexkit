@@ -5,7 +5,8 @@ or an example of `nexkit/protocol/v1/examples/state/` with fields set), and even
 each with the state, the `changed` flag and the kinds of actions it must give, or the error it
 must be refused with. A step may also name fields of the state to `expect`, by dotted path, and
 `policies` that the host sends from that step on. Events name only what a case needs; the
-runner fills in the rest, each with an id of its own unless the case gives one.
+runner fills in the rest, each with an id of its own unless the case gives one. A `note` is
+for people.
 
 The runner sends each request to the program twice and checks that both answers are the same
 text, checks every answer against the protocol, and after every call checks the outbox: every
@@ -101,12 +102,20 @@ def event_of(short, state, number):
         pending = [item for item in state["pending"] if item["kind"] == event["action"]]
         if not ACTION_ID.match(event["action"]):
             event["action"] = pending[-1]["id"] if pending else "a0.0"
-        action = next((a for a in state["pending"] if a["id"] == event["action"]), {})
-        event.setdefault("changeVersion", action.get("changeVersion", version))
+        action = next((a for a in state["pending"] if a["id"] == event["action"]), None)
+        # A result echoes its action's own version, null for one with none.
+        event.setdefault("changeVersion", action.get("changeVersion") if action else version)
     if kind == "actionFinished":
         event["result"] = result_of(event["result"])
     if kind in ("changeAccepted", "changeEmptied", "changeApproved"):
         event.setdefault("changeVersion", version)
+    if kind == "changePushed":
+        event.setdefault("previousVersion", version)
+    if kind in ("planApproved", "answered"):
+        # The plan the person decides on: the one that asked, or the item's plan.
+        asked = (state.get("attention") or {}).get("ref") if kind == "answered" else None
+        plan = (state.get("plan") or {}).get("text", {}).get("ref")
+        event.setdefault("plan", asked or plan or "none")
     return event
 
 
@@ -138,18 +147,18 @@ def table_transitions():
     return pairs
 
 
-def allowed(policies):
+def allowed(policies, had_change):
     """The table's transitions, and those the page's rules below it allow, under `policies`:
-    from a state that may have a change, a change that went in, became empty or was pushed to,
-    a review asked for, and a conflict as the conflict policy says; from every state that is
-    not final, a drop and a stop; and a final item reopened."""
+    from every state that is not final, a drop and a stop; a final item reopened; and, when the
+    item had a change before the step, a change that went in, became empty or was pushed to, a
+    review asked for, and a conflict as the conflict policy says."""
     conflicts = {**_defaults(), **policies}["conflicts"]
     pairs = table_transitions() | {(name, "new") for name in FINAL}
     for name in _states():
         if name in FINAL:
             continue
         pairs |= {(name, "dropped"), (name, "failed")}
-        if name != "split":
+        if had_change and name != "split":
             pairs |= {(name, target) for target in ("accepted", "noChange", "checking")}
             pairs |= {(name, target) for target in CONFLICTS[conflicts]}
     return pairs
@@ -231,7 +240,8 @@ class ConformanceTest(unittest.TestCase):
                 self.assertTrue(carried, f"{where}: nothing carries the item on")
             if state is not None and new["state"] != state["state"]:
                 pair = (state["state"], new["state"])
-                self.assertIn(pair, allowed(policies), f"{where}: the page names no {pair}")
+                names = allowed(policies, bool(state["change"]))
+                self.assertIn(pair, names, f"{where}: the page names no {pair}")
                 seen.add(pair)
             if event["kind"] == "dropRequested" and answer["changed"]:
                 dropped.add(state["state"])
@@ -274,8 +284,11 @@ class ConformanceTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.check_outbox({action["id"]: action}, {"kind": "tick"}, answer, "here")
         # A transition the conflict policy does not lead to is not allowed.
-        self.assertNotIn(("working", "fixing"), allowed({"conflicts": "person"}))
-        self.assertIn(("working", "fixing"), allowed({"conflicts": "resolve"}))
+        self.assertNotIn(("working", "fixing"), allowed({"conflicts": "person"}, True))
+        self.assertIn(("working", "fixing"), allowed({"conflicts": "resolve"}, True))
+        # Nor one that only an item with a change makes.
+        self.assertNotIn(("planning", "accepted"), allowed({}, False))
+        self.assertNotIn(("new", "ready"), allowed({}, False))
 
 
 def _states():

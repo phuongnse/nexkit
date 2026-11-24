@@ -1,8 +1,5 @@
 {
   "policies": {
-    "planApproval": "autoWhenClean",
-    "accept": "autoWhenPassed",
-    "reviewAfterFailingChecks": "onlyAfterPassing",
     "conflicts": "resolve"
   },
   "steps": [
@@ -62,15 +59,15 @@
           "checks": [
             {
               "name": "test",
-              "passed": false,
+              "passed": true,
               "skipped": false,
-              "signature": "fail test_x",
+              "signature": null,
               "knownBaseFailure": false
             }
           ]
         }
       },
-      "state": "fixing",
+      "state": "reviewing",
       "changed": true,
       "actions": [
         "runAgent"
@@ -80,28 +77,13 @@
       "event": {
         "kind": "actionFinished",
         "action": "runAgent",
-        "result": "@agent:fixQuestions"
+        "result": "@agent:reviewChanges"
       },
-      "state": "awaitingApproval",
-      "changed": true,
-      "actions": [
-        "needPerson"
-      ]
-    },
-    {
-      "event": {
-        "kind": "answered"
-      },
-      "state": "planning",
+      "state": "fixing",
       "changed": true,
       "actions": [
         "runAgent"
-      ],
-      "expect": {
-        "pending.1.id": "a7.1",
-        "pending.1.stage": "plan",
-        "pending.1.changeVersion": "v1"
-      }
+      ]
     },
     {
       "event": {
@@ -110,26 +92,11 @@
       },
       "state": "fixing",
       "changed": true,
-      "actions": [
-        "cancel",
-        "runAgent"
-      ],
+      "actions": [],
       "expect": {
-        "pending.1.kind": "cancel",
-        "pending.1.action": "a7.1",
-        "pending.2.stage": "fix",
-        "rounds.conflicts": 1
+        "conflict": "v1",
+        "rounds.conflicts": 0
       }
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "a7.1",
-        "result": "@agent:plan"
-      },
-      "state": "fixing",
-      "changed": false,
-      "actions": []
     },
     {
       "event": {
@@ -142,6 +109,29 @@
       "actions": [
         "publish"
       ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v2"
+          },
+          "refused": null
+        }
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "conflict": null,
+        "rounds.conflicts": 1,
+        "pending.0.changeVersion": "v2"
+      }
     }
   ]
 }

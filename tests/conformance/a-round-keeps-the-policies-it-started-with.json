@@ -1,6 +1,7 @@
 {
   "policies": {
-    "fixRounds": 1
+    "fixRounds": 1,
+    "start": "bySweep"
   },
   "steps": [
     {
@@ -24,7 +25,17 @@
         "runAgent"
       ],
       "expect": {
-        "policies.fixRounds": 1
+        "policies.fixRounds": 1,
+        "policies": {
+          "planApproval": "person",
+          "reviewAfterFailingChecks": "always",
+          "accept": "person",
+          "fixRounds": 1,
+          "whenRoundsRunOut": "person",
+          "conflicts": "person",
+          "conflictRounds": 3,
+          "splits": false
+        }
       }
     },
     {

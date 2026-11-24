@@ -182,6 +182,19 @@ class ProtocolTest(unittest.TestCase):
         for value, name, found in cases:
             with self.subTest(name=name, found=found):
                 self.assertEqual(protocol.check(value, name), found)
+        # minimum, maximum and maxItems.
+        policies = {"fixRounds": -1, "conflictRounds": 11}
+        self.assertEqual(
+            protocol.check(policies, "policies.schema.json"),
+            ["value.fixRounds must be at least 0", "value.conflictRounds must be at most 10"],
+        )
+        crowded = {**new, "recentEvents": [f"d-{n}" for n in range(21)]}
+        self.assertEqual(
+            protocol.check(crowded, "state.schema.json"),
+            ["value.recentEvents must hold at most 20 items"],
+        )
+        # An integer has no fraction written, deliberately (nexkit/schema.py).
+        self.assertEqual(problems(1.0, {"type": "integer"}), ["result must be an integer"])
         self.assertEqual(problems(True, {"enum": [1, "1"]}), ["result must be one of 1, '1'"])
         self.assertEqual(problems(1, {"enum": [True]}), ["result must be one of True"])
 
@@ -219,6 +232,25 @@ class ProtocolTest(unittest.TestCase):
             self.assertIs(schema.get("additionalProperties"), False, schema)
         tick = {**example("events/tick.json"), "priority": 3}
         self.assertEqual(protocol.check(tick, "events/tick.schema.json"), [])
+
+    def test_the_state_keeps_only_the_policies_it_knows(self):
+        policies = protocol.load("state.schema.json")["properties"]["policies"]
+        names = protocol.load("policies.schema.json")["properties"]
+        self.assertEqual(sorted(policies["properties"]), sorted(names))
+        state = {**example("state/fixing.json")}
+        state["policies"] = {**state["policies"], "start": "bySweep"}
+        self.assertEqual(
+            protocol.check(state, "state.schema.json"), ["value.policies.start is not allowed"]
+        )
+
+    def test_a_decision_names_what_it_decides_on(self):
+        for kind, field in (
+            ("planApproved", "plan"),
+            ("answered", "plan"),
+            ("changeApproved", "changeVersion"),
+            ("changePushed", "previousVersion"),
+        ):
+            self.assertIn(field, protocol.load(f"events/{kind}.schema.json")["required"], kind)
 
     def test_the_package_ships_every_schema_and_no_example(self):
         data = tomllib.loads((HERE.parent / "pyproject.toml").read_text())

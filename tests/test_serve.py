@@ -71,6 +71,12 @@ def nested(depth):
     return json.loads("[" * depth + "]" * depth)
 
 
+def bare(depth):
+    """A body of arrays `depth` deep, written as bytes: decoding it, as `nested` does, would
+    pass Python's recursion limit at depths the test needs."""
+    return ("[" * depth + "]" * depth).encode()
+
+
 def on_standard_input(call, data):
     """The exit code and output of `nexkit-engine <call>` given `data` on standard input."""
     out = io.StringIO()
@@ -165,9 +171,9 @@ class ServeTest(unittest.TestCase):
             under_a_pending_action(bound): False,
             under_a_pending_action(bound + 1): True,
             under_a_pending_action(490): True,
-            json.dumps(nested(bound)).encode(): False,
-            json.dumps(nested(bound + 1)).encode(): True,
-            json.dumps(nested(9995)).encode(): True,
+            bare(bound): False,
+            bare(bound + 1): True,
+            bare(9995): True,
         }
         with server() as port:
             for data, refused in cases.items():

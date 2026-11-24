@@ -597,7 +597,9 @@ class Step:
             return False
         if not match:
             # A part may end before the result that names the parts arrives: keep its end.
-            if not any(action["kind"] == "createParts" for action in self.s["pending"]):
+            creating = [action for action in self.s["pending"] if action["kind"] == "createParts"]
+            # No more ends than the parts being made, so the list stays within MOST.
+            if not creating or len(parts) >= min(len(creating[-1]["parts"]), MOST["split"]):
                 return False
             parts.append({"item": event["part"], "state": event["state"]})
             return True
@@ -993,6 +995,11 @@ def step(state, event, policies, check):
     work.s["recentEvents"] = [*work.s["recentEvents"], event["id"]][-RECENT:]
     if fit(work.s) is None:
         raise EngineError(f"The state document passes the limit of {STATE_LIMIT} bytes.")
+    # The engine never answers a state its own schema refuses, such as more pending actions
+    # than `maxItems` allows when a host never reports them: it refuses the event instead.
+    found = check(work.s, "state.schema.json", "state")
+    if found:
+        raise EngineError(f"The answer would break the state's schema: {'; '.join(found[:3])}")
     return work.s, work.actions, True
 
 

@@ -237,7 +237,8 @@ def largest():
         "splits": True,
     }
     state["waits"] = [
-        {"id": f"w99.{n}", "for": "blocker", "until": None, "on": str(4000 + n)} for n in range(10)
+        {"id": f"w99.{n}", "for": "blocker", "until": None, "on": str(4000 + n)}
+        for n in range(most("waits"))
     ]
     questions = most("plan.questions")
     state["plan"] = {
@@ -271,7 +272,7 @@ def largest():
     ]
     rounds["criteria"] = ["unverifiable"] * most("rounds.criteria")
     rounds["checklist"] = ["not_applicable"] * most("rounds.checklist")
-    state["asked"] = ["split", "titles", "parts", "fewer", "answers"]
+    state["asked"] = (["split", "titles", "parts", "fewer", "answers"] * 4)[: most("asked")]
     state["parts"] = [{"item": str(4300 + n), "state": None} for n in range(most("parts"))]
     parts = [
         {**part, "body": {"name": f"part-{part['key']}", "ref": "9" * 20}}
@@ -290,6 +291,12 @@ def largest():
         {"id": "a99.4", "kind": "runChecks", "next": None, "changeVersion": "f" * 40},
     ]
     state["pending"][1].update(text=worst(LONGEST["reason"]), ref="9" * 20)
+    # The rest of the outbox: a person is told one thing at a time, since a notice is taken
+    # back when attention changes, so what piles up while a host has not reported is cancels.
+    state["pending"] += [
+        {"id": f"a99.{n}", "kind": "cancel", "next": None, "action": f"a98.{n}"}
+        for n in range(5, most("pending") + 1)
+    ]
     state["recentEvents"] = [f"event-{n:040}" for n in range(most("recentEvents"))]
     return state
 

@@ -150,14 +150,16 @@
           "on"
         ],
         "additionalProperties": false
-      }
+      },
+      "maxItems": 64
     },
     "pending": {
       "$comment": "The outbox: each action the engine answered, whole, until its result, its cancel or its loss.",
       "type": "array",
       "items": {
         "$ref": "action.schema.json"
-      }
+      },
+      "maxItems": 64
     },
     "actors": {
       "type": "object",
@@ -418,7 +420,8 @@
           "fewer",
           "answers"
         ]
-      }
+      },
+      "maxItems": 16
     },
     "parts": {
       "$comment": "The parts of a split, and how each ended, or null while it is open.",

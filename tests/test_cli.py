@@ -1876,14 +1876,24 @@ class SupportedVersionTests(unittest.TestCase):
             self.assertEqual(cli.main(["--version"]), 2)
 
 
+def jobs_of(text):
+    """Each job of a workflow's text, by name, with its lines."""
+    body = text.split("\njobs:\n", 1)[1]
+    return dict(re.findall(r"^  (\w+):\n((?:    .*\n|\n)*)", body, re.M))
+
+
+def permissions_of(job):
+    block = re.search(r"^    permissions:\n((?:      .*\n)+)", job, re.M)
+    return dict(re.findall(r"^      ([\w-]+): (\w+)", block.group(1), re.M))
+
+
 class WorkflowSafetyTests(unittest.TestCase):
     """Credential separation is the pipeline's core safety property; keep it explicit."""
 
     @classmethod
     def setUpClass(cls):
         cls.text = (ROOT / ".github/workflows/pipeline.yml").read_text()
-        body = cls.text.split("\njobs:\n", 1)[1]
-        cls.jobs = dict(re.findall(r"^  (\w+):\n((?:    .*\n|\n)*)", body, re.M))
+        cls.jobs = jobs_of(cls.text)
         # What pipeline.yml says in the call of these two, and the job that runs.
         cls.calls = {name: cls.jobs[name] for name in ("agent", "review")}
         for name in cls.calls:
@@ -1916,8 +1926,7 @@ class WorkflowSafetyTests(unittest.TestCase):
             self.assertNotIn("private-key", self.jobs[name], name)
 
     def permissions(self, name):
-        block = re.search(r"^    permissions:\n((?:      .*\n)+)", self.jobs[name], re.M)
-        return dict(re.findall(r"^      ([\w-]+): (\w+)", block.group(1), re.M))
+        return permissions_of(self.jobs[name])
 
     def test_jobs_that_run_agents_or_repository_code_hold_only_read_permissions(self):
         read = {"contents": "read", "issues": "read", "pull-requests": "read"}
@@ -2417,6 +2426,60 @@ class WorkflowSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReleaseWorkflowTests(unittest.TestCase):
+    """release.yml builds the engine's image with a read-only token, and only the job that
+    publishes it writes, with github.token, running no repository code (AGENTS.md)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = (ROOT / ".github/workflows/release.yml").read_text()
+        cls.jobs = jobs_of(cls.text)
+
+    def test_jobs_and_triggers(self):
+        self.assertEqual(list(self.jobs), ["build", "publish"])
+        self.assertIn("permissions: {}\n", self.text)
+        # Every pull request builds and checks the image; only a release publishes it.
+        self.assertIn("\n  pull_request:\n", self.text)
+        self.assertIn("\n  release:\n    types: [published]\n", self.text)
+        self.assertIn("    if: github.event_name == 'release'\n", self.jobs["publish"])
+        self.assertIn("IMAGE: ghcr.io/phuongnse/nexkit-engine\n", self.text)
+
+    def test_the_job_that_runs_repository_code_only_reads(self):
+        build = self.jobs["build"]
+        self.assertEqual(permissions_of(build), {"contents": "read"})
+        self.assertIn("persist-credentials: false", build)
+        self.assertNotIn("secrets", build)
+        self.assertNotIn("github.token", build)
+
+    def test_the_job_that_publishes_runs_no_repository_code(self):
+        publish = self.jobs["publish"]
+        self.assertEqual(permissions_of(publish), {"packages": "write"})
+        self.assertEqual(
+            re.findall(r"uses: (\S+)@", publish), ["actions/download-artifact"], "only the image"
+        )
+        for text in (
+            "uses: ./",
+            "actions/checkout",
+            "python",
+            "bin/",
+            "docker build",
+            "docker run",
+        ):
+            self.assertNotIn(text, publish)
+        self.assertNotIn("secrets", publish)
+        self.assertIn('docker push "$IMAGE:$VERSION"', publish)
+
+    def test_a_release_is_the_package_version_on_main(self):
+        build = self.jobs["build"]
+        self.assertIn('if [ "$TAG" != "v$version" ]; then', build)
+        self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" origin/main', build)
+        self.assertIn("fetch-depth: ${{ github.event_name == 'release' && 0 || 1 }}", build)
+        self.assertIn("print(nexkit.PYTHON_IMAGE)", build)
+        self.assertIn('--build-arg PYTHON_IMAGE="$base"', build)
+        self.assertIn('--tag "$IMAGE:$VERSION" .', build)
+        self.assertIn("cmp served.json expected.json", build)
 
 
 class RepeatedChecksTests(unittest.TestCase):

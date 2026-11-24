@@ -17,7 +17,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `runtimes/` | Everything specific to one CLI or model provider |
 | `schema.py`, `redact.py`, `runlog.py` | Result validation, secret removal, log and run summary |
 | `protocol/` | The engine's protocol as JSON Schemas (`v1/`), stage result schemas included, with an example of each; `size.py`, the largest state document and how what comes in is kept within it; see [The engine](docs/engine.md) |
-| `engine/` | The engine: `machine.py` holds the states and what moves an item between them, as pure functions; `cli.py` is `nexkit-engine`. Its rules come with a case in `tests/conformance/` |
+| `engine/` | The engine: `machine.py` holds the states and what moves an item between them, as pure functions; `cli.py` is `nexkit-engine` and `serve.py` its HTTP server, the program around them. Its rules come with a case in `tests/conformance/` |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py`, `cache.py` | Setup and checks with `NEXKIT_BASE_SHA`/`NEXKIT_VERIFIED_SHA`; the keys of cache restore and of the `cache/` action |
 | `report.py`, `state.py`, `progress.py` | Statuses, review, run and state comments and their markers |
@@ -38,6 +38,9 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
   writes mints its own token with only what it needs; `github.token` only reads. A token
   lasts an hour, so nothing holds one through a longer wait. What the App does starts
   workflows, NexKit's own too, so each write must leave a following run nothing to do.
+  The one exception is the `publish` job of `release.yml`, NexKit's own release: it pushes
+  the engine's image with `github.token` and `packages: write`, since a GitHub App gets no
+  access to packages, and it runs no repository code.
 - Agent output is untrusted: validate it before publishing, pass everything printed or
   stored from a session through `redact.py`, print tool output with workflow commands
   stopped. Markers count only in comments of the App, never the Actions bot, which CI on an
@@ -91,7 +94,11 @@ sets the version in `nexkit/__init__.py`, `pyproject.toml`, `.claude-plugin/plug
 the README's `pipx install` line, and adds a `## X.Y.Z` changelog entry, ending with
 `### Upgrade` steps when the configuration, caller workflow or permissions must change. Its
 description holds the output of `python3 scripts/release_notes.py X.Y.Z`; after the merge,
-release `vX.Y.Z` (titled `NexKit X.Y.Z`) on the merge commit with those notes.
+release `vX.Y.Z` (titled `NexKit X.Y.Z`) on the merge commit with those notes. Publishing
+it runs `release.yml`, which builds `Dockerfile` and publishes the engine's image
+`ghcr.io/phuongnse/nexkit-engine:X.Y.Z`. It refuses a tag that is not `v` and the version in
+`nexkit/__init__.py`, and a commit that is not on `main`. Every pull request builds and
+checks the image the same way, without publishing it.
 
 ## Verify
 

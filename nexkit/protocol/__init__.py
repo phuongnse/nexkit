@@ -20,6 +20,9 @@ from ..schema import problems
 # The protocol's version. The state document has a schema version of its own
 # (`state.schema.json`), so that a state can move on without a new protocol.
 VERSION = 1
+# The most problems `check` tells. A request that breaks the protocol in many places, such as
+# a large array of wrong items, is refused as fast and as briefly as one that breaks it once.
+LIMIT = 20
 # The protocol's minor version: the one place it lives. Each field added after 1.0
 # carries `"x-since": "1.<minor>"`, and `describe` reports it.
 MINOR = 0
@@ -76,10 +79,12 @@ def _normal(parts, ref):
 
 
 def check(value, name, where="value"):
-    """The ways `value` breaks the schema in `v1/<name>`, as short sentences. `name` may point
-    into the file, such as "results/checklist.schema.json#/$defs/review"."""
+    """The ways `value` breaks the schema in `v1/<name>`, as short sentences: at most `LIMIT`,
+    then "and more". `name` may point into the file, such as
+    "results/checklist.schema.json#/$defs/review"."""
     name, _, pointer = name.partition("#")
-    return problems(value, _at(_read(name), pointer), where, _refs, name)
+    found = problems(value, _at(_read(name), pointer), where, _refs, name, LIMIT)
+    return found if len(found) <= LIMIT else [*found[:LIMIT], "and more"]
 
 
 def names(folder):

@@ -40,6 +40,8 @@ from .state import (
 )
 from .usage import PAUSE_WINDOW, iso, parse_iso
 
+# The most blockers an imported item waits for; the state keeps at most 64 waits.
+BLOCKERS = 32
 # The revision of an imported document, and the id of the action that a NexKit 6 run on its
 # way stands for, as the engine numbers the actions of the answer that made revision 1. The
 # GitHub host reports that run's end as this action's result, or its loss.
@@ -261,8 +263,9 @@ class Item:
         if self.doc["itemKind"] == "reviewOnly":
             return self.review_only(latest_comment, latest)
         if not self.pull:
-            # Every item without a pull request waits for the open issues that block it.
-            for blocker in blockers:
+            # Every item without a pull request waits for the open issues that block it: the
+            # first BLOCKERS of them, so that the waits stay within the schema's `maxItems`.
+            for blocker in blockers[:BLOCKERS]:
                 self.wait("blocker", on=str(blocker["number"]))
         if self.on_its_way:
             return self.running("started", OF_COMMAND.get(self.record["command"], "planning"))

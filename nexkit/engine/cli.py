@@ -1,30 +1,27 @@
-"""`nexkit-engine`: answer one JSON request read on standard input."""
+"""`nexkit-engine`: answer one JSON request read on standard input, or serve the same
+requests over HTTP (`serve.py`)."""
 
 from __future__ import annotations
 
-import json
 import sys
 
-from . import CALLS, answer, error_answer
+from . import CALLS, reply, serve, text
 
-USAGE = f"usage: nexkit-engine {{{','.join(CALLS)}}} < request.json"
+USAGE = (
+    f"usage: nexkit-engine {{{','.join(CALLS)}}} < request.json\n"
+    "       nexkit-engine serve [--host HOST] [--port PORT]"
+)
 
 
 def main(argv=None, stdin=None, stdout=None):
+    """`stdin` is binary, as `serve` reads a body: both decode the request as UTF-8."""
     argv = sys.argv[1:] if argv is None else argv
-    stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
+    stdin, stdout = stdin or sys.stdin.buffer, stdout or sys.stdout
+    if argv[:1] == ["serve"]:
+        return serve.main(argv[1:])
     if len(argv) != 1 or argv[0] not in CALLS:
         print(USAGE, file=sys.stderr)
         return 2
-    try:
-        request = json.load(stdin)
-    except json.JSONDecodeError as error:
-        reply = error_answer(f"The request is not JSON: {error}")
-    else:
-        if isinstance(request, dict) and request.get("call", argv[0]) != argv[0]:
-            reply = error_answer(f"The request is a {request.get('call')} call.")
-        else:
-            reply = answer({**request, "call": argv[0]} if isinstance(request, dict) else request)
-    json.dump(reply, stdout, sort_keys=True)
-    stdout.write("\n")
-    return 1 if "error" in reply else 0
+    answer = reply(argv[0], stdin.read())
+    stdout.write(text(answer))
+    return 1 if "error" in answer else 0

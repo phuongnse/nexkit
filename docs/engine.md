@@ -1,10 +1,11 @@
 # The engine
 
 _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`, and the
-engine's `step` call with its states, as `nexkit-engine step`, whose decisions are a frame that
-takes NexKit 6's own rules one group at a time; and the GitHub host's state comment and its
-import of NexKit 6's open work, which nothing calls yet. The rest of this page is not built
-yet, and NexKit 6 runs as [How it works](how-it-works.md) says._
+engine's `step` call with its states, as `nexkit-engine step` and over HTTP as
+`nexkit-engine serve`, whose decisions are a frame that takes NexKit 6's own rules one group at
+a time; and the GitHub host's state comment and its import of NexKit 6's open work, which
+nothing calls yet. The rest of this page is not built yet, and NexKit 6 runs as
+[How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
 **hosts** that store the work, carry out what the engine decides and show it to people. GitHub
@@ -44,11 +45,26 @@ carried out.
 | Runner | Runs one agent session for one stage | This repository for agent CLIs; a host may bring its own |
 | Conformance suite | Events and the actions and state they must give | This repository |
 
-A host never imports the engine's code. It runs the engine as a program, `nexkit-engine`, that
-reads one JSON request on standard input and writes one JSON answer, or as a container that
-answers the same requests over HTTP. A host in any language can therefore run it, and the
-engine could be written again in another language without a change to any host, as long as
-the conformance suite passes.
+A host never imports the engine's code. It runs the engine as a program, `nexkit-engine <call>`,
+that reads one JSON request on standard input and writes one JSON answer, or runs
+`nexkit-engine serve` beside it, which answers the same requests over HTTP. A host in any
+language can therefore run it, and the engine could be written again in another language
+without a change to any host, as long as the conformance suite passes.
+
+- **Over HTTP**, `POST /<call>` takes the request as its body and answers with the same JSON
+  text as standard input: status `200`, or `400` when the engine refuses the request. Both read
+  the request as UTF-8 and refuse one that nests deeper than 64 arrays and objects. An error
+  answer names at most 20 ways in which a request breaks the protocol. `serve` answers each
+  request on its own and keeps nothing between them. It refuses a body over 1 MiB, without one
+  `Content-Length` or that stops coming, a method other than `POST`, a call it does not know and
+  a request that HTTP does not allow. Each refusal is an error answer
+  (`calls/error.schema.json`) with its own status. It listens on `127.0.0.1:8080` unless
+  `--host` and `--port` say otherwise.
+- **Only for its host.** `serve` asks no one who they are, and does not limit how many clients
+  connect or how slowly they send. Put it where only its host reaches it, such as the host's
+  own machine or a private network beside it.
+- **The image.** Each release publishes `ghcr.io/phuongnse/nexkit-engine:<version>`, built from
+  the release's commit on `main`. It runs `serve` on port 8080 of the container.
 
 ## The engine
 
@@ -100,7 +116,8 @@ needed.
   fits, in this order: the findings, the questions and their options, the protected paths and
   the attention's text. It never shortens a count, a status, an id, a part's title or a
   signature, which decisions read, and a host that builds a first document keeps it the same
-  way.
+  way. The engine never answers a state that its own schema refuses, such as an outbox past
+  its `maxItems` when a host never reports its actions: it refuses that event instead.
 - **It is the truth.** A host may keep columns or markers that copy parts of it, for its own
   lists and pages, written in the same transaction, but the engine reads only the document.
 

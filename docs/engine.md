@@ -192,13 +192,13 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   (`redo`, or `resolve` with rounds left), since those checks can no longer lead to an accept.
   Otherwise the policy applies when the item would next go to its checks or be ready, as NexKit 6
   starts no conflict round while another runs, and only if the latest observation still says that
-  version conflicts; a question or a failure keeps its attention meanwhile. A person told of a conflict on a version is told once,
-  and the item stays in `ready` for them even if the conflict clears without a push. An
-  observation of another change changes nothing, and a publish or a replace that ends sets the
-  change with the observation its result carries, which replaces the latest one: one of a change
-  the engine replaced never touches the new one, even when the new one keeps its id and version.
-  An event that stops the item, or fails it for a lost action, keeps its attention: a new version
-  observed meanwhile applies with the item's next event.
+  version conflicts; a question or a failure keeps its attention meanwhile. A person told of a
+  conflict on a version is told once, and the item stays in `ready` for them even if the conflict
+  clears without a push. An observation of another change changes nothing, and a publish or a
+  replace that ends sets the change with the observation its result carries, which replaces the
+  latest one: one of a change the engine replaced never touches the new one, even when the new
+  one keeps its id and version. An event that stops the item, or fails it for a lost action,
+  keeps its attention: a new version observed meanwhile applies with the item's next event.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.

@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/held.schema.json",
   "$comment": "A hold was set.",
   "type": "object",
   "properties": {
@@ -7,6 +9,9 @@
     },
     "kind": {
       "const": "held"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
     },
     "item": {
       "$ref": "../common.schema.json#/$defs/id"
@@ -24,9 +29,9 @@
   "required": [
     "protocol",
     "kind",
+    "id",
     "item",
     "at",
     "label"
-  ],
-  "additionalProperties": false
+  ]
 }

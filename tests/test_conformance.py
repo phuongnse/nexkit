@@ -1,24 +1,39 @@
 """The engine's conformance suite (docs/engine.md#conformance).
 
-Each file in tests/conformance/ is a case: the host's policies and events in order, each with
-the state and the kinds of actions it must give. Events name only what a case needs; the
-runner fills in the rest. Every answer is checked against the protocol, and after every call
-each work item that is not final must have an action that runs, a wait, a hold or attention.
+Each file in tests/conformance/ is a case: the host's policies, the state it starts from (none,
+or an example of `nexkit/protocol/v1/examples/state/` with fields set), and events in order,
+each with the state, the `changed` flag and the kinds of actions it must give, or the error it
+must be refused with. A step may also name fields of the state to `expect`, by dotted path, and
+`policies` that the host sends from that step on. Events name only what a case needs; the
+runner fills in the rest, each with an id of its own unless the case gives one.
+
+The runner sends each request to the program twice and checks that both answers are the same
+text, checks every answer against the protocol, and after every call checks the outbox: every
+action of the answer is pending, whole, and an action leaves `pending` only with its result,
+its cancel or its loss. It also checks NexKit's rule: each item that is not final has a work
+action pending, a wait, a hold or attention. Across the cases, every transition of the page's
+table is played, none that the page does not name for the case's policies is, and a drop is
+played from every state that is not final.
 """
 
 import copy
+import io
 import json
 import re
 import unittest
 from pathlib import Path
 
-from nexkit import engine, protocol
+from nexkit import protocol
+from nexkit.engine import cli
 
 HERE = Path(__file__).resolve().parent
 CASES = HERE / "conformance"
 DOC = HERE.parent / "docs" / "engine.md"
+EXAMPLES = protocol.ROOT / "examples"
 FIXTURES = json.loads((CASES / "fixtures.json").read_text())
 FINAL = ("accepted", "noChange", "dropped")
+# The actions that carry an item on: the others only tell, show or end.
+WORK = ("runAgent", "runChecks", "publish", "accept", "createParts", "replaceChange", "wait")
 PERSON = {"id": "octocat", "role": "decides"}
 ACTION_ID = re.compile(r"^a\d+\.\d+$")
 DEFAULTS = {
@@ -43,7 +58,7 @@ DEFAULTS = {
     "stopped": {"outcome": "keyRefused", "text": "The provider refused the key."},
     "held": {"label": "on-hold"},
     "reopened": {"by": PERSON},
-    "actionLost": {"tokens": None},
+    "actionLost": {"tokens": None, "seconds": None, "usd": None},
 }
 AGENT = {
     "tokens": None,
@@ -54,11 +69,15 @@ AGENT = {
     "session": None,
     "changeVersion": None,
     "timedOut": False,
+    "seconds": None,
+    "usd": None,
 }
 RESULTS = {
     "@timeout": {**AGENT, "output": None, "timedOut": True},
     "@error": {**AGENT, "output": None, "error": "The agent stopped."},
 }
+# The states a conflict leads to under each conflict policy (docs/engine.md#states).
+CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working",)}
 
 
 def result_of(value):
@@ -69,22 +88,42 @@ def result_of(value):
     return value
 
 
-def event_of(short, state):
+def event_of(short, state, number):
+    """The whole event that `short` names, for `state`, as step `number` of its case. An
+    action may be named by its kind, for the latest pending action of that kind."""
     kind = short["kind"]
-    event = {"protocol": 1, "kind": kind, "item": "42", "at": "2026-11-23T15:01:11Z"}
+    event = {"protocol": 1, "kind": kind, "id": f"e{number}", "item": "42"}
+    event["at"] = "2026-11-23T15:01:11Z"
     event.update(copy.deepcopy(DEFAULTS.get(kind, {})))
     event.update({key: value for key, value in short.items() if key != "kind"})
     version = (state or {}).get("change") and state["change"]["version"]
     if kind in ("actionFinished", "actionLost"):
+        pending = [item for item in state["pending"] if item["kind"] == event["action"]]
         if not ACTION_ID.match(event["action"]):
-            ids = [item["id"] for item in state["pending"] if item["kind"] == event["action"]]
-            event["action"] = ids[-1] if ids else "a0.0"
-        event.setdefault("changeVersion", version)
+            event["action"] = pending[-1]["id"] if pending else "a0.0"
+        action = next((a for a in state["pending"] if a["id"] == event["action"]), {})
+        event.setdefault("changeVersion", action.get("changeVersion", version))
     if kind == "actionFinished":
         event["result"] = result_of(event["result"])
     if kind in ("changeAccepted", "changeEmptied", "changeApproved"):
         event.setdefault("changeVersion", version)
     return event
+
+
+def start_of(case):
+    """The state a case starts from: none, or an example state with the fields it sets."""
+    start = case.get("state")
+    if start is None:
+        return None
+    state = json.loads((EXAMPLES / "state" / f"{start['example']}.json").read_text())
+    state.update(copy.deepcopy(start.get("set", {})))
+    return state
+
+
+def at(value, path):
+    for part in path.split("."):
+        value = value[int(part)] if isinstance(value, list) else value[part]
+    return value
 
 
 def table_transitions():
@@ -99,20 +138,28 @@ def table_transitions():
     return pairs
 
 
-def allowed():
-    """The table's transitions, and those the page's rules below it allow from many states:
-    from a state with a change, a change that went in, became empty or was pushed to, and a
-    conflict; from every state that is not final, a drop and a stop; and a reopened item."""
-    states = _states()
-    extra = {(name, "new") for name in FINAL}
-    for name in states:
+def allowed(policies):
+    """The table's transitions, and those the page's rules below it allow, under `policies`:
+    from a state that may have a change, a change that went in, became empty or was pushed to,
+    a review asked for, and a conflict as the conflict policy says; from every state that is
+    not final, a drop and a stop; and a final item reopened."""
+    conflicts = {**_defaults(), **policies}["conflicts"]
+    pairs = table_transitions() | {(name, "new") for name in FINAL}
+    for name in _states():
         if name in FINAL:
             continue
-        extra |= {(name, "dropped"), (name, "failed")}
-        if name not in ("new", "planning", "split"):
-            extra |= {(name, target) for target in ("accepted", "noChange", "checking")}
-            extra |= {(name, target) for target in ("fixing", "working", "ready")}
-    return table_transitions() | extra
+        pairs |= {(name, "dropped"), (name, "failed")}
+        if name != "split":
+            pairs |= {(name, target) for target in ("accepted", "noChange", "checking")}
+            pairs |= {(name, target) for target in CONFLICTS[conflicts]}
+    return pairs
+
+
+def run_program(request):
+    """The program's answer to `request`, as text. It reads standard input as bytes."""
+    out = io.StringIO()
+    cli.main(["step"], io.BytesIO(json.dumps(request).encode()), out)
+    return out.getvalue()
 
 
 def cases():
@@ -120,95 +167,124 @@ def cases():
 
 
 def play(case):
-    """Each step of a case with the request the suite sends for it and the engine's answer."""
-    state = None
-    for step in case["steps"]:
+    """Each step of a case with the state it starts from and the request the suite sends,
+    which the program answers with `text`. The next step starts from the answer's state,
+    unless the step expects an error."""
+    policies = case["policies"]
+    state = start_of(case)
+    for number, step in enumerate(case["steps"], 1):
+        policies = step.get("policies", policies)
         request = {
             "protocol": 1,
             "call": "step",
             "state": state,
-            "event": event_of(step["event"], state),
-            "policies": case["policies"],
+            "event": event_of(step["event"], state, number),
+            "policies": policies,
         }
-        answer = engine.answer(copy.deepcopy(request))
-        yield step, request, answer
-        state = answer.get("state")
-
-
-def drop(state, policies):
-    """The request that drops a work item in `state`."""
-    return {
-        "protocol": 1,
-        "call": "step",
-        "state": state,
-        "event": event_of({"kind": "dropRequested"}, state),
-        "policies": policies,
-    }
+        text = run_program(request)
+        yield number, step, request, text
+        if "error" not in step:
+            state = json.loads(text)["state"]
 
 
 def every_request():
-    """Every request the suite sends: each case's, then a drop from the first snapshot of
-    each state that is not final."""
-    snapshots = {}
+    """Every request the suite sends, case by case."""
     for path in cases():
-        for _, request, answer in play(json.loads(path.read_text())):
+        for _, _, request, _ in play(json.loads(path.read_text())):
             yield request
-            snapshots.setdefault(answer["state"]["state"], (answer["state"], request["policies"]))
-    for name, (state, policies) in snapshots.items():
-        if name not in FINAL:
-            yield drop(state, policies)
 
 
 class ConformanceTest(unittest.TestCase):
-    def run_case(self, path, seen, snapshots):
+    def run_case(self, path, seen, dropped):
         case = json.loads(path.read_text())
-        for number, (step, request, answer) in enumerate(play(case), 1):
+        state = start_of(case)
+        if state is not None:
+            self.assertEqual(protocol.check(state, "state.schema.json"), [], path.stem)
+        open_ = {action["id"]: action for action in (state or {}).get("pending", [])}
+        for number, step, request, text in play(case):
             where = f"{path.stem} step {number} ({step['event']['kind']})"
-            state = request["state"]
+            state, event, policies = request["state"], request["event"], request["policies"]
+            self.assertEqual(run_program(request), text, f"{where}: the same request")
+            answer = json.loads(text)
+            if "error" in step:
+                self.assertIn(step["error"], answer.get("error", ""), where)
+                self.assertEqual(protocol.check(answer, "calls/error.schema.json"), [], where)
+                continue
             self.assertNotIn("error", answer, where)
             self.assertEqual(protocol.check(answer, "calls/step.answer.schema.json"), [], where)
-            for action in answer["actions"]:
-                schema = f"actions/{action['kind']}.schema.json"
-                self.assertEqual(protocol.check(action, schema), [], where)
             self.assertEqual(answer["changed"], step["changed"], where)
             new = answer["state"]
             if answer["changed"]:
                 self.assertEqual(new["revision"], (state or {"revision": 0})["revision"] + 1, where)
-                pending = {item["id"] for item in new["pending"]}
-                self.assertTrue({action["id"] for action in answer["actions"]} <= pending, where)
             else:
                 self.assertEqual(new, state, where)
                 self.assertEqual(answer["actions"], [], where)
             self.assertEqual(new["state"], step["state"], where)
             if "actions" in step:
                 self.assertEqual([a["kind"] for a in answer["actions"]], step["actions"], where)
+            for path_, value in step.get("expect", {}).items():
+                self.assertEqual(at(new, path_), value, f"{where}: {path_}")
+            open_ = self.check_outbox(open_, event, answer, where)
             if new["state"] not in FINAL:
-                carried = new["pending"] or new["waits"] or new["hold"] or new["attention"]
+                carried = [action for action in new["pending"] if action["kind"] in WORK]
+                carried = carried or new["waits"] or new["hold"] or new["attention"]
                 self.assertTrue(carried, f"{where}: nothing carries the item on")
             if state is not None and new["state"] != state["state"]:
-                seen.add((state["state"], new["state"]))
-            snapshots.setdefault(new["state"], (new, case["policies"]))
+                pair = (state["state"], new["state"])
+                self.assertIn(pair, allowed(policies), f"{where}: the page names no {pair}")
+                seen.add(pair)
+            if event["kind"] == "dropRequested" and answer["changed"]:
+                dropped.add(state["state"])
+
+    def check_outbox(self, open_, event, answer, where):
+        """The pending actions after `answer`: each action it gives is pending, whole, and
+        each that was open stays, or left with its result, its cancel or its loss."""
+        pending = {action["id"]: action for action in answer["state"]["pending"]}
+        given = {action["id"]: action for action in answer["actions"]}
+        for number, action in given.items():
+            self.assertEqual(pending.get(number), action, f"{where}: {number} is not pending")
+        ended = {action["action"] for action in answer["actions"] if action["kind"] == "cancel"}
+        if event["kind"] in ("actionFinished", "actionLost") and answer["changed"]:
+            ended.add(event["action"])
+        for number, action in open_.items():
+            if number in ended:
+                self.assertNotIn(number, pending, f"{where}: {number} ended and stays")
+            else:
+                self.assertEqual(pending.get(number), action, f"{where}: {number} went away")
+        for number in pending:
+            self.assertTrue(number in open_ or number in given, f"{where}: {number} came")
+        return pending
 
     def test_the_cases(self):
-        seen, snapshots = set(), {}
+        seen, dropped = set(), set()
         paths = cases()
         self.assertTrue(paths)
         for path in paths:
             with self.subTest(case=path.stem):
-                self.run_case(path, seen, snapshots)
+                self.run_case(path, seen, dropped)
         self.assertEqual(table_transitions() - seen, set(), "transitions no case plays")
-        self.assertEqual(seen - allowed(), set(), "transitions the page does not name")
-        for name, (state, policies) in snapshots.items():
-            if name in FINAL:
-                continue
-            with self.subTest(drop=name):
-                answer = engine.answer(drop(state, policies))
-                self.assertEqual(answer["state"]["state"], "dropped")
-        self.assertEqual(set(snapshots) - set(FINAL), set(_states()) - set(FINAL))
+        open_states = set(_states()) - set(FINAL)
+        self.assertEqual(open_states - dropped, set(), "states no case drops an item from")
+
+    def test_a_runner_that_checks_nothing_would_fail(self):
+        # The outbox check finds an action that went away with no result, cancel or loss.
+        action = json.loads((EXAMPLES / "state" / "planning.json").read_text())["pending"][0]
+        state = {"state": "planning", "pending": []}
+        answer = {"state": state, "actions": [], "changed": True}
+        with self.assertRaises(AssertionError):
+            self.check_outbox({action["id"]: action}, {"kind": "tick"}, answer, "here")
+        # A transition the conflict policy does not lead to is not allowed.
+        self.assertNotIn(("working", "fixing"), allowed({"conflicts": "person"}))
+        self.assertIn(("working", "fixing"), allowed({"conflicts": "resolve"}))
 
 
 def _states():
     return protocol.load("common.schema.json")["$defs"]["state"]["enum"]
+
+
+def _defaults():
+    properties = protocol.load("policies.schema.json")["properties"]
+    return {name: policy["default"] for name, policy in properties.items()}
 
 
 if __name__ == "__main__":

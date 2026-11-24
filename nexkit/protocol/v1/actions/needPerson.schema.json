@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/needPerson.schema.json",
   "$comment": "Tell the people who decide, once.",
   "type": "object",
   "properties": {
@@ -31,6 +33,5 @@
     "next",
     "reason",
     "text"
-  ],
-  "additionalProperties": false
+  ]
 }

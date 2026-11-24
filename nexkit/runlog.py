@@ -13,7 +13,7 @@ import secrets
 import time
 from pathlib import Path
 
-from .engine.text import fence
+from .engine.textutil import fence
 from .runtimes.base import TOKENS
 
 HEAD_LINES = 20

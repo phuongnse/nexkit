@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath
 
 from .autopilot import CI_RUNS, FAILED, on_default_branch
 from .checks import _is_text, size_text
-from .engine.text import since_text
+from .engine.textutil import since_text
 from .github import LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError
 from .state import by_bot
 

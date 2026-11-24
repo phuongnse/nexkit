@@ -24,7 +24,7 @@ from importlib import resources
 from string import Template
 
 from .. import protocol
-from .text import (
+from .textutil import (
     MAX_PARTS,
     SHARD,
     TEXT_LIMIT,

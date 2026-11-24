@@ -1,7 +1,7 @@
 {
-  "id": "a1",
+  "id": "a1.1",
   "kind": "wait",
   "next": null,
-  "wait": "w1",
+  "wait": "w3.1",
   "until": "2026-11-23T16:01:11Z"
 }

@@ -1,13 +1,16 @@
 {
   "protocol": 1,
   "kind": "actionLost",
+  "id": "d-actionLost-1",
   "item": "42",
   "at": "2026-11-23T15:01:11Z",
-  "action": "a2",
+  "action": "a2.1",
   "changeVersion": null,
   "tokens": {
     "input": 1200,
     "cached": 0,
     "output": 300
-  }
+  },
+  "seconds": 840,
+  "usd": null
 }

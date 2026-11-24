@@ -20,7 +20,7 @@ from . import protocol
 from .checks import BASE_SHA, environment, known_base
 from .context import KEEPS, keep_texts
 from .engine import prompt as engine_prompt
-from .engine.text import checklist_item, person_decides
+from .engine.textutil import checklist_item, person_decides
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, one_line, summary, write_summary

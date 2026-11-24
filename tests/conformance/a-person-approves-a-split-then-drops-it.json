@@ -1,5 +1,7 @@
 {
-  "policies": {},
+  "policies": {
+    "splits": true
+  },
   "steps": [
     {
       "event": {

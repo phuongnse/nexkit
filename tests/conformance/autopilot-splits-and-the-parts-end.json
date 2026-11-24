@@ -1,7 +1,8 @@
 {
   "policies": {
     "planApproval": "autoWhenClean",
-    "accept": "autoWhenPassed"
+    "accept": "autoWhenPassed",
+    "splits": true
   },
   "steps": [
     {

@@ -12,7 +12,7 @@ from unittest import mock
 
 from nexkit import autopilot, state
 from nexkit import maintain as maintain_module
-from nexkit.engine.text import TEXT_LIMIT
+from nexkit.engine.textutil import TEXT_LIMIT
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.report import report

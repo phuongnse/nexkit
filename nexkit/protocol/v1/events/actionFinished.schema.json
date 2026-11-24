@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/actionFinished.schema.json",
   "$comment": "An action ended. `result` has the shape of the action kind's result schema.",
   "type": "object",
   "properties": {
@@ -7,6 +9,9 @@
     },
     "kind": {
       "const": "actionFinished"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
     },
     "item": {
       "$ref": "../common.schema.json#/$defs/id"
@@ -30,11 +35,11 @@
   "required": [
     "protocol",
     "kind",
+    "id",
     "item",
     "at",
     "action",
     "changeVersion",
     "result"
-  ],
-  "additionalProperties": false
+  ]
 }

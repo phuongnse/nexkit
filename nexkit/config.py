@@ -7,7 +7,7 @@ import json
 import re
 from pathlib import Path
 
-from .engine.text import checklist_item
+from .engine.textutil import checklist_item
 from .globs import GlobError, compile_globs
 from .runtimes import PROVIDERS, REMOVED, RUNTIMES, SECRET_SLOTS
 from .runtimes.base import SECRET_NAME, AgentConfigError

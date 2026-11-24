@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 # What a prompt shows of a check is the engine's, as the prompts are.
-from .engine.text import FAILURE_LINE, FAILURE_LINES, OUTPUT_TAIL, SHARD, failing_lines
+from .engine.textutil import FAILURE_LINE, FAILURE_LINES, OUTPUT_TAIL, SHARD, failing_lines
 from .gitutil import GitError, git, has_commit, is_ancestor
 from .gitutil import names as file_names
 from .globs import unaffected

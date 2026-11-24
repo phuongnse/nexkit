@@ -1,99 +1,77 @@
 {
-  "$comment": "A host's policies, which come with every call. A policy left out takes its default, which is NexKit 6's on GitHub.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/policies.schema.json",
+  "$comment": "A host's policies, which come with every call, as docs/engine.md#what-a-host-decides lists them. A policy left out takes its default, NexKit 6's on GitHub without autopilot. The page says which policies are not in this version yet.",
   "type": "object",
-  "additionalProperties": false,
-  "required": [],
   "properties": {
     "planApproval": {
       "enum": [
         "person",
         "autoWhenClean"
-      ]
+      ],
+      "default": "person"
     },
     "answers": {
       "enum": [
         "never",
         "recommended"
-      ]
+      ],
+      "default": "never"
     },
     "reviewAfterFailingChecks": {
       "enum": [
         "always",
         "onlyAfterPassing"
-      ]
+      ],
+      "default": "always"
     },
     "accept": {
       "enum": [
         "person",
         "autoWhenPassed"
-      ]
+      ],
+      "default": "person"
     },
     "fixRounds": {
-      "type": "integer"
+      "$comment": "How many fix rounds run before a person decides, from 0 to 10.",
+      "type": "integer",
+      "default": 2
+    },
+    "whenRoundsRunOut": {
+      "enum": [
+        "person",
+        "failed"
+      ],
+      "default": "person"
     },
     "conflicts": {
       "enum": [
         "person",
         "resolve",
         "redo"
-      ]
+      ],
+      "default": "person"
     },
     "conflictRounds": {
-      "type": "integer"
+      "$comment": "How many rounds may resolve conflicts, when `conflicts` is resolve.",
+      "type": "integer",
+      "default": 3
     },
     "splits": {
-      "type": "boolean"
+      "$comment": "Whether an approved plan that is too large and names its parts is split into them.",
+      "type": "boolean",
+      "default": false
     },
     "afterFailure": {
       "enum": [
         "person",
         "replan",
         "newItem"
-      ]
-    },
-    "checklist": {
-      "$comment": "Items the plan and the review answer, each a text or {text, person} for one only a person decides.",
-      "type": "array",
-      "items": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "text": {
-                "type": "string"
-              },
-              "person": {
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "text"
-            ],
-            "additionalProperties": false
-          }
-        ]
-      }
-    },
-    "profiles": {
-      "$comment": "The profiles triage chooses from: each name, with when it fits.",
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "when": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "when"
-        ]
-      }
+      ],
+      "default": "person"
     },
     "budgets": {
-      "$comment": "What each stage may spend, by stage. The plan prompt names the implement stage's time.",
+      "$comment": "What each stage may spend, by stage. So far only the prompts read it: the plan prompt names the implement stage's time.",
       "type": "object",
       "properties": {
         "triage": {
@@ -117,9 +95,7 @@
                 "null"
               ]
             }
-          },
-          "required": [],
-          "additionalProperties": false
+          }
         },
         "plan": {
           "type": "object",
@@ -142,9 +118,7 @@
                 "null"
               ]
             }
-          },
-          "required": [],
-          "additionalProperties": false
+          }
         },
         "implement": {
           "type": "object",
@@ -167,9 +141,7 @@
                 "null"
               ]
             }
-          },
-          "required": [],
-          "additionalProperties": false
+          }
         },
         "fix": {
           "type": "object",
@@ -192,9 +164,7 @@
                 "null"
               ]
             }
-          },
-          "required": [],
-          "additionalProperties": false
+          }
         },
         "review": {
           "type": "object",
@@ -217,12 +187,42 @@
                 "null"
               ]
             }
-          },
-          "required": [],
-          "additionalProperties": false
+          }
         }
       },
-      "additionalProperties": false
+      "default": {}
+    },
+    "profiles": {
+      "$comment": "The profiles triage chooses from: each name, with {when}, when it fits. So far only the triage prompt reads it.",
+      "type": "object",
+      "default": {}
+    },
+    "checklist": {
+      "$comment": "Items the plan and the review answer, each a text or {text, person} for one only a person decides. So far only the prompts read it.",
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "person": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "text"
+            ]
+          }
+        ]
+      },
+      "default": []
     }
-  }
+  },
+  "required": []
 }

@@ -22,7 +22,7 @@ from unittest import mock
 
 from nexkit import agent, engine, protocol
 from nexkit.context import gather
-from nexkit.engine import cli, prompt, serve, text
+from nexkit.engine import cli, prompt, serve, textutil
 from nexkit.engine.machine import INPUTS
 from nexkit.publish import pull_body
 from nexkit.state import answers_marker, empty_state, profile_record, render_state
@@ -661,7 +661,7 @@ class PromptCallTests(unittest.TestCase):
                 round = Round(world, case(world))
                 round.run()
                 request = round.request()
-                answer = engine.reply("prompt", json.dumps(request))
+                answer = engine.reply("prompt", json.dumps(request).encode())
                 self.assertNotIn("error", answer)
                 self.assertEqual(world.shown(answer["text"]), golden(name, None))
                 # The files a round writes, which the prompt names.
@@ -712,7 +712,7 @@ class PromptProgramTests(unittest.TestCase):
     def test_the_program_reads_standard_input_and_serve_answers_the_same(self):
         text = json.dumps({k: v for k, v in example().items() if k != "call"})
         out = io.StringIO()
-        self.assertEqual(cli.main(["prompt"], io.StringIO(text), out), 0)
+        self.assertEqual(cli.main(["prompt"], io.BytesIO(text.encode()), out), 0)
         done = subprocess.run(
             [sys.executable, str(ROOT / "bin" / "nexkit-engine"), "prompt"],
             input=text,
@@ -850,7 +850,7 @@ class PromptInputTests(unittest.TestCase):
     def test_a_request_the_engine_cannot_answer_gets_an_error_answer(self):
         with mock.patch.object(prompt, "texts", side_effect=KeyError("head")):
             answer = engine.answer(self.request("review", self.needs("review")))
-        self.assertEqual(answer["error"], "The engine could not answer: KeyError: 'head'")
+        self.assertEqual(answer["error"], "The engine failed on this request: KeyError: 'head'")
 
     def test_no_id_names_a_file_outside_the_folder_for_texts(self):
         inputs = {
@@ -870,7 +870,7 @@ class PromptInputTests(unittest.TestCase):
         self.assertEqual(defs["diff"]["properties"]["since"]["maxLength"], prompt.MAX_DIFF + 1)
         sides = defs["diff"]["properties"]["sides"]["items"]["maxLength"]
         self.assertEqual(sides, prompt.MAX_DIFF // 4 + 1)
-        self.assertEqual(defs["check"]["properties"]["output"]["maxLength"], text.OUTPUT_TAIL)
+        self.assertEqual(defs["check"]["properties"]["output"]["maxLength"], textutil.OUTPUT_TAIL)
         request = self.request("review", self.needs("review"))
         request["inputs"]["diff"] = {"base": "main", "text": "x" * (prompt.MAX_DIFF + 2)}
         self.assertIn(
@@ -887,10 +887,13 @@ class PromptInputTests(unittest.TestCase):
         with server() as port:
             too_long = {"Content-Length": str(serve.MAX_BODY + 1)}
             self.assertEqual(send(port, "/step", b"{}", headers=too_long)[0], 413)
-            body = json.dumps({**example(), "padding": "x" * serve.MAX_BODY}).encode()
-            status, answer = send(port, "/prompt", body)
-        self.assertEqual(status, 400)
-        self.assertIn("request.padding is not allowed", json.loads(answer)["error"])
+            request = example()
+            # A long issue text, kept whole: a prompt names the file that holds it.
+            request["inputs"]["item"]["body"] = "x" * serve.MAX_BODY
+            status, answer = send(port, "/prompt", json.dumps(request).encode())
+        self.assertEqual(status, 200)
+        [kept] = json.loads(answer)["files"]
+        self.assertEqual(kept["text"], "x" * serve.MAX_BODY)
 
 
 if __name__ == "__main__":

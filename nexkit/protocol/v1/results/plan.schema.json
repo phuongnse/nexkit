@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/results/plan.schema.json",
   "$comment": "The plan stage's result. `questions[].closes` names the option that only closes the work item; `split[].depends_on` the earlier parts a part needs, from 1; `no_change` the finding when nothing needs to change, or empty.",
   "type": "object",
   "properties": {

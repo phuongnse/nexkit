@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/reopened.schema.json",
   "$comment": "A final work item was opened again.",
   "type": "object",
   "properties": {
@@ -7,6 +9,9 @@
     },
     "kind": {
       "const": "reopened"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
     },
     "item": {
       "$ref": "../common.schema.json#/$defs/id"
@@ -21,9 +26,9 @@
   "required": [
     "protocol",
     "kind",
+    "id",
     "item",
     "at",
     "by"
-  ],
-  "additionalProperties": false
+  ]
 }

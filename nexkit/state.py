@@ -13,8 +13,8 @@ import hashlib
 import json
 import re
 
-from .engine.text import MAX_PARTS, clip
-from .engine.text import TEXT_LIMIT as TEXT_LIMIT
+from .engine.textutil import MAX_PARTS, clip
+from .engine.textutil import TEXT_LIMIT as TEXT_LIMIT
 from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
 from .schema import filled
 

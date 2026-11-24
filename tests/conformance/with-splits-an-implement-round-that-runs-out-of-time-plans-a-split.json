@@ -1,12 +1,15 @@
 {
-  "policies": {},
+  "policies": {
+    "splits": true
+  },
   "steps": [
     {
       "event": {
         "kind": "created"
       },
       "state": "new",
-      "changed": true
+      "changed": true,
+      "actions": []
     },
     {
       "event": {
@@ -14,7 +17,10 @@
         "what": "go"
       },
       "state": "working",
-      "changed": true
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
     },
     {
       "event": {
@@ -26,7 +32,13 @@
       "changed": true,
       "actions": [
         "runAgent"
-      ]
+      ],
+      "expect": {
+        "asked": [
+          "split"
+        ],
+        "pending.0.stage": "plan"
+      }
     }
   ]
 }

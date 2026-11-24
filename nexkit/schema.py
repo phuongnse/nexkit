@@ -4,8 +4,10 @@ Agent output is untrusted, and runtimes enforce schemas differently, so NexKit c
 result itself before anything uses it. The same check reads the engine's protocol
 (`nexkit/protocol/`). Only the parts of JSON Schema that those schemas use are supported:
 `type` (one name or a list), `enum`, `const`, `properties`, `required`, `items`,
-`additionalProperties`, `anyOf`, `$ref`, `maxLength` and `maxItems`. Keys that a schema does
-not name are left as they are unless `additionalProperties` is false.
+`additionalProperties`, `anyOf`, `$ref`, `maxLength` and `maxItems`, each as JSON Schema
+2020-12 reads it: the keywords beside a `$ref` or an `anyOf` apply too, and `const` and `enum`
+compare JSON values, so `true` is not `1`. Keys that a schema does not name are left as they
+are unless `additionalProperties` is false.
 """
 
 from __future__ import annotations
@@ -31,26 +33,29 @@ def problems(value, schema, where="result", refs=None, base=None):
 
     `refs(ref, base)` answers the schema a `$ref` names and the base of that schema's own
     references, for schemas in files; `base` is the file `schema` came from."""
+    found = []
     if "$ref" in schema:
         if refs is None:
             raise ValueError(f"{where}: no way to read {schema['$ref']}")
         target, target_base = refs(schema["$ref"], base)
-        return problems(value, target, where, refs, target_base)
+        found += problems(value, target, where, refs, target_base)
     if "anyOf" in schema:
         options = [problems(value, sub, where, refs, base) for sub in schema["anyOf"]]
         if all(options):
-            return min(options, key=len)
-        return []
-    found = []
+            # The option a value names by a constant, such as an action's `kind`, says best
+            # what is wrong with it; otherwise the one with the fewest problems.
+            named = [_names(value, sub, refs, base) for sub in schema["anyOf"]]
+            ranked = zip(named, options, strict=True)
+            found += min(ranked, key=lambda pair: (not pair[0], len(pair[1])))[1]
     kind = schema.get("type")
     if kind:
         kinds = kind if isinstance(kind, list) else [kind]
         if not any(_is(value, name) for name in kinds):
             names = " or ".join(f"{'an' if name[0] in 'aeiou' else 'a'} {name}" for name in kinds)
-            return [f"{where} must be {names}"]
-    if "const" in schema and value != schema["const"]:
+            return [*found, f"{where} must be {names}"]
+    if "const" in schema and not _same(value, schema["const"]):
         found.append(f"{where} must be {schema['const']!r}")
-    if "enum" in schema and value not in schema["enum"]:
+    if "enum" in schema and not any(_same(value, item) for item in schema["enum"]):
         allowed = ", ".join(repr(item) for item in schema["enum"])
         found.append(f"{where} must be one of {allowed}")
     if isinstance(value, dict):
@@ -71,6 +76,33 @@ def problems(value, schema, where="result", refs=None, base=None):
         for index, item in enumerate(value):
             found += problems(item, schema["items"], f"{where}[{index}]", refs, base)
     return found
+
+
+def _names(value, schema, refs, base):
+    """Whether `value` has every constant property that `schema` names, as a `kind`."""
+    while "$ref" in schema and refs is not None:
+        schema, base = refs(schema["$ref"], base)
+    constants = {
+        key: sub["const"] for key, sub in schema.get("properties", {}).items() if "const" in sub
+    }
+    return (
+        isinstance(value, dict)
+        and bool(constants)
+        and all(key in value and _same(value[key], const) for key, const in constants.items())
+    )
+
+
+def _same(value, other):
+    """Whether two JSON values are equal, as JSON compares them: a boolean is never a number."""
+    if isinstance(value, bool) or isinstance(other, bool):
+        return type(value) is type(other) and value == other
+    if isinstance(value, dict) and isinstance(other, dict):
+        return value.keys() == other.keys() and all(_same(value[k], other[k]) for k in value)
+    if isinstance(value, list) and isinstance(other, list):
+        return len(value) == len(other) and all(map(_same, value, other))
+    if isinstance(value, (dict, list)) or isinstance(other, (dict, list)):
+        return False
+    return value == other
 
 
 def _is(value, name):

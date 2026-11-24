@@ -58,6 +58,7 @@
       "state": "planning",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     },

@@ -50,6 +50,7 @@
       "state": "working",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     }

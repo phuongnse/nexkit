@@ -10,8 +10,9 @@ for people.
 
 The runner sends each request to the program twice and checks that both answers are the same
 text, checks every answer against the protocol, and after every call checks the outbox: every
-action of the answer is pending, whole, and an action leaves `pending` only with its result,
-its cancel or its loss. It also checks NexKit's rule: each item that is not final has a work
+action of the answer is pending, whole, an action leaves `pending` only with its result, its
+cancel or its loss, and a notice stays pending only while attention says it. It also checks
+NexKit's rule: each item that is not final has a work
 action pending, a wait, a hold or attention. Across the cases, every transition of the page's
 table is played, none that the page does not name for the case's policies is, and a drop is
 played from every state that is not final.
@@ -234,6 +235,14 @@ class ConformanceTest(unittest.TestCase):
             for path_, value in step.get("expect", {}).items():
                 self.assertEqual(at(new, path_), value, f"{where}: {path_}")
             open_ = self.check_outbox(open_, event, answer, where)
+            # A notice stays pending only while attention says it, so a host that carries out
+            # every pending action never tells a person something that no longer stands.
+            attention = new["attention"] or {}
+            for action in new["pending"]:
+                if action["kind"] == "needPerson":
+                    told = (action["reason"], action["text"], action["ref"])
+                    wants = (attention.get("reason"), attention.get("text"), attention.get("ref"))
+                    self.assertEqual(told, wants, f"{where}: {action['id']} no longer stands")
             if new["state"] not in FINAL:
                 carried = [action for action in new["pending"] if action["kind"] in WORK]
                 carried = carried or new["waits"] or new["hold"] or new["attention"]

@@ -50,6 +50,7 @@
       "state": "planning",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     },
@@ -84,6 +85,7 @@
       "state": "working",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ],
       "expect": {

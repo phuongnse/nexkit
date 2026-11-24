@@ -43,7 +43,14 @@
             "id": "d1",
             "version": "1"
           },
-          "refused": null
+          "refused": null,
+          "observed": {
+            "changeId": "d1",
+            "version": "1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
         }
       },
       "state": "checking",
@@ -106,6 +113,13 @@
           "change": {
             "id": "d1",
             "version": "1"
+          },
+          "observed": {
+            "changeId": "d1",
+            "version": "1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
           }
         }
       },
@@ -138,6 +152,7 @@
       "state": "checking",
       "changed": true,
       "actions": [
+        "cancel",
         "runChecks"
       ]
     }

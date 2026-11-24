@@ -1,5 +1,7 @@
 {
-  "policies": {},
+  "policies": {
+    "conflicts": "redo"
+  },
   "steps": [
     {
       "event": {
@@ -51,65 +53,6 @@
     },
     {
       "event": {
-        "kind": "actionFinished",
-        "action": "runChecks",
-        "result": {
-          "checks": [
-            {
-              "name": "test",
-              "passed": true,
-              "skipped": false,
-              "signature": null,
-              "knownBaseFailure": false
-            }
-          ]
-        }
-      },
-      "state": "reviewing",
-      "changed": true,
-      "actions": [
-        "runAgent"
-      ]
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:reviewChanges"
-      },
-      "state": "fixing",
-      "changed": true,
-      "actions": [
-        "runAgent"
-      ]
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:fix"
-      },
-      "state": "fixing",
-      "changed": true,
-      "actions": [
-        "publish"
-      ]
-    },
-    {
-      "event": {
-        "kind": "changeObserved",
-        "version": "v1b"
-      },
-      "state": "fixing",
-      "changed": true,
-      "actions": [],
-      "expect": {
-        "observed.version": "v1b",
-        "pending.0.kind": "publish"
-      }
-    },
-    {
-      "event": {
         "kind": "stopped"
       },
       "state": "failed",
@@ -117,39 +60,12 @@
       "actions": [
         "cancel",
         "needPerson"
-      ],
-      "expect": {
-        "attention.reason": "failed",
-        "change.version": "v1"
-      }
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "needPerson",
-        "result": {}
-      },
-      "state": "failed",
-      "changed": true,
-      "actions": [],
-      "expect": {
-        "attention.reason": "failed",
-        "change.version": "v1"
-      }
+      ]
     },
     {
       "event": {
         "kind": "changeObserved",
-        "version": "v1b",
-        "id": "sweep-2"
-      },
-      "state": "failed",
-      "changed": false,
-      "actions": []
-    },
-    {
-      "event": {
-        "kind": "held"
+        "version": "v1b"
       },
       "state": "failed",
       "changed": true,
@@ -162,16 +78,54 @@
     {
       "event": {
         "kind": "changeObserved",
-        "version": "v1c"
+        "version": "v1b",
+        "conflicts": true
       },
-      "state": "checking",
+      "state": "failed",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "attention.reason": "failed"
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1b",
+        "conflicts": false
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "attention.reason": "failed"
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1",
+        "conflicts": true
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "change.version": "v1",
+        "attention.reason": "failed"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "working",
       "changed": true,
       "actions": [
-        "runChecks"
-      ],
-      "expect": {
-        "change.version": "v1c"
-      }
+        "cancel",
+        "replaceChange"
+      ]
     }
   ]
 }

@@ -42,6 +42,7 @@
       "state": "planning",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     },
@@ -58,7 +59,7 @@
         "needPerson"
       ],
       "expect": {
-        "attention.ref": "a4.1"
+        "attention.ref": "a4.2"
       }
     },
     {
@@ -67,7 +68,7 @@
         "action": "a3.2"
       },
       "state": "awaitingApproval",
-      "changed": true,
+      "changed": false,
       "actions": []
     },
     {
@@ -81,7 +82,7 @@
         "needPerson"
       ],
       "expect": {
-        "pending.-1.ref": "a4.1"
+        "pending.-1.ref": "a4.2"
       }
     }
   ]

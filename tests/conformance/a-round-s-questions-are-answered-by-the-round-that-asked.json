@@ -39,6 +39,7 @@
       "state": "working",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     },
@@ -54,8 +55,8 @@
         "needPerson"
       ],
       "expect": {
-        "attention.ref": "a4.1",
-        "pending.-1.ref": "a4.1"
+        "attention.ref": "a4.2",
+        "pending.-1.ref": "a4.2"
       }
     },
     {
@@ -70,11 +71,12 @@
     {
       "event": {
         "kind": "answered",
-        "asked": "a4.1"
+        "asked": "a4.2"
       },
       "state": "planning",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     }

@@ -143,13 +143,12 @@ class Step:
         """Go to `name`: stop the work the old state asked for, and end its waits and attention.
         A round's state keeps the policies the round started with."""
         issued = {action["id"] for action in self.actions}
-        # A step that moves on tells no person what it asked of them earlier in the step.
-        withdrawn = WORK + ("needPerson",)
         for action in list(self.s["pending"]):
-            if action["kind"] in withdrawn and action["id"] in issued:
+            if action["kind"] in WORK and action["id"] in issued:
                 self.withdraw(action)
             elif action["kind"] in WORK:
                 self.cancel(action)
+        self.retract_notices()
         if name not in ROUND:
             self.s["policies"] = {}
         elif self.state not in ROUND or not self.s["policies"]:
@@ -186,8 +185,19 @@ class Step:
     def waiting(self, kind):
         return any(wait["for"] == kind for wait in self.s["waits"])
 
+    def retract_notices(self):
+        """Attention changes: a notice stays pending only while attention says it, so that every
+        pending action is one to carry out (docs/engine.md#the-state-document)."""
+        issued = {action["id"] for action in self.actions}
+        for action in list(self.s["pending"]):
+            if action["kind"] == "needPerson" and action["id"] in issued:
+                self.withdraw(action)
+            elif action["kind"] == "needPerson":
+                self.cancel(action)
+
     def need(self, reason, text, ref=None):
         """Ask a person, about `ref` when the decision names what it is on."""
+        self.retract_notices()
         self.s["attention"] = {"reason": reason, "text": text, "ref": ref}
         self.do("needPerson", reason=reason, text=text, ref=ref)
 
@@ -310,8 +320,9 @@ class Step:
         observed = self.observed()
         if self.final() or self.coming() or not observed:
             return False
-        # A reopened item waits for a person, who starts it; a review-only one is reviewed.
-        whole = whole and (self.state != "new" or self.review_only)
+        # A failed item waits for a person whatever is observed, and so does a reopened one,
+        # unless it is review-only: a newer version waits for the request that takes it on.
+        whole = whole and self.state != "failed" and (self.state != "new" or self.review_only)
         if observed["merged"]:
             self.move("accepted")
             self.close("completed")
@@ -884,15 +895,10 @@ def step(state, event, policies, check):
     ):
         changed = False
     else:
-        was = work.state
         changed = handler(event)
-        # Even after an event that changed nothing else, so that a repeated observation or a
-        # person's request catches up. A stop, or a step that fails the item, keeps its
-        # attention: a new version observed meanwhile waits for the next event
-        # (docs/engine.md#states).
-        observed_anew = was == "failed" and event["kind"] == "changeObserved" and changed
-        halted = event["kind"] == "stopped" or (work.state == "failed" and not observed_anew)
-        changed = work.reconcile(whole=not halted) or changed
+        # Even after an event that changed nothing else, so that a repeated observation
+        # catches up (docs/engine.md#states).
+        changed = work.reconcile() or changed
     if not changed:
         return before, [], False
     if work.review_only:

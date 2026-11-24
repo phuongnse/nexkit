@@ -39,6 +39,7 @@
       "state": "planning",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     },
@@ -75,7 +76,7 @@
         "action": "a3.1"
       },
       "state": "failed",
-      "changed": true,
+      "changed": false,
       "actions": []
     },
     {

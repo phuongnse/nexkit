@@ -40,7 +40,14 @@
             "id": "308",
             "version": "v1"
           },
-          "refused": null
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
         }
       },
       "state": "checking",
@@ -113,6 +120,7 @@
       "state": "checking",
       "changed": true,
       "actions": [
+        "cancel",
         "runChecks"
       ],
       "expect": {

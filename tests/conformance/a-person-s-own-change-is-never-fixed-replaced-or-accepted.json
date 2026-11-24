@@ -177,6 +177,7 @@
       "state": "checking",
       "changed": true,
       "actions": [
+        "cancel",
         "runChecks"
       ]
     }

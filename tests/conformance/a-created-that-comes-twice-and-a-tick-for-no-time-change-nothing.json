@@ -1,0 +1,43 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "waits.0.id": "w1.1",
+        "waits.0.for": "start"
+      }
+    },
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w1.1"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "start"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

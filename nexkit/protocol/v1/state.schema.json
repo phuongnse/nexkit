@@ -32,33 +32,41 @@
         }
       ]
     },
-    "conflict": {
-      "$comment": "The change version a conflict was reported on while it had to wait, or before the change reached that version, or null. The engine applies the conflict policy when the item would next go to its checks or be ready, and only while this is the change's version: a new version, by a round's publish or a person's push, drops a conflict on an older one (docs/engine.md#states).",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "pushes": {
-      "$comment": "Pushes that did not start from the change's version when they arrived, oldest first. Each applies once the change reaches its `previousVersion`. When an 11th would wait, the item fails for a person, since the engine can no longer follow the change (docs/engine.md#events-and-actions-arrive-more-than-once).",
-      "type": "array",
-      "maxItems": 10,
-      "items": {
-        "type": "object",
-        "properties": {
-          "previousVersion": {
-            "type": "string"
+    "observed": {
+      "$comment": "The latest observation of the change, as changeObserved gave it, or null. The engine reconciles the item with it after each event (docs/engine.md#states).",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "changeId": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "conflicts": {
+              "type": "boolean"
+            },
+            "merged": {
+              "type": "boolean"
+            },
+            "empty": {
+              "type": "boolean"
+            }
           },
-          "changeVersion": {
-            "type": "string"
-          }
+          "required": [
+            "changeId",
+            "version",
+            "conflicts",
+            "merged",
+            "empty"
+          ],
+          "additionalProperties": false
         },
-        "required": [
-          "previousVersion",
-          "changeVersion"
-        ],
-        "additionalProperties": false
-      }
+        {
+          "type": "null"
+        }
+      ]
     },
     "attention": {
       "anyOf": [
@@ -458,8 +466,7 @@
     "itemKind",
     "state",
     "change",
-    "conflict",
-    "pushes",
+    "observed",
     "attention",
     "hold",
     "waits",

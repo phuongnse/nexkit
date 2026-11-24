@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/changeObserved.schema.json",
+  "$comment": "The change as the host reads it when it handles this event: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way. The host sends one whenever something may have changed, such as a push, a move of the base, a merge or a sweep, and may send one at any time; it is never a delta. It reads the change while it handles the event, never from a payload that waited in a queue (docs/engine.md#events-and-actions-arrive-more-than-once).",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "kind": {
+      "const": "changeObserved"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
+    },
+    "item": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "at": {
+      "$ref": "../common.schema.json#/$defs/time"
+    },
+    "changeId": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "conflicts": {
+      "type": "boolean"
+    },
+    "merged": {
+      "type": "boolean"
+    },
+    "empty": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "id",
+    "item",
+    "at",
+    "changeId",
+    "version",
+    "conflicts",
+    "merged",
+    "empty"
+  ]
+}

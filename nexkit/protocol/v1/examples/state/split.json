@@ -5,8 +5,7 @@
   "itemKind": "change",
   "state": "split",
   "change": null,
-  "conflict": null,
-  "pushes": [],
+  "observed": null,
   "attention": null,
   "hold": false,
   "waits": [

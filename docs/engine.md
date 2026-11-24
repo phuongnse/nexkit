@@ -100,23 +100,21 @@ The protocol is built for delivery at least once, in any order a host's queues g
 - **A person's decision names what it decides on.** `planApproved`, and a `go`, name the plan by
   its text's ref; `answered` names the questions by the ref that asked them, as the state's
   attention has it: a plan's text ref, or a round's agent action; `changeApproved` names the change
-  version. A decision on a plan, questions or a version that is no longer the item's changes
+  and its version. A decision on a plan, questions or a version that is no longer the item's changes
   nothing. The host names what the person acted on: the plan or questions they replied to, or the
   latest ones shown to them before they acted, and the version they saw; never what the state
   holds when the host handles the event, which would make a late decision look current.
-- **Pushes may arrive in any order.** `changePushed` names the change and the version the push
-  started from. One that does not start from the change's version waits in the state, and
-  applies once the change reaches that version, such as when an earlier push or the agent's own
-  publish arrives after it; one for another change, such as a change the engine replaced,
-  changes nothing. A host need not order pushes, nor read the head when it sends one. At most 10
-  pushes wait: when one more would, the engine can no longer follow the change, and the item
-  goes to `failed` for a person, with the pushes dropped. The host then sends a push from the
-  change's version in the state to its head. A push that arrives again with a new id after the
-  change moved past it also waits, and would apply only if the change came back to the version
-  it started from.
-- **Conflicts may arrive before their version.** A `conflict` for a version the change has not
-  reached yet, such as one the host found while it published the agent's work, waits in the
-  state and applies once the change reaches that version.
+- **The host observes the change, and the engine reconciles.** A host does not report what
+  happened to a change but what the change is: `changeObserved` gives its version, whether it
+  conflicts with what it was made on, and whether it was merged or became empty, as the host
+  reads them while it handles the event. A host sends one whenever something may have changed,
+  such as a push, a move of the base, a merge or a sweep, and may send one at any time. The state
+  keeps the latest observation, and after each event the engine reconciles the item with it, so
+  the next observation mends one that was lost or repeated.
+- **The host handles one item's events one at a time,** in the order it handles them, and stores
+  each answer with the revision's compare-and-set. It reads an observation when it handles it,
+  never from a payload that waited in a queue. With that duty, the latest observation the engine
+  got is the truth, and no observation can overtake a newer one.
 - **Every action has an id**, and the result event of an action carries that id and the action's
   own change version: the one it acts on, or null for an action that has none, such as `publish`
   or an agent started with no change. The version an agent produced is in its result. The state
@@ -168,17 +166,20 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   a person approves its split plan, it goes on as one change, and under `autoWhenClean` the plan
   waits for a person. A plan that asks questions waits for answers, even one an item was made
   with.
-- **From every state that has a change:** a `conflict` follows the conflict policy at once where
-  nothing runs that it must wait for: in `ready` and `accepting`, and in `checking` when a
-  conflict round can start (`redo`, or `resolve` with rounds left), since those checks can no
-  longer lead to an accept. Otherwise the state records the conflict with its version, and the
-  policy applies when the item would next go to its checks or be ready, as NexKit 6 starts no
-  conflict round while another runs; a question or a failure keeps its attention meanwhile. A
-  recorded conflict applies only while it names the change's version: a new version, by a
-  round's publish or a person's push, drops a conflict on an older one, and the host reports a
-  conflict again for a version that still has one. A change that a person accepted, such as a
-  merge by hand, goes to `accepted`; a change that became empty, because the same change landed
-  another way, goes to `noChange`; a change that a person pushed to goes to `checking`.
+- **From every state that has a change,** the engine reconciles the item with the latest
+  observation of that change, once no publish or replace is on its way. A change that was merged,
+  such as by a person's hand, goes to `accepted`; one that became empty, because the same change
+  landed another way, goes to `noChange`; a version other than the engine's, such as a person's
+  push, cancels what acts on the old version and goes to `checking`. A change that conflicts
+  follows the conflict policy at once where nothing runs that it must wait for: in `ready` and
+  `accepting`, and in `checking` when a conflict round can start (`redo`, or `resolve` with rounds
+  left), since those checks can no longer lead to an accept. Otherwise the policy applies when the
+  item would next go to its checks or be ready, as NexKit 6 starts no conflict round while another
+  runs, and only if the latest observation still says that version conflicts; a question or a
+  failure keeps its attention meanwhile. An observation of another change changes nothing, so
+  one of a change the engine replaced never touches the new one, even with the same version. A
+  publish or a replace that ends sets the change and reconciles at once, so an observation of the
+  new version that arrived first applies then.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
@@ -226,7 +227,7 @@ Three things sit beside the state, never in place of it:
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |
 | `actionFinished` | An action ended, with its id, the change version and its result |
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |
-| `conflict`, `changeAccepted`, `changeEmptied`, `changePushed` | Something happened to the change outside the engine |
+| `changeObserved` | The host read the change: its version, and whether it conflicts, was merged or became empty |
 | `stopped` | The host stops the item, with the outcome |
 | `held`, `released` | A hold was set or taken off |
 | `blockerClosed`, `partEnded` | Work that this item waits for ended |
@@ -380,12 +381,14 @@ adapter. A new rule of the engine comes with a case.
   refuses one that is newer than it knows, so an engine rolled back never guesses.
 - **Major and minor.** Every message carries the protocol's major version, `"protocol": 1`.
   Version 1 may change freely until NexKit 7.0 ships; at that release it is 1.0. From then on,
-  each additive change raises the minor version, and every field or value it adds carries
-  `"x-since": "1.<minor>"` in its schema. `protocol.MINOR` in `nexkit/protocol/` is the one place
-  the minor version lives, and `load` leaves `x-since` out, as it does `$comment`.
-- **A host asks which version it talks to.** The `describe` call answers the protocol's major and
-  minor version, the engine's own version and the calls it answers. A host calls it and refuses
-  an engine whose minor version is below what the host needs.
+  each additive change raises the minor version, and every field it adds carries
+  `"x-since": "1.<minor>"` in its schema; a new value of a field is a new major version, below.
+  `protocol.MINOR` in `nexkit/protocol/` is the one place the minor version lives, and `load`
+  leaves `x-since` out, as it does `$comment`.
+- **A host asks which version it talks to.** The `describe` call carries the major version the
+  host speaks, and answers the protocol's major and minor version, the engine's own version and
+  the calls it answers; an engine that does not serve that major version answers an error. A host
+  calls it and refuses an engine whose minor version is below what the host needs.
 - **A new optional field is a minor change.** Every reader ignores a field it does not know, so
   the schemas of events, actions, results, calls and policies leave out
   `additionalProperties: false`, and an engine or host that is older takes a message with a new

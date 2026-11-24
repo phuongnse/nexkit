@@ -243,6 +243,28 @@ class ProtocolTest(unittest.TestCase):
             self.assertNotIn("x-since", json.dumps(protocol.load(name)), name)
         self.assertEqual(named, set(range(1, protocol.MINOR + 1)))
 
+    def test_load_leaves_out_the_annotations(self):
+        # A made-up schema: what `load` gives an agent or a host holds no annotation.
+        raw = {
+            "$schema": protocol.DIALECT,
+            "$id": protocol.BASE + "made-up.schema.json",
+            "$comment": "For people.",
+            "type": "object",
+            "properties": {"new": {"x-since": "1.3", "$comment": "Added.", "type": "string"}},
+        }
+        self.assertEqual(
+            protocol._plain(raw),
+            {"type": "object", "properties": {"new": {"type": "string"}}},
+        )
+
+    def test_a_change_is_observed_whole_never_as_a_delta(self):
+        observed = protocol.load("events/changeObserved.schema.json")["required"]
+        for field in ("changeId", "version", "conflicts", "merged", "empty"):
+            self.assertIn(field, observed)
+        events = protocol.names("events")
+        for gone in ("changePushed", "conflict", "changeAccepted", "changeEmptied"):
+            self.assertNotIn(gone, events)
+
     def test_describe_answers_the_major_and_minor_version(self):
         answer = example("calls/describe.answer.json")
         self.assertEqual(answer["protocol"]["major"], protocol.VERSION)
@@ -277,8 +299,8 @@ class ProtocolTest(unittest.TestCase):
             ("planApproved", "plan"),
             ("answered", "asked"),
             ("requested", "plan"),
+            ("changeApproved", "changeId"),
             ("changeApproved", "changeVersion"),
-            ("changePushed", "previousVersion"),
         ):
             self.assertIn(field, protocol.load(f"events/{kind}.schema.json")["required"], kind)
 

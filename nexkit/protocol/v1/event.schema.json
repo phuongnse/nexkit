@@ -16,25 +16,16 @@
       "$ref": "events/blockerClosed.schema.json"
     },
     {
-      "$ref": "events/changeAccepted.schema.json"
-    },
-    {
       "$ref": "events/changeApproved.schema.json"
     },
     {
-      "$ref": "events/changeEmptied.schema.json"
-    },
-    {
-      "$ref": "events/changePushed.schema.json"
+      "$ref": "events/changeObserved.schema.json"
     },
     {
       "$ref": "events/changesRequested.schema.json"
     },
     {
       "$ref": "events/commented.schema.json"
-    },
-    {
-      "$ref": "events/conflict.schema.json"
     },
     {
       "$ref": "events/created.schema.json"

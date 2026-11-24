@@ -5,8 +5,7 @@
   "itemKind": "change",
   "state": "awaitingApproval",
   "change": null,
-  "conflict": null,
-  "pushes": [],
+  "observed": null,
   "attention": {
     "reason": "question",
     "text": "The plan has a question with no recommended answer.",

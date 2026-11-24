@@ -36,6 +36,17 @@
           "knownBaseFailure"
         ]
       }
+    },
+    "baseFailure": {
+      "$comment": "The work item about a failure the base branch has, when every failing check fails as it does there, as the host compares them; null or left out otherwise. A fix round waits for that item to close rather than fix the same failure.",
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

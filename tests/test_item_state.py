@@ -284,7 +284,7 @@ def largest():
         "noChange": True,
     }
     rounds = state["rounds"]
-    rounds.update(started=13, counted=10, conflicts=3)
+    rounds.update(started=13, counted=10, conflicts=3, baseFailure="9" * 20, recheck="f" * 40)
     rounds["signatures"] = ["sha256:" + "f" * 64] * most("rounds.signatures")
     rounds["findings"] = [
         {"severity": "blocking" if n % 2 else "suggestion", "text": worst(LONGEST["finding"])}
@@ -340,6 +340,8 @@ def decisions(state):
         len(plan["protectedPaths"]),
         [item["severity"] for item in state["rounds"]["findings"]],
         state["rounds"]["signatures"],
+        state["rounds"]["baseFailure"],
+        state["rounds"]["recheck"],
         state["rounds"]["criteria"],
         state["rounds"]["checklist"],
         state["parts"],

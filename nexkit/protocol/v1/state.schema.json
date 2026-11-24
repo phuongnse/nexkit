@@ -439,6 +439,21 @@
             ]
           },
           "maxItems": 50
+        },
+        "baseFailure": {
+          "$comment": "The item about a failure the base branch has that every failing check of the latest checks matches, as their result names it, or null: a fix round waits for it to close.",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recheck": {
+          "$comment": "The version of the change that a fix round left as it was, having found the cause outside it, while it is the change's version: what still fails on it is a person's.",
+          "$ref": "common.schema.json#/$defs/id"
         }
       },
       "required": [

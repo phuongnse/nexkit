@@ -942,5 +942,26 @@
     "outside_plan": [],
     "reviewer_notes": [],
     "no_change": ""
+  },
+  "reviewApproveBlocking": {
+    "verdict": "approve",
+    "summary": "The change does what the plan says.",
+    "criteria": [
+      {
+        "criterion": "A test shows the round says the issue is closed.",
+        "status": "met",
+        "test": "tests/test_report.py",
+        "evidence": "The test passes."
+      }
+    ],
+    "findings": [
+      {
+        "severity": "blocking",
+        "file": "a.py",
+        "line": 3,
+        "body": "Wrong, but the review approves."
+      }
+    ],
+    "previous_findings": []
   }
 }

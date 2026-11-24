@@ -30,7 +30,6 @@ from .github import DOWNLOAD_LIMIT, LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError, 
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
 from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command, retry_kind
-from .schema import filled
 from .state import (
     ACTIONS_BOT,
     BOT_LOGINS,
@@ -1105,14 +1104,6 @@ def replans(run):
     return any(item.get("replans") for item in questions(run.get("questions")))
 
 
-def closes(run):
-    """Whether a blocked round found that no change is needed and recommends closing the
-    issue with that finding. A finding alone is not enough: an agent may use `no_change` to
-    say there is none, and recommend waiting or more work."""
-    found = questions(run.get("questions"))
-    return len(found) == 1 and found[0].get("closes", False) and bool(filled(run.get("no_change")))
-
-
 def answer_note(found):
     lines = ["Answers for the owner, each the option NexKit recommended:"]
     for number, item in enumerate(found, 1):
@@ -1132,50 +1123,6 @@ def split_refused(gh, issue):
             why = f"a part of a split ran out of time again, after #{number} asked for a split"
             return person(TIMED_OUT_DO, why)
     return person(TIMED_OUT_DO, DEPTH_REASON) if depth(issue, above) >= MAX_DEPTH else None
-
-
-def _stopped(gh, cfg, issue, run, record, start, command, target, comments):
-    """The step after a `/nexkit go` or a round that stopped: answer a blocked round's
-    questions, ask once for a split after the agent ran out of time, or wait. `comments`
-    holds the comments of the target, then those of the issue or its pull request."""
-    found = answers(cfg, run.get("questions")) if run.get("outcome") == "agent_blocked" else None
-    if run.get("outcome") == "agent_blocked" and run.get("protected_paths"):
-        # Only a person changes protected paths, whatever the round recommends.
-        return _step(issue, "waits", protected_reason(run["protected_paths"]))
-    if found and asked_again(*comments):
-        return _step(issue, "waits", REPEATED)
-    if found and command == "go" and closes(run):
-        # The recommended answer only closes the issue: another round would find the same.
-        reason = "the last round found no change is needed and recommends closing the issue"
-        return _step(issue, "close", reason, finding=run["no_change"], run_url=run.get("url"))
-    if found and any(item.get("closes") for item in questions(run.get("questions"))):
-        # Closing without a finding that no change is needed is a person's choice.
-        return _step(issue, "waits", CLOSE_UNFOUNDED)
-    if found and replans(run) and command != "go":
-        # A new plan of the issue would leave its open pull request behind.
-        return _step(issue, "waits", REPLAN_IN_PULL)
-    if found and replans(run):
-        # Another `/nexkit go` cannot change the issue's scope: a new plan can, and it
-        # splits the issue as any plan that is too large.
-        start = {
-            **start,
-            "target": issue["number"],
-            "note": f"{REPLAN_NOTE}\n\n{answer_note(found)}",
-        }
-        reason = "autopilot answers the blocked round with an option that a new plan carries out"
-        return _step(issue, "start", reason, command="plan", answers=found, replan=True, **start)
-    if found:
-        start = {**start, "target": target, "note": answer_note(found)}
-        reason = "autopilot answers the questions of the blocked round"
-        return _step(issue, "start", reason, command=command, answers=found, **start)
-    if run.get("timed_out") and not record.get("split_asked"):
-        refused = split_refused(gh, issue)
-        if refused:
-            return _step(issue, "waits", refused)
-        start = {**start, "note": SPLIT_NOTE, "remember": {"split_asked": True}}
-        reason = "the agent ran out of time, so autopilot asks for a split"
-        return _step(issue, "start", reason, command="plan", **start)
-    return None
 
 
 def _later(text, since):
@@ -1589,14 +1536,15 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
             return step
     if latest.get("outcome") == CI_WAITING:
         return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start)
+    if latest.get("status") == FAILURE and (engine_round(latest) or latest.get("timed_out")):
+        fields = {"pull": pull, "pull_comments": pull_comments}
+        return _after_stop(gh, cfg, issue, latest, record, start, comments, **fields)
     if latest.get("status") == FAILURE:
-        found = (pull_comments, comments)
-        step = _stopped(gh, cfg, issue, latest, record, start, "fix", pull, found)
         failed = person(
             f"read the last round's comment on #{pull} for why, then post its command again",
             f"the last round of #{pull} failed",
         )
-        return step or _step(issue, "waits", latest.get("attention") or failed)
+        return _step(issue, "waits", latest.get("attention") or failed)
     if latest.get("attention"):
         return _step(issue, "waits", latest["attention"])
     conflict = _conflict_wait(gh, cfg, pull, [run for _, run in rounds])
@@ -1714,6 +1662,18 @@ def _after_go(gh, cfg, issue, comment, last, record, start, comments):
 
     try:
         return after_go(gh, cfg, issue, comment, last, record, start, comments)
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+
+
+def _after_stop(gh, cfg, issue, run, record, start, comments, pull=None, pull_comments=()):
+    """The step after a fix round that stopped as blocked with questions or protected paths,
+    or a round that ran out of time, which the engine decides (`host.stopped`). An issue whose
+    next step the engine refuses to decide waits for a person, alone."""
+    from .host import Refused, refused_reason, stopped
+
+    try:
+        return stopped(gh, cfg, issue, run, record, start, comments, pull, pull_comments)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
 
@@ -1930,10 +1890,9 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
             return _step(issue, "waits", reason)
         if engine_round(last):
             return _after_go(gh, cfg, issue, *found[-1], record, start, comments)
-        step = _stopped(gh, cfg, issue, last, record, start, "go", number, (comments,))
-        if step:
-            return step
-        changed = None if last.get("timed_out") else _since_stop(gh, issue, comments, found[-1][0])
+        if last.get("timed_out"):
+            return _after_stop(gh, cfg, issue, last, record, start, comments)
+        changed = _since_stop(gh, issue, comments, found[-1][0])
         if changed:
             return _step(issue, "start", changed, command="plan", **start)
         return _step(issue, "waits", last.get("attention") or failed_reason("go"))
@@ -1957,25 +1916,22 @@ def carries_on(gh, cfg, decision, outcome, agent):
         return _round_carried_on(gh, cfg, decision, agent)
     if output.get("protected_paths"):
         # Only a person changes protected paths.
-        handled = False
-    elif outcome == "agent_blocked":
-        found = {"questions": round_questions(agent)}
-        # A fix round's option that only a new plan carries out is a person's to answer.
-        planned = replans(found) and decision["action"] != "implement"
-        handled = answers(cfg, found["questions"]) is not None and not planned
-    elif outcome == "agent_error" and agent.get("timed_out"):
-        handled = decision["action"] in ("implement", "fix")
-    else:
+        return False
+    timed_out = outcome == "agent_error" and agent.get("timed_out")
+    if outcome == "agent_blocked" and decision["action"] == "fix":
+        return _stop_carried_on(gh, cfg, decision, agent)
+    if timed_out and decision["action"] in ("implement", "fix"):
+        return _stop_carried_on(gh, cfg, decision, agent)
+    if outcome != "agent_blocked":
+        return False
+    # The blocked round of another stage, which no engine decision follows.
+    found = {"questions": round_questions(agent)}
+    if answers(cfg, found["questions"]) is None or replans(found):
         return False
     try:
-        if not handled:
-            return False
         issue = gh.issue(decision["issue"])
         if not taken(gh, cfg, issue):
             return False
-        if outcome == "agent_error":
-            record = find_record(gh.comments(issue["number"]))[1]
-            return not record.get("split_asked") and not split_refused(gh, issue)
         # Questions again right after autopilot's answers: a person decides.
         pr = decision.get("pr")
         target = gh.comments(pr or issue["number"])
@@ -1993,6 +1949,19 @@ def _round_carried_on(gh, cfg, decision, agent):
     try:
         issue = gh.issue(decision["issue"])
         return taken(gh, cfg, issue) and round_carried_on(gh, cfg, issue, decision, agent)
+    except (GitHubError, Refused):
+        return False
+
+
+def _stop_carried_on(gh, cfg, decision, agent):
+    """Whether autopilot carries on after a fix round that stopped as blocked, or a round
+    that ran out of time, as the engine decides what follows it (`host.stop_carried_on`).
+    One whose next step the engine refuses to decide needs a person."""
+    from .host import Refused, stop_carried_on
+
+    try:
+        issue = gh.issue(decision["issue"])
+        return taken(gh, cfg, issue) and stop_carried_on(gh, cfg, issue, decision, agent)
     except (GitHubError, Refused):
         return False
 

@@ -232,9 +232,9 @@ class Step:
         self.s["pending"].remove(action)
         self.do("cancel", action=action["id"])
 
-    def wait(self, kind):
+    def wait(self, kind, on=None):
         self.waits += 1
-        wait = {"id": self.number("w", self.waits), "for": kind, "until": None, "on": None}
+        wait = {"id": self.number("w", self.waits), "for": kind, "until": None, "on": on}
         self.s["waits"].append(wait)
 
     def waiting(self, kind):
@@ -317,11 +317,31 @@ class Step:
         self.do("createParts", parts=parts)
 
     def next_fix(self):
+        """The checks or the review fail: an automatic fix round, counted, while one is left
+        (`report._report`). A fix round that changed nothing is not run again, since another
+        could only change nothing too. A counted round waits while the base branch has the
+        same failure, for the item about it to close, since a fix here would only fix that
+        again; and while a hold is on, as nothing new starts by itself. Either starts it when
+        it ends, as the same round."""
         rounds = self.s["rounds"]
+        if rounds.get("recheck") == self.version:
+            if self.conflicted():
+                return
+            self.move("failed" if self.p["whenRoundsRunOut"] == "failed" else "ready")
+            text = "The fix round changed nothing, and the checks or the review still fail."
+            self.need("roundsUsedUp", text)
+            return
         if rounds["counted"] < self.p["fixRounds"]:
             rounds["counted"] += 1
+            base = rounds.get("baseFailure")
             self.move("fixing")
-            self.run("fix")
+            if base:
+                rounds["started"] += 1
+                self.wait("baseFailure", base)
+            elif self.s["hold"]:
+                rounds["started"] += 1
+            else:
+                self.run("fix")
             return
         if self.conflicted():
             return
@@ -343,9 +363,12 @@ class Step:
             self.accept_or_ask()
 
     def accept_or_ask(self):
+        """Accept the change by the accept policy, or ask a person. A hold keeps the engine's
+        accept back until it ends (`report._report`)."""
         if self.p["accept"] == "autoWhenPassed":
             self.move("accepting")
-            self.do("accept", changeVersion=self.version, by="engine")
+            if not self.s["hold"]:
+                self.do("accept", changeVersion=self.version, by="engine")
         else:
             self.need("accept", "The change passed, and a person decides its accept.")
 
@@ -472,9 +495,11 @@ class Step:
 
     def timed_out(self):
         """An implement or fix agent ran out of time. With splits on, as autopilot does, the
-        item asks once for a plan that splits it; otherwise, or the second time, a person
-        decides (`autopilot._stopped`)."""
-        if self.p["splits"] and "split" not in self.s["asked"]:
+        item asks once for a plan that splits it; otherwise, the second time, or for an item
+        at the deepest level of parts, which is not split, a person decides
+        (`autopilot._stopped`, `split_refused`)."""
+        deepest = self.s.get("depth", 0) >= self.p["splitDepth"]
+        if self.p["splits"] and "split" not in self.s["asked"] and not deepest:
             # NexKit 6 asks after a fix round too. An item with a change is never split, so its
             # new plan goes on as one change on it, with the plan revised.
             self.s["asked"].append("split")
@@ -1164,11 +1189,11 @@ class Step:
             {"severity": item["severity"], "text": clip(item["body"], "finding")}
             for item in findings[: MOST["findings"]]
         ]
-        blocking = any(item["severity"] == "blocking" for item in rounds["findings"])
+        # The verdict and the criteria decide, as in NexKit 6: a blocking finding of a review
+        # that approves goes to the next fix round only if one runs (`report.apply_criteria`).
         if (
             output["verdict"] == "request_changes"
             or "unmet" in rounds["criteria"]
-            or blocking
             or rounds["signatures"]
         ):
             self.next_fix()
@@ -1180,7 +1205,14 @@ class Step:
             self.move("failed")
             self.need("failed", result["refused"] or "The change could not be published.")
             return
+        before = self.version
         self.took_change(result)
+        # A fix round that left the change as it was found the cause outside it: its checks
+        # and review run again on the same version, and what still fails is a person's.
+        rounds = self.s["rounds"]
+        rounds.pop("recheck", None)
+        if action["stage"] == "fix" and self.version == before:
+            rounds["recheck"] = self.version
         # The observation may name a later version: take it before the checks, so that a
         # conflict on it follows the policy once.
         if not self.reconcile():
@@ -1199,6 +1231,8 @@ class Step:
         self.s["rounds"]["signatures"] = [
             signature(check["signature"] or check["name"]) for check in failing
         ][: MOST["signatures"]]
+        # The item about a failure the base branch has, which every failing check matches.
+        self.s["rounds"]["baseFailure"] = (result.get("baseFailure") or None) if failing else None
         if self.review_only or not failing:
             self.review()
         elif self.p["reviewAfterFailingChecks"] == "always":

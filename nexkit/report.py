@@ -2221,7 +2221,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         # The run whose `nexkit-checks` artifact holds the failing checks' result files.
         state["feedback"]["run_id"] = int(run_id)
 
-    found = {}
+    found, refused = {}, None
     if conflicting:
         outcome, message = _skipped_conflicting(
             gh, cfg, decision, pr, head, publish["conflicts"], row, workflow_ref, default_branch
@@ -2245,31 +2245,6 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 "\n\nOnly a person decides these checklist items, which the review found not "
                 f"met:\n\n{items}"
             )
-    elif checks_ok and verdict == "approve":
-        outcome = "ready"
-        approved = f"the AI review approved `{head[:7]}`"
-        if carried:
-            approved = f"the AI review's approval carried over to `{head[:7]}`"
-        message = (
-            f"✅ Checks passed and {approved}. This pull request is ready for a human decision."
-        )
-        if confirm or decide:
-            message += _for_person(cfg, review, confirm, decide)
-            if decide:
-                # A person's approval of this head accepts them (`maintain.merge_approved`).
-                row["decide"] = decide
-        elif cfg["merge"]["auto"] and (label := _held(gh, cfg, decision["issue"])):
-            outcome, row["held_back"] = autopilot.HELD, "merge"
-            message += " " + _held_line(decision["issue"], label, "does not merge it", "merges it")
-        elif cfg["merge"]["auto"]:
-            target = {"pr": pr, "head": head, "issue": decision["issue"], "base": decision["base"]}
-            # A required check that failed gets its fix round through this round's state.
-            target.update(state=state, state_comment=comment_id)
-            outcome, message = merge_pull(
-                gh, cfg, target, row, message, workflow_file(workflow_ref), default_branch
-            )
-            comment_id = target["state_comment"]
-            found = target.get("found", {})
     elif verdict is None:
         outcome = "review_failed"
         found["error"], message = review_failure(reviewed)
@@ -2286,43 +2261,78 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         elif error and not _retries_left(cfg, decision):
             outcome, message = "retry_failed", _retried(gh, decision, error, message)
             found.update(error=error, stops=int(decision.get("retry") or 0) + 1)
-    elif recheck:
-        # The fix agent found nothing to change for a cause outside the code, and the
-        # checks and the review ran once more: what still fails waits for a person.
-        outcome = "recheck_failed"
-        message = (
-            "Checks or review still fail on the same commit. Comment `/nexkit fix "
-            "<instructions>` or `/nexkit review`, push a commit yourself, or close the PR."
-        )
-    elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"] and (
-        wait := _ci_wait(gh, cfg, decision, checks, default_branch)
-    ):
-        # The checks fail as the default branch does: the bug issue about it fixes that,
-        # and a fix round here would only fix it again, or change nothing.
-        outcome = autopilot.CI_WAITING
-        state["ci_wait"] = row["ci_wait"] = wait
-        state["feedback"].pop("repeated", None)
-        message = autopilot.ci_wait_message(wait)
-    elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"] and (
-        label := _held(gh, cfg, decision["issue"])
-    ):
-        outcome, row["held_back"] = autopilot.HELD, "fix"
-        message = _held_line(
-            decision["issue"], label, "starts no automatic fix round", "starts the fix round"
-        )
-    elif state["auto_fixes"] < cfg["fix"]["max_auto_rounds"]:
-        state["auto_fixes"] += 1
-        outcome = "auto_fix"
-        message = (
-            f"Starting automatic fix round {state['auto_fixes']} of "
-            f"{cfg['fix']['max_auto_rounds']} for the failing checks and blocking findings."
-        )
     else:
-        outcome = "needs_human"
-        message = (
-            "Checks or review still need attention, and no automatic fix rounds remain. "
-            "Comment `/nexkit fix <instructions>`, push a commit yourself, or close the PR."
-        )
+        # What follows the checks and the review is the engine's (`host.after_round`).
+        wait = _ci_wait(gh, cfg, decision, checks, default_branch)
+        label = _held(gh, cfg, decision["issue"])
+        from .host import Refused, after_round
+
+        try:
+            ends = after_round(
+                cfg, decision, pr, head, state["auto_fixes"], checks, review, recheck, wait, label
+            )
+        except Refused as error:
+            ends, refused = "needs_human", error
+        if ends in ("ready", "merge", "held_merge"):
+            outcome = "ready"
+            approved = f"the AI review approved `{head[:7]}`"
+            if carried:
+                approved = f"the AI review's approval carried over to `{head[:7]}`"
+            message = (
+                f"✅ Checks passed and {approved}. This pull request is ready for a human decision."
+            )
+        if ends == "ready" and (confirm or decide):
+            message += _for_person(cfg, review, confirm, decide)
+            if decide:
+                # A person's approval of this head accepts them (`maintain.merge_approved`).
+                row["decide"] = decide
+        elif ends == "held_merge":
+            outcome, row["held_back"] = autopilot.HELD, "merge"
+            message += " " + _held_line(decision["issue"], label, "does not merge it", "merges it")
+        elif ends == "merge":
+            target = {"pr": pr, "head": head, "issue": decision["issue"], "base": decision["base"]}
+            # A required check that failed gets its fix round through this round's state.
+            target.update(state=state, state_comment=comment_id)
+            outcome, message = merge_pull(
+                gh, cfg, target, row, message, workflow_file(workflow_ref), default_branch
+            )
+            comment_id = target["state_comment"]
+            found = target.get("found", {})
+        elif ends == "recheck_failed":
+            # The fix agent found nothing to change for a cause outside the code, and the
+            # checks and the review ran once more: what still fails waits for a person.
+            outcome = "recheck_failed"
+            message = (
+                "Checks or review still fail on the same commit. Comment `/nexkit fix "
+                "<instructions>` or `/nexkit review`, push a commit yourself, or close the PR."
+            )
+        elif ends == "ci_waiting":
+            # The checks fail as the default branch does: the bug issue about it fixes that,
+            # and a fix round here would only fix it again, or change nothing.
+            outcome = autopilot.CI_WAITING
+            state["ci_wait"] = row["ci_wait"] = wait
+            state["feedback"].pop("repeated", None)
+            message = autopilot.ci_wait_message(wait)
+        elif ends == "held_fix":
+            outcome, row["held_back"] = autopilot.HELD, "fix"
+            message = _held_line(
+                decision["issue"], label, "starts no automatic fix round", "starts the fix round"
+            )
+        elif ends == "auto_fix":
+            state["auto_fixes"] += 1
+            outcome = "auto_fix"
+            message = (
+                f"Starting automatic fix round {state['auto_fixes']} of "
+                f"{cfg['fix']['max_auto_rounds']} for the failing checks and blocking findings."
+            )
+        elif ends == "needs_human":
+            outcome = "needs_human"
+            # A round the engine refused to decide may still have rounds left.
+            remain = "" if refused else ", and no automatic fix rounds remain"
+            message = (
+                f"Checks or review still need attention{remain}. "
+                "Comment `/nexkit fix <instructions>`, push a commit yourself, or close the PR."
+            )
 
     cause = str(((agent or {}).get("output") or {}).get("cause") or "").strip()
     if recheck:
@@ -2375,6 +2385,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     )
     if outcome == "recheck_failed":
         reason = _with_finding(reason, agent)
+    if refused:
+        from .host import refused_reason
+
+        reason = refused_reason(refused)
     if reason:
         row["attention"] = reason
     fix = {"command": "fix", "number": str(pr), "note": "", "auto": "true"}

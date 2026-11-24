@@ -235,6 +235,10 @@ class ConformanceTest(unittest.TestCase):
             for path_, value in step.get("expect", {}).items():
                 self.assertEqual(at(new, path_), value, f"{where}: {path_}")
             open_ = self.check_outbox(open_, event, answer, where)
+            # A close stays pending only while the item is final: a reopen takes it back.
+            if new["state"] not in FINAL:
+                closes = [action["id"] for action in new["pending"] if action["kind"] == "close"]
+                self.assertEqual(closes, [], f"{where}: a close is pending on an open item")
             # A notice stays pending only while attention says it, so a host that carries out
             # every pending action never tells a person something that no longer stands.
             attention = new["attention"] or {}

@@ -1,0 +1,45 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "close"
+      ]
+    },
+    {
+      "event": {
+        "kind": "reopened"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "reopened"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "a2.1"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

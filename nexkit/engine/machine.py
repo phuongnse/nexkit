@@ -457,6 +457,8 @@ class Step:
                 return False
             self.check()
         elif what == "retry" and state == "failed":
+            if self.review_only and not change:
+                return False
             if self.review_only:
                 self.check()
             elif change:
@@ -584,6 +586,10 @@ class Step:
             self.s["change"] = None
             self.s["observed"] = None
             self.s["rounds"] = blank(self.s["item"])["rounds"]
+        # A close asked for before the reopen no longer stands.
+        for action in list(self.s["pending"]):
+            if action["kind"] == "close":
+                self.cancel(action)
         self.move("new")
         self.need("reopened", "The work item was opened again.")
         return True

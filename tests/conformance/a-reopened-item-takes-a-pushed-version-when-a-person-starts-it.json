@@ -96,6 +96,7 @@
       "state": "new",
       "changed": true,
       "actions": [
+        "cancel",
         "needPerson"
       ]
     },

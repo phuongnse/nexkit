@@ -1,6 +1,7 @@
 {
   "protocol": 1,
   "kind": "created",
+  "id": "d-created-1",
   "item": "42",
   "at": "2026-11-23T15:01:11Z",
   "itemKind": "change",
@@ -14,5 +15,6 @@
     "change": "engine",
     "review": "engine"
   },
-  "plan": null
+  "plan": null,
+  "change": null
 }

@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/runChecks.result.schema.json",
   "$comment": "The result of runChecks, in actionFinished.",
   "type": "object",
   "properties": {
@@ -32,13 +34,11 @@
           "skipped",
           "signature",
           "knownBaseFailure"
-        ],
-        "additionalProperties": false
+        ]
       }
     }
   },
   "required": [
     "checks"
-  ],
-  "additionalProperties": false
+  ]
 }

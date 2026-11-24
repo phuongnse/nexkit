@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/requested.schema.json",
   "$comment": "A person, or the sweep with `by` null, asks for something.",
   "type": "object",
   "properties": {
@@ -7,6 +9,9 @@
     },
     "kind": {
       "const": "requested"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
     },
     "item": {
       "$ref": "../common.schema.json#/$defs/id"
@@ -43,11 +48,11 @@
   "required": [
     "protocol",
     "kind",
+    "id",
     "item",
     "at",
     "what",
     "by",
     "note"
-  ],
-  "additionalProperties": false
+  ]
 }

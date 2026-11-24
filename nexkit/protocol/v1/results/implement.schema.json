@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/results/implement.schema.json",
   "$comment": "The implement stage's result. `no_change` is the finding only when no file changed because no change is needed.",
   "type": "object",
   "properties": {

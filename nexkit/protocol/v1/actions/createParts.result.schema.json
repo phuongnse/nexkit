@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/createParts.result.schema.json",
   "$comment": "The result of createParts, in actionFinished.",
   "type": "object",
   "properties": {
@@ -17,13 +19,11 @@
         "required": [
           "key",
           "item"
-        ],
-        "additionalProperties": false
+        ]
       }
     }
   },
   "required": [
     "parts"
-  ],
-  "additionalProperties": false
+  ]
 }

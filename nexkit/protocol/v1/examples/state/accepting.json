@@ -12,13 +12,21 @@
   "hold": false,
   "waits": [
     {
-      "id": "w1",
+      "id": "w7.1",
       "for": "requiredChecks",
       "until": "2026-11-23T21:01:11Z",
       "on": null
     }
   ],
-  "pending": [],
+  "pending": [
+    {
+      "id": "a7.1",
+      "kind": "wait",
+      "next": null,
+      "wait": "w7.1",
+      "until": "2026-11-23T21:01:11Z"
+    }
+  ],
   "actors": {
     "plan": "engine",
     "change": "engine",
@@ -35,7 +43,8 @@
     "parts": 0,
     "noChange": false,
     "protectedPaths": [],
-    "approved": true
+    "approved": true,
+    "split": []
   },
   "rounds": {
     "started": 1,
@@ -54,9 +63,20 @@
       "cached": 0,
       "output": 0
     },
+    "seconds": 640,
+    "usd": 2.37,
     "since": null
   },
   "asked": [],
   "parts": [],
-  "policies": {}
+  "policies": {},
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
 }

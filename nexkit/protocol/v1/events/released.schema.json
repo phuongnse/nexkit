@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/released.schema.json",
   "$comment": "A hold was taken off.",
   "type": "object",
   "properties": {
@@ -7,6 +9,9 @@
     },
     "kind": {
       "const": "released"
+    },
+    "id": {
+      "$ref": "../common.schema.json#/$defs/eventId"
     },
     "item": {
       "$ref": "../common.schema.json#/$defs/id"
@@ -18,8 +23,8 @@
   "required": [
     "protocol",
     "kind",
+    "id",
     "item",
     "at"
-  ],
-  "additionalProperties": false
+  ]
 }

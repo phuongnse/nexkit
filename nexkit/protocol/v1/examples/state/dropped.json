@@ -8,7 +8,15 @@
   "attention": null,
   "hold": true,
   "waits": [],
-  "pending": [],
+  "pending": [
+    {
+      "id": "a7.1",
+      "kind": "close",
+      "next": null,
+      "outcome": "notPlanned",
+      "finding": null
+    }
+  ],
   "actors": {
     "plan": "engine",
     "change": "engine",
@@ -30,9 +38,20 @@
       "cached": 0,
       "output": 0
     },
+    "seconds": 0,
+    "usd": 0,
     "since": null
   },
   "asked": [],
   "parts": [],
-  "policies": {}
+  "policies": {},
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
 }

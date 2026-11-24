@@ -13,8 +13,10 @@
   "waits": [],
   "pending": [
     {
-      "id": "a4",
-      "kind": "runChecks"
+      "id": "a7.1",
+      "kind": "runChecks",
+      "next": null,
+      "changeVersion": "5a54e2b"
     }
   ],
   "actors": {
@@ -33,7 +35,8 @@
     "parts": 0,
     "noChange": false,
     "protectedPaths": [],
-    "approved": true
+    "approved": true,
+    "split": []
   },
   "rounds": {
     "started": 1,
@@ -50,9 +53,31 @@
       "cached": 0,
       "output": 0
     },
+    "seconds": 640,
+    "usd": 2.37,
     "since": null
   },
   "asked": [],
   "parts": [],
-  "policies": {}
+  "policies": {
+    "planApproval": "person",
+    "answers": "never",
+    "reviewAfterFailingChecks": "always",
+    "accept": "person",
+    "fixRounds": 2,
+    "whenRoundsRunOut": "person",
+    "conflicts": "person",
+    "conflictRounds": 3,
+    "splits": false,
+    "afterFailure": "person"
+  },
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
 }

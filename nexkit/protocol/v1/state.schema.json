@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/state.schema.json",
   "$comment": "One work item's state document, which the host stores and passes back. It holds decisions, not prose.",
   "type": "object",
   "properties": {
@@ -59,6 +61,7 @@
     "waits": {
       "type": "array",
       "items": {
+        "$comment": "Each wait's id is new each time; a tick ends only a wait for a time (`time`, `usageLimit`, `requiredChecks`).",
         "type": "object",
         "properties": {
           "id": {
@@ -66,11 +69,13 @@
           },
           "for": {
             "enum": [
+              "start",
               "time",
+              "usageLimit",
               "blocker",
+              "parts",
               "baseFailure",
-              "requiredChecks",
-              "usageLimit"
+              "requiredChecks"
             ]
           },
           "until": {
@@ -104,22 +109,10 @@
       }
     },
     "pending": {
+      "$comment": "The outbox: each action the engine answered, whole, until its result, its cancel or its loss.",
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "common.schema.json#/$defs/id"
-          },
-          "kind": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "kind"
-        ],
-        "additionalProperties": false
+        "$ref": "action.schema.json"
       }
     },
     "actors": {
@@ -186,6 +179,33 @@
             },
             "approved": {
               "type": "boolean"
+            },
+            "split": {
+              "$comment": "The parts a split plan names, with the earlier parts each needs, by key.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "needs": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "required": [
+                  "key",
+                  "title",
+                  "needs"
+                ],
+                "additionalProperties": false
+              }
             }
           },
           "required": [
@@ -196,7 +216,8 @@
             "parts",
             "noChange",
             "protectedPaths",
-            "approved"
+            "approved",
+            "split"
           ],
           "additionalProperties": false
         },
@@ -278,10 +299,17 @@
       "additionalProperties": false
     },
     "used": {
+      "$comment": "What the item's agents spent: tokens, seconds and US dollars.",
       "type": "object",
       "properties": {
         "tokens": {
           "$ref": "common.schema.json#/$defs/tokens"
+        },
+        "seconds": {
+          "type": "integer"
+        },
+        "usd": {
+          "type": "number"
         },
         "since": {
           "anyOf": [
@@ -296,6 +324,8 @@
       },
       "required": [
         "tokens",
+        "seconds",
+        "usd",
         "since"
       ],
       "additionalProperties": false
@@ -313,13 +343,47 @@
       }
     },
     "parts": {
+      "$comment": "The parts of a split, and how each ended, or null while it is open.",
       "type": "array",
       "items": {
-        "$ref": "common.schema.json#/$defs/id"
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "common.schema.json#/$defs/id"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "accepted",
+                  "noChange",
+                  "dropped",
+                  "failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "item",
+          "state"
+        ],
+        "additionalProperties": false
       }
     },
     "policies": {
-      "type": "object"
+      "$comment": "The policies the running round started with, so that a change of the host's configuration applies from the next round. Empty while no round runs.",
+      "$ref": "policies.schema.json"
+    },
+    "recentEvents": {
+      "$comment": "The ids of the latest events that changed the state, newest last, at most 20. An event whose id is here changes nothing.",
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/eventId"
+      }
     }
   },
   "required": [
@@ -339,7 +403,8 @@
     "used",
     "asked",
     "parts",
-    "policies"
+    "policies",
+    "recentEvents"
   ],
   "additionalProperties": false
 }

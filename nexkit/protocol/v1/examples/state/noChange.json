@@ -25,7 +25,8 @@
     "parts": 0,
     "noChange": true,
     "protectedPaths": [],
-    "approved": true
+    "approved": true,
+    "split": []
   },
   "rounds": {
     "started": 0,
@@ -42,9 +43,20 @@
       "cached": 0,
       "output": 0
     },
+    "seconds": 640,
+    "usd": 2.37,
     "since": null
   },
   "asked": [],
   "parts": [],
-  "policies": {}
+  "policies": {},
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
 }

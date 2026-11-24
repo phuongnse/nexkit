@@ -10,8 +10,32 @@
   "waits": [],
   "pending": [
     {
-      "id": "a2",
-      "kind": "runAgent"
+      "id": "a7.1",
+      "kind": "runAgent",
+      "next": null,
+      "stage": "implement",
+      "changeVersion": null,
+      "access": "write",
+      "inputs": [
+        "item",
+        "discussion",
+        "notes",
+        "plan",
+        "linked",
+        "evidence",
+        "parts"
+      ],
+      "result": "results/implement.schema.json",
+      "agent": null,
+      "model": null,
+      "effort": null,
+      "budget": {
+        "tokens": null,
+        "seconds": null,
+        "usd": null
+      },
+      "session": null,
+      "resume": false
     }
   ],
   "actors": {
@@ -30,7 +54,8 @@
     "parts": 0,
     "noChange": false,
     "protectedPaths": [],
-    "approved": true
+    "approved": true,
+    "split": []
   },
   "rounds": {
     "started": 0,
@@ -47,9 +72,31 @@
       "cached": 0,
       "output": 0
     },
+    "seconds": 640,
+    "usd": 2.37,
     "since": null
   },
   "asked": [],
   "parts": [],
-  "policies": {}
+  "policies": {
+    "planApproval": "person",
+    "answers": "never",
+    "reviewAfterFailingChecks": "always",
+    "accept": "person",
+    "fixRounds": 2,
+    "whenRoundsRunOut": "person",
+    "conflicts": "person",
+    "conflictRounds": 3,
+    "splits": false,
+    "afterFailure": "person"
+  },
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
 }

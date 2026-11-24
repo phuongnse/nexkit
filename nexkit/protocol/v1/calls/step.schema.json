@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/calls/step.schema.json",
+  "$comment": "A step call: one work item's state, null before its created event, one event and the host's policies.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "call": {
+      "const": "step"
+    },
+    "state": {
+      "anyOf": [
+        {
+          "$ref": "../state.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "event": {
+      "$ref": "../event.schema.json"
+    },
+    "policies": {
+      "$ref": "../policies.schema.json"
+    }
+  },
+  "required": [
+    "protocol",
+    "call",
+    "state",
+    "event",
+    "policies"
+  ]
+}

@@ -10,8 +10,32 @@
   "waits": [],
   "pending": [
     {
-      "id": "a1",
-      "kind": "runAgent"
+      "id": "a7.1",
+      "kind": "runAgent",
+      "next": null,
+      "stage": "plan",
+      "changeVersion": null,
+      "access": "read",
+      "inputs": [
+        "item",
+        "discussion",
+        "notes",
+        "previousPlan",
+        "linked",
+        "evidence",
+        "parts"
+      ],
+      "result": "results/plan.schema.json",
+      "agent": null,
+      "model": null,
+      "effort": null,
+      "budget": {
+        "tokens": null,
+        "seconds": null,
+        "usd": null
+      },
+      "session": null,
+      "resume": false
     }
   ],
   "actors": {
@@ -35,9 +59,20 @@
       "cached": 0,
       "output": 0
     },
+    "seconds": 640,
+    "usd": 2.37,
     "since": null
   },
   "asked": [],
   "parts": [],
-  "policies": {}
+  "policies": {},
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
 }

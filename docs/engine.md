@@ -1,7 +1,7 @@
 # The engine
 
-_Planned for NexKit 7. Nothing on this page is built yet. NexKit 6 runs as
-[How it works](how-it-works.md) says._
+_Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`. The rest of
+this page is not built yet, and NexKit 6 runs as [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
 **hosts** that store the work, carry out what the engine decides and show it to people. GitHub
@@ -76,9 +76,9 @@ needed.
   reads the state again and sends the event again.
 - **It holds decisions, not prose.** The state keeps what the engine decides from: the state
   name, the change, questions, criteria and checklist outcomes, findings in short, failure
-  signatures, counts and budgets used. Long texts, such as a plan's prose, check output, a
-  discussion and evidence, stay with the host as texts that the state names, and reach the
-  engine only in `prompt`. The protocol sets the largest state document, small enough for one
+  signatures, counts, and the tokens, time and money its agents spent. Long texts, such as a
+  plan's prose, check output, a discussion and evidence, stay with the host as texts that the
+  state names, and reach the engine only in `prompt`. The protocol sets the largest state document, small enough for one
   GitHub comment.
 - **It is the truth.** A host may keep columns or markers that copy parts of it, for its own
   lists and pages, written in the same transaction, but the engine reads only the document.
@@ -87,14 +87,18 @@ needed.
 
 The protocol is built for delivery at least once, in any order a host's queues give it.
 
+- **Every event has an id**, the same each time the host sends that event again, such as a
+  webhook's delivery id. The state keeps the ids of the latest events that changed it, and the
+  engine takes an event whose id it holds as a duplicate that changes nothing.
 - **Every action has an id**, and the result event of an action carries that id and the version
   of the change it applies to. The state records the actions it waits for, and the engine
   ignores a result whose action it no longer waits for, or whose change version is old. A step
   that runs twice, a late result after a cancel, and a run started again after it was lost are
   then each harmless.
-- **The state is an outbox.** Actions the engine answered stay in the state as pending until
-  their result arrives. A host that crashed between storing the state and carrying out its
-  actions carries out the pending ones when it starts again.
+- **The state is an outbox.** Each action the engine answered stays in the state, whole, as
+  pending until its result arrives, the engine cancels it, or the host reports it lost. A host
+  that crashed between storing the state and carrying out its actions carries out the pending
+  ones when it starts again, from the state alone.
 - **Every action can be repeated.** A host carries out an action with the same id once: parts
   already filed are not filed again, and a person already told is not told again.
 
@@ -138,13 +142,21 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 
 Three things sit beside the state, never in place of it:
 
-- **Attention:** a person is needed, with the reason: a question with no recommended answer, a
-  criterion the review could not verify, a checklist item only a person decides, a refused accept,
-  fix rounds used up, a split that is not complete.
+- **Attention:** a person is needed, with the reason: a plan that waits for its approval
+  (`approval`), a question with no recommended answer (`question`), a change that needs paths
+  only a person changes (`handMadeChange`), a criterion the review could not verify
+  (`unverifiableCriterion`), a checklist item only a person decides (`personChecklistItem`), a
+  change that waits for a person's accept (`accept`), a refused accept (`acceptRefused`), fix
+  rounds used up (`roundsUsedUp`), a split that is not complete (`splitIncomplete`), a round that
+  was blocked (`blocked`), a step that failed (`failed`), a final item opened again
+  (`reopened`), or an action the host lost (`outage`).
 - **Hold:** nothing new starts. A step that runs finishes and records what it held back.
-- **Wait:** the next step waits for something named: a time, such as after a transient stop or a
-  usage limit; an item that blocks it; a failure the base branch has; or required checks before a
-  merge. Each wait has an id, and the event that ends it names it.
+- **Wait:** the next step waits for something named: a request to start (`start`); a time, such
+  as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
+  blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has
+  (`baseFailure`); or required checks before a merge (`requiredChecks`). Each wait has an id that
+  is new each time, and the event that ends it names it. A tick ends only a wait for a time:
+  `time`, `usageLimit` or `requiredChecks`.
 
 ## Events
 
@@ -188,11 +200,14 @@ id. NexKit 6's round, from `route` to `report`, stays one workflow run.
 ## Runners
 
 A runner runs one agent session for one stage. Its contract is part of the protocol: `runAgent`
-gives it the stage, the stage's access, the prompt, the schema of the stage's result, the agent,
-the model and effort, the budget left in tokens, time and money, and a session id to ask the same
-session again. Its result gives the stage's result, the tokens as input, cached and output, a
-usage limit with its reset, whether the stop was transient, whether no result fit the schema, and
-the version of the change it produced.
+gives it the stage, the version of the change it starts from, the stage's access, the prompt,
+the name of the stage's result schema, the agent, the model and effort, the budget left in
+tokens, time and money, and a session id to ask the same session again. Until the protocol holds
+the checklist and agents policies, the host adds to that schema what they add: a checklist field,
+and the names of triage's profiles. Its result gives the stage's result, the tokens as input,
+cached and output, the seconds and money it spent, a usage limit with its reset, whether the stop
+was transient, whether it ran out of time, whether no result fit the schema, and the version of
+the change it produced.
 
 Each stage has its access, which the runner enforces: none for triage, read for plan and review,
 write for implement and fix. There are two kinds of runner:
@@ -216,25 +231,29 @@ shapes, and a host shows them in its own words.
 
 ## What a host decides
 
-A host gives the engine its policies in its configuration. Each has a default.
+A host gives the engine its policies in its configuration. Each has a default, and the
+protocol's `policies.schema.json` names it, as the first column does below. The policies with no
+name there, start, budgets, retries, usage limits, agents, a parent's end and the checklist, are
+not in the protocol yet: they come into it as the engine takes over the decisions that read them,
+and until then the host applies them itself.
 
 | Policy | Values | GitHub | An application, for example |
 | --- | --- | --- | --- |
 | Start | `onRequest`, `bySweep` | `onRequest`; `bySweep` with autopilot | `onRequest`: a request starts when it is sent |
-| Plan approval | `person`, `autoWhenClean` | `person`; `autoWhenClean` with autopilot | `person`, always |
-| Answers | `never`, `recommended` | `never` (`autopilot.answer`) | `never` |
-| Review after failing checks | `always`, `onlyAfterPassing` | `always`: one fix round takes the failures and the findings | `onlyAfterPassing` |
-| Accept | `person`, `autoWhenPassed` | `person`; `autoWhenPassed` with `merge.auto` | `autoWhenPassed` only when the application and the request allow it, else the person who sent it |
-| Fix rounds | 0–10, and which rounds count | 2: rounds a person asked for, resumed, retried and stopped rounds do not count | 3; a request for changes and a retry start the count again |
-| When fix rounds run out | `person`, `failed` | `person` | `person`: the draft is ready with its open findings |
-| Conflicts | `resolve`, `redo`, by who accepted | `resolve` on a person's request; by itself with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
+| Plan approval (`planApproval`) | `person`, `autoWhenClean` | `person`; `autoWhenClean` with autopilot | `person`, always |
+| Answers (`answers`) | `never`, `recommended` | `never` (`autopilot.answer`) | `never` |
+| Review after failing checks (`reviewAfterFailingChecks`) | `always`, `onlyAfterPassing` | `always`: one fix round takes the failures and the findings | `onlyAfterPassing` |
+| Accept (`accept`) | `person`, `autoWhenPassed` | `person`; `autoWhenPassed` with `merge.auto` | `autoWhenPassed` only when the application and the request allow it, else the person who sent it |
+| Fix rounds (`fixRounds`) | 0–10, and which rounds count | 2: rounds a person asked for, resumed, retried and stopped rounds do not count | 3; a request for changes and a retry start the count again |
+| When fix rounds run out (`whenRoundsRunOut`) | `person`, `failed` | `person` | `person`: the draft is ready with its open findings |
+| Conflicts (`conflicts`, `conflictRounds`) | `person`, `resolve`, `redo`, by who accepted; the most rounds that resolve | `person`; `resolve` with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
 | Budgets | Tokens, time, money and model calls, per item and per stage | Time and money per stage | Tokens and time per request, model calls per stage |
 | Retries | Waits after a transient stop; when a lost action starts again | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
 | Usage limits | Resume after the reset, and how long to wait | `usage_limit.*` | Resume after the reset |
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
-| Splits | Off or on, with the most parts and the depth | On with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
+| Splits (`splits`) | Off or on, with the most parts and the depth | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
 | A parent's end | When its parts' ends end it | `close_parent_issues`, when one part was completed | When its parts end |
-| After a failure | `person`, `replan`, `newItem` | `person`, then `replan` on a comment | `newItem`: the person sends the request again |
+| After a failure (`afterFailure`) | `person`, `replan`, `newItem` | `person`, then `replan` on a comment | `newItem`: the person sends the request again |
 | Checklist | Items the plan and the review answer, some for a person | `review.checklist` | The application's own checklist |
 
 **Someone else may do a stage.** `created` says who does each stage: the engine's runners, a
@@ -289,9 +308,16 @@ adapter. A new rule of the engine comes with a case.
 - **Two versions.** The protocol has a version, and the state document has a schema version of its
   own. The engine moves an older state document to the current schema when it reads one, and
   refuses one that is newer than it knows, so an engine rolled back never guesses.
-- **A new action kind is a new major version** of the protocol, because a host cannot carry out an
-  action it does not know. A host refuses an answer with an action it does not know, and the
-  engine's error names it.
+- **A new optional field keeps the version.** Every reader ignores a field it does not know, so
+  the schemas of events, actions, results, calls and policies leave out
+  `additionalProperties: false`, and an engine or host that is older takes a message with a new
+  field. Such a field must be one that a reader that ignores it still acts on correctly.
+- **Anything a reader must act on is a new major version** of the protocol: a new action kind,
+  because a host cannot carry out an action it does not know, a new value of a field, a new
+  required field, or a field whose absence changes what a reader does. A host refuses an answer
+  with an action it does not know, and the engine's error names it.
+- **The state document is closed.** Only the engine writes it, so its schema refuses a field it
+  does not name, and a new field is a new schema version of the state document.
 - **A host's first state document is the host's to build.** The GitHub host builds each open
   item's document from NexKit 6's markers, open pull requests, paused runs and waits included, and
   an application that had a loop of its own builds each request's from its records. A conformance

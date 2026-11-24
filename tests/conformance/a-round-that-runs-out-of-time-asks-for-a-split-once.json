@@ -1,5 +1,7 @@
 {
-  "policies": {},
+  "policies": {
+    "splits": true
+  },
   "steps": [
     {
       "event": {
@@ -87,7 +89,15 @@
         "result": "@timeout"
       },
       "state": "planning",
-      "changed": true
+      "changed": true,
+      "expect": {
+        "asked": [
+          "split"
+        ]
+      },
+      "actions": [
+        "runAgent"
+      ]
     },
     {
       "event": {
@@ -109,10 +119,19 @@
       "event": {
         "kind": "actionFinished",
         "action": "runAgent",
-        "result": "@error"
+        "result": "@timeout"
       },
       "state": "failed",
-      "changed": true
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "failed",
+        "asked": [
+          "split"
+        ]
+      }
     },
     {
       "event": {

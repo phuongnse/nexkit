@@ -193,7 +193,8 @@
           "Retry"
         ],
         "recommended": 0,
-        "closes": 0
+        "closes": 0,
+        "replans": []
       }
     ],
     "checks_run": [
@@ -266,7 +267,8 @@
           "Read again",
           "Retry"
         ],
-        "recommended": 0
+        "recommended": 0,
+        "replans": []
       }
     ],
     "checks_run": [

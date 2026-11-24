@@ -374,14 +374,12 @@ class Item:
             self.wait("requiredChecks", until=iso(self.now))
             return self.be("required checks", "accepting")
         if outcome == CI_WAITING:
-            # The fix round waits until the base branch's failure ends: its bug issue closes.
-            # NexKit 6 counts it when it starts it, and a person decides when none is left.
-            if self.kept_round_used_up():
-                return self.be(
-                    "needs a person", "ready", "roundsUsedUp", None, SAYS["roundsUsedUp"]
-                )
+            # The fix round waits until the base branch's failure ends: its bug issue closes,
+            # or the base passes again. NexKit 6 counts it when it starts it, and a person
+            # decides when none is left then, as the engine does (`due`).
             wait = latest.get("ci_wait") or self.pr_state.get("ci_wait") or {}
-            self.wait("baseFailure", on=str(wait["bug"]) if wait.get("bug") else None)
+            self.doc["rounds"]["due"] = True
+            self.wait("baseFailure", on=str(wait.get("bug") or "none"))
             return self.be("base failure", "fixing")
         if outcome == "ready":
             return self.ready(latest)
@@ -433,31 +431,21 @@ class Item:
         which starts once the hold ends, or, when the label is already gone, on the sweep's
         start. A conflict round waits in its checks, where the engine follows the conflict
         policy, with its count and limit, if the change still conflicts, and checks it if
-        not. A fix round is counted, as NexKit 6 counts it when it starts it. A head pushed
-        since the label is gone is checked first, as `/nexkit review`."""
+        not. A fix round is due, and counted when it starts, as NexKit 6 counts it, or goes
+        to a person when none is left then. A head pushed since the label is gone is checked
+        first, as `/nexkit review`."""
         back = row.get("held_back")
         name = {"merge": "accepting", "conflicts": "checking"}.get(back, "fixing")
         if not self.doc["hold"] and self.head_moved():
             self.doc["change"]["version"] = self.pull["head"]["sha"]
             self.wait("start")
             return self.be("held, label gone", "checking")
-        if name == "fixing" and self.kept_round_used_up():
-            text = SAYS["roundsUsedUp"]
-            return self.be("needs a person", "ready", "roundsUsedUp", None, text)
+        if name == "fixing":
+            self.doc["rounds"]["due"] = True
         if self.doc["hold"]:
             return self.be("held", name)
         self.wait("start")
         return self.be("held, label gone", name)
-
-    def kept_round_used_up(self):
-        """Count the automatic fix round that a hold or a base failure kept back, as NexKit 6
-        does when it starts it (`count`), or answer that none is left for it."""
-        rounds = self.doc["rounds"]
-        if rounds["counted"] >= self.cfg["fix"]["max_auto_rounds"]:
-            return True
-        rounds["counted"] += 1
-        rounds["started"] += 1
-        return False
 
     def on_checked_head(self, row):
         """Keep the head the round checked as the change's version, while the observation

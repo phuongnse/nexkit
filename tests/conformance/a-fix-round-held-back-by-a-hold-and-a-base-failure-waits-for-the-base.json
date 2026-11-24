@@ -111,9 +111,10 @@
             "until": null
           }
         ],
-        "rounds.counted": 1,
+        "rounds.counted": 0,
         "hold": true,
-        "rounds.started": 2
+        "rounds.started": 1,
+        "rounds.due": true
       }
     },
     {
@@ -137,7 +138,8 @@
       ],
       "expect": {
         "pending.-1.stage": "fix",
-        "rounds.counted": 1
+        "rounds.counted": 1,
+        "rounds.started": 2
       }
     }
   ]

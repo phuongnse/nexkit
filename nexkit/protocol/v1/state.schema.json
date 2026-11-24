@@ -454,6 +454,14 @@
         "recheck": {
           "$comment": "The version of the change that a fix round left as it was, having found the cause outside it, while it is the change's version: what still fails on it is a person's.",
           "$ref": "common.schema.json#/$defs/id"
+        },
+        "due": {
+          "$comment": "An automatic fix round was decided and waits to be issued, for a hold or a failure the base branch has: it is counted when its run is issued, while `fixRounds` has one left by the policies given then.",
+          "const": true
+        },
+        "automatic": {
+          "$comment": "The fix round under way is an automatic one that `counted` holds, until its review ends: one that the engine stops before then gives its count back.",
+          "const": true
         }
       },
       "required": [

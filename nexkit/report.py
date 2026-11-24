@@ -1091,14 +1091,30 @@ def _retried(gh, decision, error, message):
 
 def _stop_round(gh, decision, agent, outcome, message, reason=None, **fields):
     """Show a pull request round that published nothing, with the reason. An automatic
-    fix round that stopped for a reason outside the agent's work gives its round back."""
+    fix round that NexKit stopped, for a reason outside the agent's work, gives its round
+    back, as the engine decides (`host.stopped_counts`)."""
     comments = gh.comments(decision["pr"])
     state_id, state = read_state(comments)
     _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
-    counted = decision.get("auto") and not decision.get("conflicts")
-    if outcome in UNCOUNTED and counted and state and state.get("auto_fixes"):
-        state["auto_fixes"] -= 1
-        progress.save_state(gh, decision["pr"], state_id, state)
+    if state and state.get("auto_fixes"):
+        from .host import Refused, stopped_counts
+
+        automatic = bool(decision.get("auto")) and not decision.get("conflicts")
+        try:
+            counted = stopped_counts(
+                decision["issue"],
+                decision["pr"],
+                decision["head"],
+                state["auto_fixes"],
+                automatic,
+                outcome in UNCOUNTED,
+            )
+        except Refused:
+            # The count stays as it is: a person reads the round's comment.
+            counted = state["auto_fixes"]
+        if counted != state["auto_fixes"]:
+            state["auto_fixes"] = counted
+            progress.save_state(gh, decision["pr"], state_id, state)
     comment_id, row = progress.find_round(comments, decision)
     status = run_status(outcome)
     row.update(status=status, head=decision["head"], tokens=_tokens(agent), outcome=outcome)
@@ -1560,7 +1576,18 @@ def _required_failed(gh, cfg, target, row, message, names, workflow, default_bra
     state["feedback"] = {**(state.get("feedback") or {"head": head}), "required": failed}
     what = _failed_line(failed, head, bool(target.get("waiting")))
     limit = cfg["fix"]["max_auto_rounds"]
-    if state["auto_fixes"] >= limit:
+    decision = {"base": target["base"], "issue": target["issue"]}
+    wait = _ci_wait(gh, cfg, decision, autopilot.as_checks(failed), default_branch)
+    # What follows is the engine's (`host.required_failed`).
+    from .host import Refused, refused_parts, required_failed
+
+    try:
+        ends = required_failed(cfg, target["issue"], pr, head, state["auto_fixes"], wait)
+    except Refused as error:
+        save()
+        target["found"] = {"refused": refused_parts(error)}
+        return "merge_refused", f"{message}\n\n{what}"
+    if ends == "needs_human":
         save()
         target["found"] = {"failing": [item["name"] for item in failed]}
         line = (
@@ -1568,9 +1595,7 @@ def _required_failed(gh, cfg, target, row, message, names, workflow, default_bra
             "commit yourself, or close the PR."
         )
         return "needs_human", f"{message}\n\n{what} {line}"
-    decision = {"base": target["base"], "issue": target["issue"]}
-    wait = _ci_wait(gh, cfg, decision, autopilot.as_checks(failed), default_branch)
-    if wait:
+    if ends == "ci_waiting":
         state["ci_wait"] = row["ci_wait"] = wait
         save()
         return autopilot.CI_WAITING, f"{message}\n\n{what} {autopilot.ci_wait_message(wait)}"

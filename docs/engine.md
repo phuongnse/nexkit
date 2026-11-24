@@ -5,8 +5,9 @@ _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol
 at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 does, as
 `nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; the
 GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
-the decisions that follow a plan and a blocked `/nexkit go`, which NexKit 6's autopilot, `route`
-and `report` take from `step` (see [getting there](#getting-there)). The rest of this page is not built yet, and NexKit 6 runs as
+the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, the end of
+a round's wait and which rounds count, which NexKit 6's autopilot, `route`, `report` and
+`maintain` take from `step` (see [getting there](#getting-there)). The rest of this page is not built yet, and NexKit 6 runs as
 [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
@@ -254,9 +255,9 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `planning` | An agent writes a plan | `awaitingApproval`, `working` or `fixing`, `split`, `noChange` |
 | `awaitingApproval` | The plan, or a split, waits for its approval or for answers, or a round's questions wait for answers | `planning`, `working` or `fixing`, `split`, `noChange`, `dropped` |
 | `working` | An agent makes the change | `checking`, `awaitingApproval`, `planning`, `noChange`, `failed` |
-| `checking` | The host's checks run on the change | `reviewing`, `fixing` |
+| `checking` | The host's checks run on the change | `reviewing`, `fixing`, `ready` |
 | `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `accepting`, `fixing` |
-| `fixing` | An agent works on the failures and findings, in the same change | `checking`, `awaitingApproval`, `planning`, `failed` |
+| `fixing` | An agent works on the failures and findings, in the same change, or its round waits to start | `checking`, `awaitingApproval`, `planning`, `working`, `ready`, `failed` |
 | `ready` | The change passed, or a person decides what is left | `accepting`, `fixing`, `checking` |
 | `accepting` | The host accepts the change | `accepted`, `ready`, `fixing`, `working`, `failed` |
 | `accepted` | The change is in | none |
@@ -316,16 +317,32 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **What follows a round's checks and review.** The review runs after failing checks too, by
   `reviewAfterFailingChecks`. Its verdict and its criteria decide, as in NexKit 6: a review that
   requests changes, an `unmet` criterion or a failing check leads to a fix round, and a blocking
-  finding of a review that approves does not. A fix round is counted and runs while `fixRounds`
-  has one left; then a person decides, in `ready` or, by `whenRoundsRunOut`, in `failed`
-  (`roundsUsedUp`). A counted fix round waits while every failing check fails as the base
-  branch does, which the checks' result says with the item about that failure, until that item
-  closes; and while a hold is on, until it ends. A fix round that left the change as it was,
-  having found the cause outside it, is followed by no other: what still fails on that version
-  is a person's (`roundsUsedUp`). A change that passes is `ready`: a person confirms the criteria
-  the review could not verify (`unverifiableCriterion`) and decides the checklist items that
-  only a person decides (`personChecklistItem`); otherwise the accept policy decides, and a hold
-  keeps the engine's accept back until it ends.
+  finding of a review that approves does not. A fix round follows while `fixRounds` has one
+  left; then a person decides, in `ready` or, by `whenRoundsRunOut`, in `failed`
+  (`roundsUsedUp`). The fix round waits while every failing check fails as the base branch
+  does, which the checks' result says with the item about that failure, until that failure
+  ends (see *Wait* below); and while a hold is on, until it ends. It is counted when its run
+  is issued, as NexKit 6 counts it when it starts it: one that waited (`rounds.due`) runs only
+  while `fixRounds`, as the host gives it then, has one left, and otherwise a person decides
+  (`roundsUsedUp`). A fix round that left the change as it was, having found the cause outside
+  it, is followed by no other: what still fails on that version is a person's (`roundsUsedUp`),
+  until a person's request starts work on it again. A change that passes is `ready`: a person
+  confirms the criteria the review could not verify (`unverifiableCriterion`) and decides the
+  checklist items that only a person decides (`personChecklistItem`); otherwise the accept
+  policy decides, and a hold keeps the engine's accept back until it ends. A required check
+  that fails at the accept (`checkFailed`) leads to a fix round as a failing check of the round
+  does, waiting while it fails as the base branch does, which the accept's result says.
+- **While a fix round waits** for a hold or the base branch, a person's push is checked, and so
+  is a person's request for a review; a person's request for a fix runs that fix. The round
+  that waited no longer waits, and none of these counts: the checks and the review that follow
+  decide the next round, as in NexKit 6.
+- **Which rounds count.** Only an automatic fix round counts toward `fixRounds`. One that is
+  stopped before its review ends gives its count back, since it could no longer lead to an
+  accept and its work was not judged: the engine stops it when the change moves under it, such
+  as by a push or a conflict round, and the host may stop it (`stopped`), as GitHub does for an
+  agent it may not run, a change already on the base branch, or checks that the base branch's
+  move stopped. One whose agent stopped by itself, such as blocked, out of time or with an
+  error, keeps its count.
 - **From every state that has a change,** the engine reconciles the item with the latest
   observation of that change after each event, once no publish or replace is on its way. A change
   that was merged, such as by a person's hand, goes to `accepted`; one that became empty, because
@@ -390,12 +407,17 @@ Three things sit beside the state, never in place of it:
   (`baseFailure`); or required checks before a merge (`requiredChecks`). Each wait has an id that
   is new each time, and the event that ends it names it. A tick ends only a wait for a time:
   `time`, `usageLimit` or `requiredChecks`. When a blocker, or the bug issue of a base failure,
-  closes, the waits on it end, and an item does not start while a blocker is open. When the
-  last wait or hold on a state whose work does not run ends, as after a usage limit, a
-  transient stop or a hold that kept a round back, the engine starts that state's work again:
-  the same round, which counts nothing again, and checks or an accept that start again follow
-  the latest observation of the change first. A request to start does the same for a state
-  that waits to start.
+  closes, the waits on it end, and an item does not start while a blocker is open. A host
+  reports that the base branch passes again, so that its failure is gone though its item is
+  open, as the end of that item too, naming it. An end that comes before the
+  engine recorded a wait on that item changes nothing, so a host sends it again, as a new
+  event, each time it finds the item closed or the base passing while a wait on the item
+  stands, such as on each sweep, as NexKit 6's sweep looks at each wait. When the last wait or
+  hold on a state whose work does not run ends, as after a usage limit, a transient stop or a
+  hold that kept a round back, the engine starts that state's work again: the same round,
+  which counts nothing again, but for a fix round that waited to be issued, which is counted
+  now, and checks or an accept that start again follow the latest observation of the change
+  first. A request to start does the same for a state that waits to start.
 
 ## Events
 
@@ -422,7 +444,7 @@ Three things sit beside the state, never in place of it:
 | `publish` | Makes the agent's work the change: a commit and a pull request, or a draft | The change's id and version, or why it could not |
 | `replaceChange` | Drops the change and starts a new one from what is current | The new change |
 | `runChecks` | Runs its checks on a version of the change | Each result, its failure signature, and whether the failure matches a known failure of the base; the item about that failure when every failing check matches it |
-| `accept` | Accepts the change: a merge, or an accept of a draft | `accepted`, or refused with a kind: `transient`, `waitingForChecks`, `checkFailed`, `behind`, `headMoved`, `conflict`, `notAccepted` or `needsPerson` |
+| `accept` | Accepts the change: a merge, or an accept of a draft | `accepted`, or refused with a kind: `transient`, `waitingForChecks`, `checkFailed`, `behind`, `headMoved`, `conflict`, `notAccepted` or `needsPerson`; for `checkFailed`, the item about a failure the base branch has when every check that failed fails as it does there |
 | `createParts` | Makes the parts of a split, each blocked by the earlier parts it needs | The parts' ids |
 | `close` | Ends the work item with its outcome | Done |
 | `cancel` | Stops an action that runs | Done |
@@ -616,10 +638,10 @@ adapter. A new rule of the engine comes with a case.
   wait, and a round that waits for a failure the base branch has is `fixing` with that wait. A
   round that a hold label kept back is in the state of the step it kept back, held, or waiting to
   start once the label is gone; a conflict round waits in its checks, where the conflict policy
-  applies with its count, and a fix round that a hold or a base failure kept back is counted, or
-  goes to a person when none is left. What a round decided on its head keeps that head as the
-  change's version, and a head pushed since is in the observation, so the engine checks it
-  before it goes on. A run that waits to run again runs its own command again, and a lost round
+  applies with its count, and a fix round that a hold or a base failure kept back waits to be
+  issued (`rounds.due`), counted when it starts or left to a person when none is left then.
+  What a round decided on its head keeps that head as the change's version, and a head pushed
+  since is in the observation, so the engine checks it before it goes on. A run that waits to run again runs its own command again, and a lost round
   runs a fix round's command or a review, as NexKit 6 does; autopilot's record of tries counts
   only for the same command and target within six hours, and allows one start more once the
   agent ran. Each imported item is one the engine moves on from: a case in
@@ -638,8 +660,12 @@ adapter. A new rule of the engine comes with a case.
    decisions that follow a `/nexkit go` that stopped as blocked with questions or with paths
    only a person changes, a writer's command that answers its questions with the option that
    only closes the issue, the reason a plan waits for without autopilot, what follows the
-   checks and the review of a round on a pull request (`report`), and what follows a fix round
-   that stopped as blocked with questions or protected paths and a round that ran out of time. A `/nexkit go`
+   checks and the review of a round on a pull request (`report`), what follows a fix round
+   that stopped as blocked with questions or protected paths and a round that ran out of time,
+   the end of a fix round's or a merge's wait for a hold or for the base branch's failure
+   (`autopilot`'s sweep), which rounds count after a round that NexKit stopped (`report`,
+   `maintain`), and what follows required checks that fail at the merge (`report`). A conflict
+   round that a hold kept back stays NexKit 6's, with the conflict rounds. A `/nexkit go`
    that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as
    the policy after a failure, which the protocol does not hold yet, says. Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the

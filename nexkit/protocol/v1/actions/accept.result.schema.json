@@ -28,6 +28,17 @@
     },
     "text": {
       "type": "string"
+    },
+    "baseFailure": {
+      "$comment": "For a refusal as `checkFailed`: the work item about a failure the base branch has, when every required check that failed fails as it does there, as the host compares them; null or left out otherwise. The fix round waits for that failure to end rather than fix it again.",
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

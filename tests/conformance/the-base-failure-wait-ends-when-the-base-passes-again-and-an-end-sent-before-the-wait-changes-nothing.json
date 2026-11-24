@@ -1,0 +1,128 @@
+{
+  "policies": {
+    "fixRounds": 1
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "9",
+        "completed": true
+      },
+      "state": "checking",
+      "changed": false,
+      "actions": [],
+      "note": "The base branch passes again before the round's checks end: the host sends the end of the failure's item, which no wait names yet."
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": false,
+              "skipped": false,
+              "signature": "fail test_x",
+              "knownBaseFailure": false
+            }
+          ],
+          "baseFailure": "9"
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:review"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "rounds.counted": 0,
+        "rounds.due": true
+      }
+    },
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "9",
+        "completed": true
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.counted": 1,
+        "waits": []
+      },
+      "note": "The host's next sweep finds the base passing again, or the item closed, while the wait stands, and sends it again as a new event."
+    }
+  ]
+}

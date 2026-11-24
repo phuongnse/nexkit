@@ -27,11 +27,20 @@ that changed nothing, the rounds used up, and a change that passes, which a pers
 decides or merges, or which merges by `merge.auto` unless a hold keeps it back. A round whose
 next step the engine refuses to decide waits for a person.
 
-Last, it decides what follows a fix round that stopped as blocked with questions or protected
+It also decides what follows a fix round that stopped as blocked with questions or protected
 paths, as after a blocked `/nexkit go` but on the pull request, where an answer that changes
 the issue's scope is a person's; and what follows an implement or fix round that ran out of
 time: one plan that splits the issue, unless the issue asked before, a parent asked, or it is a
 part at the deepest level.
+
+It decides the end of a round's wait too, in the sweep: once the label that held back a merge
+or an automatic fix round is gone, a head pushed meanwhile is reviewed, and the fix round runs,
+counted only now, while `fix.max_auto_rounds` has one left; once the base branch's failure
+that a fix round waited for ends, its bug issue closed or the base passing again, the same. A
+conflict round that a label held back stays NexKit 6's. And it decides which rounds count: an
+automatic fix round that NexKit stopped gives its count back (`report._stop_round`,
+`maintain._give_back`), and required checks that fail at the merge start a counted fix round,
+wait for the base branch, or leave the rounds used up (`report._required_failed`).
 
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
@@ -124,8 +133,13 @@ def step(state, event, found_policies):
 
 def refused_reason(error):
     """Why an issue waits whose next step the engine refused to decide."""
+    return autopilot.person(*refused_parts(error))
+
+
+def refused_parts(error):
+    """(do, why) of `refused_reason`."""
     why = f"NexKit's engine refused to decide its next step: {autopilot.quoted(str(error), 300)}"
-    return autopilot.person(REFUSED_DO, why)
+    return REFUSED_DO, why
 
 
 # -- the document and the events -------------------------------------------------------
@@ -748,10 +762,8 @@ def round_carried_on(gh, cfg, issue, decision, agent):
     if "runAgent" in kinds or "close" in kinds:
         return True
     if "needPerson" in kinds:
-        if kinds["needPerson"]["reason"] != "closeRecommended" or again:
-            return False
-        # NexKit 6 asks whether an answer replans before it looks at the one that closes.
-        return not autopilot.replans({"questions": round_questions(agent)})
+        # NexKit 6 asks whether an answer replans only for a fix round (`stop_carried_on`).
+        return kinds["needPerson"]["reason"] == "closeRecommended" and not again
     return False
 
 
@@ -1102,3 +1114,146 @@ def _round_end(answer, recheck):
     raise Refused(
         f"The engine answers {sorted(kinds)} after a round, which the host does not carry out."
     )
+
+
+# -- the end of a round's wait, and which rounds count ----------------------------------
+
+
+def _pull_doc(cfg, issue, pr, head, state, auto_fixes):
+    """The document of `issue` whose NexKit pull request `pr` is in `state` on `head`, with
+    `auto_fixes` automatic fix rounds counted, as the state comment of `pr` keeps them."""
+    doc = first_state.empty(str(issue))
+    version = str(head or pr)
+    doc["state"] = state
+    doc["change"] = {"id": str(pr), "version": version}
+    doc["observed"] = {
+        "changeId": str(pr),
+        "version": version,
+        "conflicts": False,
+        "merged": False,
+        "empty": False,
+    }
+    doc["rounds"]["counted"] = max(int(auto_fixes or 0), 0)
+    doc["rounds"]["started"] = 1
+    if cfg and state in ("fixing", "checking", "reviewing"):
+        doc["policies"] = policies(cfg)
+    return doc
+
+
+def _answers(doc, events, found_policies):
+    """The engine's actions for `events` sent in order from `doc`, and the state after them."""
+    actions = []
+    for event in events:
+        found = step(doc, event, found_policies)
+        doc, actions = found["state"], [*actions, *found["actions"]]
+    return doc, actions
+
+
+def _wait_end(doc, actions):
+    """What follows the end of a round's wait, by the engine's answer: `review` of a head
+    pushed meanwhile, `merge`, the automatic `fix` round, counted, or `used_up` when it has
+    no round left."""
+    kinds = {action["kind"]: action for action in actions}
+    if "runChecks" in kinds:
+        return "review"
+    if "accept" in kinds:
+        return "merge"
+    if (kinds.get("runAgent") or {}).get("stage") == "fix":
+        return "fix"
+    if (kinds.get("needPerson") or {}).get("reason") == "roundsUsedUp":
+        return "used_up"
+    raise Refused(f"The engine answers {sorted(kinds)} after a wait, which the host cannot do.")
+
+
+def released(cfg, issue, pull, run, head, auto_fixes):
+    """What follows once no label holds `issue` whose pull request's round, the marker `run`,
+    held back its merge or its automatic fix round, as the engine decides it
+    (`autopilot._released`): one of `_wait_end`'s. `head` is the pull request's head now. A
+    fix round held back is counted only now, while `fix.max_auto_rounds` has one left as it
+    reads now. `_released` reads only the head, so a conflict is the next round's to find.
+    Raises `Refused`."""
+    back = "accepting" if run.get("held_back") == "merge" else "fixing"
+    doc = _pull_doc(cfg, issue, pull, run.get("head"), back, auto_fixes)
+    doc["hold"] = True
+    if back == "fixing":
+        doc["rounds"]["due"] = True
+    version = doc["change"]["version"]
+    events = []
+    if head != run.get("head"):
+        fields = {"changeId": str(pull), "version": str(head or "none")}
+        fields.update(conflicts=False, merged=False, empty=False)
+        events.append(_event("changeObserved", issue, None, f"head-{pull}-{head}", **fields))
+    events.append(_event("released", issue, None, f"released-{pull}-{version}"))
+    return _wait_end(*_answers(doc, events, policies(cfg)))
+
+
+def base_passes(cfg, issue, pull, run, auto_fixes):
+    """What follows the end of the wait of `issue`'s pull request `pull`, whose round, the
+    marker `run`, waits while the base branch has the same failure (`ci_waiting`), once its
+    bug issue closed or the base passes again, which the host sends as the end of that bug
+    issue (`autopilot._ci_step`): `fix`, counted now, or `used_up`. Raises `Refused`."""
+    wait = run.get("ci_wait") or {}
+    bug = str(wait.get("bug") or "none")
+    doc = _pull_doc(cfg, issue, pull, run.get("head"), "fixing", auto_fixes)
+    doc["rounds"]["due"] = True
+    doc["waits"] = [{"id": "w1.1", "for": "baseFailure", "until": None, "on": bug}]
+    event = _event("blockerClosed", issue, None, f"base-{pull}-{bug}", blocker=bug, completed=True)
+    return _wait_end(*_answers(doc, [event], policies(cfg)))
+
+
+def required_failed(cfg, issue, pr, head, auto_fixes, wait):
+    """What follows required checks that failed on `head` of the NexKit pull request `pr` at
+    its merge, as the engine decides it (`report._required_failed`): `auto_fix`, counted,
+    `ci_waiting` while they fail as the base branch does, which `wait` names
+    (`autopilot.ci_wait`), or `needs_human` when no automatic fix round is left. NexKit 6
+    tries a merge only when no label holds the issue. Raises `Refused`."""
+    doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
+    version = doc["change"]["version"]
+    action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
+    doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]
+    result = {
+        "accepted": False,
+        "refusal": "checkFailed",
+        "text": "A required check failed.",
+        "baseFailure": str(wait["bug"]) if wait else None,
+    }
+    fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
+    event = _event("actionFinished", issue, None, f"required-{pr}-{version}", **fields)
+    answer = step(doc, event, policies(cfg))
+    state, kinds = answer["state"], {action["kind"]: action for action in answer["actions"]}
+    if (kinds.get("runAgent") or {}).get("stage") == "fix":
+        return "auto_fix"
+    if any(wait["for"] == "baseFailure" for wait in state["waits"]):
+        return "ci_waiting"
+    if (kinds.get("needPerson") or {}).get("reason") == "roundsUsedUp":
+        return "needs_human"
+    raise Refused(f"The engine answers {sorted(kinds)} after a required check failed.")
+
+
+def stopped_counts(issue, pr, head, auto_fixes, automatic, by_host, checking=False):
+    """How many automatic fix rounds of the NexKit pull request `pr` count after its round on
+    `head` stopped, as the engine decides it: an automatic one (`automatic`) that the host
+    stopped before its review ended (`by_host`), such as for an agent it may not run, a change
+    already on the base branch, or checks that the base branch's move stopped (`checking`),
+    gives its count back; a round whose agent stopped by itself keeps it
+    (`report._stop_round`, `maintain._give_back`). The host's own stops, and what follows
+    them, stay NexKit 6's, so the host reports one as `stopped`; no policy decides a stop.
+    Raises `Refused`."""
+    counted = max(int(auto_fixes or 0), 0)
+    doc = _pull_doc(None, issue, pr, head, "checking" if checking else "fixing", counted)
+    version = doc["change"]["version"]
+    if checking:
+        run = {"id": first_state.RUN_ID, "next": None, "kind": "runChecks"}
+        doc["pending"] = [{**run, "changeVersion": version}]
+    else:
+        doc["pending"] = [first_state.agent_run("fix", version)]
+    if automatic and counted:
+        doc["rounds"]["automatic"] = True
+    if by_host:
+        text = "The host stopped the round before its review."
+        event = _event("stopped", issue, None, f"stop-{pr}-{version}", outcome="other", text=text)
+    else:
+        result = {**AGENT, "changeVersion": version, "output": None, "error": "The round stopped."}
+        fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
+        event = _event("actionFinished", issue, None, f"stop-{pr}-{version}", **fields)
+    return step(doc, event, {})["state"]["rounds"]["counted"]

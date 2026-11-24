@@ -99,8 +99,9 @@
       "changed": true,
       "actions": [],
       "expect": {
-        "rounds.counted": 1,
-        "hold": true
+        "rounds.counted": 0,
+        "hold": true,
+        "rounds.due": true
       }
     },
     {

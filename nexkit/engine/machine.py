@@ -344,6 +344,8 @@ class Step:
         would only fix that again; and while a hold is on, as nothing new starts by itself
         (`due`). It is counted when its run is issued (`issue_fix`)."""
         rounds = self.s["rounds"]
+        # The round's checks or review judged it, so its count stands.
+        rounds.pop("automatic", None)
         if rounds.get("recheck") == self.version:
             if self.conflicted():
                 return
@@ -386,6 +388,8 @@ class Step:
         self.need("roundsUsedUp", "The checks or the review still fail, and no fix round is left.")
 
     def ready(self):
+        # The round's checks or review judged it, so its count stands.
+        self.s["rounds"].pop("automatic", None)
         if self.conflicted():
             return
         self.move("ready")
@@ -626,13 +630,16 @@ class Step:
         elif what == "fix":
             if self.review_only or not change or not self.takes_request(("ready", "failed")):
                 return False
-            # A round of its own, with the policies given now.
+            # A round of its own, with the policies given now. An automatic round before it
+            # was judged already, so its count stands.
+            self.s["rounds"].pop("automatic", None)
             self.s["policies"] = {}
             self.move("fixing")
             self.run("fix")
         elif what == "review":
             if not change or not self.takes_request(("new", "ready", "failed")):
                 return False
+            self.s["rounds"].pop("automatic", None)
             self.s["policies"] = {}
             self.check()
         elif what == "retry" and state == "failed":

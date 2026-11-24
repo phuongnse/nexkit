@@ -1,0 +1,188 @@
+{
+  "policies": {
+    "fixRounds": 2,
+    "reviewAfterFailingChecks": "onlyAfterPassing"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": false,
+              "skipped": false,
+              "signature": "fail test_x",
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.counted": 1,
+        "pending.-1.stage": "fix"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:fix"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v2"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v2",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "held"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": false,
+              "skipped": false,
+              "signature": "fail test_x",
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "rounds.counted": 1,
+        "rounds.due": true
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v3"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ],
+      "expect": {
+        "rounds.counted": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v4"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runChecks"
+      ],
+      "expect": {
+        "rounds.counted": 1
+      }
+    }
+  ]
+}

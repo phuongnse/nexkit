@@ -4,8 +4,9 @@
   "reviewAfterFailingChecks": "always",
   "accept": "person",
   "fixRounds": 2,
+  "whenRoundsRunOut": "person",
   "conflicts": "person",
   "conflictRounds": 3,
-  "splits": true,
+  "splits": false,
   "afterFailure": "person"
 }

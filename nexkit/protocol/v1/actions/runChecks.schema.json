@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/runChecks.schema.json",
   "$comment": "Run the host's checks on a version of the change.",
   "type": "object",
   "properties": {
@@ -27,6 +29,5 @@
     "kind",
     "next",
     "changeVersion"
-  ],
-  "additionalProperties": false
+  ]
 }

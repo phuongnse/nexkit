@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/action.schema.json",
+  "$comment": "Any action. Each answer's actions and each pending action of the state fit one of these.",
+  "anyOf": [
+    {
+      "$ref": "actions/accept.schema.json"
+    },
+    {
+      "$ref": "actions/cancel.schema.json"
+    },
+    {
+      "$ref": "actions/close.schema.json"
+    },
+    {
+      "$ref": "actions/createParts.schema.json"
+    },
+    {
+      "$ref": "actions/needPerson.schema.json"
+    },
+    {
+      "$ref": "actions/publish.schema.json"
+    },
+    {
+      "$ref": "actions/replaceChange.schema.json"
+    },
+    {
+      "$ref": "actions/runAgent.schema.json"
+    },
+    {
+      "$ref": "actions/runChecks.schema.json"
+    },
+    {
+      "$ref": "actions/show.schema.json"
+    },
+    {
+      "$ref": "actions/wait.schema.json"
+    }
+  ]
+}

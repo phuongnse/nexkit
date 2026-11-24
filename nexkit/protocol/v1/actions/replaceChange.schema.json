@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/replaceChange.schema.json",
   "$comment": "Drop the change and start a new one from what is current.",
   "type": "object",
   "properties": {
@@ -27,6 +29,5 @@
     "kind",
     "next",
     "reason"
-  ],
-  "additionalProperties": false
+  ]
 }

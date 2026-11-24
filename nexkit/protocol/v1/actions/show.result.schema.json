@@ -1,7 +1,8 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/show.result.schema.json",
   "$comment": "The result of show, in actionFinished.",
   "type": "object",
   "properties": {},
-  "required": [],
-  "additionalProperties": false
+  "required": []
 }

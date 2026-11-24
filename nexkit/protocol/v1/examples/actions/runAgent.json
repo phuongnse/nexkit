@@ -1,8 +1,9 @@
 {
-  "id": "a1",
+  "id": "a2.1",
   "kind": "runAgent",
   "next": null,
   "stage": "plan",
+  "changeVersion": null,
   "access": "read",
   "inputs": [
     "item",

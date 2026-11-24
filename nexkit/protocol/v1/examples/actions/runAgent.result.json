@@ -38,5 +38,7 @@
   "error": null,
   "session": "s-1",
   "changeVersion": null,
-  "timedOut": false
+  "timedOut": false,
+  "seconds": 212,
+  "usd": 0.84
 }

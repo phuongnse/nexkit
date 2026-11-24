@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/publish.result.schema.json",
   "$comment": "The result of publish, in actionFinished.",
   "type": "object",
   "properties": {
@@ -22,6 +24,5 @@
   "required": [
     "change",
     "refused"
-  ],
-  "additionalProperties": false
+  ]
 }

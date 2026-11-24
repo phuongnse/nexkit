@@ -538,7 +538,7 @@ def _asks(doc, comment, run):
     ]
     found = bool(run.get("no_change"))
     doc["state"] = "awaitingApproval"
-    doc["questions"] = {"ref": ref, "items": items, "noChange": found}
+    doc["questions"] = {"ref": ref, "stage": "implement", "items": items, "noChange": found}
     doc["attention"] = {"reason": "question", "text": "The round has questions.", "ref": ref}
     if doc["plan"]:
         doc["plan"]["approved"] = True

@@ -313,11 +313,17 @@
       ]
     },
     "questions": {
-      "$comment": "The questions of the implement or fix round that stopped as blocked and asked them, while they wait: `ref` is the agent action that asked, as attention names it, and `noChange` whether the round, an implement round, found that no change is needed. Left out while no round's questions wait.",
+      "$comment": "The questions of the implement or fix round that stopped as blocked and asked them, while they wait: `ref` is the agent action that asked, as attention names it, `stage` the stage that runs again with the engine's answers, and `noChange` whether the round, an implement round, found that no change is needed. Left out while no round's questions wait.",
       "type": "object",
       "properties": {
         "ref": {
           "$ref": "common.schema.json#/$defs/id"
+        },
+        "stage": {
+          "enum": [
+            "implement",
+            "fix"
+          ]
         },
         "items": {
           "type": "array",
@@ -364,6 +370,7 @@
       },
       "required": [
         "ref",
+        "stage",
         "items",
         "noChange"
       ],

@@ -1099,7 +1099,7 @@ class Step:
         # The round's finding that no change is needed counts only with an implement round's
         # recommendation to close the item (`report._autopilot_fields`).
         found = stage == "implement" and bool(filled(output.get("no_change")))
-        self.s["questions"] = {"ref": number, "items": asked, "noChange": found}
+        self.s["questions"] = {"ref": number, "stage": stage, "items": asked, "noChange": found}
         if output.get("protected_paths"):
             self.need(
                 "handMadeChange", "The change needs paths that only a person changes.", number
@@ -1114,7 +1114,8 @@ class Step:
         round that found no change is needed and recommends only closing the item ends it; a
         recommended option that only closes the item is a person's to pick; one that changes
         the item's scope plans it again, which on an item with a change a person decides, as
-        the change was made for the scope it had; and the others start the round again."""
+        the change was made for the scope it had; and the others start the round that asked
+        again."""
         round_ = self.s["questions"]
         ref, asked = round_["ref"], round_["items"]
         answers = self.p["planApproval"] == "autoWhenClean" and self.p["answers"] == "recommended"
@@ -1136,9 +1137,12 @@ class Step:
             self.do("show", what="answers", text={"name": "answers", "ref": ref})
             self.start_plan()
         else:
+            # The round that asked runs again, on the change it ran on.
             self.s["asked"].append("answers")
             self.do("show", what="answers", text={"name": "answers", "ref": ref})
-            self.start_change()
+            stage = round_["stage"]
+            self.move(RUNS[stage])
+            self.run(stage)
 
     def finished_review(self, output, number):
         rounds = self.s["rounds"]

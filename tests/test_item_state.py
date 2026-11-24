@@ -270,6 +270,7 @@ def largest():
     # The questions of the round that asked, beside the plan's.
     state["questions"] = {
         "ref": "9" * 20,
+        "stage": "implement",
         "items": [
             {
                 "question": worst(LONGEST["question"]),

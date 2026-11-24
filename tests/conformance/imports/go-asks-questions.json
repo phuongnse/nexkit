@@ -82,6 +82,7 @@
     },
     "questions": {
       "ref": "3",
+      "stage": "implement",
       "items": [
         {
           "question": "Keep the old API?",

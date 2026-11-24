@@ -325,7 +325,7 @@ class Item:
             return self.be("go again", "awaitingApproval", "approval", run, ref=ref)
         if outcome == "agent_blocked" and run.get("questions"):
             # The run's comment asked: a person's answer names it.
-            return self.asks(comment, run)
+            return self.asks(comment, run, "implement")
         blocked = outcome in ("agent_blocked", UNTRUSTED_ROUND)
         return self.be("failed", "failed", "blocked" if blocked else "failed", run)
 
@@ -396,19 +396,21 @@ class Item:
         if outcome in named:
             return self.be("needs a person", "ready", named[outcome], latest)
         if outcome == "agent_blocked" and latest.get("questions"):
-            return self.asks(comment, latest)
+            stage = "implement" if latest.get("action") == "implement" else "fix"
+            return self.asks(comment, latest, stage)
         if status == FAILURE:
             blocked = outcome in ("agent_blocked", UNTRUSTED_ROUND)
             return self.be("failed", "failed", "blocked" if blocked else "failed", latest)
         return self.ready(latest)
 
-    def asks(self, comment, run):
-        """A round that stopped as blocked and asked, in the comment `comment` whose marker is
-        `run`: its questions wait for answers, which name that comment."""
+    def asks(self, comment, run, stage):
+        """A round of `stage` that stopped as blocked and asked, in the comment `comment` whose
+        marker is `run`: its questions wait for answers, which name that comment."""
         ref = str(comment["id"])
         asked = [_question(item, True) for item in questions(run["questions"])]
         found = bool(filled(run.get("no_change")))
-        self.doc["questions"] = {"ref": ref, "items": asked[: MOST["questions"]], "noChange": found}
+        asked = asked[: MOST["questions"]]
+        self.doc["questions"] = {"ref": ref, "stage": stage, "items": asked, "noChange": found}
         return self.be("asks", "awaitingApproval", "question", run, ref=ref)
 
     def ready(self, row):

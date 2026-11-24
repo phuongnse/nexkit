@@ -175,6 +175,7 @@
     },
     "questions": {
       "ref": "103",
+      "stage": "fix",
       "items": [
         {
           "question": "Merge main first?",

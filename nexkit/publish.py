@@ -22,6 +22,7 @@ from .state import (
     TEXT_LIMIT,
     clip,
     depends_on,
+    inert_markers,
     option_marks,
     passed_lines,
     plan_data_record,
@@ -82,7 +83,7 @@ def render_profile(result, cfg):
         stages.append(stage_agent(stage, chosen["agent"], chosen["model"]))
     stages = " · ".join(stages)
     if chosen_by == "triage":
-        reason = (triage.get("reason") or "").strip()
+        reason = inert_markers((triage.get("reason") or "").strip())
     else:
         error = (triage.get("error") or "no result").strip().splitlines()[0][:300]
         which = "the previous plan's profile" if chosen_by == "previous" else "the default profile"
@@ -173,7 +174,9 @@ def render_plan(output, profile=None, replan=False, passed=()):
     A comment holds at most `TEXT_LIMIT` characters. A plan longer than that has each of
     its longest texts cut to the most that fits, and says so; one that does not fit even
     with them cut to `PLAN_FLOOR` raises PublishError. The plan's record holds the same
-    text, so the parts filed from a split are what the comment shows."""
+    text, so the parts filed from a split are what the comment shows. Agent text stands on
+    both sides of the profile's lines, so none of it opens a marker (`inert_markers`)."""
+    output = inert_markers(output)
     body = _render_plan(output, profile, replan, passed)
     if len(body) <= TEXT_LIMIT:
         return body

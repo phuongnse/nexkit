@@ -48,6 +48,7 @@ from .state import (
     ci_wait_reason,
     closing_answer,
     conflict_rounds_used,
+    inert_markers,
     is_bot,
     latest_plan,
     plan_data,
@@ -146,14 +147,23 @@ WORKFLOW_EVENTS = ("schedule", "push", "workflow_dispatch")
 CI_BUG_PREFIX = "<!-- nexkit:ci "
 CI_BUG = re.compile(r"\A<!-- nexkit:ci ([A-Za-z0-9_.-]+) -->")
 CI_SHA_PREFIX = "<!-- nexkit:ci-sha "
-CI_SHA = re.compile(r"<!-- nexkit:ci-sha ([0-9a-f]+) -->")
+# Only in the markers that end a report, after its log excerpts and the tests it names:
+# the commit, then since NexKit 5.0 the failed attempt, then since 4.3 the run attempts.
+CI_SHA = re.compile(
+    r"<!-- nexkit:ci-sha ([0-9a-f]+) -->"
+    r"(?=(?:\s*<!-- nexkit:ci-failed [A-Za-z0-9+/=]+ -->)?"
+    r"(?:\s*<!-- nexkit:ci-runs [0-9. ]+ -->)?\s*\Z)"
+)
 # What a red branch's report records of the latest failed attempt of its run: the run, and
 # for each failed job the commands of its `run` steps that failed, from the job's log, and
 # the tests its error annotations name (see `checks.test_name`). A pull request whose
 # failing checks run only those commands, and fail only those tests, waits for the bug
-# issue instead of a fix round. A report from before NexKit names no tests.
+# issue instead of a fix round. A report from before NexKit names no tests. Only on the
+# line before the run attempts' marker that ends the report.
 CI_FAILED_PREFIX = "<!-- nexkit:ci-failed "
-CI_FAILED = re.compile(r"<!-- nexkit:ci-failed ([A-Za-z0-9+/=]+) -->")
+CI_FAILED = re.compile(
+    r"<!-- nexkit:ci-failed ([A-Za-z0-9+/=]+) -->(?=\s*<!-- nexkit:ci-runs [0-9. ]+ -->\s*\Z)"
+)
 # How a job's log starts a step, with the first line of the step's command, and how it ends
 # a step whose command failed or ran out of time.
 LOG_STEP = re.compile(r"##\[group\]Run (.*)")
@@ -2217,7 +2227,8 @@ def close(gh, cfg, step, workflow, ref):
         url = step.get("run_url")
         round_ = f"[the last round]({url})" if url else "the last round"
         intro = f"NexKit autopilot closes this issue with the answer {round_} recommended"
-    gh.comment(number, f"{intro}: no change is needed.\n\n{step['finding']}")
+    # The finding ends the comment, where NexKit's records stand.
+    gh.comment(number, f"{intro}: no change is needed.\n\n{inert_markers(step['finding'])}")
     gh.close_issue(number, "completed")
     lines = [f"Closed #{number}: {step['reason']}."]
     if step.get("pull"):
@@ -2285,7 +2296,8 @@ def done(gh, cfg, where):
         try:
             issue = gh.latest_closed_issue(number)
             if not issue or any(
-                by_bot(c) and DONE in (c.get("body") or "") for c in gh.comments(issue["number"])
+                by_bot(c) and (c.get("body") or "").startswith(DONE)
+                for c in gh.comments(issue["number"])
             ):
                 continue
             name = f"milestone {milestone.get('title') or number}"
@@ -3366,7 +3378,8 @@ def _still_open(gh, cfg, ghsa, issue, now):
         return []
     number = issue["number"]
     if any(
-        by_bot(c) and DEPENDABOT_STILL_OPEN in (c.get("body") or "") for c in gh.comments(number)
+        by_bot(c) and (c.get("body") or "").startswith(DEPENDABOT_STILL_OPEN)
+        for c in gh.comments(number)
     ):
         return []
     people = "".join(f"@{login} " for login in cfg["notify"])

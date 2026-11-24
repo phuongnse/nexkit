@@ -25,13 +25,15 @@ ACTIONS_BOT = "github-actions[bot]"
 BOT_LOGINS = {ACTIONS_BOT}
 PLAN_MARKER = "<!-- nexkit:plan -->"
 STATE_PREFIX = "<!-- nexkit:state "
-STATE_PATTERN = re.compile(r"<!-- nexkit:state ([A-Za-z0-9+/=]+) -->")
+# Each record that ends a comment counts only there: the text before it can quote agent
+# output, which can hold text shaped like a record.
+STATE_PATTERN = re.compile(r"<!-- nexkit:state ([A-Za-z0-9+/=]+) -->\s*\Z")
 RUN_PREFIX = "<!-- nexkit:run "
-# Only the marker that ends the comment: the text before it can quote agent output.
 RUN_PATTERN = re.compile(r"<!-- nexkit:run ([A-Za-z0-9+/=]+) -->\s*\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 # A plan's profile: a hidden record on the line after the plan marker, where agent text
-# cannot be, and lines for people that the agents do not receive.
+# cannot be, and lines for people that the agents do not receive. Agent text stands on both
+# sides of those lines, so `publish.render_plan` writes none of it that opens a marker.
 PROFILE_PREFIX = "<!-- nexkit:profile "
 PROFILE_RECORD = re.compile(r"\n<!-- nexkit:profile ([A-Za-z0-9+/=]+) -->")
 PROFILE_TEXT = ("<!-- nexkit:profile-text -->", "<!-- /nexkit:profile-text -->")
@@ -46,6 +48,9 @@ PLAN_DATA = re.compile(r"\n*<!-- nexkit:plan-data ([A-Za-z0-9+/=]+) -->\s*\Z")
 # Answers that autopilot gave for the owner. Only where the marker ends NexKit's comment.
 ANSWERS_PREFIX = "<!-- nexkit:answers "
 ANSWERS = re.compile(r"\n*<!-- nexkit:answers ([A-Za-z0-9+/=]+) -->\s*\Z")
+# What opens a NexKit marker in text that NexKit copies where no position pins its markers:
+# agent text on both sides of a plan's profile lines, and a finding that ends a comment.
+MARKER_OPENING = re.compile(r"<!--(?=\s*/?nexkit:)")
 
 RUNNING, SUCCESS, FAILURE, PAUSED = "running", "success", "failure", "paused"
 # A paused run whose command another run carries on: resumed, replaced by a later command,
@@ -112,6 +117,16 @@ def by_bot(comment):
 def clip(text, limit=4000):
     text = (text or "").strip()
     return text if len(text) <= limit else text[:limit] + "\n[truncated]"
+
+
+def inert_markers(value):
+    """`value`, a text or the texts in a dict or list, with nothing that opens a NexKit
+    marker: `<!-- nexkit:` shows as `‹!-- nexkit:`, so NexKit never reads it as its own."""
+    if isinstance(value, dict):
+        return {key: inert_markers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [inert_markers(item) for item in value]
+    return MARKER_OPENING.sub("‹!--", value) if isinstance(value, str) else value
 
 
 def latest_plan(comments):

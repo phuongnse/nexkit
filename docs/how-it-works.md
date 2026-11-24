@@ -1554,7 +1554,8 @@ holds its commit, whether its checks passed, and which of them passed on that co
 each with a digest of its `run` command, and a digest of its `setup` commands. `nexkit status` reads these markers, not
 the text people read, to list the open NexKit work and what each item waits for. NexKit
 reads a marker only from a comment by its App, and only where it ends the comment:
-text before it can quote agent output. The latest commit whose checks passed becomes the
+text before it can quote agent output. The same holds for every marker NexKit reads (see
+[Security notes](#security-notes)). The latest commit whose checks passed becomes the
 next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
 with its current command and the current `setup` becomes its `NEXKIT_CHECK_VERIFIED_SHA`
 (see [Skipping work that a change cannot
@@ -1736,3 +1737,13 @@ for a reason outside the work, before it published anything.
   The issue's author may still edit such an issue, so an edit by anyone else after it ends
   the trust, and each round NexKit starts looks for one right after it read the text, before
   any agent or setup, and so does a merge.
+- NexKit's comments and issues quote text it does not trust: agent output, such as a plan,
+  a fix round's cause or a finding that no change is needed, and the output, test names
+  and annotations of CI runs. NexKit reads each of its markers only where it writes it, so
+  such text never passes for NexKit's own record: a record, such as the state of a pull
+  request, a run's or autopilot's record, a plan's record and the markers that end a CI
+  report, only where it ends the comment or issue; a marker that names what an issue or
+  comment is, only at the start of its text; a plan's profile only on the line after the
+  plan marker. Where agent text stands on both sides of a marker, as around a plan's
+  profile lines, or ends a comment of NexKit's, as the finding autopilot closes an issue
+  with, NexKit writes `<!-- nexkit:` in it as `‹!-- nexkit:`.

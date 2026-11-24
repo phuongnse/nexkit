@@ -10,8 +10,9 @@ for people.
 
 The runner sends each request to the program twice and checks that both answers are the same
 text, checks every answer against the protocol, and after every call checks the outbox: every
-action of the answer is pending, whole, and an action leaves `pending` only with its result,
-its cancel or its loss. It also checks NexKit's rule: each item that is not final has a work
+action of the answer is pending, whole, an action leaves `pending` only with its result, its
+cancel or its loss, and a notice stays pending only while attention says it. It also checks
+NexKit's rule: each item that is not final has a work
 action pending, a wait, a hold or attention. Across the cases, every transition of the page's
 table is played, none that the page does not name for the case's policies is, and a drop is
 played from every state that is not final.
@@ -52,10 +53,7 @@ DEFAULTS = {
     "changesRequested": {"by": PERSON, "note": {"name": "comment", "ref": "9"}},
     "changeApproved": {"by": PERSON},
     "dropRequested": {"by": PERSON, "reason": ""},
-    "changeAccepted": {"by": PERSON},
-    "changeEmptied": {"landedIn": None},
-    "changePushed": {"by": PERSON},
-    "conflict": {"files": []},
+    "changeObserved": {"conflicts": False, "merged": False, "empty": False},
     "stopped": {"outcome": "keyRefused", "text": "The provider refused the key."},
     "held": {"label": "on-hold"},
     "reopened": {"by": PERSON},
@@ -107,16 +105,41 @@ def event_of(short, state, number):
         event.setdefault("changeVersion", action.get("changeVersion") if action else version)
     if kind == "actionFinished":
         event["result"] = result_of(event["result"])
-    if kind in ("changeAccepted", "changeEmptied", "changeApproved"):
+        kinds = {item["id"]: item["kind"] for item in (state or {}).get("pending", [])}
+        if kinds.get(event["action"]) in ("publish", "replaceChange"):
+            # The host reads the change it set when it handles the result: unless the case says
+            # otherwise, as the result gives it.
+            change = event["result"].get("change")
+            event["result"].setdefault("observed", change and observation(change))
+    change_id = ((state or {}).get("change") or {}).get("id") or "none"
+    if kind == "changeApproved":
+        event.setdefault("changeId", change_id)
         event.setdefault("changeVersion", version)
-    if kind == "changePushed":
-        event.setdefault("previousVersion", version)
-    if kind in ("planApproved", "answered"):
-        # The plan the person decides on: the one that asked, or the item's plan.
-        asked = (state.get("attention") or {}).get("ref") if kind == "answered" else None
-        plan = (state.get("plan") or {}).get("text", {}).get("ref")
-        event.setdefault("plan", asked or plan or "none")
+    if kind == "changeObserved":
+        # The change as the host reads it now: unless the case says otherwise, as it stands.
+        event.setdefault("changeId", change_id)
+        event.setdefault("version", version or "none")
+    plan = ((state or {}).get("plan") or {}).get("text", {}).get("ref")
+    if kind == "planApproved":
+        event.setdefault("plan", plan or "none")
+    if kind == "requested":
+        # A go names the item's plan; other requests name none.
+        event.setdefault("plan", plan if event["what"] == "go" else None)
+    if kind == "answered":
+        # The questions are those attention names, whatever the plan.
+        event.setdefault("asked", ((state or {}).get("attention") or {}).get("ref") or "none")
     return event
+
+
+def observation(change):
+    """A change as a host reads it with nothing else to say: no conflict, merge or emptiness."""
+    return {
+        "changeId": change["id"],
+        "version": change["version"],
+        "conflicts": False,
+        "merged": False,
+        "empty": False,
+    }
 
 
 def start_of(case):
@@ -150,7 +173,7 @@ def table_transitions():
 def allowed(policies, had_change):
     """The table's transitions, and those the page's rules below it allow, under `policies`:
     from every state that is not final, a drop and a stop; a final item reopened; and, when the
-    item had a change before the step, a change that went in, became empty or was pushed to, a
+    item has a change, a change that went in, became empty or was pushed to, a
     review asked for, and a conflict as the conflict policy says."""
     conflicts = {**_defaults(), **policies}["conflicts"]
     pairs = table_transitions() | {(name, "new") for name in FINAL}
@@ -234,13 +257,26 @@ class ConformanceTest(unittest.TestCase):
             for path_, value in step.get("expect", {}).items():
                 self.assertEqual(at(new, path_), value, f"{where}: {path_}")
             open_ = self.check_outbox(open_, event, answer, where)
+            # A close stays pending only while the item is final: a reopen takes it back.
+            if new["state"] not in FINAL:
+                closes = [action["id"] for action in new["pending"] if action["kind"] == "close"]
+                self.assertEqual(closes, [], f"{where}: a close is pending on an open item")
+            # A notice stays pending only while attention says it, so a host that carries out
+            # every pending action never tells a person something that no longer stands.
+            attention = new["attention"] or {}
+            for action in new["pending"]:
+                if action["kind"] == "needPerson":
+                    told = (action["reason"], action["text"], action["ref"])
+                    wants = (attention.get("reason"), attention.get("text"), attention.get("ref"))
+                    self.assertEqual(told, wants, f"{where}: {action['id']} no longer stands")
             if new["state"] not in FINAL:
                 carried = [action for action in new["pending"] if action["kind"] in WORK]
                 carried = carried or new["waits"] or new["hold"] or new["attention"]
                 self.assertTrue(carried, f"{where}: nothing carries the item on")
             if state is not None and new["state"] != state["state"]:
                 pair = (state["state"], new["state"])
-                names = allowed(policies, bool(state["change"]))
+                # A change the step itself set, as a publish does, counts too.
+                names = allowed(policies, bool(state["change"] or new["change"]))
                 self.assertIn(pair, names, f"{where}: the page names no {pair}")
                 seen.add(pair)
             if event["kind"] == "dropRequested" and answer["changed"]:

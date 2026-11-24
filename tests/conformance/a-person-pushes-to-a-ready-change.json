@@ -40,7 +40,14 @@
             "id": "308",
             "version": "v1"
           },
-          "refused": null
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
         }
       },
       "state": "checking",
@@ -82,19 +89,20 @@
     },
     {
       "event": {
-        "kind": "changePushed",
-        "changeVersion": "v2"
+        "kind": "changeObserved",
+        "version": "v2"
       },
       "state": "checking",
       "changed": true,
       "actions": [
+        "cancel",
         "runChecks"
       ]
     },
     {
       "event": {
-        "kind": "changePushed",
-        "changeVersion": "v2"
+        "kind": "changeObserved",
+        "version": "v2"
       },
       "state": "checking",
       "changed": false,

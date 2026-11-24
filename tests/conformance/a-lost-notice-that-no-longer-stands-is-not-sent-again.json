@@ -39,6 +39,7 @@
       "state": "working",
       "changed": true,
       "actions": [
+        "cancel",
         "runAgent"
       ]
     },
@@ -48,11 +49,8 @@
         "action": "needPerson"
       },
       "state": "working",
-      "changed": true,
-      "actions": [],
-      "expect": {
-        "attention": null
-      }
+      "changed": false,
+      "actions": []
     }
   ]
 }

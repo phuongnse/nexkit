@@ -1,9 +1,0 @@
-{
-  "protocol": 1,
-  "kind": "changeEmptied",
-  "id": "d-changeEmptied-1",
-  "item": "42",
-  "at": "2026-11-23T15:01:11Z",
-  "changeVersion": "3e37c53",
-  "landedIn": "b0d85b4"
-}

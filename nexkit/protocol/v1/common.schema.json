@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/common.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/common.schema.json",
   "$comment": "Shapes that the events, actions, results and state document share.",
   "$defs": {
     "id": {
@@ -13,6 +13,10 @@
     },
     "planRef": {
       "$comment": "Which plan a person decided on: the ref of the plan's text, `plan.text.ref` in the state.",
+      "type": "string"
+    },
+    "askedRef": {
+      "$comment": "Which questions a person answers: the ref that asked them, `attention.ref` in the state. That is the plan's text ref for a plan's questions, and the id of the runAgent action of a round's questions.",
       "type": "string"
     },
     "time": {
@@ -166,6 +170,34 @@
         "failed",
         "reopened",
         "outage"
+      ]
+    },
+    "observation": {
+      "$comment": "The change as the host reads it: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way.",
+      "type": "object",
+      "properties": {
+        "changeId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "conflicts": {
+          "type": "boolean"
+        },
+        "merged": {
+          "type": "boolean"
+        },
+        "empty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "changeId",
+        "version",
+        "conflicts",
+        "merged",
+        "empty"
       ]
     }
   }

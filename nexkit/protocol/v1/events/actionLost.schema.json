@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/actionLost.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/actionLost.schema.json",
   "$comment": "An action the host started never reported, with `changeVersion` as actionFinished has it, with what it is known to have spent: tokens, seconds and US dollars, each null when not known.",
   "type": "object",
   "properties": {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/state.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/state.schema.json",
   "$comment": "One work item's state document, which the host stores and passes back. It holds decisions, not prose.",
   "type": "object",
   "properties": {
@@ -32,11 +32,40 @@
         }
       ]
     },
-    "conflict": {
-      "$comment": "The change version a conflict was reported on while a step ran, or null. The engine applies the conflict policy once nothing runs (docs/engine.md#states).",
-      "type": [
-        "string",
-        "null"
+    "observed": {
+      "$comment": "The latest observation of the item's change, from changeObserved or from the result of a publish or replace, or null. The engine reconciles the item with it after each event that changes the state (docs/engine.md#states).",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "changeId": {
+              "$ref": "common.schema.json#/$defs/observation/properties/changeId"
+            },
+            "version": {
+              "$ref": "common.schema.json#/$defs/observation/properties/version"
+            },
+            "conflicts": {
+              "$ref": "common.schema.json#/$defs/observation/properties/conflicts"
+            },
+            "merged": {
+              "$ref": "common.schema.json#/$defs/observation/properties/merged"
+            },
+            "empty": {
+              "$ref": "common.schema.json#/$defs/observation/properties/empty"
+            }
+          },
+          "required": [
+            "changeId",
+            "version",
+            "conflicts",
+            "merged",
+            "empty"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "attention": {
@@ -437,7 +466,7 @@
     "itemKind",
     "state",
     "change",
-    "conflict",
+    "observed",
     "attention",
     "hold",
     "waits",

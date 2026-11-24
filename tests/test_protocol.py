@@ -221,6 +221,67 @@ class ProtocolTest(unittest.TestCase):
             self.assertEqual(raw["$id"], protocol.BASE + name, name)
             self.assertFalse(set(protocol.ANNOTATIONS) & set(protocol.load(name)), name)
 
+    def test_each_addition_names_a_minor_version_that_exists(self):
+        # docs/engine.md#versions: what 1.N adds carries "x-since": "1.N", and 1.0 adds nothing.
+        def since(value):
+            if isinstance(value, dict):
+                if "x-since" in value:
+                    yield value["x-since"]
+                for sub in value.values():
+                    yield from since(sub)
+            elif isinstance(value, list):
+                for sub in value:
+                    yield from since(sub)
+
+        named = set()
+        for name in schema_files():
+            raw = json.loads((protocol.ROOT / name).read_text())
+            for value in since(raw):
+                self.assertRegex(value, r"^1\.[1-9][0-9]*$", name)
+                self.assertLessEqual(int(value.split(".")[1]), protocol.MINOR, name)
+                named.add(int(value.split(".")[1]))
+            self.assertNotIn("x-since", json.dumps(protocol.load(name)), name)
+        self.assertEqual(named, set(range(1, protocol.MINOR + 1)))
+
+    def test_load_leaves_out_the_annotations(self):
+        # A made-up schema: what `load` gives an agent or a host holds no annotation.
+        raw = {
+            "$schema": protocol.DIALECT,
+            "$id": protocol.BASE + "made-up.schema.json",
+            "$comment": "For people.",
+            "type": "object",
+            "properties": {"new": {"x-since": "1.3", "$comment": "Added.", "type": "string"}},
+        }
+        self.assertEqual(
+            protocol._plain(raw),
+            {"type": "object", "properties": {"new": {"type": "string"}}},
+        )
+
+    def test_a_change_is_observed_whole_never_as_a_delta(self):
+        shape = protocol.load("common.schema.json")["$defs"]["observation"]
+        fields = shape["required"]
+        self.assertEqual(sorted(fields), sorted(shape["properties"]))
+        event = protocol.load("events/changeObserved.schema.json")
+        state = protocol.load("state.schema.json")["properties"]["observed"]["anyOf"][0]
+        for schema, base in ((event, "../common.schema.json"), (state, "common.schema.json")):
+            # One shape: each field refers to the observation's own.
+            self.assertLessEqual(set(fields), set(schema["required"]))
+            for field in fields:
+                ref = f"{base}#/$defs/observation/properties/{field}"
+                self.assertEqual(schema["properties"][field], {"$ref": ref})
+        for kind in ("publish", "replaceChange"):
+            # The host reads the change when it handles the result of an action that changed it.
+            self.assertIn(
+                "observed", protocol.load(f"actions/{kind}.result.schema.json")["required"]
+            )
+
+    def test_describe_answers_the_major_and_minor_version(self):
+        answer = example("calls/describe.answer.json")
+        self.assertEqual(answer["protocol"]["major"], protocol.VERSION)
+        self.assertEqual(answer["protocol"]["minor"], protocol.MINOR)
+        schema = protocol.load("calls/describe.answer.schema.json")
+        self.assertEqual(schema["properties"]["protocol"]["properties"]["major"]["const"], 1)
+
     def test_messages_take_fields_they_do_not_know_and_the_state_does_not(self):
         # docs/engine.md#versions: a new optional field keeps the protocol's version.
         for name in schema_files():
@@ -246,9 +307,10 @@ class ProtocolTest(unittest.TestCase):
     def test_a_decision_names_what_it_decides_on(self):
         for kind, field in (
             ("planApproved", "plan"),
-            ("answered", "plan"),
+            ("answered", "asked"),
+            ("requested", "plan"),
+            ("changeApproved", "changeId"),
             ("changeApproved", "changeVersion"),
-            ("changePushed", "previousVersion"),
         ):
             self.assertIn(field, protocol.load(f"events/{kind}.schema.json")["required"], kind)
 

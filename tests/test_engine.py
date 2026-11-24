@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import nexkit
 from nexkit import engine, protocol
 from nexkit.engine import cli, machine
 
@@ -26,7 +27,7 @@ EXAMPLES = protocol.ROOT / "examples"
 ALLOWED = {
     "nexkit": set(),
     "nexkit.engine.machine": {"__future__", "copy", "nexkit.schema"},
-    "nexkit.engine": {"__future__", "json", "nexkit.protocol", "nexkit.engine.machine"},
+    "nexkit.engine": {"__future__", "json", "nexkit", "nexkit.protocol", "nexkit.engine.machine"},
     "nexkit.engine.cli": {"__future__", "sys", "nexkit.engine", "nexkit.engine.serve"},
     "nexkit.engine.serve": {
         "__future__",
@@ -138,6 +139,22 @@ class ProgramTest(unittest.TestCase):
         answer = engine.answer({**request(event=tick), "call": "step"})
         self.assertIn("first event", answer["error"])
 
+    def test_describe_says_which_protocol_the_engine_speaks(self):
+        out = io.StringIO()
+        code = cli.main(["describe"], io.BytesIO(b'{"protocol": 1}'), out)
+        answer = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(protocol.check(answer, "calls/describe.answer.schema.json"), [])
+        self.assertEqual(answer["protocol"], {"major": 1, "minor": protocol.MINOR})
+        self.assertEqual(answer["engine"], nexkit.__version__)
+        self.assertEqual(answer["calls"], list(engine.CALLS))
+        self.assertIn("describe", engine.CALLS)
+        with mock.patch.object(protocol, "MINOR", 3):
+            self.assertEqual(
+                engine.answer({"protocol": 1, "call": "describe"})["protocol"]["minor"], 3
+            )
+        self.assertIn("error", engine.answer({"protocol": 2, "call": "describe"}))
+
     def test_an_unknown_call_is_refused(self):
         self.assertIn("error", engine.answer({**request(), "call": "dance"}))
 
@@ -180,6 +197,24 @@ class ProgramTest(unittest.TestCase):
             with self.assertRaisesRegex(machine.EngineError, "review-only"):
                 machine._never_writes([action])
         machine._never_writes([{"kind": "runAgent", "stage": "review"}, {"kind": "show"}])
+
+    def test_an_action_withdrawn_in_a_step_leaves_its_id_unused(self):
+        work = machine.Step(machine.blank("42"), {}, protocol.check)
+        first = work.do("runChecks", changeVersion="v1")
+        work.do("show", what="plan", text={"name": "plan", "ref": "a1.1"})
+        work.withdraw(work.s["pending"][0])
+        work.do("runChecks", changeVersion="v2")
+        ids = [action["id"] for action in work.actions]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertNotIn(first["id"], ids)
+
+    def test_a_move_withdraws_a_notice_given_earlier_in_the_step(self):
+        # No rule moves on after a notice in the same step today; `move` keeps it so.
+        work = machine.Step(machine.blank("42"), {}, protocol.check)
+        work.need("approval", "The plan waits for its approval.", "a1.1")
+        work.move("checking")
+        self.assertEqual([a for a in work.actions if a["kind"] == "needPerson"], [])
+        self.assertEqual(work.s["pending"], [])
 
     def test_the_defaults_are_the_protocol_s(self):
         properties = protocol.load("policies.schema.json")["properties"]

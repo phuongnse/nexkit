@@ -1,14 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/replaceChange.result.schema.json",
-  "$comment": "The result of replaceChange, in actionFinished.",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/replaceChange.result.schema.json",
+  "$comment": "The result of replaceChange, in actionFinished, with `observed`, the new change as the host reads it when it handles this result, or null when the host could not read each field in time or found it closed unmerged: the item then has no observation until the next one. It replaces the item's latest observation, so one of the replaced change never touches the new one, even when the new change keeps its id.",
   "type": "object",
   "properties": {
     "change": {
       "$ref": "../common.schema.json#/$defs/change"
+    },
+    "observed": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/observation"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
-    "change"
+    "change",
+    "observed"
   ]
 }

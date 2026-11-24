@@ -1,0 +1,149 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:reviewChanges"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:fix"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1b"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "stopped"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "needPerson"
+      ],
+      "expect": {
+        "change.version": "v1"
+      }
+    },
+    {
+      "event": {
+        "kind": "stopped",
+        "text": "Again."
+      },
+      "state": "failed",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "close"
+      ]
+    }
+  ]
+}

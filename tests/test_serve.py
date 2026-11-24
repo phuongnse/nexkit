@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 import nexkit
-from nexkit import protocol
+from nexkit import engine, protocol
 from nexkit.engine import cli, serve
 from tests.test_conformance import every_request
 
@@ -107,6 +107,23 @@ class ServeTest(unittest.TestCase):
                 self.assertEqual(status, 400 if done.returncode else 200, data[:80])
                 self.assertEqual(done.returncode, 1 if data is not first else 0, data[:80])
 
+    def test_every_call_is_served_as_on_standard_input(self):
+        # `describe` passes the protocol the host speaks; an unserved major is an error answer.
+        texts = [b'{"protocol": 1}', b'{"protocol": 2}', b'{"call": "describe", "protocol": 1}']
+        with server() as port:
+            for call in engine.CALLS:
+                for text in texts:
+                    code, expected = on_standard_input(call, text)
+                    status, body = send(port, f"/{call}", text)
+                    self.assertEqual(body, expected, (call, text))
+                    self.assertEqual(status, 400 if code else 200, (call, text))
+            status, body = send(port, "/describe", b'{"protocol": 1}')
+            self.assertEqual(status, 200)
+            answer = json.loads(body)
+            self.assertEqual(protocol.check(answer, "calls/describe.answer.schema.json"), [])
+            self.assertEqual(answer["calls"], list(engine.CALLS))
+            self.assertRefused(send(port, "/describe", b'{"protocol": 2}'), 400, "not 2")
+
     def test_one_request_to_two_processes_gets_one_answer(self):
         texts = [json.dumps(request) for request in every_request()]
         middle = len(texts) // 2
@@ -130,7 +147,7 @@ class ServeTest(unittest.TestCase):
 
     def test_what_is_not_a_request_is_refused_with_an_error_answer(self):
         with server() as port:
-            self.assertRefused(send(port, "/dance", b"{}"), 404, "the calls are /step")
+            self.assertRefused(send(port, "/dance", b"{}"), 404, "the calls are /describe, /step.")
             for method in ("GET", "PUT", "DELETE", "PATCH", "OPTIONS"):
                 self.assertRefused(send(port, "/step", method=method), 405, "with POST")
             self.assertEqual(send(port, "/step", method="HEAD"), (405, b""))

@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import json
 
-from .. import protocol
+from .. import __version__, protocol
 from .machine import EngineError, step
 
-CALLS = ("step",)
+CALLS = ("describe", "step")
 
 
 def answer(request):
@@ -55,6 +55,8 @@ def text(answer):
 def _answer(request):
     if not isinstance(request, dict) or request.get("call") not in CALLS:
         raise EngineError(f"A request's call must be one of {', '.join(CALLS)}.")
+    if request["call"] == "describe":
+        return _describe(request)
     event = request.get("event")
     kind = event.get("kind") if isinstance(event, dict) else None
     if kind not in protocol.names("events"):
@@ -69,6 +71,24 @@ def _answer(request):
         raise EngineError("; ".join(found))
     state, actions, changed = step(request["state"], event, request["policies"], protocol.check)
     return {"protocol": protocol.VERSION, "state": state, "actions": actions, "changed": changed}
+
+
+def _describe(request):
+    """Which protocol the engine speaks, so a host can refuse one below the minor it needs
+    (docs/engine.md#versions)."""
+    found = protocol.check(request, "calls/describe.schema.json", "request")
+    if found:
+        raise EngineError("; ".join(found))
+    if request["protocol"] != protocol.VERSION:
+        # The host speaks a major version this engine does not serve.
+        raise EngineError(
+            f"This engine serves protocol {protocol.VERSION}, not {request['protocol']}."
+        )
+    return {
+        "protocol": {"major": protocol.VERSION, "minor": protocol.MINOR},
+        "engine": __version__,
+        "calls": list(CALLS),
+    }
 
 
 def _result_problems(state, event):

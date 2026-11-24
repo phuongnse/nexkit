@@ -51,8 +51,8 @@
     },
     {
       "event": {
-        "kind": "changeEmptied",
-        "changeVersion": "v1"
+        "kind": "changeObserved",
+        "empty": true
       },
       "state": "noChange",
       "changed": true,

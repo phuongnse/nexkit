@@ -19,9 +19,12 @@ from . import CALLS, error_answer, reply, text
 
 HOST = "127.0.0.1"
 PORT = 8080
-# A request carries one state document, which the protocol keeps small enough for one GitHub
-# comment, with one event and the policies: far below this.
+# A step request carries one state document, which the protocol keeps small enough for one
+# GitHub comment, with one event and the policies: far below MAX_BODY. A prompt request
+# carries the texts a stage reads, each kept whole since a prompt names the file that holds
+# it; its diffs and outputs come clipped to what the prompt shows (`calls/prompt.schema.json`).
 MAX_BODY = 1 << 20
+MAX_BODIES = {"prompt": 16 << 20}
 
 
 class Server(ThreadingHTTPServer):
@@ -59,9 +62,10 @@ class Handler(BaseHTTPRequestHandler):
         length = lengths.pop() if lengths else ""
         if self.headers.get("Transfer-Encoding") or not (length.isascii() and length.isdigit()):
             return 411, error_answer("Send the request with a Content-Length.")
+        most = MAX_BODIES.get(call, MAX_BODY)
         # A length with more digits than any request needs is refused before it is a number.
-        if len(length) > len(str(MAX_BODY)) or int(length) > MAX_BODY:
-            return 413, error_answer(f"A request has at most {MAX_BODY} bytes.")
+        if len(length) > len(str(most)) or int(length) > most:
+            return 413, error_answer(f"A {call} request has at most {most} bytes.")
         answer = reply(call, self.rfile.read(int(length)))
         return (400 if "error" in answer else 200), answer
 

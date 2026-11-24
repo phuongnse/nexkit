@@ -14,8 +14,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
+from nexkit import agent, context
 from nexkit.agent import interpret
 from nexkit.config import validate
+from nexkit.engine import prompt
 from nexkit.github import DOWNLOAD_LIMIT, GitHubError, log_end
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.base import Launch, Runtime
@@ -48,6 +50,45 @@ use_app(BOT_LOGIN)
 def with_claude(raw):
     """`raw` with the Claude agent declared next to the agents it has."""
     return {**raw, "agents": {**CLAUDE, **raw.get("agents", {})}}
+
+
+# The prompts' parts as a round writes them, from the engine (`nexkit/engine/prompt.py`) and
+# what the GitHub host gives it.
+
+
+def build_prompt(stage, texts, cfg, extra=None):
+    """A stage's prompt from the texts `context.gather` wrote, with the round's own in
+    `extra`, as `engine.prompt.finish` builds it."""
+    inputs = {"workspace": agent.workspace(cfg)}
+    return prompt.build(stage, texts, prompt.settings(inputs, agent.policies(cfg)), extra)
+
+
+def previous_round(repo, texts, base):
+    """The review prompt's section about the previous review round."""
+    return prompt.previous_round(texts, base, agent.since_review(repo, texts, base))
+
+
+def evidence_text(found):
+    """The fix prompt's section about the failing checks' result files."""
+    return prompt.evidence_text(found, context.KEEPS["results"])
+
+
+def ci_evidence_text(found):
+    """The plan, implement and fix prompts' section about the CI runs the issue names."""
+    return prompt.ci_evidence_text(found, context.KEEPS["ci"])
+
+
+def feedback(gh, decision, comments):
+    """The fix prompt's feedback from what NexKit recorded on the pull request and what
+    collaborators said on its head."""
+    saved = context._saved_feedback(comments)
+    people = context.people(gh, decision)
+    return prompt.feedback(saved.get("checks"), saved.get("required"), saved.get("review"), people)
+
+
+def outside_plan(pull):
+    """What the implementation agent did outside the plan, from the pull request's text."""
+    return prompt.outside_plan(context.outside_section(pull))
 
 
 def make_config(**overrides):

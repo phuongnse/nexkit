@@ -65,7 +65,7 @@
           "plan",
           "linked",
           "evidence",
-          "parts"
+          "workspace"
         ],
         "result": "results/implement.schema.json",
         "agent": null,

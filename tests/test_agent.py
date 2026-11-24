@@ -10,7 +10,8 @@ from unittest import mock
 
 from nexkit import agent, runlog
 from nexkit.checks import kept_output
-from nexkit.context import PERSON_PLAN
+from nexkit.engine import prompt as engine_prompt
+from nexkit.engine.prompt import PERSON_PLAN
 from nexkit.redact import Redactor
 from nexkit.report import apply_criteria
 from nexkit.runtimes import RUNTIMES
@@ -21,9 +22,11 @@ from tests.support import (
     SUB,
     FakeClaude,
     GitRepos,
+    build_prompt,
     git,
     interpret_claude,
     make_config,
+    previous_round,
     profile_config,
 )
 
@@ -87,19 +90,19 @@ class ChecklistTests(unittest.TestCase):
 
     def test_the_items_are_in_the_plan_and_review_prompts(self):
         for stage in ("plan", "review"):
-            prompt = agent.build_prompt(stage, CONTEXT, self.cfg)
+            prompt = build_prompt(stage, CONTEXT, self.cfg)
             self.assertIn("1. Docs change with the code\n2. A setting has a safe default", prompt)
             self.assertIn("`checklist`:", prompt)
             self.assertNotIn("$items", prompt)
             self.assertNotIn("$checklist", prompt)
-        review = agent.build_prompt("review", CONTEXT, self.cfg)
+        review = build_prompt("review", CONTEXT, self.cfg)
         self.assertIn("`not_met`", review)
         self.assertIn("`not_applicable`", review)
 
     def test_with_the_setting_empty_the_prompts_and_results_are_as_before(self):
         cfg = make_config()
         for stage in ("plan", "review"):
-            prompt = agent.build_prompt(stage, CONTEXT, cfg)
+            prompt = build_prompt(stage, CONTEXT, cfg)
             self.assertNotIn("checklist", prompt)
             self.assertNotIn("$checklist", prompt)
             self.assertIs(agent.stage_schema(stage, cfg), agent.SCHEMAS[stage])
@@ -109,7 +112,7 @@ class ChecklistTests(unittest.TestCase):
 
     def test_the_other_stages_have_no_checklist(self):
         for stage in ("implement", "fix"):
-            self.assertNotIn("checklist", agent.build_prompt(stage, CONTEXT, self.cfg))
+            self.assertNotIn("checklist", build_prompt(stage, CONTEXT, self.cfg))
             self.assertIs(agent.stage_schema(stage, self.cfg), agent.SCHEMAS[stage])
 
     def test_the_schema_asks_for_an_answer_to_each_item(self):
@@ -159,11 +162,11 @@ class ChecklistTests(unittest.TestCase):
         person = {"text": "No check loosens", "person": True}
         cfg = make_config(review={"checklist": [*CHECKLIST, person]})
         for stage in ("plan", "review"):
-            prompt = agent.build_prompt(stage, CONTEXT, cfg)
+            prompt = build_prompt(stage, CONTEXT, cfg)
             self.assertIn("3. No check loosens (a person decides)", prompt)
             self.assertIn("Only a person decides the items marked (a person decides)", prompt)
             self.assertNotIn("$mark", prompt)
-        self.assertNotIn("a person decides", agent.build_prompt("review", CONTEXT, self.cfg))
+        self.assertNotIn("a person decides", build_prompt("review", CONTEXT, self.cfg))
         answers = [
             {"number": n, "answer": "met" if n < 3 else "not_met", "evidence": "x"}
             for n in (1, 2, 3)
@@ -198,21 +201,21 @@ class ChecklistTests(unittest.TestCase):
 
 class PromptTests(unittest.TestCase):
     def test_prompt_keeps_untrusted_text_literal(self):
-        prompt = agent.build_prompt("implement", CONTEXT, make_config())
+        prompt = build_prompt("implement", CONTEXT, make_config())
         self.assertIn("Use $HOME and ${{ secrets.X }} literally.", prompt)
         self.assertIn("`test`: `true`", prompt)
         self.assertIn("`.github/`", prompt)
         self.assertNotIn("$plan", prompt)
 
     def test_first_plan_has_no_latest_plan(self):
-        extra = {"previous": agent.previous_plan(CONTEXT)}
-        prompt = agent.build_prompt("plan", CONTEXT, make_config(), extra)
+        extra = {"previous": engine_prompt.previous_plan(CONTEXT)}
+        prompt = build_prompt("plan", CONTEXT, make_config(), extra)
         self.assertNotIn("Latest plan", prompt)
         self.assertIn("</untrusted>\n\n## Note from the person", prompt)
         self.assertNotRegex(prompt, r"\$(previous|since_plan)\b")
 
     def test_a_split_asks_that_a_parts_criteria_prove_what_later_parts_rely_on(self):
-        prompt = " ".join(agent.build_prompt("plan", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("plan", CONTEXT, make_config()).split())
         self.assertIn(
             "when later parts depend on a part, its acceptance criteria must prove end to "
             "end the behaviour they rely on",
@@ -234,7 +237,7 @@ class PromptTests(unittest.TestCase):
             ],
         }
         context = {**CONTEXT, "earlier": earlier}
-        prompt = agent.build_prompt("plan", context, make_config())
+        prompt = build_prompt("plan", context, make_config())
         flat = " ".join(prompt.split())
         self.assertIn("This issue is a part of #3", flat)
         self.assertIn("### #6: Run an eval stack (closed)", prompt)
@@ -255,7 +258,7 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         # An issue that is not a part, or a part that needs no other, has no such section.
         for other in (CONTEXT, {**CONTEXT, "earlier": {"parent": 3, "parts": []}}):
-            prompt = agent.build_prompt("plan", other, make_config(), {"previous": ""})
+            prompt = build_prompt("plan", other, make_config(), {"previous": ""})
             self.assertNotIn("Earlier parts", prompt)
             self.assertNotIn("$earlier_parts", prompt)
             self.assertIn("</untrusted>\n\n## Note from the person", prompt)
@@ -263,13 +266,13 @@ class PromptTests(unittest.TestCase):
     def test_the_plan_prompt_states_how_many_parts_a_split_may_have(self):
         from nexkit.state import MAX_PARTS
 
-        prompt = " ".join(agent.build_prompt("plan", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("plan", CONTEXT, make_config()).split())
         self.assertIn(f"in order, at most {MAX_PARTS} of them,", prompt)
         self.assertIn("NexKit files no part of a split with more parts than that", prompt)
         self.assertNotIn("$max_parts", prompt)
 
     def test_plan_criteria_are_what_the_review_can_verify(self):
-        prompt = " ".join(agent.build_prompt("plan", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("plan", CONTEXT, make_config()).split())
         self.assertIn(
             "each verifiable by the review from what it sees: a test in the change, or the "
             "result of a project check above, run once on the candidate commit.",
@@ -290,7 +293,7 @@ class PromptTests(unittest.TestCase):
 
     def test_a_persons_pull_request_is_reviewed_in_its_protected_paths_too(self):
         context = {**CONTEXT, "person": True}
-        prompt = " ".join(agent.build_prompt("review", context, make_config()).split())
+        prompt = " ".join(build_prompt("review", context, make_config()).split())
         self.assertIn("## A person's pull request", prompt)
         self.assertIn("a person makes any change", prompt)
         self.assertIn("return no `criteria`", prompt)
@@ -305,7 +308,7 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("$protected", prompt)
 
     def test_the_review_of_a_nexkit_pull_request_leaves_protected_paths_out(self):
-        prompt = " ".join(agent.build_prompt("review", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("review", CONTEXT, make_config()).split())
         self.assertNotIn("A person's pull request", prompt)
         self.assertNotIn("$person", prompt)
         self.assertIn(
@@ -315,15 +318,15 @@ class PromptTests(unittest.TestCase):
         )
 
     def test_review_judges_each_criterion_and_unmet_ones_request_changes(self):
-        prompt = " ".join(agent.build_prompt("review", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("review", CONTEXT, make_config()).split())
         self.assertIn("no criterion is `unmet` and every check passed", prompt)
         self.assertIn("`unverifiable` when they hold no evidence either way", prompt)
         self.assertIn("A criterion that a collaborator dropped or replaced", prompt)
 
     def test_replan_revises_the_latest_plan(self):
         context = {**CONTEXT, "since_plan": "@olivia: Also accept `label`."}
-        extra = {"previous": agent.previous_plan(context)}
-        prompt = agent.build_prompt("plan", context, make_config(), extra)
+        extra = {"previous": engine_prompt.previous_plan(context)}
+        prompt = build_prompt("plan", context, make_config(), extra)
         order = [
             "## Discussion\n",
             "## Latest plan\n",
@@ -340,7 +343,7 @@ class PromptTests(unittest.TestCase):
 
     def test_first_review_has_no_previous_round(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
-        prompt = agent.build_prompt("review", CONTEXT, make_config(), extra)
+        prompt = build_prompt("review", CONTEXT, make_config(), extra)
         self.assertNotIn("Previous round", prompt)
         self.assertIn("</untrusted>\n\n## How to review", prompt)
 
@@ -351,7 +354,7 @@ class PromptTests(unittest.TestCase):
             "outside_plan": "- Wrote the migration: the owner asked for it.",
         }
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
-        prompt = agent.build_prompt("review", context, make_config(), extra)
+        prompt = build_prompt("review", context, make_config(), extra)
         self.assertIn("## Discussion\n", prompt)
         self.assertIn("@olivia: Planned for the next release.", prompt)
         self.assertIn("## Outside the plan\n", prompt)
@@ -363,13 +366,13 @@ class PromptTests(unittest.TestCase):
     def test_writing_stages_run_commands_in_the_foreground(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("implement", "fix"):
-            prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
+            prompt = build_prompt(stage, CONTEXT, make_config(), extra)
             self.assertIn("Run every command in the foreground", prompt, stage)
 
     def test_every_prompt_has_the_writing_guide(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("plan", "implement", "fix", "review"):
-            prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
+            prompt = build_prompt(stage, CONTEXT, make_config(), extra)
             self.assertIn("## How to write", prompt, stage)
             self.assertIn("Write for a person who knows the project", prompt, stage)
             self.assertNotIn("$writing", prompt, stage)
@@ -380,7 +383,7 @@ class PromptTests(unittest.TestCase):
         schema = agent.SCHEMAS["plan"]
         for field in ("changes", "decisions", "risks", "implementation_notes"):
             self.assertIn(field, schema["required"])
-            self.assertIn(f"`{field}`", agent._template("plan"))
+            self.assertIn(f"`{field}`", engine_prompt.template("plan"))
         decision = schema["properties"]["decisions"]["items"]
         self.assertEqual(decision["required"], ["decision", "reason"])
         self.assertIn("revision", schema["required"])
@@ -392,7 +395,7 @@ class PromptTests(unittest.TestCase):
         implement, fix = agent.SCHEMAS["implement"], agent.SCHEMAS["fix"]
         for field in ("summary", "changes", "testing", "outside_plan", "reviewer_notes"):
             self.assertIn(field, implement["properties"])
-            self.assertIn(f"`{field}`", agent._template("implement"))
+            self.assertIn(f"`{field}`", engine_prompt.template("implement"))
         # The notes are optional: an empty list means the same as none.
         self.assertEqual(agent.OPTIONAL["implement"]["outside_plan"], [])
         self.assertIn("testing", implement["required"])
@@ -402,7 +405,7 @@ class PromptTests(unittest.TestCase):
     def test_the_implement_prompt_calls_each_array_of_its_result_a_list(self):
         # A field described as prose, such as "one bullet each", led models to write it as
         # text or Markdown bullets, which the structured result cannot parse.
-        template = agent._template("implement")
+        template = engine_prompt.template("implement")
         properties = agent.SCHEMAS["implement"]["properties"]
         arrays = [name for name, sub in properties.items() if sub.get("type") == "array"]
         self.assertIn("outside_plan", arrays)
@@ -466,7 +469,7 @@ class PromptTests(unittest.TestCase):
             item = agent.SCHEMAS[stage]["properties"]["questions"]["items"]
             self.assertEqual(item["properties"]["replans"]["items"], {"type": "integer"})
             self.assertIn("replans", item["required"])
-            template = " ".join(agent._template(stage).split())
+            template = " ".join(engine_prompt.template(stage).split())
             self.assertIn("`replans`: the numbers of the options that change the issue's", template)
             self.assertIn(
                 "when no issue holds that work yet, the option changes the scope", template
@@ -474,7 +477,7 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn(
             "replans", agent.SCHEMAS["plan"]["properties"]["questions"]["items"]["properties"]
         )
-        template = " ".join(agent._template("plan").split())
+        template = " ".join(engine_prompt.template("plan").split())
         self.assertIn(
             "the note answers a blocked round with an option that splits the issue", template
         )
@@ -485,7 +488,7 @@ class PromptTests(unittest.TestCase):
             closing = ["question", "options", "recommended", "closes"]
             replans = ["replans"] if stage == "implement" else []
             self.assertEqual(item["required"], [*closing, *replans], stage)
-            template = " ".join(agent._template(stage).split())
+            template = " ".join(engine_prompt.template(stage).split())
             self.assertIn(
                 "`closes`: the number of the option that only closes the issue, with no "
                 "change, or 0 when no option does. NexKit closes the issue when a person "
@@ -495,8 +498,10 @@ class PromptTests(unittest.TestCase):
             self.assertIn("Never offer closing together with another step", template)
         item = agent.SCHEMAS["fix"]["properties"]["questions"]["items"]
         self.assertNotIn("closes", item["properties"])
-        self.assertIn("Never offer to close the issue", " ".join(agent._template("fix").split()))
-        template = " ".join(agent._template("implement").split())
+        self.assertIn(
+            "Never offer to close the issue", " ".join(engine_prompt.template("fix").split())
+        )
+        template = " ".join(engine_prompt.template("implement").split())
         self.assertIn("and set its `closes` to that option's number", template)
         self.assertIn(
             "when you are blocked for any other reason, such as work that is not merged yet, "
@@ -519,12 +524,14 @@ class PromptTests(unittest.TestCase):
         )
         self.assertIn("severity", item["required"])
         self.assertEqual(item["properties"]["severity"]["enum"], ["blocking", "suggestion"])
-        self.assertIn("`severity` (the severity that review gave it)", agent._template("review"))
+        self.assertIn(
+            "`severity` (the severity that review gave it)", engine_prompt.template("review")
+        )
 
     def test_every_stage_template_is_complete(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("plan", "implement", "fix", "review"):
-            prompt = agent.build_prompt(stage, CONTEXT, make_config(), extra)
+            prompt = build_prompt(stage, CONTEXT, make_config(), extra)
             for name in ("$issue", "$title", "$plan", "$checks", "$protected", "$diff"):
                 self.assertNotIn(name, prompt, f"{stage} leaves {name}")
             self.assertNotIn("$round_checks", prompt, stage)
@@ -534,13 +541,13 @@ class PromptTests(unittest.TestCase):
         cfg = make_config(checks=checks)
         listed = "  - `unit`: `make test`\n  - `lint`: `make lint`\n"
         for stage in ("plan", "implement", "fix"):
-            prompt = agent.build_prompt(stage, CONTEXT, cfg)
+            prompt = build_prompt(stage, CONTEXT, cfg)
             self.assertIn(listed, prompt, stage)
             self.assertNotIn("slow", prompt, stage)
         rule = "- Before finishing, run the project checks and fix any failures you caused:\n"
-        self.assertIn(rule + listed, agent.build_prompt("implement", CONTEXT, cfg))
+        self.assertIn(rule + listed, build_prompt("implement", CONTEXT, cfg))
         rule = "- Before finishing, run the project checks:\n"
-        self.assertIn(rule + listed, agent.build_prompt("fix", CONTEXT, cfg))
+        self.assertIn(rule + listed, build_prompt("fix", CONTEXT, cfg))
 
     def test_slow_checks_are_listed_apart_and_not_run_in_full(self):
         checks = [
@@ -550,7 +557,7 @@ class PromptTests(unittest.TestCase):
         ]
         cfg = make_config(checks=checks)
         for stage in ("implement", "fix"):
-            prompt = agent.build_prompt(stage, CONTEXT, cfg)
+            prompt = build_prompt(stage, CONTEXT, cfg)
             order = [
                 "  - `unit`: `make test`\n  - `lint`: `make lint`\n",
                 "  - NexKit runs these slow checks after your round. Do not run them in full.",
@@ -561,7 +568,7 @@ class PromptTests(unittest.TestCase):
             self.assertEqual(positions, sorted(positions), stage)
             self.assertEqual(prompt.count("`e2e`"), 1, stage)
         # The plan lists every check NexKit runs, slow or not.
-        plan = agent.build_prompt("plan", CONTEXT, cfg)
+        plan = build_prompt("plan", CONTEXT, cfg)
         self.assertIn("  - `unit`: `make test`\n  - `e2e`: `scripts/e2e.sh`\n", plan)
         self.assertNotIn("slow", plan)
 
@@ -1187,10 +1194,10 @@ class RunStageTests(StageCase):
 
     def test_previous_round_survives_a_missing_commit(self):
         context = {**CONTEXT, "previous_head": "f" * 40, "previous_round": "x"}
-        self.assertIn("not in this checkout", agent.previous_round(self.repo, context, "main"))
+        self.assertIn("not in this checkout", previous_round(self.repo, context, "main"))
         context["previous_head"] = "--output=/tmp/x"
-        self.assertIn("unknown", agent.previous_round(self.repo, context, "main"))
-        self.assertEqual(agent.previous_round(self.repo, CONTEXT, "main"), "")
+        self.assertIn("unknown", previous_round(self.repo, context, "main"))
+        self.assertEqual(previous_round(self.repo, CONTEXT, "main"), "")
 
     def test_missing_credentials(self):
         self.claude.configure(result=DONE)
@@ -1421,16 +1428,16 @@ class ConflictTests(StageCase):
         )
         self.assertNotIn("open_conflicts", agent.SCHEMAS["implement"]["required"])
         for field in item["required"]:
-            self.assertIn(f"`{field}`", agent._template("fix"))
+            self.assertIn(f"`{field}`", engine_prompt.template("fix"))
 
     def test_fix_prompt_asks_for_a_decision_instead_of_a_guess(self):
-        section = agent.conflicts_text("main", "b" * 40, ["Program.cs"])
+        section = engine_prompt.conflicts_text("main", "b" * 40, ["Program.cs"])
         self.assertIn("whether it has one right answer or needs a choice", section)
         self.assertIn("do not pick a side and do not guess", section)
         self.assertIn("return `status: blocked` and list every\n  such conflict", section)
         self.assertIn("A note from the person who requested this round settles the choice", section)
         self.assertIn("only resolve the conflicts", section)
-        self.assertEqual(agent.conflicts_text("main", None, []), "")
+        self.assertEqual(engine_prompt.conflicts_text("main", None, []), "")
 
     def review_after_merge(self):
         """Review a fix round that merged main, after an earlier review of the branch."""

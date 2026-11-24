@@ -20,11 +20,12 @@ from nexkit.engine import cli, machine
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = protocol.ROOT / "examples"
 # What each module of the engine may import, and the modules of NexKit those import in turn,
-# with relative imports resolved. Nothing here reads the network or the clock: `machine`
-# reads nothing, `nexkit.protocol` reads only its own schemas, which ship inside the `nexkit`
-# package, `nexkit.engine.cli` reads only standard input, and `nexkit.engine.serve`, the program
-# around the engine as `cli` is, only the requests that come to its socket. Nothing imports
-# either of those two but `cli`. Any other import fails the test.
+# with relative imports resolved. Nothing here reads the network or the clock: `machine` and
+# `textutil` read nothing, `prompt` reads only its own templates and `nexkit.protocol` only its own
+# schemas, which ship inside the `nexkit` package, `nexkit.engine.cli` reads only standard
+# input, and `nexkit.engine.serve`, the program around the engine as `cli` is, only the requests
+# that come to its socket. Nothing imports either of those two but `cli`. Any other import
+# fails the test.
 ALLOWED = {
     "nexkit": set(),
     "nexkit.engine.machine": {"__future__", "copy", "nexkit.protocol.size", "nexkit.schema"},
@@ -36,7 +37,20 @@ ALLOWED = {
         "nexkit",
         "nexkit.protocol",
         "nexkit.engine.machine",
+        "nexkit.engine.prompt",
     },
+    # `importlib` only for `importlib.resources`, to read the prompts' own templates, which
+    # ship inside the package as the schemas do; `nexkit.protocol` for the checklist stages.
+    "nexkit.engine.prompt": {
+        "__future__",
+        "functools",
+        "importlib",
+        "re",
+        "string",
+        "nexkit.protocol",
+        "nexkit.engine.textutil",
+    },
+    "nexkit.engine.textutil": {"__future__", "re"},
     "nexkit.engine.cli": {"__future__", "sys", "nexkit.engine", "nexkit.engine.serve"},
     "nexkit.engine.serve": {
         "__future__",

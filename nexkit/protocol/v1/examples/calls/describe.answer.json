@@ -6,6 +6,7 @@
   "engine": "6.12.2",
   "calls": [
     "describe",
-    "step"
+    "step",
+    "prompt"
   ]
 }

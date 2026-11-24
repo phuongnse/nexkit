@@ -1,0 +1,70 @@
+{
+  "protocol": 1,
+  "call": "prompt",
+  "state": null,
+  "stage": "implement",
+  "inputs": {
+    "item": {
+      "id": "42",
+      "title": "Add a dark theme",
+      "body": "Users ask for a dark theme. Keep the current one as the default.",
+      "change": null,
+      "person": false
+    },
+    "discussion": {
+      "item": [
+        {
+          "id": "c1",
+          "author": "olivia",
+          "at": "2026-11-23T15:01:11Z",
+          "text": "Follow the system setting when the user has not chosen.",
+          "kind": "comment"
+        },
+        {
+          "id": "c2",
+          "author": "olivia",
+          "at": "2026-11-23T16:20:00Z",
+          "text": "/go keep the toggle in the header",
+          "kind": "note"
+        }
+      ],
+      "change": []
+    },
+    "notes": "keep the toggle in the header",
+    "plan": "## Plan\n\nAdd a `dark` theme, a toggle in the header, and follow the system setting until the user chooses.",
+    "linked": {
+      "texts": [
+        {
+          "kind": "item",
+          "id": "17",
+          "title": "Theme tokens",
+          "change": false,
+          "author": "olivia",
+          "nexkit": false,
+          "text": "Colours come only from the tokens in `theme.css`."
+        }
+      ],
+      "chain": [],
+      "notRead": [
+        "acme/other#9: not this repository"
+      ]
+    },
+    "evidence": {
+      "ci": null
+    },
+    "workspace": {
+      "checks": [
+        {
+          "name": "unit",
+          "run": "make test",
+          "slow": false
+        }
+      ],
+      "protectedPaths": [
+        ".github/"
+      ]
+    }
+  },
+  "policies": {},
+  "texts": "/runner/texts"
+}

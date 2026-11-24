@@ -20,7 +20,7 @@ include = ["nexkit*"]
 
 [tool.setuptools.package-data]
 nexkit = [
-    "prompts/*.md",
+    "engine/prompts/*.md",
     "templates/*",
     "protocol/v1/*.schema.json",
     "protocol/v1/*/*.schema.json",

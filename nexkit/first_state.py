@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 from . import autopilot, item_state, protocol
 from .autopilot import CHAINED, CI_WAITING, HELD, PULL_CLOSED, UNTRUSTED_MERGE, UNTRUSTED_ROUND
+from .engine.machine import ACCESS, INPUTS
 from .github import TRUSTED_ASSOCIATIONS
 from .protocol.size import MOST, clip, fit, signature
 from .schema import filled
@@ -51,14 +52,6 @@ RUN_ID = "a1.1"
 OF_COMMAND = {"plan": "planning", "go": "working", "fix": "fixing", "review": "checking"}
 OF_ACTION = {"implement": "working", "fix": "fixing", "review": "checking"}
 STAGES = {"planning": "plan", "working": "implement", "fixing": "fix", "reviewing": "review"}
-# What the engine's runAgent action holds for each stage (`machine.Step.run`).
-ACCESS = {"plan": "read", "review": "read", "implement": "write", "fix": "write"}
-INPUTS = {
-    "plan": ["item", "discussion", "notes", "previousPlan", "linked", "evidence", "parts"],
-    "implement": ["item", "discussion", "notes", "plan", "linked", "evidence", "parts"],
-    "fix": ["item", "discussion", "notes", "plan", "rounds", "checks", "findings", "diff"],
-    "review": ["item", "discussion", "notes", "plan", "rounds", "checks", "findings", "diff"],
-}
 # What autopilot's record keeps that the state's `asked` keeps.
 ASKED = {
     "split_asked": "split",

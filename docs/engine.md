@@ -1,11 +1,11 @@
 # The engine
 
-_Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`, and the
-engine's `step` call with its states, as `nexkit-engine step` and over HTTP as
-`nexkit-engine serve`, whose decisions are a frame that takes NexKit 6's own rules one group at
-a time; and the GitHub host's state comment and its import of NexKit 6's open work, which
-nothing calls yet. The rest of this page is not built yet, and NexKit 6 runs as
-[How it works](how-it-works.md) says._
+_Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`; the engine's
+`step` call with its states, whose decisions are a frame that takes NexKit 6's own rules one group
+at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 does, as
+`nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; and the
+GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet. The
+rest of this page is not built yet, and NexKit 6 runs as [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
 **hosts** that store the work, carry out what the engine decides and show it to people. GitHub
@@ -55,9 +55,9 @@ without a change to any host, as long as the conformance suite passes.
   text as standard input: status `200`, or `400` when the engine refuses the request. Both read
   the request as UTF-8 and refuse one that nests deeper than 64 arrays and objects. An error
   answer names at most 20 ways in which a request breaks the protocol. `serve` answers each
-  request on its own and keeps nothing between them. It refuses a body over 1 MiB, without one
-  `Content-Length` or that stops coming, a method other than `POST`, a call it does not know and
-  a request that HTTP does not allow. Each refusal is an error answer
+  request on its own and keeps nothing between them. It refuses a body over 1 MiB, or 16 MiB
+  for `prompt`, without one `Content-Length` or that stops coming, a method other than `POST`, a
+  call it does not know and a request that HTTP does not allow. Each refusal is an error answer
   (`calls/error.schema.json`) with its own status. It listens on `127.0.0.1:8080` unless
   `--host` and `--port` say otherwise.
 - **Only for its host.** `serve` asks no one who they are, and does not limit how many clients
@@ -72,14 +72,55 @@ The engine answers three calls, each a pure function, and `describe`, which says
 of the protocol it speaks (see [versions](#versions)):
 
 - **`step(state, event) -> (state, actions)`** decides what happens to one work item.
-- **`prompt(state, stage, inputs) -> text`** writes the prompt of a stage from the texts the host
-  fetched for it, so the prompts and their rules stay in the engine while the host does the reading.
+- **`prompt(state, stage, inputs, policies, texts) -> (text, shortened, notRead, files)`** writes
+  the prompt of a stage from the texts the host fetched for it, so the prompts and their rules
+  stay in the engine while the host does the reading.
 - **`sweep(items) -> starts`** chooses which waiting work items start, and in what order.
 
-All three read no network, no files and no clock: the time is a field of each event. They hold
-no secret and never see one. The policies of the host come with every call, as the host's
-configuration reads at that moment, and the state keeps the ones that a running round started
-with.
+All three read no network, no clock and no files but the engine's own prompt templates: the time is
+a field of each event. They hold no secret and never see one. The policies of the host come with
+every call, as the host's configuration reads at that moment, and the state keeps the ones that a
+running round started with.
+
+### The prompt
+
+`runAgent` names the inputs its stage reads, by kind, and the host fetches each before it calls
+`prompt`:
+
+| Input | What the host fetched |
+| --- | --- |
+| `item` | The work item's title and text, its change, and whether it is a person's change reviewed as its own item |
+| `discussion` | The comments on the item and on its change, oldest first, each a person's comment, a note on a command or the answers a policy gave. The host leaves out what nobody it trusts wrote |
+| `notes` | The note of the request that started the stage |
+| `plan`, `previousPlan` | The approved plan; for a new plan, the latest one, where it falls in the discussion and the profile it used |
+| `rounds` | The fix rounds so far, the fix round the review follows, what the change did outside the plan, and the checks a diagnosis round looks into |
+| `checks` | The checks' results, with the end of each output, and the required checks that refused an accept |
+| `findings` | The findings a fix round addresses, the last review of the change, and what people said on its version |
+| `linked` | The texts the item links to, the items it was split from with their discussions, and each link not read, with why in the host's words. The host bounds how many it lists |
+| `evidence` | What the CI runs the item names left, and the result files of failing checks, with what the host keeps of each |
+| `parts` | The earlier parts of the same split that a part relies on |
+| `diff` | The change against its base, since the last review, a merge of the base and its conflicted files |
+| `workspace` | The checks the agent can run, and the paths only a person changes |
+
+- **What a stage needs.** Every stage needs `item`, and every stage but triage `workspace`.
+  Implement, fix and review need `plan`, which is null when the item has none, and fix and review
+  need `diff`. The engine refuses a call without them.
+- **Rounds and findings are interim.** `rounds` and `findings` hold what the state document will
+  hold once a host keeps it. Until then the host sends them, and `prompt` does not read `state`.
+- **Limits.** The engine applies them: how much of each text and block a prompt keeps, how many
+  comments, and in what order. A text that a prompt keeps only the start of, or leaves out, goes
+  whole to a file in the folder that `texts` names, an absolute path outside the working tree,
+  where the agent reads it. So the texts come whole, but a diff and a check's output come cut to
+  what a prompt shows of them, and the schema refuses more.
+- **The answer** holds the prompt, the texts it shortened or left out, the links it lists as not
+  read, and the files with their texts, which the host writes before the agent runs.
+- **Policies.** Beside the host's policies, the call reads three that the protocol does not hold
+  yet, as its schema names them: `checklist`, the items the plan and the review answer;
+  `profiles`, the profiles triage chooses from, each with its `when` as a string; and `budgets`,
+  of which the plan prompt names the implement stage's time. A plan needs
+  `budgets.implement.seconds` as an integer, and the engine refuses one without it.
+- **A result that did not fit.** With `unfit`, why a session's result did not fit its schema, the
+  call writes the prompt that asks the same session for its result alone.
 
 Every decision of NexKit 6 that is not about GitHub moves into the engine: plans, questions and
 answers, splits, approval, fix and diagnosis rounds and how they are counted, the review's
@@ -334,14 +375,14 @@ id. NexKit 6's round, from `route` to `report`, stays one workflow run.
 ## Runners
 
 A runner runs one agent session for one stage. Its contract is part of the protocol: `runAgent`
-gives it the stage, the version of the change it starts from, the stage's access, the prompt,
-the name of the stage's result schema, the agent, the model and effort, the budget left in
-tokens, time and money, and a session id to ask the same session again. Until the protocol holds
-the checklist and agents policies, the host adds to that schema what they add: a checklist field,
-and the names of triage's profiles. Its result gives the stage's result, the tokens as input,
-cached and output, the seconds and money it spent, a usage limit with its reset, whether the stop
-was transient, whether it ran out of time, whether no result fit the schema, and the version of
-the change it produced.
+gives it the stage, the version of the change it starts from, the stage's access, the prompt
+that `prompt` writes from the inputs it names, the name of the stage's result schema, the agent,
+the model and effort, the budget left in tokens, time and money, and a session id to ask the same
+session again. Until the protocol holds the checklist and agents policies, the host adds to that
+schema what they add: a checklist field, and the names of triage's profiles. Its result gives the stage's result, the
+tokens as input, cached and output, the seconds and money it spent, a usage limit with its reset,
+whether the stop was transient, whether it ran out of time, whether no result fit the schema, and
+the version of the change it produced.
 
 Each stage has its access, which the runner enforces: none for triage, read for plan and review,
 write for implement and fix. There are two kinds of runner:
@@ -369,7 +410,10 @@ A host gives the engine its policies in its configuration. Each has a default, a
 protocol's `policies.schema.json` names it, as the first column does below. The policies with no
 name there, start, answers, budgets, retries, usage limits, agents, splits' sizes, a parent's
 end, after a failure and the checklist, are not in the protocol yet: they come into it as the
-engine takes over the decisions that read them, and until then the host applies them itself.
+engine takes over the decisions that read them, and until then the host applies them itself. The
+`prompt` call already reads three of them beside the host's policies, as its schema names them:
+`checklist`, the items the plan and the review answer; `profiles`, the profiles triage chooses
+from; and `budgets`, of which the plan prompt names the implement stage's time.
 
 | Policy | Values | GitHub | An application, for example |
 | --- | --- | --- | --- |

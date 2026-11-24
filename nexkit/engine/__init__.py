@@ -13,9 +13,10 @@ import json
 import re
 
 from .. import __version__, protocol
+from . import prompt
 from .machine import EngineError, step
 
-CALLS = ("describe", "step")
+CALLS = ("describe", "step", "prompt")
 # How deep a request may nest. The protocol's documents nest less than ten deep; the bound
 # refuses deeper text before anything recurses into it, so a request is refused alike however
 # many frames the program or the server already uses, and far below any stack's limit.
@@ -58,7 +59,9 @@ def _depth(data):
     in one pass. Text that is not JSON gets some number; parsing it then says what is wrong."""
     depth = deepest = 0
     inside = False
-    for token in _TOKENS.findall(data):
+    # One token at a time: a list of every token of a large body would take many times its size.
+    for match in _TOKENS.finditer(data):
+        token = match.group()
         if token == b'"':
             inside = not inside
         elif inside or token[:1] == b"\\":
@@ -81,6 +84,8 @@ def _answer(request):
         raise EngineError(f"A request's call must be one of {', '.join(CALLS)}.")
     if request["call"] == "describe":
         return _describe(request)
+    if request["call"] == "prompt":
+        return _prompt(request, protocol.check(request, "calls/prompt.schema.json", "request"))
     event = request.get("event")
     kind = event.get("kind") if isinstance(event, dict) else None
     if kind not in protocol.names("events"):
@@ -122,3 +127,15 @@ def _result_problems(state, event):
     return protocol.check(
         event["result"], f"actions/{pending['kind']}.result.schema.json", "request.event.result"
     )
+
+
+def _prompt(request, found):
+    """The answer to a `prompt` call: the stage's prompt, from the texts the host fetched."""
+    if not found and request.get("unfit") is None:
+        found = prompt.refusals(request["stage"], request["inputs"], request["policies"])
+        texts = request.get("texts")
+        if texts is not None and not texts.startswith("/"):
+            found.append("request.texts must be an absolute path")
+    if found:
+        raise EngineError("; ".join(found))
+    return {"protocol": protocol.VERSION, **prompt.answer(request)}

@@ -40,7 +40,8 @@
           "previousPlan",
           "linked",
           "evidence",
-          "parts"
+          "parts",
+          "workspace"
         ],
         "result": "results/plan.schema.json",
         "agent": null,

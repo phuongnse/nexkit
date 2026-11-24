@@ -167,13 +167,15 @@
         "access": "write",
         "inputs": [
           "item",
-          "discussion",
           "notes",
           "plan",
           "rounds",
           "checks",
           "findings",
-          "diff"
+          "linked",
+          "evidence",
+          "diff",
+          "workspace"
         ],
         "result": "results/fix.schema.json",
         "agent": null,

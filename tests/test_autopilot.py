@@ -12,7 +12,7 @@ from unittest import mock
 
 from nexkit import autopilot, state
 from nexkit import maintain as maintain_module
-from nexkit.context import TEXT_LIMIT
+from nexkit.engine.textutil import TEXT_LIMIT
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.report import report
@@ -1384,7 +1384,7 @@ class AnswerTests(AnswerAndSplitCase):
         self.assertEqual(step["reason"], autopilot.REPEATED)
 
     def test_prompts_recommend_only_what_nexkit_can_carry_out(self):
-        from nexkit.agent import _template
+        from nexkit.engine.prompt import template as _template
 
         for name in ("plan", "implement", "fix"):
             text = " ".join(_template(name).split())

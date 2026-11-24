@@ -17,6 +17,8 @@ import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
 
+# What a prompt shows of a check is the engine's, as the prompts are.
+from .engine.textutil import FAILURE_LINE, FAILURE_LINES, OUTPUT_TAIL, SHARD, failing_lines
 from .gitutil import GitError, git, has_commit, is_ancestor
 from .gitutil import names as file_names
 from .globs import unaffected
@@ -26,7 +28,6 @@ from .runtimes import NAMES_VAR, secret_names
 from .state import COMMIT, check_fingerprint
 from .usage import parse_iso
 
-OUTPUT_TAIL = 12_000
 # How long NexKit still reads a command's output after its shell exited or was killed,
 # while a process it started holds the pipe.
 STOP_GRACE_SECONDS = 5
@@ -34,8 +35,6 @@ BASE_SHA = "NEXKIT_BASE_SHA"
 VERIFIED_SHA = "NEXKIT_VERIFIED_SHA"
 # Set in each check's own environment: the last commit on which that check passed.
 CHECK_VERIFIED_SHA = "NEXKIT_CHECK_VERIFIED_SHA"
-# Which shard of a sharded check a job runs, as `k/N`.
-SHARD = "NEXKIT_SHARD"
 # The time a sharded check's `count` may take; it runs before setup, in a job of its own.
 COUNT_SECONDS = 300
 # The end of a failed `count`'s output that its check shows.
@@ -55,12 +54,6 @@ RESULTS_LIMIT = 50_000_000
 JOB_RESULTS_FLOOR = 25_000_000
 # How much of a file decides whether it is text, which is redacted, or binary.
 SNIFF = 8192
-# A line of a check's output that reports a failure, for `failure_signature`.
-FAILURE_LINE = re.compile(r"fail|error|✘|✗", re.IGNORECASE)
-# What a check's result and a prompt keep of the lines that report a failure before the end
-# of its output: this many, each at most this many characters.
-FAILURE_LINES = 20
-FAILURE_LINE_WIDTH = 300
 # What differs between two runs of the same failure, removed in this order: UUIDs, hex ids,
 # durations, then any other number.
 VOLATILE = (
@@ -671,85 +664,12 @@ def run_checks(cfg, cwd, out_dir=None, commits=None, group="", heads=None, skipp
     return results
 
 
-def shown_command(check):
-    """A check's command as prompts show it: a shard's with its NEXKIT_SHARD, so an agent
-    runs that shard alone."""
-    return f"{SHARD}={check['shard']} {check['run']}" if check.get("shard") else check["run"]
-
-
-def _fenced(text):
-    return f"{fence(text)}\n{text}\n{fence(text)}"
-
-
-def failing_lines(text):
-    """The lines of `text` that report a failure (FAILURE_LINE), stripped, each at most
-    FAILURE_LINE_WIDTH characters."""
-    return [
-        line if len(line) <= FAILURE_LINE_WIDTH else line[:FAILURE_LINE_WIDTH] + " […]"
-        for line in (raw.strip() for raw in text.splitlines())
-        if FAILURE_LINE.search(line)
-    ]
-
-
 def kept_output(output):
     """What a check's result keeps of its `output`: the last OUTPUT_TAIL characters, and in
     `failure_lines` the first FAILURE_LINES lines before them that report a failure, which
     that end would lose, such as a failure that a long teardown follows."""
     earlier = failing_lines(output[:-OUTPUT_TAIL])[:FAILURE_LINES]
     return {"output": output[-OUTPUT_TAIL:], **({"failure_lines": earlier} if earlier else {})}
-
-
-def output_text(check, tail, lines, keep=None):
-    """What a prompt shows of a failing `check`'s output: the whole output when it has at
-    most `tail` characters and no earlier `failure_lines`; else the first `lines` lines
-    that report a failure, those its result recorded from before the output it kept, then
-    those of the kept output before its last `tail` characters, then that end, from the
-    start of a line. `keep(text)` writes what NexKit kept of the output to a file outside
-    the working tree and returns its path, or "": the prompt names the file. A result
-    without `failure_lines`, such as one an older NexKit saved, shows the same way."""
-    raw = check.get("output") or ""
-    output = raw.rstrip()
-    earlier = [str(line) for line in check.get("failure_lines") or []]
-    # The state comment kept less of it, to fit GitHub's limit (`state.fit_state`).
-    cut = bool(check.get("output_cut"))
-    if len(output) <= tail and not earlier and not cut:
-        return f"Output:\n\n{_fenced(output)}"
-    if cut and not output and not earlier:
-        return (
-            "NexKit left its output out of the state comment, to fit GitHub's limit on a "
-            "comment's length; the run's links lead to it."
-        )
-    end = output[-tail:]
-    if len(output) > tail and output[-tail - 1] != "\n" and "\n" in end:
-        end = end[end.index("\n") + 1 :]
-    found = earlier + failing_lines(output[: len(output) - len(end)])
-    shown = found[:lines]
-    text = output
-    if earlier:
-        text = (
-            "Lines before the output that NexKit kept that report a failure or an error:\n\n"
-            + "\n".join(earlier)
-            + f"\n\nThe output NexKit kept, its last {len(raw):,} characters:\n\n{output}"
-        )
-    path = keep(text) if keep else ""
-    where = ""
-    if path and (earlier or cut or len(raw) >= OUTPUT_TAIL):
-        also = ", with the lines before them that report a failure" if earlier else ""
-        where = f"; the output NexKit kept (its last {len(raw):,} characters{also}) is in `{path}`"
-    elif path:
-        where = f"; the whole output is in `{path}`"
-    parts = []
-    if shown:
-        partly = cut or len(found) > len(shown) or len(earlier) >= FAILURE_LINES
-        which = f"the first {len(shown)}" if partly else "all"
-        parts.append(
-            f"Lines that report a failure or an error ({which}):\n\n" + _fenced("\n".join(shown))
-        )
-    parts.append(
-        f"End of output (the last {len(end):,} of {len(output):,} characters{where}):\n\n"
-        + _fenced(end)
-    )
-    return "\n\n".join(parts)
 
 
 def sharded(cfg):

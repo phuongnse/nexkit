@@ -96,9 +96,11 @@
       "id": "308",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
     },
+    "conflict": null,
     "attention": {
       "reason": "accept",
-      "text": "Merge the pull request. The checks and the AI review passed, and NexKit merges only with `merge.auto` on"
+      "text": "Merge the pull request. The checks and the AI review passed, and NexKit merges only with `merge.auto` on",
+      "ref": null
     },
     "hold": false,
     "waits": [],

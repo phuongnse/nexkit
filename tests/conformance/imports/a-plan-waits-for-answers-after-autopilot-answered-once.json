@@ -84,9 +84,11 @@
     "itemKind": "change",
     "state": "awaitingApproval",
     "change": null,
+    "conflict": null,
     "attention": {
       "reason": "question",
-      "text": "Answer the plan's questions with `/nexkit plan <answers>`. The plan asks again right after autopilot's answers"
+      "text": "Answer the plan's questions with `/nexkit plan <answers>`. The plan asks again right after autopilot's answers",
+      "ref": "4"
     },
     "hold": false,
     "waits": [],

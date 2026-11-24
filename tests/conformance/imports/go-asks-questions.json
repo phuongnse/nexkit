@@ -52,9 +52,11 @@
     "itemKind": "change",
     "state": "awaitingApproval",
     "change": null,
+    "conflict": null,
     "attention": {
       "reason": "question",
-      "text": "Answer the questions in the run's comment. The agent stopped at a decision that is the owner's to make"
+      "text": "Answer the questions in the run's comment. The agent stopped at a decision that is the owner's to make",
+      "ref": "3"
     },
     "hold": false,
     "waits": [],

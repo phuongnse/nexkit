@@ -30,9 +30,11 @@
     "itemKind": "change",
     "state": "failed",
     "change": null,
+    "conflict": null,
     "attention": {
       "reason": "failed",
-      "text": "The run was to run again after a transient error, and no run started it."
+      "text": "The run was to run again after a transient error, and no run started it.",
+      "ref": null
     },
     "hold": false,
     "waits": [],

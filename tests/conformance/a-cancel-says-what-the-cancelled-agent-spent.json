@@ -1,0 +1,52 @@
+{
+  "policies": {},
+  "state": {
+    "example": "planning"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "close"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "a7.1",
+        "result": "@agent:plan"
+      },
+      "state": "dropped",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "a8.1",
+        "result": {
+          "tokens": {
+            "input": 1500,
+            "cached": 0,
+            "output": 200
+          },
+          "seconds": 60,
+          "usd": 0.5
+        }
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "used.tokens.input": 1500,
+        "used.seconds": 700,
+        "used.usd": 2.87
+      }
+    }
+  ]
+}

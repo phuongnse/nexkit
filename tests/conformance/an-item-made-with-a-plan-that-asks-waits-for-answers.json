@@ -1,0 +1,75 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "plan": {
+          "summary": "Close an issue that GitHub closed at the same moment.",
+          "changes": [
+            "Read the issue again after a failed close."
+          ],
+          "decisions": [
+            {
+              "decision": "Read once more, not in a loop",
+              "reason": "GitHub's close is done when it answers."
+            }
+          ],
+          "risks": [],
+          "acceptance_criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "implementation_notes": [
+            "nexkit/report.py"
+          ],
+          "questions": [
+            {
+              "question": "Read again or retry?",
+              "options": [
+                "Read again",
+                "Retry"
+              ],
+              "recommended": 0,
+              "closes": 0
+            }
+          ],
+          "too_large": false,
+          "split": [],
+          "revision": {
+            "started_over": false,
+            "changes": []
+          },
+          "protected_paths": [],
+          "no_change": ""
+        }
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "question",
+        "attention.ref": "created"
+      }
+    },
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "answered"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

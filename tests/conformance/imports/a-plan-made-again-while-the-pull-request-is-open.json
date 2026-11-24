@@ -167,9 +167,11 @@
       "id": "308",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
     },
+    "conflict": null,
     "attention": {
       "reason": "approval",
-      "text": "The plan waits for its approval."
+      "text": "The plan waits for its approval.",
+      "ref": "150"
     },
     "hold": false,
     "waits": [],

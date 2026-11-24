@@ -128,9 +128,11 @@
       "id": "308",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
     },
+    "conflict": null,
     "attention": {
       "reason": "failed",
-      "text": "Read the error in the round's comment, then post its command again"
+      "text": "Read the error in the round's comment, then post its command again",
+      "ref": null
     },
     "hold": false,
     "waits": [],

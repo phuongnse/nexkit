@@ -41,9 +41,11 @@
     "itemKind": "change",
     "state": "awaitingApproval",
     "change": null,
+    "conflict": null,
     "attention": {
       "reason": "approval",
-      "text": "The plan waits for its approval."
+      "text": "The plan waits for its approval.",
+      "ref": "1"
     },
     "hold": false,
     "waits": [],

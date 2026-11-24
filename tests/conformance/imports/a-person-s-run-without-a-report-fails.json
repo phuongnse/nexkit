@@ -42,9 +42,11 @@
     "itemKind": "change",
     "state": "failed",
     "change": null,
+    "conflict": null,
     "attention": {
       "reason": "outage",
-      "text": "the run ended without a report"
+      "text": "the run ended without a report",
+      "ref": null
     },
     "hold": false,
     "waits": [],

@@ -27,6 +27,7 @@
     "itemKind": "change",
     "state": "accepted",
     "change": null,
+    "conflict": null,
     "attention": null,
     "hold": false,
     "waits": [],

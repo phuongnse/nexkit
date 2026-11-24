@@ -61,6 +61,7 @@
     "itemKind": "change",
     "state": "split",
     "change": null,
+    "conflict": null,
     "attention": null,
     "hold": false,
     "waits": [

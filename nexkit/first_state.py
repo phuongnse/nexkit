@@ -13,8 +13,6 @@ Each place the import can put an item is one of KINDS, and a case in
 
 from __future__ import annotations
 
-import base64
-import json
 import re
 from datetime import UTC, datetime
 
@@ -35,6 +33,7 @@ from .state import (
     plan_data,
     planned_parts,
     questions,
+    read_state,
     run_action,
     run_comments,
 )
@@ -45,9 +44,6 @@ from .usage import PAUSE_WINDOW, iso, parse_iso
 # GitHub host reports that run's end as this action's result, or its loss.
 REVISION = 1
 RUN_ID = "a1.1"
-# NexKit 6's pull request state comment: its marker only where it ends the comment, which
-# agent text in a round's comment, before its own marker, cannot be.
-PR_STATE = re.compile(r"<!-- nexkit:state ([A-Za-z0-9+/=]+) -->\s*\Z")
 # The state of the item while a command, or a round with that action, runs.
 OF_COMMAND = {"plan": "planning", "go": "working", "fix": "fixing", "review": "checking"}
 OF_ACTION = {"implement": "working", "fix": "fixing", "review": "checking"}
@@ -131,6 +127,7 @@ def empty(item):
         "itemKind": "change",
         "state": "new",
         "change": None,
+        "conflict": None,
         "attention": None,
         "hold": False,
         "waits": [],
@@ -197,20 +194,6 @@ def imported(*args, **fields):
     return situation(*args, **fields)[1]
 
 
-def pr_state(comments):
-    """The record of NexKit 6's state comment on a pull request, or {}: the newest comment
-    of the App whose marker ends it."""
-    for comment in reversed(comments):
-        match = PR_STATE.search(comment.get("body") or "") if by_bot(comment) else None
-        if match:
-            try:
-                found = json.loads(base64.b64decode(match.group(1)))
-            except ValueError:
-                return {}
-            return found if isinstance(found, dict) else {}
-    return {}
-
-
 class Item:
     """One item's NexKit 6 comments, read once, and the document that the import fills."""
 
@@ -223,7 +206,9 @@ class Item:
         self.plan = None if review_only else latest_plan(comments)
         self.data = plan_data(self.plan) if self.plan else None
         self.record = {} if review_only else autopilot.find_record(comments)[1]
-        self.pr_state = pr_state(pull_comments) if pull else {}
+        # NexKit 6's pull request state comment, whose marker counts only where it ends it.
+        found = read_state(pull_comments)[1] if pull else None
+        self.pr_state = found if isinstance(found, dict) else {}
         # A command that autopilot started and that has posted no run since (`assess`).
         current = autopilot.basis(comments, pull_comments)
         self.on_its_way = bool(self.record.get("command")) and self.record.get("basis") == current
@@ -272,7 +257,7 @@ class Item:
             self.wait("start")
             return self.be("new", "new")
         if last["command"] == "go":
-            return self.after_go(last)
+            return self.after_go(last_comment, last)
         return self.after_plan(last)
 
     def final(self, last):
@@ -311,15 +296,17 @@ class Item:
         self.wait("start")
         return self.be("reviewed", "ready")
 
-    def after_go(self, run):
+    def after_go(self, comment, run):
         outcome = run.get("outcome")
         if run.get("status") == SUCCESS and outcome in ("no_change", "already_on_base"):
             return self.be("no change", "noChange")
         if run.get("status") == SUCCESS:
             # Its pull request was closed: a person asks for another, as after a plan.
-            return self.be("go again", "awaitingApproval", "approval", run)
+            ref = (self.doc["plan"] or {}).get("text", {}).get("ref")
+            return self.be("go again", "awaitingApproval", "approval", run, ref=ref)
         if outcome == "agent_blocked" and run.get("questions"):
-            return self.be("asks", "awaitingApproval", "question", run)
+            # The run's comment asked: a person's answer names it.
+            return self.be("asks", "awaitingApproval", "question", run, ref=str(comment["id"]))
         blocked = outcome in ("agent_blocked", UNTRUSTED_ROUND)
         return self.be("failed", "failed", "blocked" if blocked else "failed", run)
 
@@ -329,11 +316,12 @@ class Item:
             return self.be("failed", "failed", "failed", run)
         if plan["noChange"]:
             return self.be("no change", "noChange")
+        ref = plan["text"]["ref"]
         if plan["questions"]:
-            return self.be("planned", "awaitingApproval", "question", run)
+            return self.be("planned", "awaitingApproval", "question", run, ref=ref)
         if plan["protectedPaths"]:
-            return self.be("planned", "awaitingApproval", "handMadeChange", run)
-        return self.be("planned", "awaitingApproval", "approval", run)
+            return self.be("planned", "awaitingApproval", "handMadeChange", run, ref=ref)
+        return self.be("planned", "awaitingApproval", "approval", run, ref=ref)
 
     def round(self, comment, latest):
         """Place an item whose NexKit pull request is open by its latest round, as
@@ -378,7 +366,8 @@ class Item:
         if outcome in named:
             return self.be("needs a person", "ready", named[outcome], latest)
         if outcome == "agent_blocked" and latest.get("questions"):
-            return self.be("asks", "awaitingApproval", "question", latest)
+            ref = str(comment["id"])
+            return self.be("asks", "awaitingApproval", "question", latest, ref=ref)
         if status == FAILURE:
             blocked = outcome in ("agent_blocked", UNTRUSTED_ROUND)
             return self.be("failed", "failed", "blocked" if blocked else "failed", latest)
@@ -453,9 +442,10 @@ class Item:
 
     # What the state holds beside its name.
 
-    def be(self, kind, name, reason=None, run=None, text=None):
+    def be(self, kind, name, reason=None, run=None, text=None, ref=None):
         """Put the item in state `name`, as the import's `kind`, with attention for
-        `reason`, said as NexKit 6's marker of `run` says it, or as `text`."""
+        `reason`, said as NexKit 6's marker of `run` says it, or as `text`, about `ref`: the
+        text that asked, which a person's decision names."""
         if kind not in KINDS:
             raise ValueError(f"The import has no kind {kind!r}.")
         self.kind = kind
@@ -463,7 +453,7 @@ class Item:
         if reason:
             said = str((run or {}).get("attention") or "").strip()
             text = clip(said, "reason") if said else (text or SAYS[reason])
-            self.doc["attention"] = {"reason": reason, "text": text}
+            self.doc["attention"] = {"reason": reason, "text": text, "ref": ref}
 
     def running(self, kind, name):
         """A command or round on its way: the action the engine waits for."""

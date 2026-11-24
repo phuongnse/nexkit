@@ -19,9 +19,11 @@
     "itemKind": "change",
     "state": "split",
     "change": null,
+    "conflict": null,
     "attention": {
       "reason": "splitIncomplete",
-      "text": "Every part of the split ended. A person closes the item, or opens parts for what is left: NexKit closes a parent only with `close_parent_issues` on and a part completed."
+      "text": "Every part of the split ended. A person closes the item, or opens parts for what is left: NexKit closes a parent only with `close_parent_issues` on and a part completed.",
+      "ref": null
     },
     "hold": false,
     "waits": [],

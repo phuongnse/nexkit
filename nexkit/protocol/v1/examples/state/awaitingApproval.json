@@ -5,9 +5,11 @@
   "itemKind": "change",
   "state": "awaitingApproval",
   "change": null,
+  "conflict": null,
   "attention": {
     "reason": "question",
-    "text": "The plan has a question with no recommended answer."
+    "text": "The plan has a question with no recommended answer.",
+    "ref": "issue-42/plan-1"
   },
   "hold": false,
   "waits": [],

@@ -53,9 +53,11 @@
     "itemKind": "change",
     "state": "failed",
     "change": null,
+    "conflict": null,
     "attention": {
       "reason": "failed",
-      "text": "The agent hit its usage limit, and NexKit does not resume this run."
+      "text": "The agent hit its usage limit, and NexKit does not resume this run.",
+      "ref": null
     },
     "hold": false,
     "waits": [],

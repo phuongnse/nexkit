@@ -96,9 +96,11 @@
       "id": "308",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
     },
+    "conflict": null,
     "attention": {
       "reason": "blocked",
-      "text": "Read the issue, and comment `/nexkit trust` on it if you trust it"
+      "text": "Read the issue, and comment `/nexkit trust` on it if you trust it",
+      "ref": null
     },
     "hold": false,
     "waits": [],

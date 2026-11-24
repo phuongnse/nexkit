@@ -95,9 +95,11 @@
       "id": "308",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
     },
+    "conflict": null,
     "attention": {
       "reason": "reopened",
-      "text": "The pull request was closed and opened again."
+      "text": "The pull request was closed and opened again.",
+      "ref": null
     },
     "hold": false,
     "waits": [],

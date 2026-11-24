@@ -8,7 +8,11 @@
       "type": "string"
     },
     "eventId": {
-      "$comment": "The host's id of an event, the same each time it sends that event again, such as a webhook's delivery id. The engine takes an event once.",
+      "$comment": "The host's id of one event, the same each time it sends that event again. One delivery of a webhook may give several events for one item, so an id names the event, such as <delivery>:<kind>. The engine takes an event once.",
+      "type": "string"
+    },
+    "planRef": {
+      "$comment": "Which plan a person decided on: the ref of the plan's text, `plan.text.ref` in the state.",
       "type": "string"
     },
     "time": {

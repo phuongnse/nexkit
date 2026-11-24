@@ -99,9 +99,11 @@
       "id": "308",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
     },
+    "conflict": null,
     "attention": {
       "reason": "personChecklistItem",
-      "text": "Decide the checklist items in the round's comment: approve the pull request to accept them, then merge it"
+      "text": "Decide the checklist items in the round's comment: approve the pull request to accept them, then merge it",
+      "ref": null
     },
     "hold": false,
     "waits": [],

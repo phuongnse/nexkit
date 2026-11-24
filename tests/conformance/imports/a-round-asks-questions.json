@@ -137,9 +137,11 @@
       "id": "308",
       "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
     },
+    "conflict": null,
     "attention": {
       "reason": "question",
-      "text": "The plan has questions for a person."
+      "text": "The plan has questions for a person.",
+      "ref": "103"
     },
     "hold": false,
     "waits": [],

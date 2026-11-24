@@ -213,11 +213,23 @@ def largest():
     state = blank("4" * 20)
     state.update(
         revision=99,
-        state="ready",
+        state="awaitingApproval",
         change={"id": "9" * 20, "version": "f" * 40},
-        attention={"reason": "roundsUsedUp", "text": worst(LONGEST["reason"])},
+        attention={"reason": "question", "text": worst(LONGEST["reason"]), "ref": "9" * 20},
         hold=True,
+        conflict="e" * 40,
     )
+    # A round that runs keeps every policy it started with.
+    state["policies"] = {
+        "planApproval": "autoWhenClean",
+        "reviewAfterFailingChecks": "onlyAfterPassing",
+        "accept": "autoWhenPassed",
+        "fixRounds": 10,
+        "whenRoundsRunOut": "person",
+        "conflicts": "resolve",
+        "conflictRounds": 10,
+        "splits": True,
+    }
     state["waits"] = [
         {"id": f"w99.{n}", "for": "blocker", "until": None, "on": str(4000 + n)} for n in range(10)
     ]
@@ -272,7 +284,7 @@ def largest():
         {"id": "a99.4", "kind": "runChecks", "next": None, "changeVersion": "f" * 40},
     ]
     state["pending"][1]["text"] = worst(LONGEST["reason"])
-    state["recentEvents"] = [f"event-{n:040}" for n in range(20)]
+    state["recentEvents"] = [f"event-{n:040}" for n in range(most("recentEvents"))]
     return state
 
 
@@ -297,7 +309,7 @@ def decisions(state):
 class SizeTest(unittest.TestCase):
     def test_a_document_at_the_limit_fits_one_comment(self):
         state = {**blank("42"), "revision": 1}
-        state["attention"] = {"reason": "failed", "text": ""}
+        state["attention"] = {"reason": "failed", "text": "", "ref": None}
         state["attention"]["text"] = "x" * (STATE_LIMIT - size(state))
         self.assertEqual(size(state), STATE_LIMIT)
         body = item_state.render(state)
@@ -402,7 +414,7 @@ class SizeTest(unittest.TestCase):
 
     def test_a_state_past_the_limit_is_never_stored_cut(self):
         state = {**blank("42"), "revision": 1}
-        state["attention"] = {"reason": "failed", "text": "x" * STATE_LIMIT}
+        state["attention"] = {"reason": "failed", "text": "x" * STATE_LIMIT, "ref": None}
         with self.assertRaises(item_state.StateError):
             item_state.render(state)
 

@@ -42,9 +42,11 @@
     "itemKind": "change",
     "state": "failed",
     "change": null,
+    "conflict": null,
     "attention": {
       "reason": "blocked",
-      "text": "The agent stopped: it needs a secret it does not have"
+      "text": "The agent stopped: it needs a secret it does not have",
+      "ref": null
     },
     "hold": false,
     "waits": [],

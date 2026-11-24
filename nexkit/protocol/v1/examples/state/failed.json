@@ -8,9 +8,11 @@
     "id": "308",
     "version": "5a54e2b"
   },
+  "conflict": null,
   "attention": {
     "reason": "failed",
-    "text": "The token budget ran out."
+    "text": "The token budget ran out.",
+    "ref": null
   },
   "hold": false,
   "waits": [],

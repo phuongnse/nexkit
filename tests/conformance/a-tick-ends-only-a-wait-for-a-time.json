@@ -1,4 +1,5 @@
 {
+  "note": "What follows the end of a wait for a time, such as resuming after a usage limit, comes with the engine's rules of waits; this case shows only which waits a tick ends.",
   "policies": {},
   "state": {
     "example": "new",

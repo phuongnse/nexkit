@@ -55,7 +55,7 @@ class SchemaTests(unittest.TestCase):
     def test_an_array_past_its_max_items_is_named(self):
         schema = {"type": "array", "items": {"type": "integer"}, "maxItems": 2}
         self.assertEqual(problems([1, 2], schema), [])
-        self.assertEqual(problems([1, 2, 3], schema), ["result must have at most 2 items"])
+        self.assertEqual(problems([1, 2, 3], schema), ["result must hold at most 2 items"])
 
 
 if __name__ == "__main__":

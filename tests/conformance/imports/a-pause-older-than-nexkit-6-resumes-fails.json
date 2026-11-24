@@ -49,9 +49,11 @@
     "itemKind": "change",
     "state": "failed",
     "change": null,
+    "conflict": null,
     "attention": {
       "reason": "failed",
-      "text": "The run paused at the usage limit longer ago than NexKit resumes runs."
+      "text": "The run paused at the usage limit longer ago than NexKit resumes runs.",
+      "ref": null
     },
     "hold": false,
     "waits": [],

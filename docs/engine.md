@@ -312,6 +312,19 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   not answer, on an item with no change, plans it again, since the round stopped where the plan
   did not say what the comment says, and so does the end of an item that blocks it; a comment on
   questions asked again lets the engine answer them again.
+- **What follows a round's checks and review.** The review runs after failing checks too, by
+  `reviewAfterFailingChecks`. Its verdict and its criteria decide, as in NexKit 6: a review that
+  requests changes, an `unmet` criterion or a failing check leads to a fix round, and a blocking
+  finding of a review that approves does not. A fix round is counted and runs while `fixRounds`
+  has one left; then a person decides, in `ready` or, by `whenRoundsRunOut`, in `failed`
+  (`roundsUsedUp`). A counted fix round waits while every failing check fails as the base
+  branch does, which the checks' result says with the item about that failure, until that item
+  closes; and while a hold is on, until it ends. A fix round that left the change as it was,
+  having found the cause outside it, is followed by no other: what still fails on that version
+  is a person's (`roundsUsedUp`). A change that passes is `ready`: a person confirms the criteria
+  the review could not verify (`unverifiableCriterion`) and decides the checklist items that
+  only a person decides (`personChecklistItem`); otherwise the accept policy decides, and a hold
+  keeps the engine's accept back until it ends.
 - **From every state that has a change,** the engine reconciles the item with the latest
   observation of that change after each event, once no publish or replace is on its way. A change
   that was merged, such as by a person's hand, goes to `accepted`; one that became empty, because
@@ -405,7 +418,7 @@ Three things sit beside the state, never in place of it:
 | `runAgent` | Runs a runner for a stage, see [runners](#runners) | The stage's result, tokens, a usage limit, a transient stop |
 | `publish` | Makes the agent's work the change: a commit and a pull request, or a draft | The change's id and version, or why it could not |
 | `replaceChange` | Drops the change and starts a new one from what is current | The new change |
-| `runChecks` | Runs its checks on a version of the change | Each result, its failure signature, and whether the failure matches a known failure of the base |
+| `runChecks` | Runs its checks on a version of the change | Each result, its failure signature, and whether the failure matches a known failure of the base; the item about that failure when every failing check matches it |
 | `accept` | Accepts the change: a merge, or an accept of a draft | `accepted`, or refused with a kind: `transient`, `waitingForChecks`, `checkFailed`, `behind`, `headMoved`, `conflict`, `notAccepted` or `needsPerson` |
 | `createParts` | Makes the parts of a split, each blocked by the earlier parts it needs | The parts' ids |
 | `close` | Ends the work item with its outcome | Done |
@@ -621,7 +634,8 @@ adapter. A new rule of the engine comes with a case.
    which NexKit 6 still splits, closing the pull request as superseded. They are also the
    decisions that follow a `/nexkit go` that stopped as blocked with questions or with paths
    only a person changes, a writer's command that answers its questions with the option that
-   only closes the issue, and the reason a plan waits for without autopilot. A `/nexkit go`
+   only closes the issue, the reason a plan waits for without autopilot, and what follows the
+   checks and the review of a round on a pull request (`report`). A `/nexkit go`
    that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as
    the policy after a failure, which the protocol does not hold yet, says. Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the

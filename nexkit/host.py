@@ -20,6 +20,13 @@ change is needed or without it, one that only a new plan carries out, a writer's
 only closes the issue, by a comment or a command, and a new plan after a collaborator's comment
 or the close of an issue that blocks it.
 
+And it decides what follows a round's checks and review on a NexKit pull request (`report`):
+the review's verdict and criteria, an automatic fix round within `fix.max_auto_rounds`, counted,
+one that waits while the base branch has the same failure or while a hold is on, a fix round
+that changed nothing, the rounds used up, and a change that passes, which a person confirms,
+decides or merges, or which merges by `merge.auto` unless a hold keeps it back. A round whose
+next step the engine refuses to decide waits for a person.
+
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
 """
@@ -79,6 +86,12 @@ def policies(cfg):
     taken = autopilot.takes(cfg)
     return {
         "planApproval": "autoWhenClean" if taken else "person",
+        "reviewAfterFailingChecks": "always",
+        "accept": "autoWhenPassed" if cfg["merge"]["auto"] else "person",
+        "fixRounds": cfg["fix"]["max_auto_rounds"],
+        "whenRoundsRunOut": "person",
+        "conflicts": "resolve" if cfg["conflicts"]["auto_resolve"] else "person",
+        "conflictRounds": cfg["conflicts"]["max_rounds"],
         "answers": cfg["autopilot"]["answer"],
         "splits": taken,
         "splitParts": MAX_PARTS,
@@ -778,3 +791,147 @@ def closing_command(gh, decision, comments):
         "answer": picked[2],
         "asked": asked[0],
     }
+
+
+# -- what follows a round's checks and review ------------------------------------------
+
+# What `report` does after a round of a NexKit pull request, by what the engine answers: the
+# round is ready for a person, or merges, or a hold keeps its merge back; an automatic fix
+# round starts, waits for the base branch's failure to end, or a hold keeps it back; or a
+# person decides what still fails.
+ROUND_ENDS = (
+    "ready",
+    "merge",
+    "held_merge",
+    "auto_fix",
+    "ci_waiting",
+    "held_fix",
+    "needs_human",
+    "recheck_failed",
+)
+
+
+def after_round(cfg, decision, pr, head, auto_fixes, checks, review, recheck, wait, label):
+    """What follows a round of the NexKit pull request `pr` whose checks and review ended on
+    `head`, as the engine decides it: one of `ROUND_ENDS`. `auto_fixes` is how many automatic
+    fix rounds the pull request used, `checks` the checks' results (None: they did not run),
+    `review` the review NexKit acts on (`report.apply_criteria`), `recheck` whether the round
+    is a fix round that changed nothing and checked the same head again, `wait` what a fix
+    round would wait for while the base branch has the same failure (`autopilot.ci_wait`),
+    and `label` the label that holds the issue. Raises `Refused`."""
+    number = decision["issue"]
+    found = policies(cfg)
+    doc = first_state.empty(str(number))
+    doc["state"] = "checking"
+    doc["change"] = {"id": str(pr), "version": head}
+    doc["hold"] = bool(label)
+    doc["policies"] = found
+    doc["rounds"]["counted"] = auto_fixes
+    if recheck:
+        doc["rounds"]["recheck"] = head
+    run = {"id": first_state.RUN_ID, "next": None, "kind": "runChecks", "changeVersion": head}
+    doc["pending"] = [run]
+    results = {"checks": _checks(checks), "baseFailure": str(wait["bug"]) if wait else None}
+    event = _event(
+        "actionFinished",
+        number,
+        None,
+        f"checks-{pr}-{head}",
+        action=run["id"],
+        changeVersion=head,
+        result=results,
+    )
+    answer = step(doc, event, found)
+    review_run = [a for a in answer["actions"] if a["kind"] == "runAgent"]
+    if not review_run or review_run[0]["stage"] != "review":
+        raise Refused("The engine runs no review after a round's checks.")
+    event = _event(
+        "actionFinished",
+        number,
+        None,
+        f"review-{pr}-{head}",
+        action=review_run[0]["id"],
+        changeVersion=head,
+        result={**AGENT, "output": _review_output(review)},
+    )
+    answer = step(answer["state"], event, found)
+    return _round_end(answer, recheck)
+
+
+def _checks(checks):
+    """The checks' results as `runChecks` gives them; checks that did not run fail as one."""
+    if checks is None:
+        return [_check("checks", False)]
+    return [_check(str(check.get("name") or ""), bool(check.get("passed"))) for check in checks]
+
+
+def _check(name, passed):
+    return {
+        "name": name,
+        "passed": passed,
+        "skipped": False,
+        "signature": None,
+        "knownBaseFailure": False,
+    }
+
+
+def _review_output(review):
+    """The review NexKit acts on as the review stage gives it, for what the engine decides
+    from: its verdict, each criterion's status, its findings and the checklist items not met
+    that a person decides (`report.to_decide`)."""
+    from .report import criterion_status, to_decide
+
+    criteria = [
+        {
+            "criterion": str(item.get("criterion") or ""),
+            "status": criterion_status(item),
+            "test": "",
+            "evidence": "",
+        }
+        for item in review.get("criteria") or []
+    ]
+    findings = [
+        {
+            "severity": "blocking" if item.get("severity") == "blocking" else "suggestion",
+            "file": "",
+            "line": 0,
+            "body": str(item.get("body") or ""),
+        }
+        for item in review.get("findings") or []
+    ]
+    checklist = [
+        {"number": number, "answer": "not_met", "evidence": ""}
+        for number, _ in enumerate(to_decide(review), 1)
+    ]
+    return {
+        "verdict": review["verdict"],
+        "summary": "",
+        "criteria": criteria,
+        "findings": findings,
+        "previous_findings": [],
+        "checklist": checklist,
+    }
+
+
+def _round_end(answer, recheck):
+    """`ROUND_ENDS`' name for the engine's `answer` after a round's review."""
+    state, actions = answer["state"], answer["actions"]
+    kinds = {action["kind"]: action for action in actions}
+    if "accept" in kinds:
+        return "merge"
+    if state["state"] == "accepting" and state["hold"]:
+        return "held_merge"
+    if "runAgent" in kinds and kinds["runAgent"]["stage"] == "fix":
+        return "auto_fix"
+    if state["state"] == "fixing" and any(w["for"] == "baseFailure" for w in state["waits"]):
+        return "ci_waiting"
+    if state["state"] == "fixing" and state["hold"]:
+        return "held_fix"
+    reason = (kinds.get("needPerson") or {}).get("reason")
+    if reason == "roundsUsedUp":
+        return "recheck_failed" if recheck else "needs_human"
+    if reason in ("accept", "unverifiableCriterion", "personChecklistItem"):
+        return "ready"
+    raise Refused(
+        f"The engine answers {sorted(kinds)} after a round, which the host does not carry out."
+    )

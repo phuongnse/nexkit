@@ -10,7 +10,9 @@ from nexkit import autopilot, engine, host, item_state
 from nexkit.report import TOO_LARGE, needs_person
 from nexkit.route import route
 from nexkit.state import PLAN_MARKER, answers_marker, plan_data_record, questions
+from tests.support import make_config
 from tests.test_autopilot import AutopilotCase, pilot
+from tests.test_report import ReportCase, review_result
 
 # The engine's own answer, which a test that stands in for it calls.
 ANSWER = engine.answer
@@ -255,6 +257,12 @@ class PoliciesTest(HostCase):
             found,
             {
                 "planApproval": "autoWhenClean",
+                "reviewAfterFailingChecks": "always",
+                "accept": "person",
+                "fixRounds": 2,
+                "whenRoundsRunOut": "person",
+                "conflicts": "person",
+                "conflictRounds": 3,
                 "answers": "recommended",
                 "splits": True,
                 "splitParts": 10,
@@ -264,6 +272,14 @@ class PoliciesTest(HostCase):
         found = host.policies(self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}})
         found = (found["planApproval"], found["answers"], found["splits"])
         self.assertEqual(found, ("person", "never", False))
+        cfg = make_config(
+            merge={"auto": True},
+            fix={"max_auto_rounds": 5},
+            conflicts={"auto_resolve": True, "max_rounds": 4},
+        )
+        found = host.policies(cfg)
+        found = [found[name] for name in ("accept", "fixRounds", "conflicts", "conflictRounds")]
+        self.assertEqual(found, ["autoWhenPassed", 5, "resolve", 4])
 
 
 class AfterGoTest(HostCase):
@@ -436,3 +452,45 @@ class PlanWaitsForTest(HostCase):
         )
         with mock.patch.object(host, "plan_waits_for", return_value="approval"):
             self.assertIsNone(needs_person("planned", self.cfg, plan={"questions": [ASKED]}))
+
+
+class AfterRoundTest(ReportCase):
+    """What follows a round's checks and review on a NexKit pull request is the engine's
+    answer, which `report` carries out in NexKit 6's words."""
+
+    def test_the_engine_hears_the_checks_then_the_review(self):
+        self.candidate(checks_pass=False)
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            outcome = self.run_report()
+        self.assertEqual(outcome["outcome"], "auto_fix")
+        first, second = [call.args[0] for call in answer.call_args_list]
+        self.assertEqual(first["state"]["state"], "checking")
+        self.assertEqual(first["event"]["result"]["checks"][0]["passed"], False)
+        self.assertEqual(second["event"]["result"]["output"]["verdict"], "approve")
+        self.assertEqual(second["policies"]["fixRounds"], 2)
+        self.assertEqual(self.gh.dispatches[-1]["inputs"]["command"], "fix")
+
+    def test_each_end_the_engine_answers_is_carried_out(self):
+        for ends, expected in (
+            ("needs_human", "needs_human"),
+            ("held_fix", "held"),
+            ("auto_fix", "auto_fix"),
+            ("ready", "ready"),
+        ):
+            with self.subTest(ends=ends):
+                self.candidate(checks_pass=False)
+                with mock.patch.object(host, "after_round", return_value=ends):
+                    self.assertEqual(self.run_report()["outcome"], expected)
+
+    def test_a_blocking_finding_of_a_review_that_approves_starts_no_fix_round(self):
+        finding = {"severity": "blocking", "file": "a.py", "line": 3, "body": "Wrong."}
+        self.candidate(review=review_result(findings=[finding]))
+        self.assertEqual(self.run_report()["outcome"], "ready")
+
+    def test_a_round_whose_next_step_the_engine_refuses_waits_for_a_person(self):
+        self.candidate(checks_pass=False)
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            outcome = self.run_report()
+        self.assertEqual(outcome["outcome"], "needs_human")
+        self.assertIn("refused to decide", outcome["attention"])
+        self.assertEqual(self.gh.dispatches, [])

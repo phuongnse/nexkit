@@ -391,7 +391,13 @@ def case_review_again(world):
     base = world.repos.push_commit("dev", "main", {"calc.py": CALC + MUL}, "Add mul")
     work = world.repos.root / "dev"
     git(work, "checkout", "-q", "nexkit/issue-5")
-    subprocess.run(["git", "merge", "-q", "origin/main"], cwd=work, capture_output=True)
+    # The merge stops at its conflict; a git with no identity of its own would refuse to
+    # start it, so it gets the identity every commit of these cases has.
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "origin/main"],
+        cwd=work,
+        capture_output=True,
+    )
     (work / "calc.py").write_text(CALC + SUB + MUL)
     git(work, "add", "-A")
     world.repos.commit(work, "Merge main")

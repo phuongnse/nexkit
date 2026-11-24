@@ -6,6 +6,7 @@
   "state": "dropped",
   "change": null,
   "conflict": null,
+  "pushes": [],
   "attention": null,
   "hold": true,
   "waits": [],

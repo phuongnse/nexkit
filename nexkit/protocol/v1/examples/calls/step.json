@@ -9,6 +9,7 @@
     "state": "new",
     "change": null,
     "conflict": null,
+    "pushes": [],
     "attention": null,
     "hold": false,
     "waits": [
@@ -63,7 +64,8 @@
       "id": "octocat",
       "role": "decides"
     },
-    "note": ""
+    "note": "",
+    "plan": null
   },
   "policies": {
     "planApproval": "person",

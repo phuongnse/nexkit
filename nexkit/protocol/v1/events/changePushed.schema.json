@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/changePushed.schema.json",
-  "$comment": "A person changed the change, from `previousVersion` to `changeVersion`. A push that does not start from the current version is late and changes nothing.",
+  "$comment": "A person changed the change, from `previousVersion` to `changeVersion`. Pushes may arrive in any order: one that does not start from the current version waits in the state until the change reaches its `previousVersion`.",
   "type": "object",
   "properties": {
     "protocol": {

@@ -246,7 +246,8 @@ class ProtocolTest(unittest.TestCase):
     def test_a_decision_names_what_it_decides_on(self):
         for kind, field in (
             ("planApproved", "plan"),
-            ("answered", "plan"),
+            ("answered", "asked"),
+            ("requested", "plan"),
             ("changeApproved", "changeVersion"),
             ("changePushed", "previousVersion"),
         ):

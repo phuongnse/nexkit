@@ -92,17 +92,21 @@ The protocol is built for delivery at least once, in any order a host's queues g
   names the event, such as `<delivery>:<kind>`. The state keeps the ids of the 20 latest events
   that changed it, and the engine takes an event whose id it holds as a duplicate that changes
   nothing.
-- **A person's decision names what it decides on.** `planApproved` and `answered` name the plan,
-  by its text's ref, and `changeApproved` the change version, so a decision on a plan or a
-  version that is no longer the item's changes nothing. `changePushed` names the version the push
-  replaced, so a push that arrives after a later one changes nothing.
+- **A person's decision names what it decides on.** `planApproved`, and a `go`, name the plan by
+  its text's ref; `answered` names the questions by the ref that asked them, as the state's
+  attention has it: a plan's text ref, or a round's agent action; `changeApproved` names the change
+  version. A decision on a plan, questions or a version that is no longer the item's changes
+  nothing.
+- **Pushes may arrive in any order.** `changePushed` names the version the push started from. One
+  that does not start from the change's version waits in the state, and applies once the change
+  reaches that version, such as when an earlier push or the agent's own publish arrives after it.
+  A host need not order pushes, nor read the head when it sends one.
 - **Every action has an id**, and the result event of an action carries that id and the action's
   own change version: the one it acts on, or null for an action that has none, such as `publish`
   or an agent started with no change. The version an agent produced is in its result. The state
-  records the actions it waits for, and the engine
-  ignores a result whose action it no longer waits for, or whose change version is old. A step
-  that runs twice, a late result after a cancel, and a run started again after it was lost are
-  then each harmless.
+  records the actions it waits for, and the engine ignores a result whose action it no longer
+  waits for, such as one it cancelled when the change moved on. A step that runs twice, a late
+  result after a cancel, and a run started again after it was lost are then each harmless.
 - **The state is an outbox.** Each action the engine answered stays in the state, whole, as
   pending until its result arrives, the engine cancels it, or the host reports it lost. A host
   that crashed between storing the state and carrying out its actions carries out the pending
@@ -137,15 +141,17 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
   round.
-- **From every state that has a change:** a `conflict` follows the conflict policy once nothing
-  runs. In `ready` and `accepting` it does so at once, and in `checking` too, since checks of a
-  change that conflicts can no longer lead to an accept. In any other state the state records the
-  conflict, and the policy applies once the running step has ended and the item would go on to
-  its checks or be ready, as NexKit 6 starts no conflict round while another round runs; a
-  question or a failure keeps its attention meanwhile.
-  A change that a person accepted, such as a merge by hand, goes to `accepted`; a change that
-  became empty, because the same change landed another way, goes to `noChange`; a change that a
-  person pushed to goes to `checking`.
+- **From every state that has a change:** a `conflict` follows the conflict policy at once where
+  nothing runs that it must wait for: in `ready` and `accepting`, and in `checking` when a
+  conflict round can start (`redo`, or `resolve` with rounds left), since those checks can no
+  longer lead to an accept. Otherwise the state records the conflict with its version, and the
+  policy applies when the item would next go to its checks or be ready, as NexKit 6 starts no
+  conflict round while another runs; a question or a failure keeps its attention meanwhile. A
+  recorded conflict applies only while it names the change's version: a fix round, which merges
+  the base branch when the branch conflicts, and a person's push drop it, and the host reports a
+  conflict again for a version that still has one. A change that a person accepted, such as a
+  merge by hand, goes to `accepted`; a change that became empty, because the same change landed
+  another way, goes to `noChange`; a change that a person pushed to goes to `checking`.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
@@ -320,6 +326,9 @@ adapter. A new rule of the engine comes with a case.
 
 ## Versions
 
+- **Integers carry no fraction.** A field the protocol types as an integer refuses `60.0`, though
+  JSON Schema 2020-12 takes it as one: the engine and NexKit count and index with these values,
+  and so does every check of `schema.problems`, the agents' results included.
 - **Two versions.** The protocol has a version, and the state document has a schema version of its
   own. The engine moves an older state document to the current schema when it reads one, and
   refuses one that is newer than it knows, so an engine rolled back never guesses.

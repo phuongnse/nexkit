@@ -106,7 +106,8 @@ The protocol is built for delivery at least once, in any order a host's queues g
 - **The state is an outbox.** Each action the engine answered stays in the state, whole, as
   pending until its result arrives, the engine cancels it, or the host reports it lost. A host
   that crashed between storing the state and carrying out its actions carries out the pending
-  ones when it starts again, from the state alone.
+  ones when it starts again, from the state alone. A late result of a cancelled action changes
+  nothing, so the result of the `cancel` says what the cancelled action spent.
 - **Every action can be repeated.** A host carries out an action with the same id once: parts
   already filed are not filed again, and a person already told is not told again.
 
@@ -136,10 +137,14 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
   round.
-- **From every state that has a change:** a `conflict` follows the conflict policy; a change that a
-  person accepted, such as a merge by hand, goes to `accepted`; a change that became empty, because
-  the same change landed another way, goes to `noChange`; a change that a person pushed to goes to
-  `checking`.
+- **From every state that has a change:** a `conflict` follows the conflict policy once nothing
+  runs. In `ready` and `accepting` it does so at once, and in `checking` too, since checks of a
+  change that conflicts can no longer lead to an accept. In any other state the state records the
+  conflict, and the policy applies when the running step ends and the item would go on to
+  checks, its accept or a person, as NexKit 6 starts no conflict round while another round runs.
+  A change that a person accepted, such as a merge by hand, goes to `accepted`; a change that
+  became empty, because the same change landed another way, goes to `noChange`; a change that a
+  person pushed to goes to `checking`.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
@@ -150,7 +155,8 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 
 Three things sit beside the state, never in place of it:
 
-- **Attention:** a person is needed, with the reason: a plan that waits for its approval
+- **Attention:** a person is needed, with what the person decides on, such as the plan whose
+  questions are open, and the reason: a plan that waits for its approval
   (`approval`), a question with no recommended answer (`question`), a change that needs paths
   only a person changes (`handMadeChange`), a criterion the review could not verify
   (`unverifiableCriterion`), a checklist item only a person decides (`personChecklistItem`), a
@@ -242,8 +248,8 @@ shapes, and a host shows them in its own words.
 A host gives the engine its policies in its configuration. Each has a default, and the
 protocol's `policies.schema.json` names it, as the first column does below. The policies with no
 name there, start, answers, budgets, retries, usage limits, agents, splits' sizes, a parent's
-end, after a failure and the checklist, are not in the protocol yet: they come into it as the engine takes over the decisions that read them,
-and until then the host applies them itself.
+end, after a failure and the checklist, are not in the protocol yet: they come into it as the
+engine takes over the decisions that read them, and until then the host applies them itself.
 
 | Policy | Values | GitHub | An application, for example |
 | --- | --- | --- | --- |

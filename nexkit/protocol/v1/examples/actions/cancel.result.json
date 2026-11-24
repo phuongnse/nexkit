@@ -1,1 +1,9 @@
-{}
+{
+  "tokens": {
+    "input": 1500,
+    "cached": 0,
+    "output": 200
+  },
+  "seconds": 60,
+  "usd": 1.5
+}

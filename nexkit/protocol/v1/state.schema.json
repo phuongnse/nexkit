@@ -32,6 +32,13 @@
         }
       ]
     },
+    "conflict": {
+      "$comment": "The change version a conflict was reported on while a step ran, or null. The engine applies the conflict policy once nothing runs (docs/engine.md#states).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "attention": {
       "anyOf": [
         {
@@ -42,11 +49,19 @@
             },
             "text": {
               "type": "string"
+            },
+            "ref": {
+              "$comment": "What the person decides on: the ref of the text that asked, for a question or an approval; null otherwise. A decision that names another changes nothing.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
             "reason",
-            "text"
+            "text",
+            "ref"
           ],
           "additionalProperties": false
         },
@@ -422,6 +437,7 @@
     "itemKind",
     "state",
     "change",
+    "conflict",
     "attention",
     "hold",
     "waits",

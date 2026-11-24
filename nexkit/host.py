@@ -57,6 +57,7 @@ from .state import (
     questions,
     recommended_option,
     replanning_options,
+    round_questions,
     run_comments,
 )
 
@@ -747,7 +748,10 @@ def round_carried_on(gh, cfg, issue, decision, agent):
     if "runAgent" in kinds or "close" in kinds:
         return True
     if "needPerson" in kinds:
-        return kinds["needPerson"]["reason"] == "closeRecommended" and not again
+        if kinds["needPerson"]["reason"] != "closeRecommended" or again:
+            return False
+        # NexKit 6 asks whether an answer replans before it looks at the one that closes.
+        return not autopilot.replans({"questions": round_questions(agent)})
     return False
 
 
@@ -880,7 +884,7 @@ def stop_carried_on(gh, cfg, issue, decision, agent):
     or an implement or fix round that ran out of time, with the agent's result `agent`, as
     the engine decides what follows it, so that `report` mentions nobody. As in NexKit 6,
     autopilot's answers whose recommended option only closes the issue carry on unless they
-    were asked again. Raises `Refused`."""
+    were asked again or another of them only a new plan carries out. Raises `Refused`."""
     from .report import _autopilot_fields
 
     comments = gh.comments(issue["number"])
@@ -901,7 +905,10 @@ def stop_carried_on(gh, cfg, issue, decision, agent):
     if "runAgent" in kinds or "close" in kinds:
         return True
     if "needPerson" in kinds:
-        return kinds["needPerson"]["reason"] == "closeRecommended" and not again
+        if kinds["needPerson"]["reason"] != "closeRecommended" or again:
+            return False
+        # NexKit 6 asks whether an answer replans before it looks at the one that closes.
+        return not autopilot.replans({"questions": round_questions(agent)})
     return False
 
 

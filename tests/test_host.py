@@ -493,6 +493,7 @@ class AfterRoundTest(ReportCase):
             outcome = self.run_report()
         self.assertEqual(outcome["outcome"], "needs_human")
         self.assertIn("refused to decide", outcome["attention"])
+        self.assertNotIn("no automatic fix rounds remain", outcome["summary"])
         self.assertEqual(self.gh.dispatches, [])
 
 
@@ -575,6 +576,11 @@ class StoppedTest(HostCase):
         self.assertTrue(carries_on(fix, "agent_blocked", status="blocked", output=output))
         replans = {"questions": [{**ASKED, "closes": 0, "recommended": 2, "replans": [2]}]}
         self.assertFalse(carries_on(fix, "agent_blocked", status="blocked", output=replans))
+        closes = {"questions": [{**ASKED, "recommended": 3}]}
+        self.assertTrue(carries_on(fix, "agent_blocked", status="blocked", output=closes))
+        # One answer only closes the issue and another needs a new plan: a person decides.
+        both = {"questions": closes["questions"] + replans["questions"]}
+        self.assertFalse(carries_on(fix, "agent_blocked", status="blocked", output=both))
         self.assertTrue(carries_on(fix, "agent_error", timed_out=True))
         go = {"issue": 5, "pr": None, "action": "implement"}
         self.assertTrue(carries_on(go, "agent_error", timed_out=True))

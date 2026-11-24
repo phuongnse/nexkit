@@ -2327,8 +2327,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             )
         elif ends == "needs_human":
             outcome = "needs_human"
+            # A round the engine refused to decide may still have rounds left.
+            remain = "" if refused else ", and no automatic fix rounds remain"
             message = (
-                "Checks or review still need attention, and no automatic fix rounds remain. "
+                f"Checks or review still need attention{remain}. "
                 "Comment `/nexkit fix <instructions>`, push a commit yourself, or close the PR."
             )
 

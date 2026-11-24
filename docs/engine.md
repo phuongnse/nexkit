@@ -257,7 +257,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `working` | An agent makes the change | `checking`, `awaitingApproval`, `planning`, `noChange`, `failed` |
 | `checking` | The host's checks run on the change | `reviewing`, `fixing`, `ready` |
 | `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `accepting`, `fixing` |
-| `fixing` | An agent works on the failures and findings, in the same change, or its round waits to start | `checking`, `awaitingApproval`, `planning`, `ready`, `failed` |
+| `fixing` | An agent works on the failures and findings, in the same change, or its round waits to start | `checking`, `awaitingApproval`, `planning`, `working`, `ready`, `failed` |
 | `ready` | The change passed, or a person decides what is left | `accepting`, `fixing`, `checking` |
 | `accepting` | The host accepts the change | `accepted`, `ready`, `fixing`, `working`, `failed` |
 | `accepted` | The change is in | none |

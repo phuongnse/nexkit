@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/needPerson.schema.json",
-  "$comment": "Tell the people who decide, once, with what they decide on (`ref`, as attention has it).",
+  "$comment": "Tell the people who decide, once, with what they decide on (`ref`, as attention has it: a plan's or a round's ref for questions and approvals, the change version for a conflict).",
   "type": "object",
   "properties": {
     "id": {

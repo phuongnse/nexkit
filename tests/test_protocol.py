@@ -261,9 +261,11 @@ class ProtocolTest(unittest.TestCase):
         observed = protocol.load("events/changeObserved.schema.json")["required"]
         for field in ("changeId", "version", "conflicts", "merged", "empty"):
             self.assertIn(field, observed)
-        events = protocol.names("events")
-        for gone in ("changePushed", "conflict", "changeAccepted", "changeEmptied"):
-            self.assertNotIn(gone, events)
+        for kind in ("publish", "replaceChange"):
+            # The host reads the change when it handles the result of an action that changed it.
+            self.assertIn(
+                "observed", protocol.load(f"actions/{kind}.result.schema.json")["required"]
+            )
 
     def test_describe_answers_the_major_and_minor_version(self):
         answer = example("calls/describe.answer.json")

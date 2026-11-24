@@ -39,7 +39,9 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 - Agent output is untrusted: validate it before publishing, pass everything printed or
   stored from a session through `redact.py`, print tool output with workflow commands
   stopped. Markers count only in comments of the App, never the Actions bot, which CI on an
-  agent's code can write as, and a run marker only where it ends the comment.
+  agent's code can write as, and only at the position NexKit writes them (see *Security
+  notes* in `docs/how-it-works.md`). Agent text that NexKit copies where no position pins
+  a marker opens none (`state.inert_markers`).
 - State lives only on GitHub (comments, pull requests, statuses).
 - Agent errors and `blocked` results never retry automatically; only check failures and
   review findings do, up to `fix.max_auto_rounds`. The one exception is a run that stopped

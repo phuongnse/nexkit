@@ -48,12 +48,15 @@ language can therefore run it, and the engine could be written again in another 
 without a change to any host, as long as the conformance suite passes.
 
 - **Over HTTP**, `POST /<call>` takes the request as its body and answers with the same JSON
-  text as standard input: status `200`, or `400` when the engine refuses the request. `serve`
-  answers each request on its own and keeps nothing between them. It refuses a body over 1 MiB
-  or without a `Content-Length`, and listens on `127.0.0.1:8080` unless `--host` and `--port`
-  say otherwise.
+  text as standard input: status `200`, or `400` when the engine refuses the request. Both read
+  the request as UTF-8. `serve` answers each request on its own and keeps nothing between them.
+  It refuses a body over 1 MiB or without a `Content-Length`, and listens on `127.0.0.1:8080`
+  unless `--host` and `--port` say otherwise.
+- **Only for its host.** `serve` asks no one who they are, and does not limit how many clients
+  connect or how slowly they send. Put it where only its host reaches it, such as the host's
+  own machine or a private network beside it.
 - **The image.** Each release publishes `ghcr.io/phuongnse/nexkit-engine:<version>`, built from
-  the release's commit. It runs `serve` on port 8080 of the container.
+  the release's commit on `main`. It runs `serve` on port 8080 of the container.
 
 ## The engine
 

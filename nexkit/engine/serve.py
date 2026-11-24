@@ -11,11 +11,11 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .. import protocol
-from . import CALLS, reply
-from .cli import text
+from . import CALLS, reply, text
 
 HOST = "127.0.0.1"
 PORT = 8080
@@ -25,25 +25,36 @@ MAX_BODY = 1 << 20
 
 
 class Handler(BaseHTTPRequestHandler):
-    # A client that stops sending does not hold its thread for longer than this.
+    # A client that stops sending does not hold its thread for longer than this, between two
+    # reads. Nothing bounds a client that keeps sending slowly, or how many connect at once:
+    # serve belongs on a network that only its host reaches (docs/engine.md#the-parts).
     timeout = 30
 
     def do_POST(self):
+        try:
+            status, answer = self.answer()
+        except Exception:
+            self.log_error("%s", traceback.format_exc())
+            status, answer = 500, refusal("The engine failed on this request.")
+        self.respond(status, answer)
+
+    def answer(self):
         call = self.path.removeprefix("/")
         if call not in CALLS:
-            return self.respond(
-                404, refusal(f"No call is at {self.path}; the calls are {calls()}.")
-            )
+            return 404, refusal(f"No call is at {self.path}; the calls are {calls()}.")
         length = self.headers.get("Content-Length", "")
         if self.headers.get("Transfer-Encoding") or not (length.isascii() and length.isdigit()):
-            return self.respond(411, refusal("Send the request with a Content-Length."))
-        if int(length) > MAX_BODY:
-            return self.respond(413, refusal(f"A request has at most {MAX_BODY} bytes."))
+            return 411, refusal("Send the request with a Content-Length.")
+        # A length with more digits than any request needs is refused before it is a number.
+        if len(length) > len(str(MAX_BODY)) or int(length) > MAX_BODY:
+            return 413, refusal(f"A request has at most {MAX_BODY} bytes.")
         answer = reply(call, self.rfile.read(int(length)))
-        self.respond(400 if "error" in answer else 200, answer)
+        return (400 if "error" in answer else 200), answer
 
-    def do_GET(self):
+    def refuse_method(self):
         self.respond(405, refusal(f"Send each request with POST to one of {calls()}."))
+
+    do_GET = do_HEAD = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = refuse_method
 
     def respond(self, status, answer):
         body = text(answer).encode()
@@ -55,7 +66,8 @@ class Handler(BaseHTTPRequestHandler):
         # Each connection carries one request, so nothing about one request outlives it.
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
         self.close_connection = True
 
 

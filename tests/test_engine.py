@@ -45,7 +45,7 @@ def request(**fields):
 class ProgramTest(unittest.TestCase):
     def run_program(self, text):
         out = io.StringIO()
-        code = cli.main(["step"], io.StringIO(text), out)
+        code = cli.main(["step"], io.BytesIO(text.encode()), out)
         return code, json.loads(out.getvalue())
 
     def test_the_same_request_gives_the_same_answer(self):
@@ -91,8 +91,9 @@ class PurityTest(unittest.TestCase):
                     names = [alias.name for alias in node.names]
                 elif isinstance(node, ast.ImportFrom) and node.level == 0:
                     names = [node.module]
-                elif isinstance(node, ast.ImportFrom) and node.level == 1:
-                    found = {node.module, *(alias.name for alias in node.names)}
+                elif isinstance(node, ast.ImportFrom):
+                    # Relative, at any level; an absolute `nexkit...` import fails below.
+                    found = {*(node.module or "").split("."), *(a.name for a in node.names)}
                     self.assertFalse(
                         {f"{name}.py" for name in found} & PROGRAM, f"{path.name} imports {found}"
                     )

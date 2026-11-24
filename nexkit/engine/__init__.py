@@ -19,13 +19,19 @@ def answer(request):
         return {"protocol": protocol.VERSION, "error": str(error)}
 
 
-def reply(call, text):
-    """The answer to a request for `call` given as JSON text, as the program reads it on
-    standard input and `serve` in a body. A request may leave out its call, or name `call`."""
+def reply(call, data):
+    """The answer to a request for `call` given as UTF-8 JSON bytes, as the program reads them
+    on standard input and `serve` in a body. A request may leave out its call, or name `call`."""
     try:
-        request = json.loads(text)
+        request = json.loads(data.decode("utf-8"))
     except ValueError as error:
         return {"protocol": protocol.VERSION, "error": f"The request is not JSON: {error}"}
+    except RecursionError:
+        # Its message names the stack it used, which differs between processes and threads.
+        return {
+            "protocol": protocol.VERSION,
+            "error": "The request is not JSON: it nests too deep.",
+        }
     if not isinstance(request, dict):
         return answer(request)
     if request.get("call", call) != call:
@@ -33,12 +39,17 @@ def reply(call, text):
     return answer({**request, "call": call})
 
 
+def text(answer):
+    """An answer as the program writes it and `serve` sends it: sorted JSON on one line."""
+    return json.dumps(answer, sort_keys=True) + "\n"
+
+
 def _answer(request):
     if not isinstance(request, dict) or request.get("call") not in CALLS:
         raise EngineError(f"A request's call must be one of {', '.join(CALLS)}.")
     found = protocol.check(request, f"calls/{request['call']}.schema.json", "request")
-    event = request.get("event") or {}
-    kind = event.get("kind")
+    event = request.get("event")
+    kind = event.get("kind") if isinstance(event, dict) else None
     if kind not in protocol.names("events"):
         found.append(f"request.event.kind {kind!r} is not an event")
     else:

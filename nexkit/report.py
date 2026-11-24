@@ -1728,16 +1728,15 @@ def _skipped_conflicting(gh, cfg, decision, pr, head, files, row, workflow_ref, 
     from .host import conflicting
 
     label = _held(gh, cfg, decision["issue"])
-    if label:
-        # A hold keeps the round back, whatever rounds are left (`host.conflicting`).
-        conflicting(cfg, decision, pr, head, label, 0)
-        row["held_back"] = "conflicts"
-        later = "starts the round that resolves it"
-        held = "starts no round to resolve it"
-        return autopilot.HELD, f"{message} {_held_line(decision['issue'], label, held, later)}"
     try:
-        used = conflict_rounds_of(gh, pr, row)
-        left = conflicting(cfg, decision, pr, head, None, used) == "round"
+        # A hold keeps the round back whatever rounds are left, so they are read only without.
+        used = 0 if label else conflict_rounds_of(gh, pr, row)
+        ends = conflicting(cfg, decision, pr, head, label, used)
+        if ends == "held":
+            row["held_back"] = "conflicts"
+            later = "starts the round that resolves it"
+            held = "starts no round to resolve it"
+            return autopilot.HELD, f"{message} {_held_line(decision['issue'], label, held, later)}"
         started = start_conflict_round(
             gh,
             pr,
@@ -1746,7 +1745,7 @@ def _skipped_conflicting(gh, cfg, decision, pr, head, files, row, workflow_ref, 
             default_branch,
             cfg["conflicts"]["max_rounds"],
             row=row,
-            left=left,
+            left=ends == "round",
         )
     except GitHubError as exc:
         started = f"NexKit could not start a round to merge `{base}`: {exc}"

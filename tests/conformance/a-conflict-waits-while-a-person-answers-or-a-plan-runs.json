@@ -130,7 +130,7 @@
         "runAgent"
       ],
       "expect": {
-        "conflict": null
+        "conflict": "v1"
       }
     },
     {

@@ -111,6 +111,7 @@ def event_of(short, state, number):
         event.setdefault("changeVersion", version)
     if kind == "changePushed":
         event.setdefault("previousVersion", version)
+        event.setdefault("changeId", ((state or {}).get("change") or {}).get("id") or "none")
     plan = ((state or {}).get("plan") or {}).get("text", {}).get("ref")
     if kind == "planApproved":
         event.setdefault("plan", plan or "none")

@@ -1,0 +1,234 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:review"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v2",
+        "changeVersion": "v3"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v2"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v3",
+        "changeVersion": "v4"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v3"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v4",
+        "changeVersion": "v5"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v4"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v5",
+        "changeVersion": "v6"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v5"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v6",
+        "changeVersion": "v7"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v6"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v7",
+        "changeVersion": "v8"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v7"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v8",
+        "changeVersion": "v9"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v8"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v9",
+        "changeVersion": "v10"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v9"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v10",
+        "changeVersion": "v11"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v10"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v11",
+        "changeVersion": "v12"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "pushes.-1.previousVersion": "v11"
+      }
+    },
+    {
+      "event": {
+        "kind": "changePushed",
+        "previousVersion": "v12",
+        "changeVersion": "v13"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "outage",
+        "pushes": [],
+        "change.version": "v1"
+      }
+    }
+  ]
+}

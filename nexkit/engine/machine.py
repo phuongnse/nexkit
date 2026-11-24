@@ -191,9 +191,6 @@ class Step:
         if self.review_only and stage != "review":
             raise EngineError("A review-only item is only checked and reviewed.")
         self.s["rounds"]["started"] += stage in ("implement", "fix")
-        if stage == "fix":
-            # A fix round merges the base branch when the branch conflicts (how-it-works.md).
-            self.s["conflict"] = None
         self.do(
             "runAgent",
             stage=stage,
@@ -298,6 +295,8 @@ class Step:
         policy, rounds = self.p["conflicts"], self.s["rounds"]
         if policy == "redo":
             self.move("working")
+            # Pushes that wait belong to the change this replaces.
+            self.s["pushes"] = []
             self.do("replaceChange", reason="The change no longer applies to what it was made on.")
         elif policy == "resolve" and rounds["conflicts"] < self.p["conflictRounds"]:
             rounds["conflicts"] += 1
@@ -505,8 +504,15 @@ class Step:
         return True
 
     def on_conflict(self, event):
-        if not self.s["change"] or event["changeVersion"] != self.version or self.review_only:
+        if not self.s["change"] or self.review_only:
             return False
+        if event["changeVersion"] != self.version:
+            # A conflict may arrive before its version, such as one the host found while it
+            # published: it waits for that version, unless one on the current version waits.
+            if self.s["conflict"] in (self.version, event["changeVersion"]):
+                return False
+            self.s["conflict"] = event["changeVersion"]
+            return True
         if self.at_once():
             self.s["conflict"] = None
             self.on_conflict_found()
@@ -536,14 +542,26 @@ class Step:
             "previousVersion": event["previousVersion"],
             "changeVersion": event["changeVersion"],
         }
-        if not self.s["change"] or push["changeVersion"] == self.version:
+        change = self.s["change"] or {}
+        # While a publish or a replace is on its way, the change may get an id the engine has
+        # not seen yet: a push to it waits like one that starts from a later version.
+        coming = any(a["kind"] in ("publish", "replaceChange") for a in self.s["pending"])
+        ours = change.get("id") == event["changeId"]
+        if not (ours or coming) or push["changeVersion"] == self.version:
             return False
-        if push["previousVersion"] != self.version:
+        if push["previousVersion"] != self.version or not ours:
             # Pushes arrive in any order: this one waits until the change reaches the version
             # it started from, such as when an earlier push or the agent's publish arrives.
             if push in self.s["pushes"]:
                 return False
-            self.s["pushes"] = [*self.s["pushes"], push][-PUSHES:]
+            if len(self.s["pushes"]) >= PUSHES:
+                # The engine can no longer follow the change: the host sends a push from the
+                # change's version to its head (docs/engine.md).
+                self.s["pushes"] = []
+                self.move("failed")
+                self.need("outage", "More pushes wait than the engine keeps.")
+                return True
+            self.s["pushes"] = [*self.s["pushes"], push]
             return True
         self.pushed(push["changeVersion"])
         self.check()
@@ -585,8 +603,12 @@ class Step:
         self.s["pending"].remove(action)
         self.spend(event)
         attention = self.s["attention"] or {}
-        told = (attention.get("reason"), attention.get("ref"))
-        if action["kind"] == "needPerson" and told != (action["reason"], action["ref"]):
+        told = (attention.get("reason"), attention.get("text"), attention.get("ref"))
+        if action["kind"] == "needPerson" and told != (
+            action["reason"],
+            action["text"],
+            action["ref"],
+        ):
             # What the person was to be told no longer stands.
             return True
         if action["kind"] in AGAIN:
@@ -805,8 +827,13 @@ class Step:
             self.need("acceptRefused", result["text"] or "The accept was refused.")
 
     def finished_replaceChange(self, result, action):
+        replaced = self.version
         self.s["change"] = result["change"]
-        self.s["pushes"] = []
+        # A push that starts from the replaced change's version is that change's.
+        self.s["pushes"] = [p for p in self.s["pushes"] if p["previousVersion"] != replaced]
+        if any(push["previousVersion"] == self.version for push in self.s["pushes"]):
+            # A person pushed to the new change before its result arrived.
+            self.pushed(self.version)
         self.run("implement")
 
     def finished_createParts(self, result, action):

@@ -188,8 +188,9 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, and the second time, it goes to `failed` for a person, as NexKit 6 does. An item
-  that has a change asks too, as NexKit 6 does after a fix round, but is never split: its new
-  plan goes on as one change on it.
+  that has a change asks too, as NexKit 6 does after a fix round, but the engine never splits
+  it: its new plan goes on as one change on it, where NexKit 6 may instead split it and close
+  the pull request as superseded.
 - **A final item that a person reopens** waits for a person, with attention, as NexKit 6 does.
   One whose change went in or became empty starts again without it and with its rounds
   counted afresh.

@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import nexkit
 from nexkit import engine, protocol
 from nexkit.engine import cli, machine
 
@@ -24,7 +25,7 @@ EXAMPLES = protocol.ROOT / "examples"
 ALLOWED = {
     "nexkit": set(),
     "nexkit.engine.machine": {"__future__", "copy", "nexkit.schema"},
-    "nexkit.engine": {"__future__", "nexkit.protocol", "nexkit.engine.machine"},
+    "nexkit.engine": {"__future__", "nexkit", "nexkit.protocol", "nexkit.engine.machine"},
     "nexkit.engine.cli": {"__future__", "json", "sys", "nexkit.engine"},
     "nexkit.schema": {"__future__", "string"},
     "nexkit.protocol": {"__future__", "functools", "json", "pathlib", "nexkit.schema"},
@@ -126,6 +127,22 @@ class ProgramTest(unittest.TestCase):
         tick = {**json.loads((EXAMPLES / "events" / "tick.json").read_text()), "item": "42"}
         answer = engine.answer({**request(event=tick), "call": "step"})
         self.assertIn("first event", answer["error"])
+
+    def test_describe_says_which_protocol_the_engine_speaks(self):
+        out = io.StringIO()
+        code = cli.main(["describe"], io.StringIO('{"protocol": 1}'), out)
+        answer = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(protocol.check(answer, "calls/describe.answer.schema.json"), [])
+        self.assertEqual(answer["protocol"], {"major": 1, "minor": protocol.MINOR})
+        self.assertEqual(answer["engine"], nexkit.__version__)
+        self.assertEqual(answer["calls"], list(engine.CALLS))
+        self.assertIn("describe", engine.CALLS)
+        with mock.patch.object(protocol, "MINOR", 3):
+            self.assertEqual(
+                engine.answer({"protocol": 1, "call": "describe"})["protocol"]["minor"], 3
+            )
+        self.assertIn("error", engine.answer({"protocol": 2, "call": "describe"}))
 
     def test_an_unknown_call_is_refused(self):
         self.assertIn("error", engine.answer({**request(), "call": "dance"}))

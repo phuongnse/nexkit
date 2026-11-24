@@ -77,6 +77,18 @@
         "changeVersion": "v0"
       },
       "state": "reviewing",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "conflict": "v0"
+      }
+    },
+    {
+      "event": {
+        "kind": "conflict",
+        "changeVersion": "v0"
+      },
+      "state": "reviewing",
       "changed": false,
       "actions": []
     },
@@ -92,6 +104,15 @@
         "conflict": "v1",
         "pending.0.stage": "review"
       }
+    },
+    {
+      "event": {
+        "kind": "conflict",
+        "changeVersion": "v7"
+      },
+      "state": "reviewing",
+      "changed": false,
+      "actions": []
     },
     {
       "event": {

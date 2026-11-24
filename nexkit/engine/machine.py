@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 
+from ..protocol.size import MOST, STATE_LIMIT, clip, fit, signature
 from ..schema import filled
 
 FINAL = ("accepted", "noChange", "dropped")
@@ -164,6 +165,7 @@ class Step:
         return any(wait["for"] == kind for wait in self.s["waits"])
 
     def need(self, reason, text):
+        text = clip(text, "reason")
         self.s["attention"] = {"reason": reason, "text": text}
         self.do("needPerson", reason=reason, text=text)
 
@@ -176,10 +178,10 @@ class Step:
         used["seconds"] += source.get("seconds") or 0
         used["usd"] += source.get("usd") or 0
 
-    def run(self, stage):
+    def run(self, stage, again=False):
         if self.review_only and stage != "review":
             raise EngineError("A review-only item is only checked and reviewed.")
-        self.s["rounds"]["started"] += stage in ("implement", "fix")
+        self.s["rounds"]["started"] += stage in ("implement", "fix") and not again
         self.do(
             "runAgent",
             stage=stage,
@@ -268,6 +270,28 @@ class Step:
             self.move("ready")
             self.need("acceptRefused", "The change conflicts with what it was made on.")
 
+    def held_back(self, ignore=()):
+        """Whether something holds back the work of the item's state: a hold, attention, a
+        wait other than for a blocker or of the kinds in `ignore`, or its work that runs."""
+        waits = [w for w in self.s["waits"] if w["for"] not in ("blocker", *ignore)]
+        # A `wait` action only asks for the tick, which has come or will.
+        running = any(a["kind"] in WORK and a["kind"] != "wait" for a in self.s["pending"])
+        return bool(self.s["hold"] or self.s["attention"] or waits or running)
+
+    def resume(self):
+        """Start the work of the item's state again once nothing holds it back, as after a
+        wait for a time, a usage limit, required checks or the base branch, or a hold
+        (docs/engine.md#states). It is the same round, so it counts nothing again."""
+        if self.held_back():
+            return
+        stage = next((stage for stage, name in RUNS.items() if name == self.state), None)
+        if stage:
+            self.run(stage, again=True)
+        elif self.state == "checking":
+            self.do("runChecks", changeVersion=self.version)
+        elif self.state == "accepting":
+            self.do("accept", changeVersion=self.version, by="engine")
+
     def timed_out(self):
         """An implement or fix agent ran out of time. With splits on, as autopilot does, the
         item asks once for a plan that splits it; otherwise, or the second time, a person
@@ -298,10 +322,18 @@ class Step:
     def on_requested(self, event):
         what, state, change = event["what"], self.state, self.s["change"]
         if what == "start":
-            # Only an item that waits to start starts, and a hold keeps it waiting.
-            if state != "new" or self.s["hold"] or self.review_only or not self.waiting("start"):
+            # Only an item that waits to start starts, and a hold or a blocker keeps it
+            # waiting. One that waits in a later state, as an import leaves a round that a
+            # hold kept back, starts that state's work again.
+            if self.review_only or not self.waiting("start") or self.waiting("blocker"):
                 return False
-            self.start_plan()
+            if state == "new" and not self.s["hold"]:
+                self.start_plan()
+            elif state in FINAL or state == "new" or self.held_back(ignore=("start",)):
+                return False
+            else:
+                self.s["waits"] = [wait for wait in self.s["waits"] if wait["for"] != "start"]
+                self.resume()
         elif what in ("plan", "planFromScratch"):
             if self.review_only or state not in ("new", "awaitingApproval", "failed"):
                 return False
@@ -396,6 +428,7 @@ class Step:
         if not self.s["hold"]:
             return False
         self.s["hold"] = False
+        self.resume()
         return True
 
     def on_partEnded(self, event):
@@ -425,6 +458,7 @@ class Step:
         if not waits:
             return False
         self.s["waits"].remove(waits[0])
+        self.resume()
         return True
 
     def on_conflict(self, event):
@@ -461,7 +495,15 @@ class Step:
         return False
 
     def on_blockerClosed(self, event):
-        return False
+        """An item that blocks this one ended, or the bug issue of a failure that the base
+        branch has: the waits on it end."""
+        ends = ("blocker", "baseFailure")
+        waits = [w for w in self.s["waits"] if w["for"] in ends and w["on"] == event["blocker"]]
+        if not waits:
+            return False
+        self.s["waits"] = [wait for wait in self.s["waits"] if wait not in waits]
+        self.resume()
+        return True
 
     def pending(self, number):
         return next((item for item in self.s["pending"] if item["id"] == number), None)
@@ -500,24 +542,28 @@ class Step:
     # Results.
 
     def take_plan(self, output, text):
-        questions = [
-            {key: question[key] for key in ("question", "options", "recommended", "closes")}
-            if "closes" in question
-            else {key: question[key] for key in ("question", "options", "recommended")}
-            for question in output.get("questions", [])
-        ]
+        """Keep a plan as the state does: each list to MOST and each text to LONGEST
+        (`protocol.size`). A split of more parts than MOST keeps none, and `parts` says how
+        many it named, so a split is never filed cut; each part needs only earlier parts."""
+        questions = [_question(item) for item in output.get("questions", [])[: MOST["questions"]]]
+        named = output.get("split", [])
         split = [
-            {"key": number, "title": part["title"], "needs": part["depends_on"]}
-            for number, part in enumerate(output.get("split", []), 1)
+            {
+                "key": number,
+                "title": clip(part["title"], "title"),
+                "needs": sorted({need for need in part["depends_on"] if 0 < need < number}),
+            }
+            for number, part in enumerate(named if len(named) <= MOST["split"] else [], 1)
         ]
+        paths = output.get("protected_paths", [])[: MOST["protectedPaths"]]
         self.s["plan"] = {
             "text": text,
             "questions": questions,
             "criteria": len(output.get("acceptance_criteria", [])),
             "tooLarge": bool(output.get("too_large")),
-            "parts": len(split),
+            "parts": len(named),
             "noChange": bool(filled(output.get("no_change"))),
-            "protectedPaths": list(output.get("protected_paths", [])),
+            "protectedPaths": [clip(path, "path") for path in paths],
             "approved": False,
             "split": split,
         }
@@ -608,11 +654,16 @@ class Step:
             self.do("show", what="review", text={"name": "review", "ref": number})
             self.wait("start")
             return
-        rounds["criteria"] = [item["status"] for item in output["criteria"]]
-        rounds["checklist"] = [item["answer"] for item in output.get("checklist", [])]
+        criteria = [item["status"] for item in output["criteria"]]
+        checklist = [item["answer"] for item in output.get("checklist", [])]
+        # Past MOST, what a decision reads first: an unmet or unverifiable criterion and an
+        # item not met are kept, and the blocking findings come before the others.
+        rounds["criteria"] = _most(criteria, "criteria", ("unmet", "unverifiable"))
+        rounds["checklist"] = _most(checklist, "checklist", ("not_met",))
+        findings = sorted(output["findings"], key=lambda item: item["severity"] != "blocking")
         rounds["findings"] = [
-            {"severity": item["severity"], "text": item["body"][:300]}
-            for item in output["findings"]
+            {"severity": item["severity"], "text": clip(item["body"], "finding")}
+            for item in findings[: MOST["findings"]]
         ]
         blocking = any(item["severity"] == "blocking" for item in rounds["findings"])
         if (
@@ -641,7 +692,9 @@ class Step:
         failing = [
             check for check in result["checks"] if not check["passed"] and not check["skipped"]
         ]
-        self.s["rounds"]["signatures"] = [check["signature"] or check["name"] for check in failing]
+        self.s["rounds"]["signatures"] = [
+            signature(check["signature"] or check["name"]) for check in failing
+        ][: MOST["signatures"]]
         if self.review_only or not failing:
             self.review()
         elif self.p["reviewAfterFailingChecks"] == "always":
@@ -671,8 +724,31 @@ class Step:
         self.run("implement")
 
     def finished_createParts(self, result, action):
-        self.s["parts"] = [{"item": part["item"], "state": None} for part in result["parts"]]
+        parts = result["parts"][: MOST["split"]]
+        self.s["parts"] = [{"item": part["item"], "state": None} for part in parts]
         self.wait("parts")
+
+
+def _question(question):
+    """A question as the state keeps it: its texts clipped, at most MOST["options"] options,
+    and no number that names an option it left out."""
+    options = [clip(option, "option") for option in question["options"][: MOST["options"]]]
+    kept = {
+        "question": clip(question["question"], "question"),
+        "options": options,
+        "recommended": question["recommended"] if question["recommended"] <= len(options) else 0,
+    }
+    if "closes" in question:
+        kept["closes"] = question["closes"] if question["closes"] <= len(options) else 0
+    return kept
+
+
+def _most(answers, kind, first):
+    """`answers` as the state keeps them: all of them, or past MOST[kind] the ones in
+    `first` before the others, so that a decision reads the same."""
+    if len(answers) <= MOST[kind]:
+        return answers
+    return sorted(answers, key=lambda answer: answer not in first)[: MOST[kind]]
 
 
 # The events that a final item still takes: a reopen, and the results of what it asked for.
@@ -711,6 +787,8 @@ def step(state, event, policies, check):
         _never_writes(work.actions)
     work.s["revision"] += 1
     work.s["recentEvents"] = [*work.s["recentEvents"], event["id"]][-RECENT:]
+    if fit(work.s) is None:
+        raise EngineError(f"The state document passes the limit of {STATE_LIMIT} bytes.")
     return work.s, work.actions, True
 
 

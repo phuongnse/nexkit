@@ -23,7 +23,8 @@ EXAMPLES = protocol.ROOT / "examples"
 # package, and `nexkit.engine.cli` reads only standard input. Any other import fails the test.
 ALLOWED = {
     "nexkit": set(),
-    "nexkit.engine.machine": {"__future__", "copy", "nexkit.schema"},
+    "nexkit.engine.machine": {"__future__", "copy", "nexkit.protocol.size", "nexkit.schema"},
+    "nexkit.protocol.size": {"__future__", "hashlib", "json"},
     "nexkit.engine": {"__future__", "nexkit.protocol", "nexkit.engine.machine"},
     "nexkit.engine.cli": {"__future__", "json", "sys", "nexkit.engine"},
     "nexkit.schema": {"__future__", "string"},

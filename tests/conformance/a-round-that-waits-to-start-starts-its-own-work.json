@@ -1,0 +1,39 @@
+{
+  "policies": {},
+  "state": {
+    "example": "checking",
+    "set": {
+      "pending": [],
+      "waits": [
+        {
+          "id": "w7.1",
+          "for": "start",
+          "until": null,
+          "on": null
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "checking",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

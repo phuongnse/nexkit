@@ -1,0 +1,44 @@
+{
+  "policies": {},
+  "state": {
+    "example": "fixing",
+    "set": {
+      "pending": [],
+      "waits": [
+        {
+          "id": "w7.1",
+          "for": "baseFailure",
+          "until": null,
+          "on": "77"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "76",
+        "completed": true
+      },
+      "state": "fixing",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "77",
+        "completed": true
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "waits": []
+      }
+    }
+  ]
+}

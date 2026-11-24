@@ -3,7 +3,7 @@
 Agent output is untrusted, and runtimes enforce schemas differently, so NexKit checks the
 result itself before anything uses it. The same check reads the engine's protocol
 (`nexkit/protocol/`). Only the parts of JSON Schema that those schemas use are supported:
-`type` (one name or a list), `enum`, `const`, `properties`, `required`, `items`,
+`type` (one name or a list), `enum`, `const`, `properties`, `required`, `items`, `maxItems`,
 `additionalProperties`, `anyOf` and `$ref`, each as JSON Schema 2020-12 reads it: the keywords
 beside a `$ref` or an `anyOf` apply too, and `const` and `enum` compare JSON values, so `true`
 is not `1`. Keys that a schema does not name are left as they are unless
@@ -68,6 +68,8 @@ def problems(value, schema, where="result", refs=None, base=None):
                 found += problems(value[key], sub, f"{where}.{key}", refs, base)
         if schema.get("additionalProperties") is False:
             found += [f"{where}.{key} is not allowed" for key in value if key not in properties]
+    if isinstance(value, list) and len(value) > schema.get("maxItems", len(value)):
+        found.append(f"{where} must have at most {schema['maxItems']} items")
     if isinstance(value, list) and "items" in schema:
         for index, item in enumerate(value):
             found += problems(item, schema["items"], f"{where}[{index}]", refs, base)

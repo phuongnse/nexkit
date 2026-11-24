@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/state.schema.json",
-  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions, not prose.",
+  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions, not prose. As `protocol.size` measures it, JSON in UTF-8 with sorted keys and no spaces, it is at most 48,000 bytes, so that its base64 fits one GitHub comment. Each list the results and events fill has the most items it keeps (`maxItems`), and its texts are clipped as they come in. When a document would still pass the limit, the engine shortens the findings, the questions and options, the protected paths and the attention's text to fit.",
   "type": "object",
   "properties": {
     "schemaVersion": {
@@ -156,8 +156,34 @@
             "questions": {
               "type": "array",
               "items": {
-                "$ref": "common.schema.json#/$defs/question"
-              }
+                "$comment": "A question as the state keeps it. `recommended` and `closes` count options from 1; 0 is none.",
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string"
+                  },
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 6
+                  },
+                  "recommended": {
+                    "type": "integer"
+                  },
+                  "closes": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "question",
+                  "options",
+                  "recommended"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 10
             },
             "criteria": {
               "type": "integer"
@@ -166,6 +192,7 @@
               "type": "boolean"
             },
             "parts": {
+              "$comment": "How many parts the plan names, which may be more than `split` keeps.",
               "type": "integer"
             },
             "noChange": {
@@ -175,7 +202,8 @@
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "maxItems": 20
             },
             "approved": {
               "type": "boolean"
@@ -196,7 +224,8 @@
                     "type": "array",
                     "items": {
                       "type": "integer"
-                    }
+                    },
+                    "maxItems": 9
                   }
                 },
                 "required": [
@@ -205,7 +234,8 @@
                   "needs"
                 ],
                 "additionalProperties": false
-              }
+              },
+              "maxItems": 10
             }
           },
           "required": [
@@ -242,7 +272,8 @@
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "maxItems": 30
         },
         "findings": {
           "type": "array",
@@ -264,7 +295,8 @@
               "text"
             ],
             "additionalProperties": false
-          }
+          },
+          "maxItems": 30
         },
         "criteria": {
           "type": "array",
@@ -274,7 +306,8 @@
               "unmet",
               "unverifiable"
             ]
-          }
+          },
+          "maxItems": 50
         },
         "checklist": {
           "type": "array",
@@ -284,7 +317,8 @@
               "not_met",
               "not_applicable"
             ]
-          }
+          },
+          "maxItems": 50
         }
       },
       "required": [
@@ -372,7 +406,8 @@
           "state"
         ],
         "additionalProperties": false
-      }
+      },
+      "maxItems": 10
     },
     "policies": {
       "$comment": "The policies the running round started with, so that a change of the host's configuration applies from the next round. Empty while no round runs.",

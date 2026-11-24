@@ -1,0 +1,35 @@
+{
+  "policies": {},
+  "state": {
+    "example": "fixing",
+    "set": {
+      "pending": [],
+      "waits": [
+        {
+          "id": "w7.1",
+          "for": "usageLimit",
+          "until": "2026-11-23T21:00:00Z",
+          "on": null
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w7.1"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.started": 2,
+        "rounds.counted": 1,
+        "waits": []
+      }
+    }
+  ]
+}

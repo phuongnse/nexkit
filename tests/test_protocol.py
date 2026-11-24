@@ -221,6 +221,35 @@ class ProtocolTest(unittest.TestCase):
             self.assertEqual(raw["$id"], protocol.BASE + name, name)
             self.assertFalse(set(protocol.ANNOTATIONS) & set(protocol.load(name)), name)
 
+    def test_each_addition_names_a_minor_version_that_exists(self):
+        # docs/engine.md#versions: what 1.N adds carries "x-since": "1.N", and 1.0 adds nothing.
+        def since(value):
+            if isinstance(value, dict):
+                if "x-since" in value:
+                    yield value["x-since"]
+                for sub in value.values():
+                    yield from since(sub)
+            elif isinstance(value, list):
+                for sub in value:
+                    yield from since(sub)
+
+        named = set()
+        for name in schema_files():
+            raw = json.loads((protocol.ROOT / name).read_text())
+            for value in since(raw):
+                self.assertRegex(value, r"^1\.[1-9][0-9]*$", name)
+                self.assertLessEqual(int(value.split(".")[1]), protocol.MINOR, name)
+                named.add(int(value.split(".")[1]))
+            self.assertNotIn("x-since", json.dumps(protocol.load(name)), name)
+        self.assertEqual(named, set(range(1, protocol.MINOR + 1)))
+
+    def test_describe_answers_the_major_and_minor_version(self):
+        answer = example("calls/describe.answer.json")
+        self.assertEqual(answer["protocol"]["major"], protocol.VERSION)
+        self.assertEqual(answer["protocol"]["minor"], protocol.MINOR)
+        schema = protocol.load("calls/describe.answer.schema.json")
+        self.assertEqual(schema["properties"]["protocol"]["properties"]["major"]["const"], 1)
+
     def test_messages_take_fields_they_do_not_know_and_the_state_does_not(self):
         # docs/engine.md#versions: a new optional field keeps the protocol's version.
         for name in schema_files():

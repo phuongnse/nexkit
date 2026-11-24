@@ -4,8 +4,9 @@ stage's result and the state document, as docs/engine.md describes them.
 The schemas are the contract every host and runner reads, so they live as JSON files in
 `v1/`, and NexKit reads its stages' result schemas from them too. Each file names its dialect
 (`$schema`) and its URI (`$id`, under `BASE`), so that a standard validator in any language
-resolves their relative `$ref`s; `$comment` keys explain a schema to people. `load` leaves
-these three out, so a schema given to an agent is the one NexKit 6 gave.
+resolves their relative `$ref`s; `$comment` keys explain a schema to people, and `x-since` names
+the minor version that added a field or value (docs/engine.md#versions). `load` leaves these
+out, so a schema given to an agent is the one NexKit 6 gave.
 """
 
 from __future__ import annotations
@@ -19,12 +20,15 @@ from ..schema import problems
 # The protocol's version. The state document has a schema version of its own
 # (`state.schema.json`), so that a state can move on without a new protocol.
 VERSION = 1
+# The protocol's minor version: the one place it lives. Each field or value added after 1.0
+# carries `"x-since": "1.<minor>"`, and `describe` reports it.
+MINOR = 0
 ROOT = Path(__file__).parent / f"v{VERSION}"
 # The JSON Schema dialect of every file, and the URI each file's `$id` starts with.
 DIALECT = "https://json-schema.org/draft/2020-12/schema"
-BASE = f"https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v{VERSION}/"
+BASE = f"https://github.com/phuongnse/nexkit/protocol/v{VERSION}/"
 # The keys that describe a file rather than a value, which `load` leaves out.
-ANNOTATIONS = ("$comment", "$schema", "$id")
+ANNOTATIONS = ("$comment", "$schema", "$id", "x-since")
 
 
 def _plain(value):

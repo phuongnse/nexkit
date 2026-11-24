@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/createParts.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/createParts.schema.json",
   "$comment": "Make the parts of a split. `needs` names earlier parts by `key`.",
   "type": "object",
   "properties": {

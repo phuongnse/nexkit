@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/changePushed.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/changePushed.schema.json",
   "$comment": "A person changed the change, from `previousVersion` to `changeVersion`. Pushes may arrive in any order: one that does not start from the current version waits in the state until the change reaches its `previousVersion`.",
   "type": "object",
   "properties": {
@@ -19,6 +19,10 @@
     "at": {
       "$ref": "../common.schema.json#/$defs/time"
     },
+    "changeId": {
+      "$comment": "The id of the change pushed to. A push to another change, such as one the engine replaced, changes nothing.",
+      "type": "string"
+    },
     "previousVersion": {
       "type": "string"
     },
@@ -35,6 +39,7 @@
     "id",
     "item",
     "at",
+    "changeId",
     "previousVersion",
     "changeVersion",
     "by"

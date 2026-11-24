@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/common.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/common.schema.json",
   "$comment": "Shapes that the events, actions, results and state document share.",
   "$defs": {
     "id": {

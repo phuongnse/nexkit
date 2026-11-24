@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/publish.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/publish.schema.json",
   "$comment": "Make the agent's work the change: a commit and a pull request, or a draft.",
   "type": "object",
   "properties": {

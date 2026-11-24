@@ -205,8 +205,9 @@ class ImportTest(unittest.TestCase):
         self.assertEqual([wait["for"] for wait in state["waits"]], ["blocker", "start"])
 
     def test_a_new_item_is_as_the_engine_makes_it(self):
-        state = first_state.imported(**situation({"nexkit6": {"issue": {"number": 42}}}))
         event = json.loads((protocol.ROOT / "examples" / "events" / "created.json").read_text())
+        issue = {"number": 42, "title": event["title"]}
+        state = first_state.imported(**situation({"nexkit6": {"issue": issue}}))
         made = json.loads(
             run_program(
                 {

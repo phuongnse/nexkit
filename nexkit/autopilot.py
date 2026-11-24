@@ -135,6 +135,11 @@ PART = re.compile(r"\A<!-- nexkit:part (\d+) -->")
 # An issue at this depth is not split again; a person decides.
 MAX_DEPTH = 3
 DEPTH_REASON = f"it is a part {MAX_DEPTH} levels deep, which autopilot splits no further"
+# What a person does with an issue at MAX_DEPTH whose plan is too large.
+DEPTH_DO = (
+    "split it by hand into sub-issues that each fit one session, with the `request` skill "
+    "(each reads every issue above it, as NexKit's parts do), or implement it by hand"
+)
 # The most parent issues that a sweep walks up from an issue: GitHub's own nesting limit.
 LINEAGE = 8
 # A bug issue that autopilot opened because a workflow failed twice on the default branch,
@@ -1182,9 +1187,10 @@ def _later(text, since):
 
 def _closing_comment(gh, comments, since, items, asked):
     """A function that gives the step closing the issue, when the latest of collaborators'
-    comments after `since`, other than commands, answers the questions `items` with the
-    option that only closes it, as a person answers with autopilot (see
-    `state.closing_answer`); otherwise None. `asked` is the run or plan that asked."""
+    comments after `since`, the run comment of a `/nexkit go` that stopped as blocked, other
+    than commands, answers its questions `items` with the option that only closes it, as a
+    person answers with autopilot (see `state.closing_answer`); otherwise None. `asked` is
+    that run. A plan's questions are the engine's (`host.after_plan`)."""
     said = _commented_after(comments, since)
     option = closing_answer(said[-1].get("body"), items) if said and items else None
     by = ((said[-1].get("user") or {}).get("login") or "") if option else ""
@@ -1220,20 +1226,17 @@ def _since_stop(gh, issue, comments, stop):
     return None
 
 
-def _split(gh, issue, plan, data, record, start, pull=None):
-    """The step for an issue whose latest plan is too large, or None: split it as the plan
-    suggests; or, when it suggests no parts or parts titled like the issue, ask once for
-    the plan again; or wait for a person at `MAX_DEPTH` and after a second such plan."""
-    if not (data or {}).get("too_large"):
-        return None
+def _split(gh, issue, plan, data, record, start, pull):
+    """The step for an issue whose pull request's round ran out of time and whose plan since
+    is too large: split it as the plan suggests, and close the pull request as superseded;
+    or, when it suggests no parts or parts titled like the issue, ask once for the plan
+    again; or wait for a person at `MAX_DEPTH` and after a second such plan. The engine
+    decides every other plan's split (`host.after_plan`), but it never splits an item that
+    has a change (docs/engine.md#states), so this split stays NexKit 6's
+    (docs/engine.md#getting-there)."""
     if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
         # Its scope was set levels above, so a person splits it on, or implements it.
-        do = (
-            "split it by hand into sub-issues that each fit one session, with the `request` "
-            "skill (each reads every issue above it, as NexKit's parts do), or implement it "
-            "by hand"
-        )
-        return _step(issue, "waits", person(do, DEPTH_REASON))
+        return _step(issue, "waits", person(DEPTH_DO, DEPTH_REASON))
     parts = planned_parts(plan, data)
     if parts > MAX_PARTS and record.get("fewer_asked"):
         why = f"its plan has {parts} parts again, and autopilot files at most {MAX_PARTS}"
@@ -1271,36 +1274,6 @@ def _split(gh, issue, plan, data, record, start, pull=None):
         return _step(issue, "start", reason, command="plan", **start)
     fields = {"parts": data["split"], "plan_url": plan.get("html_url") or "", "pull": pull}
     return _step(issue, "split", "the plan splits the issue", **fields, **start)
-
-
-def _planned(gh, cfg, issue, plan, last, record, start, comments):
-    """The step after a plan that needs nobody's comment."""
-    data = plan_data(plan)
-    if data is None:  # a plan from before NexKit kept its record
-        if last.get("attention"):
-            return _step(issue, "waits", last["attention"])
-        return _step(issue, "start", "the plan needs nobody", command="go", **start)
-    if data.get("too_large"):
-        return _split(gh, issue, plan, data, record, start)
-    if filled(data.get("no_change")):
-        # Another round would find the same. A plan posted before NexKit ignored a finding
-        # of only quotes, such as `""`, may record one: such a plan goes on.
-        reason = "its plan finds that no change is needed"
-        fields = {"finding": data["no_change"], "plan_url": plan.get("html_url") or ""}
-        return _step(issue, "close", reason, **fields)
-    if data.get("protected_paths"):
-        return _step(issue, "waits", protected_reason(data["protected_paths"]))
-    if data.get("questions"):
-        found = answers(cfg, data["questions"])
-        if found and any(item.get("closes") for item in questions(data["questions"])):
-            return _step(issue, "waits", CLOSE_UNFOUNDED)
-        if not found:
-            return _step(issue, "waits", last.get("attention") or QUESTIONS_REASON)
-        if asked_again(comments):
-            return _step(issue, "waits", REPEATED)
-        reason = "autopilot answers the plan's questions"
-        return _step(issue, "start", reason, command="plan", answers=found, **start)
-    return _step(issue, "start", "the plan needs nobody", command="go", **start)
 
 
 def _meaningful(rounds):
@@ -1736,20 +1709,26 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
 
 def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
     """The step after the plan autopilot asked for when a round of the pull request ran out
-    of time: split the issue as the plan suggests, answer its questions, or, when it needs
-    nobody, a fix round on the pull request that follows the revised plan."""
+    of time: split the issue as the plan suggests (`_split`), or what the engine decides
+    (`host.after_plan`): answer its questions, or, when it needs nobody, a fix round on the
+    pull request that follows the revised plan."""
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
     data = plan_data(plan) if plan else None
-    split = _split(gh, issue, plan, data, record, start, pull) if data else None
-    if split:
-        return split
-    step = _planned(gh, cfg, issue, plan, last, record, start, comments)
-    if step["state"] != "start" or step["command"] != "go":
-        return step
-    reason = "the plan after the round that ran out of time needs nobody"
-    fields = {**start, "target": pull, "note": REPLANNED_NOTE}
-    return _step(issue, "start", reason, command="fix", **fields)
+    if (data or {}).get("too_large"):
+        return _split(gh, issue, plan, data, record, start, pull)
+    return _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull)
+
+
+def _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull=None):
+    """The step after the latest plan, which the engine decides (`host.after_plan`). An
+    issue whose next step the engine refuses to decide waits for a person, alone."""
+    from .host import Refused, after_plan, refused_reason
+
+    try:
+        return after_plan(gh, cfg, issue, plan, last, record, start, comments, pull)
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
 
 
 def assess(gh, cfg, issue, open_pulls, now=None, where=None):
@@ -1963,16 +1942,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         return _step(issue, "waits", last.get("attention") or failed_reason("go"))
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
-    data = plan_data(plan) or {}
-    asked = {"url": plan.get("html_url")}
-    closing = _closing_comment(gh, comments, plan, data.get("questions"), asked)
-    if closing:
-        return closing(issue)
-    if _commented_after(comments, plan):
-        return _step(
-            issue, "start", "collaborators commented after the plan", command="plan", **start
-        )
-    return _planned(gh, cfg, issue, plan, last, record, start, comments)
+    return _after_plan(gh, cfg, issue, plan, last, record, start, comments)
 
 
 def carries_on(gh, cfg, decision, outcome, agent):
@@ -1984,16 +1954,11 @@ def carries_on(gh, cfg, decision, outcome, agent):
         return False
     agent = agent or {}
     output = agent.get("output") or {}
-    splits = outcome == "planned" and bool(output.get("too_large"))
-    closes = outcome == "planned" and bool(filled(output.get("no_change")))
-    if splits or closes:
-        # Autopilot splits the issue, or closes it with the plan's finding.
-        handled = True
-    elif output.get("protected_paths"):
+    if outcome == "planned":
+        return _plan_carried_on(gh, cfg, decision, output)
+    if output.get("protected_paths"):
         # Only a person changes protected paths.
         handled = False
-    elif outcome == "planned":
-        handled = answers(cfg, output.get("questions")) is not None
     elif outcome == "agent_blocked":
         found = {"questions": round_questions(agent)}
         # A fix round's option that only a new plan carries out is a person's to answer.
@@ -2012,22 +1977,25 @@ def carries_on(gh, cfg, decision, outcome, agent):
         if outcome == "agent_error":
             record = find_record(gh.comments(issue["number"]))[1]
             return not record.get("split_asked") and not split_refused(gh, issue)
-        if closes:
-            return True
-        if not splits:
-            # Questions again right after autopilot's answers: a person decides.
-            pr = decision.get("pr")
-            target = gh.comments(pr or issue["number"])
-            return not asked_again(target, gh.comments(issue["number"]) if pr else ())
-        if splits:
-            # Autopilot splits the issue, or plans it again for parts that it lacks or
-            # that are titled like the issue.
-            record = find_record(gh.comments(issue["number"]))[1]
-            start = {"basis": None, "target": issue["number"], "note": "", "remember": {}}
-            return _split(gh, issue, {}, output, record, start)["state"] != "waits"
+        # Questions again right after autopilot's answers: a person decides.
+        pr = decision.get("pr")
+        target = gh.comments(pr or issue["number"])
+        return not asked_again(target, gh.comments(issue["number"]) if pr else ())
     except GitHubError:
         return False
-    return True
+
+
+def _plan_carried_on(gh, cfg, decision, output):
+    """Whether autopilot carries on after a plan, as the engine decides what follows it
+    (`host.plan_carried_on`). One whose next step the engine refuses to decide needs a
+    person."""
+    from .host import Refused, plan_carried_on
+
+    try:
+        issue = gh.issue(decision["issue"])
+        return taken(gh, cfg, issue) and plan_carried_on(gh, cfg, issue, decision, output)
+    except (GitHubError, Refused):
+        return False
 
 
 # -- a sweep -----------------------------------------------------------------------

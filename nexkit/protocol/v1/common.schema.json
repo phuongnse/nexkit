@@ -169,7 +169,13 @@
         "blocked",
         "failed",
         "reopened",
-        "outage"
+        "outage",
+        "askedAgain",
+        "closeRecommended",
+        "splitDepth",
+        "tooManyParts",
+        "noParts",
+        "partTitles"
       ]
     },
     "observation": {

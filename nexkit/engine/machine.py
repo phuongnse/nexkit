@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 
-from ..protocol.size import MOST, STATE_LIMIT, clip, fit, signature
+from ..protocol.size import LONGEST, MOST, STATE_LIMIT, clip, fit, signature
 from ..schema import filled
 
 FINAL = ("accepted", "noChange", "dropped")
@@ -82,6 +82,9 @@ DEFAULTS = {
     "conflicts": "person",
     "conflictRounds": 3,
     "splits": False,
+    "answers": "never",
+    "splitParts": 10,
+    "splitDepth": 3,
 }
 # The states a conflict leads to under each conflict policy.
 CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working",)}
@@ -91,6 +94,21 @@ CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("wor
 CONFLICT_AT_ONCE = ("ready", "accepting")
 # The fields of a changeObserved event that the state keeps as its `observed`.
 OBSERVED = ("changeId", "version", "conflicts", "merged", "empty")
+# What a title may end with that does not make it another: ASCII punctuation and whitespace,
+# as `string.punctuation` and `string.whitespace` hold them (`autopilot.repeated_titles`).
+ENDS = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ \t\n\r\x0b\x0c"
+# Who may close the item by an answer: closing is a write, so a reader's answer that picks
+# the option that only closes it plans it again (`autopilot._closing_comment`).
+WRITERS = ("decides", "writer")
+# The reasons of attention on a plan's questions, which a person's answers end.
+ASKS = ("question", "askedAgain", "closeRecommended")
+# What the engine asks a plan once more for, when a plan that is too large is not split, and
+# the attention after a second such plan (`autopilot._split`).
+AGAIN_FOR = {
+    "fewer": ("tooManyParts", "The plan has more parts than a split files, again."),
+    "parts": ("noParts", "The plan is too large and names no parts, again."),
+    "titles": ("partTitles", "Parts of the plan repeat the work item's title, again."),
+}
 
 
 class EngineError(ValueError):
@@ -468,6 +486,7 @@ class Step:
         self.s["itemKind"] = event["itemKind"]
         self.s["actors"] = event["actors"]
         self.s["change"] = event["change"]
+        self.take_place(event)
         if self.review_only and not event["change"]:
             raise EngineError("A review-only item comes with its change.")
         if event["plan"] is not None and not self.review_only:
@@ -485,7 +504,23 @@ class Step:
             # (docs/engine.md#states). A refused request changes nothing, as `step` keeps the
             # state it got unless reconciling acts, which a merge or an emptied change alone do.
             self.s["change"] = {**self.s["change"], "version": observed["version"]}
+        self.take_place(event)
+        if event["by"] is not None:
+            # A person acted, so the engine may answer the next plan's questions again.
+            self.forget_answers()
         return self.requested(event)
+
+    def take_place(self, event):
+        """The item's title and how deep a part it is, as `created` gives them and a request
+        gives them again: the parts of a split may not repeat the title, and an item at the
+        deepest level is not split."""
+        if "title" in event:
+            self.s["title"] = event["title"][: LONGEST["title"]]
+        if "depth" in event:
+            self.s["depth"] = event["depth"]
+
+    def forget_answers(self):
+        self.s["asked"] = [name for name in self.s["asked"] if name != "answers"]
 
     def requested(self, event):
         what, state, change = event["what"], self.state, self.s["change"]
@@ -541,8 +576,38 @@ class Step:
 
     def splits(self, plan):
         """Whether `plan` is split into its parts: only an item with no change is, since a
-        split would leave the change with nothing to end it."""
-        return plan["tooLarge"] and plan["split"] and self.p["splits"] and not self.s["change"]
+        split would leave the change with nothing to end it, and only as the split's rules
+        allow (`unsplit`)."""
+        return (
+            plan["tooLarge"]
+            and self.p["splits"]
+            and not self.s["change"]
+            and self.unsplit() is None
+        )
+
+    def unsplit(self):
+        """Why the parts of the plan, which is too large, are not filed, as NexKit 6 decides
+        it (`autopilot._split`), or None: `depth` for an item at the deepest level of parts,
+        or what a plan would need for a split: `fewer` parts than the most a split files,
+        `parts` at all, or parts that do not repeat the item's own `titles`."""
+        plan = self.s["plan"]
+        if self.s.get("depth", 0) >= self.p["splitDepth"]:
+            return "depth"
+        if plan["parts"] > self.p["splitParts"]:
+            return "fewer"
+        if not plan["split"]:
+            return "parts"
+        if self.repeated_titles():
+            return "titles"
+        return None
+
+    def repeated_titles(self):
+        """Whether a part is titled by the item's own title or starts with it, ignoring case,
+        spaces and punctuation at the end: each part is titled by its own behaviour."""
+        own = _bare(self.s.get("title", ""))
+        return bool(own) and any(
+            _bare(part["title"]).startswith(own) for part in self.s["plan"]["split"]
+        )
 
     def on_planApproved(self, event):
         plan = self.s["plan"]
@@ -554,6 +619,9 @@ class Step:
         ):
             return False
         plan["approved"] = True
+        self.forget_answers()
+        # A split that its rules refuse goes on as one change, as a person's `/nexkit go` on
+        # such a plan does in NexKit 6.
         if self.splits(plan):
             self.start_split()
         else:
@@ -564,12 +632,36 @@ class Step:
         attention = self.s["attention"] or {}
         if (
             self.state != "awaitingApproval"
-            or attention.get("reason") != "question"
+            or attention.get("reason") not in ASKS
             or attention.get("ref") != event["asked"]
         ):
             return False
+        if (
+            event["by"]["role"] in WRITERS
+            and not self.s["change"]
+            and self.picks_closing(event["answers"])
+        ):
+            # Another plan could only stop at the same place, so no agent runs. A change that
+            # exists stays with its item: its answer goes to the next plan.
+            self.move("dropped")
+            self.close("notPlanned")
+            return True
+        self.forget_answers()
         self.start_plan()
         return True
+
+    def picks_closing(self, answers):
+        """Whether `answers` pick, for a question of the plan whose answers attention waits
+        for, the option that only closes the item (`state.closing_answer`)."""
+        plan = self.s["plan"]
+        if plan is None or (self.s["attention"] or {}).get("ref") != plan["text"]["ref"]:
+            return False
+        asked = plan["questions"]
+        return any(
+            0 < answer["question"] <= len(asked)
+            and 0 < answer["option"] == asked[answer["question"] - 1].get("closes", 0)
+            for answer in answers
+        )
 
     def on_changesRequested(self, event):
         if self.state != "ready" or not self.s["change"] or self.review_only:
@@ -689,7 +781,25 @@ class Step:
         return False
 
     def on_commented(self, event):
-        return False
+        """A person's comment: the engine may answer the next plan's questions again, and with
+        automatic approval a plan that waits for a person on an item with no change is
+        planned again, since the plan did not hold what the comment says
+        (`autopilot._commented_after`)."""
+        if event["by"]["role"] == "outside":
+            return False
+        answered = "answers" in self.s["asked"]
+        self.forget_answers()
+        plan = self.s["plan"]
+        if (
+            self.state != "awaitingApproval"
+            or self.p["planApproval"] != "autoWhenClean"
+            or self.s["change"]
+            or plan is None
+            or plan["approved"]
+        ):
+            return answered
+        self.start_plan()
+        return True
 
     def on_blockerClosed(self, event):
         """An item that blocks this one ended, or the bug issue of a failure that the base
@@ -812,30 +922,76 @@ class Step:
         getattr(self, f"finished_{stage}")(output, action["id"])
 
     def finished_plan(self, output, number):
+        """What follows a plan, as NexKit 6 decides it (`autopilot._planned`). With automatic
+        approval: a plan that is too large is split, or planned once more for what a split
+        needs; one that finds no change ends the item; one that needs paths only a person
+        changes waits; questions are answered by the `answers` policy, at most once in a row,
+        or wait; and a clean plan starts the change. Otherwise a person decides every plan,
+        one that finds no change too, as NexKit 6 closes an item by itself only with
+        autopilot."""
+        # Whether the engine's answers started this plan, with no person acting since.
+        again = "answers" in self.s["asked"]
+        self.forget_answers()
         self.take_plan(output, {"name": "plan", "ref": number})
         plan = self.s["plan"]
         self.do("show", what="plan", text=plan["text"])
-        if plan["noChange"]:
+        if self.p["planApproval"] != "autoWhenClean":
+            self.plan_waits()
+        elif plan["tooLarge"] and self.p["splits"] and not self.s["change"]:
+            self.split_or_ask()
+        elif plan["tooLarge"]:
+            self.ask("approval", "The plan is too large, and a person decides how to go on.")
+        elif plan["noChange"]:
             self.move("noChange")
             self.close("completed", {"name": "noChange", "ref": number})
-        elif plan["questions"] or plan["protectedPaths"]:
-            self.plan_waits()
-        elif self.p["planApproval"] == "autoWhenClean" and plan["tooLarge"]:
-            if self.splits(plan):
-                plan["approved"] = True
-                self.start_split()
-            else:
-                self.move("awaitingApproval")
-                self.need(
-                    "approval",
-                    "The plan is too large, and a person decides how to go on.",
-                    plan["text"]["ref"],
-                )
-        elif self.p["planApproval"] == "autoWhenClean":
+        elif plan["protectedPaths"]:
+            self.ask("handMadeChange", "The change needs paths that only a person changes.")
+        elif plan["questions"]:
+            self.answer_or_ask(again)
+        else:
             plan["approved"] = True
             self.start_change()
+
+    def ask(self, reason, text):
+        """The plan waits for a person, for `reason`."""
+        self.move("awaitingApproval")
+        self.need(reason, text, self.s["plan"]["text"]["ref"])
+
+    def answer_or_ask(self, again):
+        """Answer the plan's questions with their recommended options and plan again, when the
+        `answers` policy lets the engine and every question has one, at most once in a row:
+        when the plan its answers started asks again and no person acted since, a person
+        decides (`autopilot.asked_again`). A recommended option that only closes the item is
+        a person's to pick."""
+        asked = self.s["plan"]["questions"]
+        if self.p["answers"] != "recommended" or not all(item["recommended"] for item in asked):
+            self.ask("question", "The plan has questions for a person.")
+        elif any(item.get("closes", 0) == item["recommended"] for item in asked):
+            self.ask("closeRecommended", "A recommended answer only closes the work item.")
+        elif again:
+            self.ask("askedAgain", "The plan asks again after the engine's answers.")
         else:
-            self.plan_waits()
+            self.s["asked"].append("answers")
+            text = {"name": "answers", "ref": self.s["plan"]["text"]["ref"]}
+            self.do("show", what="answers", text=text)
+            self.start_plan()
+
+    def split_or_ask(self):
+        """File the parts of a plan that is too large, all of them, or plan once more for what
+        a split needs; after a second such plan, or at the deepest level of parts, a person
+        decides (`autopilot._split`)."""
+        plan = self.s["plan"]
+        why = self.unsplit()
+        if why is None:
+            plan["approved"] = True
+            self.start_split()
+        elif why == "depth":
+            self.ask("splitDepth", "The plan is too large, and the item is at the deepest level.")
+        elif why in self.s["asked"]:
+            self.ask(*AGAIN_FOR[why])
+        else:
+            self.s["asked"].append(why)
+            self.start_plan()
 
     def plan_waits(self):
         """The plan waits for a person: for answers, a hand-made change or its approval."""
@@ -963,6 +1119,10 @@ class Step:
     def finished_cancel(self, result, action):
         # The cancelled action's late result changes nothing, so its spending comes here.
         self.spend(result)
+
+
+def _bare(title):
+    return title.strip().rstrip(ENDS).casefold()
 
 
 def _question(question):

@@ -6,5 +6,8 @@
   "whenRoundsRunOut": "person",
   "conflicts": "person",
   "conflictRounds": 3,
-  "splits": true
+  "splits": true,
+  "answers": "recommended",
+  "splitParts": 10,
+  "splitDepth": 3
 }

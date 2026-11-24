@@ -321,7 +321,13 @@ def _closing(gh, decision):
     stop at the same place. Any other note goes to its round as it is."""
     if decision["action"] not in ("plan", "implement") or not decision.get("note"):
         return decision
-    asked = asked_last(gh.comments(decision["issue"]))
+    comments = gh.comments(decision["issue"])
+    # The latest plan's questions are the engine's to answer; a blocked round's stay here.
+    from .host import asked_by_plan, closing_command
+
+    if asked_by_plan(comments):
+        return closing_command(gh, decision, comments)
+    asked = asked_last(comments)
     option = closing_answer(decision["note"], asked[1]) if asked else None
     if not option or gh.open_pulls(decision["branch"]):
         # A pull request that is open stays with its issue: a person closes both.

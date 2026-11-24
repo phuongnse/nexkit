@@ -1,0 +1,46 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "depth": 0
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan",
+        "depth": 2
+      },
+      "state": "planning",
+      "changed": true,
+      "expect": {
+        "depth": 2
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplit"
+      },
+      "state": "split",
+      "changed": true,
+      "actions": [
+        "show",
+        "createParts"
+      ],
+      "expect": {
+        "pending.1.parts.1.needs": [
+          1
+        ]
+      }
+    }
+  ]
+}

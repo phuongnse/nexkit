@@ -58,6 +58,28 @@
       "$comment": "Whether an approved plan that is too large and names its parts is split into them.",
       "type": "boolean",
       "default": false
+    },
+    "answers": {
+      "$comment": "Whether the engine answers a plan's questions with their recommended options when every question has one, at most once in a row, or a person answers them.",
+      "enum": [
+        "never",
+        "recommended"
+      ],
+      "default": "never"
+    },
+    "splitParts": {
+      "$comment": "The most parts a split files, from 1 to 10; a plan with more is planned once more for fewer.",
+      "type": "integer",
+      "default": 10,
+      "minimum": 1,
+      "maximum": 10
+    },
+    "splitDepth": {
+      "$comment": "How deep parts go, from 1 to 10: the item first split is at depth 0, and an item at this depth is not split again.",
+      "type": "integer",
+      "default": 3,
+      "minimum": 1,
+      "maximum": 10
     }
   },
   "required": []

@@ -235,7 +235,11 @@ def largest():
         "conflicts": "resolve",
         "conflictRounds": 10,
         "splits": True,
+        "answers": "recommended",
+        "splitParts": 10,
+        "splitDepth": 10,
     }
+    state.update(title=worst(LONGEST["title"]), depth=9)
     state["waits"] = [
         {"id": f"w99.{n}", "for": "blocker", "until": None, "on": str(4000 + n)}
         for n in range(most("waits"))
@@ -306,6 +310,8 @@ def decisions(state):
     plan = state["plan"]
     return (
         state["state"],
+        state["title"],
+        state["depth"],
         state["attention"]["reason"],
         [(q["recommended"], q.get("closes"), len(q["options"])) for q in plan["questions"]],
         plan["split"],

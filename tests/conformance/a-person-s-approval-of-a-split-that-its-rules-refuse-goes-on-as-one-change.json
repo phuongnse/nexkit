@@ -1,0 +1,53 @@
+{
+  "policies": {
+    "splits": true
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "title": "The step"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplit"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "approval"
+      }
+    },
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "parts": []
+      }
+    }
+  ]
+}

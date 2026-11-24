@@ -1,0 +1,57 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true,
+    "answers": "recommended"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planCloseRecommended"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "closeRecommended"
+      }
+    },
+    {
+      "event": {
+        "kind": "answered",
+        "answers": [
+          {
+            "question": 1,
+            "option": 1
+          }
+        ]
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    }
+  ]
+}

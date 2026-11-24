@@ -51,7 +51,8 @@ the conformance suite passes.
 
 ## The engine
 
-The engine answers three calls, each a pure function:
+The engine answers three calls, each a pure function, and `describe`, which says which version
+of the protocol it speaks (see [versions](#versions)):
 
 - **`step(state, event) -> (state, actions)`** decides what happens to one work item.
 - **`prompt(state, stage, inputs) -> text`** writes the prompt of a stage from the texts the host
@@ -100,11 +101,22 @@ The protocol is built for delivery at least once, in any order a host's queues g
   its text's ref; `answered` names the questions by the ref that asked them, as the state's
   attention has it: a plan's text ref, or a round's agent action; `changeApproved` names the change
   version. A decision on a plan, questions or a version that is no longer the item's changes
-  nothing.
-- **Pushes may arrive in any order.** `changePushed` names the version the push started from. One
-  that does not start from the change's version waits in the state, and applies once the change
-  reaches that version, such as when an earlier push or the agent's own publish arrives after it.
-  A host need not order pushes, nor read the head when it sends one.
+  nothing. The host names what the person acted on: the plan or questions they replied to, or the
+  latest ones shown to them before they acted, and the version they saw; never what the state
+  holds when the host handles the event, which would make a late decision look current.
+- **Pushes may arrive in any order.** `changePushed` names the change and the version the push
+  started from. One that does not start from the change's version waits in the state, and
+  applies once the change reaches that version, such as when an earlier push or the agent's own
+  publish arrives after it; one for another change, such as a change the engine replaced,
+  changes nothing. A host need not order pushes, nor read the head when it sends one. At most 10
+  pushes wait: when one more would, the engine can no longer follow the change, and the item
+  goes to `failed` for a person, with the pushes dropped. The host then sends a push from the
+  change's version in the state to its head. A push that arrives again with a new id after the
+  change moved past it also waits, and would apply only if the change came back to the version
+  it started from.
+- **Conflicts may arrive before their version.** A `conflict` for a version the change has not
+  reached yet, such as one the host found while it published the agent's work, waits in the
+  state and applies once the change reaches that version.
 - **Every action has an id**, and the result event of an action carries that id and the action's
   own change version: the one it acts on, or null for an action that has none, such as `publish`
   or an agent started with no change. The version an agent produced is in its result. The state
@@ -162,8 +174,8 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   longer lead to an accept. Otherwise the state records the conflict with its version, and the
   policy applies when the item would next go to its checks or be ready, as NexKit 6 starts no
   conflict round while another runs; a question or a failure keeps its attention meanwhile. A
-  recorded conflict applies only while it names the change's version: a fix round, which merges
-  the base branch when the branch conflicts, and a person's push drop it, and the host reports a
+  recorded conflict applies only while it names the change's version: a new version, by a
+  round's publish or a person's push, drops a conflict on an older one, and the host reports a
   conflict again for a version that still has one. A change that a person accepted, such as a
   merge by hand, goes to `accepted`; a change that became empty, because the same change landed
   another way, goes to `noChange`; a change that a person pushed to goes to `checking`.
@@ -232,7 +244,7 @@ Three things sit beside the state, never in place of it:
 | `createParts` | Makes the parts of a split, each blocked by the earlier parts it needs | The parts' ids |
 | `close` | Ends the work item with its outcome | Done |
 | `cancel` | Stops an action that runs | Done |
-| `needPerson` | Tells the people who decide, once, with the reason | Done |
+| `needPerson` | Tells the people who decide, once, with the reason and what they decide on (`ref`) | Done |
 | `show` | Shows a plan, a round, a review or a stop where people read the work | Done |
 | `wait` | Sends a `tick` naming the wait at its time | Done |
 
@@ -365,14 +377,24 @@ adapter. A new rule of the engine comes with a case.
 - **Two versions.** The protocol has a version, and the state document has a schema version of its
   own. The engine moves an older state document to the current schema when it reads one, and
   refuses one that is newer than it knows, so an engine rolled back never guesses.
-- **A new optional field keeps the version.** Every reader ignores a field it does not know, so
+- **Major and minor.** Every message carries the protocol's major version, `"protocol": 1`.
+  Version 1 may change freely until NexKit 7.0 ships; at that release it is 1.0. From then on,
+  each additive change raises the minor version, and every field or value it adds carries
+  `"x-since": "1.<minor>"` in its schema. `protocol.MINOR` in `nexkit/protocol/` is the one place
+  the minor version lives, and `load` leaves `x-since` out, as it does `$comment`.
+- **A host asks which version it talks to.** The `describe` call answers the protocol's major and
+  minor version, the engine's own version and the calls it answers. A host calls it and refuses
+  an engine whose minor version is below what the host needs.
+- **A new optional field is a minor change.** Every reader ignores a field it does not know, so
   the schemas of events, actions, results, calls and policies leave out
   `additionalProperties: false`, and an engine or host that is older takes a message with a new
   field. Such a field must be one that a reader that ignores it still acts on correctly.
 - **Anything a reader must act on is a new major version** of the protocol: a new action kind,
   because a host cannot carry out an action it does not know, a new value of a field, a new
   required field, or a field whose absence changes what a reader does. A host refuses an answer
-  with an action it does not know, and the engine's error names it.
+  with an action it does not know, and the engine's error names it. When version 2 comes, the
+  engine still serves version 1 for one more NexKit major release, so hosts move on their own
+  time.
 - **The state document is closed.** Only the engine writes it, so its schema refuses a field it
   does not name, its copy of the policies included, and a new field is a new schema version of
   the state document. The one part that stays open is `pending`: each entry is an action as the

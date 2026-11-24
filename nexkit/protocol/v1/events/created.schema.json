@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/created.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/created.schema.json",
   "$comment": "A work item is made. An item made with its plan, such as by an outside app, starts in awaitingApproval; a review-only item, such as a person's own pull request, comes with its change.",
   "type": "object",
   "properties": {

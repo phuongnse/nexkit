@@ -1136,7 +1136,8 @@ class Step:
         """Answer a blocked round's questions with their recommended options, with automatic
         approval when the `answers` policy lets the engine and every question has one, at most
         once in a row, as `answer_or_ask` does for a plan (`autopilot._stopped`): an implement
-        round that found no change is needed and recommends only closing the item ends it; a
+        round that found no change is needed and recommends only closing the item ends it, unless
+        a change exists, which a person then closes; a
         recommended option that only closes the item is a person's to pick; one that changes
         the item's scope plans it again, which on an item with a change a person decides, as
         the change was made for the scope it had; and the others start the round that asked
@@ -1148,7 +1149,7 @@ class Step:
             self.need("question", "The round has questions for a person.", ref)
         elif again:
             self.need("askedAgain", "The round asks again after the engine's answers.", ref)
-        elif len(asked) == 1 and _closes(asked[0]) and round_["noChange"]:
+        elif len(asked) == 1 and _closes(asked[0]) and round_["noChange"] and not self.s["change"]:
             self.move("noChange")
             self.close("completed", {"name": "noChange", "ref": ref})
         elif any(_closes(item) for item in asked):

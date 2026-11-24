@@ -1,0 +1,12 @@
+{
+  "protocol": {
+    "major": 1,
+    "minor": 0
+  },
+  "engine": "6.12.2",
+  "calls": [
+    "describe",
+    "step",
+    "prompt"
+  ]
+}

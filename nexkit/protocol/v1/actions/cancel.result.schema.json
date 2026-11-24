@@ -1,8 +1,35 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/cancel.result.schema.json",
-  "$comment": "The result of cancel, in actionFinished.",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/cancel.result.schema.json",
+  "$comment": "The result of cancel, in actionFinished: what the cancelled action spent, each null when not known or when it spends nothing. A late result of the cancelled action changes nothing, so its spending counts here.",
   "type": "object",
-  "properties": {},
-  "required": []
+  "properties": {
+    "tokens": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/tokens"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "seconds": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "usd": {
+      "type": [
+        "number",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "tokens",
+    "seconds",
+    "usd"
+  ]
 }

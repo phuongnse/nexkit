@@ -1,0 +1,131 @@
+{
+  "policies": {
+    "conflicts": "redo"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "stopped"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1b"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "change.version": "v1",
+        "attention.reason": "failed"
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1b",
+        "conflicts": true
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "attention.reason": "failed"
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1b",
+        "conflicts": false
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "attention.reason": "failed"
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1",
+        "conflicts": true
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "change.version": "v1",
+        "attention.reason": "failed"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "replaceChange"
+      ]
+    }
+  ]
+}

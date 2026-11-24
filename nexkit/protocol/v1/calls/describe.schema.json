@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/calls/describe.schema.json",
+  "$comment": "A describe call: what the engine speaks. `protocol` is the major version the host speaks; an engine that does not serve it answers an error. A host calls it to learn the minor version and refuses an engine below the minor it needs.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "call": {
+      "const": "describe"
+    }
+  },
+  "required": [
+    "protocol",
+    "call"
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/calls/prompt.answer.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/calls/prompt.answer.schema.json",
   "$comment": "The answer to a prompt call: the prompt, the texts it shortened or left out, the links it lists as not read, and the files the host writes into the folder for texts before the agent runs.",
   "type": "object",
   "required": [

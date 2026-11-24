@@ -2,12 +2,13 @@
 
 Agent output is untrusted, and runtimes enforce schemas differently, so NexKit checks the
 result itself before anything uses it. The same check reads the engine's protocol
-(`nexkit/protocol/`). Only the parts of JSON Schema that those schemas use are supported:
-`type` (one name or a list), `enum`, `const`, `properties`, `required`, `items`,
-`additionalProperties`, `anyOf`, `$ref`, `maxLength` and `maxItems`, each as JSON Schema
-2020-12 reads it: the keywords beside a `$ref` or an `anyOf` apply too, and `const` and `enum`
-compare JSON values, so `true` is not `1`. Keys that a schema does not name are left as they
-are unless `additionalProperties` is false.
+(`nexkit/protocol/`). Only the parts of JSON Schema that those schemas use are supported: `type`
+(one name or a list), `enum`, `const`, `properties`, `required`, `items`, `maxItems`, `maxLength`,
+`minimum`, `maximum`, `additionalProperties`, `anyOf` and `$ref`, each as JSON Schema 2020-12 reads
+it: the keywords beside a `$ref` or an `anyOf` apply too, and `const` and `enum` compare JSON
+values, so `true` is not `1`. Keys that a schema does not name are left as they are unless
+`additionalProperties` is false. One difference is deliberate: an integer is written without a
+fraction, so `1.0` is not one, because NexKit counts and indexes with integers.
 """
 
 from __future__ import annotations
@@ -28,19 +29,26 @@ TYPES = {
 }
 
 
-def problems(value, schema, where="result", refs=None, base=None):
+def problems(value, schema, where="result", refs=None, base=None, limit=None):
     """The ways `value` breaks `schema`, as short sentences. Empty when it fits.
 
     `refs(ref, base)` answers the schema a `$ref` names and the base of that schema's own
-    references, for schemas in files; `base` is the file `schema` came from."""
+    references, for schemas in files; `base` is the file `schema` came from. With a `limit`,
+    the check of an object's properties and an array's items stops once it found more problems
+    than that, so a large value that breaks the schema costs little; the problems found then
+    are some of them, and more than `limit`."""
     found = []
     if "$ref" in schema:
         if refs is None:
             raise ValueError(f"{where}: no way to read {schema['$ref']}")
         target, target_base = refs(schema["$ref"], base)
-        found += problems(value, target, where, refs, target_base)
+        found += problems(value, target, where, refs, target_base, limit)
     if "anyOf" in schema:
-        options = [problems(value, sub, where, refs, base) for sub in schema["anyOf"]]
+        options = []
+        for sub in schema["anyOf"]:
+            options.append(problems(value, sub, where, refs, base, limit))
+            if not options[-1]:
+                break  # One option fits, so the others change nothing.
         if all(options):
             # The option a value names by a constant, such as an action's `kind`, says best
             # what is wrong with it; otherwise the one with the fewest problems.
@@ -55,6 +63,10 @@ def problems(value, schema, where="result", refs=None, base=None):
             return [*found, f"{where} must be {names}"]
     if "const" in schema and not _same(value, schema["const"]):
         found.append(f"{where} must be {schema['const']!r}")
+    if _is(value, "number") and "minimum" in schema and value < schema["minimum"]:
+        found.append(f"{where} must be at least {schema['minimum']}")
+    if _is(value, "number") and "maximum" in schema and value > schema["maximum"]:
+        found.append(f"{where} must be at most {schema['maximum']}")
     if "enum" in schema and not any(_same(value, item) for item in schema["enum"]):
         allowed = ", ".join(repr(item) for item in schema["enum"])
         found.append(f"{where} must be one of {allowed}")
@@ -65,16 +77,21 @@ def problems(value, schema, where="result", refs=None, base=None):
         properties = schema.get("properties", {})
         for key, sub in properties.items():
             if key in value:
-                found += problems(value[key], sub, f"{where}.{key}", refs, base)
+                found += problems(value[key], sub, f"{where}.{key}", refs, base, limit)
+                if limit is not None and len(found) > limit:
+                    return found
         if schema.get("additionalProperties") is False:
             found += [f"{where}.{key} is not allowed" for key in value if key not in properties]
     if isinstance(value, str) and len(value) > schema.get("maxLength", len(value)):
         found.append(f"{where} has more than {schema['maxLength']} characters")
     if isinstance(value, list) and len(value) > schema.get("maxItems", len(value)):
-        found.append(f"{where} has more than {schema['maxItems']} items")
-    if isinstance(value, list) and "items" in schema:
+        # Too many items: what each of them breaks would add nothing.
+        found.append(f"{where} must hold at most {schema['maxItems']} items")
+    elif isinstance(value, list) and "items" in schema:
         for index, item in enumerate(value):
-            found += problems(item, schema["items"], f"{where}[{index}]", refs, base)
+            found += problems(item, schema["items"], f"{where}[{index}]", refs, base, limit)
+            if limit is not None and len(found) > limit:
+                break
     return found
 
 

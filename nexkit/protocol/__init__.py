@@ -4,8 +4,9 @@ stage's result and the state document, as docs/engine.md describes them.
 The schemas are the contract every host and runner reads, so they live as JSON files in
 `v1/`, and NexKit reads its stages' result schemas from them too. Each file names its dialect
 (`$schema`) and its URI (`$id`, under `BASE`), so that a standard validator in any language
-resolves their relative `$ref`s; `$comment` keys explain a schema to people. `load` leaves
-these three out, so a schema given to an agent is the one NexKit 6 gave.
+resolves their relative `$ref`s; `$comment` keys explain a schema to people, and `x-since` names
+the minor version that added a field; a new value is a new major (docs/engine.md#versions).
+`load` leaves these out, so a schema given to an agent is the one NexKit 6 gave.
 """
 
 from __future__ import annotations
@@ -19,12 +20,18 @@ from ..schema import problems
 # The protocol's version. The state document has a schema version of its own
 # (`state.schema.json`), so that a state can move on without a new protocol.
 VERSION = 1
+# The most problems `check` tells. A request that breaks the protocol in many places, such as
+# a large array of wrong items, is refused as fast and as briefly as one that breaks it once.
+LIMIT = 20
+# The protocol's minor version: the one place it lives. Each field added after 1.0
+# carries `"x-since": "1.<minor>"`, and `describe` reports it.
+MINOR = 0
 ROOT = Path(__file__).parent / f"v{VERSION}"
 # The JSON Schema dialect of every file, and the URI each file's `$id` starts with.
 DIALECT = "https://json-schema.org/draft/2020-12/schema"
-BASE = f"https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v{VERSION}/"
+BASE = f"https://github.com/phuongnse/nexkit/protocol/v{VERSION}/"
 # The keys that describe a file rather than a value, which `load` leaves out.
-ANNOTATIONS = ("$comment", "$schema", "$id")
+ANNOTATIONS = ("$comment", "$schema", "$id", "x-since")
 
 
 def _plain(value):
@@ -72,10 +79,12 @@ def _normal(parts, ref):
 
 
 def check(value, name, where="value"):
-    """The ways `value` breaks the schema in `v1/<name>`, as short sentences. `name` may point
-    into the file, such as "results/checklist.schema.json#/$defs/review"."""
+    """The ways `value` breaks the schema in `v1/<name>`, as short sentences: at most `LIMIT`,
+    then "and more". `name` may point into the file, such as
+    "results/checklist.schema.json#/$defs/review"."""
     name, _, pointer = name.partition("#")
-    return problems(value, _at(_read(name), pointer), where, _refs, name)
+    found = problems(value, _at(_read(name), pointer), where, _refs, name, LIMIT)
+    return found if len(found) <= LIMIT else [*found[:LIMIT], "and more"]
 
 
 def names(folder):

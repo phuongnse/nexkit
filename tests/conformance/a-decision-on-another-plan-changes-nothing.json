@@ -1,0 +1,141 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "approval",
+        "attention.ref": "a2.1"
+      }
+    },
+    {
+      "event": {
+        "kind": "answered"
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planQuestions"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "question",
+        "attention.ref": "a4.2"
+      }
+    },
+    {
+      "event": {
+        "kind": "planApproved",
+        "plan": "a2.1"
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "answered",
+        "asked": "a2.1"
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "answered",
+        "asked": "a4.2"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "planApproved",
+        "plan": "a4.2"
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "planApproved",
+        "plan": "a6.2"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    }
+  ]
+}

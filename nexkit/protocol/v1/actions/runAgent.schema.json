@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/actions/runAgent.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/runAgent.schema.json",
   "$comment": "Run one agent session for a stage, on `changeVersion` of the change, or with no change when null. `result` names the stage's result schema; `inputs` name what `prompt` needs.",
   "type": "object",
   "properties": {

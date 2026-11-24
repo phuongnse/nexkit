@@ -8,9 +8,17 @@
     "id": "308",
     "version": "5a54e2b"
   },
+  "observed": {
+    "changeId": "308",
+    "version": "5a54e2b",
+    "conflicts": false,
+    "merged": false,
+    "empty": false
+  },
   "attention": {
     "reason": "unverifiableCriterion",
-    "text": "A person confirms one criterion."
+    "text": "A person confirms one criterion.",
+    "ref": null
   },
   "hold": false,
   "waits": [],

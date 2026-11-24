@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/actionFinished.schema.json",
-  "$comment": "An action ended. `result` has the shape of the action kind's result schema.",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/actionFinished.schema.json",
+  "$comment": "An action ended. `changeVersion` echoes the action's own `changeVersion`, null for an action that has none, such as publish or an agent started with no change; the version an agent produced is in its result. `result` has the shape of the action kind's result schema.",
   "type": "object",
   "properties": {
     "protocol": {

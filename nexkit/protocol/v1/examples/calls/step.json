@@ -8,6 +8,7 @@
     "itemKind": "change",
     "state": "new",
     "change": null,
+    "observed": null,
     "attention": null,
     "hold": false,
     "waits": [
@@ -62,18 +63,17 @@
       "id": "octocat",
       "role": "decides"
     },
-    "note": ""
+    "note": "",
+    "plan": null
   },
   "policies": {
     "planApproval": "person",
-    "answers": "never",
     "reviewAfterFailingChecks": "always",
     "accept": "person",
     "fixRounds": 2,
     "whenRoundsRunOut": "person",
     "conflicts": "person",
     "conflictRounds": 3,
-    "splits": false,
-    "afterFailure": "person"
+    "splits": false
   }
 }

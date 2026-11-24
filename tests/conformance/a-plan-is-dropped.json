@@ -32,6 +32,7 @@
       "state": "dropped",
       "changed": true,
       "actions": [
+        "cancel",
         "close"
       ]
     }

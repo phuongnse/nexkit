@@ -182,6 +182,39 @@ class ProtocolTest(unittest.TestCase):
         for value, name, found in cases:
             with self.subTest(name=name, found=found):
                 self.assertEqual(protocol.check(value, name), found)
+        # minimum, maximum and maxItems.
+        policies = {"fixRounds": -1, "conflictRounds": 11}
+        self.assertEqual(
+            protocol.check(policies, "policies.schema.json"),
+            ["value.fixRounds must be at least 0", "value.conflictRounds must be at most 10"],
+        )
+        crowded = {**new, "recentEvents": [f"d-{n}" for n in range(21)]}
+        self.assertEqual(
+            protocol.check(crowded, "state.schema.json"),
+            ["value.recentEvents must hold at most 20 items"],
+        )
+        # Past maxItems the items are not checked one by one; the state bounds its outbox.
+        self.assertEqual(
+            problems([{}, {}], {"maxItems": 1, "items": {"type": "string"}}),
+            ["result must hold at most 1 items"],
+        )
+        outbox = {**new, "pending": [{}] * 65}
+        self.assertEqual(
+            protocol.check(outbox, "state.schema.json"),
+            ["value.pending must hold at most 64 items"],
+        )
+        # check tells at most LIMIT problems, and stops looking soon after; without a limit,
+        # as an agent's result is checked, every problem is told.
+        many = {**new, "parts": [{}] * 1000}
+        found = protocol.check(many, "state.schema.json")
+        self.assertEqual(len(found), protocol.LIMIT + 1)
+        self.assertEqual(found[-1], "and more")
+        self.assertEqual(found[0], "value.parts[0].item is missing")
+        items = {"items": {"type": "string"}}
+        self.assertEqual(len(problems([1] * 30, items)), 30)
+        self.assertEqual(len(problems([1] * 30, items, limit=5)), 6)
+        # An integer has no fraction written, deliberately (nexkit/schema.py).
+        self.assertEqual(problems(1.0, {"type": "integer"}), ["result must be an integer"])
         self.assertEqual(problems(True, {"enum": [1, "1"]}), ["result must be one of 1, '1'"])
         self.assertEqual(problems(1, {"enum": [True]}), ["result must be one of True"])
 
@@ -208,6 +241,67 @@ class ProtocolTest(unittest.TestCase):
             self.assertEqual(raw["$id"], protocol.BASE + name, name)
             self.assertFalse(set(protocol.ANNOTATIONS) & set(protocol.load(name)), name)
 
+    def test_each_addition_names_a_minor_version_that_exists(self):
+        # docs/engine.md#versions: what 1.N adds carries "x-since": "1.N", and 1.0 adds nothing.
+        def since(value):
+            if isinstance(value, dict):
+                if "x-since" in value:
+                    yield value["x-since"]
+                for sub in value.values():
+                    yield from since(sub)
+            elif isinstance(value, list):
+                for sub in value:
+                    yield from since(sub)
+
+        named = set()
+        for name in schema_files():
+            raw = json.loads((protocol.ROOT / name).read_text())
+            for value in since(raw):
+                self.assertRegex(value, r"^1\.[1-9][0-9]*$", name)
+                self.assertLessEqual(int(value.split(".")[1]), protocol.MINOR, name)
+                named.add(int(value.split(".")[1]))
+            self.assertNotIn("x-since", json.dumps(protocol.load(name)), name)
+        self.assertEqual(named, set(range(1, protocol.MINOR + 1)))
+
+    def test_load_leaves_out_the_annotations(self):
+        # A made-up schema: what `load` gives an agent or a host holds no annotation.
+        raw = {
+            "$schema": protocol.DIALECT,
+            "$id": protocol.BASE + "made-up.schema.json",
+            "$comment": "For people.",
+            "type": "object",
+            "properties": {"new": {"x-since": "1.3", "$comment": "Added.", "type": "string"}},
+        }
+        self.assertEqual(
+            protocol._plain(raw),
+            {"type": "object", "properties": {"new": {"type": "string"}}},
+        )
+
+    def test_a_change_is_observed_whole_never_as_a_delta(self):
+        shape = protocol.load("common.schema.json")["$defs"]["observation"]
+        fields = shape["required"]
+        self.assertEqual(sorted(fields), sorted(shape["properties"]))
+        event = protocol.load("events/changeObserved.schema.json")
+        state = protocol.load("state.schema.json")["properties"]["observed"]["anyOf"][0]
+        for schema, base in ((event, "../common.schema.json"), (state, "common.schema.json")):
+            # One shape: each field refers to the observation's own.
+            self.assertLessEqual(set(fields), set(schema["required"]))
+            for field in fields:
+                ref = f"{base}#/$defs/observation/properties/{field}"
+                self.assertEqual(schema["properties"][field], {"$ref": ref})
+        for kind in ("publish", "replaceChange"):
+            # The host reads the change when it handles the result of an action that changed it.
+            self.assertIn(
+                "observed", protocol.load(f"actions/{kind}.result.schema.json")["required"]
+            )
+
+    def test_describe_answers_the_major_and_minor_version(self):
+        answer = example("calls/describe.answer.json")
+        self.assertEqual(answer["protocol"]["major"], protocol.VERSION)
+        self.assertEqual(answer["protocol"]["minor"], protocol.MINOR)
+        schema = protocol.load("calls/describe.answer.schema.json")
+        self.assertEqual(schema["properties"]["protocol"]["properties"]["major"]["const"], 1)
+
     def test_messages_take_fields_they_do_not_know_and_the_state_does_not(self):
         # docs/engine.md#versions: a new optional field keeps the protocol's version.
         for name in schema_files():
@@ -219,6 +313,26 @@ class ProtocolTest(unittest.TestCase):
             self.assertIs(schema.get("additionalProperties"), False, schema)
         tick = {**example("events/tick.json"), "priority": 3}
         self.assertEqual(protocol.check(tick, "events/tick.schema.json"), [])
+
+    def test_the_state_keeps_only_the_policies_it_knows(self):
+        policies = protocol.load("state.schema.json")["properties"]["policies"]
+        names = protocol.load("policies.schema.json")["properties"]
+        self.assertEqual(sorted(policies["properties"]), sorted(names))
+        state = {**example("state/fixing.json")}
+        state["policies"] = {**state["policies"], "start": "bySweep"}
+        self.assertEqual(
+            protocol.check(state, "state.schema.json"), ["value.policies.start is not allowed"]
+        )
+
+    def test_a_decision_names_what_it_decides_on(self):
+        for kind, field in (
+            ("planApproved", "plan"),
+            ("answered", "asked"),
+            ("requested", "plan"),
+            ("changeApproved", "changeId"),
+            ("changeApproved", "changeVersion"),
+        ):
+            self.assertIn(field, protocol.load(f"events/{kind}.schema.json")["required"], kind)
 
     def test_the_package_ships_every_schema_and_no_example(self):
         data = tomllib.loads((HERE.parent / "pyproject.toml").read_text())

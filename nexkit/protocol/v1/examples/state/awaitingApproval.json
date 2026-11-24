@@ -5,9 +5,11 @@
   "itemKind": "change",
   "state": "awaitingApproval",
   "change": null,
+  "observed": null,
   "attention": {
     "reason": "question",
-    "text": "The plan has a question with no recommended answer."
+    "text": "The plan has a question with no recommended answer.",
+    "ref": "issue-42/plan-1"
   },
   "hold": false,
   "waits": [],
@@ -27,7 +29,8 @@
       "kind": "needPerson",
       "next": null,
       "reason": "question",
-      "text": "The plan has a question with no recommended answer."
+      "text": "The plan has a question with no recommended answer.",
+      "ref": "issue-42/plan-1"
     }
   ],
   "actors": {

@@ -8,10 +8,12 @@ import io
 import json
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
+import nexkit
 from nexkit import engine, protocol
 from nexkit.engine import cli, machine
 
@@ -30,6 +32,8 @@ ALLOWED = {
     "nexkit.engine": {
         "__future__",
         "json",
+        "re",
+        "nexkit",
         "nexkit.protocol",
         "nexkit.engine.machine",
         "nexkit.engine.prompt",
@@ -51,6 +55,7 @@ ALLOWED = {
         "__future__",
         "argparse",
         "signal",
+        "socket",
         "sys",
         "traceback",
         "http.server",
@@ -114,6 +119,23 @@ def impurities(module, source=None):
     return found
 
 
+class LargeRequestTest(unittest.TestCase):
+    def test_a_large_request_that_breaks_the_protocol_is_refused_fast_and_briefly(self):
+        # About 1 MiB, the most serve reads: a crowded outbox, and a long array of wrong items.
+        start = json.loads((EXAMPLES / "state" / "planning.json").read_text())
+        for field, items in (("pending", [{}] * 340_000), ("parts", [{}] * 250_000)):
+            with self.subTest(field=field):
+                state = {**start, field: items}
+                held = json.loads((EXAMPLES / "events" / "held.json").read_text())
+                held["item"] = state["item"]
+                data = json.dumps(request(state=state, event=held))
+                began = time.monotonic()
+                answer = engine.reply("step", data.encode())
+                self.assertLess(time.monotonic() - began, 5)
+                self.assertLess(len(answer["error"]), 2000)
+                self.assertIn(f"request.state.{field}", answer["error"])
+
+
 class ProgramTest(unittest.TestCase):
     def run_program(self, text):
         out = io.StringIO()
@@ -144,6 +166,8 @@ class ProgramTest(unittest.TestCase):
         code, answer = self.run_program(json.dumps(request(policies={"fixRounds": "two"})))
         self.assertEqual(code, 1)
         self.assertIn("request.policies.fixRounds must be an integer", answer["error"])
+        code, answer = self.run_program(json.dumps(request(policies={"fixRounds": -1})))
+        self.assertIn("request.policies.fixRounds must be at least 0", answer["error"])
 
     def test_an_answer_names_the_protocol_version(self):
         with mock.patch.object(protocol, "VERSION", 9):
@@ -154,6 +178,22 @@ class ProgramTest(unittest.TestCase):
         tick = {**json.loads((EXAMPLES / "events" / "tick.json").read_text()), "item": "42"}
         answer = engine.answer({**request(event=tick), "call": "step"})
         self.assertIn("first event", answer["error"])
+
+    def test_describe_says_which_protocol_the_engine_speaks(self):
+        out = io.StringIO()
+        code = cli.main(["describe"], io.BytesIO(b'{"protocol": 1}'), out)
+        answer = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(protocol.check(answer, "calls/describe.answer.schema.json"), [])
+        self.assertEqual(answer["protocol"], {"major": 1, "minor": protocol.MINOR})
+        self.assertEqual(answer["engine"], nexkit.__version__)
+        self.assertEqual(answer["calls"], list(engine.CALLS))
+        self.assertIn("describe", engine.CALLS)
+        with mock.patch.object(protocol, "MINOR", 3):
+            self.assertEqual(
+                engine.answer({"protocol": 1, "call": "describe"})["protocol"]["minor"], 3
+            )
+        self.assertIn("error", engine.answer({"protocol": 2, "call": "describe"}))
 
     def test_an_unknown_call_is_refused(self):
         self.assertIn("error", engine.answer({**request(), "call": "dance"}))
@@ -170,8 +210,51 @@ class ProgramTest(unittest.TestCase):
         state["itemKind"] = "reviewOnly"
         state["plan"]["questions"] = []
         event = json.loads((EXAMPLES / "events" / "planApproved.json").read_text())
+        event["plan"] = state["plan"]["text"]["ref"]
         answer = engine.answer({**request(state=state, event=event), "call": "step"})
         self.assertIn("review-only", answer["error"])
+
+    def test_a_state_that_would_accept_a_review_only_item_is_refused(self):
+        # No rule leads a review-only item to wait for a person in ready; a state built by
+        # hand that does meets the last check of `step`.
+        state = json.loads((EXAMPLES / "state" / "ready.json").read_text())
+        state["itemKind"] = "reviewOnly"
+        event = json.loads((EXAMPLES / "events" / "changeApproved.json").read_text())
+        event["changeVersion"] = state["change"]["version"]
+        policies = {"accept": "autoWhenPassed"}
+        answer = engine.answer(
+            {**request(state=state, event=event, policies=policies), "call": "step"}
+        )
+        self.assertIn("review-only", answer.get("error", ""), answer)
+
+    def test_an_answer_that_writes_to_a_review_only_item_is_refused(self):
+        # Rules guard each path; this is the last check before an answer leaves.
+        for action in (
+            {"kind": "publish", "stage": "fix"},
+            {"kind": "accept"},
+            {"kind": "runAgent", "stage": "plan"},
+        ):
+            with self.assertRaisesRegex(machine.EngineError, "review-only"):
+                machine._never_writes([action])
+        machine._never_writes([{"kind": "runAgent", "stage": "review"}, {"kind": "show"}])
+
+    def test_an_action_withdrawn_in_a_step_leaves_its_id_unused(self):
+        work = machine.Step(machine.blank("42"), {}, protocol.check)
+        first = work.do("runChecks", changeVersion="v1")
+        work.do("show", what="plan", text={"name": "plan", "ref": "a1.1"})
+        work.withdraw(work.s["pending"][0])
+        work.do("runChecks", changeVersion="v2")
+        ids = [action["id"] for action in work.actions]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertNotIn(first["id"], ids)
+
+    def test_a_move_withdraws_a_notice_given_earlier_in_the_step(self):
+        # No rule moves on after a notice in the same step today; `move` keeps it so.
+        work = machine.Step(machine.blank("42"), {}, protocol.check)
+        work.need("approval", "The plan waits for its approval.", "a1.1")
+        work.move("checking")
+        self.assertEqual([a for a in work.actions if a["kind"] == "needPerson"], [])
+        self.assertEqual(work.s["pending"], [])
 
     def test_the_defaults_are_the_protocol_s(self):
         properties = protocol.load("policies.schema.json")["properties"]

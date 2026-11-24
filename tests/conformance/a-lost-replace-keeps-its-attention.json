@@ -1,9 +1,7 @@
 {
   "policies": {
-    "planApproval": "autoWhenClean",
     "accept": "autoWhenPassed",
-    "reviewAfterFailingChecks": "onlyAfterPassing",
-    "conflicts": "resolve"
+    "conflicts": "redo"
   },
   "steps": [
     {
@@ -62,15 +60,15 @@
           "checks": [
             {
               "name": "test",
-              "passed": false,
+              "passed": true,
               "skipped": false,
-              "signature": "fail test_x",
+              "signature": null,
               "knownBaseFailure": false
             }
           ]
         }
       },
-      "state": "fixing",
+      "state": "reviewing",
       "changed": true,
       "actions": [
         "runAgent"
@@ -80,68 +78,49 @@
       "event": {
         "kind": "actionFinished",
         "action": "runAgent",
-        "result": "@agent:fixQuestions"
+        "result": "@agent:review"
       },
-      "state": "awaitingApproval",
+      "state": "accepting",
       "changed": true,
       "actions": [
-        "needPerson"
+        "accept"
       ]
     },
     {
       "event": {
-        "kind": "answered"
+        "kind": "changeObserved",
+        "conflicts": true
       },
-      "state": "planning",
-      "changed": true,
-      "actions": [
-        "runAgent"
-      ],
-      "expect": {
-        "pending.1.id": "a7.1",
-        "pending.1.stage": "plan",
-        "pending.1.changeVersion": "v1"
-      }
-    },
-    {
-      "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
-      },
-      "state": "fixing",
+      "state": "working",
       "changed": true,
       "actions": [
         "cancel",
-        "runAgent"
-      ],
-      "expect": {
-        "pending.1.kind": "cancel",
-        "pending.1.action": "a7.1",
-        "pending.2.stage": "fix",
-        "rounds.conflicts": 1
-      }
+        "replaceChange"
+      ]
     },
     {
       "event": {
-        "kind": "actionFinished",
-        "action": "a7.1",
-        "result": "@agent:plan"
+        "kind": "changeObserved",
+        "version": "v2"
       },
-      "state": "fixing",
-      "changed": false,
+      "state": "working",
+      "changed": true,
       "actions": []
     },
     {
       "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:fix"
+        "kind": "actionLost",
+        "action": "replaceChange"
       },
-      "state": "fixing",
+      "state": "failed",
       "changed": true,
       "actions": [
-        "publish"
-      ]
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "outage",
+        "change.version": "v1"
+      }
     }
   ]
 }

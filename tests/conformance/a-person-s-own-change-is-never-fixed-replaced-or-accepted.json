@@ -81,12 +81,16 @@
     },
     {
       "event": {
-        "kind": "conflict",
-        "changeVersion": "v1"
+        "kind": "changeObserved",
+        "conflicts": true,
+        "version": "v1"
       },
       "state": "ready",
-      "changed": false,
-      "actions": []
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "observed.conflicts": true
+      }
     },
     {
       "event": {
@@ -173,6 +177,7 @@
       "state": "checking",
       "changed": true,
       "actions": [
+        "cancel",
         "runChecks"
       ]
     }

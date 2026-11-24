@@ -74,7 +74,6 @@ RECENT = 20
 # `policies.schema.json` gives each as its default (docs/engine.md#what-a-host-decides).
 DEFAULTS = {
     "planApproval": "person",
-    "answers": "never",
     "reviewAfterFailingChecks": "always",
     "accept": "person",
     "fixRounds": 2,
@@ -82,14 +81,15 @@ DEFAULTS = {
     "conflicts": "person",
     "conflictRounds": 3,
     "splits": False,
-    "afterFailure": "person",
-    # Only the prompts read these so far (`prompt.py`).
-    "budgets": {},
-    "profiles": {},
-    "checklist": [],
 }
 # The states a conflict leads to under each conflict policy.
 CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working",)}
+# The states where nothing runs that a conflict must wait for: it acts there at once. Checks of
+# a change that conflicts can no longer lead to an accept, so they stop for it too, when a
+# conflict round can start (`Step.at_once`).
+CONFLICT_AT_ONCE = ("ready", "accepting")
+# The fields of a changeObserved event that the state keeps as its `observed`.
+OBSERVED = ("changeId", "version", "conflicts", "merged", "empty")
 
 
 class EngineError(ValueError):
@@ -105,6 +105,7 @@ def blank(item):
         "itemKind": "change",
         "state": "new",
         "change": None,
+        "observed": None,
         "attention": None,
         "hold": False,
         "waits": [],
@@ -137,11 +138,13 @@ class Step:
     def __init__(self, state, policies, check):
         self.s = state
         self.problems = check
-        self.given = {**DEFAULTS, **policies}
+        # The state keeps only the policies the engine knows (docs/engine.md#versions).
+        self.given = {name: policies.get(name, value) for name, value in DEFAULTS.items()}
         # A round that runs keeps the policies it started with (docs/engine.md#the-engine).
         running = state["state"] in ROUND and state["policies"]
         self.p = {**DEFAULTS, **state["policies"]} if running else self.given
         self.actions = []
+        self.issued = 0
         self.waits = 0
 
     # What every rule uses.
@@ -164,13 +167,21 @@ class Step:
     def number(self, prefix, count):
         return f"{prefix}{self.s['revision'] + 1}.{count}"
 
+    def next_action(self):
+        """The id of the next action: one a withdrawn action had is never given again."""
+        self.issued += 1
+        return self.number("a", self.issued)
+
     def move(self, name):
-        """Go to `name`: cancel the work the old state asked for in earlier steps, and end its
-        waits and attention. A round's state keeps the policies the round started with."""
+        """Go to `name`: stop the work the old state asked for, and end its waits and attention.
+        A round's state keeps the policies the round started with."""
         issued = {action["id"] for action in self.actions}
         for action in list(self.s["pending"]):
-            if action["kind"] in WORK and action["id"] not in issued:
+            if action["kind"] in WORK and action["id"] in issued:
+                self.withdraw(action)
+            elif action["kind"] in WORK:
                 self.cancel(action)
+        self.retract_notices()
         if name not in ROUND:
             self.s["policies"] = {}
         elif self.state not in ROUND or not self.s["policies"]:
@@ -182,11 +193,18 @@ class Step:
         self.s["attention"] = None
 
     def do(self, kind, **fields):
-        action = {"id": self.number("a", len(self.actions) + 1), "kind": kind, "next": None}
+        action = {"id": self.next_action(), "kind": kind, "next": None}
         action.update(fields)
         self.actions.append(action)
         self.s["pending"].append(copy.deepcopy(action))
         return action
+
+    def withdraw(self, action):
+        """Take back an action asked for earlier in this step: the host never got it."""
+        self.s["pending"].remove(action)
+        self.actions = [item for item in self.actions if item["id"] != action["id"]]
+        if action["kind"] == "runAgent" and action["stage"] in ("implement", "fix"):
+            self.s["rounds"]["started"] -= 1
 
     def cancel(self, action):
         self.s["pending"].remove(action)
@@ -200,9 +218,21 @@ class Step:
     def waiting(self, kind):
         return any(wait["for"] == kind for wait in self.s["waits"])
 
-    def need(self, reason, text):
-        self.s["attention"] = {"reason": reason, "text": text}
-        self.do("needPerson", reason=reason, text=text)
+    def retract_notices(self):
+        """Attention changes: a notice stays pending only while attention says it, so that every
+        pending action is one to carry out (docs/engine.md#the-state-document)."""
+        issued = {action["id"] for action in self.actions}
+        for action in list(self.s["pending"]):
+            if action["kind"] == "needPerson" and action["id"] in issued:
+                self.withdraw(action)
+            elif action["kind"] == "needPerson":
+                self.cancel(action)
+
+    def need(self, reason, text, ref=None):
+        """Ask a person, about `ref` when the decision names what it is on."""
+        self.retract_notices()
+        self.s["attention"] = {"reason": reason, "text": text, "ref": ref}
+        self.do("needPerson", reason=reason, text=text, ref=ref)
 
     def spend(self, source):
         """Add what an agent or a lost action spent to the item's `used`."""
@@ -270,10 +300,14 @@ class Step:
             self.move("fixing")
             self.run("fix")
             return
+        if self.conflicted():
+            return
         self.move("failed" if self.p["whenRoundsRunOut"] == "failed" else "ready")
         self.need("roundsUsedUp", "The checks or the review still fail, and no fix round is left.")
 
     def ready(self):
+        if self.conflicted():
+            return
         self.move("ready")
         if "unverifiable" in self.s["rounds"]["criteria"]:
             self.need(
@@ -292,6 +326,78 @@ class Step:
         else:
             self.need("accept", "The change passed, and a person decides its accept.")
 
+    def conflicted(self):
+        """Apply the conflict policy when the item would go on to its checks or be ready and the
+        latest observation says this version of the change conflicts (docs/engine.md#states).
+        Whether it did."""
+        observed = self.observed()
+        if self.review_only or not observed or not observed["conflicts"]:
+            return False
+        self.on_conflict_found()
+        return True
+
+    def observed(self):
+        """The latest observation, always of the change the item has: `on_changeObserved` keeps
+        only those, `took_change` refuses a result that observes another change, and a reopen
+        that drops the change drops it too."""
+        return self.s["observed"]
+
+    def coming(self):
+        """Whether a publish or a replace is on its way, which sets the change."""
+        return any(a["kind"] in ("publish", "replaceChange") for a in self.s["pending"])
+
+    def reconcile(self, whole=True):
+        """Bring the item in line with the latest observation of its change; doing so again
+        changes nothing (docs/engine.md#states). Not `whole`, only a merge or an emptied change
+        acts. Whether it did anything."""
+        observed = self.observed()
+        if self.final() or self.coming() or not observed:
+            return False
+        # A failed item waits for a person whatever is observed, and so does a reopened one,
+        # unless it is review-only: a newer version waits for the request that takes it on.
+        whole = whole and self.state != "failed" and (self.state != "new" or self.review_only)
+        if observed["merged"]:
+            self.move("accepted")
+            self.close("completed")
+        elif observed["empty"]:
+            self.move("noChange")
+            self.close("completed")
+        elif not whole:
+            return False
+        elif observed["version"] != self.version:
+            # A person's push: what acts on the old version stops, and the new one is checked.
+            self.s["change"] = {**self.s["change"], "version": observed["version"]}
+            self.check()
+        elif observed["conflicts"] and not self.review_only and self.at_once():
+            if not self.on_conflict_found():
+                return False
+        else:
+            return False
+        return True
+
+    def took_change(self, result):
+        """A publish or a replace set the change. It changed the change outside the order of
+        the item's events, so the observation its result carries, read when the host handled
+        the result, replaces the latest one; `step` reconciles with it after the handler."""
+        observed = result["observed"]
+        if observed and observed["changeId"] != result["change"]["id"]:
+            raise EngineError(
+                f"The result of a {result['change']['id']!r} change observes "
+                f"{observed['changeId']!r}; the host reports the action lost instead."
+            )
+        self.s["change"] = result["change"]
+        self.s["observed"] = {key: observed[key] for key in OBSERVED} if observed else None
+
+    def at_once(self):
+        """Whether a conflict acts now: where nothing runs that it must wait for, and in checks
+        when a conflict round can start, since those checks can no longer lead to an accept;
+        NexKit 6 lets them end otherwise."""
+        if self.state in CONFLICT_AT_ONCE:
+            return True
+        policy, rounds = self.p["conflicts"], self.s["rounds"]
+        round_left = policy == "resolve" and rounds["conflicts"] < self.p["conflictRounds"]
+        return self.state == "checking" and (policy == "redo" or round_left)
+
     def on_conflict_found(self):
         policy, rounds = self.p["conflicts"], self.s["rounds"]
         if policy == "redo":
@@ -302,14 +408,26 @@ class Step:
             self.move("fixing")
             self.run("fix")
         else:
+            attention = self.s["attention"] or {}
+            if self.state == "ready" and (attention.get("reason"), attention.get("ref")) == (
+                "acceptRefused",
+                self.version,
+            ):
+                # A person was told already: reconciling again changes nothing.
+                return False
             self.move("ready")
-            self.need("acceptRefused", "The change conflicts with what it was made on.")
+            self.need(
+                "acceptRefused", "The change conflicts with what it was made on.", self.version
+            )
+        return True
 
     def timed_out(self):
         """An implement or fix agent ran out of time. With splits on, as autopilot does, the
         item asks once for a plan that splits it; otherwise, or the second time, a person
         decides (`autopilot._stopped`)."""
         if self.p["splits"] and "split" not in self.s["asked"]:
+            # NexKit 6 asks after a fix round too. An item with a change is never split, so its
+            # new plan goes on as one change on it, with the plan revised.
             self.s["asked"].append("split")
             self.start_plan()
         else:
@@ -326,13 +444,22 @@ class Step:
             raise EngineError("A review-only item comes with its change.")
         if event["plan"] is not None and not self.review_only:
             self.take_plan(event["plan"], {"name": "plan", "ref": "created"})
-            self.move("awaitingApproval")
-            self.need("approval", "The plan waits for its approval.")
+            self.plan_waits()
         else:
             self.wait("start")
         return True
 
     def on_requested(self, event):
+        observed = self.observed()
+        if observed and observed["version"] != self.version:
+            # Only a failed or reopened item keeps a version observed meanwhile, for the request
+            # that takes it on: the work it asks for starts on that version
+            # (docs/engine.md#states). A refused request changes nothing, as `step` keeps the
+            # state it got unless reconciling acts, which a merge or an emptied change alone do.
+            self.s["change"] = {**self.s["change"], "version": observed["version"]}
+        return self.requested(event)
+
+    def requested(self, event):
         what, state, change = event["what"], self.state, self.s["change"]
         if what == "start":
             # Only an item that waits to start starts, and a hold keeps it waiting.
@@ -344,7 +471,11 @@ class Step:
                 return False
             self.start_plan()
         elif what == "go":
+            plan = (self.s["plan"] or {}).get("text", {}).get("ref")
             if self.review_only or state not in ("new", "awaitingApproval"):
+                return False
+            if event["plan"] != plan:
+                # A go approves the plan it names: one for another plan arrives late.
                 return False
             if self.s["plan"]:
                 self.s["plan"]["approved"] = True
@@ -359,6 +490,8 @@ class Step:
                 return False
             self.check()
         elif what == "retry" and state == "failed":
+            if self.review_only and not change:
+                return False
             if self.review_only:
                 self.check()
             elif change:
@@ -370,19 +503,34 @@ class Step:
             return False
         return True
 
+    def splits(self, plan):
+        """Whether `plan` is split into its parts: only an item with no change is, since a
+        split would leave the change with nothing to end it."""
+        return plan["tooLarge"] and plan["split"] and self.p["splits"] and not self.s["change"]
+
     def on_planApproved(self, event):
         plan = self.s["plan"]
-        if self.state != "awaitingApproval" or plan is None or plan["questions"]:
+        if (
+            self.state != "awaitingApproval"
+            or plan is None
+            or plan["questions"]
+            or event["plan"] != plan["text"]["ref"]
+        ):
             return False
         plan["approved"] = True
-        if plan["tooLarge"] and plan["split"] and self.p["splits"]:
+        if self.splits(plan):
             self.start_split()
         else:
             self.start_change()
         return True
 
     def on_answered(self, event):
-        if self.state != "awaitingApproval":
+        attention = self.s["attention"] or {}
+        if (
+            self.state != "awaitingApproval"
+            or attention.get("reason") != "question"
+            or attention.get("ref") != event["asked"]
+        ):
             return False
         self.start_plan()
         return True
@@ -398,6 +546,7 @@ class Step:
         attention = self.s["attention"] or {}
         if (
             self.state != "ready"
+            or event["changeId"] != (self.s["change"] or {}).get("id")
             or event["changeVersion"] != self.version
             or attention.get("reason") not in ("unverifiableCriterion", "personChecklistItem")
         ):
@@ -413,7 +562,9 @@ class Step:
 
     def on_dropRequested(self, event):
         self.move("dropped")
-        self.close("notPlanned")
+        if not self.review_only:
+            # A person's own pull request stays theirs: NexKit 6 never closes it.
+            self.close("notPlanned")
         return True
 
     def on_stopped(self, event):
@@ -438,19 +589,40 @@ class Step:
     def on_partEnded(self, event):
         parts = self.s["parts"]
         match = [part for part in parts if part["item"] == event["part"]]
-        if self.state != "split" or not match or match[0]["state"] is not None:
+        if self.state != "split" or (match and match[0]["state"] is not None):
             return False
+        if not match:
+            # A part may end before the result that names the parts arrives: keep its end.
+            if not any(action["kind"] == "createParts" for action in self.s["pending"]):
+                return False
+            parts.append({"item": event["part"], "state": event["state"]})
+            return True
         match[0]["state"] = event["state"]
-        if all(part["state"] for part in parts):
-            self.s["waits"] = [wait for wait in self.s["waits"] if wait["for"] != "parts"]
-            if any(part["state"] == "accepted" for part in parts):
-                self.move("accepted")
-                self.close("completed")
-            else:
-                self.need("splitIncomplete", "No part of the split was completed.")
+        self.parts_ended()
         return True
 
+    def parts_ended(self):
+        parts = self.s["parts"]
+        if not all(part["state"] for part in parts):
+            return
+        self.s["waits"] = [wait for wait in self.s["waits"] if wait["for"] != "parts"]
+        if any(part["state"] == "accepted" for part in parts):
+            self.move("accepted")
+            self.close("completed")
+        else:
+            self.need("splitIncomplete", "No part of the split was completed.")
+
     def on_reopened(self, event):
+        if self.state in ("accepted", "noChange"):
+            # Its change went in or became empty: the work starts again without it, and with
+            # its rounds counted afresh.
+            self.s["change"] = None
+            self.s["observed"] = None
+            self.s["rounds"] = blank(self.s["item"])["rounds"]
+        # A close asked for before the reopen no longer stands.
+        for action in list(self.s["pending"]):
+            if action["kind"] == "close":
+                self.cancel(action)
         self.move("new")
         self.need("reopened", "The work item was opened again.")
         return True
@@ -464,31 +636,13 @@ class Step:
         self.s["waits"].remove(waits[0])
         return True
 
-    def on_conflict(self, event):
-        if not self.s["change"] or event["changeVersion"] != self.version or self.review_only:
+    def on_changeObserved(self, event):
+        observed = {key: event[key] for key in OBSERVED}
+        change = self.s["change"]
+        # Only the item's change: one a publish or a replace sets comes with its result.
+        if not change or observed["changeId"] != change["id"] or observed == self.s["observed"]:
             return False
-        self.on_conflict_found()
-        return True
-
-    def on_changeAccepted(self, event):
-        if not self.s["change"]:
-            return False
-        self.move("accepted")
-        self.close("completed")
-        return True
-
-    def on_changeEmptied(self, event):
-        if not self.s["change"]:
-            return False
-        self.move("noChange")
-        self.close("completed")
-        return True
-
-    def on_changePushed(self, event):
-        if not self.s["change"] or event["changeVersion"] == self.version:
-            return False
-        self.s["change"] = {**self.s["change"], "version": event["changeVersion"]}
-        self.check()
+        self.s["observed"] = observed
         return True
 
     def on_textChanged(self, event):
@@ -507,8 +661,18 @@ class Step:
         action = self.pending(event["action"])
         if action is None:
             return False
+        self.same_version(action, event)
         self.s["pending"].remove(action)
         self.spend(event)
+        attention = self.s["attention"] or {}
+        told = (attention.get("reason"), attention.get("text"), attention.get("ref"))
+        if action["kind"] == "needPerson" and told != (
+            action["reason"],
+            action["text"],
+            action["ref"],
+        ):
+            # What the person was to be told no longer stands.
+            return True
         if action["kind"] in AGAIN:
             fields = {key: value for key, value in action.items() if key not in ("id", "next")}
             self.do(fields.pop("kind"), **fields)
@@ -517,17 +681,22 @@ class Step:
             self.need("outage", "An action the host started never reported.")
         return True
 
+    def same_version(self, action, event):
+        """A result echoes the version its action acts on, or null for one with none: one that
+        names another cannot be this action's
+        (docs/engine.md#events-and-actions-arrive-more-than-once)."""
+        if event["changeVersion"] != action.get("changeVersion"):
+            raise EngineError(
+                f"The result of {action['id']} is for the change version "
+                f"{event['changeVersion']!r}, but the action acts on "
+                f"{action.get('changeVersion')!r}."
+            )
+
     def on_actionFinished(self, event):
         action = self.pending(event["action"])
         if action is None:
             return False
-        if "changeVersion" in action and event["changeVersion"] != action["changeVersion"]:
-            # The action is pending on the version it acts on: a result that names another
-            # cannot be this action's (docs/engine.md#events-and-actions-arrive-more-than-once).
-            raise EngineError(
-                f"The result of {action['id']} is for the change version "
-                f"{event['changeVersion']!r}, but the action acts on {action['changeVersion']!r}."
-            )
+        self.same_version(action, event)
         self.s["pending"].remove(action)
         handler = getattr(self, f"finished_{action['kind']}", None)
         if handler:
@@ -597,25 +766,36 @@ class Step:
         if plan["noChange"]:
             self.move("noChange")
             self.close("completed", {"name": "noChange", "ref": number})
-        elif plan["questions"]:
-            self.move("awaitingApproval")
-            self.need("question", "The plan has questions for a person.")
-        elif plan["protectedPaths"]:
-            self.move("awaitingApproval")
-            self.need("handMadeChange", "The change needs paths that only a person changes.")
+        elif plan["questions"] or plan["protectedPaths"]:
+            self.plan_waits()
         elif self.p["planApproval"] == "autoWhenClean" and plan["tooLarge"]:
-            if plan["split"] and self.p["splits"]:
+            if self.splits(plan):
                 plan["approved"] = True
                 self.start_split()
             else:
                 self.move("awaitingApproval")
-                self.need("approval", "The plan is too large, and a person decides how to go on.")
+                self.need(
+                    "approval",
+                    "The plan is too large, and a person decides how to go on.",
+                    plan["text"]["ref"],
+                )
         elif self.p["planApproval"] == "autoWhenClean":
             plan["approved"] = True
             self.start_change()
         else:
-            self.move("awaitingApproval")
-            self.need("approval", "The plan waits for its approval.")
+            self.plan_waits()
+
+    def plan_waits(self):
+        """The plan waits for a person: for answers, a hand-made change or its approval."""
+        plan = self.s["plan"]
+        ref = plan["text"]["ref"]
+        self.move("awaitingApproval")
+        if plan["questions"]:
+            self.need("question", "The plan has questions for a person.", ref)
+        elif plan["protectedPaths"]:
+            self.need("handMadeChange", "The change needs paths that only a person changes.", ref)
+        else:
+            self.need("approval", "The plan waits for its approval.", ref)
 
     def finished_implement(self, output, number):
         self.finished_change(output, number, "implement")
@@ -627,7 +807,7 @@ class Step:
         if output["status"] == "blocked":
             if output.get("questions"):
                 self.move("awaitingApproval")
-                self.need("question", "The round has questions for a person.")
+                self.need("question", "The round has questions for a person.", number)
             else:
                 self.move("failed")
                 self.need("blocked", filled(output.get("blocker")) or "The agent was blocked.")
@@ -667,10 +847,15 @@ class Step:
             self.move("failed")
             self.need("failed", result["refused"] or "The change could not be published.")
             return
-        self.s["change"] = result["change"]
-        self.check()
+        self.took_change(result)
+        # The observation may name a later version: take it before the checks, so that a
+        # conflict on it follows the policy once.
+        if not self.reconcile():
+            self.check()
 
     def check(self):
+        if self.conflicted():
+            return
         self.move("checking")
         self.do("runChecks", changeVersion=self.version)
 
@@ -704,12 +889,20 @@ class Step:
             self.need("acceptRefused", result["text"] or "The accept was refused.")
 
     def finished_replaceChange(self, result, action):
-        self.s["change"] = result["change"]
+        self.took_change(result)
         self.run("implement")
 
     def finished_createParts(self, result, action):
-        self.s["parts"] = [{"item": part["item"], "state": None} for part in result["parts"]]
+        ended = {part["item"]: part["state"] for part in self.s["parts"]}
+        self.s["parts"] = [
+            {"item": part["item"], "state": ended.get(part["item"])} for part in result["parts"]
+        ]
         self.wait("parts")
+        self.parts_ended()
+
+    def finished_cancel(self, result, action):
+        # The cancelled action's late result changes nothing, so its spending comes here.
+        self.spend(result)
 
 
 # The events that a final item still takes: a reopen, and the results of what it asked for.
@@ -742,6 +935,9 @@ def step(state, event, policies, check):
         changed = False
     else:
         changed = handler(event)
+        # Even after an event that changed nothing else, so that a repeated observation
+        # catches up (docs/engine.md#states).
+        changed = work.reconcile() or changed
     if not changed:
         return before, [], False
     if work.review_only:

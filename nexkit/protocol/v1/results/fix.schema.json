@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/results/fix.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/results/fix.schema.json",
   "$comment": "The fix stage's result. `cause` and its evidence come first in a diagnosis round; `open_conflicts` need a person.",
   "type": "object",
   "properties": {

@@ -5,6 +5,7 @@
   "itemKind": "change",
   "state": "noChange",
   "change": null,
+  "observed": null,
   "attention": null,
   "hold": false,
   "waits": [],

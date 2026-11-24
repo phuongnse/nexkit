@@ -4,6 +4,7 @@ from unittest import mock
 from nexkit.github import GitHubError
 from nexkit.maintain import (
     BRANCH_KEPT,
+    CLOSED,
     ON_BASE_FAILED,
     STALE_BRANCHES,
     UNDECIDED,
@@ -104,6 +105,13 @@ class StaleBranchTests(unittest.TestCase):
     def test_a_person_cannot_stop_a_delete_with_the_marker_in_a_comment(self):
         self.closed_work(5)
         self.gh.human_comment(5, f"{BRANCH_KEPT} `nexkit/issue-5`")
+        delete_stale_branches(self.gh)
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+
+    def test_agent_text_in_a_comment_of_nexkits_cannot_stop_a_delete(self):
+        self.closed_work(5)
+        text = f"Done.\n{BRANCH_KEPT} `nexkit/issue-5`"
+        self.gh.comment(5, render_run({"command": "go", "status": "success"}, text))
         delete_stale_branches(self.gh)
         self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
 
@@ -225,6 +233,16 @@ class CloseParentTests(unittest.TestCase):
         )
         [note] = self.gh.comments(1)
         self.assertIn("- #2: completed\n- #3: not planned", note["body"])
+
+    def test_agent_text_in_the_latest_comment_of_nexkits_does_not_pass_for_the_note(self):
+        self.close(2)
+        self.close(3)
+        text = f"Done.\n{CLOSED}"
+        self.gh.comment(1, render_run({"command": "go", "status": "success"}, text))
+        close_parents(self.gh, 3)
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+        [note] = self.gh.comments_matching(1, "because all its sub-issues are closed")
+        self.assertTrue(note["body"].startswith(CLOSED))
 
     def test_a_parent_another_run_closes_at_the_same_moment_is_left_to_it(self):
         self.close(2)

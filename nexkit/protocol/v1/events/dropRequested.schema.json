@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/phuongnse/nexkit/main/nexkit/protocol/v1/events/dropRequested.schema.json",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/dropRequested.schema.json",
   "$comment": "A person ends the work item.",
   "type": "object",
   "properties": {

@@ -772,10 +772,8 @@ def round_carried_on(gh, cfg, issue, decision, agent):
     if "runAgent" in kinds or "close" in kinds:
         return True
     if "needPerson" in kinds:
-        if kinds["needPerson"]["reason"] != "closeRecommended" or again:
-            return False
-        # NexKit 6 asks whether an answer replans before it looks at the one that closes.
-        return not autopilot.replans({"questions": round_questions(agent)})
+        # NexKit 6 asks whether an answer replans only for a fix round (`stop_carried_on`).
+        return kinds["needPerson"]["reason"] == "closeRecommended" and not again
     return False
 
 

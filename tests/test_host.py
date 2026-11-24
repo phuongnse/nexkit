@@ -608,6 +608,9 @@ class StoppedTest(HostCase):
         self.assertTrue(carries_on(fix, "agent_error", timed_out=True))
         go = {"issue": 5, "pr": None, "action": "implement"}
         self.assertTrue(carries_on(go, "agent_error", timed_out=True))
+        # NexKit 6 asks whether an answer replans only for a fix round: after a `/nexkit go`
+        # the round carries on, and the sweep then waits for a person and mentions them.
+        self.assertTrue(carries_on(go, "agent_blocked", status="blocked", output=both))
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             self.assertFalse(carries_on(go, "agent_error", timed_out=True))
 

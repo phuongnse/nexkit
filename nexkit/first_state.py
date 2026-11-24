@@ -379,7 +379,7 @@ class Item:
             # decides when none is left then, as the engine does (`due`).
             wait = latest.get("ci_wait") or self.pr_state.get("ci_wait") or {}
             self.doc["rounds"]["due"] = True
-            self.wait("baseFailure", on=str(wait["bug"]) if wait.get("bug") else None)
+            self.wait("baseFailure", on=str(wait.get("bug") or "none"))
             return self.be("base failure", "fixing")
         if outcome == "ready":
             return self.ready(latest)

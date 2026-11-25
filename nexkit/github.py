@@ -106,6 +106,24 @@ query($owner: String!, $name: String!, $number: Int!) {
 """
 
 
+# Who edited each of some comments: `nodes` answers in the order of `ids`, null for an id that
+# is no comment. Beyond a first page, a query for one comment follows with `after`.
+COMMENT_EDITS_QUERY = """
+query($ids: [ID!]!, $after: String) {
+  nodes(ids: $ids) {
+    ... on IssueComment {
+      userContentEdits(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { editor { __typename login } }
+      }
+    }
+  }
+}
+"""
+
+COMMENT_BATCH = 100
+
+
 # What GitHub says about the reviews of a pull request: whether it is a draft, whether its
 # reviews let it merge, and its review conversations (see `review_state`).
 REVIEW_QUERY = """
@@ -312,11 +330,57 @@ class GitHub:
         return self.request("GET", f"{self._repo}/issues/{number}")
 
     def comments(self, number):
-        return self.paginate(f"{self._repo}/issues/{number}/comments")
+        return self.comment_editors(self.paginate(f"{self._repo}/issues/{number}/comments"))
 
     def issue_comment(self, comment_id):
         """One comment on an issue or pull request of this repository, by its id."""
-        return self.request("GET", f"{self._repo}/issues/comments/{comment_id}")
+        found = self.request("GET", f"{self._repo}/issues/comments/{comment_id}")
+        return self.comment_editors([found])[0]
+
+    def comment_editors(self, comments):
+        """`comments`, with `editors` added to each that a bot wrote and that was edited
+        since: the logins of everyone who changed its text, as REST writes them, and "" for
+        someone GitHub cannot name. Other comments get none, since only a comment of NexKit's
+        App can pass for its record (see `state.changed_by`)."""
+        edited = [
+            c
+            for c in comments
+            if (c.get("user") or {}).get("type") == "Bot"
+            and c.get("node_id")
+            and c.get("updated_at") != c.get("created_at")
+        ]
+        for at in range(0, len(edited), COMMENT_BATCH):
+            part = edited[at : at + COMMENT_BATCH]
+            found = self.graphql(COMMENT_EDITS_QUERY, {"ids": [c["node_id"] for c in part]})
+            nodes = found.get("nodes") or []
+            for place, comment in enumerate(part):
+                node = nodes[place] if place < len(nodes) else None
+                comment["editors"] = self._edit_logins(comment, node)
+        return comments
+
+    def _edit_logins(self, comment, node):
+        # A comment GitHub gives no edits for is one it cannot vouch for.
+        if not (node or {}).get("userContentEdits"):
+            return [""]
+        logins = set()
+        while True:
+            edits = (node or {}).get("userContentEdits") or {}
+            for edit in edits.get("nodes") or []:
+                editor = (edit or {}).get("editor") or {}
+                login = editor.get("login") or ""
+                # GraphQL names a bot without the suffix that REST gives it.
+                logins.add(f"{login}[bot]" if editor.get("__typename") == "Bot" else login)
+            info = edits.get("pageInfo") or {}
+            if not info.get("hasNextPage"):
+                return sorted(logins)
+            if not info.get("endCursor"):
+                return sorted(logins | {""})
+            found = self.graphql(
+                COMMENT_EDITS_QUERY, {"ids": [comment["node_id"]], "after": info["endCursor"]}
+            )
+            node = (found.get("nodes") or [None])[0]
+            if not (node or {}).get("userContentEdits"):
+                return sorted(logins | {""})
 
     def parent_issue(self, number):
         """The parent of a sub-issue, or None for an issue without a parent."""
@@ -468,7 +532,7 @@ class GitHub:
         """Comments on any issue or pull request, edited or posted since `since` (ISO 8601),
         newest first."""
         params = {"since": since, "sort": "updated", "direction": "desc"}
-        return self.paginate(f"{self._repo}/issues/comments", params, limit)
+        return self.comment_editors(self.paginate(f"{self._repo}/issues/comments", params, limit))
 
     def comment(self, number, body):
         """Post a comment. GitHub may post it and still answer with a server error or a

@@ -68,6 +68,15 @@ class StoreTest(unittest.TestCase):
         self.assertTrue(comment["body"].startswith("### NexKit state"))
         self.assertIn("`new`, at revision 1", comment["body"])
 
+    def test_a_state_comment_that_someone_else_changed_is_not_read(self):
+        gh = FakeGitHub()
+        state = created(gh)
+        [comment] = gh.comments(42)
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        self.assertEqual(item_state.read(gh, 42), (None, None))
+        comment["editors"] = [BOT_LOGIN]
+        self.assertEqual(item_state.read(gh, 42)[1], state)
+
     def test_a_write_on_a_revision_that_moved_is_not_made(self):
         gh = FakeGitHub()
         created(gh)

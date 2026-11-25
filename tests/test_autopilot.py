@@ -3706,6 +3706,108 @@ class CIWaitTests(AutopilotCase):
         )
 
 
+class ChangedCommentTests(AutopilotCase):
+    """A comment of the App that someone else changed counts for no record of autopilot's."""
+
+    CHANGED = [BOT_LOGIN, "mallory"]
+    SHA = "a" * 40
+
+    def changed(self, number, body, editors=CHANGED):
+        comment = self.gh.comment(number, body)
+        comment["editors"] = editors
+        return comment
+
+    def test_a_record_comment_that_someone_else_changed_is_not_read(self):
+        record = {"command": "go", "basis": "x"}
+        data = base64.b64encode(json.dumps(record).encode()).decode()
+        body = f"{autopilot.RECORD_PREFIX}{data} -->"
+        self.issue(5)
+        self.changed(5, body)
+        self.assertEqual(autopilot.find_record(self.gh.comments(5)), (None, {}))
+        self.gh.issue_comments[5][0]["editors"] = [BOT_LOGIN]
+        self.assertEqual(autopilot.find_record(self.gh.comments(5))[1], record)
+
+    def test_the_ci_reports_that_someone_else_changed_are_not_read(self):
+        bug = self.issue(8, body="<!-- nexkit:ci ci.yml -->\nRed.", user=BOT_LOGIN)
+        failed = base64.b64encode(json.dumps({"run": 50, "jobs": []}).encode()).decode()
+        report = (
+            f"<!-- nexkit:ci-sha {self.SHA} -->\n"
+            f"{autopilot.CI_FAILED_PREFIX}{failed} -->\n"
+            "<!-- nexkit:ci-runs 50.1 -->"
+        )
+        comment = self.changed(8, f"Again.\n\n{report}")
+        found = autopilot._ci_records(self.gh, "ci.yml", [bug])
+        self.assertEqual((found["shas"], found["seen"], found["reporter"]), (set(), {}, {}))
+        self.assertIsNone(autopilot._recorded_failure(self.gh, bug))
+        comment["editors"] = [BOT_LOGIN]
+        found = autopilot._ci_records(self.gh, "ci.yml", [bug])
+        self.assertEqual((found["shas"], found["seen"]), ({self.SHA}, {50: {1}}))
+        self.assertEqual(autopilot._recorded_failure(self.gh, bug)["run"], 50)
+
+    def test_the_done_note_that_someone_else_changed_does_not_count(self):
+        self.issue(5, state="closed", reason="completed")
+        self.gh.add_milestone(2)
+        self.issue(6, milestone=2)
+        self.changed(5, f"{autopilot.DONE}\nNot the note.")
+        self.assertIn("Autopilot finished milestone M1.", self.sweep(closed=5))
+        self.assertEqual(len(self.gh.comments_matching(5, "finished milestone M1")), 1)
+
+    def test_the_done_note_that_only_the_app_changed_counts(self):
+        self.issue(5, state="closed", reason="completed")
+        self.gh.add_milestone(2)
+        self.issue(6, milestone=2)
+        self.changed(5, f"{autopilot.DONE}\nNexKit finished milestone M1.", [BOT_LOGIN])
+        self.assertNotIn("Autopilot finished milestone M1.", self.sweep(closed=5))
+        self.assertEqual(len(self.gh.comments_matching(5, autopilot.DONE)), 1)
+
+    def test_a_mention_that_someone_else_changed_does_not_count(self):
+        self.issue(5)
+        self.run_comment(5, "plan", status="running")
+        mention = self.gh.comment(5, autopilot.mention_text(make_config(notify=["olivia"]), "why"))
+        mention["editors"] = [BOT_LOGIN, "mallory"]
+        self.assertFalse(autopilot.mentioned(self.gh.comments(5)))
+        mention["editors"] = [BOT_LOGIN]
+        self.assertTrue(autopilot.mentioned(self.gh.comments(5)))
+
+    def test_the_runs_that_a_report_someone_else_changed_names_are_not_read(self):
+        from nexkit.evidence import named_runs
+
+        bug = self.issue(8, body="<!-- nexkit:ci ci.yml -->\nRed.", user=BOT_LOGIN)
+        report = f"<!-- nexkit:ci-sha {self.SHA} -->\n<!-- nexkit:ci-runs 50.1 -->"
+        comment = self.changed(8, f"Again.\n\n{report}")
+        self.assertEqual(named_runs(self.gh, bug, self.gh.comments(8))[0], [])
+        comment["editors"] = [BOT_LOGIN]
+        self.assertEqual(named_runs(self.gh, bug, self.gh.comments(8))[0], [(50, [1])])
+
+    def test_the_reason_names_who_changed_the_newest_comment_and_where(self):
+        old = self.changed(5, "old", ["mallory", BOT_LOGIN])
+        new = self.changed(5, "new", [BOT_LOGIN, ""])
+        self.gh.comment(5, "newest, but unchanged")
+        mine = {"id": 99, "body": "x", "user": {"login": "alice", "type": "User"}}
+        mine["editors"] = ["bob"]
+        why = autopilot.changed_comment([old, new, mine])
+        self.assertIn("someone GitHub cannot name changed a comment of NexKit's", why)
+        self.assertIn(new["html_url"], why)
+        self.assertEqual(autopilot.changed_comment([mine, self.gh.comments(5)[-1]]), "")
+
+    def test_an_issue_or_pull_request_with_such_a_comment_waits_for_a_person(self):
+        self.issue(5)
+        self.gh.add_issue(6, title="Fix", user=BOT_LOGIN)
+        self.gh.pulls[6] = {"number": 6, "state": "open", "head": {"sha": "b" * 40}}
+        comment = self.changed(6, "State.")
+        for open_pulls in ({}, {5: 6}):
+            step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], open_pulls)
+            self.assertEqual(step["state"] == "waits", bool(open_pulls))
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6})
+        self.assertEqual(step["pull"], 6)
+        self.assertIn(autopilot.CHANGED_ENTRY, step["reason"])
+        self.assertIn("@mallory changed a comment of NexKit's", step["reason"])
+        self.assertTrue(step["reason"].startswith("read the comment, then delete it"))
+        comment["editors"] = [BOT_LOGIN]
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6})
+        self.assertNotIn(autopilot.CHANGED_ENTRY, step["reason"])
+
+
 class TrustedWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()
@@ -4136,6 +4238,18 @@ class DependabotTests(unittest.TestCase):
         self.gh.comment(issue["number"], render_run({"command": "go", "status": "success"}, text))
         self.check()
         self.assertEqual(len(self.gh.comments_matching(issue["number"], "still reports")), 1)
+
+    def test_a_still_open_note_that_someone_else_changed_does_not_count(self):
+        issue = self.closed_issue()
+        note = self.gh.comment(issue["number"], f"{autopilot.DEPENDABOT_STILL_OPEN}\nNot it.")
+        note["editors"] = [BOT_LOGIN, "mallory"]
+        self.check()
+        self.assertEqual(len(self.gh.comments_matching(issue["number"], "still reports")), 1)
+        # One that the App alone changed does.
+        self.gh.issue_comments[issue["number"]][:] = [note]
+        note["editors"] = [BOT_LOGIN]
+        self.check()
+        self.assertEqual(len(self.gh.comments_matching(issue["number"], "still reports")), 0)
 
     def test_it_says_nothing_while_the_alert_may_still_close_after_a_merge(self):
         issue = self.closed_issue(timedelta(hours=1))

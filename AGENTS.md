@@ -39,8 +39,8 @@ that sets up repositories. Read [How it works](docs/how-it-works.md) before chan
   [Releases](docs/delivery.md#releases).
 - Agent output is untrusted: validate it before publishing, redact what a session prints or stores
   with `redact.py`, and print tool output with workflow commands stopped. Markers count only in the
-  App's comments, at the position NexKit writes them. See [Security
-  notes](docs/how-it-works.md#security-notes).
+  App's comments that no one else changed, never the Actions bot, and only at the position NexKit
+  writes them. See [Security notes](docs/how-it-works.md#security-notes).
 - State lives only on GitHub: comments, pull requests and statuses. See
   [State](docs/how-it-works.md#state).
 - Agent errors and `blocked` results never retry automatically. Only check failures and review

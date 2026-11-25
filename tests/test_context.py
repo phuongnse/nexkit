@@ -359,6 +359,18 @@ class ContextTests(unittest.TestCase):
             ],
         )
 
+    def test_a_linked_plan_that_someone_else_changed_is_not_read(self):
+        plan = self.gh.comment(5, "<!-- nexkit:plan -->\n## Plan\n\nDo it.")
+        self.gh.issues[5]["body"] = f"Follow (#issuecomment-{plan['id']})."
+        task = {"action": "implement", "issue": 5, "note": ""}
+        self.assertIn("Do it.", gather(self.gh, task)["linked"]["comments"])
+        plan["editors"] = [BOT_LOGIN, "mallory"]
+        linked = gather(self.gh, task)["linked"]
+        self.assertNotIn("Do it.", linked["comments"])
+        self.assertEqual(
+            linked["skipped"], [f"comment {plan['id']}: not written by a collaborator"]
+        )
+
     def test_the_fix_round_reads_a_linked_comment_of_the_issue_itself(self):
         # The fix prompt shows no discussion, so a rule linked from the issue's own
         # discussion comes as a linked text there.

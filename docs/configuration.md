@@ -1733,9 +1733,9 @@ no person's token when it is private, and its installation on this repository; t
 in its file. Without that option doctor says that it could not tell. A run without
 `github_app` stops at its start with what to do, and so does one that gets no token.
 
-**Comments of earlier releases.** NexKit counts only what its App wrote. Your CI can write
-as the Actions bot, also on code an agent wrote, so what that bot wrote proves nothing, and
-that includes the plans and rounds of earlier releases.
+**Comments of earlier releases.** NexKit counts only what its App wrote and no one else
+changed. Your CI can write as the Actions bot, also on code an agent wrote, so what that bot
+wrote proves nothing, and that includes the plans and rounds of earlier releases.
 
 ## Reviewing your own pull requests
 

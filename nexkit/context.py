@@ -30,6 +30,7 @@ from .runlog import write_summary
 from .state import (
     PLAN_MARKER,
     answers_text,
+    bot_record,
     by_bot,
     latest_plan,
     plan_text,
@@ -416,7 +417,7 @@ def _linked_comment(gh, comment_id):
         comment = gh.issue_comment(comment_id)
     except GitHubError as exc:
         return None, f"comment {comment_id}: could not be read ({exc.status})"
-    plan = by_bot(comment) and (comment.get("body") or "").startswith(PLAN_MARKER)
+    plan = bot_record(comment) and (comment.get("body") or "").startswith(PLAN_MARKER)
     if not (_trusted(comment) or plan):
         return None, f"comment {comment_id}: not written by a collaborator"
     number = _issue_number(comment)

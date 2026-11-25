@@ -746,6 +746,23 @@ have read it: see [Issues from a workflow](configuration.md#issues-from-a-workfl
 An issue that a writer vouched for is left alone again after an edit by someone without write
 access. Read what changed, and comment `/nexkit trust` again if you trust it.
 
+### A comment of NexKit was changed by someone else
+
+The reason under *Needs a person* names who changed which comment of NexKit's, on the issue
+or on its pull request. GitHub lets anyone with write access, and any token, edit the App's
+comments, so NexKit reads the markers of a comment only when, by its edit history, no one
+but the App ever changed it. Autopilot starts, merges and fixes nothing for the item while
+such a comment is there, since its state, run or answers records may not be NexKit's.
+
+Read the comment and its history. Then either:
+
+- Delete the comment, which hands the item back to autopilot. When it is the pull request's
+  state comment, the state starts again from nothing, including the count of automatic fix
+  rounds, so check that `fix.max_auto_rounds` still bounds what you want.
+- Carry the item on yourself with `/nexkit` commands. They ignore the changed comment.
+
+`/nexkit trust` does not clear it: it vouches for an issue's text, not for NexKit's records.
+
 ### An issue in a later wave does not start
 
 `nexkit status` names the open issues of lower waves in its milestone that it waits for

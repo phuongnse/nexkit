@@ -1339,41 +1339,22 @@ def _tries(record):
     return 1 if record.get("retried") else 0
 
 
-def _again(issue, record, now, what, fields, extra=None):
+def _again(cfg, issue, record, now, what, fields, extra=None, person=False):
     """The step for a command whose run GitHub never started, or that ended without a
     report (`what` says which): start it again, as `fields` says, `AGAIN[n]` after the
     last start, for its n-th time; wait meanwhile, with the run on its way as far as
     `max_parallel` goes; and once the tries are used up, wait for a person. `record` is
     autopilot's record of the last start of the same command, or {} when there is none. A
     start that `record` names `once` was the one more start of a round that started the
-    next by itself, which waits for a person when it does not run either."""
-    extra = extra or {}
-    tries, command = _tries(record), f"`/nexkit {fields['command']}`"
-    limit = 1 if record.get("once") else len(AGAIN)
-    if tries >= limit:
-        if record.get("once"):
-            why = f"{what}, after autopilot started it once more"
-            return _step(issue, "waits", person(LOST_DO, why), **extra)
-        why = (
-            f"{what}, {tries + 1} times: GitHub created no job for it, or ended its run "
-            "without a report, as it does while GitHub Actions has an outage"
-        )
-        return _step(issue, "waits", person(OUTAGE_DO.format(command=command), why), **extra)
-    due = (parse_iso(record.get("at")) or now) + AGAIN[tries] if tries else now
-    if now < due:
-        reason = (
-            f"{what}; autopilot starts {command} again after {due:%H:%M} UTC, since GitHub "
-            "may not start runs for a while"
-        )
-        return _step(issue, "active", reason, **extra)
-    remember = {
-        **fields.get("remember", {}),
-        "tries": tries + 1,
-        **({"once": True} if record.get("once") else {}),
-    }
-    again = "once more" if not tries else "again"
-    reason = f"{what}, so autopilot starts {command} {again}"
-    return _step(issue, "start", reason, **{**fields, "remember": remember}, **extra)
+    next by itself, which waits for a person when it does not run either. With `person`,
+    the command is a person's, which waits for them. The engine decides each of these
+    (`host.lost_again`)."""
+    from .host import Refused, lost_again, refused_reason
+
+    try:
+        return lost_again(cfg, issue, record, now, what, fields, extra, person)
+    except Refused as exc:
+        return _step(issue, "waits", refused_reason(exc), **(extra or {}))
 
 
 def _stalled(gh, issue, comment, run, record, start, target, now, cfg=None):
@@ -1390,7 +1371,7 @@ def _stalled(gh, issue, comment, run, record, start, target, now, cfg=None):
         return _handed_on(issue, comment, run, start, now, cfg, "the run that continues it")
     if status != RUNNING or not _ended(gh, run):
         return None
-    return _reportless(gh, issue, comment, run, record, start, target, now, stale=True)
+    return _reportless(gh, cfg, issue, comment, run, record, start, target, now, stale=True)
 
 
 # The jobs of a run whose agent session spends agent time.
@@ -1415,7 +1396,7 @@ def _agent_ran(gh, run):
     )
 
 
-def _reportless(gh, issue, comment, run, record, start, target, now, stale=False):
+def _reportless(gh, cfg, issue, comment, run, record, start, target, now, stale=False):
     """The step for a run that ended without a report: it starts again when NexKit started
     it by itself, later each time (see `_again`), or once more only when its agent ran,
     since those starts count toward no budget; a person's command waits for them. Tries
@@ -1425,19 +1406,18 @@ def _reportless(gh, issue, comment, run, record, start, target, now, stale=False
     follows a failed run."""
     command = run.get("command") or ("fix" if run_action(run) == "fix" else "review")
     extra = {"stale": {"number": target, "comment": comment["id"]}} if stale else {}
-    if not _automatic(run):
-        return _step(issue, "waits", person(LOST_DO, REPORTLESS), **extra) if stale else None
+    automatic = _automatic(run)
     at = parse_iso(record.get("at"))
     same = (record.get("command"), record.get("target")) == (command, target)
     record = record if same and at is not None and now - at <= LOST else {}
-    if _agent_ran(gh, run):
+    if automatic and _agent_ran(gh, run):
         record = {**record, "once": True}
     fields = {**start, "target": target, "command": command}
     auto = _auto_input(run)
     if auto:
         # The same kind of round: one after failing checks merges the base branch first.
         fields["auto"] = auto
-    return _again(issue, record, now, REPORTLESS, fields, extra)
+    return _again(cfg, issue, record, now, REPORTLESS, fields, extra, person=not automatic)
 
 
 def _handed_on(issue, comment, run, start, now, cfg, what):
@@ -1470,7 +1450,7 @@ def _handed_on(issue, comment, run, start, now, cfg, what):
     }
     minutes = cfg["autopilot"]["lost_after_minutes"]
     reason = f"{what} did not start within {minutes} minutes"
-    return _again(issue, {"once": True}, now, reason, fields)
+    return _again(cfg, issue, {"once": True}, now, reason, fields)
 
 
 def settle_ended(gh, number, comment, run):
@@ -1537,7 +1517,7 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         lost = _handed_on(issue, comment, latest, start, now, cfg, what)
         return lost or _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") == "lost":
-        lost = _reportless(gh, issue, comment, latest, record, start, pull, now)
+        lost = _reportless(gh, cfg, issue, comment, latest, record, start, pull, now)
         if lost:
             return lost
     if latest.get("outcome") in (UNTRUSTED_ROUND, UNTRUSTED_MERGE):
@@ -1946,9 +1926,8 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
             "basis": current,
             **({"auto": record["auto"]} if record.get("auto") else {}),
         }
-        return _again(
-            issue, record, now, f"the {command} that autopilot started did not run", fields
-        )
+        what = f"the {command} that autopilot started did not run"
+        return _again(cfg, issue, record, now, what, fields)
     start = {"basis": current, "target": number, "note": "", "remember": {}}
     found = [(c, run) for c, run in run_comments(comments) if "command" in run]
     last = found[-1][1] if found else None
@@ -1958,7 +1937,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         reason = retry_waits(last) or f"`/nexkit {last['command']}` is {last['status']}"
         return stalled or _step(issue, "active", reason)
     if last and last.get("outcome") == "lost" and not pull:
-        lost = _reportless(gh, issue, found[-1][0], last, record, start, number, now)
+        lost = _reportless(gh, cfg, issue, found[-1][0], last, record, start, number, now)
         if lost:
             return lost
     plan = latest_plan(comments)

@@ -110,7 +110,10 @@
     "asked": [],
     "parts": [],
     "policies": {},
-    "recentEvents": []
+    "recentEvents": [],
+    "again": {
+     "lost": 1
+    }
   },
   "steps": [
     {

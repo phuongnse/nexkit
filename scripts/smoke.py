@@ -27,8 +27,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from nexkit import agent  # noqa: E402
-from nexkit.agent import run_stage, run_triage  # noqa: E402
+from nexkit import agent, protocol  # noqa: E402
+from nexkit.agent import action_for, run_action  # noqa: E402
 from nexkit.config import validate  # noqa: E402
 from nexkit.context import current_fix  # noqa: E402
 from nexkit.engine import prompt  # noqa: E402
@@ -101,13 +101,17 @@ def make_repo(root):
 
 
 def stage(name, work, out, program, context=None, *, want="done", **kw):
-    result = run_stage(name, context or CONTEXT, CONFIG["cfg"], work, out, program=program, **kw)
+    cfg = CONFIG["cfg"]
+    version = git(work, "rev-parse", "HEAD").strip() if name in ("fix", "review") else None
+    action = action_for(name, cfg, version)
+    result, ran = run_action(action, context or CONTEXT, cfg, work, out, program=program, **kw)
     keys = ("status", "error", "tokens", "changed_files", "conflicts")
     summary = {k: result.get(k) for k in keys}
     print(f"{name}: {json.dumps(summary)}", flush=True)
     if result["status"] != want:
         raise SystemExit(f"{name} stage failed: {result.get('error')}")
     counted(name, result)
+    conforms(name, ran, name)
     # The readable transcript pairs every tool call with its result. Planning, implementing
     # and fixing cannot be done without reading or changing the code, so those stages must
     # call tools; a review may judge from the diff and check results in its prompt.
@@ -136,12 +140,15 @@ def triage(root, program):
         ({**CONTEXT, "requests": "@olivia: Plan this with the hard profile."}, "hard"),
     ]
     for number, (context, want) in enumerate(cases, 1):
-        result = run_triage(context, cfg, None, root / f"triage-{number}", program=program)
+        action = action_for("triage", cfg)
+        out = root / f"triage-{number}"
+        result, ran = run_action(action, context, cfg, None, out, previous=None, program=program)
         keys = ("status", "profile", "chosen_by", "reason", "error", "tokens")
         print(f"triage: {json.dumps({k: result.get(k) for k in keys})}", flush=True)
         if result["chosen_by"] != "triage" or result["profile"] != want or not result["reason"]:
             raise SystemExit(f"triage: wanted {want}, got {result}")
         counted("triage", result)
+        conforms("triage", ran, "triage")
 
 
 def result_again(root, program):
@@ -166,7 +173,9 @@ def result_again(root, program):
     body = f"{CONTEXT['body']} The code word for this issue is PELICAN."
     context = {**CONTEXT, "body": body, "requests": "No discussion."}
     with mock.patch.object(agent, "problems", first_refused):
-        result = run_triage(context, cfg, None, root / "result-again", program=program)
+        action = action_for("triage", cfg)
+        out = root / "result-again"
+        result, ran = run_action(action, context, cfg, None, out, previous=None, program=program)
     keys = ("status", "profile", "reason", "asked_again", "error", "tokens")
     print(f"result again: {json.dumps({k: result.get(k) for k in keys})}", flush=True)
     if not RUNTIMES[CONFIG["runtime"]].resumes:
@@ -178,6 +187,16 @@ def result_again(root, program):
     if "PELICAN" not in result["reason"].upper():
         raise SystemExit(f"result again: the session did not go on where it stopped: {result}")
     counted("result again", result)
+    conforms("result again", ran, "triage")
+
+
+def conforms(name, ran, stage):
+    """The runner's result and its output fit the protocol's schemas."""
+    found = protocol.check(ran, "actions/runAgent.result.schema.json", "run")
+    if ran["output"] is not None:
+        found += protocol.check(ran["output"], f"results/{stage}.schema.json", "output")
+    if found:
+        raise SystemExit(f"{name}: the runner's result does not fit the protocol: {found}")
 
 
 def counted(name, result):

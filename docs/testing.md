@@ -31,7 +31,8 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 The smoke test runs every agent stage against real Claude Code, at the version that
 `nexkit/__init__.py` pins, on a tiny repository. NexKit tests only the versions it pins, with no
 matrix of versions. It exercises the CLI's real flags, event stream and structured results, which
-the unit tests replace with a fake. It needs a Claude login or credential,
+the unit tests replace with a fake. It runs each stage through [the runner](engine.md#runners)
+and fails when the runner's result, or its output, does not fit the protocol's schemas. It needs a Claude login or credential,
 `CLAUDE_CODE_OAUTH_TOKEN` in CI, and costs a real session, so it runs only when a change touches
 what it covers.
 

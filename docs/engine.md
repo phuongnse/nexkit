@@ -560,7 +560,12 @@ write for implement and fix. There are two kinds of runner:
 
 - **An agent CLI in a workspace:** Claude Code today, and Codex and Gemini when their runtimes
   are added. The agent works on files, and the host publishes them. NexKit 6's `Runtime` and
-  `Provider` stay the Python interface inside this runner, which this repository holds.
+  `Provider` stay the Python interface inside this runner, which this repository holds. The runner
+  is `agent.run_action`. It refuses a `runAgent` action that does not fit the protocol, or that
+  names another agent, model, effort or access than the configuration gives the stage, before any
+  agent starts. It saves its result as `run.json`, beside the stage's `result.json`. The session,
+  the change version and the money are null: the publish job makes the commit, and nothing asks
+  the same session again.
 - **A model with tools:** the agent works only through the tools the host offers for the stage,
   such as an MCP server. A host that keeps its users' keys implements this runner itself, so that
   a key never leaves the host.

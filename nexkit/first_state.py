@@ -18,9 +18,10 @@ from datetime import UTC, datetime
 
 from . import autopilot, item_state, protocol
 from .autopilot import CHAINED, CI_WAITING, HELD, PULL_CLOSED, UNTRUSTED_MERGE, UNTRUSTED_ROUND
+from .checks import failing_signatures
 from .engine.machine import ACCESS, INPUTS
 from .github import TRUSTED_ASSOCIATIONS
-from .protocol.size import LONGEST, MOST, clip, fit, signature
+from .protocol.size import LONGEST, MOST, clip, failure_key, fit, signature
 from .schema import filled
 from .state import (
     COMMIT,
@@ -112,6 +113,14 @@ KINDS = {
     "ready": "A change waits for a person: its accept, criteria or a checklist item.",
     "needs a person": "A round left the change for a person: rounds used up, a refused merge.",
 }
+
+
+def failing(recorded):
+    """The engine's `rounds.failing` for checks as the state comment recorded them: each
+    failing check by the digest of its name and signature (`checks.failing_signatures`)."""
+    return [
+        failure_key(name, found or name) for name, found in failing_signatures(recorded).items()
+    ][: MOST["failing"]]
 
 
 def empty(item):
@@ -563,9 +572,13 @@ class Item:
             if isinstance(check, dict) and not check.get("passed") and not check.get("skipped")
         ][: MOST["signatures"]]
         # The checks that failed the same way before and after the last fix round, which the
-        # next automatic fix round diagnoses. The failing checks that the checks after a fix
-        # round compare with are not imported: the first fix round after the import starts
-        # its comparison anew.
+        # next automatic fix round diagnoses, and the failing checks that the checks after the
+        # next fix round compare with. `fixed` is not imported: every imported fix round still
+        # publishes, and the engine sets `fixed` then. An import kind that leaves a fix round's
+        # checks pending would need `fixed` too. A conflicting round records no checks.
+        failed = failing(feedback.get("checks"))
+        if failed:
+            rounds["failing"] = failed
         found = feedback.get("repeated")
         found = found if isinstance(found, list) else []
         repeated = [clip(name, "check") for name in found if isinstance(name, str)]

@@ -271,10 +271,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `fixing` | An agent works on the failures and findings, in the same change, or its round waits to start | `checking`, `awaitingApproval`, `planning`, `working`, `ready`, `failed` |
 | `ready` | The change passed, or a person decides what is left | `accepting`, `fixing`, `checking` |
 | `accepting` | The host accepts the change | `accepted`, `ready`, `fixing`, `working`, `failed` |
-| `accepted` | The change is in | none |
+| `accepted` | The change is in | `new`, when a person reopens it |
 | `split` | The work is carried by its parts | `accepted`, `dropped` |
-| `noChange` | Nothing needs to change, and the item says why | none |
-| `dropped` | A person ended the work | none |
+| `noChange` | Nothing needs to change, and the item says why | `new`, when a person reopens it |
+| `dropped` | A person ended the work | `new`, when a person reopens it |
 | `failed` | A step failed in a way that waiting does not help, or a token, time or money budget ran out. The change is kept, and the item waits for a person whatever is observed of it, but a merge or an emptied change | `dropped`, and by the host's policy `planning` or `fixing` |
 
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
@@ -417,7 +417,8 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   it: its new plan goes on as one change on it, where NexKit 6 may instead split it and close
   the pull request as superseded.
 - **A final item that a person reopens** waits for a person, with attention, as NexKit 6 does.
-  One whose change went in or became empty starts again without it and with its rounds
+  One whose change went in or became empty, as its state or the latest observation says, such
+  as a change merged after a person dropped the item, starts again without it and with its rounds
   counted afresh.
 
 Three things sit beside the state, never in place of it:
@@ -691,9 +692,11 @@ adapter. A new rule of the engine comes with a case.
   applies with its count, and a fix round that a hold or a base failure kept back waits to be
   issued (`rounds.due`), counted when it starts or left to a person when none is left then.
   The checks that NexKit 6 found failing the same way before and after the last fix round are
-  kept for the next automatic fix round to diagnose (`rounds.repeated`); the failing checks
-  that later checks compare with are not, so the first fix round after the import compares
-  with none.
+  kept for the next automatic fix round to diagnose (`rounds.repeated`). So are the failing
+  checks of NexKit 6's state comment (`rounds.failing`), which the checks after the next fix
+  round compare with, as NexKit 6 compares them. The version a fix round published
+  (`rounds.fixed`) is not imported, since every imported fix round still publishes and the
+  engine sets it then.
   What a round decided on its head keeps that head as the change's version, and a head pushed
   since is in the observation, so the engine checks it before it goes on. A run that waits to run again runs its own command again, and a lost round
   runs a fix round's command or a review, as NexKit 6 does; autopilot's record of tries counts

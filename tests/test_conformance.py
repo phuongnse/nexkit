@@ -173,11 +173,11 @@ def table_transitions():
 
 def allowed(policies, had_change):
     """The table's transitions, and those the page's rules below it allow, under `policies`:
-    from every state that is not final, a drop and a stop; a final item reopened; and, when the
-    item has a change, a change that went in, became empty or was pushed to, a
-    review asked for, and a conflict as the conflict policy says."""
+    from every state that is not final, a drop and a stop; and, when the item has a change, a
+    change that went in, became empty or was pushed to, a review asked for, and a conflict as
+    the conflict policy says."""
     conflicts = {**_defaults(), **policies}["conflicts"]
-    pairs = table_transitions() | {(name, "new") for name in FINAL}
+    pairs = table_transitions()
     for name in _states():
         if name in FINAL:
             continue

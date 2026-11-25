@@ -917,9 +917,12 @@ class Step:
             self.need("splitIncomplete", "No part of the split was completed.")
 
     def on_reopened(self, event):
-        if self.state in ("accepted", "noChange"):
-            # Its change went in or became empty: the work starts again without it, and with
-            # its rounds counted afresh.
+        observed = self.observed() or {}
+        gone = observed.get("merged") or observed.get("empty")
+        if self.state in ("accepted", "noChange") or gone:
+            # Its change went in or became empty, as its final state or the latest observation
+            # says, even after a drop: the work starts again without it, and with its rounds
+            # counted afresh.
             self.s["change"] = None
             self.s["observed"] = None
             self.s["rounds"] = blank(self.s["item"])["rounds"]

@@ -808,9 +808,12 @@ adapter. A new rule of the engine comes with a case.
    stop of publish. After a plan, a stopped round and a review, `report` also sends the tokens,
    seconds, money and session that the runner's `run.json` gives. It checks the file against the
    protocol first. The rest of the result stays NexKit 6's, so the engine decides as before, and
-   a file that is missing or does not fit sends none. It also decides the start again of lost
-   work under `lostWaits`; no GitHub
-   path asks it yet. After a blocked `/nexkit go` or fix round whose recommended
+   a file that is missing or does not fit sends none. It also decides what follows a command that
+   autopilot started and lost, when its run never started, ended without a report, or handed the work on to a run that never
+   started (`autopilot._again`, called by `_reportless` and `_handed_on`): `lost_again` sends
+   `actionLost` at the time of the last start, with autopilot's count of losses, and the host
+   carries out the start, the wait or the person. What counts as lost and the six-hour window of
+   the count stay the host's. A person's own lost command waits for that person. After a blocked `/nexkit go` or fix round whose recommended
    answer only closes the issue, `report` mentions the person, as for any other wait, and the
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found

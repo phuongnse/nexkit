@@ -23,4 +23,5 @@ FAMILIES = {
     "waits": "#390",
     "pause": "#398",
     "ended": "#393",
+    "lost": "#399",
 }

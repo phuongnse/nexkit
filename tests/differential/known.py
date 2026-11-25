@@ -27,6 +27,24 @@ KNOWN = [
         ),
     },
     {
+        "name": "a command NexKit never writes starts again",
+        "family": "lost",
+        "by": "#399",
+        "why": (
+            "NexKit 6 started again whatever command a run that handed the work on named, such "
+            "as `close`. NexKit never writes such a command, and the engine refuses to decide "
+            "what follows it, so the issue waits for a person with the refusal as its reason."
+        ),
+        "match": lambda sc, old, new: (
+            sc["where"] in {"issue_continued", "pull_chained"}
+            and sc.get("next") == "close"
+            and any(
+                isinstance(old.get(f"step{n}"), dict) and old[f"step{n}"].get("command") == "close"
+                for n in (1, 2, 3)
+            )
+        ),
+    },
+    {
         "name": "a closing answer after a stopped round",
         "family": "stop",
         "by": "#346",

@@ -274,8 +274,8 @@ MUTANTS = {
         "path": MACHINE,
         "old": """        if count >= (min(1, len(waits)) if once else len(waits)):""",
         "new": """        if count >= len(waits):""",
-        "seen": ("walker",),
-        "families": ("round", "give"),
+        "seen": ("harness", "walker"),
+        "families": ("lost",),
     },
     # A person's lost work starts again as the engine's own does, where NexKit 6's
     # `_reportless` waits for a person (#397).
@@ -285,8 +285,22 @@ MUTANTS = {
             return False
         if action["kind"] == "runAgent":""",
         "new": """        if action["kind"] == "runAgent":""",
-        "seen": ("walker",),
-        "families": ("round", "give"),
+        "seen": ("harness", "walker"),
+        "families": ("lost",),
+    },
+    # Lost work waits as long as the last wait, not the next (#399).
+    "lost-waits-shifted": {
+        "path": MACHINE,
+        "old": """        if waits[count] == 0:
+            self.resume()
+            return
+        until = _later(self.at, waits[count])""",
+        "new": """        if waits[count] == 0:
+            self.resume()
+            return
+        until = _later(self.at, waits[-1])""",
+        "seen": ("harness", "walker"),
+        "families": ("lost",),
     },
     # A transient stop waits as long as the last wait, not the next (#398).
     "transient-waits-shifted": {

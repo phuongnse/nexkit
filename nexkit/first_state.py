@@ -560,6 +560,10 @@ class Item:
             return self.be("lost for a person", "failed", "outage", run, SAYS["outage"])
         due = max((at or self.now) + autopilot.AGAIN[tries], self.now) if tries else self.now
         self.wait("time", until=iso(due))
+        # The engine counts this loss as it does before it waits, so later restarts go on from it.
+        self.doc["again"] = {"lost": min(tries + 1, 10)}
+        if record.get("once"):
+            self.doc["again"]["once"] = True
         return self.be("lost", OF_COMMAND.get(command, "planning"))
 
     # What the state holds beside its name.

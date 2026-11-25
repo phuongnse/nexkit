@@ -21,11 +21,12 @@ from .checks import BASE_SHA, environment, known_base
 from .context import KEEPS, keep_texts
 from .engine import prompt as engine_prompt
 from .engine.textutil import checklist_item, person_decides
+from .first_state import agent_run
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
-from .runtimes.base import AgentConfigError, Spec
+from .runtimes.base import ACCESS, AgentConfigError, Spec
 from .schema import filled, problems
 from .usage import schedule
 
@@ -1183,3 +1184,92 @@ def _save(result, out, redact, calls, *, start, merged, conflicts):
     (out / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     write_summary(summary(result, calls), redact)
     return result
+
+
+def action_for(stage, cfg, version=None):
+    """The `runAgent` action for `stage` as the configuration describes it: its agent, model,
+    effort and time budget. `version` is the change the stage starts from."""
+    settings = configuration.stage(cfg, stage)
+    return {
+        **agent_run(stage, version),
+        "agent": settings["agent"],
+        "model": settings["model"],
+        "effort": settings["effort"],
+        "budget": {
+            "tokens": None,
+            "seconds": configuration.stage_minutes(cfg, stage) * 60,
+            "usd": settings["max_budget_usd"],
+        },
+    }
+
+
+def finished(result, stage):
+    """The protocol's `runAgent` result for NexKit 6's `result` of `stage`. It reads only a
+    result that is already redacted. The session, the change version and the cost are null:
+    the publish job makes the commit, no job asks the same session again, and NexKit 6's
+    result does not keep the cost."""
+    status = result.get("status")
+    if stage == "triage":
+        chosen = result.get("chosen_by") == "triage"
+        output = {"profile": result["profile"], "reason": result.get("reason") or ""}
+        output = output if chosen else None
+    else:
+        output = result["output"] if isinstance(result.get("output"), dict) else None
+    paused = status == "paused"
+    seconds = result.get("seconds")
+    return {
+        "output": output,
+        "tokens": result.get("tokens") or None,
+        # Without a known reset, `resume_at` is NexKit's own guess, not the provider's.
+        "limit": {
+            "message": result["limit"],
+            "reset": result["resume_at"] if result.get("reset_known") else None,
+        }
+        if paused
+        else None,
+        "transient": bool(result.get("transient")),
+        "noResult": bool(result.get("unfit")),
+        "error": (result.get("error") or None) if status not in ("done", "blocked") else None,
+        "session": None,
+        "changeVersion": None,
+        "timedOut": bool(result.get("timed_out")),
+        "seconds": round(seconds) if isinstance(seconds, (int, float)) else None,
+        "usd": None,
+    }
+
+
+def run_action(action, context, cfg, repo, out, *, previous=None, program=None, **kw):
+    """Run the `runAgent` action `action` and save the protocol's result as `run.json`, in
+    `out` (`out/triage` for triage). Returns NexKit 6's result and the protocol's.
+
+    The runner starts the agent the configuration names, so it refuses an action that does
+    not fit the protocol, or that names another agent, model, effort, access or result
+    schema, before any agent starts."""
+    found = protocol.check(action, "actions/runAgent.schema.json", "action")
+    if not found:
+        stage = action["stage"]
+        settings = configuration.stage(cfg, stage)
+        wanted = {
+            "agent": settings["agent"],
+            "model": settings["model"],
+            "effort": settings["effort"],
+            "access": ACCESS[stage],
+            "result": f"results/{stage}.schema.json",
+        }
+        found = [
+            f"The action's {key} is {action[key]!r}, but the {stage} stage runs {value!r}."
+            for key, value in wanted.items()
+            if action[key] != value
+        ]
+    if found:
+        raise ValueError("NexKit refuses the runAgent action: " + " ".join(found))
+    stage = action["stage"]
+    if stage == "triage":
+        result = run_triage(context, cfg, previous, out, program=program)
+        path = Path(out) / "triage" / "run.json"
+    else:
+        result = run_stage(stage, context, cfg, repo, out, program=program, **kw)
+        path = Path(out) / "run.json"
+    ran = finished(result, stage)
+    path.write_text(json.dumps(ran, indent=2), encoding="utf-8")
+    return result, ran

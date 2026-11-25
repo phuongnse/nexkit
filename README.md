@@ -217,7 +217,9 @@ Caches that your CI saves on the default branch can be restored before `setup`. 
 ## Develop NexKit
 
 Python 3.12 or newer, standard library only. [AGENTS.md](AGENTS.md) has the code layout,
-the rules to keep and the commands that verify a change. The live smoke test
+the rules to keep and the commands that verify a change; [Delivery](docs/delivery.md) says how
+issues, pull requests and releases are done, and [Testing](docs/testing.md) what each check
+covers. The live smoke test
 (`scripts/smoke.py`) costs a few cents and needs a Claude login. To try your working copy's
 `status` or `doctor` in a repository that pins another ref, such as `main`, pass
 `--own-release`: otherwise `bin/nexkit` runs the pinned release.

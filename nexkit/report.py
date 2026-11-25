@@ -1303,13 +1303,11 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
         edited = autopilot.edited_after_vouch(gh, issue)
     except GitHubError as exc:
         message += f" NexKit did not merge it: it could not read #{number}: {exc}"
-        target["found"] = {
-            "refused": (
-                "comment `/nexkit review` on the pull request to try the merge again",
-                f"NexKit could not read #{number}: {autopilot.quoted(str(exc), 200)}",
-            )
-        }
-        return "merge_refused", message.strip()
+        found = (
+            "comment `/nexkit review` on the pull request to try the merge again",
+            f"NexKit could not read #{number}: {autopilot.quoted(str(exc), 200)}",
+        )
+        return _guarded(cfg, target, "merge_refused", message.strip(), found)
     if ended:
         # A person merged or closed it first, which may also have closed its issue: there
         # is nothing left to merge, and nobody to ask.
@@ -1320,13 +1318,13 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
             f" NexKit did not merge it: #{target['issue']} is closed. Merge the pull request "
             "or close it yourself."
         )
-        return "merge_issue_closed", message.strip()
+        return _guarded(cfg, target, "merge_issue_closed", message.strip())
     if edited:
         message += (
             f" NexKit did not merge it: {edited}. Read #{target['issue']}, and comment "
             f"`/nexkit trust` there if you trust it; NexKit then reviews this pull request again."
         )
-        return autopilot.UNTRUSTED_MERGE, message.strip()
+        return _guarded(cfg, target, autopilot.UNTRUSTED_MERGE, message.strip())
     merge_base = on_base(gh, target["base"], head)
     if merge_base:
         outcome, text, commit = close_on_base(gh, cfg, {**target, "merge_base": merge_base})
@@ -1344,7 +1342,7 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
             if attempt + 1 < MERGE_TRIES and moved:
                 time.sleep(MERGE_DELAY * (attempt + 1))
                 continue
-            return _refused(gh, cfg, target, row, message, exc, workflow, default_branch)
+            return _refused(gh, cfg, target, row, message, exc, workflow, default_branch, moved)
     message = f"✅ Checks and AI review passed; merged `{head[:7]}`."
     if attempt:
         message += f" GitHub took it at try {attempt + 1}, after the base branch moved."
@@ -1390,7 +1388,56 @@ def _passed_but(head, ended):
     return f"✅ Checks and AI review passed on `{head[:7]}`. {ended}"
 
 
-def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
+def _guarded(cfg, target, outcome, message, found=None):
+    """`(outcome, message)` of a merge that one of its guards stopped: a closed issue, one
+    edited after a writer vouched for it, or one NexKit could not read. A person decides each,
+    as the engine does when it is sent as a refusal only a person clears. `found` is what the
+    round's comment says a person does, when it says one."""
+    from .host import Refused
+
+    try:
+        end = _engine_accept(cfg, target, "needsPerson", "NexKit did not try the merge.")
+        if end != "person":
+            raise Refused(f"The engine answers {end!r} to a merge that a guard stopped.")
+    except Refused as error:
+        return _engine_refused(target, message, error)
+    if found:
+        target["found"] = {"refused": found}
+    return outcome, message
+
+
+def _engine_accept(cfg, target, kind, text, before=()):
+    """What the engine decides after the accept of `target`'s pull request ended with the
+    refusal `kind`, and `text` for a person, once it has heard the events `before`
+    (`host.accept_answer`'s end). Raises `host.Refused`."""
+    from .host import accept_answer
+
+    auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+    result = {"accepted": False, "refusal": kind, "text": text}
+    end, _ = accept_answer(
+        cfg,
+        target["issue"],
+        target["pr"],
+        target["head"],
+        auto_fixes,
+        result,
+        before=before,
+        at=iso(datetime.now(UTC)),
+    )
+    return end
+
+
+def _engine_refused(target, message, error):
+    """The merge outcome when the engine refuses to decide what follows: a person does."""
+    from .host import refused_parts
+
+    do, why = refused_parts(error)
+    target["found"] = {"refused": (do, why)}
+    unblocks = autopilot.person(do, why)
+    return "merge_refused", f"{message}\n\n**What unblocks it:** {unblocks}."
+
+
+def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after_move=False):
     """(outcome, message) after GitHub refused the merge: a conflict round for a conflict,
     a review of a head that moved, an automatic fix round for required checks that failed,
     at the first try or while the merge waits (see `_required_failed`), an update of a
@@ -1398,7 +1445,9 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     checks that have not passed yet, which autopilot's next sweeps merge, and otherwise
     `merge_refused` for a person. GitHub's data decides: the response's status, the pull
     request, the base branch's required checks and the head's checks. The error's text
-    counts only for required checks that have not reported, when the data cannot say."""
+    counts only for required checks that have not reported, when the data cannot say. What
+    follows a head that moved, a refusal after the base branch kept moving (`after_move`) and
+    any other refusal only a person clears is the engine's (`host.accept_answer`)."""
     pr, base, head = target["pr"], target["base"], target["head"]
     try:
         ended = _ended(gh.pull(pr))
@@ -1423,7 +1472,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
         return "merge_refused", f"{message}\n\n{started}" if started else message
     if exc.status == 409 or _head(gh, pr) not in (None, head):
         # GitHub answers 409 when the head is no longer the commit the round checked.
-        return _head_moved(gh, target, row, message, workflow, default_branch)
+        return _head_moved(gh, cfg, target, row, message, workflow, default_branch)
     failed, pending, complete = required_checks(gh, base, pr, head)
     if failed:
         return _required_failed(gh, cfg, target, row, message, failed, workflow, default_branch)
@@ -1446,7 +1495,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
             }
             return "merge_refused", f"{message}\n\n{line}"
         # What follows is the engine's (`host.accept_answer`).
-        from .host import Refused, accept_answer, refused_parts
+        from .host import Refused, accept_answer
 
         result = {
             "accepted": False,
@@ -1468,10 +1517,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
             if ends != "waiting":
                 raise Refused(f"The engine answers {ends!r} to required checks that wait.")
         except Refused as error:
-            do, why = refused_parts(error)
-            target["found"] = {"refused": (do, why)}
-            unblocks = autopilot.person(do, why)
-            return "merge_refused", f"{message}\n\n**What unblocks it:** {unblocks}."
+            return _engine_refused(target, message, error)
         row["waiting_since"] = answer["checksSince"]["at"]
         line = (
             "Required checks have not passed yet. The next autopilot sweep merges it once "
@@ -1485,6 +1531,15 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
         # Only without `conflicts.auto_resolve` does a refusal for these get here.
         do, why = _not_up_to_date(state, base)
     else:
+        from .host import Refused
+
+        kind = "transient" if after_move else "needsPerson"
+        try:
+            end = _engine_accept(cfg, target, kind, "GitHub refused the merge.")
+            if end != "person":
+                raise Refused(f"The engine answers {end!r} to a merge that GitHub refused.")
+        except Refused as error:
+            return _engine_refused(target, message, error)
         do, why = refusal.explain_safely(gh, target, exc)
     target["found"] = {"refused": (do, why)}
     return "merge_refused", f"{message}\n\n**What unblocks it:** {autopilot.person(do, why)}."
@@ -1652,23 +1707,45 @@ def _failed_line(failed, head, waited):
     return f"Required checks {names} failed on `{head[:7]}`" + when.format("them")
 
 
-def _head_moved(gh, target, row, message, workflow, default_branch):
+def _head_moved(gh, cfg, target, row, message, workflow, default_branch):
     """Check and review the new head of a pull request whose branch moved after the round
-    checked it: the round's approval is for a commit that is no longer its head."""
+    checked it: the round's approval is for a commit that is no longer its head. The engine
+    hears the new head as an observation first and checks it (`host.accept_answer`); with
+    none read, or none newer, a person decides."""
+    from .host import Refused, head_observed
+
+    pr = target["pr"]
+    head, unread = None, None
     try:
-        head = gh.pull(target["pr"])["head"]["sha"]
-        inputs = {"command": "review", "number": str(target["pr"]), "note": "", "auto": "true"}
-        gh.dispatch(workflow, default_branch, inputs)
-        row["next"] = inputs
+        head = gh.pull(pr)["head"]["sha"]
     except GitHubError as error:
+        unread = str(error)
+    before = [head_observed(target["issue"], pr, head)] if head else []
+    try:
+        end = _engine_accept(cfg, target, "headMoved", "The change moved after its checks.", before)
+        if end not in ("review", "person"):
+            raise Refused(f"The engine answers {end!r} to a change that moved.")
+    except Refused as error:
+        return _engine_refused(target, message, error)
+    if end == "review":
+        inputs = {"command": "review", "number": str(pr), "note": "", "auto": "true"}
+        try:
+            gh.dispatch(workflow, default_branch, inputs)
+        except GitHubError as error:
+            unread = str(error)
+        else:
+            row["next"] = inputs
+    elif unread is None:
+        unread = "its head did not move"
+    if unread is not None:
         target["found"] = {
             "refused": (
                 "comment `/nexkit review` on the pull request",
                 "its branch moved after the round checked it, and NexKit could not start a "
-                f"review: {autopilot.quoted(str(error), 200)}",
+                f"review: {autopilot.quoted(unread, 200)}",
             )
         }
-        return "merge_refused", f"{message}\n\nNexKit could not start a review: {error}"
+        return "merge_refused", f"{message}\n\nNexKit could not start a review: {unread}"
     line = (
         f"The branch moved to `{head[:7]}` after this round checked it, so NexKit started "
         "`/nexkit review` on the new commit."

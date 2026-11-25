@@ -1574,7 +1574,7 @@ Names a person meets in run comments and in that output:
 | `conflicting` | The round's commit conflicts with the base branch, so its checks and review did not run, and NexKit started no conflict round, because `conflicts.max_rounds` are used up. |
 | `branch_updated` | GitHub refused the automatic merge because the branch was behind its base branch; NexKit merged the base branch into it and started `/nexkit review` on the new commit. |
 | `carried` | The round carried over the approval of that commit, after a branch update that left the pull request's change as it was. |
-| `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. |
+| `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. When GitHub says it moved and the pull request still shows the head the round checked, or NexKit cannot read the head, the outcome is `merge_refused` and a person decides. |
 | `superseded` | NexKit stopped the round in its checks because the base branch moved so that they could not lead to a merge, and started the conflict round, or an update of the branch and `/nexkit review`. See *Stopping a round in its checks* under [Work without a command](#work-without-a-command). |
 | `stop_failed` | NexKit stopped the round in its checks for the same reason, but the next round could not start; a person starts it. |
 | `merge_waiting` | The automatic merge waits for required checks; see [Failure handling](#failure-handling). |

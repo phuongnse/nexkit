@@ -864,6 +864,21 @@ class AcceptAnswerTest(ReportCase):
         self.assertEqual([event["kind"] for event in sent], ["changeObserved", "actionFinished"])
         self.assertEqual({event["at"] for event in sent}, {self.AT})
 
+    def test_a_newer_head_observed_before_a_moved_head_is_checked(self):
+        newer = "d" * 40
+        end, state = self.answer("headMoved", before=[host.head_observed(5, 6, newer)])
+        self.assertEqual((end, state["state"]), ("review", "checking"))
+        self.assertEqual(state["change"]["version"], newer)
+        self.assertIsNone(state["attention"])
+
+    def test_a_moved_head_with_no_newer_one_observed_waits_for_a_person(self):
+        same = host.head_observed(5, 6, self.HEAD)
+        for before in ([], [same]):
+            with self.subTest(before=len(before)):
+                end, state = self.answer("headMoved", before=before)
+                self.assertEqual((end, state["state"]), ("person", "ready"))
+                self.assertEqual(state["attention"]["reason"], "acceptRefused")
+
     def test_an_answer_the_host_cannot_carry_out_is_refused(self):
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             with self.assertRaises(host.Refused):

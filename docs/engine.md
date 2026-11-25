@@ -270,7 +270,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `accepting`, `fixing` |
 | `fixing` | An agent works on the failures and findings, in the same change, or its round waits to start | `checking`, `awaitingApproval`, `planning`, `working`, `ready`, `failed` |
 | `ready` | The change passed, or a person decides what is left | `accepting`, `fixing`, `checking` |
-| `accepting` | The host accepts the change | `accepted`, `ready`, `fixing`, `working`, `failed` |
+| `accepting` | The host accepts the change | `accepted`, `ready`, `checking`, `fixing`, `working`, `failed` |
 | `accepted` | The change is in | `new`, when a person reopens it |
 | `split` | The work is carried by its parts | `accepted`, `dropped` |
 | `noChange` | Nothing needs to change, and the item says why | `new`, when a person reopens it |
@@ -429,6 +429,13 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   again, so checks that never end are looked into by a person, as NexKit 6's autopilot does. The
   time is the tick's own: the engine reads no clock, and a refusal that comes in never ends the
   wait.
+- **An accept refused for a reason that waits for a person** (`headMoved`, `transient` and
+  `needsPerson`) goes to `ready` with `acceptRefused`, and one that was not accepted
+  (`notAccepted`) to `failed`. A host that read a newer version of the change sends it as an
+  observation before the refusal, which the engine checks as any push: the item goes to
+  `checking`, the pending accept is cancelled, and the refusal that follows changes nothing. A
+  `headMoved` with no newer observation waits for a person, since the engine has no version to
+  check.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
@@ -755,8 +762,12 @@ adapter. A new rule of the engine comes with a case.
    `maintain`), what follows required checks that fail at the merge (`report`), and the wait
    for required checks that have not passed yet, with its end after a time (`report` and the
    sweep's `autopilot`). `host.accept_answer` sends a merge's answer to `step` as an `accept`
-   result and carries out what the engine answers, and so far only a merge refused for required
-   checks that have not passed yet is sent. `report`
+   result and carries out what the engine answers. So far it sends a merge refused for required
+   checks that have not passed yet, a merge refused because the head moved, which first sends
+   the new head as an observation, so that the engine checks it, the last refusal after the
+   base branch kept moving, the guards that stop a merge before it is tried (an issue closed,
+   edited after a vouch or unreadable), and GitHub's other refusals that only a person clears.
+   `report`
    sends every round's checks and review to `step`: a review that paused at a usage limit,
    with the reset when NexKit 6 resumes it, a review that failed, a person's own pull request
    as an item that is only reviewed, and a round whose commit conflicts with its base branch,
@@ -771,8 +782,9 @@ adapter. A new rule of the engine comes with a case.
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found
    after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
-   as does the merge itself (`report.merge_pull`) but for required checks that fail or have not
-   passed yet. A
+   as does the merge itself (`report.merge_pull`) but for the refusals above: those for required
+   checks that fail or have not passed yet, a head that moved, a base branch that kept moving
+   and a reason only a person clears. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`
    that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as

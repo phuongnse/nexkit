@@ -246,6 +246,36 @@ MUTANTS = {
         "seen": ("walker",),
         "families": ("round", "give"),
     },
+    # A merge refused because the head moved tries the accept again, where it waits for a
+    # person (#391).
+    "head-moved-tries-again": {
+        "path": MACHINE,
+        "old": """        elif result["refusal"] in ("transient", "headMoved", "needsPerson"):""",
+        "new": """        elif result["refusal"] == "headMoved":
+            self.do("accept", changeVersion=self.version, by="engine")
+        elif result["refusal"] in ("transient", "needsPerson"):""",
+        "seen": ("harness", "walker"),
+        "families": ("refusals",),
+    },
+    # A refusal after the base branch kept moving waits for the required checks, as if they
+    # had not passed (#391).
+    "transient-waits-for-checks": {
+        "path": MACHINE,
+        "old": """        elif result["refusal"] == "waitingForChecks":""",
+        "new": """        elif result["refusal"] in ("waitingForChecks", "transient"):""",
+        "seen": ("harness", "walker"),
+        "families": ("refusals",),
+    },
+    # A refusal only a person clears fails the item, where it is the person's to carry on
+    # (#391). Only the walker sees it: the host reads a person's turn from the answer's
+    # notice, which a failed item gives too.
+    "needs-person-fails": {
+        "path": MACHINE,
+        "old": """        elif result["refusal"] == "notAccepted":""",
+        "new": """        elif result["refusal"] in ("notAccepted", "needsPerson"):""",
+        "seen": ("walker",),
+        "families": ("refusals",),
+    },
 }
 
 

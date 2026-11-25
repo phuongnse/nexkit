@@ -864,7 +864,7 @@ class MergeRefusalTests(ReportCase):
             409, "Head branch was modified. Review and try the merge again."
         )
         self.gh.pulls[6]["head"]["sha"] = "c" * 40
-        outcome = self.run_report(cfg=self.cfg)
+        outcome = self.run_report(cfg=self.cfg, head="b" * 40)
         self.assertEqual(outcome["outcome"], "head_moved")
         self.assertIsNone(outcome.get("attention"))
         self.assertIn(
@@ -877,6 +877,124 @@ class MergeRefusalTests(ReportCase):
         )
         self.assertFalse(self.gh.comments_matching(5, "@olivia"))
         self.assertFalse(self.gh.comments_matching(6, "@olivia"))
+
+    def merge(self, head="c" * 40):
+        """`merge_pull` for the pull request that checked `head`: its outcome, text and the
+        events the engine heard."""
+        from nexkit import host
+        from nexkit.report import merge_pull
+        from tests.test_report import WORKFLOW
+
+        self.target = {"pr": 6, "head": head, "issue": 5, "base": "main"}
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            outcome, text = merge_pull(self.gh, self.cfg, self.target, {}, "", WORKFLOW, "main")
+        return outcome, text, [call.args[1] for call in step.call_args_list]
+
+    def refusals(self, events):
+        return [event["result"]["refusal"] for event in events if event["kind"] == "actionFinished"]
+
+    def test_the_new_head_is_sent_to_the_engine_before_a_moved_head_is_reviewed(self):
+        self.gh.merge_error = GitHubError(409, "Head branch was modified.")
+        self.gh.pulls[6]["head"]["sha"] = "d" * 40
+        outcome, _, events = self.merge(head="b" * 40)
+        self.assertEqual(outcome, "head_moved")
+        self.assertEqual([event["kind"] for event in events], ["changeObserved", "actionFinished"])
+        self.assertEqual(events[0]["version"], "d" * 40)
+        self.assertEqual(self.refusals(events), ["headMoved"])
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(dispatch["inputs"]["command"], "review")
+
+    def test_a_moved_head_that_could_not_be_read_is_a_person_s(self):
+        self.cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": False})
+        self.gh.merge_error = GitHubError(409, "Head branch was modified.")
+        pull = self.gh.pull
+        refused = []
+
+        def read(number):
+            if refused:
+                raise GitHubError(502, "down")
+            return pull(number)
+
+        def merge(number, sha, method="squash"):
+            refused.append(number)
+            raise self.gh.merge_error
+
+        with mock.patch.object(self.gh, "pull", side_effect=read):
+            with mock.patch.object(self.gh, "merge", side_effect=merge):
+                outcome, text, events = self.merge(head="b" * 40)
+        self.assertEqual(outcome, "merge_refused")
+        self.assertEqual(self.refusals(events), ["headMoved"])
+        self.assertEqual([event["kind"] for event in events], ["actionFinished"])
+        self.assertIn("NexKit could not start a review: GitHub API 502: down", text)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_a_409_on_the_head_that_was_checked_is_a_person_s(self):
+        self.gh.merge_error = GitHubError(409, "Head branch was modified.")
+        outcome, text, events = self.merge()
+        self.assertEqual(outcome, "merge_refused")
+        self.assertEqual(self.refusals(events), ["headMoved"])
+        self.assertIn("its head did not move", self.target["found"]["refused"][1])
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_a_review_that_could_not_be_started_is_a_person_s(self):
+        from tests.test_report import WORKFLOW
+
+        self.gh.merge_error = GitHubError(409, "Head branch was modified.")
+        self.gh.pulls[6]["head"]["sha"] = "d" * 40
+        self.gh.dispatch_errors[WORKFLOW] = GitHubError(503, "Service Unavailable")
+        outcome, text, _ = self.merge()
+        self.assertEqual(outcome, "merge_refused")
+        self.assertIn("NexKit could not start a review: GitHub API 503", text)
+
+    def test_the_outcome_of_a_moved_head_follows_the_engine(self):
+        from nexkit import host
+
+        self.gh.merge_error = GitHubError(409, "Head branch was modified.")
+        self.gh.pulls[6]["head"]["sha"] = "d" * 40
+        with mock.patch.object(host, "accept_answer", side_effect=host.Refused("no")):
+            outcome, text, _ = self.merge()
+        self.assertEqual(outcome, "merge_refused")
+        self.assertIn("refused to decide its next step", text)
+        self.assertEqual(self.gh.dispatches, [])
+        with mock.patch.object(host, "accept_answer", return_value=("person", {})):
+            self.assertEqual(self.merge()[0], "merge_refused")
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_the_last_refusal_after_the_base_branch_kept_moving_is_transient(self):
+        self.gh.required = set()
+        modified = GitHubError(405, "Base branch was modified. Review and try the merge again.")
+        left = [3]
+
+        def merge(number, sha, method="squash"):
+            left[0] -= 1
+            self.gh.branches["main"] = f"{left[0]}" * 40
+            raise modified
+
+        with mock.patch.object(self.gh, "merge", side_effect=merge):
+            outcome, _, events = self.merge()
+        self.assertEqual(outcome, "merge_refused")
+        self.assertEqual(self.refusals(events), ["transient"])
+
+    def test_another_refusal_is_one_only_a_person_clears(self):
+        self.gh.required = set()
+        self.gh.merge_error = UNKNOWN_REFUSAL
+        outcome, text, events = self.merge()
+        self.assertEqual(outcome, "merge_refused")
+        self.assertEqual(self.refusals(events), ["needsPerson"])
+        self.assertIn("**What unblocks it:**", text)
+        self.assertIn("refused", self.target["found"])
+
+    def test_the_outcome_of_a_refusal_only_a_person_clears_follows_the_engine(self):
+        from nexkit import host
+
+        self.gh.required = set()
+        self.gh.merge_error = UNKNOWN_REFUSAL
+        _, plain, _ = self.merge()
+        with mock.patch.object(host, "accept_answer", side_effect=host.Refused("no")):
+            outcome, text, _ = self.merge()
+        self.assertEqual(outcome, "merge_refused")
+        self.assertIn("refused to decide its next step", text)
+        self.assertNotIn("refused to decide its next step", plain)
 
     def test_an_implement_round_that_ends_with_a_conflict_starts_its_conflict_round(self):
         os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as

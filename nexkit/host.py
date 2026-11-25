@@ -49,6 +49,14 @@ and `checks_waited` sends the sweep's tick, which tries the merge again or, once
 have not passed for `machine.CHECKS_END`, leaves it to a person. A merge whose issue no
 sweep looks at is the host's own refusal, since no tick would come for it.
 
+It decides what follows the other refusals of a merge (`report._refused`, `report._head_moved`,
+`report._guarded`): a head that moved, which the host sends as an observation of the new head
+first, so that the engine checks it, or a person decides when none was read or it is the head
+the round checked; the last refusal after the base branch kept moving through the host's quick
+tries; the checks before the merge, an issue closed, edited after a vouch or unreadable; and
+any other refusal GitHub gives that only a person clears. A refusal for a conflict, or for a
+branch behind its base, stays NexKit 6's.
+
 Every round's checks and review reach it (`round_ended`): a review that paused at a usage
 limit, a review that failed, and a person's own pull request, which is only reviewed; a
 review that runs again after a transient error is the host's own retry. It finds the checks
@@ -1437,6 +1445,14 @@ def required_failed(cfg, issue, pr, head, auto_fixes, wait):
     raise Refused(f"The engine answers {sorted(kinds)} after a required check failed.")
 
 
+def head_observed(issue, pr, head):
+    """The event that tells the engine the NexKit pull request `pr` has the head `head` now,
+    for `accept_answer`'s `before`."""
+    fields = {"changeId": str(pr), "version": str(head), "conflicts": False}
+    fields.update(merged=False, empty=False)
+    return _event("changeObserved", issue, None, f"head-{pr}-{head}", **fields)
+
+
 def accept_answer(cfg, issue, pr, head, auto_fixes, result, before=(), since=None, at=None):
     """What follows the answer of GitHub's merge of the NexKit pull request `pr`, as the engine
     decides it (`report._refused`): the accept's `result`, as `accepted` or with its refusal
@@ -1444,8 +1460,9 @@ def accept_answer(cfg, issue, pr, head, auto_fixes, result, before=(), since=Non
     head that moved. `since`, when given, is when required checks first had not passed on
     `head`, as NexKit 6's `waiting_since` says, and `at` the time of the events. Returns
     `(end, state)`, `end` being `accepted`, `waiting` while the required checks are awaited,
-    `fix` or `redo` for the round that follows, `base_failure` while a failure the base branch
-    has is awaited, or `person`, whose reason `state["attention"]` names. Raises `Refused`."""
+    `review` for the checks and review of a newer head that `before` observed, `fix` or `redo`
+    for the round that follows, `base_failure` while a failure the base branch has is awaited,
+    or `person`, whose reason `state["attention"]` names. Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
     version = doc["change"]["version"]
     action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
@@ -1463,6 +1480,8 @@ def accept_answer(cfg, issue, pr, head, auto_fixes, result, before=(), since=Non
         return "accepted", state
     if state["state"] == "accepting" and "requiredChecks" in waits:
         return "waiting", state
+    if "runChecks" in kinds:
+        return "review", state
     if stage == "fix":
         return "fix", state
     if stage == "implement":

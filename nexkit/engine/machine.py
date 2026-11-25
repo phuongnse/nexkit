@@ -43,6 +43,7 @@ INPUTS = {
     "implement": ["item", "discussion", "notes", "plan", "linked", "evidence", "workspace"],
     "fix": [
         "item",
+        "discussion",
         "notes",
         "plan",
         "rounds",

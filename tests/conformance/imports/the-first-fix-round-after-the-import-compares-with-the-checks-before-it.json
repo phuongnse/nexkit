@@ -147,6 +147,7 @@
         "access": "write",
         "inputs": [
           "item",
+          "discussion",
           "notes",
           "plan",
           "rounds",

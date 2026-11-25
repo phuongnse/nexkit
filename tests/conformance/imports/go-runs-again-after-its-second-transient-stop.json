@@ -1,0 +1,118 @@
+{
+  "kind": "retrying",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "comments": [
+      {
+        "run": {
+          "command": "go",
+          "status": "paused",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "retry_waiting",
+          "resume": {
+            "command": "go",
+            "number": "42",
+            "note": "",
+            "auto": "retry2",
+            "at": "2026-11-23T16:00:00Z",
+            "retry": 2
+          }
+        }
+      }
+    ]
+  },
+  "policies": {
+    "retryWaits": [
+      15,
+      30
+    ]
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "working",
+    "change": null,
+    "observed": null,
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "w1.1",
+        "for": "time",
+        "until": "2026-11-23T16:00:00Z",
+        "on": null
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": null,
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {},
+    "again": {
+      "transient": 2
+    },
+    "recentEvents": []
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w1.1"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "waits": [],
+        "again.transient": 2
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@transient"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "failed",
+        "attention.text": "The agent stopped on a transient error after every wait to run it again.",
+        "waits": []
+      }
+    }
+  ]
+}

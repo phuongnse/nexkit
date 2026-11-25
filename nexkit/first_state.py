@@ -526,6 +526,10 @@ class Item:
             # The command that runs again, such as `review` after a review's transient error.
             name = OF_COMMAND.get(resume.get("command"), name)
             self.wait("time", until=iso(at))
+            count = resume["retry"]
+            if isinstance(count, int) and not isinstance(count, bool) and count >= 1:
+                # The engine counts the runs again on from here.
+                self.doc["again"] = {"transient": min(count, 10)}
             return self.be("retrying", name)
         paused_at = parse_iso(comment.get("created_at"))
         stale = paused_at is not None and self.now - paused_at > PAUSE_WINDOW

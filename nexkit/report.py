@@ -969,27 +969,39 @@ def _retries_left(cfg, decision):
     return max(0, len(cfg["retry"]["wait_minutes"]) - int(decision.get("retry") or 0))
 
 
-def _retry(gh, cfg, decision, command, number, workflow_ref, default_branch, now=None):
+def _agent_transient(agent, needs):
+    """Whether the agent itself stopped on a transient error: its job ended without a result,
+    or its result says so. A stop of `publish` is NexKit's own retry."""
+    if (needs.get("agent") or {}).get("result") in ("cancelled", "skipped"):
+        return False
+    return agent is None or (agent.get("status") == "error" and bool(agent.get("transient")))
+
+
+def _retry(gh, cfg, decision, command, number, workflow_ref, default_branch, now=None, answer=None):
     """Start `command` again after a transient error, with the same note for the same
     command, after the next wait of `retry.wait_minutes`: at once when it is 0, otherwise
-    later, by `maintain.resume_paused`. Returns the inputs of the run it started, for the
+    later, by `maintain.resume_paused`. `answer` is the engine's (`host.stage_transient`)
+    for a stop of the agent itself. Returns the inputs of the run it started, for the
     run's `next` (see `autopilot._handed_on`), or for one that waits, its resume record
     with `at` and `retry`, its number. None when the waits are used up, or the run could
     not start."""
-    if not _retries_left(cfg, decision):
+    if answer:
+        count, until = answer[-1], answer[1] if answer[0] == "later" else None
+    elif _retries_left(cfg, decision):
+        count = int(decision.get("retry") or 0) + 1
+        wait = cfg["retry"]["wait_minutes"][count - 1]
+        until = iso((now or datetime.now(UTC)) + timedelta(minutes=wait)) if wait else None
+    else:
         return None
-    number_again = int(decision.get("retry") or 0) + 1
     same = command == progress.COMMANDS[decision["action"]]
     note = (decision.get("note") or "") if same else ""
     if same:
-        auto = auto_input(decision, retry=number_again)
+        auto = auto_input(decision, retry=count)
     else:
-        auto = auto_input({"autopilot": decision.get("autopilot")}, retry=number_again)
+        auto = auto_input({"autopilot": decision.get("autopilot")}, retry=count)
     inputs = {"command": command, "number": str(number), "note": note, "auto": auto}
-    wait = cfg["retry"]["wait_minutes"][number_again - 1]
-    if wait:
-        at = (now or datetime.now(UTC)) + timedelta(minutes=wait)
-        return {**inputs, "at": iso(at), "retry": number_again}
+    if until:
+        return {**inputs, "at": until, "retry": count}
     try:
         gh.dispatch(workflow_file(workflow_ref), default_branch, inputs)
     except GitHubError as exc:
@@ -1128,13 +1140,30 @@ def _stop_round(gh, decision, agent, outcome, message, reason=None, **fields):
     progress.save_round(gh, decision["pr"], comment_id, row, message)
 
 
-def pause(result, cfg, command, number, note="", auto="resume", resumed=False):
+# What `pause` reads the time to run again from, when it is not given.
+FROM_RESULT = object()
+
+
+def limit_reset(result, cfg, resumed=False):
+    """The time to give the engine as the reset of a stage that stopped at the usage limit, or
+    None when NexKit does not resume it: `usage_limit.resume` is off, the time is not known, or
+    a run that was resumed blind stopped again, since a limit that never resets must not
+    start a run every hour."""
+    if resumed and not result.get("reset_known"):
+        return None
+    return (result.get("resume_at") or None) if cfg["usage_limit"]["resume"] else None
+
+
+def pause(result, cfg, command, number, note="", auto="resume", resumed=False, until=FROM_RESULT):
     """(message, resume record or None) for a stage that stopped at the usage limit.
 
     The resume record goes into the run comment's marker; `maintain` starts the command
-    again once its time has passed."""
+    again once its time has passed. It runs again at `until`, which the engine decides for a
+    plan, implement or fix stage, and which is `limit_reset` otherwise, or never when None."""
     at = result.get("resume_at")
     known = result.get("reset_known")
+    if until is FROM_RESULT:
+        until = limit_reset(result, cfg, resumed)
     shown_command = f"`/nexkit {command}`" + (" with the same note" if note else "")
     # A plan that paused in triage has the attempts of its triage.
     attempts = result.get("attempts") or (result.get("triage") or {}).get("attempts") or []
@@ -1142,22 +1171,18 @@ def pause(result, cfg, command, number, note="", auto="resume", resumed=False):
     who = "Every agent stopped at its" if len(limited) > 1 else "The agent stopped at the account's"
     message = f"⏸️ {who} usage limit: {result.get('limit') or ''}"
     message = message.rstrip(": ") + "."
-    if resumed and not known:
-        # A run that was resumed blind and stopped again: a person decides, so a limit
-        # that never resets cannot start a run every hour.
-        at = None
-    if not cfg["usage_limit"]["resume"] or not at:
+    if not until:
         reset = f"It resets at {shown(at)}." if known and at else "The reset time is unknown."
         return f"{message} {reset} Comment {shown_command} after the reset to continue.", None
     if known:
-        message += f" NexKit runs {shown_command} again after it resets, at {shown(at)}."
+        message += f" NexKit runs {shown_command} again after it resets, at {shown(until)}."
     else:
         message += (
             f" NexKit could not read when it resets, so it runs {shown_command} again after "
-            f"{shown(at)}."
+            f"{shown(until)}."
         )
     message += " A new command here replaces this."
-    resume = {"command": command, "number": number, "note": note or "", "auto": auto, "at": at}
+    resume = {"command": command, "number": number, "note": note or "", "auto": auto, "at": until}
     return message, resume
 
 
@@ -1172,7 +1197,20 @@ def _pause_statuses(gh, head, resume, url):
 
 def _paused_agent(gh, decision, cfg, agent):
     """The outcome of a plan, implement or fix stage that stopped at the usage limit."""
+    from . import host
+
     command = progress.COMMANDS[decision["action"]]
+    resumed = bool(decision.get("resumed"))
+    refused = None
+    try:
+        until = host.stage_limited(
+            cfg,
+            decision,
+            limit_reset(agent, cfg, resumed),
+            _held(gh, cfg, decision["issue"]),
+        )
+    except host.Refused as error:
+        until, refused = None, host.refused_reason(error)
     message, resume = pause(
         agent,
         cfg,
@@ -1180,9 +1218,10 @@ def _paused_agent(gh, decision, cfg, agent):
         decision["target"],
         decision.get("note"),
         auto_input(decision, resume=True),
-        resumed=bool(decision.get("resumed")),
+        resumed=resumed,
+        until=until,
     )
-    reason = needs_person("paused", cfg, resume=resume)
+    reason = refused or needs_person("paused", cfg, resume=resume)
     at = resume and resume["at"]
     if not decision.get("pr"):
         return {
@@ -2296,14 +2335,38 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             fields = {}
             error = _transient(decision, agent, publish, needs)
             command = progress.COMMANDS[action]
-            again = error and _retry(
-                gh, cfg, decision, command, decision["target"], workflow_ref, default_branch
-            )
+            now, answer, refused = datetime.now(UTC), None, None
+            if error and _agent_transient(agent, needs):
+                # The engine decides when the agent runs again, and when a person does.
+                from . import host
+
+                try:
+                    label = _held(gh, cfg, decision["issue"])
+                    answer = host.stage_transient(cfg, decision, now, error, label)
+                except host.Refused as exc:
+                    refused = host.refused_reason(exc)
+            failed = answer == ("failed",)
+            if answer is None and not refused:
+                # A stop of publish is NexKit's own retry, by `retry.wait_minutes`.
+                failed = bool(error) and not _retries_left(cfg, decision)
+            again = None
+            if error and not refused and not failed:
+                again = _retry(
+                    gh,
+                    cfg,
+                    decision,
+                    command,
+                    decision["target"],
+                    workflow_ref,
+                    default_branch,
+                    now,
+                    answer,
+                )
             if again:
                 outcome, message, fields = _retrying(
                     gh, cfg, decision, agent, error, again, message
                 )
-            elif error and not _retries_left(cfg, decision):
+            elif failed:
                 outcome, message = "retry_failed", _retried(gh, decision, error, message)
             found = {
                 "pull": bool(decision.get("pr")),
@@ -2318,6 +2381,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             protected = protected_paths(agent)
             if outcome == "agent_blocked" and protected:
                 reason = autopilot.protected_reason(protected)
+            if refused:
+                reason = refused
             if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent):
                 reason = None
                 message += "\n\nNexKit autopilot carries on from here."

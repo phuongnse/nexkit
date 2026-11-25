@@ -235,8 +235,8 @@ MUTANTS = {
         "path": MACHINE,
         "old": """        self.resume(hold=not paused)""",
         "new": """        self.resume()""",
-        "seen": ("walker",),
-        "families": ("sweep", "round"),
+        "seen": ("harness", "walker"),
+        "families": ("sweep", "round", "pause"),
     },
     # A run again after a transient stop counts as a new round (#396).
     "transient-run-again-counts": {
@@ -275,6 +275,14 @@ MUTANTS = {
         "new": """        elif result["refusal"] in ("notAccepted", "needsPerson"):""",
         "seen": ("walker",),
         "families": ("refusals",),
+    },
+    # A transient stop waits as long as the last wait, not the next (#398).
+    "transient-waits-shifted": {
+        "path": MACHINE,
+        "old": """        until = _later(self.at, waits[count])""",
+        "new": """        until = _later(self.at, waits[-1])""",
+        "seen": ("harness", "walker"),
+        "families": ("pause",),
     },
     # A split parent ends whatever `parentEnd` says, where NexKit 6 closes a parent only with
     # `close_parent_issues` (#393). The host sends `person` without it, so the merge's parent

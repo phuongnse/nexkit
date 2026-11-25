@@ -22,7 +22,7 @@ from nexkit import first_state, item_state, protocol
 from nexkit.autopilot import record_marker
 from nexkit.state import ANSWERS_PREFIX, PLAN_DATA_PREFIX, PLAN_MARKER, render_run, render_state
 from tests.support import BOT_LOGIN, FakeGitHub, make_config
-from tests.test_conformance import WORK, event_of, run_program
+from tests.test_conformance import WORK, at, event_of, run_program
 
 CASES = Path(__file__).resolve().parent / "conformance" / "imports"
 FINAL = ("accepted", "noChange", "dropped")
@@ -143,6 +143,8 @@ class ImportCasesTest(unittest.TestCase):
             self.assertEqual(answer["changed"], step["changed"], where)
             self.assertEqual(answer["state"]["state"], step["state"], where)
             self.assertEqual([a["kind"] for a in answer["actions"]], step["actions"], where)
+            for path_, value in step.get("expect", {}).items():
+                self.assertEqual(at(answer["state"], path_), value, f"{where}: {path_}")
             state = answer["state"]
         self.assertNotEqual(state, imported, "the events left the item as it was")
         waits_only = imported["state"] not in FINAL and not (

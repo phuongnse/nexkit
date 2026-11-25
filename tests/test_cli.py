@@ -1853,7 +1853,10 @@ class SupportedVersionTests(unittest.TestCase):
         wanted_python = ".".join(map(str, nexkit.PYTHON))
         for path in (ROOT / ".github/workflows").glob("*.yml"):
             text = path.read_text()
-            self.assertEqual(set(re.findall(r"runs-on: (\S+)", text)), {nexkit.RUNNER}, path.name)
+            # nexkit.yml, NexKit's own caller, only calls pipeline.yml, so it has no runner.
+            self.assertLessEqual(
+                set(re.findall(r"runs-on: (\S+)", text)), {nexkit.RUNNER}, path.name
+            )
             self.assertLessEqual(
                 set(re.findall(r'python-version: "([^"]+)"', text)), {wanted_python}, path.name
             )

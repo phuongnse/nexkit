@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "agents": {
+    "claude": {
+      "runtime": "claude-code",
+      "provider": "anthropic",
+      "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"
+    }
+  },
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "setup": [],
+  "parallel_checks": true,
+  "checks": [
+    {
+      "name": "test",
+      "run": "python3 -m unittest discover -s tests -t .",
+      "timeout_minutes": 20
+    },
+    {
+      "name": "lint",
+      "run": "scripts/lint.sh",
+      "timeout_minutes": 10
+    },
+    {
+      "name": "differential",
+      "run": "tests/differential/check.sh",
+      "timeout_minutes": 20,
+      "slow": true,
+      "unaffected_by": [
+        "docs/**",
+        "skills/**",
+        ".github/**",
+        ".nexkit/**",
+        "**/*.md"
+      ]
+    }
+  ],
+  "stages": {
+    "plan": {
+      "timeout_minutes": 20
+    },
+    "implement": {
+      "timeout_minutes": 45
+    },
+    "review": {
+      "timeout_minutes": 25
+    },
+    "triage": {
+      "model": "claude-opus-5-5"
+    }
+  },
+  "default_profile": "hard",
+  "profiles": {
+    "standard": {
+      "when": "Only work that repeats what NexKit already does, in the same way: a change to docs, skills or tests only, or a fix inside one module that follows a pattern the module already has. It changes no decision of the engine, no prompt, no protocol schema, no config key or command, and nothing about tokens, secrets, markers, redaction or who may run a command. Anything else is hard.",
+      "stages": {
+        "plan": {
+          "model": "claude-opus-5-5"
+        },
+        "implement": {
+          "model": "claude-haiku-5-5"
+        },
+        "review": {
+          "agent": "claude",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    "hard": {
+      "when": "Everything that is not standard. That covers a change to the engine's states or decisions, the protocol's schemas, the GitHub host's calls of the engine, the import of NexKit 6's markers, prompts and their goldens, runtimes and pins, publishing, merging, retries and autopilot, and anything a mistake in which could let an agent write with a token, leak a secret, pass a marker that NexKit did not write, or start, repeat or merge work no rule allows. When unsure between standard and hard, choose hard.",
+      "stages": {
+        "plan": {
+          "model": "claude-opus-5-5"
+        },
+        "implement": {
+          "model": "claude-sonnet-5-5",
+          "timeout_minutes": 60
+        },
+        "review": {
+          "agent": "claude",
+          "model": "claude-opus-5-5"
+        }
+      }
+    }
+  },
+  "fix": {
+    "max_auto_rounds": 2
+  },
+  "merge": {
+    "auto": true
+  },
+  "conflicts": {
+    "auto_resolve": true,
+    "max_rounds": 6
+  },
+  "close_parent_issues": true,
+  "autopilot": {
+    "enabled": true,
+    "scope": null,
+    "answer": "recommended",
+    "max_parallel": 3,
+    "watch_workflows": [
+      "ci.yml"
+    ],
+    "priority": [
+      "nexkit:ci",
+      "nexkit:dependabot",
+      "bug",
+      "nexkit:flaky"
+    ],
+    "labels": {
+      "on-hold": {
+        "hold": true
+      },
+      "hand-made": {
+        "hold": true
+      }
+    }
+  },
+  "notify": [
+    "phuongnse"
+  ],
+  "review": {
+    "checklist": [
+      "The change keeps every rule under Rules in AGENTS.md that the code it touches falls under: read that section and check the diff against each such rule",
+      "A config key, command or prompt contract that the change adds or changes changes together with its tests, docs and skills, and no doc statement is left false",
+      "A decision about what happens next to a work item that the engine holds is made only in nexkit/engine/, with its case in tests/conformance/, and the change keeps GitHub's behaviour as AGENTS.md's Moving decisions into the engine says",
+      {
+        "text": "The change adds no exception to a check and loosens none",
+        "person": true
+      }
+    ]
+  },
+  "github_app": {
+    "slug": "nexkit-agent",
+    "app_id_secret": "NEXKIT_APP_ID",
+    "private_key_secret": "NEXKIT_APP_PRIVATE_KEY"
+  }
+}

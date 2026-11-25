@@ -28,7 +28,7 @@ through `bin/nexkit` (standard library only, Python 3.12+), and the Claude Code 
 | `config.py`, `globs.py`, `scaffold.py`, `app.py`, `templates/` | Config schema and defaults, path globs; `nexkit init` and `doctor`; the GitHub App |
 | `pin.py` | `status` and `doctor` run the release the repository's workflow pins |
 | `status.py`, `snapshot.py`, `github.py`, `gitutil.py` | `nexkit status` and the batched reads it makes; REST, GraphQL and git helpers |
-| `scripts/` | Live smoke test, pin updates, release notes |
+| `scripts/` | Live smoke test, pin updates, release notes; `lint.sh`, the lint that CI and NexKit's checks run |
 
 ## Rules
 
@@ -148,14 +148,19 @@ Its pull request has the sections *What moved*, *Left for #N* when the issue sta
   says near the top "Stacked on #N: review and merge that first." Pull requests are
   squash-merged. After a squash merge, the next pull request merges `main` into its branch,
   without a rebase, so that its reviewed commits stay, and then targets `main`.
-- The next work is the open issues of the milestone that no open issue blocks (GitHub's
+- A session's next work is the open `hand-made` issues of the milestone that no open issue blocks (GitHub's
   blocked-by), where a blocking issue with an open pull request counts as done and the work
   stacks on that pull request. Of those, take the lowest number, unless the owner names
   another. A question
   for the owner is a comment on the issue it concerns, and work goes on with the issues that do
   not depend on it. Issues, pull requests and their links hold the state of this work, never a
   local note.
-- Agent sessions never merge, push a tag or release: the owner does.
+- NexKit works this repository's issues itself (`.nexkit/config.json`), pinned to a release,
+  never `main`: autopilot takes every open issue but those labelled `on-hold` or `hand-made`,
+  and merges its own pull requests once their checks and review pass. A session outside NexKit
+  takes only `hand-made` issues, those that change `.github/` or `.nexkit/` among them, so the
+  two never work the same issue; it never merges. No agent pushes a tag or releases: the owner
+  does, and moves the pin to a release only once it runs well elsewhere.
 - Every issue and pull request is in the milestone of the feature it builds, as
   [the roadmap](docs/roadmap.md) lists them. It carries at least one label of its kind
   (`enhancement`, `bug`, `refactor`, `process` or `documentation`) and every other label whose
@@ -185,8 +190,8 @@ checks the image the same way, without publishing it.
 
 ```sh
 python3 -m unittest discover -s tests -t .
-ruff check . && ruff format --check .      # ruff 0.13.3
-actionlint .github/workflows/*.yml
+scripts/lint.sh                            # ruff 0.13.3 and actionlint
+tests/differential/check.sh                # the engine against NexKit 6, as CI runs it
 claude plugin validate --strict .
 python3 scripts/smoke.py [--program PATH]  # real Claude Code at the pinned version
 ```

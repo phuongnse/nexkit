@@ -61,8 +61,8 @@ python3 tests/differential/walk.py --walk 17 --show
 then, and checks the invariants that `INVARIANTS` lists after every step: the protocol's
 schemas, the transitions the states table names, the outbox, every open item carried on,
 counts within the policies, which rounds give their count back, `due` and `automatic`,
-diagnosis, usage-limit waits, holds and conflict rounds, and the engine's answers to a round's
-questions. Each rule is checked both ways where it can be: a count neither passes its policy
+diagnosis, usage-limit waits, runs again after a transient stop, holds and conflict rounds, and
+the engine's answers to a round's questions. Each rule is checked both ways where it can be: a count neither passes its policy
 nor fails to come back when its round stops. It exits 1 when one breaks that `KNOWN` does not
 list, or when the engine refuses more than a tenth of the events, as walks it refuses check
 nothing. A change adds invariants for the rules it adds.

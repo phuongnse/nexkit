@@ -413,6 +413,12 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   the same stage runs again, as the same round, which counts nothing again and diagnoses
   again if it did. A limit with no reset, as when the host does not resume such runs, waits
   for a person in `failed`.
+- **An agent that stops on a transient error**, without a usage limit, runs the same stage again
+  after each wait of `retryWaits` in turn, as the same round, which counts nothing again and
+  diagnoses again if it did. A wait of 0 runs it again in the same step. After the last wait,
+  the next transient stop goes to `failed` for a person. The count of runs again goes on through
+  the stages of one round, so a review handed on keeps it, and starts afresh when a request is
+  taken or a new plan, implement or fix run starts.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
@@ -447,10 +453,10 @@ Three things sit beside the state, never in place of it:
   still runs, as NexKit 6's hold label does. A step that runs finishes and records what it held
   back. A request that would lead to the conflict policy's work, such as a person's request for a
   review of a change that conflicts, is taken but that work still waits: the hold wins, and the item
-  waits in `checking` until it ends. A hold also holds a run paused at a usage limit or waiting to
-  run again, which starts when the hold ends. NexKit 6 resumes such a run under the label
-  (`maintain.resume_paused`), and the engine differs on purpose: one rule holds every wait, and a
-  resumed run spends agent time.
+  waits in `checking` until it ends. A hold does not stop a step that runs: a run paused at a usage
+  limit or waiting after a transient stop runs again at its tick, as NexKit 6's resume does under
+  the label (`maintain.resume_paused`). A fix round that is due, an accept and a conflict round
+  wait until the hold ends.
 - **Wait:** the next step waits for something named: a request to start (`start`); a time, such
   as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has
@@ -547,7 +553,7 @@ shapes, and a host shows them in its own words.
 
 A host gives the engine its policies in its configuration. Each has a default, and the
 protocol's `policies.schema.json` names it, as the first column does below. The policies with no
-name there, start, budgets, retries, usage limits, agents, a parent's end, after a failure and
+name there, start, budgets, lost actions' starts, usage limits, agents, a parent's end, after a failure and
 the checklist, are not in the protocol yet: they come into it as the
 engine takes over the decisions that read them, and until then the host applies them itself. The
 `prompt` call already reads three of them beside the host's policies, as its schema names them:
@@ -565,7 +571,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | When fix rounds run out (`whenRoundsRunOut`) | `person`, `failed` | `person` | `person`: the draft is ready with its open findings |
 | Conflicts (`conflicts`, `conflictRounds`) | `person`, `resolve`, `redo`, by who accepted; the most rounds that resolve or redo, 1–10 | `person`; `resolve` with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
 | Budgets | Tokens, time, money and model calls, per item and per stage | Time and money per stage | Tokens and time per request, model calls per stage |
-| Retries | Waits after a transient stop; when a lost action starts again | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
+| Retries (`retryWaits`) | Waits in minutes after a transient stop, at most 10, each 0–330; a lost action's start is not in the protocol yet | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
 | Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
 | Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10; the re-plan for fewer parts, no parts or repeated titles happens only with `autoWhenClean`, and a person's approval of a split that these rules refuse goes on as one change | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
@@ -739,11 +745,10 @@ adapter. A new rule of the engine comes with a case.
    whose conflict round a hold keeps back until the sweep sends the hold's end
    (`autopilot._conflicts_released`). The engine finds the checks that failed the same way
    before and after a fix round, which the state comment keeps, and `route` asks it which of
-   them the fix round it starts diagnoses. A review that NexKit 6 runs again after a
-   transient error is the host's own retry, which the protocol does not hold yet, and so is
-   whether a usage limit is resumed. When the host moves that resume into the engine, a run
-   that a hold keeps back starts later than in NexKit 6, and the differential check lists it as
-   a difference. After a blocked `/nexkit go` or fix round whose recommended
+   them the fix round it starts diagnoses. The engine now decides the runs again after a
+   transient stop, under `retryWaits`, and lets a paused run go on under a hold as NexKit 6 does.
+   No GitHub path asks it yet: a review that NexKit 6 runs again after a transient error is the
+   host's own retry, and so is whether a usage limit is resumed. After a blocked `/nexkit go` or fix round whose recommended
    answer only closes the issue, `report` mentions the person, as for any other wait, and the
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found

@@ -1,0 +1,63 @@
+# Proposes the current digest of the engine image's base, PYTHON_IMAGE in nexkit/__init__.py,
+# which moves when its tag gets security fixes. NexKit starts it on main every few merges, by
+# merge.after_workflows in .nexkit/config.json, rather than on a schedule, which GitHub may delay or
+# drop; it also runs on demand. One pull request, from the branch update/python-image, changes only
+# that pin, and none opens while the pin is the tag's digest. Pull requests opened with the Actions
+# token start no workflows, so this one starts CI and release.yml on the branch: the image's build
+# from the new digest and its check against standard input run as the pull request's checks. Merge
+# it when they are green. NexKit watches this workflow's runs on main like CI's: with autopilot, a
+# failure that repeats opens a bug issue.
+name: Update base image
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: update-image
+
+env:
+  BRANCH: update/python-image
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the branch
+      pull-requests: write # open its pull request
+      actions: write # start CI and the image's check on it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Open a pull request when the tag's digest moved
+        run: |
+          image=$(python scripts/image_digest.py update)
+          if [ -z "$image" ]; then
+            echo "PYTHON_IMAGE is the current digest of its tag."
+            exit 0
+          fi
+          open=$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number')
+          if [ -n "$open" ] && git fetch -q origin "$BRANCH" &&
+             git show FETCH_HEAD:nexkit/__init__.py | grep -qF "\"$image\""; then
+            echo "Pull request #$open already proposes $image."
+            exit 0
+          fi
+          git switch -q -c "$BRANCH"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qam "Build the engine's image on $image"
+          git push --force origin "$BRANCH"
+          if [ -z "$open" ]; then
+            gh pr create --head "$BRANCH" --label dependencies \
+              --title "Build the engine's image on the current digest of ${image%@*}" --body \
+              "${image%@*} now names $image. This changes only \`PYTHON_IMAGE\`. CI and the image's build and check (release.yml) run on this branch. Merge when they are green."
+          fi
+          # Pull requests opened or pushed with the Actions token start no workflows.
+          gh workflow run ci.yml --ref "$BRANCH" -f runtime=none
+          gh workflow run release.yml --ref "$BRANCH"
+        env:
+          GH_TOKEN: ${{ github.token }}

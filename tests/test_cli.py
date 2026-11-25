@@ -2427,6 +2427,72 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.jobs["route"])
 
 
+class UpdateImageWorkflowTests(unittest.TestCase):
+    """update-image.yml proposes the base image's current digest with the least it needs, and
+    the image's build and check run on its pull request (#328). NexKit starts it every few merges
+    rather than on a schedule, which GitHub may delay or drop, and watches its runs."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = (ROOT / ".github/workflows/update-image.yml").read_text()
+        cls.jobs = jobs_of(cls.text)
+
+    def test_the_updates_run_every_few_merges_with_the_least_permissions(self):
+        """Both workflows that propose a pin run when NexKit starts them after its merges,
+        never on a schedule, and hold only what they need to push and open a pull request."""
+        cfg = nexkit.config.load(ROOT)
+        listed = {
+            entry["workflow"] if isinstance(entry, dict) else entry
+            for entry in cfg["merge"]["after_workflows"]
+        }
+        nexkit_yml = (ROOT / ".github/workflows/nexkit.yml").read_text()
+        watched = re.search(r"\n  workflow_run:.*\n    workflows: \[([^]\n]*)\]", nexkit_yml)
+        for file, name in (
+            ("update-image.yml", "Update base image"),
+            ("update-agents.yml", "Update agents"),
+        ):
+            with self.subTest(workflow=file):
+                text = (ROOT / ".github/workflows" / file).read_text()
+                triggers = text.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+                self.assertEqual(triggers, "  workflow_dispatch:")
+                self.assertIn(f"\nname: {name}\n", text)
+                self.assertIn(file, listed)
+                # A finished run on main starts a sweep, which watches its failures as CI's.
+                self.assertIn(name, [n.strip() for n in watched.group(1).split(",")])
+                self.assertIn("\npermissions: {}\n", text)
+                jobs = jobs_of(text)
+                self.assertEqual(list(jobs), ["update"])
+                self.assertEqual(
+                    permissions_of(jobs["update"]),
+                    {"contents": "write", "pull-requests": "write", "actions": "write"},
+                )
+                self.assertNotIn("secrets.", text)
+                self.assertNotIn("gh issue", text)
+
+    def test_proposes_only_a_moved_digest_on_one_branch(self):
+        job = self.jobs["update"]
+        self.assertIn("image=$(python scripts/image_digest.py update)", job)
+        self.assertIn('if [ -z "$image" ]; then', job)
+        self.assertIn("BRANCH: update/python-image\n", self.text)
+        # An open pull request that already pins this digest gets no new push.
+        self.assertIn('grep -qF "\\"$image\\""', job)
+        self.assertIn("commit -qam", job)
+        self.assertIn('gh pr create --head "$BRANCH" --label dependencies', job)
+
+    def test_starts_the_images_build_and_check_on_its_branch(self):
+        job = self.jobs["update"]
+        self.assertIn('gh workflow run release.yml --ref "$BRANCH"', job)
+        self.assertIn('gh workflow run ci.yml --ref "$BRANCH" -f runtime=none', job)
+        release = (ROOT / ".github/workflows/release.yml").read_text()
+        self.assertIn("\n  workflow_dispatch:\n", release.split("\njobs:\n", 1)[0])
+        # A dispatched run builds and checks the image; only a release publishes it.
+        publish = jobs_of(release)["publish"]
+        self.assertIn("    if: github.event_name == 'release'\n", publish)
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("options: [all, claude-code, none]", ci)
+        self.assertIn("""contains(fromJSON('["all","claude-code"]'), inputs.runtime)""", ci)
+
+
 class ReleaseWorkflowTests(unittest.TestCase):
     """release.yml builds the engine's image with a read-only token, and only the job that
     publishes it writes, with github.token, running no repository code (AGENTS.md)."""

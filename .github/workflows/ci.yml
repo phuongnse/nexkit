@@ -4,12 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch: # also started by update-agents.yml; runs the smoke test of `runtime`
+  # Also started by update-agents.yml, which smoke-tests the runtime it updates, and by
+  # update-image.yml, which smoke-tests none.
+  workflow_dispatch:
     inputs:
       runtime:
         description: Runtime to smoke-test
         type: choice
-        options: [all, claude-code]
+        options: [all, claude-code, none]
         default: all
 
 permissions:

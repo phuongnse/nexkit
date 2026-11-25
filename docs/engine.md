@@ -70,8 +70,10 @@ without a change to any host, as long as the conformance suite passes.
   connect or how slowly they send. Put it where only its host reaches it, such as the host's
   own machine or a private network beside it.
 - **The image.** Each release publishes `ghcr.io/phuongnse/nexkit-engine:<version>`, built from
-  the release's commit on `main`. It runs `serve` on port 8080 of the container. A release
-  never replaces an image: one whose version is already in the registry fails before it pushes.
+  the release's commit on `main`. It runs `serve` on port 8080 of the container. Its base is a
+  Python image pinned by digest; every few merges a pull request proposes the digest its tag
+  names now, when that moved, so the image takes the base's security fixes. A release never
+  replaces an image: one whose version is already in the registry fails before it pushes.
   Each image carries an attestation of its build provenance, so a host can check the commit
   and workflow that built it with
   `gh attestation verify oci://ghcr.io/phuongnse/nexkit-engine:<version> --repo phuongnse/nexkit`.

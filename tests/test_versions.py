@@ -59,5 +59,64 @@ class AgentVersionTests(unittest.TestCase):
         self.assertTrue(versions.newer("2.10.0", "2.9.9"))
 
 
+digest_spec = importlib.util.spec_from_file_location(
+    "image_digest", ROOT / "scripts" / "image_digest.py"
+)
+digests = importlib.util.module_from_spec(digest_spec)
+digest_spec.loader.exec_module(digests)
+
+
+class ImageDigestTests(unittest.TestCase):
+    """update-image.yml proposes PYTHON_IMAGE at its tag's current digest, and only then
+    (#328)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.init = Path(self.tmp.name) / "__init__.py"
+        shutil.copy(ROOT / "nexkit" / "__init__.py", self.init)
+
+    def test_reads_the_pin(self):
+        tag, digest = digests.current()
+        self.assertEqual(f"{tag}@{digest}", nexkit.PYTHON_IMAGE)
+        self.assertEqual(digests.current(self.init), (tag, digest))
+
+    def test_update_changes_only_the_digest_and_only_when_it_moved(self):
+        before = self.init.read_text()
+        tag, pinned = digests.current(self.init)
+        asked = []
+
+        def lookup(digest):
+            return lambda name: asked.append(name) or digest
+
+        self.assertIsNone(digests.update(self.init, lookup(pinned)))
+        self.assertEqual(self.init.read_text(), before)
+        self.assertEqual(asked, [tag])
+
+        moved = "sha256:" + "a" * 64
+        self.assertEqual(digests.update(self.init, lookup(moved)), f"{tag}@{moved}")
+        after = self.init.read_text()
+        self.assertEqual(after, before.replace(pinned, moved))
+        self.assertEqual(digests.current(self.init), (tag, moved))
+        # Nothing else moved: the runtime pins and the line around the image stay.
+        self.assertEqual(versions.current("claude-code", self.init), nexkit.CLAUDE_CODE)
+        self.assertEqual(len(after.splitlines()), len(before.splitlines()))
+        self.assertIsNone(digests.update(self.init, lookup(moved)))
+
+    def test_refuses_what_is_not_a_digest(self):
+        before = self.init.read_text()
+        for answer in ("", None, "sha256:abc", "sha512:" + "a" * 128, "latest"):
+            with self.subTest(answer=answer), self.assertRaises(ValueError):
+                digests.update(self.init, lambda name, answer=answer: answer)
+        self.assertEqual(self.init.read_text(), before)
+        self.init.write_text(before.replace(nexkit.PYTHON_IMAGE, "python:3.12-slim"))
+        with self.assertRaises(ValueError):
+            digests.current(self.init)
+
+    def test_official_images_live_under_library(self):
+        self.assertEqual(digests._repository("python"), "library/python")
+        self.assertEqual(digests._repository("acme/python"), "acme/python")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -75,7 +75,7 @@ that sets up repositories. Read [How it works](docs/how-it-works.md) before chan
   prompt changes its golden by hand, in the same pull request, and says why.
 - Pins live only in `nexkit/__init__.py`. The pipeline installs exactly those versions; test only
   them, without matrices. `update-agents.yml` proposes runtime updates, and each needs its runtime's
-  smoke test to pass.
+  smoke test to pass; `update-image.yml` proposes the image's base, which needs the image's check.
 - Everything specific to a CLI or provider lives in `runtimes/` behind `Runtime` and `Provider`;
   never branch on runtime names elsewhere. Settings that identify an account or resource (such as an
   endpoint) are secret fields.

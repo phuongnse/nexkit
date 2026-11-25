@@ -1,6 +1,8 @@
 # The engine's image (docs/engine.md#the-parts). Every pull request and push to main builds it
-# and checks that it serves the answers of standard input. When a release is published, the
-# image of the release's commit is published as ghcr.io/phuongnse/nexkit-engine:<version>.
+# and checks that it serves the answers of standard input, as does the run that
+# update-image.yml starts on its pull request, which moves the base image's digest. When a
+# release is published, the image of the release's commit is published as
+# ghcr.io/phuongnse/nexkit-engine:<version>.
 # The job that builds and runs the image holds a read-only token; the job that publishes it
 # runs no repository code, only loads the built image and pushes it. It refuses a version
 # already in the registry, so a release never replaces an image, and attests the pushed
@@ -14,6 +16,7 @@ on:
     branches: [main]
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions: {}
 

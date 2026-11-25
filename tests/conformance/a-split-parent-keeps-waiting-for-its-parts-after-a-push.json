@@ -1,0 +1,45 @@
+{
+  "policies": {},
+  "state": {
+    "example": "split",
+    "set": {
+      "change": {
+        "id": "308",
+        "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "observed": {
+        "changeId": "308",
+        "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "conflicts": false,
+        "merged": false,
+        "empty": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "state": "split",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "waits.0.for": "parts"
+      }
+    },
+    {
+      "event": {
+        "kind": "partEnded",
+        "part": "44",
+        "state": "accepted"
+      },
+      "state": "accepted",
+      "changed": true,
+      "actions": [
+        "close"
+      ]
+    }
+  ]
+}

@@ -92,6 +92,7 @@ def situation(case):
         ],
         "blockers": [{"number": number, "state": "open"} for number in given.get("blockers", [])],
         "held": given.get("held", False),
+        "waves": given.get("waves", []),
     }
 
 
@@ -203,6 +204,22 @@ class ImportTest(unittest.TestCase):
         self.assertEqual(state["state"], "new")
         self.assertTrue(state["hold"])
         self.assertEqual([wait["for"] for wait in state["waits"]], ["blocker", "start"])
+
+    def test_the_import_waits_for_the_open_issues_of_a_lower_wave(self):
+        gh = FakeGitHub()
+        gh.add_milestone(1)
+        for number, label in ((40, "journey"), (41, "docs"), (42, "docs")):
+            gh.add_issue(number, milestone=1, labels=(label,))
+        labels = {"journey": {"wave": 1}, "docs": {"wave": 2}}
+        cfg = make_config(autopilot={"enabled": True, "labels": labels})
+        state = first_state.import_item(gh, cfg, 42)
+        self.assertEqual(
+            [(wait["for"], wait["on"]) for wait in state["waits"]],
+            [("blocker", "40"), ("start", None)],
+        )
+        gh.issues[40]["state"] = "closed"
+        state = first_state.import_item(gh, cfg, 42)
+        self.assertEqual([wait["for"] for wait in state["waits"]], ["start"])
 
     def test_a_new_item_is_as_the_engine_makes_it(self):
         event = json.loads((protocol.ROOT / "examples" / "events" / "created.json").read_text())

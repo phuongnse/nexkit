@@ -1156,8 +1156,10 @@ def _later(text, since):
 
 
 def engine_round(run):
-    """Whether the engine decides what follows the `/nexkit go` whose marker is `run`: one
-    that stopped as blocked with questions or with protected paths its change needs."""
+    """Whether the engine decides what follows the `/nexkit go` whose marker is `run` on a
+    pull request's round, as `_pull_step` asks: one that stopped as blocked with questions or
+    with protected paths its change needs. The sweep of an issue sends every blocked
+    `/nexkit go` to the engine (`_assess`)."""
     blocked = run.get("outcome") == "agent_blocked"
     return blocked and bool(run.get("questions") or run.get("protected_paths"))
 
@@ -1744,9 +1746,9 @@ def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
 
 
 def _after_go(gh, cfg, issue, comment, last, record, start, comments):
-    """The step after a `/nexkit go` that stopped as blocked with questions or protected
-    paths, which the engine decides (`host.after_go`). An issue whose next step the engine
-    refuses to decide waits for a person, alone."""
+    """The step after a `/nexkit go` that stopped as blocked, with questions, protected paths
+    or nothing to answer, which the engine decides (`host.after_go`). An issue whose next step
+    the engine refuses to decide waits for a person, alone."""
     from .host import Refused, after_go, refused_reason
 
     try:
@@ -1998,7 +2000,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
                 "its pull request was closed, and autopilot opens no other by itself",
             )
             return _step(issue, "waits", reason)
-        if engine_round(last):
+        if last.get("outcome") == "agent_blocked":
             return _after_go(gh, cfg, issue, *found[-1], record, start, comments)
         if last.get("timed_out"):
             return _after_stop(gh, cfg, issue, last, record, start, comments)

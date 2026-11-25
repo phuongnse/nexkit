@@ -45,6 +45,7 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `waits` | #390 | a merge that waits for required checks and its six hours: the round's own merge, a sweep, a writer's approval |
 | `pause` | #398 | a plan, implement or fix stage that stopped at a usage limit or on a transient error, then the resume that comes due, under a hold or not |
 | `ended` | #393 | what a merge finds and a parent's end: a pull request a person merged or closed, a change the base branch holds, a head pushed while the merge waits, and the parent after the merge |
+| `failure` | #415 | a `/nexkit go` that stopped as blocked with nothing to answer, then a comment or a blocker's close, with autopilot on or off |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time

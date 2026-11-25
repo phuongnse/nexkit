@@ -332,8 +332,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   `awaitingApproval` for their answers, and the state keeps the round's questions while they
   wait. One whose change needs paths only a person changes waits for that person
   (`handMadeChange`), whatever it asks, and one that neither asks nor needs such paths fails, for
-  a person. Under `autoWhenClean`, with `answers` `recommended` and a recommended option for
-  every question, the engine answers, once in a row as for a plan:
+  a person. Under `afterFailure` `replan`, a person's comment, or the end of an item that blocks
+  it, plans such an item again when it has no change. Under `autoWhenClean`, with `answers`
+  `recommended` and a recommended option for every question, the engine answers, once in a row
+  as for a plan:
   - An implement round whose one question recommends only closing the item, with its finding
     that no change is needed, ends the item in `noChange`, unless the item has a change, such as
     one made anew after a conflict, which a person closes. Any other recommended option that only
@@ -590,7 +592,7 @@ shapes, and a host shows them in its own words.
 
 A host gives the engine its policies in its configuration. Each has a default, and the
 protocol's `policies.schema.json` names it, as the first column does below. The policies with no
-name there, start, budgets, usage limits, agents, after a failure and
+name there, start, budgets, usage limits, agents and
 the checklist, are not in the protocol yet: they come into it as the
 engine takes over the decisions that read them, and until then the host applies them itself. The
 `prompt` call already reads three of them beside the host's policies, as its schema names them:
@@ -614,7 +616,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
 | Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10; the re-plan for fewer parts, no parts or repeated titles happens only with `autoWhenClean`, and a person's approval of a split that these rules refuse goes on as one change | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
 | A parent's end (`parentEnd`) | `whenPartAccepted`, `person`: whether the parent ends once every part ended and one was completed, or a person decides (`splitIncomplete`); a host that leaves it out gets `whenPartAccepted` | `whenPartAccepted` with `close_parent_issues`, else `person`: the engine's default differs from GitHub's, where `close_parent_issues` is off by default | `whenPartAccepted`: the parent ends when its parts end |
-| After a failure | `person`, `replan`, `newItem` | `person`, then `replan` on a comment | `newItem`: the person sends the request again |
+| After a failure (`afterFailure`) | `person`, `replan`: whether an item that failed because its round was blocked with nothing to answer, with no change, is planned again after a person's comment or the end of an item that blocks it | `person`; `replan` with autopilot | `person` |
 | Checklist | Items the plan and the review answer, some for a person | `review.checklist` | The application's own checklist |
 
 **Someone else may do a stage.** `created` says who does each stage: the engine's runners, a
@@ -817,8 +819,10 @@ adapter. A new rule of the engine comes with a case.
    outside the merge, stay NexKit 6's. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`
-   that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as
-   the policy after a failure, which the protocol does not hold yet, says. Every existing test
+   that stopped as blocked with neither is the engine's too: it waits for a person, and with
+   autopilot, under `afterFailure`, a comment or the close of an issue that blocks it plans it
+   again. Only a `/nexkit go` that ended in an agent error stays NexKit 6's
+   (`autopilot._since_stop`). Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the
    conformance suite as it goes.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on

@@ -67,6 +67,14 @@
       ],
       "default": "never"
     },
+    "afterFailure": {
+      "$comment": "What follows a failed round that has nothing for a person to answer. Under `replan`, an item that failed because its round was blocked with nothing to answer, on no change, is planned again after a person's comment or a blocker's close; the GitHub host sends `replan` with autopilot.",
+      "enum": [
+        "person",
+        "replan"
+      ],
+      "default": "person"
+    },
     "splitParts": {
       "$comment": "The most parts a split files, from 1 to 10; with automatic approval a plan with more is planned once more for fewer, and a person's approval of one goes on as one change.",
       "type": "integer",

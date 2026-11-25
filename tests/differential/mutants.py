@@ -321,6 +321,28 @@ MUTANTS = {
         "seen": ("harness",),
         "families": ("ended",),
     },
+    # A person's comment no longer plans again an item that failed for nothing (#415). The
+    # sweep of NexKit 6 does, so both the differential check and the walker see it.
+    "failure-comment-ignored": {
+        "path": MACHINE,
+        "old": """        if self.fails_for_nothing():
+            self.start_plan()
+            return True
+        plan = self.s["plan"]""",
+        "new": """        plan = self.s["plan"]""",
+        "seen": ("harness", "walker"),
+        "families": ("failure",),
+    },
+    # An item with a change fails for nothing too and is planned again by a comment (#415).
+    # On GitHub an issue's `/nexkit go` never has a change, so only the walker sees it.
+    "failure-ignores-change": {
+        "path": MACHINE,
+        "old": """            and not self.s["change"]
+            and (self.s["attention"] or {}).get("reason") == "blocked\"""",
+        "new": """            and (self.s["attention"] or {}).get("reason") == "blocked\"""",
+        "seen": ("walker",),
+        "families": ("failure",),
+    },
 }
 
 

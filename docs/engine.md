@@ -712,8 +712,8 @@ adapter. A new rule of the engine comes with a case.
   that reported and changed the item, ends them. A NexKit 6 run on its way becomes the action the
   engine waits for, and an automatic fix round on its way, with a count, is marked
   `rounds.automatic`, so that a stop gives its count back. A run paused at a usage limit, or until
-  it runs again after a transient stop, becomes a wait with its time, unless NexKit 6 would no
-  longer resume it, which fails for a person; an automatic run that ended without a report waits
+  it runs again after a transient stop, becomes a wait with its time, the second keeping the
+  count of runs again, unless NexKit 6 would no longer resume it, which fails for a person; an automatic run that ended without a report waits
   to start again, later each time. A merge that waits for required checks is `accepting` with that
   wait and, when NexKit 6 recorded when they first had not passed (`waiting_since`), with that
   time as `checksSince`, so that their end counts from the same moment, and a round that waits
@@ -772,10 +772,13 @@ adapter. A new rule of the engine comes with a case.
    whose conflict round a hold keeps back until the sweep sends the hold's end
    (`autopilot._conflicts_released`). The engine finds the checks that failed the same way
    before and after a fix round, which the state comment keeps, and `route` asks it which of
-   them the fix round it starts diagnoses. The engine now decides the runs again after a
+   them the fix round it starts diagnoses. The engine decides the runs again after a
    transient stop, under `retryWaits`, and lets a paused run go on under a hold as NexKit 6 does.
-   No GitHub path asks it yet: a review that NexKit 6 runs again after a transient error is the
-   host's own retry, and so is whether a usage limit is resumed. After a blocked `/nexkit go` or fix round whose recommended
+   `report` sends it a plan, implement or fix stage whose agent stopped at a usage limit or on a
+   transient error, and `maintain.resume_paused` sends the tick of each due resume; the host
+   carries out the wait, or leaves the run to a person. Which reset the host gives stays the
+   host's, and so do a review that NexKit 6 runs again after a transient error and a transient
+   stop of publish. After a blocked `/nexkit go` or fix round whose recommended
    answer only closes the issue, `report` mentions the person, as for any other wait, and the
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found

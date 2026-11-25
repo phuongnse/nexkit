@@ -44,7 +44,9 @@ class DocsMapTests(unittest.TestCase):
             for file, anchor in links(page):
                 self.assertTrue(file.exists(), f"{page.name} links {file}, which does not exist")
                 if anchor and file.suffix == ".md":
-                    self.assertIn(anchor, anchors(file), f"{page.name} links #{anchor} of {file.name}")
+                    self.assertIn(
+                        anchor, anchors(file), f"{page.name} links #{anchor} of {file.name}"
+                    )
 
 
 if __name__ == "__main__":

@@ -48,7 +48,7 @@
       "default": "person"
     },
     "conflictRounds": {
-      "$comment": "How many rounds may resolve conflicts, when `conflicts` is resolve, from 1 to 10.",
+      "$comment": "How many rounds may resolve or redo conflicts, when `conflicts` is resolve or redo, from 1 to 10.",
       "type": "integer",
       "default": 3,
       "minimum": 1,

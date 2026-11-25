@@ -1,0 +1,90 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "stopped"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v2",
+        "conflicts": true
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "change.version": "v2",
+        "pending.-1.changeVersion": "v2"
+      }
+    }
+  ]
+}

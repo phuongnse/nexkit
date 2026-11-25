@@ -239,6 +239,18 @@ class ProgramTest(unittest.TestCase):
                 machine._never_writes([action])
         machine._never_writes([{"kind": "runAgent", "stage": "review"}, {"kind": "show"}])
 
+    def test_a_review_only_item_is_never_closed_even_by_a_lost_close(self):
+        # A state built by hand can hold a close that `actionLost` would issue again.
+        state = json.loads((EXAMPLES / "state" / "dropped.json").read_text())
+        state["itemKind"] = "reviewOnly"
+        event = json.loads((EXAMPLES / "events" / "actionLost.json").read_text())
+        event["action"] = "a7.1"
+        event["changeVersion"] = None
+        answer = engine.answer({**request(state=state, event=event), "call": "step"})
+        self.assertIn("review-only", answer.get("error", ""), answer)
+        with self.assertRaisesRegex(machine.EngineError, "review-only"):
+            machine._never_writes([{"kind": "close"}])
+
     def test_an_action_withdrawn_in_a_step_leaves_its_id_unused(self):
         work = machine.Step(machine.blank("42"), {}, protocol.check)
         first = work.do("runChecks", changeVersion="v1")

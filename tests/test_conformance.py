@@ -77,7 +77,7 @@ RESULTS = {
     "@error": {**AGENT, "output": None, "error": "The agent stopped."},
 }
 # The states a conflict leads to under each conflict policy (docs/engine.md#states).
-CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working",)}
+CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working", "ready")}
 
 
 def result_of(value):
@@ -323,6 +323,10 @@ class ConformanceTest(unittest.TestCase):
         # A transition the conflict policy does not lead to is not allowed.
         self.assertNotIn(("working", "fixing"), allowed({"conflicts": "person"}, True))
         self.assertIn(("working", "fixing"), allowed({"conflicts": "resolve"}, True))
+        # A conflict that finds no round left goes to a person, under `redo` as under `resolve`.
+        self.assertIn(("working", "ready"), allowed({"conflicts": "redo"}, True))
+        # The table names the failed checks that go to a person, which no conflict explains.
+        self.assertIn(("checking", "ready"), table_transitions())
         # Nor one that only an item with a change makes.
         self.assertNotIn(("planning", "accepted"), allowed({}, False))
         self.assertNotIn(("new", "ready"), allowed({}, False))

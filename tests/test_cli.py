@@ -2427,6 +2427,49 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.jobs["route"])
 
 
+class UpdateImageWorkflowTests(unittest.TestCase):
+    """update-image.yml proposes the base image's current digest with the least it needs, and
+    the image's build and check run on its pull request (#328)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = (ROOT / ".github/workflows/update-image.yml").read_text()
+        cls.jobs = jobs_of(cls.text)
+
+    def test_runs_every_week_with_the_least_permissions(self):
+        self.assertIn('\n  schedule:\n    - cron: "43 3 * * 1"\n  workflow_dispatch:\n', self.text)
+        self.assertIn("\npermissions: {}\n", self.text)
+        self.assertEqual(list(self.jobs), ["update"])
+        self.assertEqual(
+            permissions_of(self.jobs["update"]),
+            {"contents": "write", "pull-requests": "write", "actions": "write", "issues": "write"},
+        )
+        self.assertNotIn("secrets.", self.text)
+
+    def test_proposes_only_a_moved_digest_on_one_branch(self):
+        job = self.jobs["update"]
+        self.assertIn("image=$(python scripts/image_digest.py update)", job)
+        self.assertIn('if [ -z "$image" ]; then', job)
+        self.assertIn("BRANCH: update/python-image\n", self.text)
+        # An open pull request that already pins this digest gets no new push.
+        self.assertIn('grep -qF "\\"$image\\""', job)
+        self.assertIn("commit -qam", job)
+        self.assertIn('gh pr create --head "$BRANCH" --label dependencies', job)
+
+    def test_starts_the_images_build_and_check_on_its_branch(self):
+        job = self.jobs["update"]
+        self.assertIn('gh workflow run release.yml --ref "$BRANCH"', job)
+        self.assertIn('gh workflow run ci.yml --ref "$BRANCH" -f runtime=none', job)
+        release = (ROOT / ".github/workflows/release.yml").read_text()
+        self.assertIn("\n  workflow_dispatch:\n", release.split("\njobs:\n", 1)[0])
+        # A dispatched run builds and checks the image; only a release publishes it.
+        publish = jobs_of(release)["publish"]
+        self.assertIn("    if: github.event_name == 'release'\n", publish)
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("options: [all, claude-code, none]", ci)
+        self.assertIn("""contains(fromJSON('["all","claude-code"]'), inputs.runtime)""", ci)
+
+
 if __name__ == "__main__":
     unittest.main()
 

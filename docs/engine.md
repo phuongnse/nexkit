@@ -68,7 +68,9 @@ without a change to any host, as long as the conformance suite passes.
   connect or how slowly they send. Put it where only its host reaches it, such as the host's
   own machine or a private network beside it.
 - **The image.** Each release publishes `ghcr.io/phuongnse/nexkit-engine:<version>`, built from
-  the release's commit on `main`. It runs `serve` on port 8080 of the container.
+  the release's commit on `main`. It runs `serve` on port 8080 of the container. Its base is a
+  Python image pinned by digest; every week a pull request proposes the digest its tag names
+  now, when that moved, so the image takes the base's security fixes.
 
 ## The engine
 

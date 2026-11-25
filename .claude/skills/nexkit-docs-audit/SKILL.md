@@ -18,8 +18,9 @@ opens issues, which NexKit takes.
 1. `pages <run number>` picks the run's pages: every Markdown file that git tracks under `docs/`,
    `skills/` and `.claude/skills/`, and `AGENTS.md` and `README.md`, in order, whose index modulo 4
    is the run number's, so every page is read once in four runs.
-2. `read <run number> <out>` reads each page in a session of its own, at most four at a time, with
-   the agent, model and time of NexKit's review stage and its read-only tools. Each session follows
+2. `read <run number> <out>` reads each page in a session of its own, at most four at a time. It
+   runs as NexKit's review stage runs, with its agents and fallbacks, model, time and read-only
+   tools, and asks for the findings' schema in place of the review's. Each session follows
    [reading a page](#reading-a-page) and answers in the script's schema. When a page's session
    fails, the step fails once every page has been read.
 3. `plan <findings> <run id>` groups the findings into issues, leaves out each that an open issue

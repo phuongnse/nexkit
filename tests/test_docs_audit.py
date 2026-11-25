@@ -179,13 +179,18 @@ class ReadTests(unittest.TestCase):
 
     def test_an_answer_that_does_not_fit_fails_the_page(self):
         self.answer([{"line": 1, "kind": "rumour"}])
-        with self.assertRaisesRegex(RuntimeError, "docs/a.md: no result that fits"):
+        with self.assertRaisesRegex(RuntimeError, "docs/a.md: .*does not fit the review schema"):
             audit.read(["docs/a.md"], self.cfg, program=str(self.fake.path))
 
-    def test_no_secret_fails_before_the_agent_runs(self):
+    def test_no_secret_fails_before_the_agent_runs_on_actions(self):
+        # On a person's machine the agent may run on that person's own login instead.
         self.answer([])
-        with mock.patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": ""}):
-            with self.assertRaisesRegex(RuntimeError, "no secret"):
+        with mock.patch.dict(
+            "os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "", "GITHUB_ACTIONS": "true"}
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "docs/a.md: No secret for the `claude` agent"
+            ):
                 audit.read(["docs/a.md"], self.cfg, program=str(self.fake.path))
         self.assertEqual(self.fake.calls(), [])
 

@@ -30,14 +30,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from nexkit import config as configuration  # noqa: E402
-from nexkit.agent import run_process  # noqa: E402
-from nexkit.autopilot import _unmentioned  # noqa: E402
-from nexkit.checks import environment  # noqa: E402
+from nexkit.agent import run_agent  # noqa: E402
+from nexkit.autopilot import unmentioned  # noqa: E402
 from nexkit.redact import Redactor  # noqa: E402
-from nexkit.runlog import RunLog  # noqa: E402
-from nexkit.runtimes import PROVIDERS, RUNTIMES  # noqa: E402
-from nexkit.runtimes.base import Spec  # noqa: E402
-from nexkit.schema import problems  # noqa: E402
 
 SKILL = ".claude/skills/nexkit-docs-audit/SKILL.md"
 WORKFLOW = "docs-audit.yml"
@@ -131,56 +126,26 @@ def prompt_for(page):
 
 
 def ask(page, cfg, redact, *, program=None, root=ROOT):
-    """Read `page` with the agent of the review stage, with the review stage's read-only
-    tools, model and time. Return its findings, or raise RuntimeError."""
-    settings = configuration.stage(cfg, "review")
-    agent = configuration.agent(cfg, settings["agent"])
-    runtime = RUNTIMES[agent["runtime"]]
-    provider = PROVIDERS[agent["provider"]]
-    groups = provider.secrets(agent)
-    secrets = {key: os.environ[key] for group in groups for key in group if os.environ.get(key)}
-    if any(not any(key in secrets for key in group) for group in groups):
-        raise RuntimeError(f"{page}: no secret for the `{settings['agent']}` agent")
-    provider.check_secrets(agent, secrets)
-    redact.add(secrets.values())
-    with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
-        spec = Spec(
-            stage="review",
-            model=settings["model"],
-            effort=settings["effort"],
-            budget_usd=settings["max_budget_usd"],
-            schema=FINDINGS,
-            home=Path(home),
-        )
-        launch = runtime.launch(agent, spec, secrets, program)
-        for path, content in launch.files.items():
-            Path(path).write_text(content, encoding="utf-8")
-        log = RunLog(
-            redact,
-            reader=runtime.reader(),
-            title=f"Docs audit of {page}",
-            speaker=runtime.label,
-            tool_output="none",
-        )
-        run = run_process(
+    """Read `page` with the review stage's agents, model, time and read-only access, through
+    `agent.run_agent` as every stage runs, with the findings schema in place of the review's.
+    Return its findings, or raise RuntimeError."""
+    with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as out:
+        result, _ = run_agent(
+            "review",
             prompt_for(page),
-            launch.argv,
-            env={**environment(), **launch.env},
+            cfg,
             cwd=root,
-            timeout_seconds=settings["timeout_minutes"] * 60,
-            log=log,
+            redact=redact,
+            out=out,
+            title=f"Docs audit of {page}",
+            program=program,
+            schema=FINDINGS,
         )
-    outcome = log.reader.outcome(run["returncode"], run["stderr"])
-    if run["timed_out"]:
-        raise RuntimeError(f"{page}: {runtime.label} did not finish within the review's time")
-    if outcome.error:
-        raise RuntimeError(redact(f"{page}: {runtime.label} {outcome.error}"))
-    found = problems(outcome.output, FINDINGS) if isinstance(outcome.output, dict) else ["none"]
-    if found:
-        raise RuntimeError(f"{page}: no result that fits the findings schema: {found[:3]}")
+    if result["status"] != "done":
+        raise RuntimeError(redact(f"{page}: {result['error']}"))
     return [
         {**finding, "page": page}
-        for finding in outcome.output["findings"]
+        for finding in result["output"]["findings"]
         if finding["kind"] in KINDS and finding["evidence"]
     ]
 
@@ -207,7 +172,7 @@ def read(pages, cfg, *, program=None, root=ROOT):
 def _quoted(text):
     """Text of the agent as it may stand in an issue: it mentions nobody, and opens and
     closes no HTML comment, so it forges no marker and hides nothing."""
-    return _unmentioned(" ".join(str(text).split()))
+    return unmentioned(" ".join(str(text).split()))
 
 
 def finding_key(finding):

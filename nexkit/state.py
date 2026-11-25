@@ -116,7 +116,7 @@ def inert_markers(value):
     marker: `<!-- nexkit:` shows as `‹!-- nexkit:`, so NexKit never reads it as its own.
     `publish.render_plan` passes a plan's whole output through it, so the plan text the
     agents read, the plan's record and the parts filed from a split show it so too. Only
-    marker openings change: a mention escapes more (`autopilot._unmentioned`), since any
+    marker openings change: a mention escapes more (`autopilot.unmentioned`), since any
     HTML comment there would hide the rest of it."""
     if isinstance(value, dict):
         return {key: inert_markers(item) for key, item in value.items()}

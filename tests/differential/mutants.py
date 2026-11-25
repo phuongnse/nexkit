@@ -174,6 +174,42 @@ MUTANTS = {
         "seen": ("harness",),
         "families": ("report", "review", "diag", "chains"),
     },
+    # The count of runs after a transient stop is not started afresh by a new run (#396). Only
+    # the walker sees it: no GitHub path sends a transient result to the engine yet.
+    "transient-count-never-resets": {
+        "path": MACHINE,
+        "old": """            self.forget_retries()
+        self.s["rounds"]["started"]""",
+        "new": """            pass
+        self.s["rounds"]["started"]""",
+        "seen": ("walker",),
+        "families": ("round", "give"),
+    },
+    # One wait of `retryWaits` is never used (#396).
+    "transient-one-wait-short": {
+        "path": MACHINE,
+        "old": """        if count >= len(waits):""",
+        "new": """        if count >= len(waits) - 1:""",
+        "seen": ("walker",),
+        "families": ("round", "give"),
+    },
+    # A hold keeps back a run that waited for a time or a usage limit, where NexKit 6's resume
+    # reads no hold label (#396).
+    "tick-under-hold-waits": {
+        "path": MACHINE,
+        "old": """        self.resume(hold=not paused)""",
+        "new": """        self.resume()""",
+        "seen": ("walker",),
+        "families": ("sweep", "round"),
+    },
+    # A run again after a transient stop counts as a new round (#396).
+    "transient-run-again-counts": {
+        "path": MACHINE,
+        "old": """        self.run(stage, again=True, diagnose=automatic)""",
+        "new": """        self.run(stage, again=False, diagnose=automatic)""",
+        "seen": ("walker",),
+        "families": ("round", "give"),
+    },
 }
 
 

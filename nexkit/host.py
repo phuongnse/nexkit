@@ -121,6 +121,7 @@ def policies(cfg):
         "splits": taken,
         "splitParts": MAX_PARTS,
         "splitDepth": autopilot.MAX_DEPTH,
+        "retryWaits": list(cfg["retry"]["wait_minutes"]),
     }
 
 

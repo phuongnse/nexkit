@@ -1,0 +1,50 @@
+{
+  "policies": {},
+  "state": {
+    "example": "fixing"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@transient"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "wait"
+      ],
+      "expect": {
+        "waits.0.id": "w8.1",
+        "waits.0.for": "time",
+        "waits.0.until": "2026-11-23T15:16:11Z",
+        "pending.-1.kind": "wait"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "waits": []
+      }
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w8.1"
+      },
+      "state": "fixing",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

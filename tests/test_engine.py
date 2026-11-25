@@ -16,6 +16,7 @@ from unittest import mock
 import nexkit
 from nexkit import engine, protocol
 from nexkit.engine import cli, machine
+from tests.test_conformance import AGENT
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = protocol.ROOT / "examples"
@@ -310,6 +311,36 @@ class ProgramTest(unittest.TestCase):
                 self.assertIn(problem, protocol.check(broken, "state.schema.json"))
         answer = engine.answer({**request(event={**created(), "depth": -1}), "call": "step"})
         self.assertIn("request.event.depth must be at least 0", answer["error"])
+
+
+class RetryTimeTest(unittest.TestCase):
+    def test_a_wait_is_added_to_the_time_of_the_event(self):
+        for at, minutes, found in (
+            ("2026-11-23T15:01:11Z", 15, "2026-11-23T15:16:11Z"),
+            ("2026-12-31T23:59:59Z", 2, "2027-01-01T00:01:59Z"),
+            ("2024-02-28T23:30:00Z", 60, "2024-02-29T00:30:00Z"),
+            ("2100-02-28T23:59:00Z", 1, "2100-03-01T00:00:00Z"),
+            ("2026-11-23T15:01:11.5+02:00", 30, "2026-11-23T13:31:11Z"),
+            ("2026-11-23T01:00:00-05:30", 330, "2026-11-23T12:00:00Z"),
+            ("2026-11-23T15:01:11", 0, "2026-11-23T15:01:11Z"),
+        ):
+            with self.subTest(at=at):
+                self.assertEqual(machine._later(at, minutes), found)
+
+    def test_a_time_that_is_not_iso_8601_is_refused(self):
+        for at in ("soon", "2026-02-30T00:00:00Z", "2026-11-23", "2026-11-23T25:00:00Z", ""):
+            with self.subTest(at=at):
+                with self.assertRaisesRegex(machine.EngineError, "not an ISO 8601 time"):
+                    machine._later(at, 15)
+
+    def test_a_transient_stop_at_an_unreadable_time_is_refused(self):
+        state = json.loads((EXAMPLES / "state" / "planning.json").read_text())
+        event = json.loads((EXAMPLES / "events" / "actionFinished.json").read_text())
+        event.update(item=state["item"], action=state["pending"][0]["id"], at="soon")
+        event["changeVersion"] = state["pending"][0].get("changeVersion")
+        event["result"] = {**AGENT, "output": None, "transient": True, "error": "Overloaded."}
+        answer = engine.answer({**request(state=state, event=event), "call": "step"})
+        self.assertIn("not an ISO 8601 time", answer.get("error", ""), answer)
 
 
 class PurityTest(unittest.TestCase):

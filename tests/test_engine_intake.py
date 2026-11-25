@@ -46,7 +46,7 @@ class RestartTest(unittest.TestCase):
         self.assertEqual(step(example("accepting"), TICK)[1], ["accept"])
 
     def test_a_hold_attention_or_work_that_runs_holds_the_round_back(self):
-        held = example("fixing", pending=[], waits=[wait(1, "usageLimit")], hold=True)
+        held = example("fixing", pending=[], waits=[wait(1, "requiredChecks")], hold=True)
         attention = {"reason": "failed", "text": "A person looks.", "ref": None}
         told = example("fixing", pending=[], waits=[wait(1, "usageLimit")], attention=attention)
         running = example("fixing", waits=[wait(1, "usageLimit")])

@@ -37,7 +37,12 @@
           "splits": false,
           "answers": "never",
           "splitParts": 10,
-          "splitDepth": 3
+          "splitDepth": 3,
+          "retryWaits": [
+            15,
+            30,
+            60
+          ]
         }
       }
     },

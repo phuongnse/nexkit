@@ -325,6 +325,7 @@ class PoliciesTest(HostCase):
                 "splits": True,
                 "splitParts": 10,
                 "splitDepth": 3,
+                "retryWaits": [15, 30, 60],
             },
         )
         found = host.policies(self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}})

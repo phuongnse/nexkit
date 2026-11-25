@@ -393,6 +393,19 @@
       ],
       "additionalProperties": false
     },
+    "again": {
+      "$comment": "How often work ran again in this round. `transient` counts the runs again after a transient stop, until a request or a new plan, implement or fix run starts afresh. Left out while the count is 0.",
+      "type": "object",
+      "properties": {
+        "transient": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
     "rounds": {
       "type": "object",
       "properties": {
@@ -628,6 +641,9 @@
         },
         "splitDepth": {
           "$ref": "policies.schema.json#/properties/splitDepth"
+        },
+        "retryWaits": {
+          "$ref": "policies.schema.json#/properties/retryWaits"
         }
       },
       "required": [],

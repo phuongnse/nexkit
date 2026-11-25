@@ -23,7 +23,9 @@
       },
       "state": "reviewing",
       "changed": true,
-      "actions": [],
+      "actions": [
+        "runAgent"
+      ],
       "expect": {
         "waits": []
       }
@@ -35,9 +37,7 @@
       },
       "state": "reviewing",
       "changed": true,
-      "actions": [
-        "runAgent"
-      ]
+      "actions": []
     }
   ]
 }

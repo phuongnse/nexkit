@@ -101,6 +101,7 @@ DEFAULTS = {
     "answers": "never",
     "splitParts": 10,
     "splitDepth": 3,
+    "retryWaits": [15, 30, 60],
 }
 # The states a conflict leads to under each conflict policy.
 CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working", "ready")}
@@ -333,6 +334,10 @@ class Step:
         a conflict round and the round that the engine's answers run again name none."""
         if self.review_only and stage != "review":
             raise EngineError("A review-only item is only checked and reviewed.")
+        if not again and stage != "review":
+            # New work starts the count of runs again afresh; a review handed on within the
+            # round keeps it, as NexKit 6's `retry` goes through the stages of one command.
+            self.forget_retries()
         self.s["rounds"]["started"] += stage in ("implement", "fix") and not again
         repeated = self.s["rounds"].get("repeated") or []
         fields = {"diagnose": repeated[:DIAGNOSES] if diagnose else []} if stage == "fix" else {}
@@ -351,6 +356,13 @@ class Step:
             resume=False,
             **fields,
         )
+
+    def forget_retries(self):
+        """Start the count of runs again after a transient stop afresh."""
+        again = self.s.get("again", {})
+        again.pop("transient", None)
+        if not again:
+            self.s.pop("again", None)
 
     def close(self, outcome, finding=None):
         if self.review_only:
@@ -604,28 +616,35 @@ class Step:
         self.move("checking")
         return True
 
-    def held_back(self, ignore=()):
-        """Whether something holds back the work of the item's state: a hold, attention, a
-        wait other than for a blocker or of the kinds in `ignore`, or its work that runs."""
+    def held_back(self, ignore=(), hold=True):
+        """Whether something holds back the work of the item's state: a hold unless `hold` is
+        false, attention, a wait other than for a blocker or of the kinds in `ignore`, or its
+        work that runs."""
         waits = [w for w in self.s["waits"] if w["for"] not in ("blocker", *ignore)]
         # A `wait` action only asks for the tick, which has come or will.
         running = any(a["kind"] in WORK and a["kind"] != "wait" for a in self.s["pending"])
-        return bool(self.s["hold"] or self.s["attention"] or waits or running)
+        return bool((hold and self.s["hold"]) or self.s["attention"] or waits or running)
 
-    def resume(self):
+    def run_again(self, stage):
+        """Run `stage` again in the same round, so it counts nothing again. An automatic fix
+        round diagnoses again, as after a usage limit."""
+        automatic = stage == "fix" and bool(self.s["rounds"].get("automatic"))
+        self.run(stage, again=True, diagnose=automatic)
+
+    def resume(self, hold=True):
         """Start the work of the item's state again once nothing holds it back, as after a
         wait for a time, a usage limit, required checks or the base branch, or a hold
-        (docs/engine.md#states). It is the same round, so it counts nothing again. Checks and
-        an accept follow what the latest observation of the change says first: `check` before
-        its checks, and the reconcile after the step for an accept."""
-        if self.held_back():
+        (docs/engine.md#states), which holds it back only while `hold` is true. It is the same
+        round, so it counts nothing again. Checks and an accept follow what the latest
+        observation of the change says first: `check` before its checks, and the reconcile
+        after the step for an accept."""
+        if self.held_back(hold=hold):
             return
         stage = next((stage for stage, name in RUNS.items() if name == self.state), None)
         if stage == "fix" and self.s["rounds"].get("due"):
             self.issue_fix(fresh=True)
         elif stage:
-            automatic = stage == "fix" and bool(self.s["rounds"].get("automatic"))
-            self.run(stage, again=True, diagnose=automatic)
+            self.run_again(stage)
         elif self.state == "checking":
             self.check()
         elif self.state == "accepting":
@@ -678,6 +697,7 @@ class Step:
             self.forget_answers()
         if not self.requested(event):
             return False
+        self.forget_retries()
         # A request starts work anew: what a fix round that changed nothing left is no longer
         # the last word on its version (`report._report` reads `recheck` of a fix round only),
         # and checks it asks for are not a fix round's, whatever ran last.
@@ -976,15 +996,24 @@ class Step:
         ]
         if not waits:
             return False
-        self.s["waits"].remove(waits[0])
-        checks = waits[0]["for"] == "requiredChecks" and self.state == "accepting"
+        wait = waits[0]
+        self.s["waits"].remove(wait)
+        checks = wait["for"] == "requiredChecks" and self.state == "accepting"
         if checks and self.checks_waited():
             # Required checks that neither pass nor fail are a person's to look into, and the
             # merge is not tried again (`autopilot._merge_step`).
             self.move("ready")
             self.need("acceptRefused", "The required checks have not passed for six hours.")
             return True
-        self.resume()
+        # A step that runs goes on under a hold, as NexKit 6's `maintain.resume_paused` reads no
+        # hold label: a run paused at a usage limit or after a transient stop runs again at its
+        # tick. A fix round that is due, an accept and a conflict round wait for `released`.
+        paused = (
+            wait["for"] in ("time", "usageLimit")
+            and self.state in RUNS.values()
+            and not self.s["rounds"].get("due")
+        )
+        self.resume(hold=not paused)
         return True
 
     def on_changeObserved(self, event):
@@ -1102,6 +1131,7 @@ class Step:
             return False
         self.same_version(action, event)
         self.s["pending"].remove(action)
+        self.at = event["at"]
         handler = getattr(self, f"finished_{action['kind']}", None)
         if handler:
             handler(event["result"], action)
@@ -1158,6 +1188,9 @@ class Step:
         if result["limit"]:
             self.limited(result["limit"])
             return
+        if result["transient"]:
+            self.transient(stage)
+            return
         if result["timedOut"] and stage in ("implement", "fix"):
             self.timed_out()
             return
@@ -1172,15 +1205,35 @@ class Step:
 
     def limited(self, limit):
         """The agent stopped at a usage limit: the item waits for its reset, and then the same
-        stage runs again, counting nothing again (`resume`). A limit whose reset the host does
-        not give, as when it does not resume such runs, waits for a person
-        (`report.pause`)."""
+        stage runs again at its tick, counting nothing again and even under a hold (`on_tick`).
+        A limit whose reset the host does not give, as when it does not resume such runs, waits
+        for a person (`report.pause`)."""
         if limit["reset"] is None:
             self.move("failed")
             self.need("failed", limit["message"] or "The agent stopped at its usage limit.")
             return
         wait = self.wait("usageLimit", until=limit["reset"])
         self.do("wait", wait=wait["id"], until=limit["reset"])
+
+    def transient(self, stage):
+        """The agent stopped on a transient error: after each wait of `retryWaits` in turn the
+        same stage runs again, counting nothing again, and after the last a person decides
+        (`report._retry`). A wait of 0 runs it again at once."""
+        waits = self.p["retryWaits"]
+        count = self.s.get("again", {}).get("transient", 0)
+        if count >= len(waits):
+            self.move("failed")
+            self.need(
+                "failed", "The agent stopped on a transient error after every wait to run it again."
+            )
+            return
+        self.s.setdefault("again", {})["transient"] = count + 1
+        if waits[count] == 0:
+            self.run_again(stage)
+            return
+        until = _later(self.at, waits[count])
+        wait = self.wait("time", until=until)
+        self.do("wait", wait=wait["id"], until=until)
 
     def finished_plan(self, output, number):
         """What follows a plan, as NexKit 6 decides it (`autopilot._planned`). With automatic
@@ -1517,16 +1570,6 @@ class Step:
         self.spend(result)
 
 
-def _days(year, month, day):
-    """The days from 1970-01-01 to the given day of the proleptic Gregorian calendar."""
-    year -= month <= 2
-    era = year // 400
-    of_year = year - era * 400
-    of_month = (month + 9) % 12
-    days = (153 * of_month + 2) // 5 + day - 1
-    return era * 146097 + of_year * 365 + of_year // 4 - of_year // 100 + days - 719468
-
-
 def _seconds(text):
     """Seconds since 1970 of `text`, a time as the protocol writes it, such as
     2026-11-23T15:01:11Z, or None when it is none."""
@@ -1546,18 +1589,69 @@ def _seconds(text):
 def _time(seconds):
     """`seconds` since 1970 as the protocol writes a time."""
     days, rest = divmod(seconds, 86400)
-    z = days + 719468
-    era = z // 146097
-    of_era = z - era * 146097
-    of_year = (of_era - of_era // 1460 + of_era // 36524 - of_era // 146096) // 365
-    day_of_year = of_era - (365 * of_year + of_year // 4 - of_year // 100)
-    of_month = (5 * day_of_year + 2) // 153
-    day = day_of_year - (153 * of_month + 2) // 5 + 1
-    month = of_month + 3 if of_month < 10 else of_month - 9
-    year = era * 400 + of_year + (month <= 2)
+    year, month, day = _civil(days)
     hour, rest = divmod(rest, 3600)
     minute, second = divmod(rest, 60)
     return f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}Z"
+
+
+def _later(at, minutes):
+    """The time `minutes` after `at`, an ISO 8601 time such as `2026-11-23T15:01:11Z`, written
+    as the protocol writes times. It has an optional fraction of a second, which it drops, and
+    an optional `Z` or `+hh:mm` offset, and a time without one is UTC. The engine reads no
+    clock and imports no time module, so it counts the days itself (`datetime` is not one of
+    its imports)."""
+    fail = EngineError(f"The event's time {at!r} is not an ISO 8601 time.")
+    date, split, rest = at.partition("T")
+    zone = max(rest.rfind("+"), rest.rfind("-"))
+    zone = rest.find("Z") if rest.endswith("Z") else zone
+    clock, offset = (rest[:zone], rest[zone:]) if zone >= 0 else (rest, "")
+    try:
+        year, month, day = (int(part) for part in date.split("-"))
+        hour, minute, second = (int(part) for part in clock.partition(".")[0].split(":"))
+        shift = 0
+        if offset not in ("", "Z"):
+            sign = 1 if offset[0] == "+" else -1
+            hours, colon, minutes_east = offset[1:].partition(":")
+            shift = sign * (int(hours) * 60 + int(minutes_east))
+    except ValueError:
+        raise fail from None
+    shaped = len(date) == 10 and split and len(clock.partition(".")[0]) == 8
+    if not (shaped and 1 <= year <= 9999 and 1 <= month <= 12 and 1 <= day <= 31) or not (
+        hour < 24 and minute < 60 and second < 60 and abs(shift) < 24 * 60
+    ):
+        raise fail
+    days = _days(year, month, day)
+    if _civil(days) != (year, month, day):
+        raise fail
+    total = (days * 24 + hour) * 60 + minute - shift + minutes
+    days, minutes_of_day = divmod(total, 24 * 60)
+    year, month, day = _civil(days)
+    hour, minute = divmod(minutes_of_day, 60)
+    return f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}Z"
+
+
+def _days(year, month, day):
+    """The days from 1970-01-01 to a date of the proleptic Gregorian calendar."""
+    year -= month <= 2
+    era = year // 400
+    of_year = year - era * 400
+    of_march = (153 * (month + (-3 if month > 2 else 9)) + 2) // 5 + day - 1
+    of_era = of_year * 365 + of_year // 4 - of_year // 100 + of_march
+    return era * 146097 + of_era - 719468
+
+
+def _civil(days):
+    """The date `days` after 1970-01-01, as (year, month, day): the inverse of `_days`."""
+    days += 719468
+    era = days // 146097
+    of_era = days - era * 146097
+    of_year = (of_era - of_era // 1460 + of_era // 36524 - of_era // 146096) // 365
+    of_march = of_era - (365 * of_year + of_year // 4 - of_year // 100)
+    month = (5 * of_march + 2) // 153
+    day = of_march - (153 * month + 2) // 5 + 1
+    month += 3 if month < 10 else -9
+    return of_year + era * 400 + (month <= 2), month, day
 
 
 def _bare(title):

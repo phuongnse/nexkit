@@ -75,6 +75,7 @@ AGENT = {
 RESULTS = {
     "@timeout": {**AGENT, "output": None, "timedOut": True},
     "@error": {**AGENT, "output": None, "error": "The agent stopped."},
+    "@transient": {**AGENT, "output": None, "transient": True, "error": "Overloaded."},
 }
 # The states a conflict leads to under each conflict policy (docs/engine.md#states).
 CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working", "ready")}

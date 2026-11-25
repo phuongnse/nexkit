@@ -80,6 +80,21 @@
       "default": 3,
       "minimum": 1,
       "maximum": 10
+    },
+    "retryWaits": {
+      "$comment": "The waits in minutes before an agent run that stopped on a transient error runs again, one for each run again, at most 10, each from 0 to 330; a wait of 0 runs it again at once, and after the last a person decides.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 330
+      },
+      "maxItems": 10,
+      "default": [
+        15,
+        30,
+        60
+      ]
     }
   },
   "required": []

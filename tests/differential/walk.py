@@ -8,10 +8,11 @@ Each walk starts an item with random policies, which change now and then, and se
 pending (plans and rounds with questions, checks of one to four named checks failing with
 one of two signatures, some skipped, with and without a failure the base branch has, reviews,
 publishes that conflict or leave the version as it was, refused accepts, usage limits with and
-without a reset), holds and their end, pushes, conflicts and lost actions. After every step it
-checks the invariants below; `INVARIANTS` names them by the rule each guards. Walk W plays the
-same events whatever else runs (`--walk W --show` prints its trail). It prints how often each
-invariant broke, with an example, and exits 1 when one broke that `KNOWN` does not list.
+without a reset, transient stops), holds and their end, pushes, conflicts and lost actions.
+After every step it checks the invariants below; `INVARIANTS` names them by the rule each
+guards. Walk W plays the same events whatever else runs (`--walk W --show` prints its trail).
+It prints how often each invariant broke, with an example, and exits 1 when one broke that
+`KNOWN` does not list.
 
 A change that moves a decision into the engine adds invariants for its rules here.
 """
@@ -45,7 +46,10 @@ INVARIANTS = {
     "diagnosis": "only an automatic fix round diagnoses, exactly the checks that failed the "
     "same way before and after the fix round before it",
     "usage-limit": "a usage limit waits for its reset, or for a person, counting nothing, and "
-    "the same run starts again at its tick",
+    "the same run starts again at its tick, under a hold too",
+    "retry": "a transient stop runs the same stage again after each wait of `retryWaits` in "
+    "turn, counting nothing, and waits for a person after the last; the count of runs again "
+    "starts afresh with a request and with a new plan, implement or fix run",
     "hold": "no conflict round starts and no change is made again while a hold is on",
     "answers": "the engine answers a round's questions at most once in a row, and only under "
     "`autoWhenClean` with `answers: recommended`",
@@ -87,7 +91,7 @@ class Walker:
         sys.path.insert(0, str(tree))
         os.chdir(tree)
         from nexkit import engine, protocol
-        from nexkit.engine.machine import DEFAULTS
+        from nexkit.engine.machine import DEFAULTS, _later
         from nexkit.protocol.size import failure_key
         from tests import test_conformance as tc
 
@@ -96,7 +100,7 @@ class Walker:
         protocol._refs = functools.cache(protocol._refs)
         tc.table_transitions = functools.cache(tc.table_transitions)
         self.engine, self.protocol, self.tc = engine, protocol, tc
-        self.defaults, self.failure_key = dict(DEFAULTS), failure_key
+        self.defaults, self.failure_key, self.later = dict(DEFAULTS), failure_key, _later
         self.suite = tc.ConformanceTest("test_the_cases")
         self.shorts = collections.defaultdict(list)
         self.results = collections.defaultdict(list)
@@ -129,6 +133,7 @@ class Walker:
             "fixRounds": [0, 1, 2, 3],
             "whenRoundsRunOut": ["person", "failed"],
             "reviewAfterFailingChecks": ["always", "always", "onlyAfterPassing"],
+            "retryWaits": [[], [0], [0, 5], [15, 30, 60]],
         }.items():
             if rng.random() < 0.85:
                 found[name] = rng.choice(values)
@@ -224,6 +229,8 @@ class Walker:
                 # A usage limit, with its reset or with none when the host does not resume.
                 reset = rng.choice(["2026-11-25T04:40:00Z", None])
                 return {**tc.AGENT, "output": None, "limit": {"message": "limit", "reset": reset}}
+            if rng.random() < 0.05:
+                return tc.result_of("@transient")
             if stage == "plan":
                 if rng.random() < 0.1:
                     return tc.result_of("@error")
@@ -365,6 +372,33 @@ class Walker:
         return copy.deepcopy(rng.choice(pool)) if pool else None
 
     # -- the invariants ---------------------------------------------------------------------
+
+    def retry_check(self, done, waits, again, after, state, new, event, actions, info):
+        """A transient stop with the `again`-th wait of `waits` used: what follows it."""
+        flag = self.flag
+        old, rounds = state["rounds"], new["rounds"]
+        if again >= len(waits):
+            if new["state"] != "failed" or (new["attention"] or {}).get("reason") != "failed":
+                flag("retry", "a transient stop after every wait is not for a person", info)
+            return
+        if new["state"] != state["state"]:
+            flag("retry", "a transient stop moved the item", info)
+        if after != again + 1:
+            flag("retry", "a transient stop did not count one run again", info)
+        if rounds["started"] != old["started"] or rounds["counted"] != old["counted"]:
+            flag("retry", "a transient stop counted", info)
+        if waits[again] == 0:
+            runs = [a for a in actions if a["kind"] == "runAgent"]
+            if not runs or runs[0]["stage"] != done["stage"]:
+                flag("retry", "a wait of 0 does not run the stage again", info)
+            elif runs[0].get("diagnose") != done.get("diagnose"):
+                flag("retry", "a wait of 0 diagnoses otherwise", info)
+            return
+        until = self.later(event["at"], waits[again])
+        if not any(w["for"] == "time" and w["until"] == until for w in new["waits"]):
+            flag("retry", "a transient stop waits for no time or the wrong one", info)
+        if not any(a["kind"] == "wait" for a in actions):
+            flag("retry", "a transient stop asks for no tick", info)
 
     def flag(self, invariant, problem, info):
         for (name, start), issue in KNOWN.items():
@@ -597,6 +631,26 @@ class Walker:
                 )
             if not set(got) <= set(failing):
                 flag("diagnosis", "repeated names a check that does not fail", info)
+        # retry
+        result = (event["result"] or {}) if finished else {}
+        again = (state.get("again") or {}).get("transient", 0)
+        after = (new.get("again") or {}).get("transient", 0)
+        stopped = bool(done and done["kind"] == "runAgent" and result.get("transient"))
+        stopped = stopped and not result.get("limit")
+        if stopped:
+            wanted = {**self.defaults, **eff}["retryWaits"]
+            self.retry_check(done, wanted, again, after, state, new, event, actions, info)
+            if after and 0 < after <= len(wanted) and wanted[after - 1] > 0:
+                memory["limited"] = (done["stage"], done.get("diagnose"), new["state"])
+        if after > max(len({**self.defaults, **eff}["retryWaits"]), again):
+            flag("retry", "the count of runs again passes the waits", info)
+        if event["kind"] == "requested" and answer["changed"] and after and not stopped:
+            flag("retry", "a request left the count of runs again", info)
+        fresh = ("actionFinished", "planApproved", "answered", "changesRequested", "commented")
+        if event["kind"] in fresh and not stopped and after:
+            for action in actions:
+                if action["kind"] == "runAgent" and action["stage"] != "review":
+                    flag("retry", f"a new {action['stage']} run kept the count of runs again", info)
         # usage-limit
         if done and done["kind"] == "runAgent" and (event["result"] or {}).get("limit"):
             reset = event["result"]["limit"]["reset"]
@@ -617,7 +671,7 @@ class Walker:
             memory.pop("limited")
             stage, diagnose, name = limited
             runs = [a for a in actions if a["kind"] == "runAgent"]
-            if new["state"] == name and not new["hold"] and not new["attention"]:
+            if new["state"] == name and not new["attention"]:
                 if not runs or runs[0]["stage"] != stage:
                     flag("usage-limit", "the tick after a usage limit runs nothing again", info)
                 elif runs[0].get("diagnose") != diagnose:

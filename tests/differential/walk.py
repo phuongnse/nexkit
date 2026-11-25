@@ -55,6 +55,8 @@ INVARIANTS = {
     "`autoWhenClean` with `answers: recommended`",
     "questions": "a round's questions are kept only while they wait",
     "split": "an item with a change is never split",
+    "parent-end": "a split ends as accepted only when every part ended, one was accepted and "
+    "`parentEnd` is `whenPartAccepted`, and under `person` its parts' end leaves it to a person",
     "required-checks": "a start of the wait for required checks lives only in `accepting`, on "
     "the change's version; a refusal for them that have not passed leaves one wait, a tick and "
     "the first start of that version; a tick more than six hours after it needs a person",
@@ -69,6 +71,9 @@ KNOWN = {
 TITLE = "Cache the results"
 # The share of walks that start from the example of an item that accepts.
 ACCEPTING = 0.2
+# The share that start from the example of a split whose parts end, which a walk from a new item
+# reaches only through a plan that splits.
+SPLIT = 0.1
 # The most events the engine may refuse, as a share of all: the walker sends some it may.
 REFUSED = 0.1
 ROLES = ["decides", "writer", "reader", "outside"]
@@ -134,6 +139,7 @@ class Walker:
             "whenRoundsRunOut": ["person", "failed"],
             "reviewAfterFailingChecks": ["always", "always", "onlyAfterPassing"],
             "retryWaits": [[], [0], [0, 5], [15, 30, 60]],
+            "parentEnd": ["whenPartAccepted", "whenPartAccepted", "person"],
         }.items():
             if rng.random() < 0.85:
                 found[name] = rng.choice(values)
@@ -309,6 +315,10 @@ class Walker:
             kind = "held"
         if state["rounds"].get("due") and rng.random() < 0.3:
             kind = rng.choice(["released", "blockerClosed", "requested", "push", "held"])
+        open_parts = [part for part in state["parts"] if part["state"] is None]
+        if state["state"] == "split" and open_parts and rng.random() < 0.4:
+            end = rng.choice(["accepted", "accepted", "noChange", "dropped", "failed"])
+            return {"kind": "partEnded", "part": rng.choice(open_parts)["item"], "state": end}
         checks = [wait for wait in state["waits"] if wait["for"] == "requiredChecks"]
         if checks and rng.random() < 0.6:
             return self.tick(rng, state, checks[0])
@@ -498,6 +508,20 @@ class Walker:
             flag("questions", "replanRecommended without a change", info)
         if new["state"] == "split" and state is not None and state["change"]:
             flag("split", "an item with a change was split", info)
+        # parent-end
+        if event["kind"] == "partEnded" and state is not None and state["state"] == "split":
+            parts = new["parts"]
+            making = any(a["kind"] == "createParts" for a in new["pending"])
+            if answer["changed"] and parts and not making:
+                over = all(part["state"] for part in parts)
+                done = over and any(part["state"] == "accepted" for part in parts)
+                wants = given["parentEnd"] == "whenPartAccepted"
+                if new["state"] == "accepted" and not (done and wants):
+                    flag("parent-end", "a split ended as accepted without the rule", info)
+                if done and wants and new["state"] != "accepted":
+                    flag("parent-end", "a split whose parts ended, one accepted, did not end", info)
+                if done and not wants and attention.get("reason") != "splitIncomplete":
+                    flag("parent-end", "a split left to a person says nothing", info)
         rounds = new["rounds"]
         # due, automatic
         if rounds.get("due"):
@@ -764,7 +788,11 @@ class Walker:
         state = None
         trail = []
         memory = {"open": {}, "floor": None}
-        if rng.random() < ACCEPTING:
+        if rng.random() < SPLIT:
+            path = self.tc.EXAMPLES / "state" / "split.json"
+            state = json.loads(path.read_text())
+            memory["open"] = {action["id"]: action for action in state["pending"]}
+        elif rng.random() < ACCEPTING:
             # Some walks start at a merge that waits for required checks, which a walk from a
             # new item seldom reaches: its accept, refusals and ticks come at once.
             path = self.tc.EXAMPLES / "state" / "accepting.json"

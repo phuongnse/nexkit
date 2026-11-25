@@ -1694,6 +1694,14 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
     details = gh.pull(pull)
     head = details["head"]["sha"]
     if head != run.get("head"):
+        # The engine checks what a person pushed (`host.change_seen`).
+        from .host import Refused, change_seen, refused_reason
+
+        seen = {"version": head, "merged": False, "empty": False}
+        try:
+            change_seen(cfg, issue["number"], pull, run["head"], 0, seen, waiting=True)
+        except Refused as error:
+            return _step(issue, "waits", refused_reason(error))
         reason = (
             f"pull request #{pull} got the new commit `{head[:7]}` while its merge waited for "
             "required checks"

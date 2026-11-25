@@ -24,16 +24,30 @@ from nexkit.maintain import (
 )
 from nexkit.report import report
 from nexkit.state import (
+    ACTIONS_BOT,
+    ANSWERS_PREFIX,
+    PLAN_DATA_PREFIX,
+    PLAN_MARKER,
+    RUN_PREFIX,
     STATE_PREFIX,
+    _encode,
+    answers_record,
+    answers_text,
     approved_head,
+    bot_record,
+    changed_by,
     empty_state,
+    find_run,
+    latest_plan,
+    plan_data,
     read_state,
     render_run,
     render_state,
     run_action,
+    run_comments,
     run_kinds,
 )
-from tests.support import FakeGitHub, make_config
+from tests.support import BOT_LOGIN, FakeGitHub, make_config
 
 HEAD = "c" * 40
 NEW_HEAD = "e" * 40
@@ -353,6 +367,70 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("forbidden", stderr.getvalue())
 
 
+class ChangedCommentTests(unittest.TestCase):
+    """NexKit's markers count only in a comment of its App that no one else changed."""
+
+    URL = "https://github.com/acme/app/actions/runs/9"
+
+    def comment(self, body, editors=None, user=BOT_LOGIN):
+        found = {"id": 7, "body": body, "user": {"login": user, "type": "Bot"}}
+        if editors is not None:
+            found["editors"] = editors
+        return found
+
+    def readers(self):
+        """(name, comment body, reader of a list of comments that finds the record)."""
+        state = _encode(STATE_PREFIX, {"version": 2, "issue": 5, "auto_fixes": 2})
+        run = _encode(RUN_PREFIX, {"url": self.URL, "status": "success"})
+        data = _encode(PLAN_DATA_PREFIX, {"questions": [], "too_large": False})
+        answers = _encode(ANSWERS_PREFIX, {"answers": []})
+        plan = f"{PLAN_MARKER}\n## Plan\n\n{data}"
+        return [
+            ("read_state", state, lambda c: read_state(c)[0]),
+            ("run_comments", run, lambda c: next(run_comments(c), (None,))[0]),
+            ("find_run", run, lambda c: find_run(c, self.URL)[0]),
+            ("latest_plan", plan, latest_plan),
+            ("plan_data", plan, lambda c: plan_data(c[0])),
+            ("answers_record", f"Done.\n\n{answers}", lambda c: answers_record(c[0])),
+            ("answers_text", f"Done.\n\n{answers}", lambda c: answers_text(c[0])),
+        ]
+
+    def test_a_comment_that_someone_else_changed_counts_for_no_reader(self):
+        for editors in (
+            [BOT_LOGIN, "mallory"],
+            ["mallory", BOT_LOGIN],
+            [BOT_LOGIN, ACTIONS_BOT],
+            [BOT_LOGIN, ""],
+            ["mallory"],
+        ):
+            for name, body, read in self.readers():
+                with self.subTest(name=name, editors=editors):
+                    self.assertTrue(read([self.comment(body)]))
+                    self.assertFalse(read([self.comment(body, editors)]))
+
+    def test_a_comment_that_only_the_app_wrote_and_edited_counts(self):
+        for editors in ([], [BOT_LOGIN], [BOT_LOGIN, BOT_LOGIN]):
+            for name, body, read in self.readers():
+                with self.subTest(name=name, editors=editors):
+                    self.assertTrue(read([self.comment(body, editors)]))
+
+    def test_the_comment_before_a_changed_one_is_read(self):
+        state = _encode(STATE_PREFIX, {"version": 2, "issue": 5, "auto_fixes": 0})
+        forged = _encode(STATE_PREFIX, {"version": 2, "issue": 5, "auto_fixes": 9})
+        old = {**self.comment(state), "id": 1}
+        new = {**self.comment(forged, [BOT_LOGIN, "mallory"]), "id": 2}
+        self.assertEqual(read_state([old, new])[1]["auto_fixes"], 0)
+
+    def test_who_changed_a_comment_leaves_out_the_app(self):
+        found = self.comment("x", [BOT_LOGIN, "mallory", "", "mallory"])
+        self.assertEqual(changed_by(found), ["", "mallory"])
+        self.assertEqual(changed_by(self.comment("x")), [])
+        self.assertFalse(bot_record(found))
+
+    def test_a_comment_of_a_person_is_no_record_whoever_changed_it(self):
+        self.assertFalse(bot_record(self.comment("x", [], user="alice")))
+
+
 class PausedRunTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()
@@ -434,6 +512,18 @@ class PausedRunTests(unittest.TestCase):
         self.assertNotIn("⏸️ [paused]", due["body"])
         self.assertEqual(resume_paused(self.gh, "nexkit.yml", "main", now)[0], [])  # once
         self.assertEqual(len(self.gh.dispatches), 1)
+
+    def test_a_paused_run_that_someone_else_changed_is_not_resumed(self):
+        now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+        comment = self.paused(5, 1)
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        self.assertEqual(resume_paused(self.gh, "nexkit.yml", "main", now), ([], None))
+        self.assertEqual(self.gh.dispatches, [])
+        # Changed by the App alone, it is resumed.
+        comment["editors"] = [BOT_LOGIN]
+        self.assertEqual(
+            resume_paused(self.gh, "nexkit.yml", "main", now)[0], ["Resumed /nexkit plan on #5."]
+        )
 
     def test_a_failed_resume_is_tried_again(self):
         now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)

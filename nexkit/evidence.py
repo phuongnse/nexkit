@@ -29,7 +29,7 @@ from .autopilot import CI_RUNS, FAILED, on_default_branch
 from .checks import _is_text, size_text
 from .engine.textutil import since_text
 from .github import LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError
-from .state import by_bot
+from .state import bot_record, by_bot
 
 # A link to a run, an attempt of it, or a job of it.
 RUN_LINK = re.compile(
@@ -63,7 +63,8 @@ def named_runs(gh, issue, comments):
     texts = [(issue.get("body") or "", by_bot(issue), True)]
     for comment in comments:
         if by_bot(comment):
-            texts.append((comment.get("body") or "", True, False))
+            if bot_record(comment):
+                texts.append((comment.get("body") or "", True, False))
         elif (comment.get("user") or {}).get("type") == "Bot":
             continue
         elif comment.get("author_association") in TRUSTED_ASSOCIATIONS:

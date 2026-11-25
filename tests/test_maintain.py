@@ -17,7 +17,7 @@ from nexkit.maintain import (
     maintain,
 )
 from nexkit.state import render_run
-from tests.support import FakeGitHub, make_config
+from tests.support import BOT_LOGIN, FakeGitHub, make_config
 
 HEAD = "a" * 40
 
@@ -114,6 +114,18 @@ class StaleBranchTests(unittest.TestCase):
         self.gh.comment(5, render_run({"command": "go", "status": "success"}, text))
         delete_stale_branches(self.gh)
         self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+
+    def test_a_note_that_someone_else_changed_cannot_stop_a_delete(self):
+        self.closed_work(5)
+        note = self.gh.comment(5, f"{BRANCH_KEPT} `nexkit/issue-5`\nKept.")
+        note["editors"] = [BOT_LOGIN, "mallory"]
+        delete_stale_branches(self.gh)
+        self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
+        # The same note, changed by the App alone, still does.
+        self.gh.deleted.clear()
+        note["editors"] = [BOT_LOGIN]
+        delete_stale_branches(self.gh)
+        self.assertEqual(self.gh.deleted, [])
 
     def test_an_issue_that_is_gone_or_a_listing_that_fails_stops_nothing(self):
         self.gh.branches["nexkit/issue-9"] = HEAD  # no such issue
@@ -243,6 +255,32 @@ class CloseParentTests(unittest.TestCase):
         self.assertEqual(self.gh.issues[1]["state"], "closed")
         [note] = self.gh.comments_matching(1, "because all its sub-issues are closed")
         self.assertTrue(note["body"].startswith(CLOSED))
+
+    def test_a_close_note_that_someone_else_changed_is_not_the_latest_note(self):
+        self.close(2)
+        self.close(3)
+        note = self.gh.comment(1, f"{CLOSED}\nNexKit closed this issue.")
+        note["editors"] = ["mallory"]
+        close_parents(self.gh, 3)
+        self.assertEqual(len(self.gh.comments_matching(1, CLOSED)), 2)
+        # One that the App alone wrote counts, as the guard of a run that lost the close.
+        self.gh.issues[1].update(state="open")
+        note["editors"] = [BOT_LOGIN]
+        self.gh.issue_comments[1][:] = [note]
+        close_parents(self.gh, 3)
+        self.assertEqual(len(self.gh.comments_matching(1, CLOSED)), 1)
+
+    def test_a_note_that_someone_else_changed_does_not_pass_for_the_once_only_note(self):
+        self.close(2, "not_planned")
+        self.close(3, "duplicate")
+        close_parents(self.gh, 3)
+        [note] = self.gh.comments_matching(1, UNDECIDED)
+        note["editors"] = [BOT_LOGIN]
+        close_parents(self.gh, 3)
+        self.assertEqual(len(self.gh.comments_matching(1, UNDECIDED)), 1)
+        note["editors"] = [BOT_LOGIN, "mallory"]
+        close_parents(self.gh, 3)
+        self.assertEqual(len(self.gh.comments_matching(1, UNDECIDED)), 2)
 
     def test_a_parent_another_run_closes_at_the_same_moment_is_left_to_it(self):
         self.close(2)

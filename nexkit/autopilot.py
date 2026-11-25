@@ -40,10 +40,13 @@ from .state import (
     RUNNING,
     SUCCESS,
     TEXT_LIMIT,
+    TROUBLESHOOTING,
     answers_marker,
     answers_record,
     answers_text,
+    bot_record,
     by_bot,
+    changed_by,
     ci_wait_reason,
     conflict_rounds_used,
     inert_markers,
@@ -855,7 +858,7 @@ def left_out(gh, cfg):
 def find_record(comments):
     """(comment, record) for autopilot's record comment on an issue, or (None, {})."""
     for comment in reversed(comments):
-        if by_bot(comment):
+        if bot_record(comment):
             match = RECORD_PATTERN.search(comment.get("body") or "")
             if match:
                 return comment, json.loads(base64.b64decode(match.group(1)))
@@ -963,6 +966,9 @@ NEEDED = "a person is needed: "
 MENTION_START = re.compile(r"(?:@\S+ )+" + re.escape(NEEDED))
 
 
+CHANGED_ENTRY = f"{TROUBLESHOOTING}#a-comment-of-nexkit-was-changed-by-someone-else"
+
+
 def person(do, why):
     """Why a person is needed, as a mention and `nexkit status` say it: what to do, then
     why NexKit does not do it itself, each in plain words."""
@@ -991,6 +997,12 @@ UNTRUSTED_REASON = person(
     TRUST_DO,
     "someone without write access edited it after a writer vouched for it, so NexKit does "
     "not act on its text",
+)
+# What ends the wait of an issue or pull request with a comment of the App that someone else
+# changed (see `changed_comment`).
+CHANGED_DO = (
+    "read the comment, then delete it to hand the issue back to autopilot, or carry it on "
+    f"with `/nexkit` commands ({CHANGED_ENTRY})"
 )
 REPEATED = person(
     "answer the questions in a comment, with what is new in them rather than the same option",
@@ -1767,7 +1779,7 @@ def mentioned(*groups):
     in any of them."""
     latest = max((c["id"] for found in groups for c, _ in run_comments(found)), default=0)
     return any(
-        by_bot(c) and MENTION_START.match(c.get("body") or "") and c["id"] > latest
+        bot_record(c) and MENTION_START.match(c.get("body") or "") and c["id"] > latest
         for found in groups
         for c in found
     )
@@ -1826,6 +1838,22 @@ def unfiled(gh, number, subs):
     return f"its plan lists {planned} parts, but it has {len(subs)} sub-issues"
 
 
+def changed_comment(comments):
+    """Why NexKit stops acting on an item whose newest changed comment of the App is in
+    `comments`, or "" when none is: who changed it, and where. A comment that lost its
+    marker counts too, since a pull request's state would start again without it."""
+    found = [c for c in comments if by_bot(c) and changed_by(c)]
+    if not found:
+        return ""
+    comment = max(found, key=lambda c: c["id"])
+    who = [f"@{login}" if login else "someone GitHub cannot name" for login in changed_by(comment)]
+    where = comment.get("html_url") or f"comment {comment['id']}"
+    return (
+        f"{', '.join(who)} changed a comment of NexKit's ({where}), so NexKit no longer "
+        "reads its records there"
+    )
+
+
 def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     number = issue["number"]
     label = hold_label(cfg, issue)
@@ -1871,6 +1899,11 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     comments = gh.comments(number)
     pull = open_pulls.get(number)
     pull_comments = gh.comments(pull) if pull else []
+    changed = changed_comment([*comments, *pull_comments])
+    if changed:
+        return _step(
+            issue, "waits", person(CHANGED_DO, changed), **({"pull": pull} if pull else {})
+        )
     current = basis(comments, pull_comments)
     _, record = find_record(comments)
     now = now or datetime.now(UTC)
@@ -2300,7 +2333,7 @@ def done(gh, cfg, where):
         try:
             issue = gh.latest_closed_issue(number)
             if not issue or any(
-                by_bot(c) and (c.get("body") or "").startswith(DONE)
+                bot_record(c) and (c.get("body") or "").startswith(DONE)
                 for c in gh.comments(issue["number"])
             ):
                 continue
@@ -2411,7 +2444,7 @@ def _ci_records(gh, workflow, issues):
         elif not bug and flaky_failure(issue):
             found[state].setdefault(flaky_failure(issue), issue)
         texts = [issue.get("body") or ""]
-        texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if by_bot(c)]
+        texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if bot_record(c)]
         for text in texts:
             if bug:
                 found["shas"].update(CI_SHA.findall(text))
@@ -3382,7 +3415,7 @@ def _still_open(gh, cfg, ghsa, issue, now):
         return []
     number = issue["number"]
     if any(
-        by_bot(c) and (c.get("body") or "").startswith(DEPENDABOT_STILL_OPEN)
+        bot_record(c) and (c.get("body") or "").startswith(DEPENDABOT_STILL_OPEN)
         for c in gh.comments(number)
     ):
         return []
@@ -3446,7 +3479,7 @@ def _recorded_failure(gh, issue):
     failed in the jobs that ran it, or None when no report does. A job without recorded
     tests, as in reports from before NexKit recorded them, adds none."""
     texts = [issue.get("body") or ""]
-    texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if by_bot(c)]
+    texts += [c.get("body") or "" for c in gh.comments(issue["number"]) if bot_record(c)]
     for text in reversed(texts):
         match = CI_FAILED.search(text)
         if not match:

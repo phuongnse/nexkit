@@ -257,6 +257,17 @@ class Item:
             approved = any(c["id"] > self.plan["id"] for c in after)
             doc["plan"] = plan_of(self.plan, self.data, approved)
         doc["asked"] = [name for key, name in ASKED.items() if self.record.get(key)]
+        if (
+            pull
+            and not review_only
+            and self.record.get("split_asked")
+            and self.record.get("command") == "plan"
+            and self.runs
+            and self.runs[-1][1]["command"] == "plan"
+        ):
+            # The plan that autopilot asked for after the pull request's round ran out of time
+            # (`autopilot._assess`): its split withdraws the pull request.
+            doc["asked"].append("supersede")
         self.all = comments if review_only else [*comments, *pull_comments]
         doc["used"]["tokens"] = _tokens([run for _, run in self.runs + self.rows])
         if pull and not review_only:

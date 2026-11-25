@@ -178,6 +178,66 @@ class AfterPlanTest(HostCase):
         with mock.patch.object(host, "step", return_value=answer):
             self.assertEqual(self.step(5)["parts"], [split[1]])
 
+    SPLIT = [
+        {"title": "First part", "body": "Do A.", "depends_on": []},
+        {"title": "Second part", "body": "Do B.", "depends_on": [1]},
+    ]
+
+    def timed_out_plan(self):
+        """An issue whose pull request's round ran out of time, and the too-large plan that
+        autopilot asked for after it."""
+        self.issue(5)
+        self.plan(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(9, 5)
+        timed_out = {
+            "round": 2,
+            "trigger": "fix",
+            "status": "failure",
+            "url": "u",
+            "outcome": "agent_error",
+            "timed_out": True,
+        }
+        self.gh.comment(9, render_run(timed_out))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        self.plan(5, {"too_large": True, "split": self.SPLIT})
+
+    def test_the_plan_after_a_timed_out_round_goes_to_the_engine_with_its_pull_request(self):
+        self.timed_out_plan()
+        [request] = self.requests(5)
+        self.assertIn("supersede", request["state"]["asked"])
+        head = self.gh.pulls[9]["head"]["sha"]
+        self.assertEqual(request["state"]["change"], {"id": "9", "version": head})
+
+    def test_a_split_of_a_pull_request_s_issue_needs_the_engine_to_withdraw_the_change(self):
+        self.timed_out_plan()
+        create = {
+            "kind": "createParts",
+            "parts": [
+                {"key": 1, "title": "First part", "needs": []},
+                {"key": 2, "title": "Second part", "needs": [1]},
+            ],
+        }
+        answer = {"actions": [create], "state": {"asked": []}}
+        with mock.patch.object(host, "step", return_value=answer):
+            step = self.step(5)
+        self.assertEqual(step["state"], "waits")
+        self.assertIn("refused to decide", step["reason"])
+        self.assertIn("without withdrawing pull request #9", step["reason"])
+        withdraw = {"kind": "withdrawChange", "changeId": "9", "reason": "The parts carry it."}
+        # Another change than the issue's pull request is not carried out.
+        answer = {"actions": [create, {**withdraw, "changeId": "10"}], "state": {"asked": []}}
+        with mock.patch.object(host, "step", return_value=answer):
+            self.assertIn("refused to decide", self.step(5)["reason"])
+        answer = {"actions": [create, withdraw], "state": {"asked": []}}
+        with mock.patch.object(host, "step", return_value=answer):
+            step = self.step(5)
+            self.assertEqual((step["state"], step["pull"]), ("split", 9))
+            self.sweep()
+        self.assertEqual(self.gh.pulls[9]["state"], "closed")
+        self.assertTrue(self.gh.comments_matching(9, "Superseded by"))
+
     def test_each_reason_the_engine_waits_for_is_said_in_nexkit_6_s_words(self):
         self.issue(5)
         self.plan(5)

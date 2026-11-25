@@ -1341,7 +1341,8 @@ Each stage runs on an agent: a runtime, which is the CLI that NexKit starts, pai
 provider, which serves the model (see [Agents](configuration.md#agents)). NexKit builds
 the prompt, starts the CLI with it, reads the CLI's event stream for the log and the
 transcript, and checks the structured result against the stage's schema itself before
-anything is published. Everything specific to one CLI lives in `nexkit/runtimes/`.
+anything is published. Everything specific to one CLI lives in `nexkit/runtimes/`, and no other
+code branches on a runtime's name.
 
 **What a stage may affect** is the same for every runtime:
 

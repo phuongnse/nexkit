@@ -88,7 +88,8 @@ CHECKS_RETRY = 3600
 # How many event ids the state keeps, to take each event once.
 RECENT = 20
 # A host's policies when it leaves one out: NexKit 6's on GitHub without autopilot, as
-# `policies.schema.json` gives each as its default (docs/engine.md#what-a-host-decides).
+# `policies.schema.json` gives each as its default (docs/engine.md#what-a-host-decides), except
+# `parentEnd`, which keeps the engine's rule: GitHub's `close_parent_issues` is off by default.
 DEFAULTS = {
     "planApproval": "person",
     "reviewAfterFailingChecks": "always",
@@ -103,11 +104,15 @@ DEFAULTS = {
     "splitDepth": 3,
     "retryWaits": [15, 30, 60],
     "lostWaits": [],
+    "parentEnd": "whenPartAccepted",
 }
 # The policies read as the host gives them at each step, even in a round that keeps the others
 # as it started with them: NexKit 6 reads autopilot's waits at each sweep, and the state keeps
 # none of them.
 NOW = ("lostWaits",)
+# The policies a round keeps. A round never reads a parent's end: only a split parent does, and a
+# parent is never in a round.
+KEPT = tuple(name for name in DEFAULTS if name != "parentEnd" and name not in NOW)
 # The states a conflict leads to under each conflict policy.
 CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working", "ready")}
 # The states where nothing runs that a conflict must wait for: it acts there at once. Checks of
@@ -211,10 +216,6 @@ class Step:
     def final(self):
         return self.state in FINAL
 
-    def kept(self):
-        """The policies a round keeps: those the host gave, but the ones read at each step."""
-        return {name: value for name, value in self.given.items() if name not in NOW}
-
     def number(self, prefix, count):
         return f"{prefix}{self.s['revision'] + 1}.{count}"
 
@@ -222,6 +223,10 @@ class Step:
         """The id of the next action: one a withdrawn action had is never given again."""
         self.issued += 1
         return self.number("a", self.issued)
+
+    def kept(self):
+        """The policies a round that starts now keeps (`KEPT`)."""
+        return {name: self.given[name] for name in KEPT}
 
     def move(self, name):
         """Go to `name`: stop the work the old state asked for, and end its waits and attention.
@@ -1014,11 +1019,17 @@ class Step:
         if not all(part["state"] for part in parts):
             return
         self.s["waits"] = [wait for wait in self.s["waits"] if wait["for"] != "parts"]
-        if any(part["state"] == "accepted" for part in parts):
+        if not any(part["state"] == "accepted" for part in parts):
+            self.need("splitIncomplete", "No part of the split was completed.")
+        elif self.p["parentEnd"] == "whenPartAccepted":
             self.move("accepted")
             self.close("completed")
         else:
-            self.need("splitIncomplete", "No part of the split was completed.")
+            self.need(
+                "splitIncomplete",
+                "Every part of the split ended, one completed, and a person decides the end of "
+                "the work item.",
+            )
 
     def on_reopened(self, event):
         observed = self.observed() or {}

@@ -304,6 +304,9 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
     part titled by the item's own title or starting with it, ignoring case, spaces and punctuation
     at its end. For each of these three the item is planned once more, and a second such plan
     waits for a person.
+    A split ends as `accepted` once every part ended and one was accepted, under `parentEnd`
+    `whenPartAccepted`; under `person`, or when no part was accepted, a person decides
+    (`splitIncomplete`).
   - A plan that is too large and is not split, because splits are off or the item has a change,
     waits for a person (`approval`). Otherwise, a plan that finds no change ends the item in
     `noChange`, one that needs paths only a person changes waits for that person, and a clean
@@ -598,7 +601,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
 | Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10; the re-plan for fewer parts, no parts or repeated titles happens only with `autoWhenClean`, and a person's approval of a split that these rules refuse goes on as one change | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
-| A parent's end | When its parts' ends end it | `close_parent_issues`, when one part was completed | When its parts end |
+| A parent's end (`parentEnd`) | `whenPartAccepted`, `person`: whether the parent ends once every part ended and one was completed, or a person decides (`splitIncomplete`); a host that leaves it out gets `whenPartAccepted` | `whenPartAccepted` with `close_parent_issues`, else `person`: the engine's default differs from GitHub's, where `close_parent_issues` is off by default | `whenPartAccepted`: the parent ends when its parts end |
 | After a failure | `person`, `replan`, `newItem` | `person`, then `replan` on a comment | `newItem`: the person sends the request again |
 | Checklist | Items the plan and the review answer, some for a person | `review.checklist` | The application's own checklist |
 
@@ -767,7 +770,13 @@ adapter. A new rule of the engine comes with a case.
    for required checks that have not passed yet, with its end after a time (`report` and the
    sweep's `autopilot`). `host.accept_answer` sends a merge's answer to `step` as an `accept`
    result and carries out what the engine answers, and so far only a merge refused for required
-   checks that have not passed yet is sent. `report`
+   checks that have not passed yet is sent. The merge's observations reach the engine too
+   (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
+   change that the base branch already holds ends it as `noChange`, and a commit that a person
+   pushes while the merge waits is checked. After NexKit's own merge, `host.part_ended` sends the
+   parent its part's end, and the parent closes only when the engine answers `close`: it does so
+   under `parentEnd` `whenPartAccepted`, which the GitHub host gives with `close_parent_issues`
+   and a parent of at most as many parts as a state document holds. `report`
    sends every round's checks and review to `step`: a review that paused at a usage limit,
    with the reset when NexKit 6 resumes it, a review that failed, a person's own pull request
    as an item that is only reviewed, and a round whose commit conflicts with its base branch,
@@ -784,7 +793,9 @@ adapter. A new rule of the engine comes with a case.
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found
    after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
    as does the merge itself (`report.merge_pull`) but for required checks that fail or have not
-   passed yet. A
+   passed yet, a change that a person merged, one that became empty, a commit pushed while the
+   merge waits, and the end of the direct parent. The parents above it, and a parent's end
+   outside the merge, stay NexKit 6's. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`
    that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as

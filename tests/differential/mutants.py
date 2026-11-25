@@ -288,6 +288,27 @@ MUTANTS = {
         "seen": ("walker",),
         "families": ("round", "give"),
     },
+    # A split parent ends whatever `parentEnd` says, where NexKit 6 closes a parent only with
+    # `close_parent_issues` (#393). The host sends `person` without it, so the merge's parent
+    # close differs on GitHub.
+    "parent-end-ignores-the-policy": {
+        "path": MACHINE,
+        "old": """        elif self.p["parentEnd"] == "whenPartAccepted":""",
+        "new": """        elif True:""",
+        "seen": ("harness", "walker"),
+        "families": ("ended",),
+    },
+    # A change that became empty ends the item as accepted, not as `noChange`, so the host
+    # closes no pull request on its base branch (#393).
+    "an-emptied-change-is-accepted": {
+        "path": MACHINE,
+        "old": """        elif observed["empty"]:
+            self.move("noChange")""",
+        "new": """        elif observed["empty"]:
+            self.move("accepted")""",
+        "seen": ("harness",),
+        "families": ("ended",),
+    },
 }
 
 

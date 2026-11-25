@@ -1,0 +1,23 @@
+{
+  "policies": {
+    "accept": "autoWhenPassed"
+  },
+  "state": {
+    "example": "accepting"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "5a54e2b",
+        "empty": true
+      },
+      "state": "noChange",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "close"
+      ]
+    }
+  ]
+}

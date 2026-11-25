@@ -653,6 +653,9 @@
         "splitDepth": {
           "$ref": "policies.schema.json#/properties/splitDepth"
         },
+        "parentEnd": {
+          "$ref": "policies.schema.json#/properties/parentEnd"
+        },
         "retryWaits": {
           "$ref": "policies.schema.json#/properties/retryWaits"
         },

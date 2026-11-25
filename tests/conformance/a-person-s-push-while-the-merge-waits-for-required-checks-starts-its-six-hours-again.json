@@ -1,0 +1,34 @@
+{
+  "policies": {
+    "accept": "autoWhenPassed"
+  },
+  "state": {
+    "example": "accepting",
+    "set": {
+      "checksSince": {
+        "version": "5a54e2b",
+        "at": "2026-11-23T15:01:11Z"
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "c0ffee1"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runChecks"
+      ],
+      "expect": {
+        "change.version": "c0ffee1"
+      },
+      "absent": [
+        "checksSince"
+      ]
+    }
+  ]
+}

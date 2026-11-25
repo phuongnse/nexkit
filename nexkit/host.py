@@ -49,6 +49,15 @@ and `checks_waited` sends the sweep's tick, which tries the merge again or, once
 have not passed for `machine.CHECKS_END`, leaves it to a person. A merge whose issue no
 sweep looks at is the host's own refusal, since no tick would come for it.
 
+It decides what the merge finds too (`report.merge_pull`, `autopilot._merge_step`):
+`change_seen` sends a pull request that a person merged first, a change that its base branch
+already holds, and a commit that a person pushed while the merge waited, as observations, and the
+item ends or its new head is checked as the engine answers. After NexKit's own merge,
+`part_ended` sends the end of the part to its parent's document, which closes the parent only when
+every part ended and one was completed, under `parentEnd`. Only the direct parent is the engine's:
+the parents above it, and the facts only GitHub knows, such as parts never filed as sub-issues,
+stay with `maintain.close_parents`.
+
 Every round's checks and review reach it (`round_ended`): a review that paused at a usage
 limit, a review that failed, and a person's own pull request, which is only reviewed; a
 review that runs again after a transient error is the host's own retry. It finds the checks
@@ -1492,6 +1501,55 @@ def checks_waited(cfg, issue, pr, head, since, now):
     if (kinds.get("needPerson") or {}).get("reason") == "acceptRefused":
         return "waits"
     raise Refused(f"The engine answers {sorted(kinds)} after a merge's wait, which it cannot do.")
+
+
+def change_seen(cfg, issue, pr, head, auto_fixes, seen, waiting=False):
+    """What follows what the host found about the NexKit pull request `pr` at its merge, as the
+    engine decides it (`report.merge_pull`, `autopilot._merge_step`): `seen` is the observation
+    without its change and its conflict, the pull request's `version`, and whether it was
+    `merged` by a person or became `empty` because its base branch already holds the change.
+    NexKit never tried the merge then, so the merge has no result to send. `waiting` says that
+    the merge waits for required checks. Returns `accepted` or `noChange` when the item ended,
+    and `review` when the engine checks the version that a person pushed. Raises `Refused`."""
+    doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
+    version = doc["change"]["version"]
+    if waiting:
+        doc["waits"] = [{"id": "w1.1", "for": "requiredChecks", "until": None, "on": None}]
+    else:
+        action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
+        doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]
+    name = f"seen-{pr}-{seen['version']}"
+    event = _event("changeObserved", issue, None, name, changeId=str(pr), conflicts=False, **seen)
+    state, actions = _answers(doc, [event], policies(cfg))
+    kinds = {action["kind"] for action in actions}
+    if state["state"] in ("accepted", "noChange"):
+        return state["state"]
+    if "runChecks" in kinds:
+        return "review"
+    raise Refused(f"The engine answers {sorted(kinds)} to what the merge found.")
+
+
+def part_ended(cfg, parent, subs, part, state):
+    """Whether the parent issue `parent` ends once its sub-issue `part`, which NexKit merged
+    and closed as `state`, ended, as the engine decides it (`report.merge_pull`): `close` when
+    every one of the sub-issues `subs` ended and one was completed, under `parentEnd`, which
+    GitHub gives as `person` without `close_parent_issues`; otherwise `stays`. Facts only
+    GitHub knows, such as parts that were never filed, stay with `maintain.close_parents`.
+    Raises `Refused`, also when the parent has more sub-issues than a state holds."""
+    ended = {str(sub["number"]): first_state._ended(sub) for sub in subs}
+    # The part is one of them, though a list that GitHub has not caught up with may miss it.
+    ended[str(part)] = None
+    if len(ended) > MOST["split"]:
+        raise Refused("The parent has more sub-issues than the engine keeps parts.")
+    doc = first_state.empty(str(parent))
+    doc["state"] = "split"
+    doc["waits"] = [{"id": "w1.1", "for": "parts", "until": None, "on": None}]
+    doc["parts"] = [{"item": item, "state": how} for item, how in ended.items()]
+    end = "whenPartAccepted" if cfg["close_parent_issues"] else "person"
+    found = {**policies(cfg), "parentEnd": end}
+    event = _event("partEnded", parent, None, f"part-{parent}-{part}", part=str(part), state=state)
+    _, actions = _answers(doc, [event], found)
+    return "close" if any(action["kind"] == "close" for action in actions) else "stays"
 
 
 def stopped_counts(issue, pr, head, auto_fixes, automatic, by_host, checking=False):

@@ -36,6 +36,7 @@
           "conflictRounds": 3,
           "splits": false,
           "answers": "never",
+          "afterFailure": "person",
           "splitParts": 10,
           "splitDepth": 3,
           "retryWaits": [

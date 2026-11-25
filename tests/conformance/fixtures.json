@@ -279,6 +279,19 @@
     "cause_outside": false,
     "open_conflicts": []
   },
+  "fixBlocked": {
+    "status": "blocked",
+    "summary": "Fix the failing test.",
+    "blocker": "A choice.",
+    "questions": [],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "cause": "The test read a stale fake issue.",
+    "cause_outside": false,
+    "open_conflicts": []
+  },
   "review": {
     "verdict": "approve",
     "summary": "The change does what the plan says.",

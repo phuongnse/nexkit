@@ -368,7 +368,9 @@ class Item:
         if outcome == "agent_blocked" and run.get("questions"):
             # The run's comment asked: a person's answer names it.
             return self.asks(comment, run, "implement")
-        blocked = outcome in ("agent_blocked", UNTRUSTED_ROUND)
+        # An untrusted edit's stop is `failed`, so that a comment does not plan it again under
+        # `afterFailure`: NexKit 6 waits for a writer to vouch.
+        blocked = outcome == "agent_blocked"
         return self.be("failed", "failed", "blocked" if blocked else "failed", run)
 
     def after_plan(self, run):

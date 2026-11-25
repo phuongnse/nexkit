@@ -58,6 +58,9 @@ INVARIANTS = {
     "answers": "the engine answers a round's questions at most once in a row, and only under "
     "`autoWhenClean` with `answers: recommended`",
     "questions": "a round's questions are kept only while they wait",
+    "after-failure": "an item leaves `failed` for `planning` on a comment or a blocker's close "
+    "only under `afterFailure: replan`, with no change and attention `blocked`, and a "
+    "collaborator's comment on such an item always plans it again",
     "split": "an item with a change is split only with `withdrawChange` naming it, and only from "
     "a plan that a round which ran out of time asked for (`supersede`)",
     "parent-end": "a split ends as accepted only when every part ended, one was accepted and "
@@ -135,6 +138,7 @@ class Walker:
         for name, values in {
             "planApproval": ["person", "autoWhenClean"],
             "answers": ["never", "recommended", "recommended"],
+            "afterFailure": ["person", "replan"],
             "splits": [True, False],
             "splitParts": [1, 2, 10],
             "splitDepth": [1, 2, 3],
@@ -589,6 +593,23 @@ class Walker:
             )
             if not (withdrawn and "supersede" in state["asked"] and new["change"] is None):
                 flag("split", "an item with a change was split without withdrawing it", info)
+        # after-failure
+        if (
+            state is not None
+            and state["state"] == "failed"
+            and event["id"] not in (state["recentEvents"])
+        ):
+            replans = (
+                given["afterFailure"] == "replan"
+                and not state["change"]
+                and (state["attention"] or {}).get("reason") == "blocked"
+            )
+            if event["kind"] in ("commented", "blockerClosed") and new["state"] == "planning":
+                if not replans:
+                    flag("after-failure", "planned again after a failure it should not", info)
+            if event["kind"] == "commented" and replans and event["by"]["role"] != "outside":
+                if new["state"] != "planning":
+                    flag("after-failure", "a comment did not plan a failed item again", info)
         # parent-end
         if event["kind"] == "partEnded" and state is not None and state["state"] == "split":
             parts = new["parts"]

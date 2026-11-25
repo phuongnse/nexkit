@@ -5,6 +5,10 @@ pull request belongs to one of them. A milestone is open while work on its featu
 under way, and closed when its feature is done. What each release changed is in the
 [changelog](../CHANGELOG.md).
 
+Labels give each issue and pull request its kind (`enhancement`, `bug`, `refactor`, `process`
+or `documentation`) and say more where they fit, such as `security`. Each label's description on
+GitHub says when it fits.
+
 ## Done
 
 These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.12.2 (2026-11-20).

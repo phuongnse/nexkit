@@ -156,6 +156,13 @@ Its pull request has the sections *What moved*, *Left for #N* when the issue sta
   not depend on it. Issues, pull requests and their links hold the state of this work, never a
   local note.
 - Agent sessions never merge, push a tag or release: the owner does.
+- Every issue and pull request is in the milestone of the feature it builds, as
+  [the roadmap](docs/roadmap.md) lists them. It carries at least one label of its kind
+  (`enhancement`, `bug`, `refactor`, `process` or `documentation`) and every other label whose
+  description on GitHub fits it, such as `security`. A release pull request carries `release`,
+  and one that updates a pin `dependencies`. A pull request that closes an issue carries that
+  issue's labels, but for the holds `on-hold` and `hand-made`, and its milestone: NexKit sets
+  them on the pull requests it opens, and a session sets them on its own.
 - Code, docs, commits, issues and pull requests are in English. NexKit's docs describe NexKit for
   any repository and name no product that uses it, except the README's *Built with NexKit* list
   and the changelog, which may cite a case. Issues, pull requests and code comments may name one

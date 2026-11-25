@@ -111,6 +111,21 @@ def by_bot(comment):
     return is_bot((comment.get("user") or {}).get("login"))
 
 
+def changed_by(comment):
+    """The logins of everyone other than NexKit's App who changed `comment`'s text, from its
+    `editors` (see `GitHub.comment_editors`); "" stands for someone GitHub cannot name. A
+    comment without `editors` was not read with its edit history: nothing is known to
+    have changed it."""
+    return sorted({login for login in comment.get("editors") or () if not is_bot(login)})
+
+
+def bot_record(comment):
+    """Whether `comment` counts as NexKit's own record: the App wrote it and no one else
+    ever changed it, even if the App edited it again afterwards. Its markers count only
+    then (see *Security notes* in docs/how-it-works.md)."""
+    return by_bot(comment) and not changed_by(comment)
+
+
 def inert_markers(value):
     """`value`, a text or the texts in a dict or list, with nothing that opens a NexKit
     marker: `<!-- nexkit:` shows as `‹!-- nexkit:`, so NexKit never reads it as its own.
@@ -127,7 +142,7 @@ def inert_markers(value):
 
 def latest_plan(comments):
     """The most recent plan comment posted by NexKit, or None."""
-    plans = [c for c in comments if by_bot(c) and c.get("body", "").startswith(PLAN_MARKER)]
+    plans = [c for c in comments if bot_record(c) and c.get("body", "").startswith(PLAN_MARKER)]
     return plans[-1] if plans else None
 
 
@@ -234,7 +249,7 @@ def depends_on(part, number):
 
 def plan_data(comment):
     """The record of a plan comment, or None for a plan from before it was kept."""
-    match = PLAN_DATA.search(comment.get("body") or "") if by_bot(comment) else None
+    match = PLAN_DATA.search(comment.get("body") or "") if bot_record(comment) else None
     if not match:
         return None
     try:
@@ -414,7 +429,7 @@ def answers_text(comment):
     """The text of an autopilot answers comment, without its marker, or None for any other
     comment."""
     body = comment.get("body") or ""
-    if not by_bot(comment) or not ANSWERS.search(body):
+    if not bot_record(comment) or not ANSWERS.search(body):
         return None
     return ANSWERS.sub("", body).strip()
 
@@ -422,7 +437,7 @@ def answers_text(comment):
 def answers_record(comment):
     """The record of an autopilot answers comment, such as {answers, replan}, or None for
     any other comment."""
-    match = ANSWERS.search(comment.get("body") or "") if by_bot(comment) else None
+    match = ANSWERS.search(comment.get("body") or "") if bot_record(comment) else None
     if not match:
         return None
     try:
@@ -458,7 +473,7 @@ def plan_profile(comment):
 def _marked(comments, pattern):
     """(comment_id, data) for each bot comment with the marker, newest first."""
     for comment in reversed(comments):
-        if not by_bot(comment):
+        if not bot_record(comment):
             continue
         match = pattern.search(comment.get("body", ""))
         if match:
@@ -496,7 +511,7 @@ def find_run(comments, url):
 def run_comments(comments):
     """(comment, run) for each NexKit run comment, oldest first."""
     for comment in comments:
-        if by_bot(comment):
+        if bot_record(comment):
             match = RUN_PATTERN.search(comment.get("body", ""))
             if match:
                 yield comment, json.loads(base64.b64decode(match.group(1)))

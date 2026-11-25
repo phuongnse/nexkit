@@ -7,6 +7,7 @@ that answers its REST paths and GraphQL queries as GitHub does, and logs each re
 import json
 import re
 import unittest
+from unittest import mock
 
 from nexkit import snapshot
 from nexkit.github import GitHub, GitHubError
@@ -630,6 +631,43 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn("read 34 of 34 open issues", said)
         self.assertIn("read 5 of 5 open pull requests", said)
         self.assertIn("read 2 closed pull requests", said)
+
+
+class CommentEditorsTests(unittest.TestCase):
+    def snapshot(self):
+        gh = GitHub(repository=REPO, token="t", api_url=API)
+        found = snapshot.Snapshot(gh)
+        found.loaded = True
+        app = {"__typename": "Bot", "login": "nexkit-acme"}
+        node = {
+            "id": "IC_1",
+            "fullDatabaseId": "7",
+            "body": "x",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-02T00:00:00Z",
+            "author": app,
+        }
+        found._comments(5, {"comments": {"totalCount": 1, "nodes": [node]}})
+        return gh, found
+
+    def test_a_comment_read_in_a_batch_gets_its_editors_once(self):
+        gh, found = self.snapshot()
+        edits = {"nodes": [{"editor": {"__typename": "User", "login": "mallory"}}]}
+        answer = {"nodes": [{"userContentEdits": {**edits, "pageInfo": {"hasNextPage": False}}}]}
+        with mock.patch.object(gh, "graphql", return_value=answer) as query:
+            first = found.comments(5)
+            second = found.comments(5)
+        self.assertEqual(first[0]["editors"], ["mallory"])
+        self.assertEqual(second[0]["editors"], ["mallory"])
+        query.assert_called_once()
+        self.assertEqual(query.call_args.args[1], {"ids": ["IC_1"]})
+
+    def test_a_comment_that_was_never_edited_causes_no_request(self):
+        gh, found = self.snapshot()
+        found._known[("comments", 5)][0]["updated_at"] = "2026-01-01T00:00:00Z"
+        with mock.patch.object(gh, "graphql") as query:
+            self.assertNotIn("editors", found.comments(5)[0])
+        query.assert_not_called()
 
 
 if __name__ == "__main__":

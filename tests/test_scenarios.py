@@ -33,6 +33,7 @@ from nexkit.report import report
 from nexkit.route import auto_kinds, issue_from_branch, route, skip_unaffected
 from nexkit.state import (
     ACTIONS_BOT,
+    STATE_PREFIX,
     UNCOUNTED,
     check_fingerprint,
     read_state,
@@ -1468,6 +1469,53 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
+
+    def test_a_state_comment_that_someone_else_changed_waits_for_a_person(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.required = {"e2e"}
+        pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual([outcome for *_, outcome in pipe.played], ["planned", "merge_waiting"])
+        # Someone else rewrites the pull request's state, so that it reads as fresh, and its
+        # required check fails: merging or a fix round would follow from that state.
+        [state_comment] = pipe.gh.comments_matching(6, "nexkit:state")
+        recorded = read_state(pipe.gh.comments(6))[1]
+        self.assertEqual(recorded["auto_fixes"], 0)
+        state_comment["body"] = state_comment["body"].replace(
+            STATE_PREFIX, "Edited by hand.\n\n" + STATE_PREFIX
+        )
+        state_comment["editors"] = [BOT_LOGIN, "mallory"]
+        pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is failing.')
+        sha = pipe.gh.pulls[6]["head"]["sha"]
+        pipe.gh.commit_checks[sha] = [{"id": 9, "name": "e2e", "conclusion": "failure"}]
+        started = len(pipe.gh.dispatches)
+        for _ in range(3):
+            pipe.later(timedelta(hours=7))
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+        self.assertEqual(pipe.gh.merged, [])
+        self.assertEqual([command for command, *_ in pipe.played], ["plan", "go"])
+        self.assertEqual(
+            [d["inputs"]["command"] for d in pipe.gh.dispatches[started:]], ["autopilot"] * 3
+        )
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        [mention] = [c for n in (5, 6) for c in pipe.gh.comments_matching(n, "a person is needed")]
+        self.assertIn("`@mallory` changed a comment of NexKit's", mention["body"])
+        # The status lists it with its reason.
+        needs = collect(pipe.gh, pipe.cfg, workers=1)["needs_person"]
+        self.assertTrue(any(autopilot.CHANGED_ENTRY in item["reason"] for item in needs), needs)
+        # Deleting the comment hands the pull request back to autopilot.
+        pipe.gh.issue_comments[6].remove(state_comment)
+        pipe.later(timedelta(hours=7))
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        needs = collect(pipe.gh, pipe.cfg, workers=1)["needs_person"]
+        self.assertFalse(any(autopilot.CHANGED_ENTRY in item["reason"] for item in needs), needs)
 
     def test_a_new_commit_while_a_merge_waits_is_reviewed_and_merged(self):
         def script(pipe, inputs):

@@ -22,7 +22,7 @@ import time
 
 from . import protocol
 from .protocol.size import STATE_LIMIT, decoded, encoded, size
-from .state import TEXT_LIMIT, by_bot
+from .state import TEXT_LIMIT, bot_record
 
 PREFIX = "<!-- nexkit:item-state "
 # Only the marker that ends the comment.
@@ -65,7 +65,7 @@ def render(state):
 
 
 def _document(comment):
-    match = PATTERN.search(comment.get("body") or "") if by_bot(comment) else None
+    match = PATTERN.search(comment.get("body") or "") if bot_record(comment) else None
     if not match:
         return None
     try:

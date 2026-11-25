@@ -75,6 +75,81 @@ class IssueEditsTests(unittest.TestCase):
         self.assertEqual(self.edits([], more=True), [("", None)])
 
 
+class CommentEditorsTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = GitHub(repository="acme/app", token="t")
+
+    def comment(self, number, node_id, user="Bot", edited=True):
+        login = "nexkit-acme[bot]" if user == "Bot" else "alice"
+        return {
+            "id": number,
+            "node_id": node_id,
+            "user": {"login": login, "type": user},
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z" if edited else "2026-01-01T00:00:00Z",
+        }
+
+    def edits(self, *editors, more=None):
+        nodes = [{"editor": e} for e in editors]
+        info = {"hasNextPage": bool(more), "endCursor": more}
+        return {"userContentEdits": {"nodes": nodes, "pageInfo": info}}
+
+    def read(self, comments, answers):
+        with (
+            mock.patch.object(self.gh, "paginate", return_value=comments),
+            mock.patch.object(self.gh, "graphql", side_effect=answers) as query,
+        ):
+            return self.gh.comments(5), query
+
+    def test_an_edited_comment_of_a_bot_has_everyone_who_changed_it(self):
+        user = {"__typename": "User", "login": "mallory"}
+        app = {"__typename": "Bot", "login": "nexkit-acme"}
+        comments = [self.comment(1, "IC_1"), self.comment(2, "IC_2")]
+        answers = [
+            {"nodes": [self.edits(app, user, more="c1"), self.edits(app, None)]},
+            {"nodes": [self.edits(user, app)]},
+        ]
+        found, query = self.read(comments, answers)
+        self.assertEqual(found[0]["editors"], ["mallory", "nexkit-acme[bot]"])
+        # A deleted account is someone GitHub cannot name.
+        self.assertEqual(found[1]["editors"], ["", "nexkit-acme[bot]"])
+        self.assertEqual(query.call_args_list[0].args[1], {"ids": ["IC_1", "IC_2"]})
+        self.assertEqual(query.call_args_list[1].args[1], {"ids": ["IC_1"], "after": "c1"})
+
+    def test_a_comment_that_was_never_edited_causes_no_request(self):
+        comments = [
+            self.comment(1, "IC_1", edited=False),
+            self.comment(2, "IC_2", user="User"),
+            {**self.comment(3, None), "node_id": None},
+        ]
+        found, query = self.read(comments, [])
+        query.assert_not_called()
+        self.assertTrue(all("editors" not in c for c in found))
+
+    def test_a_comment_that_github_gives_no_edits_for_is_one_nobody_vouches_for(self):
+        found, _ = self.read([self.comment(1, "IC_1")], [{"nodes": [None]}])
+        self.assertEqual(found[0]["editors"], [""])
+
+    def test_comments_are_asked_in_batches_of_a_hundred(self):
+        comments = [self.comment(n, f"IC_{n}") for n in range(101)]
+        answers = [
+            {"nodes": [self.edits() for _ in range(100)]},
+            {"nodes": [self.edits({"__typename": "User", "login": "bob"})]},
+        ]
+        found, query = self.read(comments, answers)
+        self.assertEqual(query.call_count, 2)
+        self.assertEqual(found[0]["editors"], [])
+        self.assertEqual(found[100]["editors"], ["bob"])
+
+    def test_one_comment_has_its_editors_too(self):
+        app = {"__typename": "Bot", "login": "nexkit-acme"}
+        with (
+            mock.patch.object(self.gh, "request", return_value=self.comment(1, "IC_1")),
+            mock.patch.object(self.gh, "graphql", return_value={"nodes": [self.edits(app)]}),
+        ):
+            self.assertEqual(self.gh.issue_comment(1)["editors"], ["nexkit-acme[bot]"])
+
+
 class BranchTests(unittest.TestCase):
     def setUp(self):
         self.gh = GitHub(repository="acme/app", token="t")

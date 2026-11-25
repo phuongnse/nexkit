@@ -1737,6 +1737,14 @@ for a reason outside the work, before it published anything.
   The issue's author may still edit such an issue, so an edit by anyone else after it ends
   the trust, and each round NexKit starts looks for one right after it read the text, before
   any agent or setup, and so does a merge.
+- GitHub lets anyone with write access, and any token, edit a comment of the App, which stays
+  the App's by author. So NexKit counts a marker only in a comment of the App that, by its
+  edit history, no one else ever changed, even if the App edited it again afterwards. A
+  changed comment's markers count for nothing, and autopilot leaves the issue and its pull
+  request to a person (see [A comment of NexKit was changed by someone
+  else](troubleshooting.md#a-comment-of-nexkit-was-changed-by-someone-else)). NexKit reads the
+  edit history only of the comments of bots that were edited, with the read-only token every
+  job holds.
 - NexKit's comments and issues quote text it does not trust: agent output, such as a plan,
   a fix round's cause or a finding that no change is needed, and the output, test names
   and annotations of CI runs. NexKit reads each of its markers only where it writes it, so

@@ -28,7 +28,7 @@ from .state import (
     PAUSED,
     RUNNING,
     SUCCESS,
-    by_bot,
+    bot_record,
     conflict_rounds_used,
     next_round,
     passed_checks,
@@ -189,7 +189,7 @@ def close_parent(gh, number):
     # After the close, so that only a run whose close went through comments. The latest
     # comment guards a run whose close went through after another's.
     latest = gh.comments(number)[-1:]
-    if not (latest and by_bot(latest[0]) and latest[0]["body"].startswith(CLOSED)):
+    if not (latest and bot_record(latest[0]) and latest[0]["body"].startswith(CLOSED)):
         gh.comment(
             number,
             f"{CLOSED}\nNexKit closed this issue because all its sub-issues are "
@@ -232,7 +232,7 @@ def _note_once(gh, number, marker, text):
     there already: the runs of parts that closed together, and a sweep's mention between
     them, leave one. A note about other sub-issues is a new one."""
     body = f"{marker}\n{text}"
-    if not any(by_bot(c) and c.get("body") == body for c in gh.comments(number)):
+    if not any(bot_record(c) and c.get("body") == body for c in gh.comments(number)):
         gh.comment(number, body)
 
 
@@ -297,7 +297,7 @@ def _stale(gh, name, sha, number):
 def _reported(gh, number, name):
     """Whether NexKit said on issue `number` that it could not delete the branch `name`."""
     return any(
-        by_bot(c) and (c.get("body") or "").startswith(BRANCH_KEPT) and f"`{name}`" in c["body"]
+        bot_record(c) and (c.get("body") or "").startswith(BRANCH_KEPT) and f"`{name}`" in c["body"]
         for c in gh.comments(number)
     )
 

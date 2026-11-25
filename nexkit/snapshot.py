@@ -44,7 +44,7 @@ _RELATED = f"""
 _COMMENTS = f"""
   comments(first: {COMMENTS}) {{
     totalCount
-    nodes {{ fullDatabaseId body createdAt updatedAt url authorAssociation {_ACTOR} }}
+    nodes {{ id fullDatabaseId body createdAt updatedAt url authorAssociation {_ACTOR} }}
   }}
 """
 
@@ -341,6 +341,7 @@ class Snapshot:
         self._known[("comments", number)] = [
             {
                 "id": int(c["fullDatabaseId"]),
+                "node_id": c.get("id"),
                 "body": c.get("body") or "",
                 "user": _user(c.get("author")),
                 "author_association": c.get("authorAssociation"),
@@ -526,6 +527,14 @@ class Snapshot:
         return self._once("pull", number)
 
     def comments(self, number):
+        # Comments that came in a batch lack their edit history: read it once for each thread.
+        if self.loaded and ("comments", number) in self._known:
+            with self._lock:
+                if ("editors", number) not in self._known:
+                    read = getattr(self._gh, "comment_editors", None)
+                    if read and hasattr(self._gh, "graphql"):
+                        read(self._known[("comments", number)])
+                    self._known[("editors", number)] = True
         return self._known_or("comments", number, "comments")
 
     def parent_issue(self, number):

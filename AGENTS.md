@@ -41,8 +41,9 @@ that sets up repositories. Read [How it works](docs/how-it-works.md) before chan
   `packages: write`, since a GitHub App gets no access to packages, and it runs no repository code.
 - Agent output is untrusted: validate it before publishing, pass everything printed or stored from a
   session through `redact.py`, print tool output with workflow commands stopped. Markers count only
-  in comments of the App, never the Actions bot, which CI on an agent's code can write as, and only
-  at the position NexKit writes them (see *Security notes* in `docs/how-it-works.md`). Agent text
+  in comments of the App that no one else changed, never the Actions bot, which CI on an agent's
+  code can write as, and only at the position NexKit writes them (see *Security notes* in
+  `docs/how-it-works.md`). Agent text
   that NexKit copies where no position pins a marker opens none (`state.inert_markers`).
 - State lives only on GitHub (comments, pull requests, statuses).
 - Agent errors and `blocked` results never retry automatically; only check failures and review

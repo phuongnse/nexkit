@@ -2461,21 +2461,34 @@ class UpdateImageWorkflowTests(unittest.TestCase):
                 self.assertIn(name, [n.strip() for n in watched.group(1).split(",")])
                 self.assertIn("\npermissions: {}\n", text)
                 jobs = jobs_of(text)
-                self.assertEqual(list(jobs), ["update"])
+                # The job that runs scripts/ only reads; the one that pushes runs none of it
+                # (WriteJobsTests) and applies only a patch that moves one pin.
+                self.assertEqual(list(jobs), ["propose", "update"])
+                self.assertEqual(permissions_of(jobs["propose"]), {"contents": "read"})
+                self.assertIn("persist-credentials: false", jobs["propose"])
+                self.assertIn("scripts/", jobs["propose"])
                 self.assertEqual(
                     permissions_of(jobs["update"]),
                     {"contents": "write", "pull-requests": "write", "actions": "write"},
                 )
+                self.assertIn("    needs: propose\n", jobs["update"])
+                self.assertIn("git apply --numstat", jobs["update"])
+                self.assertIn("$'1\\t1\\tnexkit/__init__.py'", jobs["update"])
                 self.assertNotIn("secrets.", text)
                 self.assertNotIn("gh issue", text)
 
     def test_proposes_only_a_moved_digest_on_one_branch(self):
-        job = self.jobs["update"]
-        self.assertIn("image=$(python scripts/image_digest.py update)", job)
-        self.assertIn('if [ -z "$image" ]; then', job)
+        propose, job = self.jobs["propose"], self.jobs["update"]
+        self.assertIn("image=$(python scripts/image_digest.py update)", propose)
+        self.assertIn('if [ -z "$image" ]; then', propose)
+        self.assertIn("    if: needs.propose.outputs.image\n", job)
         self.assertIn("BRANCH: update/python-image\n", self.text)
+        # What the reading job proposed is checked as an image by digest, and the patch must
+        # move PYTHON_IMAGE to exactly that image.
+        self.assertIn("@sha256:[0-9a-f]{64}$ ]]; then", job)
+        self.assertIn('grep -qxF "+    \\"$IMAGE\\"" "$patch"', job)
         # An open pull request that already pins this digest gets no new push.
-        self.assertIn('grep -qF "\\"$image\\""', job)
+        self.assertIn('grep -qF "\\"$IMAGE\\""', job)
         self.assertIn("commit -qam", job)
         self.assertIn('gh pr create --head "$BRANCH" --label dependencies', job)
 
@@ -2491,6 +2504,77 @@ class UpdateImageWorkflowTests(unittest.TestCase):
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn("options: [all, claude-code, none]", ci)
         self.assertIn("""contains(fromJSON('["all","claude-code"]'), inputs.runtime)""", ci)
+
+
+def run_scripts(job):
+    """The shell of each `run:` step of a job's text."""
+    scripts, lines = [], job.splitlines()
+    for index, line in enumerate(lines):
+        found = re.match(r"^( *)(?:- )?run: ?(.*)$", line)
+        if not found:
+            continue
+        if found.group(2) not in ("|", ">", "|-", ">-"):
+            scripts.append(found.group(2))
+            continue
+        indent, block = len(found.group(1)), []
+        for following in lines[index + 1 :]:
+            if following.strip() and len(following) - len(following.lstrip()) <= indent:
+                break
+            block.append(following)
+        scripts.append("\n".join(block))
+    return scripts
+
+
+# What runs a file of the repository from a step's shell.
+REPOSITORY_CODE = re.compile(
+    r"\b(?:python3?|pip3?|node|npm|npx|make|bash|sh|source)\b|(?<![\w/.$-])(?:\./|scripts/|bin/|tests/)"
+)
+
+
+def can_write(text, job):
+    """Whether the job's `github.token` can write: its own permissions, or else the
+    workflow's."""
+    own = re.search(r"^    permissions:(.*(?:\n      .*)*)", job, re.M)
+    if own:
+        return "write" in own.group(1)
+    workflow = re.search(r"^permissions:(.*(?:\n  .*)*)", text, re.M)
+    # A workflow without `permissions` gets the repository's default, which may write.
+    return workflow is None or "write" in workflow.group(1)
+
+
+class WriteJobsTests(unittest.TestCase):
+    """AGENTS.md: jobs with write tokens never run repository code, in every workflow."""
+
+    def test_no_job_that_can_write_runs_repository_code(self):
+        checked = 0
+        for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            text = path.read_text()
+            for name, job in jobs_of(text).items():
+                if not can_write(text, job):
+                    continue
+                checked += 1
+                with self.subTest(job=f"{path.name}:{name}"):
+                    self.assertNotIn("uses: ./", job)
+                    for script in run_scripts(job):
+                        self.assertNotRegex(script, REPOSITORY_CODE)
+        # The jobs that write today, so the test cannot pass by reading nothing.
+        self.assertGreaterEqual(checked, 4)
+
+    def test_the_check_sees_a_job_that_runs_repository_code(self):
+        job = (
+            "    permissions:\n      contents: write\n    steps:\n"
+            "      - run: |\n          echo start\n          python scripts/agent_version.py x\n"
+        )
+        self.assertTrue(can_write("permissions: {}\n", job))
+        self.assertRegex(run_scripts(job)[0], REPOSITORY_CODE)
+        self.assertFalse(can_write("", "    permissions:\n      contents: read\n"))
+        self.assertTrue(can_write("on: push\n", "    steps:\n"))
+        for safe in (
+            'gh issue create --body "$(jq -r .body <<< "$x")"',
+            "git push origin x",
+            "sha256",
+        ):
+            self.assertNotRegex(safe, REPOSITORY_CODE)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):

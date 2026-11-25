@@ -22,4 +22,5 @@ FAMILIES = {
     "released": "#347",
     "waits": "#390",
     "pause": "#398",
+    "ended": "#393",
 }

@@ -11,6 +11,7 @@ from unittest import mock
 from nexkit import autopilot, engine, host, item_state
 from nexkit import report as reports
 from nexkit.checks import recorded
+from nexkit.github import GitHubError
 from nexkit.maintain import resume_paused
 from nexkit.protocol.size import MOST
 from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person, report
@@ -25,7 +26,7 @@ from nexkit.state import (
     render_run,
     render_state,
 )
-from tests.support import BOT_LOGIN, make_config
+from tests.support import BOT_LOGIN, FakeGitHub, make_config
 from tests.test_autopilot import AutopilotCase, pilot, plan_output
 from tests.test_report import (
     HEAD,
@@ -1348,3 +1349,239 @@ class ResumeTest(ReportCase):
         self.assertEqual(run["run"]["status"], "failure")
         self.assertNotIn("resume", run["run"])
         self.assertIn("refused to decide", run["run"]["attention"])
+
+
+class ChangeSeenTest(ReportCase):
+    """What the merge finds about a pull request is an observation the engine ends the item
+    with, or checks: `change_seen` sends it and never fakes the merge's result."""
+
+    HEAD = "c" * 40
+
+    def seen(self, merged=False, empty=False, version=None, waiting=False, cfg=None):
+        cfg = cfg or make_config(merge={"auto": True})
+        seen = {"version": version or self.HEAD, "merged": merged, "empty": empty}
+        return host.change_seen(cfg, 5, 6, self.HEAD, 0, seen, waiting=waiting)
+
+    def test_a_pull_request_a_person_merged_ends_the_item_as_accepted(self):
+        self.assertEqual(self.seen(merged=True), "accepted")
+        self.assertEqual(self.seen(merged=True, waiting=True), "accepted")
+
+    def test_a_change_the_base_branch_holds_ends_the_item_without_a_change(self):
+        self.assertEqual(self.seen(empty=True), "noChange")
+        self.assertEqual(self.seen(empty=True, waiting=True), "noChange")
+
+    def test_a_push_while_the_merge_waits_is_checked(self):
+        self.assertEqual(self.seen(version="d" * 40), "review")
+        self.assertEqual(self.seen(version="d" * 40, waiting=True), "review")
+
+    def test_the_merge_sends_an_observation_and_no_result(self):
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            self.seen(merged=True)
+        [event] = [call.args[1] for call in step.call_args_list]
+        self.assertEqual(event["kind"], "changeObserved")
+        self.assertEqual(
+            (event["changeId"], event["merged"], event["conflicts"]), ("6", True, False)
+        )
+
+    def test_an_observation_that_ends_nothing_and_changes_nothing_is_refused(self):
+        with self.assertRaises(host.Refused):
+            self.seen()
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            with self.assertRaises(host.Refused):
+                self.seen(merged=True)
+
+
+class PartEndedTest(ReportCase):
+    """A part that NexKit merged ends its parent only as the engine decides, under `parentEnd`:
+    `close_parent_issues` on gives `whenPartAccepted`, off gives `person`."""
+
+    def subs(self, *states):
+        """The sub-issues of the parent 1: issue 5, and one for each of `states`."""
+        found = [{"number": 5, "state": "closed", "state_reason": "completed"}]
+        for number, (state, reason) in enumerate(states, 20):
+            found.append({"number": number, "state": state, "state_reason": reason})
+        return found
+
+    def ended(self, *states, close=True, subs=None):
+        cfg = make_config(close_parent_issues=close)
+        return host.part_ended(cfg, 1, subs or self.subs(*states), 5, "accepted")
+
+    def test_the_parent_closes_when_every_part_ended_and_one_was_completed(self):
+        self.assertEqual(self.ended(), "close")
+        self.assertEqual(self.ended(("closed", "not_planned")), "close")
+        self.assertEqual(self.ended(("closed", "completed")), "close")
+
+    def test_the_parent_stays_while_a_part_is_open(self):
+        self.assertEqual(self.ended(("open", None)), "stays")
+
+    def test_the_parent_stays_when_no_part_was_completed(self):
+        subs = [{"number": 5, "state": "closed", "state_reason": "completed"}]
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            self.assertEqual(host.part_ended(make_config(), 1, subs, 7, "dropped"), "stays")
+        self.assertEqual(step.call_args.args[1]["part"], "7")
+
+    def test_without_close_parent_issues_the_engine_gets_person_and_the_parent_stays(self):
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            self.assertEqual(self.ended(close=False), "stays")
+            self.assertEqual(step.call_args.args[2]["parentEnd"], "person")
+            self.assertEqual(self.ended(close=True), "close")
+            self.assertEqual(step.call_args.args[2]["parentEnd"], "whenPartAccepted")
+
+    def test_a_list_that_misses_the_part_still_counts_it(self):
+        self.assertEqual(self.ended(subs=[]), "close")
+
+    def test_a_parent_with_more_parts_than_a_state_holds_is_refused(self):
+        many = [
+            {"number": n, "state": "closed", "state_reason": "completed"}
+            for n in range(5, 5 + MOST["split"] + 1)
+        ]
+        with self.assertRaises(host.Refused):
+            self.ended(subs=many)
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            with self.assertRaises(host.Refused):
+                self.ended()
+
+    def test_a_round_keeps_the_policies_it_started_with_without_the_parents_end(self):
+        doc = host._pull_doc(make_config(), 5, 6, "c" * 40, "fixing", 0)
+        self.assertNotIn("parentEnd", doc["policies"])
+        self.assertNotIn("parentEnd", host.policies(make_config()))
+
+
+class MergeFindsTest(ReportCase):
+    """`merge_pull` follows the engine's answer to what it finds: a pull request that a person
+    merged, a change the base branch holds, and the parent after NexKit's own merge."""
+
+    AUTO = make_config(merge={"auto": True})
+
+    def merge(self, cfg=None):
+        self.candidate()
+        return self.run_report(cfg=cfg or self.AUTO)
+
+    def merged_by_person(self):
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        self.gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
+
+    def test_a_pull_request_a_person_merged_ends_the_round_as_the_engine_answers(self):
+        self.merged_by_person()
+        with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
+            outcome = self.merge()
+        self.assertEqual(outcome["outcome"], "pull_closed")
+        self.assertEqual(seen.call_args.args[5], {"version": HEAD, "merged": True, "empty": False})
+        self.merged_by_person()
+        with mock.patch.object(host, "change_seen", side_effect=host.Refused("no")):
+            outcome = self.merge()
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        self.assertIn("refused to decide", outcome["attention"])
+
+    def test_a_pull_request_closed_unmerged_is_not_sent_to_the_engine(self):
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        self.gh.pulls[6].update(state="closed", merged=False)
+        with mock.patch.object(host, "change_seen") as seen:
+            outcome = self.merge()
+        self.assertEqual(outcome["outcome"], "pull_closed")
+        seen.assert_not_called()
+
+    def test_a_merge_found_while_github_refuses_is_the_engines_too(self):
+        self.gh.merge_error = GitHubError(405, "Pull Request is not mergeable")
+        self.gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
+        with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
+            outcome = self.merge()
+        self.assertEqual(outcome["outcome"], "pull_closed")
+        self.assertTrue(seen.call_args.args[5]["merged"])
+
+    def test_a_change_the_base_branch_holds_is_closed_only_when_the_engine_ends_it(self):
+        self.gh.on_base.add(HEAD)
+        with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
+            outcome = self.merge()
+        self.assertEqual(outcome["outcome"], "already_on_base")
+        self.assertEqual(seen.call_args.args[5], {"version": HEAD, "merged": False, "empty": True})
+        self.assertEqual(self.gh.pulls[6]["state"], "closed")
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        self.gh.on_base.add(HEAD)
+        with mock.patch.object(host, "change_seen", return_value="review"):
+            outcome = self.merge()
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        self.assertEqual(self.gh.pulls[6]["state"], "open")
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+
+    def parent(self, *parts):
+        self.gh.add_issue(1, title="Epic")
+        self.gh.parents[5] = 1
+        for number, reason in parts:
+            self.gh.add_issue(number, state="closed", reason=reason)
+            self.gh.parents[number] = 1
+
+    def test_the_parent_closes_after_the_merge_only_when_the_engine_answers_close(self):
+        cfg = make_config(merge={"auto": True}, close_parent_issues=True)
+        self.parent((2, "completed"))
+        with mock.patch.object(host, "part_ended", return_value="stays") as ended:
+            self.assertEqual(self.merge(cfg)["outcome"], "merged")
+        self.assertEqual(self.gh.issues[1]["state"], "open")
+        self.assertEqual(ended.call_args.args[1:], (1, ended.call_args.args[2], 5, "accepted"))
+        self.gh.reopen(6, 5)
+        self.gh.pulls[6]["state"] = "open"
+        with mock.patch.object(host, "part_ended", return_value="close"):
+            self.assertEqual(self.merge(cfg)["outcome"], "merged")
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+
+    def test_without_close_parent_issues_the_engine_gets_person_and_the_parent_stays(self):
+        self.parent((2, "completed"))
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            self.assertEqual(self.merge()["outcome"], "merged")
+        parents = [call.args for call in step.call_args_list if call.args[1]["kind"] == "partEnded"]
+        self.assertEqual([args[2]["parentEnd"] for args in parents], ["person"])
+        self.assertEqual(self.gh.issues[1]["state"], "open")
+
+    def test_a_parent_that_is_closed_or_has_no_part_to_wait_for_is_left_alone(self):
+        cfg = make_config(merge={"auto": True}, close_parent_issues=True)
+        self.parent((2, "completed"))
+        self.gh.issues[1]["state"] = "closed"
+        with mock.patch.object(host, "part_ended") as ended:
+            self.assertEqual(self.merge(cfg)["outcome"], "merged")
+        ended.assert_not_called()
+
+    def test_an_engine_that_refuses_the_parent_closes_none_and_says_so(self):
+        cfg = make_config(merge={"auto": True}, close_parent_issues=True)
+        self.parent((2, "completed"))
+        with mock.patch.object(host, "part_ended", side_effect=host.Refused("no")):
+            outcome = self.merge(cfg)
+        self.assertEqual(outcome["outcome"], "merged")
+        self.assertEqual(self.gh.issues[1]["state"], "open")
+        [row] = self.gh.run_comments(6)
+        self.assertIn("engine refused to decide", row["body"])
+
+    def test_a_parent_with_more_sub_issues_than_a_state_holds_keeps_nexkit_6s_path(self):
+        cfg = make_config(merge={"auto": True}, close_parent_issues=True)
+        self.parent(*[(n, "completed") for n in range(20, 20 + MOST["split"])])
+        with mock.patch.object(host, "part_ended") as ended:
+            self.assertEqual(self.merge(cfg)["outcome"], "merged")
+        ended.assert_not_called()
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+
+
+class MergeStepTest(ReportCase):
+    """The sweep's tick of a merge that waits for required checks reviews a head that a person
+    pushed meanwhile only when the engine answers that it checks it."""
+
+    def step(self):
+        self.gh.pulls[6]["head"]["sha"] = "d" * 40
+        comment = {"id": 77}
+        run = {"head": HEAD, "waiting_since": autopilot.iso(datetime.now(UTC))}
+        cfg = make_config(merge={"auto": True})
+        now = datetime.now(UTC)
+        return autopilot._merge_step(self.gh, cfg, {"number": 5}, 6, comment, run, {}, now)
+
+    def test_a_head_pushed_while_the_merge_waited_is_reviewed_when_the_engine_checks_it(self):
+        with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
+            step = self.step()
+        self.assertEqual((step["state"], step["command"]), ("start", "review"))
+        self.assertEqual(seen.call_args.args[5]["version"], "d" * 40)
+        self.assertTrue(seen.call_args.kwargs["waiting"])
+
+    def test_a_head_the_engine_refuses_waits_for_a_person(self):
+        with mock.patch.object(host, "change_seen", side_effect=host.Refused("no")):
+            step = self.step()
+        self.assertEqual(step["state"], "waits")
+        self.assertIn("refused to decide", step["reason"])

@@ -513,6 +513,18 @@ class PausedRunTests(unittest.TestCase):
         self.assertEqual(resume_paused(self.gh, "nexkit.yml", "main", now)[0], [])  # once
         self.assertEqual(len(self.gh.dispatches), 1)
 
+    def test_a_paused_run_that_someone_else_changed_is_not_resumed(self):
+        now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+        comment = self.paused(5, 1)
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        self.assertEqual(resume_paused(self.gh, "nexkit.yml", "main", now), ([], None))
+        self.assertEqual(self.gh.dispatches, [])
+        # Changed by the App alone, it is resumed.
+        comment["editors"] = [BOT_LOGIN]
+        self.assertEqual(
+            resume_paused(self.gh, "nexkit.yml", "main", now)[0], ["Resumed /nexkit plan on #5."]
+        )
+
     def test_a_failed_resume_is_tried_again(self):
         now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
         self.paused(5, 1)

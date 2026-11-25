@@ -141,6 +141,15 @@ class CommentEditorsTests(unittest.TestCase):
         self.assertEqual(found[0]["editors"], [])
         self.assertEqual(found[100]["editors"], ["bob"])
 
+    def test_the_recent_comments_of_all_issues_have_their_editors_too(self):
+        user = {"__typename": "User", "login": "mallory"}
+        with (
+            mock.patch.object(self.gh, "paginate", return_value=[self.comment(1, "IC_1")]),
+            mock.patch.object(self.gh, "graphql", return_value={"nodes": [self.edits(user)]}),
+        ):
+            [found] = self.gh.recent_comments("2026-01-01T00:00:00Z")
+        self.assertEqual(found["editors"], ["mallory"])
+
     def test_one_comment_has_its_editors_too(self):
         app = {"__typename": "Bot", "login": "nexkit-acme"}
         with (

@@ -532,7 +532,7 @@ class GitHub:
         """Comments on any issue or pull request, edited or posted since `since` (ISO 8601),
         newest first."""
         params = {"since": since, "sort": "updated", "direction": "desc"}
-        return self.paginate(f"{self._repo}/issues/comments", params, limit)
+        return self.comment_editors(self.paginate(f"{self._repo}/issues/comments", params, limit))
 
     def comment(self, number, body):
         """Post a comment. GitHub may post it and still answer with a server error or a

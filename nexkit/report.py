@@ -1445,7 +1445,34 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
                 )
             }
             return "merge_refused", f"{message}\n\n{line}"
-        row.setdefault("waiting_since", iso(datetime.now(UTC)))
+        # What follows is the engine's (`host.accept_answer`).
+        from .host import Refused, accept_answer, refused_parts
+
+        result = {
+            "accepted": False,
+            "refusal": "waitingForChecks",
+            "text": "Required checks have not passed yet.",
+        }
+        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+        try:
+            ends, answer = accept_answer(
+                cfg,
+                target["issue"],
+                pr,
+                head,
+                auto_fixes,
+                result,
+                since=row.get("waiting_since"),
+                at=iso(datetime.now(UTC)),
+            )
+            if ends != "waiting":
+                raise Refused(f"The engine answers {ends!r} to required checks that wait.")
+        except Refused as error:
+            do, why = refused_parts(error)
+            target["found"] = {"refused": (do, why)}
+            unblocks = autopilot.person(do, why)
+            return "merge_refused", f"{message}\n\n**What unblocks it:** {unblocks}."
+        row["waiting_since"] = answer["checksSince"]["at"]
         line = (
             "Required checks have not passed yet. The next autopilot sweep merges it once "
             "they pass."

@@ -1,0 +1,27 @@
+{
+  "policies": {},
+  "state": {
+    "example": "accepting",
+    "set": {
+      "pending": [],
+      "checksSince": {
+        "version": "0ld0000",
+        "at": "2026-11-20T00:00:00Z"
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w7.1",
+        "at": "2026-11-23T21:01:11Z"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ]
+    }
+  ]
+}

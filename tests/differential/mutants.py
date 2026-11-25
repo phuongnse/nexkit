@@ -161,6 +161,42 @@ MUTANTS = {
         "seen": ("harness",),
         "families": ("report", "review", "diag", "chains"),
     },
+    # The wait for required checks never ends (#390).
+    "required-checks-never-end": {
+        "path": MACHINE,
+        "old": """and now - began > CHECKS_END""",
+        "new": """and False""",
+        "seen": ("harness", "walker"),
+        "families": ("waits",),
+    },
+    # It ends at six hours, not after them (#390).
+    "required-checks-end-at-six-hours": {
+        "path": MACHINE,
+        "old": """now - began > CHECKS_END""",
+        "new": """now - began >= CHECKS_END""",
+        "seen": ("walker",),
+        "families": ("waits",),
+    },
+    # Each refusal starts the six hours again (#390).
+    "required-checks-start-again-at-each-refusal": {
+        "path": MACHINE,
+        "old": """            if not since or since["version"] != self.version:
+                self.s["checksSince"]""",
+        "new": """            if True:
+                self.s["checksSince"]""",
+        "seen": ("harness", "walker"),
+        "families": ("waits",),
+    },
+    # The start outlives the item's stay in `accepting`, so a new version keeps it (#390).
+    "required-checks-start-kept-across-a-new-version": {
+        "path": MACHINE,
+        "old": """        if name != "accepting":
+            self.s.pop("checksSince", None)""",
+        "new": """        if False:
+            self.s.pop("checksSince", None)""",
+        "seen": ("walker",),
+        "families": ("waits",),
+    },
 }
 
 

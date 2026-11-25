@@ -1,0 +1,193 @@
+{
+  "policies": {
+    "accept": "autoWhenPassed"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:review"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "accept",
+        "result": {
+          "accepted": false,
+          "refusal": "waitingForChecks",
+          "text": "Required checks have not passed yet."
+        }
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "wait"
+      ],
+      "expect": {
+        "checksSince.version": "v1",
+        "checksSince.at": "2026-11-23T15:01:11Z"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "wait",
+        "result": {}
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v2",
+        "at": "2026-11-23T20:00:00Z"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:review"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "accept",
+        "result": {
+          "accepted": false,
+          "refusal": "waitingForChecks",
+          "text": "Required checks have not passed yet."
+        },
+        "at": "2026-11-23T22:00:00Z"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "wait"
+      ],
+      "expect": {
+        "checksSince.version": "v2",
+        "checksSince.at": "2026-11-23T22:00:00Z"
+      }
+    }
+  ]
+}

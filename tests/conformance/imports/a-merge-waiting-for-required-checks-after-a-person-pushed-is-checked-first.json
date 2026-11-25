@@ -107,6 +107,10 @@
     },
     "attention": null,
     "hold": false,
+    "checksSince": {
+      "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+      "at": "2026-11-23T15:00:00Z"
+    },
     "waits": [
       {
         "id": "w1.1",

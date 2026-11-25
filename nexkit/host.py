@@ -42,6 +42,13 @@ back (`report._stop_round`, `maintain._give_back`), and required checks that fai
 start a counted fix round, wait for the base branch, or leave the rounds used up
 (`report._required_failed`).
 
+It decides the wait for required checks that have not passed yet at a merge, and its end
+(`report._refused`, `autopilot._merge_step`): `accept_answer` sends the merge's answer to
+`step` as an `accept` result, so that the item stays in `accepting` with its first start kept,
+and `checks_waited` sends the sweep's tick, which tries the merge again or, once the checks
+have not passed for `machine.CHECKS_END`, leaves it to a person. A merge whose issue no
+sweep looks at is the host's own refusal, since no tick would come for it.
+
 Every round's checks and review reach it (`round_ended`): a review that paused at a usage
 limit, a review that failed, and a person's own pull request, which is only reviewed; a
 review that runs again after a transient error is the host's own retry. It finds the checks
@@ -59,7 +66,7 @@ from __future__ import annotations
 
 import json
 
-from . import autopilot, engine, first_state
+from . import autopilot, engine, first_state, usage
 from .checks import failing_signatures
 from .protocol.size import LONGEST, MOST
 from .report import TOO_LARGE
@@ -1426,6 +1433,62 @@ def required_failed(cfg, issue, pr, head, auto_fixes, wait):
     if (kinds.get("needPerson") or {}).get("reason") == "roundsUsedUp":
         return "needs_human"
     raise Refused(f"The engine answers {sorted(kinds)} after a required check failed.")
+
+
+def accept_answer(cfg, issue, pr, head, auto_fixes, result, before=(), since=None, at=None):
+    """What follows the answer of GitHub's merge of the NexKit pull request `pr`, as the engine
+    decides it (`report._refused`): the accept's `result`, as `accepted` or with its refusal
+    kind, sent after the events `before`, which tell the engine what the host read, such as a
+    head that moved. `since`, when given, is when required checks first had not passed on
+    `head`, as NexKit 6's `waiting_since` says, and `at` the time of the events. Returns
+    `(end, state)`, `end` being `accepted`, `waiting` while the required checks are awaited,
+    `fix` or `redo` for the round that follows, `base_failure` while a failure the base branch
+    has is awaited, or `person`, whose reason `state["attention"]` names. Raises `Refused`."""
+    doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
+    version = doc["change"]["version"]
+    action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
+    doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]
+    if since:
+        doc["checksSince"] = {"version": version, "at": str(since)}
+    events = [{**event, "at": at or event["at"]} for event in before]
+    fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
+    events.append(_event("actionFinished", issue, at, f"accept-{pr}-{version}", **fields))
+    state, actions = _answers(doc, events, policies(cfg))
+    kinds = {action["kind"]: action for action in actions}
+    waits = {wait["for"] for wait in state["waits"]}
+    stage = (kinds.get("runAgent") or {}).get("stage")
+    if state["state"] == "accepted":
+        return "accepted", state
+    if state["state"] == "accepting" and "requiredChecks" in waits:
+        return "waiting", state
+    if stage == "fix":
+        return "fix", state
+    if stage == "implement":
+        return "redo", state
+    if "baseFailure" in waits:
+        return "base_failure", state
+    if "needPerson" in kinds:
+        return "person", state
+    raise Refused(f"The engine answers {sorted(kinds)} after a merge, which the host cannot do.")
+
+
+def checks_waited(cfg, issue, pr, head, since, now):
+    """What follows a sweep's tick of the merge of the NexKit pull request `pr` that waits for
+    required checks since `since` on `head`, as the engine decides it
+    (`autopilot._merge_step`): `merge`, to try it again, or `waits` for a person once the
+    checks have not passed for more than six hours. Raises `Refused`."""
+    doc = _pull_doc(cfg, issue, pr, head, "accepting", 0)
+    version = doc["change"]["version"]
+    doc["checksSince"] = {"version": version, "at": usage.iso(since)}
+    doc["waits"] = [{"id": "w1.1", "for": "requiredChecks", "until": usage.iso(now), "on": None}]
+    event = _event("tick", issue, usage.iso(now), f"merge-{pr}-{version}", wait="w1.1")
+    answer = step(doc, event, policies(cfg))
+    kinds = {action["kind"]: action for action in answer["actions"]}
+    if "accept" in kinds:
+        return "merge"
+    if (kinds.get("needPerson") or {}).get("reason") == "acceptRefused":
+        return "waits"
+    raise Refused(f"The engine answers {sorted(kinds)} after a merge's wait, which it cannot do.")
 
 
 def stopped_counts(issue, pr, head, auto_fixes, automatic, by_host, checking=False):

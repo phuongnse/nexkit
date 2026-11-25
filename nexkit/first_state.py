@@ -412,6 +412,12 @@ class Item:
             if since is not None and self.now - since > autopilot.LOST:
                 text = "The required checks have not passed for six hours."
                 return self.be("needs a person", "ready", "acceptRefused", None, text)
+            if since is not None:
+                # The six hours go on counting from the first refusal on this head.
+                self.doc["checksSince"] = {
+                    "version": self.doc["change"]["version"],
+                    "at": iso(since),
+                }
             self.wait("requiredChecks", until=iso(self.now))
             return self.be("required checks", "accepting")
         if outcome == CI_WAITING:

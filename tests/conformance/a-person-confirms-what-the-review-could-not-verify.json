@@ -119,8 +119,8 @@
         "action": "accept",
         "result": {
           "accepted": false,
-          "refusal": "waitingForChecks",
-          "text": "Refused: waitingForChecks."
+          "refusal": "needsPerson",
+          "text": "Refused: needsPerson."
         }
       },
       "state": "ready",

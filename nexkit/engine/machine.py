@@ -524,6 +524,7 @@ class Step:
         elif observed["version"] != self.version:
             # A person's push: what acts on the old version stops, and the new one is checked.
             self.s["change"] = {**self.s["change"], "version": observed["version"]}
+            self.s.pop("checksSince", None)
             if self.state != "fixing":
                 # The round published: its change stays under the push, and the push's checks
                 # judge it, so its count stands, as NexKit 6 keeps it (`report._head_moved`,

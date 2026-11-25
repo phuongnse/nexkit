@@ -3,10 +3,10 @@
 Each file in tests/conformance/ is a case: the host's policies, the state it starts from (none,
 or an example of `nexkit/protocol/v1/examples/state/` with fields set), and events in order,
 each with the state, the `changed` flag and the kinds of actions it must give, or the error it
-must be refused with. A step may also name fields of the state to `expect`, by dotted path, and
-`policies` that the host sends from that step on. Events name only what a case needs; the
-runner fills in the rest, each with an id of its own unless the case gives one. A `note` is
-for people.
+must be refused with. A step may also name fields of the state to `expect`, by dotted path, the
+top-level fields that must be `absent`, and `policies` that the host sends from that step on.
+Events name only what a case needs; the runner fills in the rest, each with an id of its own
+unless the case gives one. A `note` is for people.
 
 The runner sends each request to the program twice and checks that both answers are the same
 text, checks every answer against the protocol, and after every call checks the outbox: every
@@ -258,6 +258,8 @@ class ConformanceTest(unittest.TestCase):
                 self.assertEqual([a["kind"] for a in answer["actions"]], step["actions"], where)
             for path_, value in step.get("expect", {}).items():
                 self.assertEqual(at(new, path_), value, f"{where}: {path_}")
+            for field in step.get("absent", ()):
+                self.assertNotIn(field, new, f"{where}: {field}")
             open_ = self.check_outbox(open_, event, answer, where)
             self.check_due(new, where)
             # A close stays pending only while the item is final: a reopen takes it back.

@@ -1,0 +1,28 @@
+{
+  "policies": {
+    "accept": "autoWhenPassed"
+  },
+  "state": {
+    "example": "accepting"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "c0ffee1"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runChecks"
+      ],
+      "expect": {
+        "change.version": "c0ffee1"
+      },
+      "absent": [
+        "checksSince"
+      ]
+    }
+  ]
+}

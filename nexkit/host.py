@@ -440,7 +440,9 @@ class _PlanView:
         elif reason == "askedAgain":
             text = autopilot.REPEATED
         elif reason == "closeRecommended":
-            text = autopilot.CLOSE_UNFOUNDED
+            # The plan run's report names this reason and mentions `notify` with it, and an
+            # older run that carried on records none.
+            text = self.run.get("attention") or autopilot.CLOSE_UNFOUNDED
         elif reason == "handMadeChange":
             text = autopilot.protected_reason(self.data["protected_paths"])
         elif reason == "approval":
@@ -465,11 +467,10 @@ class _PlanView:
 
 def plan_carried_on(gh, cfg, issue, decision, output):
     """Whether autopilot carries on after the plan `output` that a run of `decision` posted,
-    as the engine decides what follows it, so that `report` mentions nobody. As in NexKit 6,
-    a plan that finds no change carries on whatever else it says, and so do autopilot's
-    answers whose recommended option only closes the issue, unless they were asked again:
-    the sweep then waits for a person and mentions them itself. A plan that needs nobody is
-    no run that would need a person. Raises `Refused`."""
+    as the engine decides what follows it, so that `report` mentions nobody. A plan that finds
+    no change carries on whatever else it says. A recommended answer that only closes the
+    issue needs a person, whom `report` mentions: the sweep finds that mention since the run
+    (`autopilot.mentioned`), so it mentions nobody again. Raises `Refused`."""
     if filled(output.get("no_change")):
         return True
     number = issue["number"]
@@ -494,9 +495,7 @@ def plan_carried_on(gh, cfg, issue, decision, output):
     kinds = {action["kind"]: action for action in actions}
     if "runAgent" in kinds:
         return kinds["runAgent"]["stage"] == "plan"
-    if "needPerson" in kinds:
-        return kinds["needPerson"]["reason"] == "closeRecommended" and not again
-    return True
+    return "needPerson" not in kinds
 
 
 def plan_waits_for(output):

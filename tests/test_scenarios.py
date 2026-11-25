@@ -2261,6 +2261,28 @@ class ScenarioTests(unittest.TestCase):
                     [{"number": 5, "kind": "issue", "reason": autopilot.CLOSE_UNFOUNDED}],
                 )
 
+    def test_a_plan_whose_recommended_answer_only_closes_the_issue_mentions_once(self):
+        close = "Close the issue as not wanted, with no change"
+
+        def script(pipe, inputs):
+            question = {
+                "question": "Is this still wanted?",
+                "options": ["Add it", close],
+                "recommended": 2,
+                "closes": 2,
+            }
+            return plan(questions=[question])
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        self.assertFalse(pipe.gh.comments_matching(5, "NexKit autopilot carries on"))
+        [run] = [r for _, r in run_comments(pipe.gh.comments(5)) if r.get("command") == "plan"]
+        self.assertIn("answer the plan's questions", run["attention"])
+        [mention] = pipe.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("(NexKit closes the issue as not planned)", mention["body"])
+
     def test_a_blocked_round_that_recommends_waiting_does_not_close_the_issue(self):
         # The agent says in `no_change` that it found none, and recommends waiting.
         text = "Not a no-change finding: the issue is blocked on #1848, which is not merged."

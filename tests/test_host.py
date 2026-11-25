@@ -21,7 +21,7 @@ from nexkit.state import (
     render_state,
 )
 from tests.support import BOT_LOGIN, make_config
-from tests.test_autopilot import AutopilotCase, pilot
+from tests.test_autopilot import AutopilotCase, pilot, plan_output
 from tests.test_report import (
     HEAD,
     LIMIT,
@@ -111,6 +111,30 @@ class AfterPlanTest(HostCase):
         self.plan(5, {"questions": [ASKED]})
         self.assertEqual(self.step(5, cfg)["reason"], autopilot.REPEATED)
         self.assertIn("answers", self.requests(5, cfg)[0]["state"]["asked"])
+
+    def test_a_plan_whose_recommended_answer_only_closes_needs_a_person_at_its_report(self):
+        cfg = make_config(autopilot={"enabled": True, "answer": "recommended"}, notify=["olivia"])
+        self.issue(5)
+        output = plan_output(questions=[{**ASKED, "recommended": 3}])
+        result = self.report_plan(cfg, output)
+        self.assertIn("answer the plan's questions", result["attention"])
+        self.assertNotIn("carries on", result["summary"])
+        self.assertEqual(len(self.gh.comments_matching(5, "@olivia a person is needed")), 1)
+
+    def test_the_sweep_waits_with_the_reason_the_plan_s_run_recorded(self):
+        cfg = pilot(answer="recommended")
+        closing = {"questions": [{**ASKED, "recommended": 3}]}
+        self.issue(5)
+        self.plan(5, closing, attention="answer the questions")
+        step = self.step(5, cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", "answer the questions"))
+        self.assertTrue(step["person"])
+        # A run from before the report named it records none.
+        self.issue(6)
+        self.plan(6, closing)
+        step = self.step(6, cfg)
+        self.assertEqual((step["state"], step["reason"]), ("waits", autopilot.CLOSE_UNFOUNDED))
+        self.assertTrue(step["person"])
 
     def test_a_plan_from_before_its_record_is_read_by_its_run(self):
         self.issue(5)
@@ -216,13 +240,13 @@ class CarriesOnTest(HostCase):
         agent = {"output": output}
         return autopilot.carries_on(self.gh, cfg, decision, "planned", agent)
 
-    def test_answers_asked_again_need_a_person_even_when_one_only_closes(self):
+    def test_answers_need_a_person_when_asked_again_or_when_one_only_closes(self):
         cfg = pilot(answer="recommended")
         self.issue(5)
         closing = {"questions": [{**ASKED, "recommended": 3}]}
         self.run_comment(5, "plan", status="running")
-        # Autopilot's answers then wait for a person, whom the sweep mentions itself.
-        self.assertTrue(self.carries_on(5, closing, cfg))
+        # An answer that only closes the issue needs a person, whom `report` mentions.
+        self.assertFalse(self.carries_on(5, closing, cfg))
         self.assertTrue(self.carries_on(5, {"questions": [ASKED]}, cfg))
         self.plan(5, {"questions": [ASKED]})
         self.answered(5)

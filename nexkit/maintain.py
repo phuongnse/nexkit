@@ -30,13 +30,12 @@ from .state import (
     SUCCESS,
     bot_record,
     conflict_rounds_used,
+    counted_fix,
     next_round,
     passed_checks,
     read_state,
     render_run,
-    run_action,
     run_comments,
-    run_kinds,
     with_run,
 )
 from .usage import PAUSE_WINDOW, iso, parse_iso
@@ -929,8 +928,7 @@ def _give_back(gh, number, comments, run):
     resumed one, counts toward no automatic fix round here."""
     from .host import Refused, stopped_counts
 
-    automatic = run_action(run) == "fix" and "auto" in run_kinds(run)
-    automatic = automatic and not (run.get("conflicts") or run.get("retry") or run.get("resumed"))
+    automatic = counted_fix(run)
     state_id, state = read_state(comments)
     if not (state and state.get("auto_fixes")):
         return

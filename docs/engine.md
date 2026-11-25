@@ -362,11 +362,12 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   decide the next round, as in NexKit 6.
 - **Which rounds count.** Only an automatic fix round counts toward `fixRounds`. One that is
   stopped before its review ends gives its count back, since it could no longer lead to an
-  accept and its work was not judged: the engine stops it when the change moves under it, such
-  as by a push or a conflict round, and the host may stop it (`stopped`), as GitHub does for an
-  agent it may not run, a change already on the base branch, or checks that the base branch's
-  move stopped. One whose agent stopped by itself, such as blocked, out of time or with an
-  error, keeps its count.
+  accept and its work was not judged: the engine stops it when a conflict round takes over, or
+  when a person pushes while its agent runs, and the host may stop it (`stopped`), as GitHub does
+  for an agent it may not run, a change already on the base branch, or checks that the base
+  branch's move stopped. Once the round has published, a person's push keeps its count, since its
+  change stays under the push and the push's checks judge it, as NexKit 6 keeps it. One whose
+  agent stopped by itself, such as blocked, out of time or with an error, keeps its count.
 - **From every state that has a change,** the engine reconciles the item with the latest observation
   of that change after each event, once no publish or replace is on its way. A change that was
   merged, such as by a person's hand, goes to `accepted`; one that became empty, because the same
@@ -633,7 +634,8 @@ action of the answer is pending, and an action leaves `pending` only with its re
 or its loss. It also checks NexKit's rule: every item that is not final has an action that works
 on it (`runAgent`, `runChecks`, `publish`, `accept`, `createParts`, `replaceChange` or `wait`), a
 wait, a hold or attention. The rule that a round counts only when its agent ran to its end or
-published joins these checks with the engine's rules of rounds. Across the cases, every
+published joins these checks with the engine's rules of rounds, and so does the rule that a fix
+round waits to be issued (`rounds.due`) only in `fixing`. Across the cases, every
 transition of the states table is played, no case makes one that the page does not name for its
 policies and for whether the item had a change, and an item is dropped from every state that is
 not final. The engine passes the suite in this repository, and each host runs it through its own
@@ -678,10 +680,11 @@ adapter. A new rule of the engine comes with a case.
   NexKit 6's markers only from NexKit's App, each only where NexKit writes it. The change's
   observation is what NexKit 6 knows of the open pull request: its head commit, and whether it
   conflicts or was merged when GitHub said so; none when there is no pull request. A NexKit 6 run
-  on its way becomes the action the engine waits for. A run paused at a usage limit, or until it
-  runs again after a transient stop, becomes a wait with its time, unless NexKit 6 would no longer
-  resume it, which fails for a person; an automatic run that ended without a report waits to
-  start again, later each time. A merge that waits for required checks is `accepting` with that
+  on its way becomes the action the engine waits for, and an automatic fix round on its way, with
+  a count, is marked `rounds.automatic`, so that a stop gives its count back. A run paused at a
+  usage limit, or until it runs again after a transient stop, becomes a wait with its time, unless
+  NexKit 6 would no longer resume it, which fails for a person; an automatic run that ended
+  without a report waits to start again, later each time. A merge that waits for required checks is `accepting` with that
   wait, and a round that waits for a failure the base branch has is `fixing` with that wait. An
   item without a pull request that a lower wave of its milestone holds back waits for each open
   issue of that wave as for a blocker, read once at the import; an issue opened later in the

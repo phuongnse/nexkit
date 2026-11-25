@@ -1377,7 +1377,8 @@ def released(cfg, issue, pull, run, head, auto_fixes):
     (`autopilot._released`): one of `_wait_end`'s. `head` is the pull request's head now. A
     fix round held back is counted only now, while `fix.max_auto_rounds` has one left as it
     reads now. `_released` reads only the head, so a conflict is the next round's to find.
-    Raises `Refused`."""
+    For a held merge, `autopilot._released` uses the answer only to guard against a refusal,
+    while `_merge_step` reads the head and merges. Raises `Refused`."""
     back = "accepting" if run.get("held_back") == "merge" else "fixing"
     doc = _pull_doc(cfg, issue, pull, run.get("head"), back, auto_fixes)
     doc["hold"] = True

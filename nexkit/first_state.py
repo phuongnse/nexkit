@@ -30,6 +30,7 @@ from .state import (
     answers_record,
     by_bot,
     conflict_rounds_used,
+    counted_fix,
     depends_on,
     latest_plan,
     plan_data,
@@ -356,9 +357,10 @@ class Item:
         status, outcome = latest.get("status"), latest.get("outcome")
         name = OF_ACTION.get(run_action(latest), "checking")
         if status in autopilot.ACTIVE:
-            return self.active(comment, latest, name)
+            return self.active(comment, latest, name, automatic=counted_fix(latest))
         if outcome in CHAINED:
-            return self.running("next round", _next_state(latest, name))
+            started = latest.get("outcome") == "auto_fix"
+            return self.running("next round", _next_state(latest, name), automatic=started)
         if outcome == "lost":
             # `autopilot._reportless`: a fix round's command again, or a review for any other.
             command = "fix" if run_action(latest) == "fix" else "review"
@@ -464,10 +466,11 @@ class Item:
 
     # A run that is on its way, paused or lost.
 
-    def active(self, comment, run, name):
-        """A run that runs, continues in another, or paused, as `autopilot._stalled` reads it."""
+    def active(self, comment, run, name, automatic=False):
+        """A run that runs, continues in another, or paused, as `autopilot._stalled` reads it.
+        `automatic` marks a run that runs as an automatic fix round."""
         if run.get("status") != PAUSED:
-            return self.running("started", name)
+            return self.running("started", name, automatic)
         if run.get("verdict") == "paused":
             # A round paused at its review.
             name = "reviewing"
@@ -528,8 +531,13 @@ class Item:
             text = clip(said, "reason") if said else (text or SAYS[reason])
             self.doc["attention"] = {"reason": reason, "text": text, "ref": ref}
 
-    def running(self, kind, name):
-        """A command or round on its way: the action the engine waits for."""
+    def running(self, kind, name, automatic=False):
+        """A command or round on its way: the action the engine waits for. An `automatic` fix
+        round that holds a count is marked, so that a stop gives the count back, as NexKit 6
+        does (`report._stop_round`)."""
+        rounds = self.doc["rounds"]
+        if automatic and name == "fixing" and rounds["counted"] >= 1:
+            rounds["automatic"] = True
         version = (self.doc["change"] or {}).get("version")
         if name == "checking":
             action = {"id": RUN_ID, "next": None, "kind": "runChecks", "changeVersion": version}

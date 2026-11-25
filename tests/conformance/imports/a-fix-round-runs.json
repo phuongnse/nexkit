@@ -229,7 +229,8 @@
       "criteria": [
         "unmet"
       ],
-      "checklist": []
+      "checklist": [],
+      "automatic": true
     },
     "used": {
       "tokens": {

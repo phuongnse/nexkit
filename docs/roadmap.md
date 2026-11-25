@@ -30,6 +30,7 @@ These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.12.2 (202
 
 | Milestone | What it delivers | Status |
 | --- | --- | --- |
+| [Foundation](https://github.com/phuongnse/nexkit/milestone/18) | NexKit's own docs, delivery and checks at the standard it asks of the repositories it runs on: a map of the docs, short agent instructions, architecture, security, decisions, CodeQL, a docs audit, the owner's maintenance skill, and NexKit working its own issues | In progress |
 | [Engine and hosts](https://github.com/phuongnse/nexkit/milestone/1) | The loop's decisions in one engine that any host runs, as [The engine](engine.md) describes. NexKit 7.0 ships when the GitHub host runs only through it (#320) | In progress |
 
 Built so far: the protocol's schemas, `nexkit-engine step`, `prompt` and `serve`, the state

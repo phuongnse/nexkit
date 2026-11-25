@@ -1,0 +1,86 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "answers": "recommended"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "answers"
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@error"
+      },
+      "state": "failed",
+      "changed": true,
+      "expect": {
+        "asked": []
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "retry",
+        "by": null
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planRecommended"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "answers"
+        ]
+      }
+    }
+  ]
+}

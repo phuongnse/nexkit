@@ -1024,6 +1024,62 @@ class ReportTests(ReportCase):
         self.assertEqual(row["run"]["status"], "success")
         self.assertFalse(self.gh.dispatches)
 
+    def test_a_merge_refused_for_pending_required_checks_is_the_engine_s_to_wait_for(self):
+        from nexkit import host
+        from nexkit.report import merge_pull
+
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.gh.required = {"e2e"}
+        cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+        target = {"pr": 6, "head": HEAD, "issue": 5, "base": "main"}
+        pending = GitHubError(405, 'Required status check "e2e" is expected.')
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            self.gh.merge_error = [pending]
+            row = {}
+            outcome, _ = merge_pull(self.gh, cfg, target, row, "", WORKFLOW, "main")
+            self.assertEqual(outcome, "merge_waiting")
+            [(state, event, _)] = [call.args for call in step.call_args_list]
+            self.assertEqual(event["kind"], "actionFinished")
+            self.assertEqual(
+                (event["result"]["accepted"], event["result"]["refusal"]),
+                (False, "waitingForChecks"),
+            )
+            self.assertEqual([action["kind"] for action in state["pending"]], ["accept"])
+            # `waiting_since` is the engine's `checksSince`, which is the time of its event.
+            self.assertEqual(row["waiting_since"], event["at"])
+            self.assertLess(
+                datetime.now(UTC) - parse_iso(row["waiting_since"]), timedelta(minutes=1)
+            )
+            # A second refusal of the same head keeps the first time the checks had not passed.
+            step.reset_mock()
+            self.gh.merge_error = [pending]
+            first = "2026-11-23T10:00:00Z"
+            row = {"waiting_since": first}
+            outcome, _ = merge_pull(self.gh, cfg, target, row, "", WORKFLOW, "main")
+            self.assertEqual(outcome, "merge_waiting")
+            [(state, *_)] = [call.args for call in step.call_args_list]
+            self.assertEqual(state["checksSince"], {"version": HEAD, "at": first})
+            self.assertEqual(row["waiting_since"], first)
+
+    def test_a_refusal_the_engine_cannot_wait_for_goes_to_a_person(self):
+        from nexkit import host
+        from nexkit.report import merge_pull
+
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        self.gh.required = {"e2e"}
+        cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+        target = {"pr": 6, "head": HEAD, "issue": 5, "base": "main"}
+        self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is expected.')]
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            row = {}
+            outcome, text = merge_pull(self.gh, cfg, target, row, "", WORKFLOW, "main")
+        self.assertEqual(outcome, "merge_refused")
+        self.assertIn("refused to decide its next step", text)
+        self.assertNotIn("waiting_since", row)
+        self.assertIn("refused", target["found"])
+
     def test_auto_merge_starts_the_base_branch_workflows(self):
         self.candidate()
         run = "https://github.com/acme/app/actions/runs/77"

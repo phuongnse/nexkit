@@ -20,4 +20,5 @@ FAMILIES = {
     "review": "#347",
     "chains": "#347",
     "released": "#347",
+    "waits": "#390",
 }

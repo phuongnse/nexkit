@@ -1086,6 +1086,37 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual((step["state"], step["person"]), ("waits", True))
         self.assertIn("have not passed for six hours", step["reason"])
 
+    def test_the_six_hours_of_a_merge_waiting_for_checks_end_as_the_engine_answers(self):
+        from datetime import timedelta
+
+        from nexkit import autopilot, host
+
+        self.waiting_merge()
+        later = datetime.now(UTC) + timedelta(hours=7)
+        real = host.step
+
+        def early(state, event, policies):
+            """The engine's answer to the tick as if it came when the wait began."""
+            return real(state, {**event, "at": state["checksSince"]["at"]}, policies)
+
+        with mock.patch.object(host, "step", side_effect=early) as step:
+            step_ = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
+        self.assertEqual(step_["state"], "merge")
+        [(state, event, _)] = [call.args for call in step.call_args_list]
+        self.assertEqual((event["kind"], event["at"]), ("tick", iso(later)))
+        self.assertEqual(state["waits"][0]["id"], event["wait"])
+        # An answer the host cannot carry out leaves that issue to a person, alone.
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            step_ = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
+        self.assertEqual((step_["state"], step_["person"]), ("waits", True))
+        self.assertIn("refused to decide", step_["reason"])
+        # A branch behind its base that `conflicts.auto_resolve` updates asks the engine nothing.
+        self.gh.pulls[6]["mergeable_state"] = "behind"
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")) as step:
+            step_ = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
+        self.assertEqual(step_["state"], "merge")
+        step.assert_not_called()
+
     def test_a_new_commit_on_a_merge_waiting_pull_request_is_reviewed(self):
         from nexkit import autopilot
 

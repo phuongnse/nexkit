@@ -112,6 +112,23 @@
     "hold": {
       "type": "boolean"
     },
+    "checksSince": {
+      "$comment": "When the first accept on `version` was refused because required checks had not passed, while the item stays in `accepting`: the wait for them ends six hours after it (docs/engine.md#states). A start recorded for another version counts as missing, and the engine drops it when the item leaves `accepting`.",
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "common.schema.json#/$defs/change/properties/version"
+        },
+        "at": {
+          "$ref": "common.schema.json#/$defs/time"
+        }
+      },
+      "required": [
+        "version",
+        "at"
+      ],
+      "additionalProperties": false
+    },
     "waits": {
       "type": "array",
       "items": {

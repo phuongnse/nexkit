@@ -26,6 +26,7 @@ import multiprocessing
 import os
 import random
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -54,6 +55,9 @@ INVARIANTS = {
     "`autoWhenClean` with `answers: recommended`",
     "questions": "a round's questions are kept only while they wait",
     "split": "an item with a change is never split",
+    "required-checks": "a start of the wait for required checks lives only in `accepting`, on "
+    "the change's version; a refusal for them that have not passed leaves one wait, a tick and "
+    "the first start of that version; a tick more than six hours after it needs a person",
 }
 
 # Broken invariants that a known issue covers: (invariant, a text the problem starts with).
@@ -63,10 +67,23 @@ KNOWN = {
 }
 
 TITLE = "Cache the results"
+# The share of walks that start from the example of an item that accepts.
+ACCEPTING = 0.2
 # The most events the engine may refuse, as a share of all: the walker sends some it may.
 REFUSED = 0.1
 ROLES = ["decides", "writer", "reader", "outside"]
+# How long after the first refusal for required checks a walk's tick comes: around the six
+# hours that end the wait.
+TICKS = [0, 3600, 5 * 3600 + 3540, 6 * 3600, 6 * 3600 + 1, 7 * 3600]
+SIX_HOURS = 6 * 3600
+TIME = "%Y-%m-%dT%H:%M:%SZ"
 CHECKS = ["unit", "lint", "e2e", "types"]
+
+
+def _later(seconds):
+    """The conformance runner's time for an event, `seconds` later."""
+    start = datetime(2026, 11, 23, 15, 1, 11, tzinfo=UTC)
+    return (start + timedelta(seconds=seconds)).strftime(TIME)
 
 
 class Walker:
@@ -231,9 +248,10 @@ class Walker:
         if kind == "runChecks":
             if rng.random() < 0.6:
                 return self.checks(rng)
-        if kind == "accept" and rng.random() < 0.4:
+        if kind == "accept" and rng.random() < 0.6:
             refusal = rng.choice(
                 ["checkFailed", "checkFailed", "conflict", "behind", "notAccepted"]
+                + ["waitingForChecks"] * 8
             )
             found = {"accepted": False, "refusal": refusal, "text": "x"}
             if rng.random() < 0.5:
@@ -251,6 +269,17 @@ class Walker:
             return None
         found = copy.deepcopy(rng.choice(pool))
         return tc.result_of(found) if isinstance(found, str) else found
+
+    def tick(self, rng, state, wait):
+        """A tick of `wait`; one of required checks comes at one of `TICKS` after their start."""
+        found = {"kind": "tick", "wait": wait["id"]}
+        since = (state.get("checksSince") or {}).get("at")
+        if wait["for"] == "requiredChecks" and since:
+            late = datetime.strptime(since, TIME).replace(tzinfo=UTC) + timedelta(
+                seconds=rng.choice(TICKS)
+            )
+            found["at"] = late.strftime(TIME)
+        return found
 
     def short(self, rng, state):
         tc = self.tc
@@ -280,10 +309,13 @@ class Walker:
             kind = "held"
         if state["rounds"].get("due") and rng.random() < 0.3:
             kind = rng.choice(["released", "blockerClosed", "requested", "push", "held"])
+        checks = [wait for wait in state["waits"] if wait["for"] == "requiredChecks"]
+        if checks and rng.random() < 0.6:
+            return self.tick(rng, state, checks[0])
         if state["waits"] and rng.random() < 0.25:
             wait = rng.choice(state["waits"])
             if wait["until"] is not None:
-                return {"kind": "tick", "wait": wait["id"]}
+                return self.tick(rng, state, wait)
             if wait["for"] == "baseFailure":
                 return {"kind": "blockerClosed", "blocker": wait["on"] or "7", "completed": True}
         if kind == "actionFinished":
@@ -294,7 +326,12 @@ class Walker:
                 result = self.finish(rng, state, action)
                 if result is None:
                     return None
-                return {"kind": "actionFinished", "action": action["id"], "result": result}
+                found = {"kind": "actionFinished", "action": action["id"], "result": result}
+                if action["kind"] == "accept":
+                    # Refusals come at different times, so that the first one's is told apart.
+                    late = rng.choice([0, 3600, 2 * 3600, 5 * 3600])
+                    found["at"] = _later(late)
+                return found
         if kind == "requested":
             whats = ["plan", "planFromScratch", "go", "fix", "review", "retry", "start"]
             if state["state"] in ("new", "awaitingApproval"):
@@ -321,7 +358,7 @@ class Walker:
             return {"kind": "actionLost", "action": rng.choice(state["pending"])["id"]}
         if kind == "tick":
             timed = [w for w in state["waits"] if w["until"] is not None]
-            return {"kind": "tick", "wait": rng.choice(timed)["id"]} if timed else None
+            return self.tick(rng, state, rng.choice(timed)) if timed else None
         if kind == "push":
             if not state["change"]:
                 return None
@@ -647,6 +684,7 @@ class Walker:
             # The reconcile after any event may start a conflict round.
             if not old.get("due") and rounds["conflicts"] == old["conflicts"]:
                 flag("usage-limit", "a run again after a tick counted as started", info)
+        self.required_checks(state, event, answer, done, flag, info)
         # automatic: a round that its checks or its review judged keeps its count, so only a
         # fix round issued in the same step is automatic after it.
         judged = done is not None and done["kind"] == "runChecks"
@@ -672,6 +710,52 @@ class Walker:
         if state["hold"] and new["hold"] and any(a["kind"] == "replaceChange" for a in actions):
             flag("hold", "a change made again under a hold", info)
 
+    def required_checks(self, state, event, answer, done, flag, info):
+        """The invariants of the wait for required checks and its six hours."""
+        new, actions = answer["state"], answer["actions"]
+        since = new.get("checksSince")
+        version = (new["change"] or {}).get("version")
+        if since and (new["state"] != "accepting" or since["version"] != version):
+            flag("required-checks", "a start outside accepting or of another version", info)
+        if state is None or not answer["changed"]:
+            return
+        seen = state["observed"]
+        # What would move an item out of `accepting` by itself is not this rule's.
+        calm = bool(seen) and not (seen["conflicts"] or seen["merged"] or seen["empty"])
+        calm = calm and seen["version"] == state["change"]["version"] and not state["hold"]
+        result = event.get("result") or {}
+        if done and done["kind"] == "accept" and result.get("refusal") == "waitingForChecks":
+            if state["state"] != "accepting" or not calm:
+                return
+            held = [wait for wait in new["waits"] if wait["for"] == "requiredChecks"]
+            first = state.get("checksSince") or {}
+            kept = first.get("version") == state["change"]["version"]
+            want = {"version": version, "at": first["at"] if kept else event["at"]}
+            asked = [a for a in actions if a["kind"] == "wait"]
+            if new["state"] != "accepting" or len(held) != 1 or len(asked) != 1:
+                flag("required-checks", "a refusal for required checks leaves no single wait", info)
+            elif asked[0]["wait"] != held[0]["id"] or asked[0]["until"] != held[0]["until"]:
+                flag("required-checks", "the tick asked for is not the wait's", info)
+            elif since != want:
+                flag("required-checks", "the start is not the first refusal on this version", info)
+            return
+        ended = next((w for w in state["waits"] if w["id"] == event.get("wait")), None)
+        if event["kind"] != "tick" or not ended or ended["for"] != "requiredChecks":
+            return
+        first = state.get("checksSince")
+        if state["state"] != "accepting" or not first:
+            return
+        late = datetime.strptime(event["at"], TIME) - datetime.strptime(first["at"], TIME)
+        waited = first["version"] == state["change"]["version"] and late.total_seconds() > SIX_HOURS
+        attention = new["attention"] or {}
+        if waited and (new["state"] != "ready" or attention.get("reason") != "acceptRefused"):
+            flag("required-checks", "a tick six hours after the start needs no person", info)
+        elif not waited and new["state"] == "ready" and "six hours" in attention.get("text", ""):
+            flag("required-checks", "the six hours ended early", info)
+        elif not waited and calm and not state["attention"] and len(state["waits"]) == 1:
+            if not any(a["kind"] == "accept" for a in actions) and new["state"] == "accepting":
+                flag("required-checks", "a tick within six hours tries no accept again", info)
+
     # -- a walk ---------------------------------------------------------------------------------
 
     def walk(self, w, seed, steps, show=False):
@@ -680,6 +764,12 @@ class Walker:
         state = None
         trail = []
         memory = {"open": {}, "floor": None}
+        if rng.random() < ACCEPTING:
+            # Some walks start at a merge that waits for required checks, which a walk from a
+            # new item seldom reaches: its accept, refusals and ticks come at once.
+            path = self.tc.EXAMPLES / "state" / "accepting.json"
+            state = json.loads(path.read_text())
+            memory["open"] = {action["id"]: action for action in state["pending"]}
         self.last_checks = None
         for number in range(1, steps + 1):
             short = self.short(rng, state)

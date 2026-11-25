@@ -42,6 +42,7 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `review` | #347 | a review that failed, paused or is missing, then runs again |
 | `chains` | #347 | random chains of rounds with long, sharded and repeated check names |
 | `released` | #347 | a held conflict round released while `mergeable` flips |
+| `waits` | #390 | a merge that waits for required checks and its six hours: the round's own merge, a sweep, a writer's approval |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time
@@ -61,8 +62,10 @@ python3 tests/differential/walk.py --walk 17 --show
 then, and checks the invariants that `INVARIANTS` lists after every step: the protocol's
 schemas, the transitions the states table names, the outbox, every open item carried on,
 counts within the policies, which rounds give their count back, `due` and `automatic`,
-diagnosis, usage-limit waits, runs again after a transient stop, holds and conflict rounds, and
-the engine's answers to a round's questions. Each rule is checked both ways where it can be: a count neither passes its policy
+diagnosis, usage-limit waits, runs again after a transient stop, holds and conflict rounds, the
+wait for required checks with its six hours, and the engine's answers to a round's questions.
+Some walks start from the example of an item that accepts, which a walk from a new item seldom
+reaches. Each rule is checked both ways where it can be: a count neither passes its policy
 nor fails to come back when its round stops. It exits 1 when one breaks that `KNOWN` does not
 list, or when the engine refuses more than a tenth of the events, as walks it refuses check
 nothing. A change adds invariants for the rules it adds.

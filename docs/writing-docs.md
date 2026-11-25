@@ -226,5 +226,6 @@ when a list of what the code defines misses an entry. These rules close each of 
    at its new home. The [docs audit skill](../.claude/skills/nexkit-docs-audit/SKILL.md) says how a
    page is read and what each issue holds.
 9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
-   every doc and that the links of the map and of this page resolve. A docs check is added only once
-   the whole tree passes it: there are no lists of exceptions.
+   every doc, that the links of the map, of this page and of [AGENTS.md](../AGENTS.md) resolve, and
+   that AGENTS.md keeps within its word limits. A docs check is added only once the whole tree passes
+   it: there are no lists of exceptions.

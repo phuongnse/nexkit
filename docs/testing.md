@@ -16,21 +16,22 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 | Unit tests | `tests/test_*.py`, run by `python3 -m unittest discover -s tests -t .` | Each module's behaviour, most of it against `FakeGitHub`, with the standard library only. `tests/test_cli.py` also reads the workflows and checks which job holds which token and secret |
 | Scenarios | `tests/test_scenarios.py` | Autopilot over many rounds and sweeps: every issue in scope is carried on or waits for a person, and budgets count as they should |
 | Conformance | `tests/conformance/` | Each rule of the engine, as a case of events and the actions and state they must give; each kind of import (`first_state.KINDS`) has a case in `tests/conformance/imports/` |
-| Prompt goldens | `tests/prompts/` | The prompt each stage writes, compared with NexKit 6's own record of it. A change to a prompt changes its golden by hand and says why |
+| Prompt goldens | `tests/prompts/` | The prompt each stage writes, compared with NexKit 6's own record of it. A change to a prompt changes its golden by hand and says why. Never write them again with `NEXKIT_WRITE_PROMPTS` from today's code: set it only to add a case's file from NexKit 6's code, or to change a prompt on purpose |
 | Agent schemas | `tests/golden/agent-schemas.json`, read by `tests/test_protocol.py` | The result schema each stage gives its agent, as NexKit 6 gave it |
 | Differential check | `tests/differential/`, run by `tests/differential/check.sh` | The engine against NexKit 6, with random walks of the engine and its mutants, as [its README](../tests/differential/README.md) says |
 | Lint | `scripts/lint.sh` | ruff on the Python code, and actionlint on the workflows |
 | Plugin | `claude plugin validate --strict .` | The plugin's manifest and skills |
-| Docs | `tests/test_docs.py` | The map lists every doc, and the links of the map and of the docs standard resolve, as [writing the docs](writing-docs.md#how-the-docs-stay-correct) says |
-| The engine's image | `release.yml` | The image builds from the pinned base and answers over HTTP as `nexkit-engine` answers on standard input |
+| Docs | `tests/test_docs.py` | The map lists every doc, and the links of the map, of the docs standard and of AGENTS.md resolve. AGENTS.md stays within 800 words, and each of its rules within 60, as [writing the docs](writing-docs.md#how-the-docs-stay-correct) says |
+| The engine's image | `release.yml` | The image builds from the pinned base and answers over HTTP as `nexkit-engine` answers on standard input. `update-image.yml` proposes a new base, and its pull request needs this check |
 | Code scanning | `codeql.yml` | CodeQL on the Python code and the workflows |
 | Smoke test | `scripts/smoke.py` | Real Claude Code at its pin, as [the smoke test](#the-smoke-test) says |
 
 ## The smoke test
 
 The smoke test runs every agent stage against real Claude Code, at the version that
-`nexkit/__init__.py` pins, on a tiny repository. It exercises the CLI's real flags, event stream and
-structured results, which the unit tests replace with a fake. It needs a Claude login or credential,
+`nexkit/__init__.py` pins, on a tiny repository. NexKit tests only the versions it pins, with no
+matrix of versions. It exercises the CLI's real flags, event stream and structured results, which
+the unit tests replace with a fake. It needs a Claude login or credential,
 `CLAUDE_CODE_OAUTH_TOKEN` in CI, and costs a real session, so it runs only when a change touches
 what it covers.
 

@@ -746,9 +746,8 @@ class _RoundView:
 def _carries_on(actions):
     """Whether the engine's `actions` after a stopped round start a run or close the issue.
     Any wait for a person, the recommended answer that only closes the issue included, needs
-    that person now, so `report` mentions them and the sweep does not. NexKit 6 said
-    autopilot carries on there and left the mention to the sweep; this differs on purpose
-    (#346)."""
+    that person now, so `report` mentions them and the sweep does not (see
+    `docs/engine.md#getting-there`)."""
     return any(action["kind"] in ("runAgent", "close") for action in actions)
 
 

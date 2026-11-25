@@ -149,11 +149,18 @@ needed.
   host whose write loses reads the state again and sends the event again. An answer that changes
   nothing, such as to a duplicate result, says so and gives the state back as it came, with no
   actions, so the host writes nothing.
-- **It holds decisions, not prose.** The state keeps what the engine decides from: the state
-  name, the change, questions, criteria and checklist outcomes, findings in short, failure
-  signatures, counts, and the tokens, time and money its agents spent. Long texts, such as a
-  plan's prose, check output, a discussion and evidence, stay with the host as texts that the
-  state names, and reach the engine only in `prompt`.
+- **It holds decisions and the history that the prompts show, not other prose.** The state keeps
+  what the engine decides from: the state name, the change, questions, criteria and checklist
+  outcomes, findings in short, failure signatures, counts, and the tokens, time and money its
+  agents spent. It also keeps the history that the next fix and review prompts show: the latest
+  fix rounds' records, each with its number, who started it, whether it diagnosed, its note, the
+  agent's summary and cause, and the checks that still failed after it with their failure
+  signatures, and the last review's round, version, verdict and findings with file, line and
+  body. The engine records a fix round when its agent returns a result that is not blocked, and
+  the checks after it complete the record. A round under way keeps who started it, whether it
+  diagnoses and its note until then (`rounds.fixRound`). Other long texts, such as a plan's prose,
+  check output, a discussion and evidence, stay with the host as texts that the state names, and
+  reach the engine only in `prompt`.
 - **It has a size.** The protocol sets the largest state document: 48,000 bytes as JSON in UTF-8
   with its keys sorted and no spaces, so that its base64 fits one GitHub comment of 65,536
   characters. What results and events bring is bounded as it comes in. Each list keeps at most as
@@ -164,14 +171,23 @@ needed.
   first. A split of more parts keeps none of them, only how many it named, so a split is never filed
   cut. Each text is clipped as NexKit 6 clips it: a question at 1,500 characters, an option at 500,
   the item's title and a part's at 256, a path at 300, a finding at 300, a reason for a person at
-  1,000 and a check's name at 40, as long as NexKit's own may be. A long failure signature is kept
-  as its hash, never cut, because rounds compare signatures. When a document would still pass the
-  limit, the engine shortens texts that a person reads in full where the host keeps them, each to
-  the most that fits, in this order: the findings, the questions and their options, the protected
-  paths, the attention's text, and the names of repeated checks past the ten that a diagnosis round
-  looks into, which no name of NexKit's own ever needs. It never shortens a count, a status, an id,
-  a title or a signature, which decisions read, and a host that builds a first document keeps it the
-  same way. The engine never answers a state that its own schema refuses, such as an outbox past its
+  1,000 and a check's name at 40, as long as NexKit's own may be. The history is clipped as the
+  prompts clip it: a note at 2,000 characters, a summary at 4,000, a cause at 2,000, a finding's
+  body at 1,500 and the failure signature of a fix record at 200. The state keeps the latest 5 fix
+  records, each with at most 30 failing checks, and the last review's 30 findings, in the
+  reviewer's order, or the blocking ones first when there are more, with how many were left out.
+  A long failure signature is kept as its hash, never cut, because rounds compare signatures.
+  When a document would still pass the limit, the engine shortens texts that a person reads in full
+  where the host keeps them, each to the most that fits, in this order: the findings, the questions
+  and their options, the protected paths, the attention's text, and the names of repeated checks
+  past the ten that a diagnosis round looks into, which no name of NexKit's own ever needs. Only
+  then does it shorten the history: the last review's suggestions and then its blocking findings,
+  the fix records' notes, summaries and causes and the note of the round under way, the check
+  names, failure signatures and conflicting files of the fix records, and the files of the last
+  review's findings. If the document still does not fit, the oldest fix records leave out the
+  checks that still failed after them, which a prompt then shows as unknown. It never shortens a
+  count, a status, an id, a title or a signature, which decisions read, and a host that builds a
+  first document keeps it the same way. The engine never answers a state that its own schema refuses, such as an outbox past its
   `maxItems` when a host never reports its actions: it refuses that event instead.
 - **It is the truth.** A host may keep columns or markers that copy parts of it, for its own
   lists and pages, written in the same transaction, but the engine reads only the document.
@@ -705,7 +721,10 @@ adapter. A new rule of the engine comes with a case.
   The checks that NexKit 6 found failing the same way before and after the last fix round are
   kept for the next automatic fix round to diagnose (`rounds.repeated`). So are the failing
   checks of NexKit 6's state comment (`rounds.failing`), which the checks after the next fix
-  round compare with, as NexKit 6 compares them. The version a fix round published
+  round compare with, as NexKit 6 compares them. The fix records and the last review of NexKit 6's
+  state comment are imported with NexKit 6's round numbers, which count every run on the pull
+  request, so the engine numbers the rounds after them from the next number. The version a fix
+  round published
   (`rounds.fixed`) is not imported, since every imported fix round still publishes and the
   engine sets it then.
   What a round decided on its head keeps that head as the change's version, and a head pushed

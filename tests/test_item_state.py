@@ -8,7 +8,7 @@ import unittest
 
 from nexkit import engine, item_state, protocol
 from nexkit.engine.machine import blank
-from nexkit.protocol.size import LONGEST, MOST, STATE_LIMIT, dump, fit, size
+from nexkit.protocol.size import HISTORY, LONGEST, MOST, STATE_LIMIT, dump, fit, size
 from nexkit.state import TEXT_LIMIT
 from tests.support import BOT_LOGIN, FakeGitHub
 
@@ -201,7 +201,8 @@ def most(path):
     """The `maxItems` of a list of the state, by its path in `state.schema.json`."""
     schema = protocol.load("state.schema.json")
     for part in path.split("."):
-        schema = schema["properties"][part]
+        # `[]` names a list's items.
+        schema = schema["items"] if part == "[]" else schema["properties"][part]
         schema = schema["anyOf"][0] if "anyOf" in schema else schema
     return schema["maxItems"]
 
@@ -215,10 +216,58 @@ def worst(characters):
     return (WORST * characters)[:characters]
 
 
-def largest():
+def clipped(characters):
+    """A text of the history as `engine.textutil.clip` keeps it at most: the limit, and the
+    line that ends a shortened text."""
+    return worst(characters) + "\n[truncated]"
+
+
+def history():
+    """The most that the state keeps of the history that the prompts show: five fix records
+    with every text, 30 failing checks and 30 conflicting files, and a last review of 30
+    findings with the longest bodies."""
+    fixes = [
+        {
+            "round": 20 + n,
+            "auto": bool(n % 2),
+            "diagnosis": bool(n % 2),
+            "note": clipped(HISTORY["note"]),
+            "summary": clipped(HISTORY["summary"]),
+            "cause": clipped(HISTORY["cause"]),
+            "failing": [
+                {
+                    "name": worst(LONGEST["check"]) + "...",
+                    "signature": clipped(HISTORY["signature"]),
+                }
+                for _ in range(most("rounds.fixes.[].failing"))
+            ],
+            "conflicts": [worst(LONGEST["path"])] * most("rounds.fixes.[].conflicts"),
+        }
+        for n in range(most("rounds.fixes"))
+    ]
+    review = {
+        "round": 25,
+        "version": "f" * 40,
+        "verdict": "request_changes",
+        "findings": [
+            {
+                "severity": "blocking" if n % 2 else "suggestion",
+                "file": worst(LONGEST["path"]),
+                "line": 9999,
+                "body": clipped(HISTORY["body"]),
+            }
+            for n in range(most("rounds.lastReview.findings"))
+        ],
+        "leftOut": 12,
+    }
+    return fixes, review
+
+
+def largest(with_history=True):
     """The largest state the schema allows: every list as long as its `maxItems`, each text
     as long as the engine keeps it, in the characters that take the most bytes, and in the
-    outbox the actions that hold texts, whole."""
+    outbox the actions that hold texts, whole. Without the history of the fix rounds and the
+    last review, which is shortened after everything else, the other texts keep their room."""
     state = blank("4" * 20)
     state.update(
         revision=99,
@@ -300,6 +349,9 @@ def largest():
         {"severity": "blocking" if n % 2 else "suggestion", "text": worst(LONGEST["finding"])}
         for n in range(most("rounds.findings"))
     ]
+    if with_history:
+        rounds["fixes"], rounds["lastReview"] = history()
+        rounds["fixRound"] = {"auto": True, "diagnosis": True, "note": clipped(HISTORY["note"])}
     rounds["criteria"] = ["unverifiable"] * most("rounds.criteria")
     rounds["checklist"] = ["not_applicable"] * most("rounds.checklist")
     asked = ["split", "titles", "parts", "fewer", "answers", "replan"]
@@ -349,6 +401,19 @@ def decisions(state):
         plan["split"],
         len(plan["protectedPaths"]),
         [item["severity"] for item in state["rounds"]["findings"]],
+        [
+            (record["round"], record["auto"], record["diagnosis"], len(record["failing"]))
+            for record in state["rounds"].get("fixes", [])
+        ],
+        state["rounds"].get("fixRound"),
+        [
+            (item["severity"], item["line"])
+            for item in state["rounds"].get("lastReview", {}).get("findings", [])
+        ],
+        {
+            key: state["rounds"].get("lastReview", {}).get(key)
+            for key in ("round", "version", "verdict", "leftOut")
+        },
         state["rounds"]["signatures"],
         state["rounds"]["baseFailure"],
         state["rounds"]["recheck"],
@@ -383,9 +448,97 @@ class SizeTest(unittest.TestCase):
         self.assertEqual(protocol.check(fitted, "state.schema.json"), [])
         self.assertEqual(decisions(fitted), before)
         self.assertLessEqual(len(item_state.render(fitted)), TEXT_LIMIT)
+        # The history that the prompts show was shortened last: five fix records and 30
+        # findings are all still there, and so are the checks that still failed after each.
+        rounds = fitted["rounds"]
+        self.assertEqual(len(rounds["fixes"]), MOST["fixes"])
+        self.assertEqual(len(rounds["lastReview"]["findings"]), MOST["findings"])
+        self.assertEqual(
+            [len(record["failing"]) for record in rounds["fixes"]], [MOST["fixFailing"]] * 5
+        )
+
+    def test_the_other_texts_are_shortened_before_the_history_of_the_rounds(self):
+        state = largest(with_history=False)
+        before = decisions(state)
+        fitted = fit(state)
+        self.assertLessEqual(size(fitted), STATE_LIMIT)
         # The findings went first: what fits of the attention's text was kept.
         self.assertTrue(all(len(item["text"]) <= 3 for item in fitted["rounds"]["findings"]))
         self.assertGreater(len(fitted["attention"]["text"]), 3)
+        self.assertEqual(decisions(fitted), before)
+        # With the history as long as it can be, they are cut to nothing before it is cut.
+        state = largest()
+        found = fit(state)
+        self.assertEqual(len(found["attention"]["text"]), 3)
+        self.assertTrue(all(item["text"] == "..." for item in found["rounds"]["findings"]))
+
+    def test_long_round_texts_are_shortened_after_the_others_and_keep_what_decides(self):
+        state = {**blank("42"), "revision": 1}
+        rounds = state["rounds"]
+        rounds.update(started=9, counted=2, conflicts=1, signatures=["sha256:" + "a" * 64] * 3)
+        rounds.update(criteria=["unmet"], checklist=["not_met"], failing=["f" * 12] * 3)
+        failing = [{"name": "test", "signature": "g" * HISTORY["signature"]}] * 3
+        rounds["fixes"] = [
+            {
+                "round": number,
+                "auto": bool(number % 2),
+                "diagnosis": False,
+                "note": "n" * HISTORY["note"],
+                "summary": "s" * HISTORY["summary"],
+                "cause": "c" * HISTORY["cause"],
+                "failing": copy.deepcopy(failing),
+            }
+            for number in range(5, 10)
+        ]
+        rounds["lastReview"] = {
+            "round": 9,
+            "version": "f" * 40,
+            "verdict": "request_changes",
+            "findings": [
+                {
+                    "severity": "blocking" if number % 2 else "suggestion",
+                    "file": f"file{number}.py",
+                    "line": number,
+                    "body": "b" * HISTORY["body"],
+                }
+                for number in range(MOST["findings"])
+            ],
+            "leftOut": 4,
+        }
+
+        def kept(found):
+            rounds = found["rounds"]
+            review = rounds["lastReview"]
+            return (
+                {key: value for key, value in rounds.items() if key not in ("fixes", "lastReview")},
+                [
+                    {
+                        key: value
+                        for key, value in fix.items()
+                        if key in ("round", "auto", "diagnosis", "failing")
+                    }
+                    for fix in rounds["fixes"]
+                ],
+                {key: value for key, value in review.items() if key != "findings"},
+                [(item["severity"], item["file"], item["line"]) for item in review["findings"]],
+            )
+
+        self.assertEqual(protocol.check(state, "state.schema.json"), [])
+        before = kept(state)
+        self.assertGreater(size(state), STATE_LIMIT)
+        fitted = fit(state)
+        self.assertIsNotNone(fitted)
+        self.assertLessEqual(size(fitted), STATE_LIMIT)
+        self.assertEqual(protocol.check(fitted, "state.schema.json"), [])
+        # Counts, the signatures that rounds compare and each record's checks are unchanged.
+        self.assertEqual(kept(fitted), before)
+        self.assertEqual(fitted["rounds"]["signatures"], ["sha256:" + "a" * 64] * 3)
+        # The last review's findings were shortened first, and the fix texts stayed whole.
+        bodies = [item["body"] for item in fitted["rounds"]["lastReview"]["findings"]]
+        self.assertTrue(all(len(body) < HISTORY["body"] for body in bodies))
+        self.assertEqual(
+            {len(fix["summary"]) for fix in fitted["rounds"]["fixes"]}, {HISTORY["summary"]}
+        )
 
     def test_a_state_that_fits_is_left_as_it_is(self):
         state = blank("42")
@@ -489,11 +642,17 @@ class FailingChecksSizeTest(unittest.TestCase):
         self.assertLessEqual(size(found), STATE_LIMIT)
         self.assertEqual(found["rounds"]["failing"], rounds["failing"])
         self.assertEqual(found["rounds"]["fixed"], rounds["fixed"])
+        # What still does not fit once every history text is cut: the oldest fix records leave
+        # out which checks still failed after them, one after the other, as unknown.
+        failing = ["failing" in record for record in found["rounds"]["fixes"]]
+        self.assertEqual(failing, sorted(failing))
+        self.assertTrue(failing[-1])
+        self.assertFalse(failing[0])
         # Only the names past those a diagnosis round looks into are shortened.
         self.assertEqual(found["rounds"]["repeated"][:10], rounds["repeated"][:10])
 
     def test_nexkit_s_own_names_of_repeated_checks_are_kept_whole(self):
-        state = largest()
+        state = largest(with_history=False)
         rounds = state["rounds"]
         rounds["failing"] = ["f" * 12] * MOST["failing"]
         rounds["repeated"] = ["c" * 40] * MOST["repeated"]

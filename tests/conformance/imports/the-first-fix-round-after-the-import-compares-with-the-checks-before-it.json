@@ -213,7 +213,26 @@
       "failing": [
         "e9b3f7f5f86c"
       ],
-      "automatic": true
+      "automatic": true,
+      "lastReview": {
+        "round": 1,
+        "version": "0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e0b1c2d3e",
+        "verdict": "request_changes",
+        "findings": [
+          {
+            "severity": "suggestion",
+            "file": "a.py",
+            "line": 3,
+            "body": "Name the helper after what it reads."
+          },
+          {
+            "severity": "blocking",
+            "file": "b.py",
+            "line": 9,
+            "body": "The close is not read again after a 422."
+          }
+        ]
+      }
     },
     "used": {
       "tokens": {

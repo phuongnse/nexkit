@@ -59,7 +59,9 @@ without a change to any host, as long as the conformance suite passes.
   text as standard input: status `200`, or `400` when the engine refuses the request. Both read
   the request as UTF-8 and refuse one that nests deeper than 64 arrays and objects. An error
   answer names at most 20 ways in which a request breaks the protocol. `serve` answers each
-  request on its own and keeps nothing between them. It refuses a body over 1 MiB, or 16 MiB
+  request on its own and keeps nothing between them. On `SIGTERM` it exits at once: a request
+  in flight gets no answer, and its host sends it again, which the engine allows since it keeps
+  no state and answers a request the same each time. It refuses a body over 1 MiB, or 16 MiB
   for `prompt`, without one `Content-Length` or that stops coming, a method other than `POST`, a
   call it does not know and a request that HTTP does not allow. Each refusal is an error answer
   (`calls/error.schema.json`) with its own status. It listens on `127.0.0.1:8080` unless
@@ -68,7 +70,11 @@ without a change to any host, as long as the conformance suite passes.
   connect or how slowly they send. Put it where only its host reaches it, such as the host's
   own machine or a private network beside it.
 - **The image.** Each release publishes `ghcr.io/phuongnse/nexkit-engine:<version>`, built from
-  the release's commit on `main`. It runs `serve` on port 8080 of the container.
+  the release's commit on `main`. It runs `serve` on port 8080 of the container. A release
+  never replaces an image: one whose version is already in the registry fails before it pushes.
+  Each image carries an attestation of its build provenance, so a host can check the commit
+  and workflow that built it with
+  `gh attestation verify oci://ghcr.io/phuongnse/nexkit-engine:<version> --repo phuongnse/nexkit`.
 
 ## The engine
 

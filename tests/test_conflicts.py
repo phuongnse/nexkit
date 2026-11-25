@@ -803,10 +803,6 @@ class ConflictReportTests(ReportCase):
         self.assertFalse(rounds_started(self.gh))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 # A refusal in words NexKit does not read, so only GitHub's data can say why.
 UNKNOWN_REFUSAL = GitHubError(405, "Merge refused.")
 
@@ -1321,3 +1317,7 @@ class MergeRefusalTests(ReportCase):
         self.assertIn("At least 1 approving review is required", outcome["summary"])
         self.assertFalse(self.gh.dispatches[:-1])  # only the autopilot sweep after the run
         self.assertEqual(self.gh.updated, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

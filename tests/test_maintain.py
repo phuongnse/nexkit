@@ -328,10 +328,6 @@ class CloseParentTests(unittest.TestCase):
         self.assertEqual(self.gh.issues[1]["state"], "closed")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class OnBaseTests(unittest.TestCase):
     """A pull request whose base branch already holds its change."""
 
@@ -444,3 +440,7 @@ class OnBaseTests(unittest.TestCase):
 
     def test_runs_with_every_setting_off(self):
         self.assertTrue(enabled("on_base", make_config()))
+
+
+if __name__ == "__main__":
+    unittest.main()

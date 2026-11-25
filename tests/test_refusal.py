@@ -444,10 +444,6 @@ class CleanMergeSweepTests(ReportCase):
         self.assertEqual(self.gh.merged, [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ReviewFixTests(ReportCase):
     """What the independent review of #221 and #224 found."""
 
@@ -584,3 +580,7 @@ class UnreadHoldTests(ReportCase):
         # The next sweep reads that no label holds it, and merges.
         autopilot.sweep(self.gh, cfg, "nexkit.yml", "main")
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
+
+
+if __name__ == "__main__":
+    unittest.main()

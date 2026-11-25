@@ -221,9 +221,10 @@ when a list of what the code defines misses an entry. These rules close each of 
    docs, the skills, the README and AGENTS.md against the code each time, so every page is read
    every few audits, and its findings become issues that NexKit takes: a statement the code
    contradicts, planned work already built, behaviour no page describes, a rule the code does not
-   follow, a list with no test, and a break of this standard. The
-   [docs audit skill](../.claude/skills/nexkit-docs-audit/SKILL.md) says how a page is read and
-   what each issue holds.
+   follow, a list with no test, a break of this standard, a doc past its size, and a milestone
+   whose close on GitHub and roadmap row disagree. It also points each broken link of an open issue
+   at its new home. The [docs audit skill](../.claude/skills/nexkit-docs-audit/SKILL.md) says how a
+   page is read and what each issue holds.
 9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
    every doc and that the links of the map and of this page resolve. A docs check is added only once
    the whole tree passes it: there are no lists of exceptions.

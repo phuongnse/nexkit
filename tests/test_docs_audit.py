@@ -95,7 +95,7 @@ class PlanTests(unittest.TestCase):
         )
         # The same finding on another line, with other spaces and case, is the same issue.
         again = finding(kind="unbuilt", statement="says the sweep   waits.", line=40)
-        self.assertEqual(audit.plan([again], [first[0]["body"]], "2", REPO), ([], []))
+        self.assertEqual(audit.plan([again], [{"body": first[0]["body"]}], "2", REPO), ([], []))
         issues, _ = audit.plan([again, again, finding(), finding(line=9)], [], "3", REPO)
         self.assertEqual(len(issues), 2)
 
@@ -104,6 +104,32 @@ class PlanTests(unittest.TestCase):
         issues, left = audit.plan(findings, [], "1", REPO)
         self.assertEqual(len(issues), audit.MAX_ISSUES)
         self.assertEqual([f["page"] for f in left], ["docs/p10.md", "docs/p11.md", "docs/p12.md"])
+
+    def test_milestones_come_first_and_long_docs_last(self):
+        milestone = {"number": 18, "title": "Foundation", "state": "closed", "row": "x"}
+        milestone.update(page="docs/roadmap.md", line=1)
+        words = [("docs/short.md", 900), ("docs/long.md", audit.SPLIT_WORDS + 1)]
+        issues, _ = audit.plan([finding()], [], "5", REPO, milestones=[milestone], words=words)
+        self.assertEqual(
+            [i["title"] for i in issues],
+            [
+                "The roadmap matches the milestone Foundation on GitHub",
+                "The docs of docs/a.md match the code",
+                "docs/long.md is split by topic into pages of at most 8,000 words",
+            ],
+        )
+        self.assertEqual(issues[0]["body"].splitlines()[-1], "<!-- docs-audit milestone 18 -->")
+        self.assertIn(f"]({REPO}/milestone/18) is closed on GitHub, but x.", issues[0]["body"])
+        self.assertEqual(
+            issues[2]["body"].splitlines()[-1], "<!-- docs-audit split docs/long.md -->"
+        )
+        self.assertIn("holds 10,001 words", issues[2]["body"])
+
+    def test_a_split_that_a_person_asked_for_counts(self):
+        words = [("docs/long.md", 20_000), ("docs/other.md", 20_000)]
+        asked = [{"title": "docs/long.md is split by topic into pages of at most 8,000 words"}]
+        issues, _ = audit.plan([], asked, "5", REPO, words=words)
+        self.assertEqual([i["title"][:13] for i in issues], ["docs/other.md"])
 
     def test_the_agents_text_mentions_nobody_and_forges_no_marker(self):
         hostile = finding(
@@ -123,6 +149,67 @@ class PlanTests(unittest.TestCase):
         self.assertNotRegex(body, r"(?<!`)@someone")
         # The key keeps no run of hyphens that could close its comment early.
         self.assertNotIn("--", lines[-1][5:-4])
+
+
+class ChecksTests(unittest.TestCase):
+    """What the audit checks without the agent: milestones, planned markers, links."""
+
+    def test_the_roadmap_rows_of_this_repository(self):
+        rows = audit.roadmap_rows((ROOT / "docs/roadmap.md").read_text())
+        self.assertEqual(rows[18], "Under way")
+        self.assertEqual(rows[8], "Done")
+        self.assertTrue(all(s in ("Done", "Under way") for s in rows.values()))
+
+    def test_a_milestone_whose_close_and_row_disagree(self):
+        rows = {1: "Done", 2: "Under way", 3: "Done", 4: "Under way"}
+        github = [
+            {"number": 1, "title": "A", "state": "open"},
+            {"number": 2, "title": "B", "state": "closed"},
+            {"number": 3, "title": "C", "state": "closed"},
+            {"number": 4, "title": "D", "state": "open"},
+            {"number": 5, "title": "E", "state": "open"},
+        ]
+        found = {m["number"]: m["row"] for m in audit.milestone_findings(rows, github)}
+        self.assertEqual(
+            found,
+            {
+                1: "its roadmap row is under *Done*",
+                2: "its roadmap row is under *Under way*",
+                5: "the roadmap has no row for it",
+            },
+        )
+
+    def test_a_planned_marker_of_a_closed_issue_is_built(self):
+        markers = audit.planned_markers(audit.tracked_all())
+        self.assertIn(("docs/writing-docs.md", 212, 360), markers)
+        [found] = audit.marker_findings([("docs/a.md", 4, 7), ("docs/b.md", 2, 8)], {7})
+        self.assertEqual((found["page"], found["line"], found["kind"]), ("docs/a.md", 4, "built"))
+        self.assertIn("#7, which is closed", found["statement"])
+
+    def test_broken_links_of_open_issues(self):
+        files = set(audit.tracked_all())
+        base = f"{REPO}/blob/main/"
+        body = (
+            f"See [states]({base}docs/engine.md#states), [gone]({base}docs/engine.md#gone), "
+            f"{base}docs/nowhere.md and {base}nexkit/agent.py#L5-L9 and "
+            f"{base}docs/engine.md#gone again, {REPO}/blob/abc123/docs/old.md, and "
+            f"{base}docs/engine.md#states. Also {base}docs/nowhere.md."
+        )
+        found = audit.broken_links([{"number": 3, "body": body}], files, REPO)
+        self.assertEqual(
+            [(f["issue"], f["link"], f["moved"]) for f in found],
+            [(3, f"{base}docs/engine.md#gone", ""), (3, f"{base}docs/nowhere.md", "")],
+        )
+
+    def test_a_link_is_replaced_only_where_it_ends(self):
+        base = f"{REPO}/blob/main/"
+        old, new = f"{base}docs/engine.md", f"{base}docs/engine/index.md"
+        body = f"[a]({old}) and [b]({old}#states) and {old}."
+        issues = [{"number": 4, "body": body}, {"number": 5, "body": "untouched"}]
+        homes = [{"issue": 4, "link": old, "home": new}, {"issue": 5, "link": old, "home": new}]
+        [relink] = audit.relinks(homes, issues)
+        self.assertEqual(relink["before"], body)
+        self.assertEqual(relink["after"], f"[a]({new}) and [b]({old}#states) and {new}.")
 
 
 class ReadTests(unittest.TestCase):
@@ -195,11 +282,93 @@ class ReadTests(unittest.TestCase):
         self.assertEqual(self.fake.calls(), [])
 
 
+class HomesTests(ReadTests):
+    """The agent chooses a broken link's new home; only one that exists is kept."""
+
+    def test_only_a_home_that_exists_for_a_link_asked_is_kept(self):
+        base = "https://github.com/phuongnse/nexkit/blob/main/"
+        links = [
+            {"issue": 1, "link": f"{base}docs/engine.md#gone", "moved": ""},
+            {"issue": 2, "link": f"{base}docs/nowhere.md", "moved": "deleted"},
+        ]
+        self.fake.configure(
+            result={
+                "homes": [
+                    {"issue": 1, "link": links[0]["link"], "home": f"{base}docs/engine.md#states"},
+                    {"issue": 2, "link": links[1]["link"], "home": f"{base}docs/engine.md#made-up"},
+                    {"issue": 9, "link": links[0]["link"], "home": f"{base}docs/engine.md"},
+                    {"issue": 1, "link": links[0]["link"], "home": "https://evil.example/x"},
+                ]
+            }
+        )
+        homes = audit.choose_homes(
+            links,
+            self.cfg,
+            program=str(self.fake.path),
+            repository="https://github.com/phuongnse/nexkit",
+        )
+        self.assertEqual(
+            homes, [{"issue": 1, "link": links[0]["link"], "home": f"{base}docs/engine.md#states"}]
+        )
+        call = self.fake.call()
+        args = call["args"]
+        self.assertEqual(args[args.index("--tools") + 1], "Read,Grep,Glob")
+        self.assertEqual(json.loads(args[args.index("--json-schema") + 1]), audit.HOMES)
+        self.assertIn(f"Read {audit.LINKS_GUIDE}", call["prompt"])
+        self.assertIn('"docs/engine.md#gone"', call["prompt"].replace(base, ""))
+
+    def test_no_link_asks_nothing(self):
+        self.assertEqual(audit.choose_homes([], self.cfg, program=str(self.fake.path)), [])
+        self.assertEqual(self.fake.calls(), [])
+
+
 class MainTests(unittest.TestCase):
     def test_plan_refuses_lost_findings(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json") as empty:
             with self.assertRaisesRegex(SystemExit, "holds no findings"):
-                audit.main(["docs_audit.py", "plan", empty.name, "1"])
+                audit.main(["docs_audit.py", "plan", empty.name, "missing.json", "1"])
+
+    def test_plan_reads_github_and_writes_the_issues_and_relinks(self):
+        base = "https://github.com/phuongnse/nexkit/blob/main/"
+        link = f"{base}docs/engine.md#gone"
+        issues = [{"number": 6, "title": "An issue", "body": f"See {link}."}]
+        answers = {
+            "issue list": json.dumps(issues),
+            "milestones": '{"number": 18, "title": "Foundation", "state": "closed"}\n',
+            "issues/359": "open\n",
+            "issues/360": "closed\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            gh = Path(tmp) / "gh"
+            gh.write_text(
+                "#!/usr/bin/env python3\nimport json, sys\n"
+                f"answers = json.loads({json.dumps(json.dumps(answers))})\n"
+                "args = ' '.join(sys.argv[1:])\n"
+                "print(next(v for k, v in answers.items() if k in args), end='')\n"
+            )
+            gh.chmod(0o755)
+            findings, homes = Path(tmp) / "findings.json", Path(tmp) / "homes.json"
+            findings.write_text("[]")
+            homes.write_text(
+                json.dumps([{"issue": 6, "link": link, "home": f"{base}docs/engine.md#states"}])
+            )
+            out = io.StringIO()
+            env = {"GH": str(gh), "GITHUB_REPOSITORY": "phuongnse/nexkit"}
+            with mock.patch.dict("os.environ", env), contextlib.redirect_stdout(out):
+                self.assertEqual(audit.main(["x", "plan", str(findings), str(homes), "77"]), 0)
+        planned = json.loads(out.getvalue())
+        titles = [i["title"] for i in planned["issues"]]
+        self.assertEqual(titles[0], "The roadmap matches the milestone Foundation on GitHub")
+        self.assertIn("The docs of docs/writing-docs.md match the code", titles)
+        marker = next(i for i in planned["issues"] if "writing-docs" in i["title"])
+        self.assertIn("#360, which is closed", marker["body"])
+        self.assertNotIn("#359, which", marker["body"])
+        # #368 and #369 are not open in this fake, so each long doc gets its split issue.
+        self.assertTrue(any("is split by topic" in title for title in titles))
+        self.assertEqual(
+            planned["relinks"],
+            [{"issue": 6, "before": f"See {link}.", "after": f"See {base}docs/engine.md#states."}],
+        )
 
     def test_the_schema_holds_only_what_an_agent_receives(self):
         keywords = {"type", "enum", "properties", "required", "items", "description"}

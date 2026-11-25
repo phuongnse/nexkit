@@ -2736,16 +2736,31 @@ class DocsAuditWorkflowTests(unittest.TestCase):
         self.assertNotRegex(job, r"secrets\[|toJSON\(secrets")
         self.assertEqual(cfg_secret(), "CLAUDE_CODE_OAUTH_TOKEN")
         steps = job.split("\n      - ")[1:]
-        read = next(i for i, s in enumerate(steps) if "docs_audit.py read" in s)
-        guard = next(i for i, s in enumerate(steps) if "Refuse findings" in s)
-        plan = next(i for i, s in enumerate(steps) if "docs_audit.py plan" in s)
-        self.assertLess(read, guard)
-        self.assertLess(guard, plan)
-        self.assertIn('grep -qF -- "$CLAUDE_CODE_OAUTH_TOKEN"', steps[guard])
-        self.assertIn("exit 1", steps[guard])
-        # The plan step reads open issues; the agent's step holds no GitHub token.
-        self.assertNotIn("GH_TOKEN", steps[read])
-        self.assertIn("GH_TOKEN: ${{ github.token }}", steps[plan])
+
+        def step(text):
+            return next(i for i, s in enumerate(steps) if text in s)
+
+        links, read, homes = step("docs_audit.py links"), step("docs_audit.py read"), step("homes")
+        guard, plan = step("Refuse files"), step("docs_audit.py plan")
+        self.assertEqual(
+            sorted([links, read, homes, guard, plan]), [links, read, homes, guard, plan]
+        )
+        # Every file the agent's steps wrote is checked before anything is planned from it.
+        self.assertIn('for file in "$RUNNER_TEMP"/docs-audit/*; do', steps[guard])
+        self.assertIn('grep -qF -- "$CLAUDE_CODE_OAUTH_TOKEN" "$file"', steps[guard])
+        self.assertIn('exit "$leaked"', steps[guard])
+        # The steps that read GitHub hold no agent credential, and the agent's no GitHub token.
+        for index in (read, homes):
+            self.assertNotIn("GH_TOKEN", steps[index])
+            self.assertIn("secrets.CLAUDE_CODE_OAUTH_TOKEN", steps[index])
+        for index in (links, plan):
+            self.assertIn("GH_TOKEN: ${{ github.token }}", steps[index])
+            self.assertNotIn("secrets.", steps[index])
+        # The links step and the homes step may fail without losing the findings.
+        self.assertIn("continue-on-error: true", steps[links])
+        self.assertIn("if: steps.links.outcome == 'success'", steps[homes])
+        self.assertIn("continue-on-error: true", steps[homes])
+        self.assertNotIn("continue-on-error", steps[read] + steps[guard] + steps[plan])
 
     def test_the_job_that_writes_runs_no_model_and_no_repository_code(self):
         job = self.jobs["file"]
@@ -2755,6 +2770,9 @@ class DocsAuditWorkflowTests(unittest.TestCase):
         for text in ("actions/checkout", "python", "bin/", "scripts/", "claude", "secrets"):
             self.assertNotIn(text, job)
         self.assertIn('gh issue create "${args[@]}"', job)
+        # An issue's text is replaced only while it is still the text the audit read.
+        self.assertIn("jq -e --argjson r \"$relink\" '.body == $r.before'", job)
+        self.assertIn('gh issue edit "$number" --body-file -', job)
 
 
 def cfg_secret():

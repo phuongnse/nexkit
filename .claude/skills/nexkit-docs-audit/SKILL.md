@@ -18,17 +18,31 @@ opens issues, which NexKit takes.
 1. `pages <run number>` picks the run's pages: every Markdown file that git tracks under `docs/`,
    `skills/` and `.claude/skills/`, and `AGENTS.md` and `README.md`, in order, whose index modulo 4
    is the run number's, so every page is read once in four runs.
-2. `read <run number> <out>` reads each page in a session of its own, at most four at a time. It
+2. `links <out>` lists each link of an open issue to a file of this repository on `main` that no
+   longer exists, or to a heading it no longer has, with where git says the file went.
+3. `read <run number> <out>` reads each page in a session of its own, at most four at a time. It
    runs as NexKit's review stage runs, with its agents and fallbacks, model, time and read-only
    tools, and asks for the findings' schema in place of the review's. Each session follows
-   [reading a page](#reading-a-page) and answers in the script's schema. When a page's session
-   fails, the step fails once every page has been read.
-3. `plan <findings> <run id>` groups the findings into issues, leaves out each that an open issue
-   covers, and keeps at most ten. It prints each finding the cap leaves out, and the page's next
-   audit reports it again.
+   [reading a page](#reading-a-page). When a page's session fails, the step fails once every page
+   has been read.
+4. `homes <links> <out>` asks one session, with the same access, for the new home of each broken
+   link, as [broken links](broken-links.md) says, and keeps a home only when its file and heading
+   exist.
+5. `plan <findings> <homes> <run id>` adds what needs no judgement, groups the findings into
+   issues, leaves out each that an open issue covers, and keeps at most ten. It prints each finding
+   the cap leaves out, and the next audit reports it again. What it adds on its own:
+   - each milestone whose close on GitHub disagrees with the [roadmap](../../../docs/roadmap.md):
+     closed while its row is not under *Done*, open while it is, or with no row;
+   - a `built` finding for each planned marker of any page whose issue is closed;
+   - each doc under `docs/` past 10,000 words, the mark at which
+     [structure](../../../docs/writing-docs.md#structure) splits a doc.
+
+   It also writes, for each issue with a broken link that has a home, its text as read and as it
+   reads with the link replaced.
 
 The job that reads holds no token that writes. A job that runs no model and no repository code
-opens the planned issues, so a page that tries to steer the agent cannot write to the repository.
+opens the planned issues, and replaces an issue's text only while it is still the one read, so a
+page or an issue that tries to steer the agent cannot write to the repository.
 
 In the owner's own session, follow [reading a page](#reading-a-page) for the pages the owner names
 and report the findings to the owner instead of opening issues.
@@ -64,16 +78,5 @@ lines, and one kind:
 
 ## The issues
 
-The `plan` step writes them, so this is what to expect, not what to do:
-
-- One issue for each `unbuilt` finding, labelled `bug` and `documentation`, which asks the code to
-  follow the rule.
-- One issue for each `untested-list` finding, labelled `documentation`, which asks for a test that
-  compares the list with the code.
-- One issue per page for its `wrong`, `built`, `missing` and `standard` findings, labelled
-  `documentation`, with each finding as an acceptance criterion.
-- Each also carries `docs-audit`, and NexKit's marker of the run that opened it on its first line,
-  so autopilot takes it, since `autopilot.trusted_workflows` lists `docs-audit.yml`. Its last line
-  is a hidden `docs-audit` marker of the page, or of the finding with its statement normalised, so
-  a later run opens no second issue while it is open.
-- The agent's text in an issue mentions nobody and opens no HTML comment.
+What each issue holds, and in which order the `plan` step opens them, is in
+[the issues](issues.md).

@@ -51,6 +51,8 @@ RUN_ID = "a1.1"
 # The state of the item while a command, or a round with that action, runs.
 OF_COMMAND = {"plan": "planning", "go": "working", "fix": "fixing", "review": "checking"}
 OF_ACTION = {"implement": "working", "fix": "fixing", "review": "checking"}
+# The states in which autopilot's answers still wait for the run they started.
+ANSWERING = ("planning", "working", "fixing")
 STAGES = {"planning": "plan", "working": "implement", "fixing": "fix", "reviewing": "review"}
 # What autopilot's record keeps that the state's `asked` keeps.
 ASKED = {
@@ -162,17 +164,21 @@ def situation(
     parts=(),
     blockers=(),
     held=False,
+    depth=0,
 ):
     """(kind, document): where the import puts `issue`, a GitHub issue, or a person's pull
     request for a review-only item, and its first state document. It reads the item's
     `comments`; its NexKit pull request `pull` and that pull request's `pull_comments`; its
     sub-issues `parts`; the open issues that block it, `blockers`; whether a label holds it,
-    `held`; the configuration `cfg`, and the time `now`."""
+    `held`; the configuration `cfg`, and the time `now`. `depth` is how many levels of parts the
+    issue is below the issue first split, as `autopilot.depth` gives it."""
     doc = empty(str(issue["number"]))
     if issue.get("title") is not None:
-        # The engine keeps the title for a split's parts. How deep a part the item is waits
-        # for the host to read its parents, so the import leaves it out.
         doc["title"] = str(issue["title"])[: LONGEST["title"]]
+    if depth > 0:
+        # Only a part has a depth, as `created` gives it: the engine splits no item at the
+        # deepest level.
+        doc["depth"] = depth
     doc["hold"] = bool(held)
     if "pull_request" in issue:
         pull, pull_comments = pull or issue, comments
@@ -182,6 +188,8 @@ def situation(
         doc["observed"] = observed(pull)
     item = Item(doc, issue, list(comments), pull, list(pull_comments), cfg, now)
     item.place(list(parts), list(blockers))
+    if doc["state"] in ANSWERING and item.answered():
+        doc["asked"].append("answers")
     if fit(doc) is None:
         raise item_state.StateError(f"The state of #{issue['number']} does not fit its limit.")
     found = protocol.check(doc, "state.schema.json", "state")
@@ -236,10 +244,29 @@ class Item:
             after += [c for c, _ in self.rows]
             approved = any(c["id"] > self.plan["id"] for c in after)
             doc["plan"] = plan_of(self.plan, self.data, approved)
-        doc["asked"] = _asked(self.record, comments if review_only else [*comments, *pull_comments])
+        doc["asked"] = [name for key, name in ASKED.items() if self.record.get(key)]
+        self.all = comments if review_only else [*comments, *pull_comments]
         doc["used"]["tokens"] = _tokens([run for _, run in self.runs + self.rows])
         if pull and not review_only:
             self.take_rounds()
+
+    def answered(self):
+        """Whether autopilot's answers still wait for the run they started, as
+        `autopilot.asked_again` reads it for the run on its way: no person commented on the
+        issue or its pull request since, and every run since changed nothing about the item,
+        or is still running."""
+        answers = [c for c in self.all if answers_record(c) is not None]
+        if not answers:
+            return False
+        last = max(answers, key=lambda c: c["id"])
+        if any(_by_person(c) and c["id"] > last["id"] for c in self.all):
+            return False
+        replan = bool(answers_record(last).get("replan"))
+        return all(
+            run.get("status") in autopilot.ACTIVE or autopilot._unchanged(run, replan)
+            for c, run in run_comments(self.all)
+            if c["id"] > last["id"]
+        )
 
     # Where the item is.
 
@@ -688,17 +715,6 @@ def _question(item, round_=False):
     return found
 
 
-def _asked(record, comments):
-    """What autopilot asked for that the engine must not ask for again: its record's split
-    and parts requests, and answers it gave with no comment by a person since, which it
-    gives once in a row (`autopilot.asked_again`)."""
-    asked = [name for key, name in ASKED.items() if record.get(key)]
-    answered = [c for c in comments if answers_record(c) is not None]
-    if answered and not any(_by_person(c) and c["id"] > answered[-1]["id"] for c in comments):
-        asked.append("answers")
-    return asked
-
-
 def _by_person(comment):
     return comment.get("author_association") in TRUSTED_ASSOCIATIONS and not by_bot(comment)
 
@@ -738,4 +754,5 @@ def import_item(gh, cfg, number, pull=None, now=None):
         gh.sub_issues(number),
         blockers,
         bool(autopilot.hold_label(cfg, issue)),
+        autopilot.depth(issue, autopilot.lineage(gh, issue)),
     )

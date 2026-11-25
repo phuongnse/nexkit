@@ -60,7 +60,7 @@
       "default": false
     },
     "answers": {
-      "$comment": "Whether the engine answers a plan's questions with their recommended options when every question has one, at most once in a row, or a person answers them.",
+      "$comment": "With automatic approval, whether the engine answers a plan's questions with their recommended options when every question has one, at most once in a row; otherwise a person answers them.",
       "enum": [
         "never",
         "recommended"
@@ -68,7 +68,7 @@
       "default": "never"
     },
     "splitParts": {
-      "$comment": "The most parts a split files, from 1 to 10; a plan with more is planned once more for fewer.",
+      "$comment": "The most parts a split files, from 1 to 10; with automatic approval a plan with more is planned once more for fewer, and a person's approval of one goes on as one change.",
       "type": "integer",
       "default": 10,
       "minimum": 1,

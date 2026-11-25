@@ -286,20 +286,24 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **What follows a plan.** Under `person`, every plan waits for a person, a plan that finds no
   change too, for what NexKit 6 asks of them first: the approval of a plan that is too large or
   finds no change, a hand-made change, answers, or the approval of a clean plan. A person may
-  answer a plan's questions whatever its attention names first. Under `autoWhenClean`, as NexKit
-  6's autopilot decides:
+  answer a plan's questions whatever its attention names first, under `autoWhenClean` too. Under
+  `autoWhenClean`, as NexKit 6's autopilot decides:
   - A plan that is too large is split into its parts, all of them, when splits are on and the
     item has no change. A split is refused for an item at `splitDepth` levels of parts, which
     waits for a person, and for a plan with more parts than `splitParts`, with no parts, or with a
     part titled by the item's own title or starting with it, ignoring case, spaces and punctuation
     at its end. For each of these three the item is planned once more, and a second such plan
     waits for a person.
-  - Otherwise, a plan that finds no change ends the item in `noChange`, one that needs paths only
-    a person changes waits for that person, and a clean plan is approved and starts the change.
+  - A plan that is too large and is not split, because splits are off or the item has a change,
+    waits for a person (`approval`). Otherwise, a plan that finds no change ends the item in
+    `noChange`, one that needs paths only a person changes waits for that person, and a clean
+    plan is approved and starts the change.
   - Questions wait for a person unless `answers` is `recommended` and every question has a
     recommended option. Then the engine answers with them and plans again, once in a row: when
     the plan its answers started asks again and no person acted since, a person decides. A
-    recommended option that only closes the item is always a person's to pick.
+    recommended option that only closes the item is always a person's to pick. The engine's
+    answers count only for the plan they started: a plan that ends without a result, such as one
+    that fails, forgets them, and the next plan's questions are answered again.
   - A person's comment on a plan that waits, on an item with no change, plans it again, since the
     plan did not hold what the comment says. A writer's answer that picks the option that only
     closes the item drops it, with no agent run, since another plan could only stop at the same
@@ -546,7 +550,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | --- | --- | --- | --- |
 | Start | `onRequest`, `bySweep` | `onRequest`; `bySweep` with autopilot | `onRequest`: a request starts when it is sent |
 | Plan approval (`planApproval`) | `person`, `autoWhenClean` | `person`; `autoWhenClean` with autopilot | `person`, always |
-| Answers (`answers`) | `never`, `recommended` | `never`; `recommended` with `autopilot.answer` | `never` |
+| Answers (`answers`) | `never`, `recommended`; the engine answers only with `autoWhenClean` | `never`; `recommended` with `autopilot.answer` | `never` |
 | Review after failing checks (`reviewAfterFailingChecks`) | `always`, `onlyAfterPassing` | `always`: one fix round takes the failures and the findings | `onlyAfterPassing` |
 | Accept (`accept`) | `person`, `autoWhenPassed` | `person`; `autoWhenPassed` with `merge.auto` | `autoWhenPassed` only when the application and the request allow it, else the person who sent it |
 | Fix rounds (`fixRounds`) | 0–10, and which rounds count | 2: rounds a person asked for, resumed, retried and stopped rounds do not count | 3; a request for changes and a retry start the count again |
@@ -556,7 +560,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | Retries | Waits after a transient stop; when a lost action starts again | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
 | Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
-| Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10 | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
+| Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10; they apply only with `autoWhenClean`, and a person's approval of a split with more parts goes on as one change | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
 | A parent's end | When its parts' ends end it | `close_parent_issues`, when one part was completed | When its parts end |
 | After a failure | `person`, `replan`, `newItem` | `person`, then `replan` on a comment | `newItem`: the person sends the request again |
 | Checklist | Items the plan and the review answer, some for a person | `review.checklist` | The application's own checklist |
@@ -671,7 +675,11 @@ adapter. A new rule of the engine comes with a case.
   an application that had a loop of its own builds each request's from its records. The import reads
   NexKit 6's markers only from NexKit's App, each only where NexKit writes it. The change's
   observation is what NexKit 6 knows of the open pull request: its head commit, and whether it
-  conflicts or was merged when GitHub said so; none when there is no pull request. A NexKit 6 run
+  conflicts or was merged when GitHub said so; none when there is no pull request. A part of a
+  split is imported with how many levels of parts it is below the issue first split, so a part at
+  the deepest level whose plan is too large waits for a person. Autopilot's answers are kept in
+  `asked` only while the plan or round they started is on its way: a person's comment, or a run
+  that reported and changed the item, ends them. A NexKit 6 run
   on its way becomes the action the engine waits for. A run paused at a usage limit, or until it
   runs again after a transient stop, becomes a wait with its time, unless NexKit 6 would no longer
   resume it, which fails for a person; an automatic run that ended without a report waits to

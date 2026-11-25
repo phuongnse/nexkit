@@ -1,0 +1,25 @@
+{
+  "policies": {},
+  "state": {
+    "example": "awaitingApproval",
+    "set": {
+      "asked": [
+        "answers",
+        "replan"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "expect": {
+        "asked": []
+      }
+    }
+  ]
+}

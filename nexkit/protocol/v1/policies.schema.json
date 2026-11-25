@@ -103,6 +103,17 @@
         30,
         60
       ]
+    },
+    "lostWaits": {
+      "$comment": "The waits in minutes before an agent run or checks that the engine started by itself and the host lost start again, one for each start again, at most 10, each from 0 to 330; a wait of 0 starts them again at once, and after the last a person decides. The engine reads it as the host gives it at each loss and never keeps it. The default, none, fails a lost action for a person.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 330
+      },
+      "maxItems": 10,
+      "default": []
     }
   },
   "required": []

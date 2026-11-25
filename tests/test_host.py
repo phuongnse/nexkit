@@ -329,6 +329,7 @@ class PoliciesTest(HostCase):
                 "splitParts": 10,
                 "splitDepth": 3,
                 "retryWaits": [15, 30, 60],
+                "lostWaits": [0, 30, 60, 120],
             },
         )
         found = host.policies(self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}})
@@ -342,6 +343,11 @@ class PoliciesTest(HostCase):
         found = host.policies(cfg)
         found = [found[name] for name in ("accept", "fixRounds", "conflicts", "conflictRounds")]
         self.assertEqual(found, ["autoWhenPassed", 5, "resolve", 4])
+
+    def test_lost_work_starts_again_only_with_autopilot(self):
+        off = self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}}
+        self.assertEqual(host.policies(off)["lostWaits"], [])
+        self.assertEqual(host.policies(self.cfg)["lostWaits"], [0, 30, 60, 120])
 
 
 class AfterGoTest(HostCase):

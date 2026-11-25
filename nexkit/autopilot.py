@@ -2011,7 +2011,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     return _after_plan(gh, cfg, issue, plan, last, record, start, comments)
 
 
-def carries_on(gh, cfg, decision, outcome, agent):
+def carries_on(gh, cfg, decision, outcome, agent, ran=None):
     """Whether autopilot takes over after a run that would otherwise need a person, so
     `report` mentions nobody: it answers a plan's or a blocked round's questions, splits a
     plan that is too large or plans it again for its parts, or asks for a split after the
@@ -2021,17 +2021,17 @@ def carries_on(gh, cfg, decision, outcome, agent):
     agent = agent or {}
     output = agent.get("output") or {}
     if outcome == "planned":
-        return _plan_carried_on(gh, cfg, decision, output)
+        return _plan_carried_on(gh, cfg, decision, output, ran)
     if outcome == "agent_blocked" and decision["action"] == "implement":
-        return _round_carried_on(gh, cfg, decision, agent)
+        return _round_carried_on(gh, cfg, decision, agent, ran)
     if output.get("protected_paths"):
         # Only a person changes protected paths.
         return False
     timed_out = outcome == "agent_error" and agent.get("timed_out")
     if outcome == "agent_blocked" and decision["action"] == "fix":
-        return _stop_carried_on(gh, cfg, decision, agent)
+        return _stop_carried_on(gh, cfg, decision, agent, ran)
     if timed_out and decision["action"] in ("implement", "fix"):
-        return _stop_carried_on(gh, cfg, decision, agent)
+        return _stop_carried_on(gh, cfg, decision, agent, ran)
     if outcome != "agent_blocked":
         return False
     # The blocked round of another stage, which no engine decision follows.
@@ -2050,7 +2050,7 @@ def carries_on(gh, cfg, decision, outcome, agent):
         return False
 
 
-def _round_carried_on(gh, cfg, decision, agent):
+def _round_carried_on(gh, cfg, decision, agent, ran=None):
     """Whether autopilot carries on after a `/nexkit go` that stopped as blocked, as the
     engine decides what follows it (`host.round_carried_on`). One whose next step the
     engine refuses to decide needs a person."""
@@ -2058,12 +2058,12 @@ def _round_carried_on(gh, cfg, decision, agent):
 
     try:
         issue = gh.issue(decision["issue"])
-        return taken(gh, cfg, issue) and round_carried_on(gh, cfg, issue, decision, agent)
+        return taken(gh, cfg, issue) and round_carried_on(gh, cfg, issue, decision, agent, ran)
     except (GitHubError, Refused):
         return False
 
 
-def _stop_carried_on(gh, cfg, decision, agent):
+def _stop_carried_on(gh, cfg, decision, agent, ran=None):
     """Whether autopilot carries on after a fix round that stopped as blocked, or a round
     that ran out of time, as the engine decides what follows it (`host.stop_carried_on`).
     One whose next step the engine refuses to decide needs a person."""
@@ -2071,12 +2071,12 @@ def _stop_carried_on(gh, cfg, decision, agent):
 
     try:
         issue = gh.issue(decision["issue"])
-        return taken(gh, cfg, issue) and stop_carried_on(gh, cfg, issue, decision, agent)
+        return taken(gh, cfg, issue) and stop_carried_on(gh, cfg, issue, decision, agent, ran)
     except (GitHubError, Refused):
         return False
 
 
-def _plan_carried_on(gh, cfg, decision, output):
+def _plan_carried_on(gh, cfg, decision, output, ran=None):
     """Whether autopilot carries on after a plan, as the engine decides what follows it
     (`host.plan_carried_on`). One whose next step the engine refuses to decide needs a
     person."""
@@ -2084,7 +2084,7 @@ def _plan_carried_on(gh, cfg, decision, output):
 
     try:
         issue = gh.issue(decision["issue"])
-        return taken(gh, cfg, issue) and plan_carried_on(gh, cfg, issue, decision, output)
+        return taken(gh, cfg, issue) and plan_carried_on(gh, cfg, issue, decision, output, ran)
     except (GitHubError, Refused):
         return False
 

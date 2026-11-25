@@ -31,8 +31,8 @@ that sets up repositories. Read [How it works](docs/how-it-works.md) before chan
 ## Rules
 
 - Jobs that run an agent or repository code have read-only tokens; jobs with write tokens never run
-  repository code or receive an agent credential. `tests/test_cli.py` checks this; extend it for new
-  jobs.
+  repository code or receive an agent credential. `tests/test_cli.py` checks this in every workflow;
+  extend it for new jobs.
 - NexKit writes on GitHub only as the repository's GitHub App (`github_app`). Each job that writes
   mints its own token with only what it needs; `github.token` only reads. A token lasts an hour, so
   nothing holds one through a longer wait. What the App does starts workflows, NexKit's own too, so

@@ -4,7 +4,8 @@
 # pull request runs the unit tests and that runtime's live smoke test with that exact version;
 # merge it when CI is green, then release. Until then the pipeline keeps using the version it was
 # tested with. NexKit watches this workflow's runs on main like CI's: with autopilot, a failure
-# that repeats opens a bug issue.
+# that repeats opens a bug issue. The job that runs scripts/ only reads; the job that pushes runs
+# no repository code and applies each change only when it moves one pin to the version proposed.
 name: Update agents
 
 on:
@@ -16,7 +17,46 @@ concurrency:
   group: update-agents
 
 jobs:
+  propose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      updates: ${{ steps.pins.outputs.updates }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - id: pins
+        name: Pin the newest stable version of each runtime, one patch each
+        run: |
+          mkdir -p "$RUNNER_TEMP/updates"
+          updates="[]"
+          for runtime in $(python -c "from nexkit.runtimes import RUNTIMES; print(*RUNTIMES)"); do
+            git checkout -q -- nexkit/__init__.py
+            version=$(python scripts/agent_version.py "$runtime" update)
+            if [ -z "$version" ]; then
+              echo "$runtime is up to date."
+              continue
+            fi
+            git diff -- nexkit/__init__.py > "$RUNNER_TEMP/updates/$runtime.patch"
+            updates=$(jq -c --arg r "$runtime" --arg v "$version" '. + [{runtime: $r, version: $v}]' <<< "$updates")
+          done
+          echo "updates=$updates" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: updates
+          path: ${{ runner.temp }}/updates
+          if-no-files-found: ignore
+          retention-days: 1
+
   update:
+    needs: propose
+    if: needs.propose.outputs.updates != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -25,25 +65,38 @@ jobs:
       actions: write # start CI on it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          python-version: "3.12"
+          name: updates
+          path: ${{ runner.temp }}/updates
       - name: Open a pull request per runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATES: ${{ needs.propose.outputs.updates }}
         run: |
           base=$(git rev-parse HEAD)
-          for runtime in $(python -c "from nexkit.runtimes import RUNTIMES; print(*RUNTIMES)"); do
-            git checkout -q --detach "$base"
-            version=$(python scripts/agent_version.py "$runtime" update)
-            if [ -z "$version" ]; then
-              echo "$runtime is up to date."
-              continue
+          jq -c '.[]' <<< "$UPDATES" | while read -r update; do
+            runtime=$(jq -r .runtime <<< "$update")
+            version=$(jq -r .version <<< "$update")
+            # What the reading job proposed is data: a runtime's name and a version, nothing else.
+            if ! [[ "$runtime" =~ ^[a-z][a-z0-9-]*$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Not a runtime and a version: $runtime $version"
+              exit 1
             fi
+            git checkout -q --detach "$base"
             branch="update/$runtime-$version"
             if gh pr list --head "$branch" --state open --json number -q '.[0].number' | grep -q .; then
               echo "A pull request for $runtime $version is already open."
-              git checkout -q -- nexkit/__init__.py
               continue
             fi
+            patch="$RUNNER_TEMP/updates/$runtime.patch"
+            # The patch moves one pin line of nexkit/__init__.py to the version, and nothing else.
+            if [ "$(git apply --numstat "$patch")" != $'1\t1\tnexkit/__init__.py' ] ||
+               ! grep -qE "^\+[A-Z_]+ = \"${version//./\\.}\"$" "$patch"; then
+              echo "::error::The patch of $runtime changes more than its pin to $version."
+              exit 1
+            fi
+            git apply "$patch"
             git switch -q -c "$branch"
             git -c user.name="github-actions[bot]" \
                 -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
@@ -54,5 +107,3 @@ jobs:
             # Pull requests opened with the Actions token do not start CI; dispatch it.
             gh workflow run ci.yml --ref "$branch" -f runtime="$runtime"
           done
-        env:
-          GH_TOKEN: ${{ github.token }}

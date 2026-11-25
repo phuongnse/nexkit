@@ -796,9 +796,10 @@ def _needing(gh, numbers):
     return found
 
 
-def lower_waves(gh, cfg, issue):
-    """(why an issue of a wave above 0 is not ready yet, whether a person must act), or
-    None. It waits for every open issue of a lower wave in its milestone, read now, so an
+def waited_waves(gh, cfg, issue):
+    """What an issue of a wave above 0 waits for, or None when it has no wave: `(level,
+    label, numbers)`. `numbers` is None when it has no milestone, and otherwise the numbers
+    of the open issues of a lower wave in its milestone that it waits for, read now, so an
     issue opened later and the parts of a split count without a mark; issues of its own
     wave run beside it. So that nothing waits in a circle, it does not wait for an issue
     above it, or for one that a person marked as needing it or an issue above it."""
@@ -807,7 +808,7 @@ def lower_waves(gh, cfg, issue):
         return None
     milestone = (issue.get("milestone") or {}).get("number")
     if milestone is None:
-        return _no_milestone(level, label), True
+        return level, label, None
     number = issue["number"]
     lower = [
         other
@@ -815,7 +816,7 @@ def lower_waves(gh, cfg, issue):
         if "pull_request" not in other and other["number"] != number and wave(cfg, other)[0] < level
     ]
     if not lower:
-        return None
+        return level, label, []
     above = _ancestors(gh, number)
     # So that nothing waits in a circle, no issue waits for a lower wave that waits, through
     # *blocked by* marks, for it, an issue above it, or any issue of its wave or a higher
@@ -826,10 +827,21 @@ def lower_waves(gh, cfg, issue):
         if "pull_request" not in other and wave(cfg, other)[0] >= level
     ]
     exempt = {*above, *_needing(gh, [number, *above, *level_up])}
-    rest = [f"#{other['number']}" for other in lower if other["number"] not in exempt]
-    if not rest:
+    return level, label, [other["number"] for other in lower if other["number"] not in exempt]
+
+
+def lower_waves(gh, cfg, issue):
+    """(why an issue of a wave above 0 is not ready yet, whether a person must act), or
+    None, from `waited_waves`."""
+    found = waited_waves(gh, cfg, issue)
+    if found is None:
         return None
-    listed = ", ".join(rest)
+    level, label, numbers = found
+    if numbers is None:
+        return _no_milestone(level, label), True
+    if not numbers:
+        return None
+    listed = ", ".join(f"#{number}" for number in numbers)
     return f"it is in wave {level} (`{label}`), so it waits for {listed} of lower waves", False
 
 

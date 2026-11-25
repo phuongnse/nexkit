@@ -165,13 +165,15 @@ def situation(
     blockers=(),
     held=False,
     depth=0,
+    waves=(),
 ):
     """(kind, document): where the import puts `issue`, a GitHub issue, or a person's pull
     request for a review-only item, and its first state document. It reads the item's
     `comments`; its NexKit pull request `pull` and that pull request's `pull_comments`; its
     sub-issues `parts`; the open issues that block it, `blockers`; whether a label holds it,
-    `held`; the configuration `cfg`, and the time `now`. `depth` is how many levels of parts the
-    issue is below the issue first split, as `autopilot.depth` gives it."""
+    `held`; how many levels of parts the issue is below the issue first split, `depth`, as
+    `autopilot.depth` gives it; the numbers of the open issues of a lower wave that it waits for,
+    `waves`; the configuration `cfg`, and the time `now`."""
     doc = empty(str(issue["number"]))
     if issue.get("title") is not None:
         doc["title"] = str(issue["title"])[: LONGEST["title"]]
@@ -187,7 +189,7 @@ def situation(
         doc["change"] = {"id": str(pull["number"]), "version": pull["head"]["sha"]}
         doc["observed"] = observed(pull)
     item = Item(doc, issue, list(comments), pull, list(pull_comments), cfg, now)
-    item.place(list(parts), list(blockers))
+    item.place(list(parts), list(blockers), list(waves))
     if doc["state"] in ANSWERING and item.answered():
         doc["asked"].append("answers")
     if fit(doc) is None:
@@ -270,8 +272,9 @@ class Item:
 
     # Where the item is.
 
-    def place(self, parts, blockers):
-        """Name the item's state, in the order `autopilot._assess` reads an item."""
+    def place(self, parts, blockers, waves=()):
+        """Name the item's state, in the order `autopilot._assess` reads an item. It waits for the
+        open `blockers` and for the issues of a lower wave in `waves`."""
         last_comment, last = self.runs[-1] if self.runs else (None, None)
         latest_comment, latest = _latest(self.rows)
         # A run of the issue that its pull request carries on is read there, unless it is
@@ -287,10 +290,12 @@ class Item:
         if self.doc["itemKind"] == "reviewOnly":
             return self.review_only(latest_comment, latest)
         if not self.pull:
-            # Every item without a pull request waits for the open issues that block it: the
-            # first BLOCKERS of them, so that the waits stay within the schema's `maxItems`.
-            for blocker in blockers[:BLOCKERS]:
-                self.wait("blocker", on=str(blocker["number"]))
+            # Every item without a pull request waits for the open issues that block it and for
+            # those of a lower wave that hold it back, as one wait each: the first BLOCKERS of
+            # them, so that the waits stay within the schema's `maxItems`.
+            waited = [blocker["number"] for blocker in blockers] + list(waves)
+            for number in list(dict.fromkeys(waited))[:BLOCKERS]:
+                self.wait("blocker", on=str(number))
         if self.on_its_way:
             return self.running("started", OF_COMMAND.get(self.record["command"], "planning"))
         if last and not handed_on and last.get("status") in autopilot.ACTIVE:
@@ -744,6 +749,9 @@ def import_item(gh, cfg, number, pull=None, now=None):
     details = gh.pull(pull) if pull else None
     pull_comments = gh.comments(pull) if pull else []
     blockers = [found for found in gh.blocked_by(number) if found.get("state") == "open"]
+    # An issue with no pull request waits for the lower waves of its milestone; `_assess`
+    # reads waves only for one.
+    waited = None if details else autopilot.waited_waves(gh, cfg, issue)
     return imported(
         issue,
         comments,
@@ -755,4 +763,5 @@ def import_item(gh, cfg, number, pull=None, now=None):
         blockers,
         bool(autopilot.hold_label(cfg, issue)),
         autopilot.depth(issue, autopilot.lineage(gh, issue)),
+        (waited[2] or []) if waited else [],
     )

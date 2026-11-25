@@ -472,9 +472,11 @@ class Step:
             return False
         # A failed item waits for a person whatever is observed, and so does one in `new`, but a
         # review-only item that waits to start: a newer version waits for the request that takes
-        # it on (docs/engine.md#states).
+        # it on. A split parent waits for its parts whatever is pushed to its change, as the
+        # autopilot reads a parent's parts before its pull request (docs/engine.md#states).
         starting = self.review_only and self.waiting("start")
-        whole = whole and self.state != "failed" and (self.state != "new" or starting)
+        whole = whole and self.state not in ("failed", "split")
+        whole = whole and (self.state != "new" or starting)
         if observed["merged"]:
             self.move("accepted")
             self.close("completed")

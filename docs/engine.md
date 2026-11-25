@@ -199,8 +199,8 @@ The protocol is built for delivery at least once, in any order a host's queues g
   such as a push, a move of the base, a merge or a sweep, and may send one at any time. The state
   keeps the latest observation, and after each event the engine reconciles the item with it,
   even after an event that changes nothing else, so the next observation, or a repeated one,
-  mends one that was lost. A failed item waits for a person, whatever is observed, but for a
-  merge or an emptied change.
+  mends one that was lost. A failed item waits for a person, and a split parent waits for its
+  parts, whatever is observed, but for a merge or an emptied change.
 - **A host's duties make the latest observation the truth.**
   - It handles one item's events one at a time, in the order it handles them, and stores each
     answer with the revision's compare-and-set. When its write loses, it reads the state again and
@@ -376,7 +376,8 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   merged, such as by a person's hand, goes to `accepted`; one that became empty, because the same
   change landed another way, goes to `noChange`; a version other than the engine's, such as a
   person's push, withdraws or cancels what acts on the old version and goes to `checking`, or
-  follows the conflict policy when that version conflicts. A change that conflicts follows the
+  follows the conflict policy when that version conflicts. A split parent keeps waiting for its
+  parts instead, as NexKit 6 reads a parent's parts before its pull request. A change that conflicts follows the
   conflict policy at once where nothing runs that it must wait for: in `ready` and `accepting`, and
   in `checking` when a conflict round can start (`resolve` or `redo` with rounds left), since those
   checks can no longer lead to an accept. Otherwise the policy applies when the item would next go
@@ -444,7 +445,10 @@ Three things sit beside the state, never in place of it:
   still runs, as NexKit 6's hold label does. A step that runs finishes and records what it held
   back. A request that would lead to the conflict policy's work, such as a person's request for a
   review of a change that conflicts, is taken but that work still waits: the hold wins, and the item
-  waits in `checking` until it ends.
+  waits in `checking` until it ends. A hold also holds a run paused at a usage limit or waiting to
+  run again, which starts when the hold ends. NexKit 6 resumes such a run under the label
+  (`maintain.resume_paused`), and the engine differs on purpose: one rule holds every wait, and a
+  resumed run spends agent time.
 - **Wait:** the next step waits for something named: a request to start (`start`); a time, such
   as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has
@@ -453,7 +457,9 @@ Three things sit beside the state, never in place of it:
   `time`, `usageLimit` or `requiredChecks`. When a blocker, or the bug issue of a base failure,
   closes, the waits on it end, and an item does not start while a blocker is open. A host
   reports that the base branch passes again, so that its failure is gone though its item is
-  open, as the end of that item too, naming it. An end that comes before the
+  open, as the end of that item too, naming it. A base failure whose record names no item of
+  its own waits on the word "none", which the host ends the first time it looks, as NexKit 6
+  treats such a wait as over. An end that comes before the
   engine recorded a wait on that item changes nothing, so a host sends it again, as a new
   event, each time it finds the item closed or the base passing while a wait on the item
   stands, such as on each sweep, as NexKit 6's sweep looks at each wait. When the last wait or
@@ -684,7 +690,10 @@ adapter. A new rule of the engine comes with a case.
   runs again after a transient stop, becomes a wait with its time, unless NexKit 6 would no longer
   resume it, which fails for a person; an automatic run that ended without a report waits to
   start again, later each time. A merge that waits for required checks is `accepting` with that
-  wait, and a round that waits for a failure the base branch has is `fixing` with that wait. A
+  wait, and a round that waits for a failure the base branch has is `fixing` with that wait. An
+  item without a pull request that a lower wave of its milestone holds back waits for each open
+  issue of that wave as for a blocker, read once at the import; an issue opened later in the
+  wave is not waited for. A
   round that a hold label kept back is in the state of the step it kept back, held, or waiting to
   start once the label is gone; a conflict round waits in its checks, where the conflict policy
   applies with its count, and a fix round that a hold or a base failure kept back waits to be
@@ -726,7 +735,9 @@ adapter. A new rule of the engine comes with a case.
    before and after a fix round, which the state comment keeps, and `route` asks it which of
    them the fix round it starts diagnoses. A review that NexKit 6 runs again after a
    transient error is the host's own retry, which the protocol does not hold yet, and so is
-   whether a usage limit is resumed. After a blocked `/nexkit go` or fix round whose recommended
+   whether a usage limit is resumed. When the host moves that resume into the engine, a run
+   that a hold keeps back starts later than in NexKit 6, and the differential check lists it as
+   a difference. After a blocked `/nexkit go` or fix round whose recommended
    answer only closes the issue, `report` mentions the person, as for any other wait, and the
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found

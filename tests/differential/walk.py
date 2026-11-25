@@ -58,7 +58,8 @@ INVARIANTS = {
     "answers": "the engine answers a round's questions at most once in a row, and only under "
     "`autoWhenClean` with `answers: recommended`",
     "questions": "a round's questions are kept only while they wait",
-    "split": "an item with a change is never split",
+    "split": "an item with a change is split only with `withdrawChange` naming it, and only from "
+    "a plan that a round which ran out of time asked for (`supersede`)",
     "parent-end": "a split ends as accepted only when every part ended, one was accepted and "
     "`parentEnd` is `whenPartAccepted`, and under `person` its parts' end leaves it to a person",
     "required-checks": "a start of the wait for required checks lives only in `accepting`, on "
@@ -576,8 +577,18 @@ class Walker:
                 flag("answers", "answered without the answers policy", info)
         if attention.get("reason") == "replanRecommended" and not new["change"]:
             flag("questions", "replanRecommended without a change", info)
-        if new["state"] == "split" and state is not None and state["change"]:
-            flag("split", "an item with a change was split", info)
+        if (
+            new["state"] == "split"
+            and state is not None
+            and state["state"] != "split"
+            and state["change"]
+        ):
+            withdrawn = any(
+                a["kind"] == "withdrawChange" and a["changeId"] == state["change"]["id"]
+                for a in actions
+            )
+            if not (withdrawn and "supersede" in state["asked"] and new["change"] is None):
+                flag("split", "an item with a change was split without withdrawing it", info)
         # parent-end
         if event["kind"] == "partEnded" and state is not None and state["state"] == "split":
             parts = new["parts"]

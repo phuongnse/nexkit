@@ -35,6 +35,9 @@
     },
     {
       "$ref": "actions/wait.schema.json"
+    },
+    {
+      "$ref": "actions/withdrawChange.schema.json"
     }
   ]
 }

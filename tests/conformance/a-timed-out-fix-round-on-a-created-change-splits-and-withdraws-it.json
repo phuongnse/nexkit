@@ -1,0 +1,80 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "change": {
+          "id": "308",
+          "version": "v1"
+        }
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@timeout"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "split",
+          "supersede"
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplit"
+      },
+      "state": "split",
+      "changed": true,
+      "actions": [
+        "show",
+        "createParts",
+        "withdrawChange"
+      ],
+      "expect": {
+        "change": null,
+        "observed": null,
+        "asked": [
+          "split"
+        ],
+        "pending.2.changeId": "308",
+        "pending.2.kind": "withdrawChange"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "withdrawChange",
+        "result": {}
+      },
+      "state": "split",
+      "changed": true
+    }
+  ]
+}

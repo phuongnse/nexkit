@@ -12,7 +12,8 @@ questions, once in a row, a writer's answer that only closes the issue, a plan t
 change or needs a hand-made change, splits and their rules, a new plan after a collaborator's
 comment, and what a plan waits for without autopilot. One stays NexKit 6's
 (`autopilot._replanned`): a plan that splits an issue whose pull request's round ran out of
-time, since the engine never splits an item that has a change (docs/engine.md#states).
+time. The engine splits such an item and withdraws its change (docs/engine.md#states), but the
+host does not send it that plan yet.
 
 It also decides what follows a `/nexkit go` that stopped as blocked with questions or with
 protected paths its change needs (`autopilot.engine_round`): the answers to its questions, once

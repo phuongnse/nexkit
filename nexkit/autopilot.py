@@ -1188,9 +1188,9 @@ def _split(gh, issue, plan, data, record, start, pull):
     is too large: split it as the plan suggests, and close the pull request as superseded;
     or, when it suggests no parts or parts titled like the issue, ask once for the plan
     again; or wait for a person at `MAX_DEPTH` and after a second such plan. The engine
-    decides every other plan's split (`host.after_plan`), but it never splits an item that
-    has a change (docs/engine.md#states), so this split stays NexKit 6's
-    (docs/engine.md#getting-there)."""
+    decides every other plan's split (`host.after_plan`). It splits an item that has a change
+    too, from this plan, but the host does not send it that plan yet, so this split stays
+    NexKit 6's (docs/engine.md#getting-there)."""
     if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
         # Its scope was set levels above, so a person splits it on, or implements it.
         return _step(issue, "waits", person(DEPTH_DO, DEPTH_REASON))

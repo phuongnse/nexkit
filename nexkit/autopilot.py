@@ -1779,7 +1779,7 @@ def mention_text(cfg, reason):
     if not cfg["notify"]:
         return None
     people = " ".join(f"@{login}" for login in cfg["notify"])
-    text = _unmentioned(reason).rstrip(".")
+    text = unmentioned(reason).rstrip(".")
     # A reason that ends with a list of what a person decides ends without a period.
     end = "" if LIST_ITEM.match(text.rsplit("\n", 1)[-1]) else "."
     return f"{people} {NEEDED}{text}{end}"
@@ -1790,7 +1790,7 @@ LIST_ITEM = re.compile(r"\s*(?:-|\d+\.) ")
 MENTION = re.compile(r"@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9._-]+|\[bot\])?")
 
 
-def _unmentioned(reason):
+def unmentioned(reason):
     """`reason` as it may stand in a comment that mentions `notify`: outside its code
     spans, a login such as the author of an issue goes in a code span of its own, so that
     nobody outside `notify` is mentioned, and nothing opens or closes an HTML comment."""

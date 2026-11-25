@@ -101,6 +101,10 @@
       {
         "workflow": "update-agents.yml",
         "every": 10
+      },
+      {
+        "workflow": "docs-audit.yml",
+        "every": 20
       }
     ]
   },
@@ -116,6 +120,9 @@
     "max_parallel": 3,
     "watch_workflows": [
       "ci.yml"
+    ],
+    "trusted_workflows": [
+      "docs-audit.yml"
     ],
     "priority": [
       "nexkit:ci",

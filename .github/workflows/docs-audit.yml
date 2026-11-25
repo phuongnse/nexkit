@@ -1,0 +1,136 @@
+# Reads a quarter of NexKit's docs, skills, README and AGENTS.md against the code, as
+# .claude/skills/nexkit-docs-audit/SKILL.md says, checks what needs no judgement (milestones and
+# the roadmap, planned markers, the size of each doc), and opens an issue for each group of
+# findings, at most ten a run. It also points each broken link of an open issue at its new home.
+# NexKit takes the issues, since autopilot.trusted_workflows lists this file, and starts this
+# workflow on main every few merges, by merge.after_workflows; it also runs on demand. The audit
+# job runs the agent with read-only tools and holds no token that writes; it reads issues and
+# milestones only. The file job runs no model and no repository code: it opens the issues and
+# replaces the links that the audit job planned, so a page or an issue that tries to steer the
+# agent cannot write to the repository.
+name: Docs audit
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: docs-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: read # open issues and milestones: what they cover, and their links
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, so the links step can say where a moved or deleted file went.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the pinned Claude Code
+        run: python bin/nexkit install-agents --runtime claude-code
+      - id: links
+        name: List the broken links of open issues
+        # A failure leaves every link as it is, and the pages are still read.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/docs-audit"
+          python scripts/docs_audit.py links "$RUNNER_TEMP/docs-audit/links.json"
+      - name: Read this run's pages
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/docs-audit"
+          python scripts/docs_audit.py read "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP/docs-audit/findings.json"
+      - name: Choose the new home of each broken link
+        if: steps.links.outcome == 'success'
+        # A failure leaves every link as it is, and the findings are still filed.
+        continue-on-error: true
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          python scripts/docs_audit.py homes "$RUNNER_TEMP/docs-audit/links.json" \
+            "$RUNNER_TEMP/docs-audit/homes.json"
+      # What follows becomes public issues and issue text: no file may hold the agent's
+      # credential, which the agent's read-only tools could still read from the runner.
+      - name: Refuse files that hold the agent's credential
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          leaked=0
+          for file in "$RUNNER_TEMP"/docs-audit/*; do
+            if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && grep -qF -- "$CLAUDE_CODE_OAUTH_TOKEN" "$file"; then
+              rm -f "$file"
+              echo "::error::$(basename "$file") held the agent's credential, so it was deleted and nothing is filed."
+              leaked=1
+            fi
+          done
+          exit "$leaked"
+      - name: Plan the issues and the links
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          dir="$RUNNER_TEMP/docs-audit"
+          python scripts/docs_audit.py plan "$dir/findings.json" "$dir/homes.json" "$GITHUB_RUN_ID" \
+            > "$dir/plan.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-audit
+          path: ${{ runner.temp }}/docs-audit
+          if-no-files-found: error
+          retention-days: 30
+
+  file:
+    needs: audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      issues: write # open the planned issues, with their labels
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: docs-audit
+          path: ${{ runner.temp }}/docs-audit
+      - name: Open the planned issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          plan="$RUNNER_TEMP/docs-audit/plan.json"
+          if [ "$(jq '.issues | length' "$plan")" -gt 0 ]; then
+            gh label create docs-audit --force --color c5def5 \
+              --description "Found by the docs audit, which reads the docs against the code"
+          fi
+          jq -c '.issues[]' "$plan" | while read -r issue; do
+            args=(--title "$(jq -r .title <<< "$issue")" --body "$(jq -r .body <<< "$issue")")
+            while read -r label; do
+              args+=(--label "$label")
+            done < <(jq -r '.labels[]' <<< "$issue")
+            gh issue create "${args[@]}"
+          done
+      - name: Point each broken link at its checked home
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          jq -c '.relinks[]' "$RUNNER_TEMP/docs-audit/plan.json" | while read -r relink; do
+            number=$(jq -r .issue <<< "$relink")
+            # Only the text the audit read is replaced, so an edit since then is never lost.
+            if gh issue view "$number" --json body | jq -e --argjson r "$relink" '.body == $r.before' > /dev/null; then
+              jq -r .after <<< "$relink" | gh issue edit "$number" --body-file -
+            else
+              echo "#$number changed since the audit read it; its links stay as they are."
+            fi
+          done

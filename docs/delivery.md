@@ -18,8 +18,8 @@ them true and each merge easy to review.
   says near the top "Stacked on #N: review and merge that first." Pull requests are
   squash-merged. After a squash merge, the next pull request merges `main` into its branch,
   without a rebase, so that its reviewed commits stay, and then targets `main`.
-- A session's next work is the open `hand-made` issues of the milestone that no open issue blocks
-  (GitHub's blocked-by), where a blocking issue with an open pull request counts as done and the
+- A session's next work is the open `hand-made` issues, in a milestone or in none, that no open
+  issue blocks (GitHub's blocked-by), where a blocking issue with an open pull request counts as done and the
   work stacks on that pull request. Of those, take the lowest number, unless the owner names
   another.
 - A question for the owner is a comment on the issue it concerns, and work goes on with the issues
@@ -34,16 +34,33 @@ them true and each merge easy to review.
 ## Labels and milestones
 
 Milestones group the work by feature and labels say what kind of change it is, so the
-[roadmap](roadmap.md) and a search on GitHub find every piece of a feature.
+[roadmap](roadmap.md) and a search on GitHub find every piece of a feature, and a milestone holds
+only the work that its feature needs.
 
-- Every issue and pull request is in the milestone of the feature it builds, as
-  [the roadmap](roadmap.md) lists them.
-- It carries at least one label of its kind (`enhancement`, `bug`, `refactor`, `process` or
-  `documentation`) and every other label whose description on GitHub fits it, such as `security`.
+- **An issue's milestone follows one test, taken in these steps.**
+  1. **The milestone whose roadmap row names what the issue builds,** in its *What it delivers*:
+     its features, and the fixes and follow-ups of that work while the milestone is open. A
+     `process` or `documentation` issue that a row names is in that row's milestone too.
+  2. **Otherwise no milestone, and the label that names its kind:**
+
+     | Label | Kind |
+     | --- | --- |
+     | `nexkit:ci`, `nexkit:flaky`, `nexkit:dependabot` | NexKit's issues for a failure of CI on `main`, a flaky test, a Dependabot advisory |
+     | `bug` | A fix of what a released NexKit already has |
+     | `refactor` | One concern moved to one shared mechanism, which keeps its behaviour |
+     | `process` | A change to how NexKit is built that no row names |
+     | `documentation` | A change to the docs that no row names |
+     | `docs-audit` | An issue that the [docs audit](writing-docs.md#how-the-docs-stay-correct) opens |
+
+  3. **A part of a split and a follow-up take the same test.** A part builds part of its parent,
+     so it keeps the parent's milestone.
+- Every issue and pull request carries at least one label of its kind (`enhancement`, `bug`,
+  `refactor`, `process` or `documentation`) and every other label whose description on GitHub fits
+  it, such as `security`.
 - A release pull request carries `release`, and one that updates a pin `dependencies`.
 - A pull request that closes an issue carries that issue's labels, but for the holds `on-hold` and
-  `hand-made`, and its milestone: NexKit sets them on the pull requests it opens, and a session
-  sets them on its own.
+  `hand-made`, and its milestone when it has one: NexKit sets them on the pull requests it opens,
+  and a session sets them on its own. A pull request that closes no issue takes the same test.
 
 ## NexKit on this repository
 

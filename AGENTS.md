@@ -26,7 +26,7 @@ that sets up repositories. Read [How it works](docs/how-it-works.md) before chan
 | `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; resuming runs paused at a usage limit; autopilot sweeps |
 | `config.py`, `globs.py`, `scaffold.py`, `app.py`, `templates/` | Config schema and defaults, path globs; `nexkit init` and `doctor`; the GitHub App |
 | `status.py`, `snapshot.py`, `pin.py`, `github.py`, `gitutil.py` | `nexkit status` and the batched reads it makes; the release that the repository's workflow pins, which `status` and `doctor` run; REST, GraphQL and git helpers |
-| `scripts/` | Live smoke test, pin updates, release notes; `lint.sh`, the lint that CI and NexKit's checks run |
+| `scripts/` | Live smoke test, pin updates, release notes, the docs audit; `lint.sh`, the lint that CI and NexKit's checks run |
 
 ## Rules
 

@@ -528,10 +528,11 @@ def stage_schema(stage, cfg):
     return with_checklist(schema, stage, cfg)
 
 
-def stage_spec(stage, cfg, home, dirs=(), session=None):
+def stage_spec(stage, cfg, home, dirs=(), session=None, schema=None):
     """What the runtime needs to run `stage`, with `home` for the CLI's own files and
     `dirs`, folders outside the checkout that the agent reads, such as CI runs' evidence.
-    `session` names a session that NexKit may continue."""
+    `session` names a session that NexKit may continue, and `schema` replaces the stage's
+    result schema, for a run outside the pipeline that keeps the stage's agent and access."""
     settings = configuration.stage(cfg, stage)
     return Spec(
         session=session,
@@ -539,7 +540,7 @@ def stage_spec(stage, cfg, home, dirs=(), session=None):
         model=settings["model"],
         effort=settings["effort"],
         budget_usd=settings["max_budget_usd"],
-        schema=stage_schema(stage, cfg),
+        schema=schema or stage_schema(stage, cfg),
         home=Path(home),
         dirs=tuple(Path(d) for d in dirs),
     )
@@ -606,10 +607,13 @@ def run_agent(
     program=None,
     restore=None,
     dirs=(),
+    schema=None,
 ):
     """Run the agent of `stage` on `prompt`. Return the interpreted result and the tool
     calls for the summary. `program` replaces the runtime's executable, for tests. `dirs`
-    are folders outside `cwd` that the agent reads.
+    are folders outside `cwd` that the agent reads. `schema` replaces the stage's result
+    schema, for a run outside the pipeline, such as the docs audit, that keeps the stage's
+    agents, model, time and access.
 
     When the agent stops at a usage limit, the stage runs again from the start on each of
     its fallbacks in turn, after `restore` returned the checkout to where the agent started.
@@ -651,6 +655,7 @@ def run_agent(
             commits=commits,
             program=program,
             dirs=dirs,
+            schema=schema,
         )
         attempts.append(_attempt_record(cfg, name, settings, attempt))
         if attempt.get("skipped"):
@@ -710,7 +715,21 @@ def _totals(result, attempts):
 
 
 def _run_one(
-    stage, prompt, cfg, name, *, fallback, seconds, cwd, redact, out, title, commits, program, dirs
+    stage,
+    prompt,
+    cfg,
+    name,
+    *,
+    fallback,
+    seconds,
+    cwd,
+    redact,
+    out,
+    title,
+    commits,
+    program,
+    dirs,
+    schema=None,
 ):
     """Run the agent `name` once. A fallback without its secret is skipped: the result has
     `skipped` and says why."""
@@ -770,12 +789,12 @@ def _run_one(
             cfg["usage_limit"]["retry_minutes"],
             label=runtime.label,
             # NexKit's own schema: triage names an unknown profile in its error, not here.
-            schema=with_checklist(SCHEMAS[stage], stage, cfg),
+            schema=schema or with_checklist(SCHEMAS[stage], stage, cfg),
         )
         return found, outcome.cost_usd
 
     with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
-        spec = stage_spec(stage, cfg, home, dirs, session=session)
+        spec = stage_spec(stage, cfg, home, dirs, session=session, schema=schema)
         result, cost = launch_once(spec, prompt, log, seconds)
         calls = log.calls
         if unfit(result):

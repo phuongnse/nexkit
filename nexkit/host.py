@@ -80,6 +80,7 @@ held up by it.
 from __future__ import annotations
 
 import json
+import os
 
 from . import autopilot, engine, first_state, usage
 from .checks import failing_signatures
@@ -272,6 +273,37 @@ def _waiting(doc):
     return doc
 
 
+# The kinds of source that name an event: a comment, a review, an event of the issue events API,
+# a dispatch (by its run) and an agent's result (by its run).
+SOURCES = ("comment", "review", "issue-event", "dispatch", "run")
+
+
+def event_id(kind, source):
+    """The id `<kind>-<id>` of an event that GitHub's object `source` (or its id) gives, so a
+    source gives the same id each time and two sources never share one. Only GitHub's positive
+    numeric id counts, never a text that a person wrote. Raises `ValueError`.
+    See docs/engine.md#events-and-actions-arrive-more-than-once."""
+    if kind not in SOURCES:
+        raise ValueError(f"No event is named by a {kind!r}.")
+    found = source.get("id") if isinstance(source, dict) else source
+    if not isinstance(found, int) or isinstance(found, bool) or found <= 0:
+        raise ValueError(f"A {kind} names an event by its positive number, not {found!r}.")
+    return f"{kind}-{found}"
+
+
+def _run_event_id(url=None):
+    """The id of the agent's result of the workflow run that the link `url` of a run comment
+    names, or of the run this process is in when there is no link. A process outside GitHub
+    Actions, or a comment without a link, has no source and gives `run-local`."""
+    from .route import RUN_ID
+
+    match = RUN_ID.search(url or "")
+    found = match.group(1) if match else None
+    if found is None and not url:
+        found = os.environ.get("GITHUB_RUN_ID", "")
+    return event_id("run", int(found)) if found and found.isdigit() else "run-local"
+
+
 def _event(kind, number, at, name, **fields):
     return {
         "protocol": 1,
@@ -290,7 +322,7 @@ def _result(number, plan, data, run, change=None):
         "actionFinished",
         number,
         plan.get("created_at"),
-        f"plan-{plan.get('id')}",
+        _run_event_id(run.get("url")),
         action=first_state.RUN_ID,
         changeVersion=version,
         result={**AGENT, "changeVersion": version, "output": plan_output(plan, data, run)},
@@ -334,14 +366,14 @@ def _said(gh, number, comment, picked, doc):
         role = "writer" if by and gh.can_write(by) else "reader"
         answers = [{"question": picked[0], "option": picked[1]}]
         asked = doc["attention"]["ref"]
-        name = f"answer-{comment['id']}"
+        name = event_id("comment", comment)
         fields = {"by": _person(by, role), "answers": answers, "note": "", "asked": asked}
         return _event("answered", number, at, name, **fields)
     # A collaborator, as `autopilot._commented_after` reads them: whether they may write
     # matters only to an answer that closes.
     text = {"name": "comment", "ref": str(comment["id"])}
     by = _person(by, "reader")
-    return _event("commented", number, at, f"comment-{comment['id']}", by=by, text=text)
+    return _event("commented", number, at, event_id("comment", comment), by=by, text=text)
 
 
 # -- what follows a plan -------------------------------------------------------------------
@@ -511,7 +543,7 @@ def plan_carried_on(gh, cfg, issue, decision, output):
         "actionFinished",
         number,
         None,
-        f"run-{decision.get('run_id') or number}",
+        _run_event_id(),
         action=first_state.RUN_ID,
         changeVersion=None,
         result=result,
@@ -636,7 +668,7 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments):
         answers = [{"question": picked[0], "option": picked[1]}]
         asked = doc["attention"]["ref"]
         fields = {"by": _person(by, "writer"), "answers": answers, "note": "", "asked": asked}
-        at, name = said[-1].get("created_at"), f"answer-{said[-1]['id']}"
+        at, name = said[-1].get("created_at"), event_id("comment", said[-1])
         event = _event("answered", number, at, name, **fields)
         return view.carry(step(doc, event, policies(cfg))["actions"])
     doc = _working(_plan_doc(issue, record, comments), autopilot.asked_again(comments))
@@ -645,7 +677,7 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments):
         # A collaborator, as `autopilot._commented_after` reads them.
         login = (said[-1].get("user") or {}).get("login") or ""
         text = {"name": "comment", "ref": str(said[-1]["id"])}
-        at, name = said[-1].get("created_at"), f"comment-{said[-1]['id']}"
+        at, name = said[-1].get("created_at"), event_id("comment", said[-1])
         events.append(_event("commented", number, at, name, by=_person(login, "reader"), text=text))
     else:
         closed = _closed_since(gh, issue, comment)
@@ -679,7 +711,7 @@ def _round_result(number, comment, run):
         "actionFinished",
         number,
         comment.get("created_at"),
-        f"go-{comment.get('id')}",
+        _run_event_id(run.get("url")),
         action=first_state.RUN_ID,
         changeVersion=None,
         result={**AGENT, "output": round_output(run)},
@@ -792,7 +824,7 @@ def round_carried_on(gh, cfg, issue, decision, agent):
         "actionFinished",
         issue["number"],
         None,
-        f"run-{decision.get('run_id') or issue['number']}",
+        _run_event_id(),
         action=first_state.RUN_ID,
         changeVersion=None,
         result={**AGENT, "output": round_output(run)},
@@ -879,7 +911,7 @@ def stopped(gh, cfg, issue, run, record, start, comments, pull=None, pull_commen
     if not timed_out:
         again = autopilot.asked_again(pull_comments, comments)
     doc = _round_doc(issue, record, again, pull, run.get("head"), place)
-    event = _stop_event(number, f"stop-{pull or number}", doc, fix_output(run), timed_out)
+    event = _stop_event(number, _run_event_id(run.get("url")), doc, fix_output(run), timed_out)
     actions = step(doc, event, policies(cfg))["actions"]
     kinds = {action["kind"]: action for action in actions}
     found = [
@@ -943,7 +975,7 @@ def stop_carried_on(gh, cfg, issue, decision, agent):
     run = {**found, "protected_paths": ((agent.get("output") or {}).get("protected_paths") or [])}
     doc = _round_doc(issue, record, again, pr, decision.get("head"), place)
     output = fix_output(run) if pr else round_output(run)
-    name = f"run-{decision.get('run_id') or issue['number']}"
+    name = _run_event_id()
     actions = step(doc, _stop_event(issue["number"], name, doc, output, timed_out), policies(cfg))
     return _carries_on(actions["actions"])
 
@@ -951,12 +983,13 @@ def stop_carried_on(gh, cfg, issue, decision, agent):
 # -- a person's command ----------------------------------------------------------------
 
 
-def closing_command(gh, decision, comments):
+def closing_command(gh, decision, comments, command):
     """A writer's `/nexkit plan` or `/nexkit go` on an issue whose questions NexKit asked
     last, those of its latest plan or of a `/nexkit go` that stopped as blocked
     (`state.asked_last`): when its note picks the option that only closes the issue and the
     engine drops the issue for it, the `maintain` job closes the issue as not planned, with
-    no agent run. Otherwise the command goes to its round as it is."""
+    no agent run. Otherwise the command goes to its round as it is. `command` is the comment
+    of the command, which names the event."""
     number = decision["issue"]
     asked = asked_last(comments)
     if asked is None:
@@ -979,7 +1012,7 @@ def closing_command(gh, decision, comments):
     answers = [{"question": picked[0], "option": picked[1]}]
     fields = {"answers": answers, "note": "", "asked": doc["attention"]["ref"]}
     by = _person(decision.get("actor"), "writer")
-    event = _event("answered", number, None, f"command-{number}", by=by, **fields)
+    event = _event("answered", number, None, event_id("comment", command), by=by, **fields)
     try:
         found = step(doc, event, {})
     except Refused:
@@ -1123,7 +1156,7 @@ def round_ended(
         "actionFinished",
         number,
         None,
-        f"review-{pr}-{head}",
+        f"round-review-{pr}-{head}",
         action=review_run[0]["id"],
         changeVersion=head,
         result=result,
@@ -1638,7 +1671,7 @@ def stage_limited(cfg, decision, reset, label=None):
     result = {**AGENT, "changeVersion": version, "output": None, "limit": limit}
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
     events = _hold_events(number, label)
-    events.append(_event("actionFinished", number, None, f"limit-{number}", **fields))
+    events.append(_event("actionFinished", number, None, _run_event_id(), **fields))
     _, actions = _answers(doc, events, policies(cfg))
     kinds = {action["kind"]: action for action in actions}
     if "wait" in kinds:
@@ -1660,7 +1693,7 @@ def stage_transient(cfg, decision, now, error, label=None):
     result["error"] = str(error)
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
     events = _hold_events(number, label)
-    events.append(_event("actionFinished", number, usage.iso(now), f"transient-{number}", **fields))
+    events.append(_event("actionFinished", number, usage.iso(now), _run_event_id(), **fields))
     state, actions = _answers(doc, events, policies(cfg))
     kinds = {action["kind"]: action for action in actions}
     count = (state.get("again") or {}).get("transient")

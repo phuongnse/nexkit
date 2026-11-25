@@ -180,7 +180,7 @@ def route(gh, event_name, event, inputs=None):
             decision = _trust(event["issue"], note)
         else:
             decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
-            decision = _closing(gh, decision)
+            decision = _closing(gh, decision, event["comment"])
         decision.update(actor=actor, comment_id=event["comment"]["id"])
         return decision
 
@@ -312,16 +312,17 @@ def _approved(pull, actor, commit=None):
     }
 
 
-def _closing(gh, decision):
+def _closing(gh, decision, command):
     """A person's `/nexkit plan` or `/nexkit go` whose note picks the option, of the
     questions NexKit asked last on the issue, that only closes it: the `maintain` job
     closes the issue as not planned, and no agent runs, since another round could only
-    stop at the same place. Any other note goes to its round as it is."""
+    stop at the same place. Any other note goes to its round as it is. `command` is the
+    comment of the command."""
     if decision["action"] not in ("plan", "implement") or not decision.get("note"):
         return decision
     from .host import closing_command
 
-    return closing_command(gh, decision, gh.comments(decision["issue"]))
+    return closing_command(gh, decision, gh.comments(decision["issue"]), command)
 
 
 def _trust(issue, note):

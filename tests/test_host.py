@@ -4,11 +4,13 @@ autopilot and `route` carry out in NexKit 6's words, storing no state
 
 import base64
 import json
+from pathlib import Path
 from unittest import mock
 
 from nexkit import autopilot, engine, host, item_state
 from nexkit import report as reports
 from nexkit.checks import recorded
+from nexkit.protocol.size import MOST
 from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person, report
 from nexkit.route import route
 from nexkit.state import (
@@ -41,6 +43,8 @@ ASKED = {
     "recommended": 1,
     "closes": 3,
 }
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def comment_event(number, body, login="alice"):
@@ -869,10 +873,10 @@ class ManyChecksTest(ReportCase):
     """The checks that repeat are found however many checks a pull request runs, and a
     diagnosis round looks into the first ten, as in NexKit 6."""
 
-    def checks(self, failing):
+    def checks(self, failing, count=40):
         return [
             {
-                "name": f"c{n:02}",
+                "name": f"c{n:03}",
                 "run": f"make c{n}",
                 "exit_code": 1 if n in failing else 0,
                 "passed": n not in failing,
@@ -880,15 +884,15 @@ class ManyChecksTest(ReportCase):
                 if n in failing
                 else "",
             }
-            for n in range(40)
+            for n in range(count)
         ]
 
-    def round_with(self, before, after, d):
+    def round_with(self, before, after, d, count=40):
         state = {**empty_state(5), "feedback": {"head": "b" * 40, "review": None}}
-        state["feedback"]["checks"] = recorded(self.checks(before))
+        state["feedback"]["checks"] = recorded(self.checks(before, count))
         self.gh.comment(6, render_state(state))
         self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
-        self.write("nexkit-checks", "checks.json", self.checks(after))
+        self.write("nexkit-checks", "checks.json", self.checks(after, count))
         self.write("nexkit-review", "result.json", review_result())
         self.run_report(d=d)
         return read_state(self.gh.comments(6))[1]["feedback"].get("repeated")
@@ -898,21 +902,42 @@ class ManyChecksTest(ReportCase):
 
     def test_checks_past_the_thirtieth_that_fail_the_same_way_are_found(self):
         repeated = self.round_with(range(40), (32, 33, 34, 35), self.fix(auto=True))
-        self.assertEqual(repeated, ["c32", "c33", "c34", "c35"])
+        self.assertEqual(repeated, ["c032", "c033", "c034", "c035"])
         event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
         found = route(self.gh, "workflow_dispatch", event, event["inputs"])
-        self.assertEqual(found["diagnose"], ["c32", "c33", "c34", "c35"])
+        self.assertEqual(found["diagnose"], ["c032", "c033", "c034", "c035"])
 
     def test_a_diagnosis_round_looks_into_the_first_ten_of_more(self):
         repeated = self.round_with(range(40), range(5, 40), self.fix(auto=True))
-        self.assertEqual(repeated, [f"c{n:02}" for n in range(5, 40)])
+        self.assertEqual(repeated, [f"c{n:03}" for n in range(5, 40)])
         event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
         found = route(self.gh, "workflow_dispatch", event, event["inputs"])
-        self.assertEqual(found["diagnose"], [f"c{n:02}" for n in range(5, 15)])
+        self.assertEqual(found["diagnose"], [f"c{n:03}" for n in range(5, 15)])
 
     def test_a_person_s_fix_round_s_checks_compare_too(self):
         repeated = self.round_with((3,), (3,), self.fix())
-        self.assertEqual(repeated, ["c03"])
+        self.assertEqual(repeated, ["c003"])
+
+    def route_diagnoses(self):
+        event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
+        return route(self.gh, "workflow_dispatch", event, event["inputs"]).get("diagnose")
+
+    def test_a_check_past_the_300th_failing_result_is_not_compared(self):
+        # The state compares with the first 300 failing results, so c305 is not compared.
+        repeated = self.round_with(range(320), (305,), self.fix(auto=True), count=320)
+        self.assertFalse(repeated)
+        self.assertFalse(self.route_diagnoses())
+
+    def test_at_most_150_repeated_checks_are_kept(self):
+        repeated = self.round_with(range(320), range(320), self.fix(auto=True), count=320)
+        self.assertEqual(repeated, [f"c{n:03}" for n in range(MOST["repeated"])])
+        self.assertEqual(self.route_diagnoses(), [f"c{n:03}" for n in range(10)])
+
+    def test_the_configuration_names_the_bounds(self):
+        text = (ROOT / "docs" / "configuration.md").read_text(encoding="utf-8")
+        text = text.split("\n## Checks\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn(f"{MOST['failing']} failing", text)
+        self.assertIn(f"{MOST['repeated']} checks", text)
 
 
 class ConflictingTest(ReportCase):

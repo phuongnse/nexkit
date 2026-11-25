@@ -61,7 +61,7 @@ import json
 
 from . import autopilot, engine, first_state
 from .checks import failing_signatures
-from .protocol.size import LONGEST, MOST, failure_key
+from .protocol.size import LONGEST, MOST
 from .report import TOO_LARGE
 from .schema import filled
 from .state import (
@@ -1062,7 +1062,7 @@ def round_ended(
     doc["rounds"]["counted"] = auto_fixes
     if recheck:
         doc["rounds"]["recheck"] = head
-    failing = _failing(before)
+    failing = first_state.failing(before)
     if failing:
         doc["rounds"]["failing"] = failing
     if decision["action"] == "fix":
@@ -1107,14 +1107,6 @@ def round_ended(
     if kind == "done" and not person:
         return _round_end(answer, recheck), _repeated(answer)
     return _review_end(answer, kind, person), _repeated(answer)
-
-
-def _failing(recorded):
-    """The engine's `rounds.failing` for checks as the state comment recorded them: each
-    failing check by the digest of its name and signature (`checks.failing_signatures`)."""
-    return [
-        failure_key(name, found or name) for name, found in failing_signatures(recorded).items()
-    ][: MOST["failing"]]
 
 
 def _repeated(answer):

@@ -254,6 +254,15 @@ round starts, instead of being listed once per shard:
   take the name of one of its shards, `e2e-1` to `e2e-<max>`. A check with a fixed list of
   shards, one entry each, works as before.
 
+**Many checks at once.** The checks after a fix round are compared with the checks before it
+to find those that failed the same way, which the next automatic fix round diagnoses (see
+[Failure handling](how-it-works.md#failure-handling)). The comparison reads at most the first
+300 failing results of the checks before the round, which 15 checks of 20 shards each reach.
+A check whose failing result comes after those is not compared, so it never makes the next
+automatic fix round a diagnosis round. NexKit keeps at most 150 checks that repeated, and a
+diagnosis round looks into the first ten of them. The engine's [state](engine.md#states)
+holds no more than these bounds.
+
 Each job sets up the repository again, so parallel jobs use more runner minutes than one,
 and are worth it when a few slow checks dominate the round. `nexkit init` writes the
 setting from `--parallel-checks`, and each `group` from `--check-group NAME=GROUP`.

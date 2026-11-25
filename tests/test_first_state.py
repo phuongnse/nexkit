@@ -143,8 +143,8 @@ class ImportCasesTest(unittest.TestCase):
             self.assertEqual(answer["changed"], step["changed"], where)
             self.assertEqual(answer["state"]["state"], step["state"], where)
             self.assertEqual([a["kind"] for a in answer["actions"]], step["actions"], where)
-            for path, value in step.get("expect", {}).items():
-                self.assertEqual(at(answer["state"], path), value, f"{where}: {path}")
+            for path_, value in step.get("expect", {}).items():
+                self.assertEqual(at(answer["state"], path_), value, f"{where}: {path_}")
             state = answer["state"]
         self.assertNotEqual(state, imported, "the events left the item as it was")
         waits_only = imported["state"] not in FINAL and not (

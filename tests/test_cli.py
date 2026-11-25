@@ -2429,22 +2429,24 @@ class WorkflowSafetyTests(unittest.TestCase):
 
 class UpdateImageWorkflowTests(unittest.TestCase):
     """update-image.yml proposes the base image's current digest with the least it needs, and
-    the image's build and check run on its pull request (#328). NexKit starts it every few merges
-    rather than on a schedule, which GitHub may delay or drop, and watches its runs."""
+    the image's build and check run on its pull request (#328). It runs once a week, as
+    update-agents.yml does, and autopilot watches the runs of both (#376)."""
 
     @classmethod
     def setUpClass(cls):
         cls.text = (ROOT / ".github/workflows/update-image.yml").read_text()
         cls.jobs = jobs_of(cls.text)
 
-    def test_the_updates_run_every_few_merges_with_the_least_permissions(self):
-        """Both workflows that propose a pin run when NexKit starts them after its merges,
-        never on a schedule, and hold only what they need to push and open a pull request."""
+    def test_the_updates_run_every_week_with_the_least_permissions(self):
+        """Both workflows that propose a pin run once a week, not after merges, since they check
+        no behaviour; autopilot watches their runs, and they hold only what they need to push
+        and open a pull request."""
         cfg = nexkit.config.load(ROOT)
-        listed = {
+        after = {
             entry["workflow"] if isinstance(entry, dict) else entry
             for entry in cfg["merge"]["after_workflows"]
         }
+        cron = re.compile(r'^  schedule:\n    - cron: "\d+ \d+ \* \* [0-6]"\n  workflow_dispatch:$')
         nexkit_yml = (ROOT / ".github/workflows/nexkit.yml").read_text()
         watched = re.search(r"\n  workflow_run:.*\n    workflows: \[([^]\n]*)\]", nexkit_yml)
         for file, name in (
@@ -2454,9 +2456,10 @@ class UpdateImageWorkflowTests(unittest.TestCase):
             with self.subTest(workflow=file):
                 text = (ROOT / ".github/workflows" / file).read_text()
                 triggers = text.split("\non:\n", 1)[1].split("\n\n", 1)[0]
-                self.assertEqual(triggers, "  workflow_dispatch:")
+                self.assertRegex(triggers, cron)
                 self.assertIn(f"\nname: {name}\n", text)
-                self.assertIn(file, listed)
+                self.assertNotIn(file, after)
+                self.assertIn(file, cfg["autopilot"]["watch_workflows"])
                 # A finished run on main starts a sweep, which watches its failures as CI's.
                 self.assertIn(name, [n.strip() for n in watched.group(1).split(",")])
                 self.assertIn("\npermissions: {}\n", text)

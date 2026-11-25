@@ -95,14 +95,6 @@
         "every": 10
       },
       {
-        "workflow": "update-image.yml",
-        "every": 10
-      },
-      {
-        "workflow": "update-agents.yml",
-        "every": 10
-      },
-      {
         "workflow": "docs-audit.yml",
         "every": 20
       }
@@ -119,7 +111,9 @@
     "answer": "recommended",
     "max_parallel": 3,
     "watch_workflows": [
-      "ci.yml"
+      "ci.yml",
+      "update-agents.yml",
+      "update-image.yml"
     ],
     "trusted_workflows": [
       "docs-audit.yml"

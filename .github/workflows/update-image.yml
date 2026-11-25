@@ -1,17 +1,17 @@
-# Proposes the current digest of the engine image's base, PYTHON_IMAGE in nexkit/__init__.py,
-# which moves when its tag gets security fixes. NexKit starts it on main every few merges, by
-# merge.after_workflows in .nexkit/config.json, rather than on a schedule, which GitHub may delay or
-# drop; it also runs on demand. One pull request, from the branch update/python-image, changes only
-# that pin, and none opens while the pin is the tag's digest. Pull requests opened with the Actions
-# token start no workflows, so this one starts CI and release.yml on the branch: the image's build
-# from the new digest and its check against standard input run as the pull request's checks. Merge
-# it when they are green. NexKit watches this workflow's runs on main like CI's: with autopilot, a
-# failure that repeats opens a bug issue. The job that runs scripts/ only reads; the job that
-# pushes runs no repository code and applies the change only when it moves the pin to the image
-# proposed.
+# Every week, propose the current digest of the engine image's base, PYTHON_IMAGE in
+# nexkit/__init__.py, which moves when its tag gets security fixes; it also runs on demand. One
+# pull request, from the branch update/python-image, changes only that pin, and none opens while
+# the pin is the tag's digest. Pull requests opened with the Actions token start no workflows, so
+# this one starts CI and release.yml on the branch: the image's build from the new digest and its
+# check against standard input run as the pull request's checks. Merge it when they are green.
+# Autopilot watches this workflow's runs on main (autopilot.watch_workflows): a failure that
+# repeats opens a bug issue. The job that runs scripts/ only reads; the job that pushes runs no
+# repository code and applies the change only when it moves the pin to the image proposed.
 name: Update base image
 
 on:
+  schedule:
+    - cron: "43 3 * * 1"
   workflow_dispatch:
 
 permissions: {}

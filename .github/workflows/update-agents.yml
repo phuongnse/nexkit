@@ -1,14 +1,15 @@
-# Proposes the newest stable version of each agent runtime, one pull request per runtime.
-# NexKit starts it on main every few merges, by merge.after_workflows in .nexkit/config.json,
-# rather than on a schedule, which GitHub may delay or drop; it also runs on demand. CI on the
-# pull request runs the unit tests and that runtime's live smoke test with that exact version;
-# merge it when CI is green, then release. Until then the pipeline keeps using the version it was
-# tested with. NexKit watches this workflow's runs on main like CI's: with autopilot, a failure
-# that repeats opens a bug issue. The job that runs scripts/ only reads; the job that pushes runs
-# no repository code and applies each change only when it moves one pin to the version proposed.
+# Every week, propose the newest stable version of each agent runtime, one pull request per
+# runtime; it also runs on demand. CI on the pull request runs the unit tests and that runtime's
+# live smoke test with that exact version; merge it when CI is green, then release. Until then the
+# pipeline keeps using the version it was tested with. Autopilot watches this workflow's runs on
+# main (autopilot.watch_workflows): a failure that repeats opens a bug issue. The job that runs
+# scripts/ only reads; the job that pushes runs no repository code and applies each change only
+# when it moves one pin to the version proposed.
 name: Update agents
 
 on:
+  schedule:
+    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 permissions: {}

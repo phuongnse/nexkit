@@ -107,6 +107,16 @@ Until NexKit 7.0 ships, changes move NexKit 6's decisions into the engine one by
   - the outbox;
   - every open item is carried on, so none is stuck or brought back;
   - counts within the policies.
+- Adds to `tests/differential/` ([its README](tests/differential/README.md)), which holds both
+  checks and a CI job that plays a fixed sample of them on every pull request: a family of
+  scenarios for what it moves, each difference it calls out in `known.py`, the invariants of its
+  rules in `walk.py`, and mutants of its rules in `mutants.py`. With a checkout of 8bf5190:
+
+  ```sh
+  python3 tests/differential/harness.py --v6 PATH       # every scenario; --sample K for fewer
+  python3 tests/differential/walk.py                    # 2,000 walks of the engine
+  python3 tests/differential/mutants.py --v6 PATH       # each broken rule is seen
+  ```
 - Comes with a conformance case for each engine rule it adds or changes. Every other test passes
   unchanged, or the pull request says why one changed. It brings its rules in
   [The engine](docs/engine.md), *Getting there* and the Layout's `host.py` row up to date.

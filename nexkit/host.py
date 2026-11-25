@@ -12,7 +12,8 @@ questions, once in a row, a writer's answer that only closes the issue, a plan t
 change or needs a hand-made change, splits and their rules, a new plan after a collaborator's
 comment, and what a plan waits for without autopilot. One stays NexKit 6's
 (`autopilot._replanned`): a plan that splits an issue whose pull request's round ran out of
-time, since the engine never splits an item that has a change (docs/engine.md#states).
+time. The engine splits such an item and withdraws its change (docs/engine.md#states), but the
+host does not send it that plan yet.
 
 It also decides what follows a `/nexkit go` that stopped as blocked with questions or with
 protected paths its change needs (`autopilot.engine_round`): the answers to its questions, once
@@ -58,6 +59,13 @@ limit or on a transient error (`stage_limited`, `stage_transient`, called by `re
 a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_paused`), a hold
 on the issue included. A reset stays the host's to give, and a transient stop of publish stays
 its own retry.
+
+It decides what follows a command that autopilot started and lost, whose run GitHub never
+started, or that ended without a report, or that handed the work on to a run that never started
+(`autopilot._again`, called by `_reportless` and `_handed_on`): `lost_again` sends `actionLost`
+at the time of the last start, with autopilot's count of losses, and carries out the start
+again, the wait or the person. What counts as lost, and the six-hour window of the count, stay
+`autopilot`'s. A person's own lost command waits for that person.
 
 It decides what the merge finds too (`report.merge_pull`, `autopilot._merge_step`):
 `change_seen` sends a pull request that a person merged first, a change that its base branch
@@ -1770,3 +1778,109 @@ def resumes(cfg, run, number, now, label=None):
     if any(action["kind"] in ("runAgent", "runChecks") for action in actions):
         return True
     raise Refused("The engine starts nothing at a resume, which the host cannot do.")
+
+
+# -- a command that autopilot started again after it was lost -------------------------------
+
+
+def lost_again(cfg, issue, record, now, what, fields, extra=None, person=False, label=None):
+    """The step for a command whose run GitHub never started, or that ended without a report
+    (`autopilot._again`, `_reportless`, `_handed_on`), as the engine decides it, or None for a
+    person's command whose comment already shows its end. `what` says which loss it is, `fields`
+    the command's start, `record` autopilot's record of its last start, or {} when none counts,
+    and `extra` what the step carries besides. With `person`, the command is a person's, which
+    waits for them. Raises `Refused`.
+
+    The loss is sent at the time of the last start, as the engine measures a wait from the loss
+    and NexKit 6 from that start, and the host keeps nothing that a later sweep could count
+    from. The agent's tokens are not sent: the record's `once` says that the agent ran."""
+    extra = extra or {}
+    command = str(fields["command"])
+    if command not in RESUMED:
+        raise Refused(f"NexKit writes no start of the command `{command}`.")
+    number, shown = issue["number"], f"`/nexkit {command}`"
+    tries = autopilot._tries(record)
+    doc, version = _lost_doc(RESUMED[command], number, fields["target"])
+    if person:
+        doc["pending"][0]["by"] = "person"
+    if tries >= 1:
+        doc["again"] = {"lost": min(tries, MOST_AGAIN)}
+    if record.get("once"):
+        doc.setdefault("again", {})["once"] = True
+    found = {
+        **(policies(cfg) if cfg else {}),
+        "lostWaits": [int(wait.total_seconds() // 60) for wait in autopilot.AGAIN],
+    }
+    lost = _event(
+        "actionLost",
+        number,
+        _time(record.get("at")) or usage.iso(now),
+        f"lost-{number}-{tries}",
+        action=first_state.RUN_ID,
+        changeVersion=version,
+        tokens=None,
+        seconds=None,
+        usd=None,
+    )
+    state, actions = _answers(doc, [*_hold_events(number, label), lost], found)
+    kinds = {action["kind"]: action for action in actions}
+    if "wait" in kinds:
+        due = autopilot.parse_iso(kinds["wait"]["until"])
+        if due > now:
+            reason = (
+                f"{what}; autopilot starts {shown} again after {due:%H:%M} UTC, since GitHub "
+                "may not start runs for a while"
+            )
+            return autopilot._step(issue, "active", reason, **extra)
+        name, wait = f"lost-tick-{number}-{tries}", kinds["wait"]["wait"]
+        tick = _event("tick", number, usage.iso(now), name, wait=wait)
+        state, actions = _answers(state, [tick], found)
+        kinds = {action["kind"]: action for action in actions}
+    if "runAgent" in kinds or "runChecks" in kinds:
+        again = state["again"]
+        remember = {
+            **fields.get("remember", {}),
+            "tries": again["lost"],
+            **({"once": True} if again.get("once") else {}),
+        }
+        reason = f"{what}, so autopilot starts {shown} {'again' if tries else 'once more'}"
+        return autopilot._step(issue, "start", reason, **{**fields, "remember": remember}, **extra)
+    if (kinds.get("needPerson") or {}).get("reason") == "outage":
+        if person:
+            if not extra:
+                return None
+            return autopilot._step(
+                issue, "waits", autopilot.person(autopilot.LOST_DO, autopilot.REPORTLESS), **extra
+            )
+        if record.get("once"):
+            why = f"{what}, after autopilot started it once more"
+            return autopilot._step(
+                issue, "waits", autopilot.person(autopilot.LOST_DO, why), **extra
+            )
+        why = (
+            f"{what}, {tries + 1} times: GitHub created no job for it, or ended its run "
+            "without a report, as it does while GitHub Actions has an outage"
+        )
+        do = autopilot.OUTAGE_DO.format(command=shown)
+        return autopilot._step(issue, "waits", autopilot.person(do, why), **extra)
+    if label:
+        return autopilot._step(issue, "held", autopilot.held_reason(label), running=False)
+    raise Refused(f"The engine answers {sorted(kinds)} after a lost run, which it cannot do.")
+
+
+def _lost_doc(stage, number, target):
+    """(document, change version) of `number` while the run of `stage` on `target`, the pull
+    request of a fix round or a review, runs: the document that a lost run waits in."""
+    if stage not in ("fix", "review"):
+        return _stage_doc(stage, number, None, 0)
+    change = {"id": target, "version": target}
+    if stage == "fix":
+        return _stage_doc(stage, number, change, 0)
+    doc = first_state.empty(str(number))
+    version = str(target)
+    doc["state"] = "checking"
+    doc["change"] = {"id": version, "version": version}
+    doc["pending"] = [
+        {"id": first_state.RUN_ID, "next": None, "kind": "runChecks", "changeVersion": version}
+    ]
+    return doc, version

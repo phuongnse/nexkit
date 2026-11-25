@@ -7,7 +7,7 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest import mock
+from unittest import TestCase, mock
 
 from nexkit import autopilot, engine, host, item_state
 from nexkit import report as reports
@@ -1733,3 +1733,144 @@ class MergeStepTest(ReportCase):
             step = self.step()
         self.assertEqual(step["state"], "waits")
         self.assertIn("refused to decide", step["reason"])
+
+
+class LostAgainTest(TestCase):
+    """A command that autopilot started and that was lost starts again, waits, or waits for a
+    person as the engine decides, with NexKit 6's words, due times and counts."""
+
+    CFG = make_config(autopilot={"enabled": True})
+    NOW = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+    AT = "2099-01-01T11:50:00Z"
+    ISSUE = {"number": 5, "title": "Add it"}
+    WHAT = "the run ended without a report"
+    # Each command and the target of its start: the issue, or its pull request.
+    COMMANDS = (("plan", 5), ("go", 5), ("fix", 6), ("review", 6))
+    # The minutes after the last start that the n-th start waits.
+    DUE = (0, 30, 60, 120)
+
+    def lost(self, command="plan", target=5, tries=0, now=None, at=None, **kwargs):
+        record = {"command": command, "target": target, "at": at or self.AT, "tries": tries}
+        record.update(kwargs.pop("record", {}))
+        fields = {"command": command, "target": target, "note": "", "remember": {}}
+        fields.update(kwargs.pop("fields", {}))
+        now = now or self.NOW
+        with mock.patch.object(host, "step", wraps=host.step) as sent:
+            found = host.lost_again(self.CFG, self.ISSUE, record, now, self.WHAT, fields, **kwargs)
+        return found, [call.args for call in sent.call_args_list]
+
+    def test_a_lost_command_starts_again_when_it_is_due(self):
+        for command, target in self.COMMANDS:
+            for tries in range(4):
+                with self.subTest(command=command, tries=tries):
+                    due = datetime(2099, 1, 1, 11, 50, tzinfo=UTC) + timedelta(
+                        minutes=self.DUE[tries]
+                    )
+                    found, _ = self.lost(command, target, tries, now=due)
+                    self.assertEqual((found["state"], found["command"]), ("start", command))
+                    self.assertEqual(found["target"], target)
+                    self.assertEqual(found["remember"]["tries"], tries + 1)
+                    self.assertNotIn("once", found["remember"])
+                    again = "again" if tries else "once more"
+                    self.assertIn(f"autopilot starts `/nexkit {command}` {again}", found["reason"])
+
+    def test_a_lost_command_waits_until_its_due_time(self):
+        for command, target in self.COMMANDS:
+            for tries in range(1, 4):
+                with self.subTest(command=command, tries=tries):
+                    due = datetime(2099, 1, 1, 11, 50, tzinfo=UTC) + timedelta(
+                        minutes=self.DUE[tries]
+                    )
+                    early = due - timedelta(seconds=1)
+                    found, requests = self.lost(command, target, tries, now=early)
+                    self.assertEqual(found["state"], "active")
+                    self.assertEqual([r[1]["kind"] for r in requests], ["actionLost"])
+                    self.assertIn(f"again after {due:%H:%M} UTC", found["reason"])
+                    self.assertIn(f"`/nexkit {command}`", found["reason"])
+
+    def test_the_loss_is_sent_at_the_last_start_and_a_run_again_after_its_wait(self):
+        _, requests = self.lost("fix", 6, 2, now=self.NOW + timedelta(hours=2))
+        lost, tick = [event for _, event, _ in requests]
+        self.assertEqual((lost["kind"], lost["at"]), ("actionLost", self.AT))
+        self.assertEqual((lost["tokens"], lost["action"]), (None, "a1.1"))
+        self.assertEqual(tick["kind"], "tick")
+        self.assertEqual(tick["at"], autopilot.iso(self.NOW + timedelta(hours=2)))
+        document = requests[0][0]
+        self.assertEqual(document["state"], "fixing")
+        self.assertEqual(document["again"], {"lost": 2})
+        self.assertEqual(document["change"], {"id": "6", "version": "6"})
+
+    def test_a_loss_without_a_usable_record_is_sent_at_the_sweeps_time(self):
+        found, requests = self.lost("plan", 5, 0, record={"at": "soon"})
+        self.assertEqual(found["state"], "start")
+        self.assertEqual(requests[0][1]["at"], autopilot.iso(self.NOW))
+
+    def test_a_review_runs_the_checks_again(self):
+        _, requests = self.lost("review", 6, 1, now=self.NOW + timedelta(hours=1))
+        document = requests[0][0]
+        self.assertEqual(document["state"], "checking")
+        self.assertEqual(document["pending"][0]["kind"], "runChecks")
+        self.assertEqual(requests[0][1]["changeVersion"], "6")
+
+    def test_what_a_start_carried_stays(self):
+        fields = {"auto": "autopilot", "note": "Mind the cache.", "remember": {"split_asked": 1}}
+        found, _ = self.lost("go", 5, 0, fields=fields)
+        self.assertEqual(found["auto"], "autopilot")
+        self.assertEqual(found["note"], "Mind the cache.")
+        self.assertEqual(found["remember"], {"split_asked": 1, "tries": 1})
+        stale = {"number": 5, "comment": 9}
+        found, _ = self.lost("go", 5, 0, extra={"stale": stale})
+        self.assertEqual(found["stale"], stale)
+
+    def test_the_fifth_loss_waits_for_a_person(self):
+        for tries in (4, 7):
+            with self.subTest(tries=tries):
+                found, _ = self.lost("go", 5, tries)
+                self.assertEqual(found["state"], "waits")
+                self.assertIn(f"{tries + 1} times", found["reason"])
+                self.assertTrue(
+                    found["reason"].startswith(
+                        autopilot.OUTAGE_DO.format(command="`/nexkit go`")[:40]
+                    )
+                )
+                self.assertIn("GitHub created no job for it", found["reason"])
+
+    def test_a_run_whose_agent_ran_starts_once_more_only(self):
+        found, requests = self.lost("fix", 6, 0, record={"once": True})
+        self.assertEqual(found["state"], "start")
+        self.assertEqual(found["remember"], {"tries": 1, "once": True})
+        self.assertEqual(requests[0][0]["again"], {"once": True})
+        found, _ = self.lost("fix", 6, 1, record={"once": True})
+        self.assertEqual(found["state"], "waits")
+        self.assertIn("after autopilot started it once more", found["reason"])
+        self.assertTrue(found["reason"].startswith(autopilot.LOST_DO))
+
+    def test_a_persons_command_waits_for_that_person(self):
+        stale = {"number": 6, "comment": 9}
+        found, requests = self.lost("fix", 6, 0, extra={"stale": stale}, person=True)
+        self.assertEqual(found["state"], "waits")
+        self.assertEqual(found["reason"], autopilot.person(autopilot.LOST_DO, self.WHAT))
+        self.assertEqual(found["stale"], stale)
+        self.assertEqual(requests[0][0]["pending"][0]["by"], "person")
+        found, _ = self.lost("fix", 6, 0, person=True)
+        self.assertIsNone(found)
+
+    def test_a_hold_label_is_sent_and_a_held_restart_answers_held(self):
+        found, requests = self.lost("plan", 5, 0, label="on-hold")
+        self.assertEqual([r[1]["kind"] for r in requests], ["held", "actionLost"])
+        self.assertEqual(found["state"], "held")
+        self.assertIn("`on-hold`", found["reason"])
+        due = self.NOW + timedelta(hours=1)
+        found, requests = self.lost("plan", 5, 1, now=due, label="on-hold")
+        self.assertEqual([r[1]["kind"] for r in requests], ["held", "actionLost", "tick"])
+        self.assertEqual(found["state"], "held")
+
+    def test_a_command_nexkit_never_writes_is_refused(self):
+        with self.assertRaises(host.Refused):
+            self.lost("close", 5, 0)
+
+    def test_autopilot_waits_for_a_person_when_the_engine_refuses(self):
+        fields = {"command": "close", "target": 5, "note": "", "remember": {}}
+        found = autopilot._again(self.CFG, self.ISSUE, {}, self.NOW, self.WHAT, fields)
+        self.assertEqual(found["state"], "waits")
+        self.assertIn("refused to decide", found["reason"])

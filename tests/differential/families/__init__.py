@@ -24,4 +24,5 @@ FAMILIES = {
     "pause": "#398",
     "ended": "#393",
     "failure": "#415",
+    "lost": "#399",
 }

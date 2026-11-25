@@ -99,7 +99,8 @@
       "changed": true,
       "expect": {
         "asked": [
-          "split"
+          "split",
+          "supersede"
         ]
       },
       "actions": [

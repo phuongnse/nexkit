@@ -246,8 +246,8 @@ The protocol is built for delivery at least once, in any order a host's queues g
 - **Leaving a state cancels its work.** An item that moves on cancels the actions of the state it
   left that still run, such as its checks when a person pushes to the change, so their late
   results find nothing pending. One it asked for earlier in the same step is withdrawn from the
-  answer instead, since the host never got it. A lost action that only tells, shows, waits or
-  ends is carried out again under a new id while it still stands: a lost notice is not sent again
+  answer instead, since the host never got it. A lost action that only tells, shows, waits,
+  ends the item or withdraws its change is carried out again under a new id while it still stands: a lost notice is not sent again
   once attention has another reason or is about something else. A lost agent run or lost checks
   that the engine started by itself, in the state that runs them, start again as the same round,
   which counts nothing again, after each wait of `lostWaits` in turn: a wait of 0 in the same
@@ -296,26 +296,28 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
-  round. An item that has a change is never split, since nothing would then end the change: once
-  a person approves its split plan, it goes on as one change, and under `autoWhenClean` the plan
-  waits for a person. A split goes on as one change too when its rules refuse it, as below. A
-  plan that asks questions waits for answers, even one an item was made with.
+  round. An item that has a change is split only from the plan that a round which ran out of
+  time asked for, and that split withdraws the change, so nothing is left with no end. Once a
+  person approves the split plan of an item with a change, it goes on as one change. A split goes
+  on as one change too when its rules refuse it, as below. A plan that asks questions waits for
+  answers, even one an item was made with.
 - **What follows a plan.** Under `person`, every plan waits for a person, a plan that finds no
   change too, for what NexKit 6 asks of them first: the approval of a plan that is too large or
   finds no change, a hand-made change, answers, or the approval of a clean plan. A person may
   answer a plan's questions whatever its attention names first, under `autoWhenClean` too. Under
   `autoWhenClean`, as NexKit 6's autopilot decides:
   - A plan that is too large is split into its parts, all of them, when splits are on and the
-    item has no change. A split is refused for an item at `splitDepth` levels of parts, which
-    waits for a person, and for a plan with more parts than `splitParts`, with no parts, or with a
-    part titled by the item's own title or starting with it, ignoring case, spaces and punctuation
-    at its end. For each of these three the item is planned once more, and a second such plan
+    item has no change, or has one and the plan is the one that a round which ran out of time
+    asked for (`supersede`). A split of an item with a change withdraws the change. A split is
+    refused for an item at `splitDepth` levels of parts, which waits for a person, and for a plan
+    with more parts than `splitParts`, with no parts, or with a part titled by the item's own
+    title or starting with it, ignoring case, spaces and punctuation at its end. For each of these three the item is planned once more, and a second such plan
     waits for a person.
     A split ends as `accepted` once every part ended and one was accepted, under `parentEnd`
     `whenPartAccepted`; under `person`, or when no part was accepted, a person decides
     (`splitIncomplete`).
-  - A plan that is too large and is not split, because splits are off or the item has a change,
-    waits for a person (`approval`). Otherwise, a plan that finds no change ends the item in
+  - A plan that is too large and is not split, because splits are off or the item has a change
+    and the plan is not that one, waits for a person (`approval`). Otherwise, a plan that finds no change ends the item in
     `noChange`, one that needs paths only a person changes waits for that person, and a clean
     plan is approved and starts the change.
   - Questions wait for a person unless `answers` is `recommended` and every question has a
@@ -456,9 +458,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
   split, it goes to `failed` for a person, as NexKit 6 does. A host marks a part whose parent
   already asked as having asked, since NexKit 6's parts inherit that. An item that has a change
-  asks too, as NexKit 6 does after a fix round, but the engine never splits
-  it: its new plan goes on as one change on it, where NexKit 6 may instead split it and close
-  the pull request as superseded.
+  asks too, as NexKit 6 does after a fix round, and marks the plan `supersede`. If that plan is
+  too large, the split rules apply and `withdrawChange` ends the change. Any other plan goes on
+  as one change on it. The mark is dropped once a fix or implement run starts, or the item is
+  split.
 - **A final item that a person reopens** waits for a person, with attention, as NexKit 6 does.
   One whose change went in or became empty, as its state or the latest observation says, such
   as a change merged after a person dropped the item, starts again without it and with its rounds
@@ -538,6 +541,7 @@ Three things sit beside the state, never in place of it:
 | `runChecks` | Runs its checks on a version of the change | Each result, its failure signature, and whether the failure matches a known failure of the base; the item about that failure when every failing check matches it |
 | `accept` | Accepts the change: a merge, or an accept of a draft | `accepted`, or refused with a kind: `transient`, `waitingForChecks`, `checkFailed`, `behind`, `headMoved`, `conflict`, `notAccepted` or `needsPerson`; for `checkFailed`, the item about a failure the base branch has when every check that failed fails as it does there |
 | `createParts` | Makes the parts of a split, each blocked by the earlier parts it needs | The parts' ids |
+| `withdrawChange` | Withdraws the change that a split replaces, such as closing its pull request as superseded | Done |
 | `close` | Ends the work item with its outcome | Done |
 | `cancel` | Stops an action that runs | Done |
 | `needPerson` | Tells the people who decide, once, with the reason and what they decide on (`ref`) | Done |
@@ -806,9 +810,12 @@ adapter. A new rule of the engine comes with a case.
    stop of publish. After a plan, a stopped round and a review, `report` also sends the tokens,
    seconds, money and session that the runner's `run.json` gives. It checks the file against the
    protocol first. The rest of the result stays NexKit 6's, so the engine decides as before, and
-   a file that is missing or does not fit sends none. It also decides the start again of lost
-   work under `lostWaits`; no GitHub
-   path asks it yet. After a blocked `/nexkit go` or fix round whose recommended
+   a file that is missing or does not fit sends none. It also decides what follows a command that
+   autopilot started and lost, when its run never started, ended without a report, or handed the work on to a run that never
+   started (`autopilot._again`, called by `_reportless` and `_handed_on`): `lost_again` sends
+   `actionLost` at the time of the last start, with autopilot's count of losses, and the host
+   carries out the start, the wait or the person. What counts as lost and the six-hour window of
+   the count stay the host's. A person's own lost command waits for that person. After a blocked `/nexkit go` or fix round whose recommended
    answer only closes the issue, `report` mentions the person, as for any other wait, and the
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found

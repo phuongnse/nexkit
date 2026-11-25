@@ -105,7 +105,8 @@
       ],
       "expect": {
         "asked": [
-          "split"
+          "split",
+          "supersede"
         ]
       }
     },

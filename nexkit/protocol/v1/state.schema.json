@@ -578,7 +578,8 @@
           "parts",
           "fewer",
           "answers",
-          "replan"
+          "replan",
+          "supersede"
         ]
       },
       "maxItems": 16

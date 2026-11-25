@@ -88,7 +88,13 @@
     "max_auto_rounds": 2
   },
   "merge": {
-    "auto": true
+    "auto": true,
+    "after_workflows": [
+      {
+        "workflow": "codeql.yml",
+        "every": 10
+      }
+    ]
   },
   "conflicts": {
     "auto_resolve": true,

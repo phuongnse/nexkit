@@ -1639,10 +1639,6 @@ class AgentLogTests(StageCase):
         self.assertEqual(stdout, "· Working on it\n▸ Bash make test\n")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CarriedReviewTests(unittest.TestCase):
     """After NexKit merged the base branch into an approved pull request, the approval
     holds only for a clean merge of a base commit that leaves the change as it was."""
@@ -1698,3 +1694,7 @@ class CarriedReviewTests(unittest.TestCase):
         self.assertFalse(carried)
         self.assertIn("not a merge of `main` into", why)
         self.assertFalse(agent.carried_review(repo, "main", "f" * 40)[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

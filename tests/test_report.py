@@ -2153,10 +2153,6 @@ class ReportTests(ReportCase):
         self.assertEqual(workflow_file(WORKFLOW), "nexkit.yml")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 SHORTENED = [
     {"name": "the comment of `@alice` of 2026-11-01T00:00:00Z", "kept": 1000, "length": 39016}
 ]
@@ -2266,3 +2262,7 @@ class LinkedTextsTests(ReportCase):
         self.assertIn("**Read for the agent:** `#3 with its discussion`.", body)
         self.assertNotIn("Linked but not read", body)
         self.assertEqual(linked_line(None, {"linked": "x"}, {"linked": {"read": [1]}}), "")
+
+
+if __name__ == "__main__":
+    unittest.main()

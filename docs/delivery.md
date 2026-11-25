@@ -44,6 +44,8 @@ Milestones group the work by feature and labels say what kind of change it is, s
 - A pull request that closes an issue carries that issue's labels, but for the holds `on-hold` and
   `hand-made`, and its milestone: NexKit sets them on the pull requests it opens, and a session
   sets them on its own.
+- An issue that the [docs audit](writing-docs.md#how-the-docs-stay-correct) opens carries
+  `docs-audit` and no milestone, since it keeps the docs true rather than building a feature.
 
 ## NexKit on this repository
 

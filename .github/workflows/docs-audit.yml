@@ -1,0 +1,94 @@
+# Reads a quarter of NexKit's docs, skills, README and AGENTS.md against the code, as
+# .claude/skills/nexkit-docs-audit/SKILL.md says, and opens an issue for each group of findings,
+# at most ten a run. NexKit takes those issues, since autopilot.trusted_workflows lists this file.
+# NexKit starts it on main every few merges, by merge.after_workflows, and it also runs on demand.
+# The audit job runs the agent with read-only tools and holds no token that writes; it reads open
+# issues only to leave out the findings they cover. The file job runs no model and no repository
+# code: it opens the issues that the audit job planned, so a page that tries to steer the agent
+# cannot write to the repository.
+name: Docs audit
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: docs-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: read # leave out the findings that an open issue covers
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the pinned Claude Code
+        run: python bin/nexkit install-agents --runtime claude-code
+      - name: Read this run's pages
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/docs-audit"
+          python scripts/docs_audit.py read "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP/docs-audit/findings.json"
+      # The findings become public issues: none may hold the agent's credential, which the
+      # agent's read-only tools could still read from the runner.
+      - name: Refuse findings that hold the agent's credential
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          findings="$RUNNER_TEMP/docs-audit/findings.json"
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && grep -qF -- "$CLAUDE_CODE_OAUTH_TOKEN" "$findings"; then
+            rm -f "$findings"
+            echo "::error::The findings held the agent's credential, so they were deleted and nothing is filed."
+            exit 1
+          fi
+      - name: Plan the issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/docs_audit.py plan "$RUNNER_TEMP/docs-audit/findings.json" "$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/docs-audit/issues.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-audit
+          path: ${{ runner.temp }}/docs-audit
+          if-no-files-found: error
+          retention-days: 30
+
+  file:
+    needs: audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      issues: write # open the planned issues, with their labels
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: docs-audit
+          path: ${{ runner.temp }}/docs-audit
+      - name: Open the planned issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          issues="$RUNNER_TEMP/docs-audit/issues.json"
+          if [ "$(jq length "$issues")" -gt 0 ]; then
+            gh label create docs-audit --force --color c5def5 \
+              --description "Found by the docs audit, which reads the docs against the code"
+          fi
+          jq -c '.[]' "$issues" | while read -r issue; do
+            args=(--title "$(jq -r .title <<< "$issue")" --body "$(jq -r .body <<< "$issue")")
+            while read -r label; do
+              args+=(--label "$label")
+            done < <(jq -r '.labels[]' <<< "$issue")
+            gh issue create "${args[@]}"
+          done

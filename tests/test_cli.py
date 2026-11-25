@@ -2702,5 +2702,66 @@ class RepeatedChecksTests(unittest.TestCase):
         self.assertTrue(any("ci.yml runs the commands of checks `test`" in m for m in failed))
 
 
+class DocsAuditWorkflowTests(unittest.TestCase):
+    """docs-audit.yml: the job that runs the agent holds no token that writes, and the job
+    that writes runs no model and no repository code (#363)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = (ROOT / ".github/workflows/docs-audit.yml").read_text()
+        cls.jobs = jobs_of(cls.text)
+
+    def test_nexkit_starts_it_every_few_merges_and_takes_its_issues(self):
+        triggers = self.text.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(triggers, "  workflow_dispatch:")
+        self.assertIn("\nname: Docs audit\n", self.text)
+        self.assertIn("\npermissions: {}\n", self.text)
+        cfg = nexkit.config.load(ROOT)
+        listed = {
+            entry["workflow"] if isinstance(entry, dict) else entry
+            for entry in cfg["merge"]["after_workflows"]
+        }
+        self.assertIn("docs-audit.yml", listed)
+        self.assertEqual(cfg["autopilot"]["trusted_workflows"], ["docs-audit.yml"])
+        nexkit_yml = (ROOT / ".github/workflows/nexkit.yml").read_text()
+        watched = re.search(r"\n  workflow_run:.*\n    workflows: \[([^]\n]*)\]", nexkit_yml)
+        self.assertIn("Docs audit", [n.strip() for n in watched.group(1).split(",")])
+
+    def test_the_job_that_runs_the_agent_only_reads(self):
+        job = self.jobs["audit"]
+        self.assertEqual(permissions_of(job), {"contents": "read", "issues": "read"})
+        self.assertIn("persist-credentials: false", job)
+        # Only the configured agent's secret, by name, never `secrets` as a whole.
+        self.assertEqual(set(re.findall(r"secrets\.(\w+)", job)), {"CLAUDE_CODE_OAUTH_TOKEN"})
+        self.assertNotRegex(job, r"secrets\[|toJSON\(secrets")
+        self.assertEqual(cfg_secret(), "CLAUDE_CODE_OAUTH_TOKEN")
+        steps = job.split("\n      - ")[1:]
+        read = next(i for i, s in enumerate(steps) if "docs_audit.py read" in s)
+        guard = next(i for i, s in enumerate(steps) if "Refuse findings" in s)
+        plan = next(i for i, s in enumerate(steps) if "docs_audit.py plan" in s)
+        self.assertLess(read, guard)
+        self.assertLess(guard, plan)
+        self.assertIn('grep -qF -- "$CLAUDE_CODE_OAUTH_TOKEN"', steps[guard])
+        self.assertIn("exit 1", steps[guard])
+        # The plan step reads open issues; the agent's step holds no GitHub token.
+        self.assertNotIn("GH_TOKEN", steps[read])
+        self.assertIn("GH_TOKEN: ${{ github.token }}", steps[plan])
+
+    def test_the_job_that_writes_runs_no_model_and_no_repository_code(self):
+        job = self.jobs["file"]
+        self.assertEqual(permissions_of(job), {"issues": "write"})
+        self.assertIn("needs: audit", job)
+        self.assertEqual(re.findall(r"uses: (\S+)@", job), ["actions/download-artifact"])
+        for text in ("actions/checkout", "python", "bin/", "scripts/", "claude", "secrets"):
+            self.assertNotIn(text, job)
+        self.assertIn('gh issue create "${args[@]}"', job)
+
+
+def cfg_secret():
+    cfg = nexkit.config.load(ROOT)
+    agent = cfg["agents"][nexkit.config.stage(cfg, "review")["agent"]]
+    return agent["oauth_token_secret"]
+
+
 if __name__ == "__main__":
     unittest.main()

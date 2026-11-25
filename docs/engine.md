@@ -801,8 +801,11 @@ adapter. A new rule of the engine comes with a case.
    transient error, and `maintain.resume_paused` sends the tick of each due resume; the host
    carries out the wait, or leaves the run to a person. Which reset the host gives stays the
    host's, and so do a review that NexKit 6 runs again after a transient error and a transient
-   stop of publish. It also decides what follows a command that autopilot started and lost, when
-   its run never started, ended without a report, or handed the work on to a run that never
+   stop of publish. After a plan, a stopped round and a review, `report` also sends the tokens,
+   seconds, money and session that the runner's `run.json` gives. It checks the file against the
+   protocol first. The rest of the result stays NexKit 6's, so the engine decides as before, and
+   a file that is missing or does not fit sends none. It also decides what follows a command that
+   autopilot started and lost, when its run never started, ended without a report, or handed the work on to a run that never
    started (`autopilot._again`, called by `_reportless` and `_handed_on`): `lost_again` sends
    `actionLost` at the time of the last start, with autopilot's count of losses, and the host
    carries out the start, the wait or the person. What counts as lost and the six-hour window of

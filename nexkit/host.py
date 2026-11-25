@@ -4,7 +4,8 @@ Decisions move into the engine a group at a time, and until the GitHub host runs
 it, NexKit 6's code moves an item between the decisions that the engine holds. The host keeps no
 state document for them: for each one, it builds the item's document from NexKit 6's markers, as
 the import reads them (`first_state`), sends the event that GitHub shows, and carries out the
-answer with NexKit 6's code, in NexKit 6's words.
+answer with NexKit 6's code, in NexKit 6's words. After a plan, a stopped round and a review,
+`report` also sends what the runner's `run.json` says the agent spent (`spent`).
 
 So far the engine decides what follows a plan: its approval by autopilot, the answers to its
 questions, once in a row, a writer's answer that only closes the issue, a plan that finds no
@@ -89,7 +90,7 @@ from __future__ import annotations
 import json
 import os
 
-from . import autopilot, engine, first_state, usage
+from . import autopilot, engine, first_state, protocol, usage
 from .checks import failing_signatures
 from .engine.machine import RUNS
 from .protocol.size import LONGEST, MOST
@@ -123,6 +124,20 @@ AGENT = {
     "seconds": None,
     "usd": None,
 }
+# What the runner's result says an agent spent, which the engine adds to the item's `used`.
+SPENT = ("tokens", "seconds", "usd", "session")
+
+
+def spent(ran):
+    """`AGENT` with what the runner's result `ran` (`run.json`) spent, when it fits the protocol;
+    otherwise `AGENT`. The rest stays NexKit 6's, so the engine decides as before."""
+    if not isinstance(ran, dict) or protocol.check(
+        ran, "actions/runAgent.result.schema.json", "run.json"
+    ):
+        return dict(AGENT)
+    return {**AGENT, **{key: ran[key] for key in SPENT}}
+
+
 # What the engine asks a plan once more for, as autopilot's record keeps it.
 REMEMBER = {"fewer": "fewer_asked", "parts": "parts_asked", "titles": "titles_asked"}
 # The time of an event that GitHub gives no time for.
@@ -529,7 +544,7 @@ class _PlanView:
         return self.step("waits", text)
 
 
-def plan_carried_on(gh, cfg, issue, decision, output):
+def plan_carried_on(gh, cfg, issue, decision, output, ran=None):
     """Whether autopilot carries on after the plan `output` that a run of `decision` posted,
     as the engine decides what follows it, so that `report` mentions nobody. A plan that finds
     no change carries on whatever else it says. A recommended answer that only closes the
@@ -545,7 +560,7 @@ def plan_carried_on(gh, cfg, issue, decision, output):
     data = plan_record(output)
     doc = _document(issue, autopilot.find_record(comments)[1])
     doc = _planning(doc, _depth(gh, issue, data), again)
-    result = {**AGENT, "output": plan_output({}, data, {})}
+    result = {**spent(ran), "output": plan_output({}, data, {})}
     event = _event(
         "actionFinished",
         number,
@@ -815,7 +830,7 @@ def _carries_on(actions):
     return any(action["kind"] in ("runAgent", "close") for action in actions)
 
 
-def round_carried_on(gh, cfg, issue, decision, agent):
+def round_carried_on(gh, cfg, issue, decision, agent, ran=None):
     """Whether autopilot carries on after the `/nexkit go` that a run of `decision` ran and
     that stopped as blocked, with the agent's result `agent`, as the engine decides what
     follows it, so that `report` mentions nobody. A wait for a person, the closing answer
@@ -834,7 +849,7 @@ def round_carried_on(gh, cfg, issue, decision, agent):
         _run_event_id(),
         action=first_state.RUN_ID,
         changeVersion=None,
-        result={**AGENT, "output": round_output(run)},
+        result={**spent(ran), "output": round_output(run)},
     )
     return _carries_on(step(doc, event, policies(cfg))["actions"])
 
@@ -890,9 +905,9 @@ def _round_doc(issue, record, again, pull=None, head=None, place=(0, False)):
     return doc
 
 
-def _stop_event(number, name, doc, output, timed_out):
+def _stop_event(number, name, doc, output, timed_out, ran=None):
     version = (doc["change"] or {}).get("version")
-    result = {**AGENT, "timedOut": timed_out, "output": None if timed_out else output}
+    result = {**spent(ran), "timedOut": timed_out, "output": None if timed_out else output}
     return _event(
         "actionFinished",
         number,
@@ -963,7 +978,7 @@ ROUND_WAITS = {
 }
 
 
-def stop_carried_on(gh, cfg, issue, decision, agent):
+def stop_carried_on(gh, cfg, issue, decision, agent, ran=None):
     """Whether autopilot carries on after a fix round of `decision` that stopped as blocked,
     or an implement or fix round that ran out of time, with the agent's result `agent`, as
     the engine decides what follows it, so that `report` mentions nobody. A wait for a person,
@@ -983,7 +998,8 @@ def stop_carried_on(gh, cfg, issue, decision, agent):
     doc = _round_doc(issue, record, again, pr, decision.get("head"), place)
     output = fix_output(run) if pr else round_output(run)
     name = _run_event_id()
-    actions = step(doc, _stop_event(issue["number"], name, doc, output, timed_out), policies(cfg))
+    event = _stop_event(issue["number"], name, doc, output, timed_out, ran)
+    actions = step(doc, event, policies(cfg))
     return _carries_on(actions["actions"])
 
 
@@ -1067,6 +1083,7 @@ def after_round(
     label,
     before=None,
     seen=None,
+    ran=None,
 ):
     """What follows a round of the NexKit pull request `pr` whose checks and review ended on
     `head`, as the engine decides it: one of `ROUND_ENDS`. `auto_fixes` is how many automatic
@@ -1078,7 +1095,18 @@ def after_round(
     the state comment recorded them. `seen`, a dict, gets the checks that failed the same
     way before and after a fix round as `repeated` (`round_ended`). Raises `Refused`."""
     end, repeated = round_ended(
-        cfg, decision, pr, head, auto_fixes, checks, before, ("done", review), recheck, wait, label
+        cfg,
+        decision,
+        pr,
+        head,
+        auto_fixes,
+        checks,
+        before,
+        ("done", review),
+        recheck,
+        wait,
+        label,
+        ran,
     )
     if seen is not None:
         seen["repeated"] = repeated
@@ -1103,6 +1131,7 @@ def round_ended(
     recheck=False,
     wait=None,
     label=None,
+    ran=None,
 ):
     """What follows the checks and the review of the round of `decision` on the pull request
     `pr`, which ended on `head`, as the engine decides it: (end, repeated). `review` is
@@ -1153,12 +1182,16 @@ def round_ended(
     if kind == "again":
         return "again", _repeated(answer)
     if kind == "done":
-        result = {**AGENT, "output": _review_output(given)}
+        result = {**spent(ran), "output": _review_output(given)}
     elif kind == "paused":
         message = "The review stopped at its usage limit."
-        result = {**AGENT, "output": None, "limit": {"message": message, "reset": _time(given)}}
+        result = {
+            **spent(ran),
+            "output": None,
+            "limit": {"message": message, "reset": _time(given)},
+        }
     else:
-        result = {**AGENT, "output": None, "error": str(given or "The review failed.")}
+        result = {**spent(ran), "output": None, "error": str(given or "The review failed.")}
     event = _event(
         "actionFinished",
         number,

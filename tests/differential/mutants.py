@@ -291,8 +291,12 @@ MUTANTS = {
     # A transient stop waits as long as the last wait, not the next (#398).
     "transient-waits-shifted": {
         "path": MACHINE,
-        "old": """        until = _later(self.at, waits[count])""",
-        "new": """        until = _later(self.at, waits[-1])""",
+        "old": """            self.run_again(stage)
+            return
+        until = _later(self.at, waits[count])""",
+        "new": """            self.run_again(stage)
+            return
+        until = _later(self.at, waits[-1])""",
         "seen": ("harness", "walker"),
         "families": ("pause",),
     },

@@ -316,6 +316,8 @@ class ImportTest(unittest.TestCase):
             )
         )
         made = copy.deepcopy(answer["actions"][0])
+        # The import does not know who started the run, so it leaves out the mark of a person's.
+        made.pop("by", None)
         self.assertEqual(state["pending"], [{**made, "id": first_state.RUN_ID}])
 
     def test_the_import_keeps_lists_and_signatures_within_the_state_s_bounds(self):

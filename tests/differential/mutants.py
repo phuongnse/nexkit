@@ -210,6 +210,48 @@ MUTANTS = {
         "seen": ("walker",),
         "families": ("round", "give"),
     },
+    # The count of lost work is not started afresh when work finishes, so a later loss finds
+    # the waits used up (#397). Only the walker sees it: no GitHub path sends a loss to the
+    # engine yet.
+    "lost-count-never-resets": {
+        "path": MACHINE,
+        "old": """            self.forget_lost()
+        # The round of a person's work""",
+        "new": """            pass
+        # The round of a person's work""",
+        "seen": ("walker",),
+        "families": ("round", "give"),
+    },
+    # A hold does not keep back the restart of lost work at its tick, where autopilot's sweep
+    # skips held issues (#397).
+    "lost-restart-ignores-hold": {
+        "path": MACHINE,
+        "old": """            and not restart
+""",
+        "new": "",
+        "seen": ("walker",),
+        "families": ("sweep", "round"),
+    },
+    # A lost run whose agent ran starts as often as the waits allow, not only once more
+    # (#397).
+    "lost-once-ignored": {
+        "path": MACHINE,
+        "old": """        if count >= (min(1, len(waits)) if once else len(waits)):""",
+        "new": """        if count >= len(waits):""",
+        "seen": ("walker",),
+        "families": ("round", "give"),
+    },
+    # A person's lost work starts again as the engine's own does, where NexKit 6's
+    # `_reportless` waits for a person (#397).
+    "lost-person-restarts": {
+        "path": MACHINE,
+        "old": """        if action.get("by") == "person":
+            return False
+        if action["kind"] == "runAgent":""",
+        "new": """        if action["kind"] == "runAgent":""",
+        "seen": ("walker",),
+        "families": ("round", "give"),
+    },
 }
 
 

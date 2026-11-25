@@ -1,0 +1,197 @@
+{
+  "policies": {
+    "lostWaits": [
+      0,
+      30,
+      60,
+      120
+    ]
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go",
+        "by": null
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.started": 1,
+        "pending.0.kind": "runAgent"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "again.lost": 1,
+        "rounds.started": 1,
+        "waits": [],
+        "pending.-1.kind": "runAgent"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "wait"
+      ],
+      "expect": {
+        "again.lost": 2,
+        "waits.0.for": "time",
+        "waits.0.until": "2026-11-23T15:31:11Z",
+        "pending.-1.kind": "wait",
+        "rounds.started": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w4.1"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "waits": [],
+        "again.lost": 2,
+        "rounds.started": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "wait"
+      ],
+      "expect": {
+        "again.lost": 3,
+        "waits.0.until": "2026-11-23T16:01:11Z",
+        "rounds.started": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w6.1"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "waits": []
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "wait"
+      ],
+      "expect": {
+        "again.lost": 4,
+        "waits.0.until": "2026-11-23T17:01:11Z",
+        "rounds.started": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w8.1"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "waits": []
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "cancel",
+        "cancel",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "outage",
+        "attention.text": "An action the host started never reported, 5 times in a row.",
+        "waits": [],
+        "rounds.started": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan",
+        "by": null
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "pending.-1.kind": "runAgent"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "again.lost": 1
+      }
+    }
+  ]
+}

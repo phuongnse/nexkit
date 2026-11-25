@@ -49,6 +49,10 @@ INVARIANTS = {
     "retry": "a transient stop runs the same stage again after each wait of `retryWaits` in "
     "turn, counting nothing, and waits for a person after the last; the count of runs again "
     "starts afresh with a request and with a new plan, implement or fix run",
+    "lost": "a lost agent run or checks that the engine started by itself start again after each "
+    "wait of `lostWaits` in turn, counting nothing, once more only when the agent ran, and a "
+    "person's work and what is past the last wait wait for a person; a hold keeps the start "
+    "back; the count starts afresh when work finishes",
     "hold": "no conflict round starts and no change is made again while a hold is on",
     "answers": "the engine answers a round's questions at most once in a row, and only under "
     "`autoWhenClean` with `answers: recommended`",
@@ -74,7 +78,7 @@ class Walker:
         sys.path.insert(0, str(tree))
         os.chdir(tree)
         from nexkit import engine, protocol
-        from nexkit.engine.machine import DEFAULTS, _later
+        from nexkit.engine.machine import DEFAULTS, RUNS, _later
         from nexkit.protocol.size import failure_key
         from tests import test_conformance as tc
 
@@ -84,6 +88,7 @@ class Walker:
         tc.table_transitions = functools.cache(tc.table_transitions)
         self.engine, self.protocol, self.tc = engine, protocol, tc
         self.defaults, self.failure_key, self.later = dict(DEFAULTS), failure_key, _later
+        self.runs = RUNS
         self.suite = tc.ConformanceTest("test_the_cases")
         self.shorts = collections.defaultdict(list)
         self.results = collections.defaultdict(list)
@@ -117,6 +122,7 @@ class Walker:
             "whenRoundsRunOut": ["person", "failed"],
             "reviewAfterFailingChecks": ["always", "always", "onlyAfterPassing"],
             "retryWaits": [[], [0], [0, 5], [15, 30, 60]],
+            "lostWaits": [[], [0], [0, 30], [0, 30, 60, 120]],
         }.items():
             if rng.random() < 0.85:
                 found[name] = rng.choice(values)
@@ -276,6 +282,13 @@ class Walker:
             kind = "actionFinished"
         if state["state"] in ("new", "awaitingApproval") and rng.random() < 0.3:
             kind = "requested"
+        # Lost work again and again, and a hold set while its restart waits.
+        again = state.get("again") or {}
+        if again.get("lost") and rng.random() < 0.4:
+            if any(w["until"] is not None for w in state["waits"]) and not state["hold"]:
+                return {"kind": "held"}
+            kind = "actionLost" if busy else kind
+
         if state["state"] == "fixing" and not state["hold"] and rng.random() < 0.15:
             kind = "held"
         if state["rounds"].get("due") and rng.random() < 0.3:
@@ -318,7 +331,13 @@ class Walker:
         if kind == "actionLost":
             if not state["pending"]:
                 return None
-            return {"kind": "actionLost", "action": rng.choice(state["pending"])["id"]}
+            runs = [a for a in state["pending"] if a["kind"] in ("runAgent", "runChecks")]
+            lost = rng.choice(runs if runs and rng.random() < 0.5 else state["pending"])
+            event = {"kind": "actionLost", "action": lost["id"]}
+            if rng.random() < 0.3:
+                # The agent ran: it spent tokens.
+                event["tokens"] = {"input": 10, "cached": 0, "output": 5}
+            return event
         if kind == "tick":
             timed = [w for w in state["waits"] if w["until"] is not None]
             return {"kind": "tick", "wait": rng.choice(timed)["id"]} if timed else None
@@ -362,6 +381,57 @@ class Walker:
             flag("retry", "a transient stop waits for no time or the wrong one", info)
         if not any(a["kind"] == "wait" for a in actions):
             flag("retry", "a transient stop asks for no tick", info)
+
+    def lost_check(self, gone, state, new, event, actions, given, info):
+        """An agent run or checks lost with `lostWaits` as the host gives them now: what
+        follows it."""
+        flag = self.flag
+        waits = given["lostWaits"]
+        before, after = state.get("again") or {}, new.get("again") or {}
+        count, old, rounds = before.get("lost", 0), state["rounds"], new["rounds"]
+        tokens = event["tokens"] or {}
+        ran = gone["kind"] == "runAgent" and any(tokens.get(k, 0) > 0 for k in tokens)
+        once = bool(before.get("once")) or ran
+        runs_here = (
+            self.runs.get(gone.get("stage")) == state["state"]
+            if gone["kind"] == "runAgent"
+            else state["state"] == "checking"
+        )
+        limit = min(1, len(waits)) if once else len(waits)
+        if gone.get("by") == "person" or not runs_here or count >= limit:
+            if new["state"] != "failed" or (new["attention"] or {}).get("reason") != "outage":
+                why = "a person's" if gone.get("by") == "person" else "a past-the-last"
+                flag("lost", f"{why} lost run does not wait for a person", info)
+            return
+        if (new["observed"] or {}).get("conflicts"):
+            # The conflict policy acts on the checks that start again, as on any checks.
+            return
+        if new["state"] != state["state"]:
+            flag("lost", "a lost run that starts again moved the item", info)
+        if after.get("lost") != count + 1:
+            flag("lost", "a lost run did not count one start again", info)
+        if ran and not after.get("once"):
+            flag("lost", "a lost run whose agent ran did not start only once more", info)
+        if rounds["started"] != old["started"] or rounds["counted"] != old["counted"]:
+            flag("lost", "a lost run that starts again counted", info)
+        starts = [a for a in actions if a["kind"] in ("runAgent", "runChecks")]
+        if waits[count] == 0:
+            free = not (state["hold"] or state["attention"])
+            free = free and not [w for w in state["waits"] if w["for"] != "blocker"]
+            if state["hold"] and starts:
+                flag("lost", "a lost run starts again under a hold", info)
+            elif free and (not starts or starts[0]["kind"] != gone["kind"]):
+                flag("lost", "a wait of 0 does not start the work again", info)
+            elif free and gone["kind"] == "runAgent" and starts[0]["stage"] != gone["stage"]:
+                flag("lost", "a wait of 0 starts another stage", info)
+            return
+        until = self.later(event["at"], waits[count])
+        if not any(w["for"] == "time" and w["until"] == until for w in new["waits"]):
+            flag("lost", "a lost run waits for no time or the wrong one", info)
+        if not any(a["kind"] == "wait" for a in actions):
+            flag("lost", "a lost run asks for no tick", info)
+        if starts:
+            flag("lost", "a lost run starts again before its wait", info)
 
     def flag(self, invariant, problem, info):
         for (name, start), issue in KNOWN.items():
@@ -614,6 +684,28 @@ class Walker:
             for action in actions:
                 if action["kind"] == "runAgent" and action["stage"] != "review":
                     flag("retry", f"a new {action['stage']} run kept the count of runs again", info)
+        # lost
+        gone = None
+        if event["kind"] == "actionLost" and answer["changed"]:
+            gone = next((a for a in state["pending"] if a["id"] == event["action"]), None)
+        if gone and gone["kind"] in ("runAgent", "runChecks"):
+            self.lost_check(gone, state, new, event, actions, given, info)
+        if done and done["kind"] in tc.WORK and done["kind"] != "wait":
+            if {"lost", "once"} & set(new.get("again") or {}):
+                flag("lost", "the count of lost work stands after work finished", info)
+        counted = (new.get("again") or {}).get("lost", 0)
+        if counted > max(len(given["lostWaits"]), (state.get("again") or {}).get("lost", 0)):
+            flag("lost", "the count of starts again passes the waits", info)
+        if event["kind"] in ("tick", "released") and answer["changed"]:
+            if state["hold"] and new["hold"] and (state.get("again") or {}).get("lost"):
+                if any(a["kind"] in ("runAgent", "runChecks") for a in actions):
+                    flag("lost", "work starts under a hold while a lost start waits", info)
+        if event["kind"] == "requested" and answer["changed"]:
+            marked = [a for a in actions if a["kind"] in ("runAgent", "runChecks", "publish")]
+            # A conflict round that the request leads to is the engine's own.
+            own = rounds["conflicts"] > old["conflicts"]
+            if not own and any(("by" in a) != (event["by"] is not None) for a in marked):
+                flag("lost", "a request's work is marked other than by who asked", info)
         # usage-limit
         if done and done["kind"] == "runAgent" and (event["result"] or {}).get("limit"):
             reset = event["result"]["limit"]["reset"]

@@ -40,10 +40,12 @@ ALLOWED = {
         "nexkit.engine.prompt",
     },
     # `importlib` only for `importlib.resources`, to read the prompts' own templates, which
-    # ship inside the package as the schemas do; `nexkit.protocol` for the checklist stages.
+    # ship inside the package as the schemas do; `nexkit.protocol` for the checklist stages;
+    # `hashlib` to name the files of whole texts, so two ids never share one.
     "nexkit.engine.prompt": {
         "__future__",
         "functools",
+        "hashlib",
         "importlib",
         "re",
         "string",

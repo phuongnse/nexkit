@@ -56,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
         call = self.path.removeprefix("/")
         if call not in CALLS:
             return 404, error_answer(f"No call is at {self.path}; the calls are {calls()}.")
-        lengths = {value.strip() for value in self.headers.get_all("Content-Length", [])}
+        lengths = {number(value) for value in self.headers.get_all("Content-Length", [])}
         if len(lengths) > 1:
             return 400, error_answer("The request has more than one Content-Length.")
         length = lengths.pop() if lengths else ""
@@ -92,6 +92,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
         self.close_connection = True
+
+
+def number(length):
+    """A Content-Length as its number: `000000002` is `2`, so two headers that give the same
+    number count as one and the digit count below is of the number."""
+    length = length.strip()
+    return (length.lstrip("0") or "0") if length.isascii() and length.isdigit() else length
 
 
 def calls():

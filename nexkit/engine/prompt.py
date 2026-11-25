@@ -19,6 +19,7 @@ and text, and the host writes it. The engine reads no file but its own templates
 from __future__ import annotations
 
 import functools
+import hashlib
 import re
 from importlib import resources
 from string import Template
@@ -72,6 +73,25 @@ NEEDS = {
 }
 # What a file of whole texts may be named: anything else in a host's id becomes `-`.
 UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+# An id that already ends like the hash `file_name` adds, so no two ids share a name.
+HASHED = re.compile(r"-[0-9a-f]{8}$")
+# An absolute Windows path: a drive and a separator, or a UNC path `\\host\share`.
+WINDOWS = re.compile(r"[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+")
+
+
+def absolute(folder):
+    """Whether `folder` is an absolute path, POSIX or Windows (docs/engine.md#the-prompt)."""
+    return folder.startswith("/") or bool(WINDOWS.match(folder))
+
+
+def file_name(key):
+    """The name of the file for a host's id `key`: its characters a file name can hold, and a
+    short hash of the id when cleaning changed it or it ends like a hash, so two ids never
+    share a file. An id that is safe keeps its name."""
+    name = UNSAFE.sub("-", key)
+    if name == key and not HASHED.search(key):
+        return name
+    return f"{name}-{hashlib.sha256(key.encode('utf-8', 'surrogatepass')).hexdigest()[:8]}"
 
 
 @functools.cache
@@ -118,13 +138,15 @@ class Shelf:
 
     def __init__(self, folder=None):
         self.folder = str(folder) if folder else None
+        # A Windows host's folder is joined with its own separator.
+        self.sep = "\\" if self.folder and WINDOWS.match(self.folder) else "/"
         self.cut = []
         self.stored = []
         self.files = {}
 
     def _path(self, key, suffix, text):
         # A key holds a host's ids, so it is cleaned: no file lands outside the folder.
-        path = f"{self.folder}/{UNSAFE.sub('-', key)}{suffix}"
+        path = f"{self.folder}{self.sep}{file_name(key)}{suffix}"
         self.files[path] = text
         return path
 

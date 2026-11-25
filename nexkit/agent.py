@@ -1059,7 +1059,7 @@ def run_stage(
     # Beside the context's texts, outside the working tree; the agent's artifact keeps them.
     folder = (out / "texts").resolve()
     written = engine_prompt.finish(stage, context, inputs, policies(cfg), folder, KEEPS)
-    keep_texts(written["files"])
+    keep_texts(written["files"], folder)
     if written["files"]:
         context = {**context, "check_outputs": [item["path"] for item in written["files"]]}
     text = written["text"]

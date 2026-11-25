@@ -12,6 +12,7 @@ prompt, which then says so.
 """
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -908,9 +909,45 @@ class PromptInputTests(unittest.TestCase):
         }
         answer = engine.answer(self.request("implement", inputs))
         [kept] = answer["files"]
-        self.assertEqual(kept["path"], "/runner/texts/issue--..-..-..-home-runner-.bashrc-.md")
-        relative = {**self.request("implement", inputs), "texts": "out/texts"}
-        self.assertEqual(engine.answer(relative)["error"], "request.texts must be an absolute path")
+        key = "issue-/../../../home/runner/.bashrc#"
+        short = hashlib.sha256(key.encode()).hexdigest()[:8]
+        self.assertEqual(
+            kept["path"], f"/runner/texts/issue--..-..-..-home-runner-.bashrc--{short}.md"
+        )
+        for folder in ("out/texts", "out\\texts", "C:texts", "C:", "\\\\server", "\\foo"):
+            with self.subTest(folder=folder):
+                relative = {**self.request("implement", inputs), "texts": folder}
+                self.assertEqual(
+                    engine.answer(relative)["error"], "request.texts must be an absolute path"
+                )
+
+    def long_item(self, id, **request):
+        inputs = {
+            "item": {"id": id, "title": "x", "body": "B" * 70_000},
+            "plan": None,
+            "workspace": {"checks": [], "protectedPaths": []},
+        }
+        answer = engine.answer({**self.request("implement", inputs), **request})
+        self.assertNotIn("error", answer)
+        [kept] = answer["files"]
+        return kept
+
+    def test_two_ids_that_differ_in_unsafe_characters_get_two_files(self):
+        slash, dash = self.long_item("a/b"), self.long_item("a-b")
+        self.assertNotEqual(slash["path"], dash["path"])
+        self.assertRegex(slash["path"], r"^/runner/texts/issue-a-b-[0-9a-f]{8}\.md$")
+        # An id that already ends like a hash does not share a name with one that gets it.
+        short = slash["path"].removesuffix(".md")[-8:]
+        ends_like = self.long_item(f"a-b-{short}")
+        self.assertNotEqual(ends_like["path"], slash["path"])
+        # An id that is safe keeps its name.
+        self.assertEqual(self.long_item("5")["path"], "/runner/texts/issue-5.md")
+
+    def test_a_windows_folder_names_its_files_with_backslashes(self):
+        for folder in ("C:\\nexkit\\texts", "c:/nexkit/texts", "\\\\server\\share\\texts"):
+            with self.subTest(folder=folder):
+                kept = self.long_item("5", texts=folder)
+                self.assertEqual(kept["path"], folder + "\\issue-5.md")
 
     def test_diffs_and_outputs_come_no_longer_than_a_prompt_shows(self):
         defs = self.defs

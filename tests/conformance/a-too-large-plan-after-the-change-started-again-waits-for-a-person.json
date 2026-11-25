@@ -6,7 +6,11 @@
   "steps": [
     {
       "event": {
-        "kind": "created"
+        "kind": "created",
+        "change": {
+          "id": "308",
+          "version": "v1"
+        }
       },
       "state": "new",
       "changed": true
@@ -15,70 +19,6 @@
       "event": {
         "kind": "requested",
         "what": "go"
-      },
-      "state": "working",
-      "changed": true,
-      "actions": [
-        "runAgent"
-      ]
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:implement"
-      },
-      "state": "working",
-      "changed": true,
-      "actions": [
-        "publish"
-      ]
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "publish",
-        "result": {
-          "change": {
-            "id": "308",
-            "version": "v1"
-          },
-          "refused": null
-        }
-      },
-      "state": "checking",
-      "changed": true,
-      "actions": [
-        "runChecks"
-      ]
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runChecks",
-        "result": {
-          "checks": [
-            {
-              "name": "test",
-              "passed": true,
-              "skipped": false,
-              "signature": null,
-              "knownBaseFailure": false
-            }
-          ]
-        }
-      },
-      "state": "reviewing",
-      "changed": true,
-      "actions": [
-        "runAgent"
-      ]
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:reviewChanges"
       },
       "state": "fixing",
       "changed": true,
@@ -96,7 +36,50 @@
       "changed": true,
       "actions": [
         "runAgent"
-      ]
+      ],
+      "expect": {
+        "asked": [
+          "split",
+          "supersede"
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "fixing",
+      "changed": true,
+      "expect": {
+        "asked": [
+          "split"
+        ],
+        "change.id": "308"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@timeout"
+      },
+      "state": "failed",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "expect": {
+        "asked": [
+          "split"
+        ]
+      }
     },
     {
       "event": {
@@ -111,7 +94,9 @@
         "needPerson"
       ],
       "expect": {
-        "attention.reason": "approval"
+        "attention.reason": "approval",
+        "parts": [],
+        "change.id": "308"
       }
     }
   ]

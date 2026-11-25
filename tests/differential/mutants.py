@@ -312,6 +312,19 @@ MUTANTS = {
     },
     # A change that became empty ends the item as accepted, not as `noChange`, so the host
     # closes no pull request on its base branch (#393).
+    # A split of an item with a change leaves it open, with no action that withdraws it. Only
+    # the walker sees it: the host sends no `supersede` plan to the engine yet.
+    "split-keeps-the-change": {
+        "path": MACHINE,
+        "old": """            self.do(
+                "withdrawChange",
+                changeId=change["id"],
+                reason="The parts of the split carry the work.",
+            )""",
+        "new": """            pass""",
+        "seen": ("walker",),
+        "families": ("stop",),
+    },
     "an-emptied-change-is-accepted": {
         "path": MACHINE,
         "old": """        elif observed["empty"]:

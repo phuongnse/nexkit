@@ -1,0 +1,61 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "title": "The step"
+      },
+      "state": "new",
+      "changed": true,
+      "expect": {
+        "title": "The step"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplitPrefixed"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "show",
+        "runAgent"
+      ],
+      "expect": {
+        "asked": [
+          "titles"
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplitPrefixed"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "partTitles"
+      }
+    }
+  ]
+}

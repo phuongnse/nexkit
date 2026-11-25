@@ -225,6 +225,12 @@ class Step:
         self.s["rounds"].pop("due", None)
         if name not in COUNTING:
             self.s["rounds"].pop("automatic", None)
+        if self.state == "planning" and name != "planning":
+            # The engine's answers count only for the plan they started: a plan that ends
+            # without its result, such as one that fails, forgets them, so the next plan's
+            # questions can be answered again. The plan's own result carries a re-plan's
+            # answers on to the round that follows (`finished_plan`).
+            self.forget_answers()
         self.s["state"] = name
         self.s["attention"] = None
         # A round's questions wait only while the item does, after the round that asked.
@@ -1149,8 +1155,6 @@ class Step:
         again = "answers" in self.s["asked"]
         replan = "replan" in self.s["asked"]
         self.forget_answers()
-        if replan:
-            self.s["asked"] += list(ANSWERED)
         self.take_plan(output, {"name": "plan", "ref": number})
         plan = self.s["plan"]
         self.do("show", what="plan", text=plan["text"])
@@ -1170,6 +1174,10 @@ class Step:
         else:
             plan["approved"] = True
             self.start_change()
+        if replan:
+            # The answers of a re-plan reach the round that follows, past the move that
+            # forgets the engine's answers.
+            self.s["asked"] += list(ANSWERED)
 
     def ask(self, reason, text):
         """The plan waits for a person, for `reason`."""

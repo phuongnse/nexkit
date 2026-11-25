@@ -238,6 +238,56 @@ class ImportTest(unittest.TestCase):
         )
         self.assertEqual(state, {**made["state"], "recentEvents": []})
 
+    def test_a_part_three_levels_deep_is_imported_with_its_depth_and_is_not_split(self):
+        gh = FakeGitHub()
+        gh.add_issue(1)
+        for child, parent in ((2, 1), (3, 2), (4, 3)):
+            gh.add_issue(child, user=BOT_LOGIN, body=f"<!-- nexkit:part {parent} -->\nDo.")
+            gh.parents[child] = parent
+        run = {"command": "plan", "status": "running", "url": "https://x/actions/runs/7"}
+        gh.comment(4, render_run(run, "Planning."))
+        cfg = make_config()
+        self.assertNotIn("depth", first_state.import_item(gh, cfg, 1))
+        self.assertEqual(first_state.import_item(gh, cfg, 2)["depth"], 1)
+        state = first_state.import_item(gh, cfg, 4)
+        self.assertEqual((state["state"], state["depth"]), ("planning", 3))
+        result = "@agent:planSplit"
+        event = {"kind": "actionFinished", "action": "runAgent", "result": result}
+        request = {
+            "protocol": 1,
+            "call": "step",
+            "state": state,
+            "event": {**event_of(event, state, 1), "item": state["item"]},
+            "policies": {"planApproval": "autoWhenClean", "splits": True},
+        }
+        answer = json.loads(run_program(request))
+        self.assertEqual(answer["state"]["state"], "awaitingApproval")
+        self.assertEqual(answer["state"]["attention"]["reason"], "splitDepth")
+
+    def test_the_engine_s_answers_are_kept_only_for_the_run_they_started(self):
+        plan = {"plan": {"record": {"questions": [], "too_large": False}}}
+        ran = {"command": "plan", "status": "success", "outcome": "planned"}
+        answers = {"answers": {"answers": [{"question": "Read again?", "answer": "Yes"}]}}
+
+        def run(number, **fields):
+            return {"run": {**ran, "url": f"https://x/actions/runs/{number}", **fields}}
+
+        on_its_way = run(9, status="running", outcome=None)
+        failed = run(8, status="failure", outcome="failed")
+        quiet = run(8, outcome="retry")
+        for name, after, asked, where in (
+            ("a plan on its way", [on_its_way], ["answers"], "planning"),
+            ("a run that changed nothing", [quiet, on_its_way], ["answers"], "planning"),
+            ("a plan that reported", [run(8), on_its_way], [], "planning"),
+            ("a plan that failed", [failed, on_its_way], [], "planning"),
+            ("a person's comment", [{"person": "Wait."}, on_its_way], [], "planning"),
+            ("a plan that waits", [], [], "awaitingApproval"),
+        ):
+            with self.subTest(name):
+                given = {"issue": {"number": 42}, "comments": [plan, run(7), answers, *after]}
+                state = first_state.imported(**situation({"nexkit6": given}))
+                self.assertEqual((state["state"], state["asked"]), (where, asked))
+
     def test_a_run_on_its_way_is_the_action_the_engine_would_ask_for(self):
         given = {
             "issue": {"number": 42},

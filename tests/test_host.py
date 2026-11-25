@@ -99,6 +99,16 @@ class AfterPlanTest(HostCase):
         step = self.step(5)
         self.assertEqual((step["state"], step["answer"]), ("close", "Close the issue"))
 
+    def test_a_reader_s_closing_comment_plans_again_instead_of_closing(self):
+        self.issue(5)
+        self.plan(5, {"questions": [ASKED]})
+        self.gh.human_comment(5, "Close the issue", login="bob")
+        [request] = self.requests(5)
+        self.assertEqual(request["event"]["kind"], "answered")
+        self.assertEqual(request["event"]["by"]["role"], "reader")
+        step = self.step(5)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+
     def test_answers_follow_the_answers_policy_once_in_a_row(self):
         self.issue(5)
         self.plan(5, {"questions": [ASKED]})

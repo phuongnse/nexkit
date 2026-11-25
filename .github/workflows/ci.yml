@@ -45,7 +45,7 @@ jobs:
         run: claude plugin validate --strict .
 
   differential:
-    # The engine against NexKit 6 at harness.V6 (AGENTS.md, *Moving decisions into the engine*):
+    # The engine against NexKit 6 at harness.V6 (docs/testing.md#moving-decisions-into-the-engine):
     # a fixed sample of the differential check, and random walks of the engine.
     runs-on: ubuntu-24.04
     timeout-minutes: 15

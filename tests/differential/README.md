@@ -1,8 +1,8 @@
 # The engine against NexKit 6
 
 Each change that moves a NexKit 6 decision into the engine keeps GitHub's behaviour of
-NexKit 6 at 8bf5190, and keeps the engine's invariants (`AGENTS.md`, *Moving decisions into the
-engine*). This folder holds the checks that show it. They are a tool of the move to the engine:
+NexKit 6 at 8bf5190, and keeps the engine's invariants
+([Moving decisions into the engine](../../docs/testing.md#moving-decisions-into-the-engine)). This folder holds the checks that show it. They are a tool of the move to the engine:
 they go with NexKit 6's code once 7.0 ships.
 
 Nothing here is a test that `unittest discover` runs: the folder is no package, and no file's

@@ -1025,10 +1025,6 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(log, "")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class LongTextTests(unittest.TestCase):
     """An issue's body and a collaborator's comment reach the agent whole up to GitHub's
     limit; a text that a prompt still shortens is whole in a file, and named."""
@@ -1261,3 +1257,7 @@ class LongTextTests(unittest.TestCase):
         self.assertIn("The rest was left out.", context["body"])
         self.assertEqual(shortened_text(context), "")
         self.assertEqual(shortened_folders(context), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

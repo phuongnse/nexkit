@@ -1158,10 +1158,6 @@ class SetupTimeoutTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[2], 7 * 60)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 SHARDED = {
     "name": "e2e",
     "run": 'echo "shard $NEXKIT_SHARD"',
@@ -1295,3 +1291,7 @@ def state_passed(results):
     from nexkit.state import passed_checks
 
     return passed_checks(results)
+
+
+if __name__ == "__main__":
+    unittest.main()

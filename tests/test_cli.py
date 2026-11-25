@@ -2493,10 +2493,6 @@ class UpdateImageWorkflowTests(unittest.TestCase):
         self.assertIn("""contains(fromJSON('["all","claude-code"]'), inputs.runtime)""", ci)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ReleaseWorkflowTests(unittest.TestCase):
     """release.yml builds the engine's image with a read-only token, and only the job that
     publishes it writes, with github.token, running no repository code (AGENTS.md)."""
@@ -2524,9 +2520,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_the_job_that_publishes_runs_no_repository_code(self):
         publish = self.jobs["publish"]
-        self.assertEqual(permissions_of(publish), {"packages": "write"})
+        # Pushing the image and its attestation, and signing it with the workflow's identity.
         self.assertEqual(
-            re.findall(r"uses: (\S+)@", publish), ["actions/download-artifact"], "only the image"
+            permissions_of(publish),
+            {"packages": "write", "id-token": "write", "attestations": "write"},
+        )
+        self.assertEqual(
+            re.findall(r"uses: (\S+)@", publish),
+            ["actions/download-artifact", "actions/attest"],
+            "only the image and its attestation",
         )
         for text in (
             "uses: ./",
@@ -2540,6 +2542,44 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("secrets", publish)
         self.assertIn('docker push "$IMAGE:$VERSION"', publish)
 
+    def test_a_release_never_replaces_a_published_image(self):
+        """#334: the version's tag in the registry fails the release before anything is
+        pushed, and so does an answer that does not say whether it is there."""
+        publish = self.jobs["publish"]
+        steps = publish.split("\n      - ")[1:]
+        refuse = next(i for i, step in enumerate(steps) if "Refuse a version" in step)
+        push = next(i for i, step in enumerate(steps) if "docker push" in step)
+        self.assertEqual(refuse, 0, "before the image is even downloaded")
+        self.assertLess(refuse, push)
+        step = steps[refuse]
+        self.assertIn("scope=repository:$name:pull,push", step)
+        self.assertIn('echo "::add-mask::$token"', step)
+        self.assertIn('"https://ghcr.io/v2/$name/manifests/$VERSION"', step)
+        self.assertIn("--head", step)
+        answers = re.search(r'case "\$status" in\n(.*?)\n +esac', step, re.S).group(1)
+        self.assertRegex(answers, r"404\) echo [^\n]*not published yet")
+        self.assertRegex(answers, r"200\)\n +echo \"::error::[^\n]*\n +exit 1")
+        self.assertRegex(answers, r"\*\)\n +echo \"::error::[^\n]*\n +exit 1")
+        self.assertNotIn("exit 0", step)
+
+    def test_the_pushed_image_carries_its_build_provenance(self):
+        publish = self.jobs["publish"]
+        steps = publish.split("\n      - ")[1:]
+        push = next(i for i, step in enumerate(steps) if "docker push" in step)
+        attest = next(i for i, step in enumerate(steps) if "uses: actions/attest@" in step)
+        logout = next(i for i, step in enumerate(steps) if "docker logout" in step)
+        # The attestation goes to the registry with the push's login, then the job logs out.
+        self.assertLess(push, attest)
+        self.assertLess(attest, logout)
+        self.assertIn("if: always()", steps[logout])
+        self.assertIn("id: push", steps[push])
+        self.assertIn('echo "digest=${pushed#*@}" >> "$GITHUB_OUTPUT"', steps[push])
+        self.assertRegex(steps[attest], r"actions/attest@[0-9a-f]{40} # v\d")
+        self.assertIn("subject-name: ${{ env.IMAGE }}", steps[attest])
+        self.assertIn("subject-digest: ${{ steps.push.outputs.digest }}", steps[attest])
+        self.assertIn("push-to-registry: true", steps[attest])
+        self.assertIn("create-storage-record: false", steps[attest])
+
     def test_a_release_is_the_package_version_on_main(self):
         build = self.jobs["build"]
         self.assertIn('if [ "$TAG" != "v$version" ]; then', build)
@@ -2549,6 +2589,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('--build-arg PYTHON_IMAGE="$base"', build)
         self.assertIn('--tag "$IMAGE:$VERSION" .', build)
         self.assertIn("cmp served.json expected.json", build)
+
+
+class TestFilesTests(unittest.TestCase):
+    """Each test file runs all of its tests when it is run directly: no test comes after its
+    `unittest.main()` (#334)."""
+
+    def test_unittest_main_comes_last(self):
+        main = '\nif __name__ == "__main__":\n    unittest.main()\n'
+        for path in sorted((ROOT / "tests").rglob("test_*.py")):
+            text = path.read_text()
+            if main in text:
+                with self.subTest(path=path.relative_to(ROOT)):
+                    self.assertTrue(text.endswith(main))
 
 
 class RepeatedChecksTests(unittest.TestCase):
@@ -2647,3 +2700,7 @@ class RepeatedChecksTests(unittest.TestCase):
         )
         failed = [m for ok, m in scaffold.doctor(self.root) if not ok]
         self.assertTrue(any("ci.yml runs the commands of checks `test`" in m for m in failed))
+
+
+if __name__ == "__main__":
+    unittest.main()

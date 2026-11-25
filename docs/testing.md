@@ -1,0 +1,89 @@
+# Testing
+
+This page says how NexKit itself is tested: which check covers what, when each one runs, and what a
+change that moves a decision of NexKit 6 into the engine must prove. It is for whoever works on
+NexKit. The commands are in [AGENTS.md](../AGENTS.md#verify), and how a repository that uses NexKit
+runs its own checks is in [the configuration reference](configuration.md).
+
+## Which check covers what
+
+Each check owns one kind of mistake, so a change knows which checks it adds to and which must pass.
+The workflows under `.github/workflows/` run them on pull requests and on `main`, and NexKit's
+rounds on this repository run the commands that `checks` in `.nexkit/config.json` lists.
+
+| Check | Where | What it covers |
+| --- | --- | --- |
+| Unit tests | `tests/test_*.py`, run by `python3 -m unittest discover -s tests -t .` | Each module's behaviour, most of it against `FakeGitHub`, with the standard library only. `tests/test_cli.py` also reads the workflows and checks which job holds which token and secret |
+| Scenarios | `tests/test_scenarios.py` | Autopilot over many rounds and sweeps: every issue in scope is carried on or waits for a person, and budgets count as they should |
+| Conformance | `tests/conformance/` | Each rule of the engine, as a case of events and the actions and state they must give; each kind of import (`first_state.KINDS`) has a case in `tests/conformance/imports/` |
+| Prompt goldens | `tests/prompts/` | The prompt each stage writes, compared with NexKit 6's own record of it. A change to a prompt changes its golden by hand and says why |
+| Agent schemas | `tests/golden/agent-schemas.json`, read by `tests/test_protocol.py` | The result schema each stage gives its agent, as NexKit 6 gave it |
+| Differential check | `tests/differential/`, run by `tests/differential/check.sh` | The engine against NexKit 6, with random walks of the engine and its mutants, as [its README](../tests/differential/README.md) says |
+| Lint | `scripts/lint.sh` | ruff on the Python code, and actionlint on the workflows |
+| Plugin | `claude plugin validate --strict .` | The plugin's manifest and skills |
+| Docs | `tests/test_docs.py` | The map lists every doc, and the links of the map and of the docs standard resolve, as [writing the docs](writing-docs.md#how-the-docs-stay-correct) says |
+| The engine's image | `release.yml` | The image builds from the pinned base and answers over HTTP as `nexkit-engine` answers on standard input |
+| Code scanning | `codeql.yml` | CodeQL on the Python code and the workflows |
+| Smoke test | `scripts/smoke.py` | Real Claude Code at its pin, as [the smoke test](#the-smoke-test) says |
+
+## The smoke test
+
+The smoke test runs every agent stage against real Claude Code, at the version that
+`nexkit/__init__.py` pins, on a tiny repository. It exercises the CLI's real flags, event stream and
+structured results, which the unit tests replace with a fake. It needs a Claude login or credential,
+`CLAUDE_CODE_OAUTH_TOKEN` in CI, and costs a real session, so it runs only when a change touches
+what it covers.
+
+Run it when changing `engine/prompts/`, `engine/prompt.py`, `engine/textutil.py`, `agent.py`,
+`schema.py`, `runtimes/` or a pin. CI runs it on such a pull request, and on the pull request of
+`update-agents.yml` for the runtime it updates.
+
+## Moving decisions into the engine
+
+Until NexKit 7.0 ships, changes move NexKit 6's decisions into the engine one by one
+([Getting there](engine.md#getting-there)). Each such change:
+
+- Keeps GitHub's behaviour: NexKit 6 at 8bf5190 and the change behave alike on GitHub, unless
+  the change fixes a NexKit 6 bug, which its pull request calls out. A differential check proves
+  it. Scenarios of what the change moves run on both trees, each on a fresh `FakeGitHub`. The
+  check compares the command's result, everything on GitHub after it (comments with markers
+  decoded, statuses, reviews, dispatches with their inputs, merges, issues, pull requests,
+  labels), the preview and `nexkit status`. Sequences of several rounds and sweeps matter most.
+  The pull request gives the scenario counts and explains every difference.
+- Walks the engine at random against invariants, including the invariants of its own rules:
+  - the protocol's schemas;
+  - only the transitions that the states table names;
+  - the outbox;
+  - every open item is carried on, so none is stuck or brought back;
+  - counts within the policies.
+- Adds to `tests/differential/` ([its README](../tests/differential/README.md)), which holds both
+  checks and a CI job that plays a fixed sample of them on every pull request: a family of
+  scenarios for what it moves, each difference it calls out in `known.py`, the invariants of its
+  rules in `walk.py`, and mutants of its rules in `mutants.py`. With a checkout of 8bf5190:
+
+  ```sh
+  python3 tests/differential/harness.py --v6 PATH       # every scenario; --sample K for fewer
+  python3 tests/differential/walk.py                    # 2,000 walks of the engine
+  python3 tests/differential/mutants.py --v6 PATH       # each broken rule is seen
+  ```
+- Comes with a conformance case for each engine rule it adds or changes. Every other test passes
+  unchanged, or the pull request says why one changed. It brings its rules in
+  [The engine](engine.md) and *Getting there* up to date.
+- Gets an independent review before it merges. A separate session reviews it, given the issue and
+  the diff but not the author's conclusions. The review builds or extends the checks above on
+  its own, adds mutation checks of the new rules, and writes a verdict.
+  - Only wrong behaviour or instability blocks the merge: a decision that differs from NexKit 6, an
+    item stuck or brought back, a round counted wrongly, a crash, a lost event or action, work on
+    the wrong change, a transition the states table does not name, or the engine contradicting
+    [The engine](engine.md).
+  - The author fixes these and checks each fix with the reviewer's own reproducers.
+  - Other findings are fixed when cheap. The rest go into one issue in the milestone, blocked by
+    the change's issue and blocking the milestone's release issue (#320 for 7.0), and get no
+    further review round.
+  - The pull request then gains an *Independent review* section: what the review ran, what it
+    found, and how each finding was settled.
+
+Its pull request has the sections *What moved*, *Left for #N* when the issue stays open,
+*Differential check*, *Random walks*, *Existing tests that changed*, *Independent review* and
+*Checks*: the commands under [Verify](../AGENTS.md#verify), and the smoke test when
+[the smoke test](#the-smoke-test) asks for it.

@@ -44,6 +44,7 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `released` | #347 | a held conflict round released while `mergeable` flips |
 | `waits` | #390 | a merge that waits for required checks and its six hours: the round's own merge, a sweep, a writer's approval |
 | `refusals` | #391 | a merge refused because the head moved, or for a reason only a person clears: the round's own merge, a sweep, a writer's approval |
+| `ended` | #393 | what a merge finds and a parent's end: a pull request a person merged or closed, a change the base branch holds, a head pushed while the merge waits, and the parent after the merge |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time

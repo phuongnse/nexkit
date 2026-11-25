@@ -22,4 +22,5 @@ FAMILIES = {
     "released": "#347",
     "waits": "#390",
     "refusals": "#391",
+    "ended": "#393",
 }

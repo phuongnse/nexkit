@@ -29,6 +29,7 @@ from .maintain import (
     start_waiting,
     update_branch,
 )
+from .protocol.size import MOST
 from .route import auto_input, on_base
 from .runlog import add_tokens, one_line
 from .schema import filled
@@ -1292,11 +1293,14 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     again a few times; other refusals that pass are handed on (see `_refused`). A pull
     request whose base branch already holds its change is closed instead, with its issue
     (see `maintain.close_on_base`). One that a person merged or closed first ends the round
-    as `pull_closed`, before its issue counts, since that merge closes the issue too."""
+    as `pull_closed`, before its issue counts, since that merge closes the issue too. The
+    engine decides what a merge by a person and an emptied change end (`host.change_seen`), and
+    whether a parent ends after NexKit's merge (`host.part_ended`)."""
     pr, head = target["pr"], target["head"]
     number = pr
     try:
-        ended = _ended(gh.pull(pr))
+        pull = gh.pull(pr)
+        ended = _ended(pull)
         number = target["issue"]
         issue = gh.issue(number)
         closed = issue.get("state") != "open"
@@ -1310,7 +1314,11 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
         return _guarded(cfg, target, "merge_refused", message.strip(), found)
     if ended:
         # A person merged or closed it first, which may also have closed its issue: there
-        # is nothing left to merge, and nobody to ask.
+        # is nothing left to merge, and nobody to ask. A merge is the engine's to end.
+        if _merged(pull):
+            refused = _seen(cfg, target, message, _seen_by(pull, head, merged=True), "accepted")
+            if refused:
+                return refused
         return autopilot.PULL_CLOSED, _passed_but(head, ended)
     if closed:
         # A person closed the issue while the pull request waited: they decide its fate.
@@ -1327,6 +1335,10 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
         return _guarded(cfg, target, autopilot.UNTRUSTED_MERGE, message.strip())
     merge_base = on_base(gh, target["base"], head)
     if merge_base:
+        empty = {"version": head, "merged": False, "empty": True}
+        refused = _seen(cfg, target, message, empty, "noChange")
+        if refused:
+            return refused
         outcome, text, commit = close_on_base(gh, cfg, {**target, "merge_base": merge_base})
         if commit:
             row["on_base"] = commit
@@ -1347,9 +1359,9 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     if attempt:
         message += f" GitHub took it at try {attempt + 1}, after the base branch moved."
     closed, lines = close_merged_issue(gh, target["issue"], pr, merge.get("sha"))
-    if closed and cfg["close_parent_issues"]:
+    if closed:
         # At once, for this round's comment; the `issues: closed` run finds nothing left.
-        lines += close_parents_safely(gh, target["issue"])
+        lines += _parent_ends(gh, cfg, target)
     lines += delete_head_branch(gh, pr)
     runs = []
     started = after_merge(gh, after_workflows(cfg), target["base"], runs)
@@ -1382,6 +1394,71 @@ def _ended(pull):
     if pull.get("merged") or pull.get("merged_at"):
         return f"It was already merged{by}, so NexKit had nothing to merge."
     return "It was already closed, so NexKit did not merge it."
+
+
+def _merged(pull):
+    """Whether the pull request `pull` was merged."""
+    return bool(pull.get("merged") or pull.get("merged_at"))
+
+
+def _seen_by(pull, head, merged):
+    """What the host found about the pull request `pull` at its merge, for `host.change_seen`:
+    its head now, or `head`, and whether a person `merged` it, else that it is empty."""
+    version = (pull.get("head") or {}).get("sha") or head
+    return {"version": version, "merged": merged, "empty": not merged}
+
+
+def _seen(cfg, target, message, seen, expect):
+    """None when the engine ends the item as `expect` after the observation `seen` that the
+    host made at the merge (`host.change_seen`); otherwise (outcome, message) for a person,
+    since the engine refused to decide."""
+    from .host import Refused, change_seen, refused_parts
+
+    auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+    try:
+        end = change_seen(cfg, target["issue"], target["pr"], target["head"], auto_fixes, seen)
+        if end != expect:
+            raise Refused(f"The engine answers {end!r}, not {expect!r}, to what the merge found.")
+    except Refused as error:
+        do, why = refused_parts(error)
+        target["found"] = {"refused": (do, why)}
+        unblocks = autopilot.person(do, why)
+        return "merge_refused", f"{message}\n\n**What unblocks it:** {unblocks}.".strip()
+    return None
+
+
+def _parent_ends(gh, cfg, target):
+    """Lines for the round's comment about the parent issue of `target`'s issue, which NexKit
+    merged and closed. The engine decides whether the direct parent ends (`host.part_ended`),
+    and when it does, `maintain.close_parents` closes it, with the facts only GitHub knows, and
+    goes on up. A parent with more sub-issues than a state document holds is NexKit 6's:
+    `close_parent_issues` decides. The parent of an issue that merges stays as it is when the
+    engine refuses to decide."""
+    from .host import Refused, accept_answer, part_ended
+
+    issue = target["issue"]
+    try:
+        parent = gh.parent_issue(issue)
+        if not parent or parent.get("state") != "open" or not autopilot.in_repository(gh, parent):
+            return []
+        subs = gh.sub_issues(parent["number"])
+        if len({sub["number"] for sub in subs} | {issue}) > MOST["split"]:
+            return close_parents_safely(gh, issue) if cfg["close_parent_issues"] else []
+        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+        accepted = {"accepted": True, "refusal": None, "text": ""}
+        end, state = accept_answer(cfg, issue, target["pr"], target["head"], auto_fixes, accepted)
+        if end != "accepted":
+            raise Refused(f"The engine answers {end!r} to a merge that went through.")
+        close = part_ended(cfg, parent["number"], subs, issue, state["state"])
+    except GitHubError as exc:
+        return [f"Could not check the parent issue of #{issue}: {exc}"]
+    except Refused as error:
+        why = autopilot.quoted(str(error), 300)
+        line = (
+            f"Left the parent issue of #{issue} as it is: NexKit's engine refused to decide: {why}"
+        )
+        return [line]
+    return close_parents_safely(gh, issue) if close == "close" else []
 
 
 def _passed_but(head, ended):
@@ -1450,11 +1527,17 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
     any other refusal only a person clears is the engine's (`host.accept_answer`)."""
     pr, base, head = target["pr"], target["base"], target["head"]
     try:
-        ended = _ended(gh.pull(pr))
+        pull = gh.pull(pr)
+        ended = _ended(pull)
     except GitHubError:
-        ended = None
+        pull, ended = None, None
     if ended:
-        # A person merged or closed it while NexKit tried, which GitHub then refused.
+        # A person merged or closed it while NexKit tried, which GitHub then refused. A merge
+        # is the engine's to end.
+        if _merged(pull):
+            refused = _seen(cfg, target, message, _seen_by(pull, head, merged=True), "accepted")
+            if refused:
+                return refused
         return autopilot.PULL_CLOSED, _passed_but(head, ended)
     message += f" Automatic merge was not possible: {exc}"
     auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]

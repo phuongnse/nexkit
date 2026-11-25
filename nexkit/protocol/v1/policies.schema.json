@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/policies.schema.json",
-  "$comment": "A host's policies, which come with every call, as docs/engine.md#what-a-host-decides lists them. A policy left out takes its default, NexKit 6's on GitHub without autopilot. These are the policies the engine decides with so far; the page says which are not in this version yet.",
+  "$comment": "A host's policies, which come with every call, as docs/engine.md#what-a-host-decides lists them. A policy left out takes its default, NexKit 6's on GitHub without autopilot, except `parentEnd`, which keeps the engine's rule (GitHub's `close_parent_issues` is off by default). These are the policies the engine decides with so far; the page says which are not in this version yet.",
   "type": "object",
   "properties": {
     "planApproval": {
@@ -80,6 +80,14 @@
       "default": 3,
       "minimum": 1,
       "maximum": 10
+    },
+    "parentEnd": {
+      "$comment": "Whether a split parent ends when its parts did: whenPartAccepted ends it as accepted once every part ended and one was accepted, and person leaves it to a person (splitIncomplete). Only a split parent reads it, so a round's stored policies leave it out. A host that leaves it out gets the first; the GitHub host sends person when `close_parent_issues` is off.",
+      "enum": [
+        "whenPartAccepted",
+        "person"
+      ],
+      "default": "whenPartAccepted"
     },
     "retryWaits": {
       "$comment": "The waits in minutes before an agent run that stopped on a transient error runs again, one for each run again, at most 10, each from 0 to 330; a wait of 0 runs it again at once, and after the last a person decides.",

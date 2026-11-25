@@ -12,7 +12,7 @@ read only the sections you need. What goes in which doc, and how the docs stay t
 | Understand NexKit | The [README](../README.md) | [How it works](how-it-works.md) and the [roadmap](roadmap.md) |
 | Set NexKit up on a repository | [Set up a repository](../README.md#set-up-a-repository) in the README, or the `setup` skill | The [configuration reference](configuration.md), [The GitHub App](configuration.md#the-github-app) first |
 | Find why a run stopped or waits | [Troubleshooting](troubleshooting.md) | [Failure handling](how-it-works.md#failure-handling) in how it works |
-| Work on NexKit | [AGENTS.md](../AGENTS.md) | [Writing the docs](writing-docs.md), [the engine](engine.md) and the [roadmap](roadmap.md) |
+| Work on NexKit | [AGENTS.md](../AGENTS.md) | [Delivery](delivery.md), [testing](testing.md), [writing the docs](writing-docs.md), [the engine](engine.md) and the [roadmap](roadmap.md) |
 
 ## Using NexKit
 
@@ -35,4 +35,6 @@ Read by people, and agents, who change NexKit itself.
 | --- | --- | --- |
 | [The engine](engine.md) | The engine, its protocol, states, events and actions, hosts, and the way there from NexKit 6 | You change a decision of the loop, the protocol or a host |
 | [Roadmap](roadmap.md) | NexKit's features, one milestone each, done and under way, and what labels are for | You need a feature's milestone or the work under way |
+| [Delivery](delivery.md) | Which issue a session takes, pull requests, labels and milestones, NexKit on this repository, and releases | You take an issue, open a pull request or prepare a release |
+| [Testing](testing.md) | Which check covers what, the smoke test, and what a change that moves a decision into the engine proves | You add a test, or change what a check covers |
 | [Writing the docs](writing-docs.md) | What goes in which doc, decisions, style, structure, and how the docs stay correct | You write or change any doc |

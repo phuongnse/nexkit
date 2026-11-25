@@ -20,8 +20,8 @@ Each kind of content has one home. Write a fact in its home and link to it from 
 | How NexKit is built: modules, workflows and jobs, tokens and secrets | Architecture _(planned, #359)_ |
 | What NexKit trusts, and the rule that contains each input it does not | Security _(planned, #360)_ |
 | A choice between real alternatives, with its reasons | A [decision](#decisions) |
-| How the work on NexKit is done: issues, pull requests, labels, milestones, releases | Delivery _(planned, #358)_, and [AGENTS.md](../AGENTS.md) until then |
-| How NexKit is tested | Testing _(planned, #358)_, and [AGENTS.md](../AGENTS.md) until then |
+| How the work on NexKit is done: issues, pull requests, labels, milestones, releases | [Delivery](delivery.md) |
+| How NexKit is tested | [Testing](testing.md) |
 | How an agent applies a rule, step by step | A skill, which links the rule and does not restate it: the plugin's skills under `skills/` for people who use NexKit, and the maintenance skills under `.claude/skills/` for work on NexKit |
 | Each feature and its status | The [roadmap](roadmap.md) |
 | What a release changed, and how to upgrade to it | The [changelog](../CHANGELOG.md) |

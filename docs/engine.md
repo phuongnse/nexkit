@@ -566,7 +566,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | Retries | Waits after a transient stop; when a lost action starts again | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
 | Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
-| Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10; they apply only with `autoWhenClean`, and a person's approval of a split with more parts goes on as one change | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
+| Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10; the re-plan for fewer parts, no parts or repeated titles happens only with `autoWhenClean`, and a person's approval of a split that these rules refuse goes on as one change | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
 | A parent's end | When its parts' ends end it | `close_parent_issues`, when one part was completed | When its parts end |
 | After a failure | `person`, `replan`, `newItem` | `person`, then `replan` on a comment | `newItem`: the person sends the request again |
 | Checklist | Items the plan and the review answer, some for a person | `review.checklist` | The application's own checklist |

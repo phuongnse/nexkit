@@ -2437,27 +2437,37 @@ class UpdateImageWorkflowTests(unittest.TestCase):
         cls.text = (ROOT / ".github/workflows/update-image.yml").read_text()
         cls.jobs = jobs_of(cls.text)
 
-    def test_runs_every_few_merges_with_the_least_permissions(self):
-        triggers = self.text.split("\non:\n", 1)[1].split("\n\n", 1)[0]
-        self.assertEqual(triggers, "  workflow_dispatch:")
-        self.assertIn("\nname: Update base image\n", self.text)
+    def test_the_updates_run_every_few_merges_with_the_least_permissions(self):
+        """Both workflows that propose a pin run when NexKit starts them after its merges,
+        never on a schedule, and hold only what they need to push and open a pull request."""
         cfg = nexkit.config.load(ROOT)
-        every = {
-            entry["workflow"]: entry["every"]
+        listed = {
+            entry["workflow"] if isinstance(entry, dict) else entry
             for entry in cfg["merge"]["after_workflows"]
-            if isinstance(entry, dict)
         }
-        self.assertIn("update-image.yml", every)
-        # A finished run on main starts a sweep, which watches its failures as CI's.
         nexkit_yml = (ROOT / ".github/workflows/nexkit.yml").read_text()
-        self.assertRegex(nexkit_yml, r"workflow_run:.*\n    workflows: \[[^]\n]*Update base image")
-        self.assertIn("\npermissions: {}\n", self.text)
-        self.assertEqual(list(self.jobs), ["update"])
-        self.assertEqual(
-            permissions_of(self.jobs["update"]),
-            {"contents": "write", "pull-requests": "write", "actions": "write"},
-        )
-        self.assertNotIn("secrets.", self.text)
+        watched = re.search(r"\n  workflow_run:.*\n    workflows: \[([^]\n]*)\]", nexkit_yml)
+        for file, name in (
+            ("update-image.yml", "Update base image"),
+            ("update-agents.yml", "Update agents"),
+        ):
+            with self.subTest(workflow=file):
+                text = (ROOT / ".github/workflows" / file).read_text()
+                triggers = text.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+                self.assertEqual(triggers, "  workflow_dispatch:")
+                self.assertIn(f"\nname: {name}\n", text)
+                self.assertIn(file, listed)
+                # A finished run on main starts a sweep, which watches its failures as CI's.
+                self.assertIn(name, [n.strip() for n in watched.group(1).split(",")])
+                self.assertIn("\npermissions: {}\n", text)
+                jobs = jobs_of(text)
+                self.assertEqual(list(jobs), ["update"])
+                self.assertEqual(
+                    permissions_of(jobs["update"]),
+                    {"contents": "write", "pull-requests": "write", "actions": "write"},
+                )
+                self.assertNotIn("secrets.", text)
+                self.assertNotIn("gh issue", text)
 
     def test_proposes_only_a_moved_digest_on_one_branch(self):
         job = self.jobs["update"]

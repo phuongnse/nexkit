@@ -1,20 +1,16 @@
-# Every week, propose the newest stable version of each agent runtime, one pull request per
-# runtime. CI on the pull request runs the unit tests and that runtime's live smoke test
-# with that exact version; merge it when CI is green, then release. Until then the pipeline
-# keeps using the version it was tested with. A run that fails says so in an issue, which
-# the next run that succeeds closes.
+# Proposes the newest stable version of each agent runtime, one pull request per runtime.
+# NexKit starts it on main every few merges, by merge.after_workflows in .nexkit/config.json,
+# rather than on a schedule, which GitHub may delay or drop; it also runs on demand. CI on the
+# pull request runs the unit tests and that runtime's live smoke test with that exact version;
+# merge it when CI is green, then release. Until then the pipeline keeps using the version it was
+# tested with. NexKit watches this workflow's runs on main like CI's: with autopilot, a failure
+# that repeats opens a bug issue.
 name: Update agents
 
 on:
-  schedule:
-    - cron: "17 3 * * 1"
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
-  actions: write
-  issues: write # the issue that says this workflow failed
+permissions: {}
 
 concurrency:
   group: update-agents
@@ -23,6 +19,10 @@ jobs:
   update:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: write # push each runtime's branch
+      pull-requests: write # open its pull request
+      actions: write # start CI on it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -56,29 +56,3 @@ jobs:
           done
         env:
           GH_TOKEN: ${{ github.token }}
-      # A run that fails leaves no pull request, which looks the same as no newer version:
-      # say so in an issue, one at a time, and close it once a run succeeds.
-      - name: Report the failure in an issue
-        if: failure()
-        run: |
-          body="[Update agents]($RUN_URL) failed, so no pull request proposes a newer agent runtime. This issue closes when the workflow next succeeds."
-          number=$(gh issue list --state open --author app/github-actions --search "\"$TITLE\" in:title" --json number -q '.[0].number')
-          if [ -n "$number" ]; then
-            gh issue comment "$number" --body "[Update agents]($RUN_URL) failed again."
-          else
-            gh issue create --title "$TITLE" --label bug --body "$body"
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TITLE: Update agents failed
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      - name: Close the failure issue
-        if: success()
-        run: |
-          for number in $(gh issue list --state open --author app/github-actions --search "\"$TITLE\" in:title" --json number -q '.[].number'); do
-            gh issue close "$number" --comment "[Update agents]($RUN_URL) succeeded."
-          done
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TITLE: Update agents failed
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

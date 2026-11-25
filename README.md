@@ -48,9 +48,9 @@ adds what is missing around the agent:
 ## Supported versions
 
 Everything the pipeline installs is pinned to the version NexKit was tested with, so a
-release never changes underneath you. New agent versions still arrive quickly: a weekly
-job proposes the newest stable version of each runtime, CI tests it with the real CLI, and
-a new NexKit release ships it.
+release never changes underneath you. New agent versions still arrive quickly: a job that
+runs every few merges proposes the newest stable version of each runtime, CI tests it with
+the real CLI, and a new NexKit release ships it.
 
 | Dependency | Supported | Tested |
 |---|---|---|

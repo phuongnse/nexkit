@@ -101,24 +101,25 @@ running round started with.
 
 | Input | What the host fetched |
 | --- | --- |
-| `item` | The work item's title and text, its change, and whether it is a person's change reviewed as its own item |
-| `discussion` | The comments on the item and on its change, oldest first, each a person's comment, a note on a command or the answers a policy gave. The host leaves out what nobody it trusts wrote |
+| `item` | The work item's title and text, its change, whether it is a person's change reviewed as its own item, and what the change did outside the plan |
+| `discussion` | The comments on the item and on its change, oldest first, each a person's comment, a note on a command or the answers a policy gave, and what people said on the change's version: their reviews and their comments on a line. The host leaves out what nobody it trusts wrote |
 | `notes` | The note of the request that started the stage |
 | `plan`, `previousPlan` | The approved plan; for a new plan, the latest one, where it falls in the discussion and the profile it used |
-| `rounds` | The fix rounds so far, the fix round the review follows, what the change did outside the plan, and the checks a diagnosis round looks into |
-| `checks` | The checks' results, with the end of each output, and the required checks that refused an accept |
-| `findings` | The findings a fix round addresses, the last review of the change, and what people said on its version |
+| `rounds` | The fix rounds so far and the fix round the review follows |
+| `checks` | The checks' results, with the end of each output, the required checks that refused an accept, and the checks a diagnosis round looks into, each with the failure it repeated |
+| `findings` | The findings a fix round addresses and the last review of the change |
 | `linked` | The texts the item links to, the items it was split from with their discussions, and each link not read, with why in the host's words. The host bounds how many it lists |
 | `evidence` | What the CI runs the item names left, and the result files of failing checks, with what the host keeps of each |
 | `parts` | The earlier parts of the same split that a part relies on |
-| `diff` | The change against its base, since the last review, a merge of the base and its conflicted files |
+| `diff` | The change against its base, since the last review, the merge of the base that this run's fix round made, and the files a merge conflicted in |
 | `workspace` | The checks the agent can run, and the paths only a person changes |
 
 - **What a stage needs.** Every stage needs `item`, and every stage but triage `workspace`.
   Implement, fix and review need `plan`, which is null when the item has none, and fix and review
   need `diff`. The engine refuses a call without them.
-- **Rounds and findings are interim.** `rounds` and `findings` hold what the state document will
-  hold once a host keeps it. Until then the host sends them, and `prompt` does not read `state`.
+- **Rounds and findings are interim.** `rounds` and `findings` hold only round history, which the
+  state document will hold once a host keeps it. Until then the host sends them, and `prompt` does
+  not read `state`. The texts that are not history have inputs of their own.
 - **Limits.** The engine applies them: how much of each text and block a prompt keeps, how many
   comments, and in what order. A text that a prompt keeps only the start of, or leaves out, goes
   whole to a file in the folder that `texts` names, an absolute path outside the working tree,

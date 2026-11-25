@@ -336,10 +336,10 @@ def feedback(checks=None, required=None, review=None, people=None, shelf=None):
     return "\n\n".join(parts) if parts else "No recorded feedback. Follow the note."
 
 
-def previous_review(last, fixes=(), current=None):
+def previous_review(last, fixes=(), current=None, merged=None):
     """{previous_head, previous_round}: the `last` NexKit review of the change and the fix
-    rounds since, of the recorded `fixes` and this run's `current` one; None without a
-    review."""
+    rounds since, of the recorded `fixes` and this run's `current` one, whose merge of the
+    base is `merged`; None without a review."""
     if not last:
         return None
     fixes = [f for f in fixes or [] if f["round"] > last["round"]]
@@ -350,7 +350,7 @@ def previous_review(last, fixes=(), current=None):
                 "summary": current.get("summary"),
                 "cause": current.get("cause"),
                 "note": current.get("note"),
-                "conflicts": current.get("conflicts") if current.get("base") else None,
+                "conflicts": merged.get("conflicts") if merged and merged.get("base") else None,
             }
         )
     lines = [f"### Findings of the review of commit {last['head'][:7]} ({last['verdict']})", ""]
@@ -503,6 +503,7 @@ def texts(stage, inputs, shelf):
     if stage in ("plan", "implement", "fix", "review"):
         context["linked"] = linked(inputs.get("linked"), shelf)
     rounds, findings = inputs.get("rounds") or {}, inputs.get("findings") or {}
+    merged = (inputs.get("diff") or {}).get("merged") or {}
     shown = None
     if planning:
         earlier = earlier_parts(inputs.get("parts"))
@@ -520,7 +521,7 @@ def texts(stage, inputs, shelf):
             shown = discussion(on_item[:before], shelf=shelf)
             context["since_plan"] = discussion(on_item[before:], notes=True, shelf=shelf)
     current = rounds.get("current")
-    reviewed = previous_review(findings.get("last_review"), rounds.get("fixes"), current)
+    reviewed = previous_review(findings.get("last_review"), rounds.get("fixes"), current, merged)
     if item.get("person"):
         # Its item is the change itself, with its description and comments, so the review
         # needs neither a plan nor the same discussion twice.
@@ -533,13 +534,13 @@ def texts(stage, inputs, shelf):
             + "\n\n---\n\nOn the pull request:\n\n"
             + discussion(on_change, notes=True, shelf=shelf)
         )
-        context["outside_plan"] = outside_plan(rounds.get("outside_plan"))
+        context["outside_plan"] = outside_plan(item.get("outside_plan"))
         context.update(reviewed or {})
-        if current and current.get("base"):
+        if current and merged.get("base"):
             context["merged"] = {
-                "head": current.get("head"),
-                "base": current["base"],
-                "conflicts": current.get("conflicts") or [],
+                "head": merged.get("head"),
+                "base": merged["base"],
+                "conflicts": merged.get("conflicts") or [],
             }
     elif stage == "fix":
         checks = inputs.get("checks") or {}
@@ -547,13 +548,13 @@ def texts(stage, inputs, shelf):
             checks.get("results"),
             checks.get("required"),
             findings.get("review"),
-            findings.get("people"),
+            talk.get("said"),
             shelf,
         )
         results = evidence.get("results")
         context["evidence"] = _without_keeps(results) if results else None
         context["earlier_fixes"] = earlier_fixes(rounds.get("fixes"))
-        context["diagnose"] = list(rounds.get("diagnose") or [])
+        context["diagnose"] = list(checks.get("diagnose") or [])
         # The fix prompt shows the feedback rather than the discussion, so it names nothing
         # shortened here.
         shown = (

@@ -26,6 +26,25 @@ KNOWN = [
             and new["step"].get("person") is True
         ),
     },
+    {
+        "name": "a closing answer after a stopped round",
+        "family": "stop",
+        "by": "#346",
+        "why": (
+            "After a blocked round whose recommended answer only closes the issue, NexKit 6's "
+            "report said autopilot carries on and mentioned nobody; its next sweep then "
+            "waited for a person and mentioned them. The report mentions the person, as it "
+            "does for any other wait, and the sweep does not mention them again."
+        ),
+        "match": lambda sc, old, new: (
+            sc["kind"] == "blocked"
+            and not sc["protected"]
+            and sc["answer"] == "recommended"
+            and sc["qset"] in {"close", "close_replan", "replan_close", "rec_close"}
+            and not old["report"]["attention"]
+            and bool(new["report"]["attention"])
+        ),
+    },
 ]
 
 

@@ -2222,6 +2222,45 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])  # nothing more ran
         self.assertEqual(len(pipe.gh.comments_matching(5, "a person is needed")), 1)
 
+    def test_a_blocked_round_whose_recommended_answer_only_closes_the_issue_mentions_the_person(
+        self,
+    ):
+        # The report mentions the person, and the sweep that follows does not mention them again.
+        close = "Close the issue as not reproduced, with no code change"
+        closing = {
+            "question": "The failure does not reproduce. How should this go on?",
+            "options": ["Keep the issue open until someone attaches the logs", close],
+            "recommended": 2,
+            "closes": 2,
+        }
+        replanning = {
+            "question": "The change is wider than planned. How should this go on?",
+            "options": ["Narrow it", "Split it"],
+            "recommended": 2,
+            "closes": 0,
+            "replans": [2],
+        }
+        for questions in ([closing], [closing, replanning]):
+
+            def script(pipe, inputs, questions=questions):
+                if inputs["command"] == "plan":
+                    return plan()
+                output = {"status": "blocked", "blocker": "No repro.", "questions": questions}
+                return {"agent": {"status": "blocked", "error": "No repro.", "output": output}}
+
+            with self.subTest(questions=len(questions)):
+                pipe = Pipeline(self, config(), script)
+                pipe.issue(5)
+                self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+                [mention] = pipe.gh.comments_matching(5, "a person is needed")
+                self.assertFalse(pipe.gh.comments_matching(5, "carries on from here"))
+                self.assertGreater(mention["id"], pipe.gh.run_comments(5)[-1]["id"])
+                self.assertEqual(pipe.gh.issues[5]["state"], "open")
+                self.assertEqual(
+                    collect(pipe.gh, pipe.cfg, workers=1)["needs_person"],
+                    [{"number": 5, "kind": "issue", "reason": autopilot.CLOSE_UNFOUNDED}],
+                )
+
     def test_a_blocked_round_that_recommends_waiting_does_not_close_the_issue(self):
         # The agent says in `no_change` that it found none, and recommends waiting.
         text = "Not a no-change finding: the issue is blocked on #1848, which is not merged."

@@ -18,8 +18,8 @@ them true and each merge easy to review.
   says near the top "Stacked on #N: review and merge that first." Pull requests are
   squash-merged. After a squash merge, the next pull request merges `main` into its branch,
   without a rebase, so that its reviewed commits stay, and then targets `main`.
-- A session's next work is the open `hand-made` issues of the milestone that no open issue blocks
-  (GitHub's blocked-by), where a blocking issue with an open pull request counts as done and the
+- A session's next work is the open `hand-made` issues, in a milestone or in none, that no open
+  issue blocks (GitHub's blocked-by), where a blocking issue with an open pull request counts as done and the
   work stacks on that pull request. Of those, take the lowest number, unless the owner names
   another.
 - A question for the owner is a comment on the issue it concerns, and work goes on with the issues
@@ -34,18 +34,21 @@ them true and each merge easy to review.
 ## Labels and milestones
 
 Milestones group the work by feature and labels say what kind of change it is, so the
-[roadmap](roadmap.md) and a search on GitHub find every piece of a feature.
+[roadmap](roadmap.md) and a search on GitHub find every piece of a feature, and a milestone holds
+only the work that its feature needs.
 
-- Every issue and pull request is in the milestone of the feature it builds, as
-  [the roadmap](roadmap.md) lists them.
+- An issue that builds a feature is in that feature's milestone, as [the roadmap](roadmap.md)
+  lists them. A part of a split and a follow-up keep the milestone of the work they continue.
+- An issue that builds no feature has no milestone, only the label of its kind: a `bug` that fixes
+  what a release already has, a `refactor`, NexKit's own issues for a failure on `main`
+  (`nexkit:ci`, `nexkit:flaky`, `nexkit:dependabot`), and an issue of the
+  [docs audit](writing-docs.md#how-the-docs-stay-correct) (`docs-audit`).
 - It carries at least one label of its kind (`enhancement`, `bug`, `refactor`, `process` or
   `documentation`) and every other label whose description on GitHub fits it, such as `security`.
 - A release pull request carries `release`, and one that updates a pin `dependencies`.
 - A pull request that closes an issue carries that issue's labels, but for the holds `on-hold` and
-  `hand-made`, and its milestone: NexKit sets them on the pull requests it opens, and a session
-  sets them on its own.
-- An issue that the [docs audit](writing-docs.md#how-the-docs-stay-correct) opens carries
-  `docs-audit` and no milestone, since it keeps the docs true rather than building a feature.
+  `hand-made`, and its milestone when it has one: NexKit sets them on the pull requests it opens,
+  and a session sets them on its own.
 
 ## NexKit on this repository
 

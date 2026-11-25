@@ -1,9 +1,10 @@
 # Roadmap
 
-NexKit's work is grouped by feature. Each feature has one milestone on GitHub, and every issue and
-pull request belongs to one of them. A milestone is open while work on its feature is planned or
-under way, and closed when its feature is done. What each release changed is in the
-[changelog](../CHANGELOG.md).
+NexKit's work is grouped by feature. Each feature has one milestone on GitHub, and each issue and
+pull request that builds a feature belongs to it; a fix of a release, a refactor and other upkeep
+have only the label of their kind, as [Delivery](delivery.md#labels-and-milestones) says. A
+milestone is open while work on its feature is planned or under way, and closed when its feature is
+done. What each release changed is in the [changelog](../CHANGELOG.md).
 
 Labels give each issue and pull request its kind (`enhancement`, `bug`, `refactor`, `process`
 or `documentation`) and say more where they fit, such as `security`. Each label's description on

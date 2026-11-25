@@ -16,10 +16,10 @@ python3 tests/differential/harness.py --v6 ../nexkit-v6               # every sc
 python3 tests/differential/harness.py --v6 ../nexkit-v6 --sample 400  # what CI plays
 ```
 
-`harness.py` plays every family of `families/` on NexKit 6 and on this tree (`--tree` for
-another), each scenario on a fresh `FakeGitHub` of the tree it plays, in shards across
+`harness.py` plays every family of `families/` on NexKit 6, which must be a checkout of
+8bf5190, and on this tree (`--tree` for another), each scenario on a fresh `FakeGitHub` of the tree it plays, in shards across
 `--jobs` processes. It compares what each records: the command's result, everything on GitHub
-after it (comments with NexKit's markers decoded and times removed, statuses, reviews,
+after it (comments with NexKit's markers decoded and the clock's times removed, statuses, reviews,
 dispatches with their inputs, merges, issues, pull requests, labels), the preview and
 `nexkit status`. It prints each family's count, the differences that `known.py` lists, and every
 other difference grouped by where it differs, with an example, and exits 1 when there is one.
@@ -44,7 +44,9 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `released` | #347 | a held conflict round released while `mergeable` flips |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
-order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded.
+order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time
+a scenario fixes, such as when a usage limit resets, is in 2099: the comparison keeps those and
+drops the clock's.
 `common.py` holds what they share. A change adds a family for what it moves, and adds to
 `known.py` each difference from NexKit 6 that its pull request calls out.
 
@@ -60,8 +62,10 @@ then, and checks the invariants that `INVARIANTS` lists after every step: the pr
 schemas, the transitions the states table names, the outbox, every open item carried on,
 counts within the policies, which rounds give their count back, `due` and `automatic`,
 diagnosis, usage-limit waits, holds and conflict rounds, and the engine's answers to a round's
-questions. It exits 1 when one breaks that `KNOWN` does not list. A change adds invariants for
-the rules it adds.
+questions. Each rule is checked both ways where it can be: a count neither passes its policy
+nor fails to come back when its round stops. It exits 1 when one breaks that `KNOWN` does not
+list, or when the engine refuses more than a tenth of the events, as walks it refuses check
+nothing. A change adds invariants for the rules it adds.
 
 ## Mutation checks
 
@@ -71,7 +75,8 @@ python3 tests/differential/mutants.py --v6 ../nexkit-v6
 
 `mutants.py` breaks one rule in a copy of the tree for each of `MUTANTS`, plays the families
 that cover it and walks the engine, and says whether each check that should see the broken rule
-did. A change adds mutants of its own rules.
+did. No CI job runs it: it takes several minutes. A change adds mutants of its own rules and
+runs it.
 
 The engine's state lives only for one call of the host while the GitHub host builds each
 item's document from NexKit 6's markers. A rule that only matters across calls, such as

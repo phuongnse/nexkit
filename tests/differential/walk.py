@@ -58,6 +58,8 @@ KNOWN = {
 }
 
 TITLE = "Cache the results"
+# The most events the engine may refuse, as a share of all: the walker sends some it may.
+REFUSED = 0.1
 ROLES = ["decides", "writer", "reader", "outside"]
 CHECKS = ["unit", "lint", "e2e", "types"]
 
@@ -91,6 +93,7 @@ class Walker:
         self.errors = collections.Counter()
         self.pairs = collections.Counter()
         self.events = 0
+        self.last_checks = None
 
     # -- what a walk sends ------------------------------------------------------------------
 
@@ -173,6 +176,10 @@ class Walker:
         return {**self.tc.AGENT, "output": found}
 
     def checks(self, rng):
+        if self.last_checks and rng.random() < 0.4:
+            # The same checks fail the same way again, as after a fix round that fixed nothing:
+            # what a diagnosis round looks into.
+            return copy.deepcopy(self.last_checks)
         found = []
         for name in rng.sample(CHECKS, rng.randint(1, 4)):
             passed = rng.random() < 0.4
@@ -187,6 +194,7 @@ class Walker:
             )
         failing = any(not c["passed"] for c in found)
         base = rng.choice(["7", "8"]) if failing and rng.random() < 0.15 else None
+        self.last_checks = {"checks": found, "baseFailure": None}
         return {"checks": found, "baseFailure": base}
 
     def finish(self, rng, state, action):
@@ -459,7 +467,28 @@ class Walker:
             if short.get("what") in ("fix", "review") and answer["changed"]:
                 if rounds["counted"] != old["counted"]:
                     flag("counts", "a person's request during a wait counted", info)
+        if rounds["conflicts"] > old["conflicts"]:
+            mine = {**self.defaults, **(state["policies"] or {})}["conflictRounds"]
+            if rounds["conflicts"] > max({**self.defaults, **pol}["conflictRounds"], mine):
+                flag("counts", "conflict rounds past conflictRounds", info)
+        # hold
+        if state["hold"] and new["hold"] and rounds["counted"] > old["counted"]:
+            flag("hold", "an automatic fix round counted under a hold", info)
         # give-back
+        if old.get("automatic") and not fixes and rounds["counted"] >= old["counted"]:
+            pending = {a["id"]: a for a in state["pending"]}
+            stopped = [pending.get(a["action"]) for a in actions if a["kind"] == "cancel"]
+            work = [
+                a
+                for a in stopped
+                if a
+                and (
+                    a["kind"] in ("runChecks", "publish")
+                    or (a["kind"] == "runAgent" and a["stage"] in ("fix", "review"))
+                )
+            ]
+            if work:
+                flag("give-back", "an automatic round's work stopped and kept its count", info)
         if rounds["counted"] < old["counted"] and event["kind"] != "reopened":
             if not old.get("automatic") or rounds["counted"] != old["counted"] - 1:
                 flag("give-back", "gave back without an automatic round", info)
@@ -488,6 +517,10 @@ class Walker:
                     flag("diagnosis", "a conflict round diagnoses", info)
                 if event["kind"] in ("requested", "changesRequested", "answered", "commented"):
                     flag("diagnosis", "a person's or an answered round diagnoses", info)
+        if rounds["counted"] > old["counted"] and rounds.get("automatic"):
+            for action in fixes:
+                if action.get("diagnose") != (rounds.get("repeated") or [])[:10]:
+                    flag("diagnosis", "an automatic fix round diagnoses other than repeated", info)
         done = None
         if finished and answer["changed"]:
             done = next((a for a in state["pending"] if a["id"] == event["action"]), None)
@@ -577,6 +610,7 @@ class Walker:
         state = None
         trail = []
         memory = {"open": {}, "floor": None}
+        self.last_checks = None
         for number in range(1, steps + 1):
             short = self.short(rng, state)
             if short is None:
@@ -607,7 +641,9 @@ def _walks(job):
     for w in walks:
         walker.walk(w, seed, steps, show=show)
     table = walker.tc.table_transitions()
-    return walker.problems, walker.examples, walker.known, walker.events, walker.pairs, table
+    refused = sum(walker.errors.values())
+    found = (walker.problems, walker.examples, walker.known, walker.events, walker.pairs, table)
+    return (*found, refused)
 
 
 def main(argv=None):
@@ -630,7 +666,7 @@ def main(argv=None):
         with multiprocessing.Pool(jobs) as pool:
             found = pool.map(_walks, chunks)
     problems, examples, known, events = collections.Counter(), {}, collections.Counter(), 0
-    pairs, table = collections.Counter(), set()
+    pairs, table, refused = collections.Counter(), set(), 0
     for (
         their_problems,
         their_examples,
@@ -638,8 +674,10 @@ def main(argv=None):
         their_events,
         their_pairs,
         their_table,
+        their_refused,
     ) in found:
         table |= their_table
+        refused += their_refused
         problems.update(their_problems)
         pairs.update(their_pairs)
         known.update(their_known)
@@ -650,6 +688,9 @@ def main(argv=None):
     print(f"{len(walks)} walks, seed {args.seed}, {events} events")
     played = len(table & set(pairs))
     print(f"  {played} of the {len(table)} transitions the states table names played")
+    # A walk whose events the engine mostly refuses checks nothing: that must stay rare.
+    share = refused / max(events, 1)
+    print(f"  {refused} events refused ({share:.1%}); more than {REFUSED:.0%} fails the walks")
     for name, n in sorted(known.items()):
         print(f"  listed: {n} × {name}")
     for name, n in problems.most_common():
@@ -657,7 +698,7 @@ def main(argv=None):
         print(f"  {n} × {name}")
         print(f"    e.g. walk {info['walk']} step {info['step']}: {info['trail']}")
     print(f"{sum(problems.values())} broken invariants not listed")
-    return 1 if problems else 0
+    return 1 if problems or share > REFUSED else 0
 
 
 if __name__ == "__main__":

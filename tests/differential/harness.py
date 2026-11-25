@@ -159,6 +159,11 @@ def main(argv=None):
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
     parser.add_argument("--keep", help="keep the records in this folder")
     args = parser.parse_args(argv)
+    head = subprocess.run(
+        ["git", "-C", args.v6, "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    if head != V6:
+        parser.error(f"--v6 must be a checkout of {V6}, not {head or 'a tree git cannot read'}")
     families = args.family or list(FAMILIES)
     folder = Path(args.keep or tempfile.mkdtemp(prefix="nexkit-differential-"))
     folder.mkdir(parents=True, exist_ok=True)

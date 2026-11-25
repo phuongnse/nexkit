@@ -7,7 +7,7 @@ NexKit 6's `feedback.repeated` and `diagnose`."""
 from families.diag import chains, run  # noqa: F401
 
 COUNT = 20000
-SEED = 313
+SEED = 312  # #347's own, as it ran these chains with MANY=1
 
 
 def scenarios():

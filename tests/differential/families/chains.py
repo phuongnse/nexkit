@@ -190,13 +190,13 @@ def _review(kind):
         "paused": lambda: {
             **limit,
             "limit": "You've hit your limit · resets 4:40am (UTC)",
-            "resume_at": "2026-11-25T04:40:00Z",
+            "resume_at": "2099-10-11T04:40:00Z",
             "reset_known": True,
         },
         "paused_unknown": lambda: {
             **limit,
             "limit": "You've hit your limit",
-            "resume_at": "2026-11-24T18:00:00Z",
+            "resume_at": "2099-10-11T18:00:00Z",
             "reset_known": False,
         },
         "missing": lambda: None,

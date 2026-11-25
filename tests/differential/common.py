@@ -40,7 +40,8 @@ def enter(root):
 
 
 def norm(text):
-    """`text` with each NexKit marker decoded, and times that differ between two runs gone."""
+    """`text` with each NexKit marker decoded, and the times the clock gives gone: they differ
+    between two runs. Times a scenario fixes are in 2099 and stay."""
 
     def decode(match):
         try:
@@ -51,7 +52,15 @@ def norm(text):
             data.pop("at", None)
         return f"<{match.group(1)} " + json.dumps(data, sort_keys=True) + ">"
 
-    return HUMAN.sub("TIME", TS.sub("T", MARK.sub(decode, text or "")))
+    def time(match):
+        # A time the scenario fixed, all in 2099, is compared: a wrong resume time is a
+        # difference. One that the clock gives is not.
+        found = match.group(0)
+        if "2099" in found:
+            return found
+        return "TIME" if "UTC" in found else "T"
+
+    return HUMAN.sub(time, TS.sub(time, MARK.sub(decode, text or "")))
 
 
 def walk(value):

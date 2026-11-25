@@ -17,7 +17,14 @@ KNOWN = [
             "the first read and the rules would not. The engine waits for a person with the "
             "first read's reason."
         ),
-        "match": lambda sc, old, new: sc["mergeable"] != sc["again"],
+        "match": lambda sc, old, new: (
+            sc["mergeable"] != sc["again"]
+            and isinstance(old.get("step"), dict)
+            and old["step"].get("command") == "fix"
+            and old["step"].get("auto") == "conflicts"
+            and isinstance(new.get("step"), dict)
+            and new["step"].get("person") is True
+        ),
     },
 ]
 

@@ -109,6 +109,58 @@ MUTANTS = {
         "seen": ("harness",),
         "families": ("required",),
     },
+    # Each of the following came from the independent review of #352.
+    # A stopped automatic fix round never gives its count back (#344).
+    "no-give-back": {
+        "path": MACHINE,
+        "old": """if work and rounds.pop("automatic", None):""",
+        "new": """if work and rounds.pop("automatic", None) and False:""",
+        "seen": ("harness", "walker"),
+        "families": ("give", "stop", "report", "round"),
+    },
+    # One conflict round more than `conflictRounds` (#347).
+    "conflict-rounds-plus-one": {
+        "path": MACHINE,
+        "old": """elif policy == "resolve" and rounds["conflicts"] < self.p["conflictRounds"]:""",
+        "new": """elif policy == "resolve" and rounds["conflicts"] <= self.p["conflictRounds"]:""",
+        "seen": ("harness", "walker"),
+        "families": ("conflict", "released", "chains"),
+    },
+    # A judged round's next fix round starts even under a hold (#341).
+    "hold-ignored-on-fix": {
+        "path": MACHINE,
+        "old": """            elif not self.s["hold"]:
+                self.issue_fix()""",
+        "new": """            else:
+                self.issue_fix()""",
+        "seen": ("harness", "walker"),
+        "families": ("report", "round", "diag", "chains"),
+    },
+    # A diagnosis round skips the first check that repeated (#347).
+    "diagnosis-skips-the-first": {
+        "path": MACHINE,
+        "old": """fields = {"diagnose": repeated[:DIAGNOSES] if diagnose else []}""",
+        "new": """fields = {"diagnose": repeated[1:DIAGNOSES] if diagnose else []}""",
+        "seen": ("harness", "walker"),
+        "families": ("diag", "chains"),
+    },
+    # Checks compare by name only, not by the way they fail (#347).
+    "failure-key-name-only": {
+        "path": SIZE,
+        "old": """found = f"{name}\\n{text}".encode("utf-8", "surrogatepass")""",
+        "new": """found = f"{name}".encode("utf-8", "surrogatepass")""",
+        "seen": ("harness",),
+        "families": ("diag", "chains", "many"),
+    },
+    # A review paused at a usage limit resumes at another time (#347).
+    "resume-at-another-time": {
+        "path": "nexkit/report.py",
+        "old": """    at = result.get("resume_at")""",
+        "new": """    at = result.get("resume_at")
+    at = at and at.replace("04:40", "07:10")""",
+        "seen": ("harness",),
+        "families": ("report", "review", "diag", "chains"),
+    },
 }
 
 

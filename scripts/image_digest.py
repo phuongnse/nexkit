@@ -6,9 +6,8 @@
     image_digest.py update     pin the tag's current digest if it moved; print the new image
 
 The pin is PYTHON_IMAGE in nexkit/__init__.py, which release.yml builds the Dockerfile on.
-update-image.yml, which NexKit starts on main every few merges, runs `update` and proposes the
-change in a pull request. The digest is read from Docker Hub's registry, as `docker pull` reads
-it.
+update-image.yml runs `update` every week and proposes the change in a pull request. The
+digest is read from Docker Hub's registry, as `docker pull` reads it.
 """
 
 from __future__ import annotations

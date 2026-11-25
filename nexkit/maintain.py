@@ -478,6 +478,8 @@ def resume_paused(gh, workflow, ref, now=None, cfg=None):
             "note": str(resume.get("note") or ""),
             "auto": str(resume.get("auto") or "resume"),
         }
+        if not _engine_resumes(gh, cfg, run, number, now, comment, lines, inputs):
+            continue
         try:
             started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
         except GitHubError as exc:
@@ -499,6 +501,29 @@ def resume_paused(gh, workflow, ref, now=None, cfg=None):
         gh.update_comment(comment["id"], with_run(comment["body"], run, note))
         lines.append(f"Resumed /nexkit {inputs['command']} on #{inputs['number']}.")
     return lines, upcoming
+
+
+def _engine_resumes(gh, cfg, run, number, now, comment, lines, inputs):
+    """Whether the engine runs the command of `run`'s resume record again (`host.resumes`).
+    One it refuses is not started: its run waits for a person, with the reason."""
+    from . import host
+
+    label = None
+    if cfg:
+        try:
+            label = autopilot.held(gh, cfg, number)
+        except GitHubError:
+            # The engine starts a paused run under a hold too, so this changes nothing.
+            label = "a label it could not read"
+    try:
+        return host.resumes(cfg, run, number, now, label)
+    except host.Refused as error:
+        run.pop("resume", None)
+        run.update(status=FAILURE, attention=host.refused_reason(error))
+        note = f"NexKit did not run `/nexkit {inputs['command']}` again: {error}"
+        gh.update_comment(comment["id"], with_run(comment["body"], run, note))
+        lines.append(f"Did not resume /nexkit {inputs['command']} on #{number}: {error}")
+        return False
 
 
 def start_waiting(gh, workflow, ref):

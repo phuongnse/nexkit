@@ -49,6 +49,12 @@ and `checks_waited` sends the sweep's tick, which tries the merge again or, once
 have not passed for `machine.CHECKS_END`, leaves it to a person. A merge whose issue no
 sweep looks at is the host's own refusal, since no tick would come for it.
 
+It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
+limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
+a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_paused`), a hold
+on the issue included. A reset stays the host's to give, and a transient stop of publish stays
+its own retry.
+
 Every round's checks and review reach it (`round_ended`): a review that paused at a usage
 limit, a review that failed, and a person's own pull request, which is only reviewed; a
 review that runs again after a transient error is the host's own retry. It finds the checks
@@ -68,6 +74,7 @@ import json
 
 from . import autopilot, engine, first_state, usage
 from .checks import failing_signatures
+from .engine.machine import RUNS
 from .protocol.size import LONGEST, MOST
 from .report import TOO_LARGE
 from .schema import filled
@@ -1520,3 +1527,116 @@ def stopped_counts(issue, pr, head, auto_fixes, automatic, by_host, checking=Fal
         fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
         event = _event("actionFinished", issue, None, f"stop-{pr}-{version}", **fields)
     return step(doc, event, {})["state"]["rounds"]["counted"]
+
+
+# -- a stage that stops at a usage limit or on a transient error, and its resume ------------
+
+# The stage that a resume record's command runs again.
+RESUMED = {"plan": "plan", "go": "implement", "fix": "fix", "review": "review"}
+# The most runs again the protocol counts (`again.transient` in state.schema.json).
+MOST_AGAIN = 10
+
+
+def _stage_doc(stage, item, change, retry):
+    """(document, change version) of `item` while the agent of `stage` runs on `change` (a
+    pull request's id and version, or None), with `retry` runs again after a transient error
+    counted, as `first_state` imports a run that waits to run again."""
+    doc = first_state.empty(str(item))
+    doc["state"] = RUNS[stage]
+    version = None
+    if change:
+        version = str(change["version"])
+        doc["change"] = {"id": str(change["id"]), "version": version}
+    doc["pending"] = [first_state.agent_run(stage, version)]
+    if retry > 0:
+        doc["again"] = {"transient": min(retry, MOST_AGAIN)}
+    return doc, version
+
+
+def _stopped_doc(decision):
+    """(document, change version) of the plan, implement or fix stage of `decision` while its
+    agent runs."""
+    pr = decision.get("pr")
+    change = {"id": pr, "version": decision.get("head") or pr} if pr else None
+    retry = int(decision.get("retry") or 0)
+    return _stage_doc(decision["action"], decision["issue"], change, retry)
+
+
+def _hold_events(number, label):
+    return [_event("held", number, None, f"held-{number}", label=str(label))] if label else []
+
+
+def stage_limited(cfg, decision, reset, label=None):
+    """Until when the run of `decision`, a plan, implement or fix stage whose agent stopped at
+    the usage limit, waits to run again as the engine decides it (`report.pause`), or None
+    when it leaves the run to a person. `reset` is the time the host gives, or None when it
+    does not resume the run, and `label` the label that holds the issue, if any. Raises
+    `Refused`."""
+    number = decision["issue"]
+    doc, version = _stopped_doc(decision)
+    message = "The agent stopped at its usage limit."
+    limit = {"message": message, "reset": _time(reset)}
+    result = {**AGENT, "changeVersion": version, "output": None, "limit": limit}
+    fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
+    events = _hold_events(number, label)
+    events.append(_event("actionFinished", number, None, f"limit-{number}", **fields))
+    _, actions = _answers(doc, events, policies(cfg))
+    kinds = {action["kind"]: action for action in actions}
+    if "wait" in kinds:
+        return kinds["wait"]["until"]
+    if (kinds.get("needPerson") or {}).get("reason") == "failed":
+        return None
+    raise Refused(f"The engine answers {sorted(kinds)} after a usage limit, which it cannot do.")
+
+
+def stage_transient(cfg, decision, now, error, label=None):
+    """What follows the transient stop of the agent of `decision`, a plan, implement or fix
+    stage, at `now` (`report._retry`), as the engine decides it: `("now", count)` to run it
+    again at once, `("later", until, count)` after the next wait of `retry.wait_minutes`, or
+    `("failed",)` for a person after the last. `count` is the number of the run again. Raises
+    `Refused`."""
+    number = decision["issue"]
+    doc, version = _stopped_doc(decision)
+    result = {**AGENT, "changeVersion": version, "output": None, "transient": True}
+    result["error"] = str(error)
+    fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
+    events = _hold_events(number, label)
+    events.append(_event("actionFinished", number, usage.iso(now), f"transient-{number}", **fields))
+    state, actions = _answers(doc, events, policies(cfg))
+    kinds = {action["kind"]: action for action in actions}
+    count = (state.get("again") or {}).get("transient")
+    if (kinds.get("runAgent") or {}).get("stage") == decision["action"] and count:
+        return "now", count
+    if "wait" in kinds and count:
+        return "later", kinds["wait"]["until"], count
+    if (kinds.get("needPerson") or {}).get("reason") == "failed":
+        return ("failed",)
+    raise Refused(f"The engine answers {sorted(kinds)} after a transient stop, which it cannot do.")
+
+
+def resumes(cfg, run, number, now, label=None):
+    """Whether the engine runs again the command of the resume record of `run`, which `number`
+    paused at the usage limit or which waits to run again after a transient error, at `now`
+    (`maintain.resume_paused`): True to start it, which a hold on the issue, the `label`, does
+    not stop. Raises `Refused`, for a command that NexKit never writes too."""
+    resume = run["resume"]
+    command = str(resume.get("command") or "")
+    if command not in RESUMED:
+        raise Refused(f"NexKit writes no resume of the command `{command}`.")
+    stage = RESUMED[command]
+    target = str(resume.get("number") or number)
+    # A fix round and a review run on their pull request.
+    change = {"id": target, "version": target} if stage in ("fix", "review") else None
+    retry = resume.get("retry")
+    retry = retry if isinstance(retry, int) and not isinstance(retry, bool) else 0
+    doc, _ = _stage_doc(stage, number, change, retry)
+    doc["pending"] = []
+    until = _time(resume.get("at")) or NO_TIME
+    kind = "time" if retry else "usageLimit"
+    doc["waits"] = [{"id": "w1.1", "for": kind, "until": until, "on": None}]
+    events = _hold_events(number, label)
+    events.append(_event("tick", number, usage.iso(now), f"resume-{number}", wait="w1.1"))
+    _, actions = _answers(doc, events, policies(cfg) if cfg else {})
+    if any(action["kind"] in ("runAgent", "runChecks") for action in actions):
+        return True
+    raise Refused("The engine starts nothing at a resume, which the host cannot do.")

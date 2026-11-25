@@ -43,6 +43,7 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `chains` | #347 | random chains of rounds with long, sharded and repeated check names |
 | `released` | #347 | a held conflict round released while `mergeable` flips |
 | `waits` | #390 | a merge that waits for required checks and its six hours: the round's own merge, a sweep, a writer's approval |
+| `pause` | #398 | a plan, implement or fix stage that stopped at a usage limit or on a transient error, then the resume that comes due, under a hold or not |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time

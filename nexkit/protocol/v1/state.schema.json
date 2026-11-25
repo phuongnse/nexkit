@@ -460,7 +460,7 @@
           "const": true
         },
         "automatic": {
-          "$comment": "The fix round under way is an automatic one that `counted` holds, until its review ends: one that the engine stops before then gives its count back.",
+          "$comment": "The fix round under way is an automatic one that `counted` holds, until its review ends: one that the engine stops before then gives its count back, such as when a conflict round takes over or a person pushes while its agent runs. A person's push after the round published keeps the count.",
           "const": true
         },
         "failing": {

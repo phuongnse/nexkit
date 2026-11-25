@@ -39,7 +39,9 @@ MUTANTS = {
         "families": ("sweep", "round"),
     },
     # A round whose checks or review judged it stays `automatic`, so a later stop could give
-    # its count back (#344, #347).
+    # its count back (#344, #347). Only the walker sees it: the GitHub host builds no document
+    # through the import, it starts each call from a fresh one, and no call sends a stop after
+    # a round's checks or review judged it, so a flag kept by mistake never reaches GitHub.
     "judged-round-keeps-automatic": {
         "path": MACHINE,
         "old": """        rounds = self.s["rounds"]
@@ -50,6 +52,17 @@ MUTANTS = {
 """,
         "seen": ("walker",),
         "families": ("report", "round", "diag", "give"),
+    },
+    # A person's push after a fix round published gives its count back, where NexKit 6 keeps
+    # it (#345). No host sends pushes yet, so only the walker sees it.
+    "push-gives-back-a-published-round": {
+        "path": MACHINE,
+        "old": """            if self.state != "fixing":
+""",
+        "new": """            if False:
+""",
+        "seen": ("walker",),
+        "families": ("give",),
     },
     # The state keeps only the first 30 failing checks, so later ones never repeat (#347).
     "failing-capped-at-30": {

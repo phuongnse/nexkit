@@ -232,7 +232,8 @@
       "checklist": [],
       "failing": [
         "e9b3f7f5f86c"
-      ]
+      ],
+      "automatic": true
     },
     "used": {
       "tokens": {

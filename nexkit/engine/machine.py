@@ -43,6 +43,7 @@ INPUTS = {
     "implement": ["item", "discussion", "notes", "plan", "linked", "evidence", "workspace"],
     "fix": [
         "item",
+        "discussion",
         "notes",
         "plan",
         "rounds",
@@ -103,11 +104,16 @@ DEFAULTS = {
     "splitParts": 10,
     "splitDepth": 3,
     "retryWaits": [15, 30, 60],
+    "lostWaits": [],
     "parentEnd": "whenPartAccepted",
 }
+# The policies read as the host gives them at each step, even in a round that keeps the others
+# as it started with them: NexKit 6 reads autopilot's waits at each sweep, and the state keeps
+# none of them.
+NOW = ("lostWaits",)
 # The policies a round keeps. A round never reads a parent's end: only a split parent does, and a
 # parent is never in a round.
-KEPT = tuple(name for name in DEFAULTS if name != "parentEnd")
+KEPT = tuple(name for name in DEFAULTS if name != "parentEnd" and name not in NOW)
 # The states a conflict leads to under each conflict policy.
 CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working", "ready")}
 # The states where nothing runs that a conflict must wait for: it acts there at once. Checks of
@@ -185,11 +191,14 @@ class Step:
         # A round that runs keeps the policies it started with (docs/engine.md#the-engine).
         running = state["state"] in ROUND and state["policies"]
         self.p = {**DEFAULTS, **state["policies"]} if running else self.given
+        self.p = {**self.p, **{name: self.given[name] for name in NOW}}
         self.actions = []
         self.issued = 0
         self.waits = 0
         # The time of the event being handled: the engine reads no clock.
         self.at = None
+        # "person" while the work that the step starts is a person's, or its round's rest.
+        self.by = None
 
     # What every rule uses.
 
@@ -235,6 +244,7 @@ class Step:
         elif self.state not in ROUND or not self.s["policies"]:
             self.s["policies"] = self.kept()
             self.p = self.given
+        self.forget_again("person")
         kept = () if name in FINAL else ("blocker",)
         self.s["waits"] = [wait for wait in self.s["waits"] if wait["for"] in kept]
         # A fix round that waited to be issued no longer waits once the item moves, and a
@@ -258,6 +268,8 @@ class Step:
     def do(self, kind, **fields):
         action = {"id": self.next_action(), "kind": kind, "next": None}
         action.update(fields)
+        if kind in ("runAgent", "runChecks", "publish") and self.by:
+            action["by"] = self.by
         self.actions.append(action)
         self.s["pending"].append(copy.deepcopy(action))
         return action
@@ -366,12 +378,27 @@ class Step:
             **fields,
         )
 
-    def forget_retries(self):
-        """Start the count of runs again after a transient stop afresh."""
+    def forget_again(self, *names):
+        """Drop `names` of the count of runs again, and the count when nothing stays in it."""
         again = self.s.get("again", {})
-        again.pop("transient", None)
+        for name in names:
+            again.pop(name, None)
         if not again:
             self.s.pop("again", None)
+
+    def forget_retries(self):
+        """Start the count of runs again after a transient stop afresh."""
+        self.forget_again("transient")
+
+    def forget_lost(self):
+        """Start the count of starts again of lost work afresh, with what goes with it."""
+        self.forget_again("lost", "once", "person")
+
+    def keep_person(self):
+        """A person's run that waits keeps its mark, which the action alone would lose across
+        the wait: it runs again as the person's (`resume`)."""
+        if self.by:
+            self.s.setdefault("again", {})["person"] = True
 
     def close(self, outcome, finding=None):
         if self.review_only:
@@ -446,6 +473,8 @@ class Step:
         it starts it (`autopilot._released`, `_ci_step`)."""
         rounds = self.s["rounds"]
         rounds.pop("due", None)
+        # An automatic fix round is the engine's own work.
+        self.by = None
         if fresh:
             self.s["policies"] = self.kept()
             self.p = self.given
@@ -533,6 +562,8 @@ class Step:
         elif observed["version"] != self.version:
             # A person's push: what acts on the old version stops, and the new one is checked.
             self.s["change"] = {**self.s["change"], "version": observed["version"]}
+            # A person's push is checked as the engine's own work.
+            self.by = None
             self.s.pop("checksSince", None)
             if self.state != "fixing":
                 # The round published: its change stays under the push, and the push's checks
@@ -579,6 +610,8 @@ class Step:
         return self.s["rounds"]["conflicts"] < self.p["conflictRounds"]
 
     def on_conflict_found(self):
+        # A conflict round is the engine's own work.
+        self.by = None
         policy, rounds = self.p["conflicts"], self.s["rounds"]
         if self.s["hold"] and policy != "person":
             return self.conflict_held()
@@ -650,6 +683,10 @@ class Step:
         after the step for an accept."""
         if self.held_back(hold=hold):
             return
+        if self.s.get("again", {}).get("person"):
+            # The run that waited was a person's: it runs again as theirs.
+            self.by = "person"
+        self.forget_again("person")
         stage = next((stage for stage, name in RUNS.items() if name == self.state), None)
         if stage == "fix" and self.s["rounds"].get("due"):
             self.issue_fix(fresh=True)
@@ -667,6 +704,7 @@ class Step:
         item asks once for a plan that splits it; otherwise, the second time, or for an item
         at the deepest level of parts, which is not split, a person decides
         (`autopilot._stopped`, `split_refused`)."""
+        self.by = None
         deepest = self.s.get("depth", 0) >= self.p["splitDepth"]
         if self.p["splits"] and "split" not in self.s["asked"] and not deepest:
             # NexKit 6 asks after a fix round too. An item with a change is never split, so its
@@ -702,12 +740,15 @@ class Step:
             # state it got unless reconciling acts, which a merge or an emptied change alone do.
             self.s["change"] = {**self.s["change"], "version": observed["version"]}
         self.take_place(event)
+        # A request with a person starts a person's work, and a sweep's the engine's own.
+        self.by = "person" if event["by"] is not None else None
         if event["by"] is not None:
             # A person acted, so the engine may answer the next plan's questions again.
             self.forget_answers()
         if not self.requested(event):
             return False
         self.forget_retries()
+        self.forget_lost()
         # A request starts work anew: what a fix round that changed nothing left is no longer
         # the last word on its version (`report._report` reads `recheck` of a fix round only),
         # and checks it asks for are not a fix round's, whatever ran last.
@@ -842,6 +883,7 @@ class Step:
         ):
             return False
         plan["approved"] = True
+        self.by = "person"
         self.forget_answers()
         # A split that its rules refuse goes on as one change, as a person's `/nexkit go` on
         # such a plan does in NexKit 6.
@@ -866,6 +908,7 @@ class Step:
             self.move("dropped")
             self.close("notPlanned")
             return True
+        self.by = "person"
         self.forget_answers()
         self.start_plan()
         return True
@@ -906,6 +949,7 @@ class Step:
         if self.state != "ready" or not self.s["change"] or self.review_only:
             return False
         self.s["rounds"].pop("recheck", None)
+        self.by = "person"
         self.move("fixing")
         self.run("fix")
         return True
@@ -1023,11 +1067,14 @@ class Step:
             return True
         # A step that runs goes on under a hold, as NexKit 6's `maintain.resume_paused` reads no
         # hold label: a run paused at a usage limit or after a transient stop runs again at its
-        # tick. A fix round that is due, an accept and a conflict round wait for `released`.
+        # tick. A fix round that is due, an accept, a conflict round and the restart of lost
+        # work (a `time` wait while the count of lost work stands) wait for `released`.
+        restart = wait["for"] == "time" and self.s.get("again", {}).get("lost")
         paused = (
             wait["for"] in ("time", "usageLimit")
             and self.state in RUNS.values()
             and not self.s["rounds"].get("due")
+            and not restart
         )
         self.resume(hold=not paused)
         return True
@@ -1109,6 +1156,7 @@ class Step:
             return False
         self.same_version(action, event)
         self.s["pending"].remove(action)
+        self.at = event["at"]
         self.spend(event)
         attention = self.s["attention"] or {}
         told = (attention.get("reason"), attention.get("text"), attention.get("ref"))
@@ -1125,10 +1173,51 @@ class Step:
         if action["kind"] in AGAIN:
             fields = {key: value for key, value in action.items() if key not in ("id", "next")}
             self.do(fields.pop("kind"), **fields)
+        elif self.restarts(action):
+            self.lost(action, event)
         else:
             self.move("failed")
             self.need("outage", "An action the host started never reported.")
         return True
+
+    def restarts(self, action):
+        """Whether lost work starts again: an agent run or checks that the engine started by
+        itself, in the state that runs them. A person's work waits for a person, and a lost
+        publish, replace, accept or parts creation fails, as it writes (`autopilot._reportless`)."""
+        if action.get("by") == "person":
+            return False
+        if action["kind"] == "runAgent":
+            return RUNS.get(action["stage"]) == self.state
+        return action["kind"] == "runChecks" and self.state == "checking"
+
+    def lost(self, action, event):
+        """Lost work starts again after each wait of `lostWaits` in turn, a wait of 0 at once,
+        counting nothing again, and a person decides after the last (`autopilot._again`). A run
+        whose agent spent tokens ran, so it starts only once more (`_agent_ran`). A hold keeps
+        the start back until `released`."""
+        waits = self.p["lostWaits"]
+        again = self.s.get("again", {})
+        count = again.get("lost", 0)
+        tokens = event["tokens"] or {}
+        ran = action["kind"] == "runAgent" and any(
+            tokens.get(name, 0) > 0 for name in ("input", "cached", "output")
+        )
+        once = bool(again.get("once")) or ran
+        if count >= (min(1, len(waits)) if once else len(waits)):
+            self.move("failed")
+            text = "An action the host started never reported"
+            self.need("outage", f"{text}, {count + 1} times in a row." if count else f"{text}.")
+            return
+        again = self.s.setdefault("again", {})
+        again["lost"] = count + 1
+        if once:
+            again["once"] = True
+        if waits[count] == 0:
+            self.resume()
+            return
+        until = _later(self.at, waits[count])
+        wait = self.wait("time", until=until)
+        self.do("wait", wait=wait["id"], until=until)
 
     def same_version(self, action, event):
         """A result echoes the version its action acts on, or null for one with none: one that
@@ -1148,6 +1237,12 @@ class Step:
         self.same_version(action, event)
         self.s["pending"].remove(action)
         self.at = event["at"]
+        if action["kind"] in WORK and action["kind"] != "wait":
+            # Work that ends starts the count of lost work afresh. A `wait` or a notice that
+            # ends would end every loss, and the last would never come.
+            self.forget_lost()
+        # The round of a person's work goes on as the person's.
+        self.by = action.get("by")
         handler = getattr(self, f"finished_{action['kind']}", None)
         if handler:
             handler(event["result"], action)
@@ -1229,6 +1324,7 @@ class Step:
             self.need("failed", limit["message"] or "The agent stopped at its usage limit.")
             return
         wait = self.wait("usageLimit", until=limit["reset"])
+        self.keep_person()
         self.do("wait", wait=wait["id"], until=limit["reset"])
 
     def transient(self, stage):
@@ -1249,6 +1345,7 @@ class Step:
             return
         until = _later(self.at, waits[count])
         wait = self.wait("time", until=until)
+        self.keep_person()
         self.do("wait", wait=wait["id"], until=until)
 
     def finished_plan(self, output, number):
@@ -1259,6 +1356,8 @@ class Step:
         or wait; and a clean plan starts the change. Otherwise a person decides every plan,
         one that finds no change too, as NexKit 6 closes an item by itself only with
         autopilot."""
+        # What follows a plan is the engine's own work, whoever asked for the plan.
+        self.by = None
         # Whether the engine's answers started this plan, with no person acting since. Answers
         # to a round that only a new plan carries out start that plan's round too.
         again = "answers" in self.s["asked"]
@@ -1406,6 +1505,7 @@ class Step:
         the item's scope plans it again, which on an item with a change a person decides, as
         the change was made for the scope it had; and the others start the round that asked
         again."""
+        self.by = None
         round_ = self.s["questions"]
         ref, asked = round_["ref"], round_["items"]
         answers = self.p["planApproval"] == "autoWhenClean" and self.p["answers"] == "recommended"

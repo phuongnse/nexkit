@@ -1,0 +1,117 @@
+{
+  "policies": {
+    "lostWaits": [
+      0,
+      30
+    ]
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go",
+        "by": null
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "held"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "again.lost": 1,
+        "pending": [],
+        "waits": [],
+        "hold": true
+      }
+    },
+    {
+      "event": {
+        "kind": "released"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "hold": false,
+        "again.lost": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "wait"
+      ],
+      "expect": {
+        "again.lost": 2,
+        "waits.0.until": "2026-11-23T15:31:11Z"
+      }
+    },
+    {
+      "event": {
+        "kind": "held"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w6.1"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "waits": [],
+        "hold": true
+      }
+    },
+    {
+      "event": {
+        "kind": "released"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "hold": false,
+        "again.lost": 2
+      }
+    }
+  ]
+}

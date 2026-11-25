@@ -1,0 +1,223 @@
+{
+  "policies": {
+    "lostWaits": [
+      0,
+      30,
+      60,
+      120
+    ]
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "pending.-1.by": "person"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "outage"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "pending.-1.by": "person"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "pending.-1.by": "person"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ],
+      "expect": {
+        "pending.-1.by": "person"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ],
+      "expect": {
+        "pending.-1.by": "person"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runChecks"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "outage"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "pending.-1.by": "person"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": null,
+          "limit": {
+            "message": "The account's usage limit.",
+            "reset": "2026-11-24T04:40:00Z"
+          },
+          "transient": false,
+          "noResult": false,
+          "error": null,
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": null,
+          "usd": null,
+          "output": null
+        }
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "wait"
+      ],
+      "expect": {
+        "again.person": true,
+        "waits.0.for": "usageLimit"
+      }
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w11.1"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "waits": [],
+        "pending.-1.by": "person"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "outage"
+      }
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "policies": {
+    "lostWaits": [
+      0,
+      30,
+      60
+    ]
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go",
+        "by": null
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.started": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent",
+        "tokens": {
+          "input": 100,
+          "cached": 0,
+          "output": 20
+        }
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "again.lost": 1,
+        "again.once": true,
+        "used.tokens.input": 100,
+        "used.tokens.output": 20,
+        "rounds.started": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "outage",
+        "attention.text": "An action the host started never reported, 2 times in a row.",
+        "again.lost": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan",
+        "by": null
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "again.lost": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "wait"
+      ],
+      "expect": {
+        "again.lost": 2,
+        "waits.0.until": "2026-11-23T15:31:11Z"
+      }
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w7.1"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "waits": []
+      }
+    },
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "runAgent",
+        "tokens": {
+          "input": 100,
+          "cached": 0,
+          "output": 20
+        }
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "outage",
+        "attention.text": "An action the host started never reported, 3 times in a row."
+      }
+    }
+  ]
+}

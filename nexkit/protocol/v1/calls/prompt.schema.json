@@ -274,7 +274,7 @@
       "required": []
     },
     "item": {
-      "$comment": "The work item: its text, and its change when it has one.",
+      "$comment": "The work item: its text, its change when it has one, and what the change did outside the plan.",
       "type": "object",
       "properties": {
         "id": {
@@ -299,6 +299,13 @@
         "person": {
           "$comment": "A change a person made, reviewed as its own work item, with no plan.",
           "type": "boolean"
+        },
+        "outsidePlan": {
+          "$comment": "What the implement round did outside the plan, as it wrote it.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -341,7 +348,7 @@
       ]
     },
     "discussion": {
-      "$comment": "The discussion on the work item and on its change.",
+      "$comment": "The discussion on the work item and on its change, and what people said on the change's version.",
       "type": "object",
       "properties": {
         "item": {
@@ -354,6 +361,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/entry"
+          }
+        },
+        "said": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/said"
           }
         }
       },
@@ -456,7 +469,7 @@
       ]
     },
     "current": {
-      "$comment": "The fix round of this run, which the review follows.",
+      "$comment": "The fix round of this run, which the review follows: who started it, its note, and what its agent said. Its merge of the base is `diff.merged`.",
       "type": "object",
       "properties": {
         "auto": {
@@ -482,35 +495,12 @@
             "string",
             "null"
           ]
-        },
-        "conflicts": {
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "string"
-          }
-        },
-        "head": {
-          "$comment": "The version the round started from.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "base": {
-          "$comment": "The version of the base it merged in, null without a merge.",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": []
     },
     "rounds": {
-      "$comment": "Earlier rounds: the recorded fix rounds, the fix round of this run that the review follows, and the checks a diagnosis round looks into. Interim: the host sends it until it keeps the engine's state document, which then holds it.",
+      "$comment": "Earlier rounds: the recorded fix rounds and the fix round of this run that the review follows. Interim: the host sends it until it keeps the engine's state document, which then holds it.",
       "type": "object",
       "properties": {
         "fixes": {
@@ -528,31 +518,6 @@
               "type": "null"
             }
           ]
-        },
-        "outsidePlan": {
-          "$comment": "What the implement round did outside the plan, as it wrote it.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "diagnose": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "signature": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "name",
-              "signature"
-            ]
-          }
         }
       },
       "required": []
@@ -631,7 +596,7 @@
       "required": []
     },
     "checks": {
-      "$comment": "The results of the checks: in a fix round the last recorded, in a review this round's.",
+      "$comment": "The results of the checks: in a fix round the last recorded, in a review this round's. `diagnose` holds the checks a diagnosis round looks into.",
       "type": "object",
       "properties": {
         "results": {
@@ -650,6 +615,24 @@
           ],
           "items": {
             "$ref": "#/$defs/required"
+          }
+        },
+        "diagnose": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "signature"
+            ]
           }
         }
       },
@@ -799,7 +782,7 @@
       ]
     },
     "findings": {
-      "$comment": "The findings a fix round addresses, the last review a review reads, and what people said. Interim: the host sends it until it keeps the engine's state document, which then holds it.",
+      "$comment": "The findings a fix round addresses and the last review a review reads. Interim: the host sends it until it keeps the engine's state document, which then holds it.",
       "type": "object",
       "properties": {
         "review": {
@@ -821,12 +804,6 @@
               "type": "null"
             }
           ]
-        },
-        "people": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/said"
-          }
         }
       },
       "required": []
@@ -1227,7 +1204,7 @@
       ]
     },
     "diff": {
-      "$comment": "The change, from the host's workspace. `merging` is the version of the base a fix round merges in and the files it conflicts in.",
+      "$comment": "The change, from the host's workspace. `merging` is the version of the base a fix round merges in and the files it conflicts in. `merged` is the merge of the base that this run's fix round made, which a review follows.",
       "type": "object",
       "properties": {
         "base": {
@@ -1289,6 +1266,41 @@
             "type": "string",
             "maxLength": 20001
           }
+        },
+        "merged": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "head": {
+                  "$comment": "The version the round started from.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "base": {
+                  "$comment": "The version of the base it merged in.",
+                  "type": "string"
+                },
+                "conflicts": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "base"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

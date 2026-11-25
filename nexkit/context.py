@@ -205,9 +205,18 @@ def current_fix(decision, fix_result):
         "summary": fix_result.get("summary"),
         "cause": (fix_result.get("output") or {}).get("cause"),
         "note": decision.get("note"),
-        "conflicts": fix_result.get("conflicts"),
+    }
+
+
+def merged_fix(decision, fix_result):
+    """The merge of the base that this run's fix round made, which the review after it
+    reads, or None when the round did not fix or merged nothing."""
+    if not _fixed(decision, fix_result) or not fix_result.get("start_base"):
+        return None
+    return {
         "head": fix_result.get("start_head"),
-        "base": fix_result.get("start_base"),
+        "base": fix_result["start_base"],
+        "conflicts": fix_result.get("conflicts"),
     }
 
 
@@ -619,22 +628,24 @@ def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None,
             "fixes": state.get("fixes") or [],
             "current": current_fix(decision, fix_result),
         }
+        merged = merged_fix(decision, fix_result)
+        if merged:
+            inputs["diff"] = {"merged": merged}
         if not decision.get("person"):
             inputs["discussion"]["change"] = entries(gh.comments(decision["pr"]))
-            inputs["rounds"]["outside_plan"] = outside_section(gh.pull(decision["pr"]))
+            inputs["item"]["outside_plan"] = outside_section(gh.pull(decision["pr"]))
     elif stage == "fix":
         pr_comments = gh.comments(decision["pr"])
         saved = _saved_feedback(pr_comments)
         _, state = read_state(pr_comments)
         inputs["checks"] = {"results": saved.get("checks"), "required": saved.get("required")}
-        inputs["findings"] = {"review": saved.get("review"), "people": people(gh, decision)}
+        inputs["findings"] = {"review": saved.get("review")}
+        inputs["discussion"]["said"] = people(gh, decision)
         host["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
         kept = evidence(saved, decision, results)
         evidence_found["results"] = {**kept, "keeps": KEEPS["results"]} if kept else None
-        inputs["rounds"] = {
-            "fixes": (state or {}).get("fixes") or [],
-            "diagnose": diagnosis(decision, saved),
-        }
+        inputs["rounds"] = {"fixes": (state or {}).get("fixes") or []}
+        inputs["checks"]["diagnose"] = diagnosis(decision, saved)
         inputs["discussion"]["change"] = entries(pr_comments)
     if evidence_found:
         inputs["evidence"] = evidence_found

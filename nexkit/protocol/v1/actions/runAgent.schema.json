@@ -121,6 +121,12 @@
         "type": "string"
       },
       "maxItems": 10
+    },
+    "by": {
+      "$comment": "Left out for work the engine started by itself. A person's work, and the rest of that round (its publish, checks and review), carry \"person\": when lost, it waits for a person at once.",
+      "enum": [
+        "person"
+      ]
     }
   },
   "required": [

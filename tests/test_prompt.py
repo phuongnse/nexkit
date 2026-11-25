@@ -616,6 +616,9 @@ class Round:
         """The `prompt` call with what the round fetched: from GitHub, and from the checkout,
         its checks and the configuration. Only the kinds that runAgent names for the stage."""
         inputs = {**self.fetched, **self.added}
+        if "diff" in self.fetched:
+            # The context job reads the merge of the base, the agent job the checkout's diff.
+            inputs["diff"] = {**self.fetched["diff"], **self.added.get("diff", {})}
         inputs = {
             kind: value
             for kind, value in prompt.camel(inputs).items()
@@ -863,6 +866,19 @@ class PromptInputTests(unittest.TestCase):
         }
         self.assertEqual(protocol.check(request, "calls/prompt.schema.json"), [])
         return request
+
+    def test_only_round_history_is_left_in_rounds_and_findings(self):
+        keys = lambda name: set(self.defs[name]["properties"])  # noqa: E731
+        self.assertEqual(keys("rounds"), {"fixes", "current"})
+        self.assertEqual(keys("findings"), {"review", "lastReview"})
+        self.assertEqual(keys("current"), {"auto", "summary", "note", "cause"})
+        for name, field in (
+            ("discussion", "said"),
+            ("item", "outsidePlan"),
+            ("diff", "merged"),
+            ("checks", "diagnose"),
+        ):
+            self.assertIn(field, keys(name))
 
     def needs(self, stage):
         """The inputs `stage` needs, each with only its required fields."""

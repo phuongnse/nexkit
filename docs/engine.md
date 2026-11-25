@@ -92,7 +92,7 @@ of the protocol it speaks (see [versions](#versions)):
 All three read no network, no clock and no files but the engine's own prompt templates: the time is
 a field of each event. They hold no secret and never see one. The policies of the host come with
 every call, as the host's configuration reads at that moment, and the state keeps the ones that a
-running round started with.
+running round started with, but `lostWaits`, which applies as the host gives it at each loss.
 
 ### The prompt
 
@@ -101,24 +101,25 @@ running round started with.
 
 | Input | What the host fetched |
 | --- | --- |
-| `item` | The work item's title and text, its change, and whether it is a person's change reviewed as its own item |
-| `discussion` | The comments on the item and on its change, oldest first, each a person's comment, a note on a command or the answers a policy gave. The host leaves out what nobody it trusts wrote |
+| `item` | The work item's title and text, its change, whether it is a person's change reviewed as its own item, and what the change did outside the plan |
+| `discussion` | The comments on the item and on its change, oldest first, each a person's comment, a note on a command or the answers a policy gave, and what people said on the change's version: their reviews and their comments on a line. The host leaves out what nobody it trusts wrote |
 | `notes` | The note of the request that started the stage |
 | `plan`, `previousPlan` | The approved plan; for a new plan, the latest one, where it falls in the discussion and the profile it used |
-| `rounds` | The fix rounds so far, the fix round the review follows, what the change did outside the plan, and the checks a diagnosis round looks into |
-| `checks` | The checks' results, with the end of each output, and the required checks that refused an accept |
-| `findings` | The findings a fix round addresses, the last review of the change, and what people said on its version |
+| `rounds` | The fix rounds so far and the fix round the review follows |
+| `checks` | The checks' results, with the end of each output, the required checks that refused an accept, and the checks a diagnosis round looks into, each with the failure it repeated |
+| `findings` | The findings a fix round addresses and the last review of the change |
 | `linked` | The texts the item links to, the items it was split from with their discussions, and each link not read, with why in the host's words. The host bounds how many it lists |
 | `evidence` | What the CI runs the item names left, and the result files of failing checks, with what the host keeps of each |
 | `parts` | The earlier parts of the same split that a part relies on |
-| `diff` | The change against its base, since the last review, a merge of the base and its conflicted files |
+| `diff` | The change against its base, since the last review, the merge of the base that this run's fix round made, and the files a merge conflicted in |
 | `workspace` | The checks the agent can run, and the paths only a person changes |
 
 - **What a stage needs.** Every stage needs `item`, and every stage but triage `workspace`.
   Implement, fix and review need `plan`, which is null when the item has none, and fix and review
   need `diff`. The engine refuses a call without them.
-- **Rounds and findings are interim.** `rounds` and `findings` hold what the state document will
-  hold once a host keeps it. Until then the host sends them, and `prompt` does not read `state`.
+- **Rounds and findings are interim.** `rounds` and `findings` hold only round history, which the
+  state document will hold once a host keeps it. Until then the host sends them, and `prompt` does
+  not read `state`. The texts that are not history have inputs of their own.
 - **Limits.** The engine applies them: how much of each text and block a prompt keeps, how many
   comments, and in what order. A text that a prompt keeps only the start of, or leaves out, goes
   whole to a file in the folder that `texts` names, an absolute path outside the working tree,
@@ -241,8 +242,18 @@ The protocol is built for delivery at least once, in any order a host's queues g
   results find nothing pending. One it asked for earlier in the same step is withdrawn from the
   answer instead, since the host never got it. A lost action that only tells, shows, waits or
   ends is carried out again under a new id while it still stands: a lost notice is not sent again
-  once attention has another reason or is about something else. A lost action that works fails
-  the step, for a person.
+  once attention has another reason or is about something else. A lost agent run or lost checks
+  that the engine started by itself, in the state that runs them, start again as the same round,
+  which counts nothing again, after each wait of `lostWaits` in turn: a wait of 0 in the same
+  step, another at its tick. After the last wait the item goes to `failed` for a person
+  (`outage`), and its text says how often the work was lost. A lost run whose event reports
+  tokens spent had its agent run, so it starts only once more. The count goes in `again` and
+  starts afresh when a request is taken or work other than a `wait` finishes. Work that a person
+  started, and the rest of that round, which carries `by: "person"` on its actions, waits for a
+  person at once when lost, and so does a run of a person's that waits after a usage limit or a
+  transient stop. A lost publish, replace, accept or parts creation fails the step, for a
+  person, and so does every lost action that works under the default `lostWaits`, which is
+  empty.
 - **The state is an outbox.** Each action the engine answered stays in the state, whole, as
   pending until its result arrives, the engine cancels it, or the host reports it lost. A host
   that crashed between storing the state and carrying out its actions carries out the pending
@@ -476,8 +487,8 @@ Three things sit beside the state, never in place of it:
   review of a change that conflicts, is taken but that work still waits: the hold wins, and the item
   waits in `checking` until it ends. A hold does not stop a step that runs: a run paused at a usage
   limit or waiting after a transient stop runs again at its tick, as NexKit 6's resume does under
-  the label (`maintain.resume_paused`). A fix round that is due, an accept and a conflict round
-  wait until the hold ends.
+  the label (`maintain.resume_paused`). A fix round that is due, an accept, a conflict round
+  and the start again of lost work wait until the hold ends, which starts the work again.
 - **Wait:** the next step waits for something named: a request to start (`start`); a time, such
   as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has
@@ -575,7 +586,7 @@ shapes, and a host shows them in its own words.
 
 A host gives the engine its policies in its configuration. Each has a default, and the
 protocol's `policies.schema.json` names it, as the first column does below. The policies with no
-name there, start, budgets, lost actions' starts, usage limits, agents, after a failure and
+name there, start, budgets, usage limits, agents, after a failure and
 the checklist, are not in the protocol yet: they come into it as the
 engine takes over the decisions that read them, and until then the host applies them itself. The
 `prompt` call already reads three of them beside the host's policies, as its schema names them:
@@ -593,7 +604,8 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | When fix rounds run out (`whenRoundsRunOut`) | `person`, `failed` | `person` | `person`: the draft is ready with its open findings |
 | Conflicts (`conflicts`, `conflictRounds`) | `person`, `resolve`, `redo`, by who accepted; the most rounds that resolve or redo, 1–10 | `person`; `resolve` with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
 | Budgets | Tokens, time, money and model calls, per item and per stage | Time and money per stage | Tokens and time per request, model calls per stage |
-| Retries (`retryWaits`) | Waits in minutes after a transient stop, at most 10, each 0–330; a lost action's start is not in the protocol yet | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
+| Retries (`retryWaits`) | Waits in minutes after a transient stop, at most 10, each 0–330 | `retry.wait_minutes` | The lease of a claimed request |
+| Lost work (`lostWaits`) | Waits in minutes before lost agent work or checks start again, at most 10, each 0–330; a person after the last, or after one more start when its agent ran | None; at once, then 30, 60 and 120 minutes with autopilot | None |
 | Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
 | Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10; the re-plan for fewer parts, no parts or repeated titles happens only with `autoWhenClean`, and a person's approval of a split that these rules refuse goes on as one change | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
@@ -789,7 +801,8 @@ adapter. A new rule of the engine comes with a case.
    transient error, and `maintain.resume_paused` sends the tick of each due resume; the host
    carries out the wait, or leaves the run to a person. Which reset the host gives stays the
    host's, and so do a review that NexKit 6 runs again after a transient error and a transient
-   stop of publish. After a blocked `/nexkit go` or fix round whose recommended
+   stop of publish. It also decides the start again of lost work under `lostWaits`; no GitHub
+   path asks it yet. After a blocked `/nexkit go` or fix round whose recommended
    answer only closes the issue, `report` mentions the person, as for any other wait, and the
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found

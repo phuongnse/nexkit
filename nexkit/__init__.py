@@ -5,7 +5,7 @@ __version__ = "6.12.2"
 # NexKit runs on Python 3.12 or newer. CI tests 3.12 only, and the pipeline installs 3.12.
 PYTHON = (3, 12)
 # The base of the engine's image (Dockerfile): that Python, by the digest of its index.
-# .github/workflows/update-image.yml proposes the tag's current digest every week.
+# .github/workflows/update-image.yml proposes the tag's current digest every few merges.
 PYTHON_IMAGE = (
     "python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b"
 )

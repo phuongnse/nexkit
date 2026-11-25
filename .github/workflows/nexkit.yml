@@ -19,7 +19,7 @@ on:
   schedule:
     - cron: "23 * * * *" # usage_limit.resume, retry.wait_minutes, conflicts.auto_resolve, autopilot
   workflow_run: # autopilot: a finished run of a workflow it watches starts a sweep at once
-    workflows: [CI, CodeQL]
+    workflows: [CI, CodeQL, Update base image]
     types: [completed]
     branches: [main]
   workflow_dispatch:

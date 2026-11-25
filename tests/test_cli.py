@@ -2429,20 +2429,33 @@ class WorkflowSafetyTests(unittest.TestCase):
 
 class UpdateImageWorkflowTests(unittest.TestCase):
     """update-image.yml proposes the base image's current digest with the least it needs, and
-    the image's build and check run on its pull request (#328)."""
+    the image's build and check run on its pull request (#328). NexKit starts it every few merges
+    rather than on a schedule, which GitHub may delay or drop, and watches its runs."""
 
     @classmethod
     def setUpClass(cls):
         cls.text = (ROOT / ".github/workflows/update-image.yml").read_text()
         cls.jobs = jobs_of(cls.text)
 
-    def test_runs_every_week_with_the_least_permissions(self):
-        self.assertIn('\n  schedule:\n    - cron: "43 3 * * 1"\n  workflow_dispatch:\n', self.text)
+    def test_runs_every_few_merges_with_the_least_permissions(self):
+        triggers = self.text.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(triggers, "  workflow_dispatch:")
+        self.assertIn("\nname: Update base image\n", self.text)
+        cfg = nexkit.config.load(ROOT)
+        every = {
+            entry["workflow"]: entry["every"]
+            for entry in cfg["merge"]["after_workflows"]
+            if isinstance(entry, dict)
+        }
+        self.assertIn("update-image.yml", every)
+        # A finished run on main starts a sweep, which watches its failures as CI's.
+        nexkit_yml = (ROOT / ".github/workflows/nexkit.yml").read_text()
+        self.assertRegex(nexkit_yml, r"workflow_run:.*\n    workflows: \[[^]\n]*Update base image")
         self.assertIn("\npermissions: {}\n", self.text)
         self.assertEqual(list(self.jobs), ["update"])
         self.assertEqual(
             permissions_of(self.jobs["update"]),
-            {"contents": "write", "pull-requests": "write", "actions": "write", "issues": "write"},
+            {"contents": "write", "pull-requests": "write", "actions": "write"},
         )
         self.assertNotIn("secrets.", self.text)
 

@@ -93,6 +93,10 @@
       {
         "workflow": "codeql.yml",
         "every": 10
+      },
+      {
+        "workflow": "update-image.yml",
+        "every": 10
       }
     ]
   },

@@ -382,7 +382,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   person's push, withdraws or cancels what acts on the old version and goes to `checking`, or
   follows the conflict policy when that version conflicts. A change that conflicts follows the
   conflict policy at once where nothing runs that it must wait for: in `ready` and `accepting`, and
-  in `checking` when a conflict round can start (`redo`, or `resolve` with rounds left), since those
+  in `checking` when a conflict round can start (`resolve` or `redo` with rounds left), since those
   checks can no longer lead to an accept. Otherwise the policy applies when the item would next go
   to its checks or be ready, as NexKit 6 starts no conflict round while another runs, and only if
   the latest observation still says that version conflicts; a question or a failure keeps its
@@ -392,20 +392,25 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   item waits in `checking` with nothing running, and the policy applies, with its count then, once
   the hold ends; in `ready` and `accepting` it applies when the hold ends. A round that resolves a
   conflict is no automatic fix round: the count of an automatic fix round whose change conflicts at
-  its publish stands, and the conflict round counts toward `conflictRounds` alone. An observation of
+  its publish stands, and a conflict round, whether it resolves or makes the change again, counts
+  toward `conflictRounds` alone. When no round is left, a conflict goes to a person in `ready`,
+  so that conflicts that keep coming never run agents without end. An observation of
   another change changes nothing, and a publish or a replace that ends sets the change with the
   observation its result carries, which replaces the latest one: one of a change the engine replaced
   never touches the new one, even when the new one keeps its id and version. An item in `failed`,
-  and one in `new` that is not review-only, take only a merge or an emptied change, so the failure's
-  or the reopen's attention stands whatever else is observed: a new version waits in the observation
-  until a person's request takes the item on, such as a review, a retry or a fix, which then starts
-  its work on that version.
+  and one in `new`, but a review-only item that waits to start, take only a merge or an emptied
+  change, so the failure's or the reopen's attention stands whatever else is observed: a new
+  version waits in the observation until a person's request takes the item on, such as a review, a
+  retry or a fix, which then starts its work on that version.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
 - **A review-only item** comes with its change and is never planned, fixed, replaced or accepted
   by the engine: a person's own pull request, which NexKit only checks and reviews. Each review
-  request takes it to `checking`, and a drop ends the engine's work without closing it.
+  request takes it to `checking`, and a drop, a merge or an emptied change ends the engine's work
+  without closing it, because the person's change stays theirs. A review-only item that waits to
+  start is checked at once when a push is observed; one that a person reopened waits for their
+  review request, which checks the pushed version.
 - **An agent that stops at a usage limit** waits for the reset its result gives, and then
   the same stage runs again, as the same round, which counts nothing again and diagnoses
   again if it did. A limit with no reset, as when the host does not resume such runs, waits
@@ -554,7 +559,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | Accept (`accept`) | `person`, `autoWhenPassed` | `person`; `autoWhenPassed` with `merge.auto` | `autoWhenPassed` only when the application and the request allow it, else the person who sent it |
 | Fix rounds (`fixRounds`) | 0–10, and which rounds count | 2: rounds a person asked for, resumed, retried and stopped rounds do not count | 3; a request for changes and a retry start the count again |
 | When fix rounds run out (`whenRoundsRunOut`) | `person`, `failed` | `person` | `person`: the draft is ready with its open findings |
-| Conflicts (`conflicts`, `conflictRounds`) | `person`, `resolve`, `redo`, by who accepted; the most rounds that resolve, 1–10 | `person`; `resolve` with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
+| Conflicts (`conflicts`, `conflictRounds`) | `person`, `resolve`, `redo`, by who accepted; the most rounds that resolve or redo, 1–10 | `person`; `resolve` with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
 | Budgets | Tokens, time, money and model calls, per item and per stage | Time and money per stage | Tokens and time per request, model calls per stage |
 | Retries | Waits after a transient stop; when a lost action starts again | `retry.wait_minutes`, `autopilot.lost_after_minutes` | The lease of a claimed request |
 | Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |

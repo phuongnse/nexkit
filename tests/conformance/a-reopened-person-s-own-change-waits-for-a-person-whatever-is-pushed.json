@@ -1,0 +1,79 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "itemKind": "reviewOnly",
+        "change": {
+          "id": "9",
+          "version": "v1"
+        }
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "dropRequested"
+      },
+      "state": "dropped",
+      "changed": true,
+      "actions": [
+        "cancel"
+      ]
+    },
+    {
+      "event": {
+        "kind": "reopened"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "reopened"
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v2"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "attention.reason": "reopened",
+        "change.version": "v1"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runChecks"
+      ],
+      "expect": {
+        "change.version": "v2"
+      }
+    }
+  ]
+}

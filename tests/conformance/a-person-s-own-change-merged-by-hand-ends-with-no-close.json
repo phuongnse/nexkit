@@ -1,0 +1,26 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "itemKind": "reviewOnly",
+        "change": {
+          "id": "9",
+          "version": "v1"
+        }
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "merged": true
+      },
+      "state": "accepted",
+      "changed": true,
+      "actions": []
+    }
+  ]
+}

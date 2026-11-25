@@ -74,9 +74,7 @@
       },
       "state": "accepted",
       "changed": true,
-      "actions": [
-        "close"
-      ]
+      "actions": []
     }
   ]
 }

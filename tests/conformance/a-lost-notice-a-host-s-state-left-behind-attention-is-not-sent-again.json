@@ -1,0 +1,24 @@
+{
+  "policies": {},
+  "state": {
+    "example": "awaitingApproval",
+    "set": {
+      "attention": {
+        "reason": "approval",
+        "text": "The plan waits for its approval.",
+        "ref": "issue-42/plan-1"
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionLost",
+        "action": "a7.2"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": []
+    }
+  ]
+}

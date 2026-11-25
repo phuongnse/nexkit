@@ -98,7 +98,7 @@ DEFAULTS = {
     "splitDepth": 3,
 }
 # The states a conflict leads to under each conflict policy.
-CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working",)}
+CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working", "ready")}
 # The states where nothing runs that a conflict must wait for: it acts there at once. Checks of
 # a change that conflicts can no longer lead to an accept, so they stop for it too, when a
 # conflict round can start (`Step.at_once`).
@@ -323,6 +323,10 @@ class Step:
         )
 
     def close(self, outcome, finding=None):
+        if self.review_only:
+            # A person's own pull request stays theirs, merged, emptied or dropped: the engine
+            # never closes it (docs/engine.md#states).
+            return
         self.do("close", outcome=outcome, finding=finding)
 
     # Starting work.
@@ -460,9 +464,11 @@ class Step:
         observed = self.observed()
         if self.final() or self.coming() or not observed:
             return False
-        # A failed item waits for a person whatever is observed, and so does a reopened one,
-        # unless it is review-only: a newer version waits for the request that takes it on.
-        whole = whole and self.state != "failed" and (self.state != "new" or self.review_only)
+        # A failed item waits for a person whatever is observed, and so does one in `new`, but a
+        # review-only item that waits to start: a newer version waits for the request that takes
+        # it on (docs/engine.md#states).
+        starting = self.review_only and self.waiting("start")
+        whole = whole and self.state != "failed" and (self.state != "new" or starting)
         if observed["merged"]:
             self.move("accepted")
             self.close("completed")
@@ -501,18 +507,27 @@ class Step:
         NexKit 6 lets them end otherwise."""
         if self.state in CONFLICT_AT_ONCE:
             return True
-        policy, rounds = self.p["conflicts"], self.s["rounds"]
-        round_left = policy == "resolve" and rounds["conflicts"] < self.p["conflictRounds"]
-        return self.state == "checking" and (policy == "redo" or round_left)
+        return (
+            self.state == "checking"
+            and self.p["conflicts"] in ("resolve", "redo")
+            and self.conflict_round_left()
+        )
+
+    def conflict_round_left(self):
+        """Whether `conflictRounds` allows another round that makes the change again or resolves
+        its conflict (docs/engine.md#states)."""
+        return self.s["rounds"]["conflicts"] < self.p["conflictRounds"]
 
     def on_conflict_found(self):
         policy, rounds = self.p["conflicts"], self.s["rounds"]
         if self.s["hold"] and policy != "person":
             return self.conflict_held()
-        if policy == "redo":
+        left = self.conflict_round_left()
+        if policy == "redo" and left:
+            rounds["conflicts"] += 1
             self.move("working")
             self.do("replaceChange", reason="The change no longer applies to what it was made on.")
-        elif policy == "resolve" and rounds["conflicts"] < self.p["conflictRounds"]:
+        elif policy == "resolve" and left:
             rounds["conflicts"] += 1
             self.move("fixing")
             # The round that resolves the conflict is no automatic fix round: the count of
@@ -847,9 +862,8 @@ class Step:
 
     def on_dropRequested(self, event):
         self.move("dropped")
-        if not self.review_only:
-            # A person's own pull request stays theirs: NexKit 6 never closes it.
-            self.close("notPlanned")
+        # A person's own pull request stays theirs: `close` leaves a review-only item open.
+        self.close("notPlanned")
         return True
 
     def on_stopped(self, event):
@@ -1005,6 +1019,9 @@ class Step:
         self.spend(event)
         attention = self.s["attention"] or {}
         told = (attention.get("reason"), attention.get("text"), attention.get("ref"))
+        # The engine's own states never reach this: `need` and `move` cancel or withdraw a
+        # notice whenever attention changes. It guards a state that a host or an import wrote
+        # (docs/engine.md#the-state-document), so that a stale notice is not sent again.
         if action["kind"] == "needPerson" and told != (
             action["reason"],
             action["text"],
@@ -1534,7 +1551,8 @@ def step(state, event, policies, check):
 
 
 def _never_writes(actions):
-    """A review-only item is never planned, changed, fixed or accepted (docs/engine.md#states)."""
+    """A review-only item is never planned, changed, fixed, accepted or closed
+    (docs/engine.md#states)."""
     for action in actions:
-        if action["kind"] in WRITES or action.get("stage", "review") != "review":
+        if action["kind"] in (*WRITES, "close") or action.get("stage", "review") != "review":
             raise EngineError(f"A review-only item never gets {action['kind']}.")

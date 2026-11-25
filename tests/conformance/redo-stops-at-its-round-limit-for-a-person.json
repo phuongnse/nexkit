@@ -1,0 +1,131 @@
+{
+  "policies": {
+    "conflicts": "redo",
+    "conflictRounds": 1
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": true,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "replaceChange"
+      ],
+      "expect": {
+        "rounds.conflicts": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "replaceChange",
+        "result": {
+          "change": {
+            "id": "309",
+            "version": "v1"
+          },
+          "observed": {
+            "changeId": "309",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "309",
+            "version": "v2"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "309",
+            "version": "v2",
+            "conflicts": true,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "acceptRefused",
+        "rounds.conflicts": 1
+      }
+    }
+  ]
+}

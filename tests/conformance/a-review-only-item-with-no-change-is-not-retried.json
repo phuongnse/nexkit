@@ -20,9 +20,7 @@
       },
       "state": "noChange",
       "changed": true,
-      "actions": [
-        "close"
-      ]
+      "actions": []
     },
     {
       "event": {
@@ -31,7 +29,6 @@
       "state": "new",
       "changed": true,
       "actions": [
-        "cancel",
         "needPerson"
       ],
       "expect": {

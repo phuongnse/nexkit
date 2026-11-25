@@ -429,6 +429,16 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   the next transient stop goes to `failed` for a person. The count of runs again goes on through
   the stages of one round, so a review handed on keeps it, and starts afresh when a request is
   taken or a new plan, implement or fix run starts.
+- **An accept refused because required checks have not passed yet** (`waitingForChecks`) keeps
+  the item in `accepting`, with a wait for them (`requiredChecks`) and a `wait` action whose tick
+  comes `CHECKS_RETRY` later, so that any host ticks the wait without a tight loop. The tick
+  tries the accept again. The first such refusal on a version is kept in `checksSince`, with the
+  version and the event's time, and the engine drops it when the item leaves `accepting`. A start
+  recorded for another version counts as missing. A tick that ends the wait more than
+  `CHECKS_END` after that start goes to `ready` with `acceptRefused` instead of trying the accept
+  again, so checks that never end are looked into by a person, as NexKit 6's autopilot does. The
+  time is the tick's own: the engine reads no clock, and a refusal that comes in never ends the
+  wait.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
@@ -455,7 +465,8 @@ Three things sit beside the state, never in place of it:
   only a person changes (`handMadeChange`), a criterion the review could not verify
   (`unverifiableCriterion`), a checklist item only a person decides (`personChecklistItem`), a
   change that waits for a person's accept (`accept`), a refused accept or a conflict
-  (`acceptRefused`, about the change version for a conflict), fix rounds used up
+  (`acceptRefused`, about the change version for a conflict, and for required checks that did not
+  pass in time), fix rounds used up
   (`roundsUsedUp`), a split that is not complete (`splitIncomplete`), a round that was blocked
   (`blocked`), a step that failed (`failed`), a final item opened again (`reopened`), or an
   action the host lost (`outage`).
@@ -470,7 +481,8 @@ Three things sit beside the state, never in place of it:
 - **Wait:** the next step waits for something named: a request to start (`start`); a time, such
   as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has
-  (`baseFailure`); or required checks before a merge (`requiredChecks`). Each wait has an id that
+  (`baseFailure`); or required checks before a merge (`requiredChecks`), whose first start is
+  kept beside the waits, as the bullet on a refused accept above says. Each wait has an id that
   is new each time, and the event that ends it names it. A tick ends only a wait for a time:
   `time`, `usageLimit` or `requiredChecks`. When a blocker, or the bug issue of a base failure,
   closes, the waits on it end, and an item does not start while a blocker is open. A host
@@ -711,7 +723,9 @@ adapter. A new rule of the engine comes with a case.
   it runs again after a transient stop, becomes a wait with its time, unless NexKit 6 would no
   longer resume it, which fails for a person; an automatic run that ended without a report waits
   to start again, later each time. A merge that waits for required checks is `accepting` with that
-  wait, and a round that waits for a failure the base branch has is `fixing` with that wait. An
+  wait and, when NexKit 6 recorded when they first had not passed (`waiting_since`), with that
+  time as `checksSince`, so that their end counts from the same moment, and a round that waits
+  for a failure the base branch has is `fixing` with that wait. An
   item without a pull request that a lower wave of its milestone holds back waits for each open
   issue of that wave as for a blocker, read once at the import; an issue opened later in the
   wave is not waited for. A
@@ -749,7 +763,11 @@ adapter. A new rule of the engine comes with a case.
    that stopped as blocked with questions or protected paths and a round that ran out of time,
    the end of a fix round's or a merge's wait for a hold or for the base branch's failure
    (`autopilot`'s sweep), which rounds count after a round that NexKit stopped (`report`,
-   `maintain`), and what follows required checks that fail at the merge (`report`). `report`
+   `maintain`), what follows required checks that fail at the merge (`report`), and the wait
+   for required checks that have not passed yet, with its end after a time (`report` and the
+   sweep's `autopilot`). `host.accept_answer` sends a merge's answer to `step` as an `accept`
+   result and carries out what the engine answers, and so far only a merge refused for required
+   checks that have not passed yet is sent. `report`
    sends every round's checks and review to `step`: a review that paused at a usage limit,
    with the reset when NexKit 6 resumes it, a review that failed, a person's own pull request
    as an item that is only reviewed, and a round whose commit conflicts with its base branch,
@@ -765,7 +783,8 @@ adapter. A new rule of the engine comes with a case.
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found
    after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
-   as does the merge itself (`report.merge_pull`) but for required checks that fail. A
+   as does the merge itself (`report.merge_pull`) but for required checks that fail or have not
+   passed yet. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`
    that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as

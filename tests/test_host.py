@@ -4,6 +4,7 @@ autopilot and `route` carry out in NexKit 6's words, storing no state
 
 import base64
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -803,6 +804,104 @@ class CountTest(ReportCase):
         # A person's round counts nothing, and an agent that stopped by itself keeps its count.
         self.assertEqual(host.stopped_counts(5, 6, head, 2, False, True), 2)
         self.assertEqual(host.stopped_counts(5, 6, head, 2, True, False), 2)
+
+
+class AcceptAnswerTest(ReportCase):
+    """The answer of GitHub's merge is the engine's: `accept_answer` carries out what it
+    answers for the merge's result, whatever the refusal's kind."""
+
+    HEAD = "c" * 40
+    AT = "2026-11-23T15:01:11Z"
+
+    def answer(self, result, cfg=None, used=0, **fields):
+        cfg = cfg or make_config(merge={"auto": True}, fix={"max_auto_rounds": 2})
+        refusal = result if isinstance(result, dict) else {"accepted": False, "refusal": result}
+        refusal = {"text": "Refused.", **refusal}
+        return host.accept_answer(cfg, 5, 6, self.HEAD, used, refusal, at=self.AT, **fields)
+
+    def test_a_merge_that_went_through_is_accepted(self):
+        end, state = self.answer({"accepted": True, "refusal": None})
+        self.assertEqual((end, state["state"]), ("accepted", "accepted"))
+
+    def test_required_checks_that_have_not_passed_wait_and_keep_their_first_time(self):
+        end, state = self.answer("waitingForChecks")
+        self.assertEqual((end, state["state"]), ("waiting", "accepting"))
+        self.assertEqual(state["checksSince"], {"version": self.HEAD, "at": self.AT})
+        self.assertEqual([wait["for"] for wait in state["waits"]], ["requiredChecks"])
+        since = "2026-11-23T10:00:00Z"
+        end, state = self.answer("waitingForChecks", since=since)
+        self.assertEqual((end, state["checksSince"]["at"]), ("waiting", since))
+
+    def test_a_merge_the_engine_cannot_try_again_waits_for_a_person(self):
+        for kind in ("transient", "behind", "headMoved", "needsPerson"):
+            with self.subTest(kind=kind):
+                end, state = self.answer(kind)
+                self.assertEqual((end, state["state"]), ("person", "ready"))
+                self.assertEqual(state["attention"]["reason"], "acceptRefused")
+                self.assertNotIn("checksSince", state)
+
+    def test_a_merge_that_was_not_accepted_fails_the_item(self):
+        end, state = self.answer("notAccepted")
+        self.assertEqual((end, state["state"]), ("person", "failed"))
+        self.assertEqual(state["attention"]["reason"], "failed")
+
+    def test_a_required_check_that_failed_follows_the_rounds_left(self):
+        wait = {"accepted": False, "refusal": "checkFailed", "baseFailure": "77"}
+        self.assertEqual(self.answer("checkFailed", used=1)[0], "fix")
+        self.assertEqual(self.answer(wait, used=1)[0], "base_failure")
+        end, state = self.answer("checkFailed", used=2)
+        self.assertEqual((end, state["attention"]["reason"]), ("person", "roundsUsedUp"))
+
+    def test_a_conflict_follows_the_conflict_policy(self):
+        resolve = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
+        person = make_config(merge={"auto": True}, conflicts={"auto_resolve": False})
+        self.assertEqual(self.answer("conflict", resolve)[0], "fix")
+        end, state = self.answer("conflict", person)
+        self.assertEqual((end, state["attention"]["reason"]), ("person", "acceptRefused"))
+
+    def test_the_events_before_the_answer_are_heard_first_at_the_given_time(self):
+        seen = {"changeId": "6", "version": self.HEAD, "conflicts": False}
+        seen.update(merged=False, empty=False)
+        event = host._event("changeObserved", 5, "2026-11-23T14:00:00Z", "head-6", **seen)
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            end, _ = self.answer("waitingForChecks", before=[event])
+        self.assertEqual(end, "waiting")
+        sent = [call.args[1] for call in step.call_args_list]
+        self.assertEqual([event["kind"] for event in sent], ["changeObserved", "actionFinished"])
+        self.assertEqual({event["at"] for event in sent}, {self.AT})
+
+    def test_an_answer_the_host_cannot_carry_out_is_refused(self):
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            with self.assertRaises(host.Refused):
+                self.answer("waitingForChecks")
+        answer = {"state": {**engine_state(), "state": "failed", "waits": []}, "actions": []}
+        with mock.patch.object(host, "step", return_value=answer):
+            with self.assertRaises(host.Refused):
+                self.answer("waitingForChecks")
+
+
+def engine_state():
+    return host._pull_doc(None, 5, 6, "c" * 40, "accepting", 0)
+
+
+class ChecksWaitedTest(ReportCase):
+    """A sweep's tick of a merge that waits for required checks: the six hours are the
+    engine's."""
+
+    def waited(self, hours):
+        since = datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
+        cfg = make_config(merge={"auto": True})
+        return host.checks_waited(cfg, 5, 6, "c" * 40, since, since + hours)
+
+    def test_the_merge_is_tried_again_for_six_hours_and_then_a_person_looks(self):
+        self.assertEqual(self.waited(timedelta(hours=1)), "merge")
+        self.assertEqual(self.waited(timedelta(hours=6)), "merge")
+        self.assertEqual(self.waited(timedelta(hours=6, seconds=1)), "waits")
+
+    def test_a_tick_the_engine_refuses_is_refused(self):
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            with self.assertRaises(host.Refused):
+                self.waited(timedelta(hours=1))
 
 
 class RoundEndTest(ReportCase):

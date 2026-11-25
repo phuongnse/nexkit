@@ -1702,13 +1702,21 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
         return _step(issue, "start", reason, command="review", **fields)
     since = parse_iso(run.get("waiting_since"))
     behind = cfg["conflicts"]["auto_resolve"] and details.get("mergeable_state") == "behind"
-    if since and now - since > LOST and not behind:
-        do = (
-            "find out from their runs why the checks neither passed nor failed, start them "
-            f"again, and comment `/nexkit review` on #{pull} once they can pass"
-        )
-        why = f"the required checks of pull request #{pull} have not passed for six hours"
-        return _step(issue, "waits", person(do, why))
+    if since and not behind:
+        # The six hours are the engine's (`host.checks_waited`).
+        from .host import Refused, checks_waited, refused_reason
+
+        try:
+            waited = checks_waited(cfg, issue, pull, head, since, now)
+        except Refused as error:
+            return _step(issue, "waits", refused_reason(error))
+        if waited == "waits":
+            do = (
+                "find out from their runs why the checks neither passed nor failed, start them "
+                f"again, and comment `/nexkit review` on #{pull} once they can pass"
+            )
+            why = f"the required checks of pull request #{pull} have not passed for six hours"
+            return _step(issue, "waits", person(do, why))
     base = (details.get("base") or {}).get("ref") or ""
     reason = f"pull request #{pull} waits for its required checks"
     return _step(issue, "merge", reason, round_comment=comment["id"], base=base)

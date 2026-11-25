@@ -80,6 +80,11 @@ ROUND = ("working", "fixing", "checking", "reviewing")
 TIMED = ("time", "usageLimit", "requiredChecks")
 # The states of a fix round: a count it took stands only once its review ends.
 COUNTING = ("fixing", "checking", "reviewing")
+# How long after the first refusal for required checks that have not passed the item stops
+# trying the merge and waits for a person (`autopilot.LOST`), and how long a refused accept
+# waits before the host's tick tries it again.
+CHECKS_END = 6 * 3600
+CHECKS_RETRY = 3600
 # How many event ids the state keeps, to take each event once.
 RECENT = 20
 # A host's policies when it leaves one out: NexKit 6's on GitHub without autopilot, as
@@ -184,7 +189,7 @@ class Step:
         self.actions = []
         self.issued = 0
         self.waits = 0
-        # The time of the event that is being taken, once its handler reads it.
+        # The time of the event being handled: the engine reads no clock.
         self.at = None
         # "person" while the work that the step starts is a person's, or its round's rest.
         self.by = None
@@ -239,6 +244,8 @@ class Step:
         # A fix round that waited to be issued no longer waits once the item moves, and a
         # counted fix round ends once the item leaves its states.
         self.s["rounds"].pop("due", None)
+        if name != "accepting":
+            self.s.pop("checksSince", None)
         if name not in COUNTING:
             self.s["rounds"].pop("automatic", None)
         if self.state == "planning" and name != "planning":
@@ -284,6 +291,21 @@ class Step:
         )
         if work and rounds.pop("automatic", None):
             rounds["counted"] = max(rounds["counted"] - 1, 0)
+
+    def later(self, seconds):
+        """The event's time `seconds` later, as the protocol writes a time; the event's own time
+        when it is not one."""
+        at = _seconds(self.at)
+        return _time(at + seconds) if at is not None else self.at
+
+    def checks_waited(self):
+        """Whether the required checks have not passed for more than `CHECKS_END` since the
+        first refusal on this version, as of the event's time."""
+        since = self.s.get("checksSince")
+        if not since or since["version"] != self.version:
+            return False
+        began, now = _seconds(since["at"]), _seconds(self.at)
+        return began is not None and now is not None and now - began > CHECKS_END
 
     def wait(self, kind, on=None, until=None):
         self.waits += 1
@@ -536,6 +558,7 @@ class Step:
             self.s["change"] = {**self.s["change"], "version": observed["version"]}
             # A person's push is checked as the engine's own work.
             self.by = None
+            self.s.pop("checksSince", None)
             if self.state != "fixing":
                 # The round published: its change stays under the push, and the push's checks
                 # judge it, so its count stands, as NexKit 6 keeps it (`report._head_moved`,
@@ -1023,6 +1046,13 @@ class Step:
             return False
         wait = waits[0]
         self.s["waits"].remove(wait)
+        checks = wait["for"] == "requiredChecks" and self.state == "accepting"
+        if checks and self.checks_waited():
+            # Required checks that neither pass nor fail are a person's to look into, and the
+            # merge is not tried again (`autopilot._merge_step`).
+            self.move("ready")
+            self.need("acceptRefused", "The required checks have not passed for six hours.")
+            return True
         # A step that runs goes on under a hold, as NexKit 6's `maintain.resume_paused` reads no
         # hold label: a run paused at a usage limit or after a transient stop runs again at its
         # tick. A fix round that is due, an accept, a conflict round and the restart of lost
@@ -1613,6 +1643,15 @@ class Step:
         elif result["refusal"] == "notAccepted":
             self.move("failed")
             self.need("failed", result["text"] or "The accept failed.")
+        elif result["refusal"] == "waitingForChecks":
+            # Required checks have not passed yet: the item stays and the accept is tried again
+            # at the wait's tick. The six hours count from the first refusal on this version.
+            since = self.s.get("checksSince")
+            if not since or since["version"] != self.version:
+                self.s["checksSince"] = {"version": self.version, "at": self.at}
+            until = self.later(CHECKS_RETRY)
+            wait = self.wait("requiredChecks", until=until)
+            self.do("wait", wait=wait["id"], until=until)
         else:
             self.move("ready")
             self.need("acceptRefused", result["text"] or "The accept was refused.")
@@ -1633,6 +1672,31 @@ class Step:
     def finished_cancel(self, result, action):
         # The cancelled action's late result changes nothing, so its spending comes here.
         self.spend(result)
+
+
+def _seconds(text):
+    """Seconds since 1970 of `text`, a time as the protocol writes it, such as
+    2026-11-23T15:01:11Z, or None when it is none."""
+    if not isinstance(text, str) or len(text) != 20 or not text.isascii():
+        return None
+    parts = (text[0:4], text[5:7], text[8:10], text[11:13], text[14:16], text[17:19])
+    if not all(part.isdigit() for part in parts) or (text[4], text[7], text[10]) != ("-", "-", "T"):
+        return None
+    if (text[13], text[16], text[19]) != (":", ":", "Z"):
+        return None
+    year, month, day, hour, minute, second = (int(part) for part in parts)
+    if not (1 <= month <= 12 and 1 <= day <= 31 and hour < 24 and minute < 60 and second < 61):
+        return None
+    return _days(year, month, day) * 86400 + hour * 3600 + minute * 60 + second
+
+
+def _time(seconds):
+    """`seconds` since 1970 as the protocol writes a time."""
+    days, rest = divmod(seconds, 86400)
+    year, month, day = _civil(days)
+    hour, rest = divmod(rest, 3600)
+    minute, second = divmod(rest, 60)
+    return f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}Z"
 
 
 def _later(at, minutes):
@@ -1755,6 +1819,7 @@ def step(state, event, policies, check):
         before = state
         state = copy.deepcopy(state)
     work = Step(state, policies, check)
+    work.at = event.get("at")
     handler = getattr(work, f"on_{event['kind']}", None)
     if handler is None:
         raise EngineError(f"No rule for the event {event['kind']}.")

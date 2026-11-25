@@ -206,6 +206,15 @@ def _load(path):
     return json.loads(path.read_text()) if path.is_file() else None
 
 
+def _ran(path):
+    """The runner's result in `run.json` at `path`, or None when it is missing or not JSON;
+    `host.spent` checks it against the protocol."""
+    try:
+        return _load(path)
+    except (ValueError, RecursionError):
+        return None
+
+
 def _tokens(*results):
     """The tokens of the stages that ran, or None when one of them has no count."""
     return add_tokens(*(r.get("tokens") for r in results if r))
@@ -2233,6 +2242,7 @@ def linked_line(*results):
 def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     action = decision["action"]
     agent = _load(artifacts / "nexkit-agent" / "result.json")
+    agent_ran = _ran(artifacts / "nexkit-agent" / "run.json")
     review_result = _load(artifacts / "nexkit-review" / "result.json")
     shortened = "\n\n".join(
         line
@@ -2306,7 +2316,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 reason = autopilot.protected_reason(protected)
             if refused:
                 reason = refused
-            if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent):
+            if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent, ran=agent_ran):
                 reason = None
                 message += "\n\nNexKit autopilot carries on from here."
             if shortened:
@@ -2328,7 +2338,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             plan = publish.get("comment")
             reason = needs_person("planned", cfg, plan=agent.get("output"))
             summary = f"[Plan]({plan}) posted." if plan else ""
-            if reason and autopilot.carries_on(gh, cfg, decision, "planned", agent):
+            if reason and autopilot.carries_on(gh, cfg, decision, "planned", agent, ran=agent_ran):
                 reason = None
                 summary += " NexKit autopilot carries on from here."
             if shortened:
@@ -2353,6 +2363,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     if config_error:
         checks = [config_check(config_error), *(checks or [])]
     reviewed = _load(artifacts / "nexkit-review" / "result.json")
+    review_ran = _ran(artifacts / "nexkit-review" / "run.json")
     given = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
     review = apply_criteria(given) if given else None
     confirm = unverified(review)
@@ -2442,7 +2453,16 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         the same way before and after a fix round, which the next automatic fix round
         diagnoses first, kept in the state comment."""
         found_end, repeated = round_ended(
-            cfg, decision, pr, head, state["auto_fixes"], checks, before, given, recheck
+            cfg,
+            decision,
+            pr,
+            head,
+            state["auto_fixes"],
+            checks,
+            before,
+            given,
+            recheck,
+            ran=review_ran,
         )
         state["feedback"] = _with_repeated(state["feedback"], repeated)
         return found_end
@@ -2537,6 +2557,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 label,
                 before,
                 seen,
+                ran=review_ran,
             )
         except Refused as error:
             ends, refused = "needs_human", error

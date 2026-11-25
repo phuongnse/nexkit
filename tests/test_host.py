@@ -12,6 +12,7 @@ from nexkit import autopilot, engine, host, item_state
 from nexkit import report as reports
 from nexkit.checks import recorded
 from nexkit.github import GitHubError
+from nexkit.maintain import resume_paused
 from nexkit.protocol.size import MOST
 from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person, report
 from nexkit.route import route
@@ -30,6 +31,7 @@ from tests.test_autopilot import AutopilotCase, pilot, plan_output
 from tests.test_report import (
     HEAD,
     LIMIT,
+    ONCE,
     TOKENS,
     WORKFLOW,
     ReportCase,
@@ -1142,6 +1144,217 @@ class HeldConflictReleasedTest(HostCase):
         )
         self.assertEqual(step["state"], "waits")
         self.assertIn("auto_resolve", step["reason"])
+
+
+class StageStopTest(ReportCase):
+    """`report` sends a plan, implement or fix stage that stopped at the usage limit or on a
+    transient error to the engine, and carries out when it runs again or that a person
+    decides. A stop of publish is NexKit's own retry."""
+
+    TRANSIENT = {"status": "error", "error": "Overloaded", "transient": True}
+    HOLD = make_config(
+        autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}},
+        retry={"wait_minutes": [0, 15]},
+    )
+
+    def hold(self):
+        """Issue 5 is in autopilot's scope with a hold label on it."""
+        self.gh.issues[5].update(labels=[{"name": "on-hold"}], milestone={"number": 1})
+        self.gh.add_milestone(1)
+
+    def stop(self, result, cfg=None, d=None):
+        """(outcome, requests, answers) of the engine's `step` calls for a stage whose agent
+        gave `result`."""
+        self.write("nexkit-agent", "result.json", result)
+        asked, answered = [], []
+
+        def answer(request):
+            asked.append(request)
+            found = ANSWER(request)
+            answered.append(found)
+            return found
+
+        with mock.patch.object(host.engine, "answer", side_effect=answer):
+            outcome = self.run_report(d=d or decision("plan"), cfg=cfg, published=False)
+        return outcome, asked, answered
+
+    def test_a_limit_with_a_known_reset_waits_for_it(self):
+        outcome, [request], [found] = self.stop(LIMIT)
+        self.assertEqual(request["event"]["kind"], "actionFinished")
+        self.assertEqual(request["event"]["result"]["limit"]["reset"], LIMIT["resume_at"])
+        [wait] = [a for a in found["actions"] if a["kind"] == "wait"]
+        self.assertEqual(outcome["resume"]["at"], wait["until"])
+        self.assertEqual(outcome["resume_at"], wait["until"])
+        self.assertIsNone(outcome["attention"])
+
+    def test_a_run_resumed_blind_that_stops_again_gets_no_reset(self):
+        blind = {**LIMIT, "reset_known": False}
+        outcome, [request], [found] = self.stop(blind, d=decision("plan", resumed=True))
+        self.assertIsNone(request["event"]["result"]["limit"]["reset"])
+        self.assertEqual(found["state"]["attention"]["reason"], "failed")
+        self.assertIsNone(outcome["resume"])
+        self.assertIsNone(outcome["resume_at"])
+        self.assertEqual(outcome["attention"], reports.PAUSED_REASON)
+        # The first blind stop waits.
+        outcome, [request], _ = self.stop(blind)
+        self.assertEqual(outcome["resume"]["at"], LIMIT["resume_at"])
+
+    def test_a_limit_that_is_not_resumed_waits_for_a_person(self):
+        cfg = make_config(usage_limit={"resume": False})
+        outcome, [request], _ = self.stop(LIMIT, cfg=cfg)
+        self.assertIsNone(request["event"]["result"]["limit"]["reset"])
+        self.assertIsNone(outcome["resume"])
+        self.assertIn("It resets at", outcome["summary"])
+
+    def test_each_wait_of_the_retry_settings_then_a_person(self):
+        cfg = make_config(retry={"wait_minutes": [0, 15]})
+        now = datetime.now(UTC)
+        outcome, [request], _ = self.stop(self.TRANSIENT, cfg=cfg)
+        self.assertEqual(outcome["outcome"], "retry")
+        self.assertTrue(request["event"]["result"]["transient"])
+        self.assertEqual(request["state"].get("again"), None)
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(dispatch["inputs"]["auto"], "retry")
+
+        # What starts the run again later is `maintain`'s run that waits for the time, not
+        # the command.
+        def commands():
+            return [d for d in self.gh.dispatches if d["inputs"]["command"] != "resume"]
+
+        outcome, [request], [found] = self.stop(self.TRANSIENT, cfg, decision("plan", retry=1))
+        self.assertEqual(request["state"]["again"], {"transient": 1})
+        self.assertTrue(request["event"]["result"]["transient"])
+        [wait] = [a for a in found["actions"] if a["kind"] == "wait"]
+        self.assertEqual(outcome["outcome"], "retry_waiting")
+        self.assertEqual(outcome["resume"]["at"], wait["until"])
+        self.assertEqual(outcome["resume"]["retry"], 2)
+        at = datetime.strptime(wait["until"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        self.assertLess(abs(at - now - timedelta(minutes=15)), timedelta(minutes=1))
+        self.assertEqual(len(commands()), 1)
+        outcome, [request], _ = self.stop(self.TRANSIENT, cfg, decision("plan", retry=2))
+        self.assertEqual(request["state"]["again"], {"transient": 2})
+        self.assertTrue(request["event"]["result"]["transient"])
+        self.assertEqual(outcome["outcome"], "retry_failed")
+        self.assertEqual(len(commands()), 1)
+        self.assertNotIn("resume", outcome)
+
+    def test_a_job_that_ended_without_a_result_is_a_transient_stop_of_the_agent(self):
+        self.write("nexkit-agent", "result.json", {})
+        (self.artifacts / "nexkit-agent" / "result.json").unlink()
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            outcome = self.run_report(d=decision("plan"), cfg=ONCE, published=False)
+        self.assertEqual(outcome["outcome"], "retry")
+        [call] = answer.call_args_list
+        self.assertTrue(call.args[0]["event"]["result"]["transient"])
+
+    def test_a_stop_of_publish_is_nexkit_s_own_retry_and_asks_nothing(self):
+        self.write("nexkit-agent", "result.json", {"status": "done", "output": {}})
+        error = "git push --quiet origin failed: The requested URL returned error: 500"
+        result = {"published": False, "error": error, "transient": True}
+        needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            outcome = report(
+                self.gh,
+                decision(),
+                ONCE,
+                needs,
+                self.artifacts,
+                workflow_ref=WORKFLOW,
+                default_branch="main",
+            )
+        self.assertEqual(outcome["outcome"], "retry")
+        self.assertEqual(len(self.gh.dispatches), 1)
+        answer.assert_not_called()
+
+    def test_a_hold_is_sent_first_and_changes_nothing_the_engine_answers(self):
+        self.hold()
+        for result, outcome in ((LIMIT, "paused"), (self.TRANSIENT, "retry")):
+            with self.subTest(outcome=outcome):
+                found, requests, _ = self.stop(result, cfg=self.HOLD)
+                self.assertEqual(found["outcome"], outcome)
+                self.assertEqual([r["event"]["kind"] for r in requests], ["held", "actionFinished"])
+                self.assertEqual(requests[0]["event"]["label"], "on-hold")
+
+    def test_a_stop_the_engine_refuses_waits_for_a_person(self):
+        with mock.patch.object(host, "stage_limited", side_effect=host.Refused("No.")):
+            outcome, _, _ = self.stop(LIMIT)
+        self.assertEqual(outcome["outcome"], "paused")
+        self.assertIsNone(outcome["resume"])
+        self.assertIn("refused to decide", outcome["attention"])
+        with mock.patch.object(host, "stage_transient", side_effect=host.Refused("No.")):
+            outcome, _, _ = self.stop(self.TRANSIENT, cfg=ONCE)
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertNotIn(outcome["outcome"], ("retry", "retry_waiting", "retry_failed"))
+        self.assertIn("refused to decide", outcome["attention"])
+
+    def test_a_fix_round_on_a_pull_request_keeps_its_change(self):
+        d = decision("fix", pr=6, target=6, head=HEAD)
+        _, [request], _ = self.stop(self.TRANSIENT, cfg=ONCE, d=d)
+        self.assertEqual(request["state"]["change"], {"id": "6", "version": HEAD})
+        self.assertEqual(request["state"]["state"], "fixing")
+
+
+class ResumeTest(ReportCase):
+    """`maintain.resume_paused` sends the tick of each due resume to the engine, a hold on the
+    issue included, and starts the command when the engine runs it."""
+
+    NOW = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+
+    def paused(self, command="plan", at="2026-10-11T04:40:00Z", **resume):
+        record = {"command": command, "number": 5, "note": "", "auto": "resume", "at": at}
+        run = {"url": "https://x/runs/1", "command": command, "status": "paused"}
+        run["resume"] = {**record, **resume}
+        return self.gh.comment(5, render_run(run, "⏸️ Paused."))
+
+    def resume(self, cfg=None):
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            lines, _ = resume_paused(self.gh, "nexkit.yml", "main", self.NOW, cfg)
+        return lines, [call.args[0] for call in answer.call_args_list]
+
+    def test_a_run_paused_under_a_hold_starts_again_at_its_time(self):
+        self.gh.issues[5].update(labels=[{"name": "on-hold"}], milestone={"number": 1})
+        self.gh.add_milestone(1)
+        cfg = pilot(labels={"on-hold": {"hold": True}})
+        self.paused()
+        lines, requests = self.resume(cfg)
+        self.assertEqual(lines, ["Resumed /nexkit plan on #5."])
+        self.assertEqual([r["event"]["kind"] for r in requests], ["held", "tick"])
+        self.assertEqual(requests[1]["state"]["waits"][0]["for"], "usageLimit")
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(dispatch["inputs"]["command"], "plan")
+
+    def test_each_command_runs_its_stage_again(self):
+        for command, state in (
+            ("plan", "planning"),
+            ("go", "working"),
+            ("fix", "fixing"),
+            ("review", "reviewing"),
+        ):
+            with self.subTest(command=command):
+                self.gh.dispatches.clear()
+                self.paused(command)
+                _, [request] = self.resume()
+                self.assertEqual(request["state"]["state"], state)
+                [dispatch] = self.gh.dispatches
+                self.assertEqual(dispatch["inputs"]["command"], command)
+
+    def test_a_run_waiting_after_a_transient_error_waits_for_a_time(self):
+        self.paused(retry=2, auto="retry:2")
+        _, [request] = self.resume()
+        self.assertEqual(request["state"]["waits"][0]["for"], "time")
+        self.assertEqual(request["state"]["again"], {"transient": 2})
+        self.assertEqual(len(self.gh.dispatches), 1)
+
+    def test_a_command_nexkit_never_writes_waits_for_a_person(self):
+        self.paused("close")
+        lines, requests = self.resume()
+        self.assertEqual(requests, [])
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertIn("Did not resume /nexkit close on #5", lines[0])
+        [run] = self.gh.run_comments(5)
+        self.assertEqual(run["run"]["status"], "failure")
+        self.assertNotIn("resume", run["run"])
+        self.assertIn("refused to decide", run["run"]["attention"])
 
 
 class ChangeSeenTest(ReportCase):

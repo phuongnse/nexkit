@@ -37,18 +37,30 @@ Milestones group the work by feature and labels say what kind of change it is, s
 [roadmap](roadmap.md) and a search on GitHub find every piece of a feature, and a milestone holds
 only the work that its feature needs.
 
-- An issue that builds a feature is in that feature's milestone, as [the roadmap](roadmap.md)
-  lists them. A part of a split and a follow-up keep the milestone of the work they continue.
-- An issue that builds no feature has no milestone, only the label of its kind: a `bug` that fixes
-  what a release already has, a `refactor`, NexKit's own issues for a failure on `main`
-  (`nexkit:ci`, `nexkit:flaky`, `nexkit:dependabot`), and an issue of the
-  [docs audit](writing-docs.md#how-the-docs-stay-correct) (`docs-audit`).
-- It carries at least one label of its kind (`enhancement`, `bug`, `refactor`, `process` or
-  `documentation`) and every other label whose description on GitHub fits it, such as `security`.
+- **An issue's milestone follows one test, taken in these steps.**
+  1. **The milestone whose roadmap row names what the issue builds,** in its *What it delivers*:
+     its features, and the fixes and follow-ups of that work while the milestone is open. A
+     `process` or `documentation` issue that a row names is in that row's milestone too.
+  2. **Otherwise no milestone, and the label that names its kind:**
+
+     | Label | Kind |
+     | --- | --- |
+     | `nexkit:ci`, `nexkit:flaky`, `nexkit:dependabot` | NexKit's issues for a failure of CI on `main`, a flaky test, a Dependabot advisory |
+     | `bug` | A fix of what a released NexKit already has |
+     | `refactor` | One concern moved to one shared mechanism, which keeps its behaviour |
+     | `process` | A change to how NexKit is built that no row names |
+     | `documentation` | A change to the docs that no row names |
+     | `docs-audit` | An issue that the [docs audit](writing-docs.md#how-the-docs-stay-correct) opens |
+
+  3. **A part of a split and a follow-up take the same test.** A part builds part of its parent,
+     so it keeps the parent's milestone.
+- Every issue and pull request carries at least one label of its kind (`enhancement`, `bug`,
+  `refactor`, `process` or `documentation`) and every other label whose description on GitHub fits
+  it, such as `security`.
 - A release pull request carries `release`, and one that updates a pin `dependencies`.
 - A pull request that closes an issue carries that issue's labels, but for the holds `on-hold` and
   `hand-made`, and its milestone when it has one: NexKit sets them on the pull requests it opens,
-  and a session sets them on its own.
+  and a session sets them on its own. A pull request that closes no issue takes the same test.
 
 ## NexKit on this repository
 

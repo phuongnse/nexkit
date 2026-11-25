@@ -7,7 +7,7 @@ from there. The runner writes the comments as NexKit 6 does, as NexKit's App, an
 document against the protocol and NexKit's rule that every item that is not final is carried
 on. It then sends the case's events to the engine, as the conformance suite does, so that no
 import leaves an item the engine cannot move on from: one that only waits must be moved on by
-the event that ends its wait.
+the event that ends its wait. A step may name fields of the state to `expect`, by dotted path.
 """
 
 import ast

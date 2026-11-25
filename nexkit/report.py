@@ -1605,7 +1605,10 @@ def _required_failed(gh, cfg, target, row, message, names, workflow, default_bra
     what = _failed_line(failed, head, bool(target.get("waiting")))
     limit = cfg["fix"]["max_auto_rounds"]
     decision = {"base": target["base"], "issue": target["issue"]}
-    wait = _ci_wait(gh, cfg, decision, autopilot.as_checks(failed), default_branch)
+    # The base branch's failure matters only to a fix round that is left, as in NexKit 6.
+    wait = None
+    if state["auto_fixes"] < limit:
+        wait = _ci_wait(gh, cfg, decision, autopilot.as_checks(failed), default_branch)
     # What follows is the engine's (`host.required_failed`).
     from .host import Refused, refused_parts, required_failed
 

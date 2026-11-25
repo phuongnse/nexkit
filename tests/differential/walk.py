@@ -38,7 +38,8 @@ INVARIANTS = {
     "carried": "every open item has work, a wait, a hold or attention, so none is stuck",
     "counts": "a fix round is counted when its run is issued, one at a time, within `fixRounds`",
     "give-back": "only an automatic fix round stopped before its review ends gives its count "
-    "back, and the count of one whose change conflicted stands",
+    "back, and the count of one whose change conflicted stands, or that a person's push "
+    "found published",
     "due": "a round that waits to be issued (`due`) is in `fixing` with no run, and waits",
     "automatic": "`automatic` marks only a counted fix round that its review has not judged",
     "diagnosis": "only an automatic fix round diagnoses, exactly the checks that failed the "
@@ -512,7 +513,22 @@ class Walker:
         if state["hold"] and new["hold"] and rounds["counted"] > old["counted"]:
             flag("hold", "an automatic fix round counted under a hold", info)
         # give-back
-        if old.get("automatic") and not fixes and rounds["counted"] >= old["counted"]:
+        # A person's push after the round published keeps its count: its change stays under the
+        # push, and the push's checks judge it. While its agent runs, the push gives it back.
+        pushed = (
+            event["kind"] == "changeObserved"
+            and event.get("version") != (state["change"] or {}).get("version")
+            and not (event.get("merged") or event.get("empty"))
+        )
+        published = pushed and state["state"] in ("checking", "reviewing")
+        if published and old.get("automatic") and rounds["counted"] < old["counted"]:
+            flag("give-back", "a published round's count given back on a push", info)
+        if (
+            old.get("automatic")
+            and not fixes
+            and rounds["counted"] >= old["counted"]
+            and not published
+        ):
             pending = {a["id"]: a for a in state["pending"]}
             stopped = [pending.get(a["action"]) for a in actions if a["kind"] == "cancel"]
             work = [

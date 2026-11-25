@@ -536,6 +536,16 @@ def run_kinds(run):
     return {kind.strip() for kind in labels.group(1).split(",")} if labels else set()
 
 
+def counted_fix(run):
+    """Whether `run` is an automatic fix round that counts toward `fix.max_auto_rounds`: a
+    conflict round, and a retried or resumed one, counts toward no automatic fix round."""
+    return (
+        run_action(run) == "fix"
+        and "auto" in run_kinds(run)
+        and not (run.get("conflicts") or run.get("retry") or run.get("resumed"))
+    )
+
+
 def run_marker(run):
     return _encode(RUN_PREFIX, run)
 

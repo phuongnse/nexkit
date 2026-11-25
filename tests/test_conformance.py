@@ -11,11 +11,11 @@ for people.
 The runner sends each request to the program twice and checks that both answers are the same
 text, checks every answer against the protocol, and after every call checks the outbox: every
 action of the answer is pending, whole, an action leaves `pending` only with its result, its
-cancel or its loss, and a notice stays pending only while attention says it. It also checks
-NexKit's rule: each item that is not final has a work
-action pending, a wait, a hold or attention. Across the cases, every transition of the page's
-table is played, none that the page does not name for the case's policies is, and a drop is
-played from every state that is not final.
+cancel or its loss, a notice stays pending only while attention says it, and a fix round waits
+to be issued (`rounds.due`) only in `fixing`. It also checks NexKit's rule: each item that is
+not final has a work action pending, a wait, a hold or attention. Across the cases, every
+transition of the page's table is played, none that the page does not name for the case's
+policies is, and a drop is played from every state that is not final.
 """
 
 import copy
@@ -258,6 +258,7 @@ class ConformanceTest(unittest.TestCase):
             for path_, value in step.get("expect", {}).items():
                 self.assertEqual(at(new, path_), value, f"{where}: {path_}")
             open_ = self.check_outbox(open_, event, answer, where)
+            self.check_due(new, where)
             # A close stays pending only while the item is final: a reopen takes it back.
             if new["state"] not in FINAL:
                 closes = [action["id"] for action in new["pending"] if action["kind"] == "close"]
@@ -302,6 +303,12 @@ class ConformanceTest(unittest.TestCase):
             self.assertTrue(number in open_ or number in given, f"{where}: {number} came")
         return pending
 
+    def check_due(self, state, where):
+        """A fix round that waits to be issued waits only in `fixing`: a move to another state
+        ends the wait."""
+        if state["rounds"].get("due"):
+            self.assertEqual(state["state"], "fixing", f"{where}: a fix round waits outside it")
+
     def test_the_cases(self):
         seen, dropped = set(), set()
         paths = cases()
@@ -320,6 +327,9 @@ class ConformanceTest(unittest.TestCase):
         answer = {"state": state, "actions": [], "changed": True}
         with self.assertRaises(AssertionError):
             self.check_outbox({action["id"]: action}, {"kind": "tick"}, answer, "here")
+        # A fix round that waits to be issued outside `fixing` is found.
+        with self.assertRaises(AssertionError):
+            self.check_due({"state": "checking", "rounds": {"due": True}}, "here")
         # A transition the conflict policy does not lead to is not allowed.
         self.assertNotIn(("working", "fixing"), allowed({"conflicts": "person"}, True))
         self.assertIn(("working", "fixing"), allowed({"conflicts": "resolve"}, True))

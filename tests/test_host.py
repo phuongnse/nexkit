@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import autopilot, engine, host, item_state
+from nexkit import report as reports
 from nexkit.checks import recorded
 from nexkit.protocol.size import MOST
 from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person, report
@@ -717,6 +718,34 @@ class WaitEndTest(HostCase):
         with mock.patch.object(autopilot, "ci_wait_over", return_value=None):
             self.assertEqual(self.requests(5), [])
 
+    def test_the_end_of_each_wait_reads_fix_max_auto_rounds_as_it_is_then(self):
+        wait = {"bug": 77, "workflow": "ci.yml", "branch": "main", "run": 50}
+        waits = {
+            "a hold": {"outcome": "held", "held_back": "fix"},
+            "a base failure": {"outcome": "ci_waiting", "ci_wait": wait},
+        }
+        for name, fields in waits.items():
+            with (
+                self.subTest(wait=name),
+                mock.patch.object(autopilot, "ci_wait_over", return_value="#77 is closed"),
+            ):
+                self.setUp()
+                self.waiting(2, **fields)
+                # Two rounds are counted, and the limit is two: a person decides.
+                step = self.step(5)
+                self.assertEqual(step["state"], "waits")
+                self.assertIn("no automatic fix rounds left", step["reason"])
+                # Raised while it waited: the round starts, counted, with the limit read now.
+                raised = pilot_with(fix={"max_auto_rounds": 3})
+                step = self.step(5, raised)
+                started = (step["state"], step["command"], step["count"])
+                self.assertEqual(started, ("start", "fix", True))
+                self.assertEqual(self.requests(5, raised)[-1]["policies"]["fixRounds"], 3)
+                # Lowered again: the round waits for a person once more.
+                step = self.step(5, pilot_with(fix={"max_auto_rounds": 1}))
+                self.assertEqual(step["state"], "waits")
+                self.assertIn("no automatic fix rounds left", step["reason"])
+
     def test_a_wait_whose_end_the_engine_refuses_waits_for_a_person(self):
         self.waiting(0, outcome="held", held_back="fix")
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
@@ -740,6 +769,26 @@ class CountTest(ReportCase):
         self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 1, None), "auto_fix")
         self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 1, wait), "ci_waiting")
         self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 2, wait), "needs_human")
+
+    def test_required_checks_read_the_base_failure_only_when_a_fix_round_is_left(self):
+        head = "c" * 40
+        cfg = make_config(merge={"auto": True}, fix={"max_auto_rounds": 2})
+        # Pull request 6 has used both automatic fix rounds, pull request 7 only one.
+        self.gh.add_pull(7, 5, head_sha=head)
+        for pull, used, read in ((6, 2, False), (7, 1, True)):
+            with self.subTest(used=used):
+                state = {"version": 2, "issue": 5, "auto_fixes": used, "feedback": None}
+                self.gh.comment(pull, render_state(state))
+                target = {"issue": 5, "pr": pull, "head": head, "base": "main"}
+                with (
+                    mock.patch.object(autopilot, "failed_checks", return_value=[]),
+                    mock.patch.object(autopilot, "ci_wait", return_value=None) as seen,
+                ):
+                    outcome, _ = reports._required_failed(
+                        self.gh, cfg, target, {}, "Done.", ["test"], "nexkit.yml", "main"
+                    )
+                self.assertEqual(seen.called, read)
+                self.assertEqual(outcome, "auto_fix" if read else "needs_human")
 
     def test_a_round_nexkit_stopped_gives_its_count_back_only_when_automatic(self):
         head = "c" * 40

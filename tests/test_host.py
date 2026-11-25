@@ -440,7 +440,10 @@ class AfterGoTest(HostCase):
             return autopilot.carries_on(self.gh, cfg, decision, "agent_blocked", agent)
 
         self.assertTrue(carries_on(ASKED))
-        self.assertTrue(carries_on({**ASKED, "recommended": 3}))
+        # A wait for a person, the closing answer included, is mentioned by `report`.
+        self.assertFalse(carries_on({**ASKED, "recommended": 3}))
+        replan = {**ASKED, "recommended": 2, "closes": 0, "replans": [2]}
+        self.assertFalse(carries_on({**ASKED, "recommended": 3}, replan))
         self.assertFalse(carries_on({**ASKED, "recommended": 0}))
         self.assertFalse(carries_on(ASKED, protected_paths=["a.yml"]))
         self.answered(5)
@@ -626,16 +629,16 @@ class StoppedTest(HostCase):
         replans = {"questions": [{**ASKED, "closes": 0, "recommended": 2, "replans": [2]}]}
         self.assertFalse(carries_on(fix, "agent_blocked", status="blocked", output=replans))
         closes = {"questions": [{**ASKED, "recommended": 3}]}
-        self.assertTrue(carries_on(fix, "agent_blocked", status="blocked", output=closes))
+        self.assertFalse(carries_on(fix, "agent_blocked", status="blocked", output=closes))
         # One answer only closes the issue and another needs a new plan: a person decides.
         both = {"questions": closes["questions"] + replans["questions"]}
         self.assertFalse(carries_on(fix, "agent_blocked", status="blocked", output=both))
         self.assertTrue(carries_on(fix, "agent_error", timed_out=True))
         go = {"issue": 5, "pr": None, "action": "implement"}
         self.assertTrue(carries_on(go, "agent_error", timed_out=True))
-        # NexKit 6 asks whether an answer replans only for a fix round: after a `/nexkit go`
-        # the round carries on, and the sweep then waits for a person and mentions them.
-        self.assertTrue(carries_on(go, "agent_blocked", status="blocked", output=both))
+        # After a `/nexkit go` too, a wait for a person is one `report` mentions.
+        self.assertFalse(carries_on(go, "agent_blocked", status="blocked", output=both))
+        self.assertFalse(carries_on(go, "agent_blocked", status="blocked", output=closes))
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             self.assertFalse(carries_on(go, "agent_error", timed_out=True))
 

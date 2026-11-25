@@ -76,7 +76,6 @@ from .state import (
     questions,
     recommended_option,
     replanning_options,
-    round_questions,
     run_comments,
 )
 
@@ -744,12 +743,19 @@ class _RoundView:
         return self.step("waits", text)
 
 
+def _carries_on(actions):
+    """Whether the engine's `actions` after a stopped round start a run or close the issue.
+    Any wait for a person, the recommended answer that only closes the issue included, needs
+    that person now, so `report` mentions them and the sweep does not (see
+    `docs/engine.md#getting-there`)."""
+    return any(action["kind"] in ("runAgent", "close") for action in actions)
+
+
 def round_carried_on(gh, cfg, issue, decision, agent):
     """Whether autopilot carries on after the `/nexkit go` that a run of `decision` ran and
     that stopped as blocked, with the agent's result `agent`, as the engine decides what
-    follows it, so that `report` mentions nobody. As in NexKit 6, autopilot's answers whose
-    recommended option only closes the issue carry on unless they were asked again: the
-    sweep then waits for a person and mentions them itself. Raises `Refused`."""
+    follows it, so that `report` mentions nobody. A wait for a person, the closing answer
+    included, makes `report` mention them. Raises `Refused`."""
     from .report import _autopilot_fields
 
     comments = gh.comments(issue["number"])
@@ -766,14 +772,7 @@ def round_carried_on(gh, cfg, issue, decision, agent):
         changeVersion=None,
         result={**AGENT, "output": round_output(run)},
     )
-    actions = step(doc, event, policies(cfg))["actions"]
-    kinds = {action["kind"]: action for action in actions}
-    if "runAgent" in kinds or "close" in kinds:
-        return True
-    if "needPerson" in kinds:
-        # NexKit 6 asks whether an answer replans only for a fix round (`stop_carried_on`).
-        return kinds["needPerson"]["reason"] == "closeRecommended" and not again
-    return False
+    return _carries_on(step(doc, event, policies(cfg))["actions"])
 
 
 # -- a fix round that stopped, and a round that ran out of time --------------------------
@@ -903,9 +902,8 @@ ROUND_WAITS = {
 def stop_carried_on(gh, cfg, issue, decision, agent):
     """Whether autopilot carries on after a fix round of `decision` that stopped as blocked,
     or an implement or fix round that ran out of time, with the agent's result `agent`, as
-    the engine decides what follows it, so that `report` mentions nobody. As in NexKit 6,
-    autopilot's answers whose recommended option only closes the issue carry on unless they
-    were asked again or another of them only a new plan carries out. Raises `Refused`."""
+    the engine decides what follows it, so that `report` mentions nobody. A wait for a person,
+    the closing answer included, makes `report` mention them. Raises `Refused`."""
     from .report import _autopilot_fields
 
     comments = gh.comments(issue["number"])
@@ -922,15 +920,7 @@ def stop_carried_on(gh, cfg, issue, decision, agent):
     output = fix_output(run) if pr else round_output(run)
     name = f"run-{decision.get('run_id') or issue['number']}"
     actions = step(doc, _stop_event(issue["number"], name, doc, output, timed_out), policies(cfg))
-    kinds = {action["kind"]: action for action in actions["actions"]}
-    if "runAgent" in kinds or "close" in kinds:
-        return True
-    if "needPerson" in kinds:
-        if kinds["needPerson"]["reason"] != "closeRecommended" or again:
-            return False
-        # NexKit 6 asks whether an answer replans before it looks at the one that closes.
-        return not autopilot.replans({"questions": round_questions(agent)})
-    return False
+    return _carries_on(actions["actions"])
 
 
 # -- a person's command ----------------------------------------------------------------

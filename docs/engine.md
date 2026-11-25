@@ -713,7 +713,10 @@ adapter. A new rule of the engine comes with a case.
    before and after a fix round, which the state comment keeps, and `route` asks it which of
    them the fix round it starts diagnoses. A review that NexKit 6 runs again after a
    transient error is the host's own retry, which the protocol does not hold yet, and so is
-   whether a usage limit is resumed. A conflict that the base branch's move makes, found
+   whether a usage limit is resumed. After a blocked `/nexkit go` or fix round whose recommended
+   answer only closes the issue, `report` mentions the person, as for any other wait, and the
+   sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
+   to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found
    after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
    as does the merge itself (`report.merge_pull`) but for required checks that fail. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's

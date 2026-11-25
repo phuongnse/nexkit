@@ -578,7 +578,7 @@ shapes, and a host shows them in its own words.
 
 A host gives the engine its policies in its configuration. Each has a default, and the
 protocol's `policies.schema.json` names it, as the first column does below. The policies with no
-name there, start, budgets, usage limits, agents, a parent's end, after a failure and
+name there, start, budgets, usage limits, agents, after a failure and
 the checklist, are not in the protocol yet: they come into it as the
 engine takes over the decisions that read them, and until then the host applies them itself. The
 `prompt` call already reads three of them beside the host's policies, as its schema names them:

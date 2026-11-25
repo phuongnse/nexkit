@@ -4,6 +4,7 @@ autopilot and `route` carry out in NexKit 6's words, storing no state
 
 import base64
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
@@ -209,6 +210,85 @@ class AfterPlanTest(HostCase):
         self.assertEqual(self.started(), [("go", 5)])
         for number in (5, 6):
             self.assertEqual(item_state.read(self.gh, number), (None, None))
+
+
+class EventIdTest(HostCase):
+    def test_a_source_gives_the_same_id_each_time_and_no_two_share_one(self):
+        comment, review, event = {"id": 7}, {"id": 7, "state": "approved"}, {"id": 9}
+        for kind, source in (("comment", comment), ("review", review), ("issue-event", event)):
+            self.assertEqual(host.event_id(kind, dict(source)), host.event_id(kind, dict(source)))
+        self.assertEqual(host.event_id("dispatch", 123), "dispatch-123")
+        self.assertEqual(host.event_id("run", 123), host.event_id("run", 123))
+        self.assertNotEqual(host.event_id("comment", comment), host.event_id("review", review))
+        self.assertNotEqual(host.event_id("comment", comment), host.event_id("comment", {"id": 8}))
+        self.assertNotEqual(host.event_id("dispatch", 123), host.event_id("run", 123))
+
+    def test_only_a_positive_number_of_a_known_kind_names_an_event(self):
+        for kind, source in (
+            ("label", 1),
+            ("comment", {"id": "7"}),
+            ("comment", {}),
+            ("comment", 0),
+            ("comment", True),
+            ("comment", -3),
+        ):
+            with self.assertRaises(ValueError, msg=(kind, source)):
+                host.event_id(kind, source)
+
+    def test_the_same_comment_sent_again_on_the_stored_state_changes_nothing(self):
+        self.issue(5)
+        self.plan(5, {"questions": [ASKED]})
+        self.gh.human_comment(5, "Keep it, but only for a day.")
+        [request] = self.requests(5)
+        event = request["event"]
+        self.assertEqual(event["kind"], "commented")
+        self.assertRegex(event["id"], r"^comment-\d+$")
+        self.assertEqual(self.requests(5)[0]["event"]["id"], event["id"])
+        stored = {**request["state"], "revision": 1}
+        self.assertTrue(item_state.write(self.gh, 5, stored, (None, None)))
+
+        def answer(state):
+            found = host.step(state, event, request["policies"])
+            return found["state"], found["actions"], found["changed"]
+
+        first = []
+        item_state.apply(self.gh, 5, lambda state: first.append(answer(state)) or first[-1])
+        self.assertTrue(first[0][2])
+        again = []
+        item_state.apply(self.gh, 5, lambda state: again.append(answer(state)) or again[-1])
+        self.assertEqual((again[0][1], again[0][2]), ([], False))
+
+    def test_a_closing_command_is_named_by_its_comment(self):
+        self.issue(5)
+        self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
+        ids = []
+        for number in (77, 78):
+            event = comment_event(5, "/nexkit plan Close the issue")
+            event["comment"]["id"] = number
+            with mock.patch.object(host, "step", wraps=host.step) as step:
+                self.assertEqual(route(self.gh, "issue_comment", event)["task"], "close_answer")
+            ids.append(step.call_args.args[1]["id"])
+        self.assertEqual(ids, ["comment-77", "comment-78"])
+
+    def test_the_report_job_and_the_sweep_name_one_result_by_its_run(self):
+        self.issue(5)
+        url = "https://github.com/acme/app/actions/runs/123"
+        self.run_comment(5, "plan", status="running", url=url)
+        cfg = pilot(answer="recommended")
+        decision = {"issue": 5, "pr": None, "action": "plan"}
+        agent = {"output": {"questions": [ASKED]}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "123"}):
+            with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+                autopilot.carries_on(self.gh, cfg, decision, "planned", agent)
+        [reported] = [call.args[0]["event"]["id"] for call in answer.call_args_list]
+        self.plan(5, {"questions": [ASKED]}, url=url)
+        [swept] = [request["event"]["id"] for request in self.requests(5)]
+        self.assertEqual((reported, swept), ("run-123", "run-123"))
+
+    def test_a_run_outside_github_actions_has_no_source(self):
+        with mock.patch.dict(os.environ, clear=True):
+            self.assertEqual(host._run_event_id(), "run-local")
+            self.assertEqual(host._run_event_id("https://example.com/x"), "run-local")
 
 
 class RefusedTest(HostCase):

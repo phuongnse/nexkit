@@ -186,6 +186,12 @@ The protocol is built for delivery at least once, in any order a host's queues g
   names the event, such as `<delivery>:<kind>`. The state keeps the ids of the 20 latest events
   that changed it, and the engine takes an event whose id it holds as a duplicate that changes
   nothing.
+  The GitHub host names each event by its source on GitHub (`host.event_id`): `comment-<id>`
+  for a comment, whether it is a remark, an answer or a command, `review-<id>`,
+  `issue-event-<id>` from the issue events API, `dispatch-<run id>`, and `run-<run id>` for an
+  agent's result, so the report job and the sweep give one result the same id. An id is built
+  only from GitHub's number, never from a text, and its kind keeps a comment and a review with
+  one number apart.
 - **A person's decision names what it decides on.** `planApproved`, and a `go`, name the plan by
   its text's ref; `answered` names the questions by the ref that asked them, as the state's
   attention has it: a plan's text ref, or a round's agent action; `changeApproved` names the change
@@ -648,7 +654,7 @@ observes every open change from time to time.
 | Observed as empty | No file differs between the base and the head | The draft changes nothing any more |
 | Observes on | `pull_request` synchronize, closed and reopened; a push to the base, for each open change; each sweep | A change of the draft or of the release; its worker, from time to time |
 | A change closed unmerged | Not an observation: the host tells a person, who drops the item or asks for the work again | The draft was discarded: the same |
-| One event at a time | Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares one concurrency group keyed by the item, which a routing job derives and passes on; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and gives each a stable id from its source, such as the comment's id. The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item and the stable ids are criteria of #332. Today NexKit groups runs by issue, by pull request, and in separate autopilot and `approved-N` review groups (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
+| One event at a time | Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares one concurrency group keyed by the item, which a routing job derives and passes on; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and each already has a stable id from its source, such as the comment's id (see [Events and actions arrive more than once](#events-and-actions-arrive-more-than-once)). The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item is a criterion of #332. Today NexKit groups runs by issue, by pull request, and in separate autopilot and `approved-N` review groups (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
 
 What exists only because of GitHub stays in the GitHub host: the GitHub App, statuses, branch
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,

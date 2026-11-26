@@ -690,9 +690,10 @@ or its loss. It also checks NexKit's rule: every item that is not final has an a
 on it (`runAgent`, `runChecks`, `publish`, `accept`, `createParts`, `replaceChange` or `wait`), a
 wait, a hold or attention. The rule that a round counts only when its agent ran to its end or
 published joins these checks with the engine's rules of rounds, and so does the rule that a fix
-round waits to be issued (`rounds.due`) only in `fixing`. Across the cases, every
-transition of the states table is played, no case makes one that the page does not name for its
-policies and for whether the item had a change, and an item is dropped from every state that is
+round waits to be issued (`rounds.due`) only in `fixing`. A state keeps a round's questions only
+while they wait for answers: in `awaitingApproval`, with attention naming them. Across the cases,
+every transition of the states table is played, no case makes one that the page does not name for
+its policies and for whether the item had a change, and an item is dropped from every state that is
 not final. The engine passes the suite in this repository, and each host runs it through its own
 adapter. A new rule of the engine comes with a case.
 

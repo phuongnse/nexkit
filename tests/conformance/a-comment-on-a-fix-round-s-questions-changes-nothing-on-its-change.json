@@ -1,0 +1,129 @@
+{
+  "note": "On an item with a change, a comment or a blocker that closes changes nothing to a fix round's questions, under automatic approval.",
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "answers": "never",
+    "reviewAfterFailingChecks": "onlyAfterPassing"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": false,
+              "skipped": false,
+              "signature": "fail test_x",
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:fixQuestions"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "question",
+        "questions.stage": "fix"
+      }
+    },
+    {
+      "event": {
+        "kind": "commented"
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": [],
+      "expect": {
+        "attention.reason": "question",
+        "change.id": "308"
+      }
+    },
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "7",
+        "completed": false
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": [],
+      "expect": {
+        "attention.reason": "question",
+        "change.id": "308"
+      }
+    }
+  ]
+}

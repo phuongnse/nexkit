@@ -183,6 +183,88 @@ class EditedIssueTests(ReportCase):
         self.assertIn("/nexkit trust", outcome["attention"])
 
 
+class MergeGuardTests(ReportCase):
+    """The checks NexKit makes before it merges go to the engine as a refusal only a person
+    clears, and the outcome stays NexKit 6's (`report._guarded`)."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(merge={"auto": True})
+        self.target = {"pr": 6, "head": HEAD, "issue": 5, "base": "main"}
+
+    def merge(self):
+        from nexkit import host
+        from nexkit.report import merge_pull
+
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            outcome, text = merge_pull(self.gh, self.cfg, self.target, {}, "", WORKFLOW, "main")
+        events = [call.args[1] for call in step.call_args_list]
+        return outcome, text, events
+
+    def edited(self):
+        self.gh.issues[5]["user"] = {"login": "bob"}
+        self.gh.human_comment(5, "/nexkit trust", "alice")
+        self.gh.edits[5] = [("bob", "2026-01-02T00:00:00Z")]
+
+    def unreadable(self):
+        return mock.patch.object(self.gh, "issue", side_effect=GitHubError(502, "down"))
+
+    def assertNeedsPerson(self, events):
+        [event] = events
+        self.assertEqual(event["kind"], "actionFinished")
+        result = event["result"]
+        self.assertEqual((result["accepted"], result["refusal"]), (False, "needsPerson"))
+        self.assertEqual(self.gh.merged, [])
+
+    def test_a_closed_issue_sends_a_refusal_only_a_person_clears(self):
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        outcome, _, events = self.merge()
+        self.assertEqual(outcome, "merge_issue_closed")
+        self.assertNeedsPerson(events)
+
+    def test_an_issue_edited_after_a_vouch_sends_a_refusal_only_a_person_clears(self):
+        self.edited()
+        outcome, _, events = self.merge()
+        self.assertEqual(outcome, "merge_untrusted")
+        self.assertNeedsPerson(events)
+
+    def test_an_unreadable_issue_sends_a_refusal_only_a_person_clears(self):
+        with self.unreadable():
+            outcome, _, events = self.merge()
+        self.assertEqual(outcome, "merge_refused")
+        self.assertNeedsPerson(events)
+
+    def test_a_closed_issue_keeps_its_words(self):
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        _, text, _ = self.merge()
+        self.assertIn("NexKit did not merge it: #5 is closed.", text)
+
+    def test_an_unreadable_issue_keeps_what_a_person_does(self):
+        with self.unreadable():
+            _, text, _ = self.merge()
+        self.assertIn("it could not read #5", text)
+        self.assertEqual(
+            self.target["found"]["refused"][0],
+            "comment `/nexkit review` on the pull request to try the merge again",
+        )
+
+    def test_a_guard_the_engine_refuses_to_decide_is_a_refused_merge(self):
+        from nexkit import host
+
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        from nexkit.report import merge_pull
+
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            outcome, text = merge_pull(self.gh, self.cfg, self.target, {}, "", WORKFLOW, "main")
+        self.assertEqual(outcome, "merge_refused")
+        self.assertIn("refused to decide its next step", text)
+        self.assertIn("refused", self.target["found"])
+
+    def test_a_merge_that_passes_the_guards_asks_the_engine_nothing(self):
+        outcome, _, events = self.merge()
+        self.assertEqual((outcome, events), ("merged", []))
+
+
 class PersonsPullRequestTests(ReportCase):
     def setUp(self):
         super().setUp()

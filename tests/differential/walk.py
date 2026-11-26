@@ -77,6 +77,9 @@ INVARIANTS = {
     "required-checks": "a start of the wait for required checks lives only in `accepting`, on "
     "the change's version; a refusal for them that have not passed leaves one wait, a tick and "
     "the first start of that version; a tick more than six hours after it needs a person",
+    "refusals": "a refused accept that no one retries, a moved head, a refusal after the base "
+    "branch kept moving or one only a person clears, waits for a person in `ready`; one that "
+    "was not accepted fails the item",
 }
 
 # Broken invariants that a known issue covers: (invariant, a text the problem starts with).
@@ -279,7 +282,8 @@ class Walker:
                 return self.checks(rng)
         if kind == "accept" and rng.random() < 0.6:
             refusal = rng.choice(
-                ["checkFailed", "checkFailed", "conflict", "behind", "notAccepted", "needsPerson"]
+                ["checkFailed", "checkFailed", "conflict", "behind", "notAccepted"]
+                + ["transient", "headMoved", "needsPerson"] * 2
                 + ["waitingForChecks"] * 8
             )
             found = {"accepted": False, "refusal": refusal, "text": "x"}
@@ -845,6 +849,7 @@ class Walker:
             if not old.get("due") and rounds["conflicts"] == old["conflicts"]:
                 flag("usage-limit", "a run again after a tick counted as started", info)
         self.required_checks(state, event, answer, done, flag, info)
+        self.refusals(state, event, answer, done, flag, info)
         self.start(state, event, new, actions, flag, info)
         self.accept_conflict(state, event, answer, done, given, flag, info)
         # automatic: a round that its checks or its review judged keeps its count, so only a
@@ -966,6 +971,28 @@ class Walker:
         elif not waited and calm and not state["attention"] and len(state["waits"]) == 1:
             if not any(a["kind"] == "accept" for a in actions) and new["state"] == "accepting":
                 flag("required-checks", "a tick within six hours tries no accept again", info)
+
+    def refusals(self, state, event, answer, done, flag, info):
+        """The invariant of the refusals that wait for a person: with a calm observation, an
+        accept refused as `transient`, `headMoved` or `needsPerson` leaves the item in `ready`
+        with `acceptRefused`, and `notAccepted` in `failed`."""
+        if state is None or not answer["changed"] or state["state"] != "accepting":
+            return
+        if done is None or done["kind"] != "accept":
+            return
+        refusal = (event.get("result") or {}).get("refusal")
+        seen = state["observed"]
+        calm = bool(seen) and not (seen["conflicts"] or seen["merged"] or seen["empty"])
+        calm = calm and seen["version"] == state["change"]["version"] and not state["hold"]
+        if not calm:
+            return
+        new = answer["state"]
+        attention = new["attention"] or {}
+        if refusal in ("transient", "headMoved", "needsPerson"):
+            if new["state"] != "ready" or attention.get("reason") != "acceptRefused":
+                flag("refusals", f"a {refusal} refusal does not wait for a person", info)
+        elif refusal == "notAccepted" and new["state"] != "failed":
+            flag("refusals", "an accept that was not accepted does not fail the item", info)
 
     # -- a walk ---------------------------------------------------------------------------------
 

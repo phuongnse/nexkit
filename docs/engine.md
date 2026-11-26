@@ -66,11 +66,15 @@ without a change to any host, as long as the conformance suite passes.
   answer names at most 20 ways in which a request breaks the protocol. `serve` answers each
   request on its own and keeps nothing between them. On `SIGTERM` it exits at once: a request
   in flight gets no answer, and its host sends it again, which the engine allows since it keeps
-  no state and answers a request the same each time. It refuses a body over 1 MiB, or 16 MiB
-  for `prompt`, without one `Content-Length` or that stops coming, a method other than `POST`, a
-  call it does not know and a request that HTTP does not allow. Each refusal is an error answer
-  (`calls/error.schema.json`) with its own status. It listens on `127.0.0.1:8080` unless
-  `--host` and `--port` say otherwise.
+  no state and answers a request the same each time. It refuses a body over the limit of its
+  call, `MAX_BODY` or for `prompt` the larger `MAX_BODIES`, without one `Content-Length` (zeros
+  before its number do not count) or that stops coming, a method other than `POST`, a call it
+  does not know and a request that HTTP does not allow. A host whose `prompt` request is over its
+  limit sends the same request to `nexkit-engine prompt` on standard input, which has no limit
+  and answers it the same. Such a request holds only the input kinds `runAgent` names, with
+  diffs and outputs cut, so only whole texts and many comments make it large. Each refusal is an
+  error answer (`calls/error.schema.json`) with its own status. It listens on `127.0.0.1:8080`
+  unless `--host` and `--port` say otherwise.
 - **Only for its host.** `serve` asks no one who they are, and does not limit how many clients
   connect or how slowly they send. Put it where only its host reaches it, such as the host's
   own machine or a private network beside it.
@@ -129,10 +133,14 @@ running round started with, but `lostWaits`, which applies as the host gives it 
 - **Limits.** The engine applies them: how much of each text and block a prompt keeps, how many
   comments, and in what order. A text that a prompt keeps only the start of, or leaves out, goes
   whole to a file in the folder that `texts` names, an absolute path outside the working tree,
-  where the agent reads it. So the texts come whole, but a diff and a check's output come cut to
-  what a prompt shows of them, and the schema refuses more.
+  POSIX or Windows, where the agent reads it. The engine names each file from the host's id,
+  and adds a short hash of the id when the id holds a character a file name cannot, so two ids
+  never share a file. So the texts come whole, but a diff and a check's output come cut to what
+  a prompt shows of them, and the schema refuses more.
 - **The answer** holds the prompt, the texts it shortened or left out, the links it lists as not
-  read, and the files with their texts, which the host writes before the agent runs.
+  read, and the files with their texts, which the host writes before the agent runs. A host
+  that writes them first checks that each path is inside its `texts` folder, and writes none
+  when one is not.
 - **Policies.** Beside the host's policies, the call reads three that the protocol does not hold
   yet, as its schema names them: `checklist`, the items the plan and the review answer;
   `profiles`, the profiles triage chooses from, each with its `when` as a string; and `budgets`,
@@ -156,11 +164,18 @@ needed.
   host whose write loses reads the state again and sends the event again. An answer that changes
   nothing, such as to a duplicate result, says so and gives the state back as it came, with no
   actions, so the host writes nothing.
-- **It holds decisions, not prose.** The state keeps what the engine decides from: the state
-  name, the change, questions, criteria and checklist outcomes, findings in short, failure
-  signatures, counts, and the tokens, time and money its agents spent. Long texts, such as a
-  plan's prose, check output, a discussion and evidence, stay with the host as texts that the
-  state names, and reach the engine only in `prompt`.
+- **It holds decisions and the history that the prompts show, not other prose.** The state keeps
+  what the engine decides from: the state name, the change, questions, criteria and checklist
+  outcomes, findings in short, failure signatures, counts, and the tokens, time and money its
+  agents spent. It also keeps the history that the next fix and review prompts show: the latest
+  fix rounds' records, each with its number, who started it, whether it diagnosed, its note, the
+  agent's summary and cause, and the checks that still failed after it with their failure
+  signatures, and the last review's round, version, verdict and findings with file, line and
+  body. The engine records a fix round when its agent returns a result that is not blocked, and
+  the checks after it complete the record. A round under way keeps who started it, whether it
+  diagnoses and its note until then (`rounds.fixRound`). Other long texts, such as a plan's prose,
+  check output, a discussion and evidence, stay with the host as texts that the state names, and
+  reach the engine only in `prompt`.
 - **It has a size.** The protocol sets the largest state document: 48,000 bytes as JSON in UTF-8
   with its keys sorted and no spaces, so that its base64 fits one GitHub comment of 65,536
   characters. What results and events bring is bounded as it comes in. Each list keeps at most as
@@ -171,14 +186,23 @@ needed.
   first. A split of more parts keeps none of them, only how many it named, so a split is never filed
   cut. Each text is clipped as NexKit 6 clips it: a question at 1,500 characters, an option at 500,
   the item's title and a part's at 256, a path at 300, a finding at 300, a reason for a person at
-  1,000 and a check's name at 40, as long as NexKit's own may be. A long failure signature is kept
-  as its hash, never cut, because rounds compare signatures. When a document would still pass the
-  limit, the engine shortens texts that a person reads in full where the host keeps them, each to
-  the most that fits, in this order: the findings, the questions and their options, the protected
-  paths, the attention's text, and the names of repeated checks past the ten that a diagnosis round
-  looks into, which no name of NexKit's own ever needs. It never shortens a count, a status, an id,
-  a title or a signature, which decisions read, and a host that builds a first document keeps it the
-  same way. The engine never answers a state that its own schema refuses, such as an outbox past its
+  1,000 and a check's name at 40, as long as NexKit's own may be. The history is clipped as the
+  prompts clip it: a note at 2,000 characters, a summary at 4,000, a cause at 2,000, a finding's
+  body at 1,500 and the failure signature of a fix record at 200. The state keeps the latest 5 fix
+  records, each with at most 30 failing checks, and the last review's 30 findings, in the
+  reviewer's order, or the blocking ones first when there are more, with how many were left out.
+  A long failure signature is kept as its hash, never cut, because rounds compare signatures.
+  When a document would still pass the limit, the engine shortens texts that a person reads in full
+  where the host keeps them, each to the most that fits, in this order: the findings, the questions
+  and their options, the protected paths, the attention's text, and the names of repeated checks
+  past the ten that a diagnosis round looks into, which no name of NexKit's own ever needs. Only
+  then does it shorten the history: the last review's suggestions and then its blocking findings,
+  the fix records' notes, summaries and causes and the note of the round under way, the check
+  names, failure signatures and conflicting files of the fix records, and the files of the last
+  review's findings. If the document still does not fit, the oldest fix records leave out the
+  checks that still failed after them, which a prompt then shows as unknown. It never shortens a
+  count, a status, an id, a title or a signature, which decisions read, and a host that builds a
+  first document keeps it the same way. The engine never answers a state that its own schema refuses, such as an outbox past its
   `maxItems` when a host never reports its actions: it refuses that event instead.
 - **It is the truth.** A host may keep columns or markers that copy parts of it, for its own
   lists and pages, written in the same transaction, but the engine reads only the document.
@@ -293,7 +317,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `accepting`, `fixing` |
 | `fixing` | An agent works on the failures and findings, in the same change, or its round waits to start | `checking`, `awaitingApproval`, `planning`, `working`, `ready`, `failed` |
 | `ready` | The change passed, or a person decides what is left | `accepting`, `fixing`, `checking` |
-| `accepting` | The host accepts the change | `accepted`, `ready`, `fixing`, `working`, `failed` |
+| `accepting` | The host accepts the change | `accepted`, `ready`, `checking`, `fixing`, `working`, `failed` |
 | `accepted` | The change is in | `new`, when a person reopens it |
 | `split` | The work is carried by its parts | `accepted`, `dropped` |
 | `noChange` | Nothing needs to change, and the item says why | `new`, when a person reopens it |
@@ -459,6 +483,13 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   again, so checks that never end are looked into by a person, as NexKit 6's autopilot does. The
   time is the tick's own: the engine reads no clock, and a refusal that comes in never ends the
   wait.
+- **An accept refused for a reason that waits for a person** (`headMoved`, `transient` and
+  `needsPerson`) goes to `ready` with `acceptRefused`, and one that was not accepted
+  (`notAccepted`) to `failed`. A host that read a newer version of the change sends it as an
+  observation before the refusal, which the engine checks as any push: the item goes to
+  `checking`, the pending accept is cancelled, and the refusal that follows changes nothing. A
+  `headMoved` with no newer observation waits for a person, since the engine has no version to
+  check.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
@@ -796,7 +827,10 @@ adapter. A new rule of the engine comes with a case.
   The checks that NexKit 6 found failing the same way before and after the last fix round are
   kept for the next automatic fix round to diagnose (`rounds.repeated`). So are the failing
   checks of NexKit 6's state comment (`rounds.failing`), which the checks after the next fix
-  round compare with, as NexKit 6 compares them. The version a fix round published
+  round compare with, as NexKit 6 compares them. The fix records and the last review of NexKit 6's
+  state comment are imported with NexKit 6's round numbers, which count every run on the pull
+  request, so the engine numbers the rounds after them from the next number. The version a fix
+  round published
   (`rounds.fixed`) is not imported, since every imported fix round still publishes and the
   engine sets it then.
   What a round decided on its head keeps that head as the change's version, and a head pushed
@@ -826,12 +860,16 @@ adapter. A new rule of the engine comes with a case.
    `maintain`), what follows required checks that fail at the merge (`report`), and the wait
    for required checks that have not passed yet, with its end after a time (`report` and the
    sweep's `autopilot`). `host.accept_answer` sends a merge's answer to `step` as an `accept`
-   result and carries out what the engine answers. So far a merge refused for required checks
-   that have not passed yet is sent, and a merge refused for a conflict, with the conflict rounds
-   used: under `conflicts.auto_resolve` the engine answers a conflict round while
-   `conflicts.max_rounds` has one left, and otherwise a person. A pull request that GitHub
-   reports as `dirty` only at the end of the refusal is sent too, as a conflict without
-   `conflicts.auto_resolve` and as `needsPerson` with it. The merge's observations reach the engine too
+   result and carries out what the engine answers. So far it sends a merge refused for required
+   checks that have not passed yet, a merge refused because the head moved, which first sends
+   the new head as an observation, so that the engine checks it, the last refusal after the
+   base branch kept moving, the guards that stop a merge before it is tried (an issue closed,
+   edited after a vouch or unreadable), and GitHub's other refusals that only a person clears.
+   A merge refused for a conflict is sent too, with the conflict rounds used: under
+   `conflicts.auto_resolve` the engine answers a conflict round while `conflicts.max_rounds`
+   has one left, and otherwise a person. A pull request that GitHub reports as `dirty` only at
+   the end of the refusal is sent as a conflict without `conflicts.auto_resolve` and as
+   `needsPerson` with it. The merge's observations reach the engine too
    (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
    change that the base branch already holds ends it as `noChange`, and a commit that a person
    pushes while the merge waits is checked. After NexKit's own merge, `host.part_ended` sends the
@@ -863,10 +901,12 @@ adapter. A new rule of the engine comes with a case.
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found
    after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
-   as does the merge itself (`report.merge_pull`) but for required checks that fail or have not
-   passed yet, a conflict, a change that a person merged, one that became empty, a commit pushed while the
-   merge waits, and the end of the direct parent. The parents above it, and a parent's end
-   outside the merge, stay NexKit 6's, and so does a branch behind its base at the merge. A
+   as does the merge itself (`report.merge_pull`) but for the refusals above: those for required
+   checks that fail or have not passed yet, a head that moved, a base branch that kept moving,
+   a reason only a person clears and a conflict, a change that a person merged, one that became
+   empty, a commit pushed while the merge waits, and the end of the direct parent. The parents
+   above it, and a parent's end outside the merge, stay NexKit 6's, and so does a branch behind
+   its base at the merge. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`
    that stopped as blocked with neither is the engine's too: it waits for a person, and with

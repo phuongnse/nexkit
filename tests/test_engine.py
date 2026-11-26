@@ -29,7 +29,13 @@ EXAMPLES = protocol.ROOT / "examples"
 # fails the test.
 ALLOWED = {
     "nexkit": set(),
-    "nexkit.engine.machine": {"__future__", "copy", "nexkit.protocol.size", "nexkit.schema"},
+    "nexkit.engine.machine": {
+        "__future__",
+        "copy",
+        "nexkit.engine.textutil",
+        "nexkit.protocol.size",
+        "nexkit.schema",
+    },
     "nexkit.protocol.size": {"__future__", "hashlib", "json"},
     "nexkit.engine": {
         "__future__",
@@ -43,10 +49,12 @@ ALLOWED = {
     },
     "nexkit.engine.sweep": {"__future__", "nexkit.engine.machine"},
     # `importlib` only for `importlib.resources`, to read the prompts' own templates, which
-    # ship inside the package as the schemas do; `nexkit.protocol` for the checklist stages.
+    # ship inside the package as the schemas do; `nexkit.protocol` for the checklist stages;
+    # `hashlib` to name the files of whole texts, so two ids never share one.
     "nexkit.engine.prompt": {
         "__future__",
         "functools",
+        "hashlib",
         "importlib",
         "re",
         "string",

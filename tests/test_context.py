@@ -8,7 +8,7 @@ from pathlib import Path
 
 from nexkit.agent import shortened_folders
 from nexkit.checks import run_checks
-from nexkit.context import MAX_LINKED, MAX_LINKED_ISSUES, gather
+from nexkit.context import MAX_LINKED, MAX_LINKED_ISSUES, gather, keep_texts
 from nexkit.engine.prompt import (
     NO_PLAN,
     PERSON_PLAN,
@@ -848,6 +848,25 @@ class ContextTests(unittest.TestCase):
         self.assertIn("`v2`", feedback)
         self.assertNotIn("`v1`", feedback)
         self.assertIn("No findings.", gather(self.gh, decision, "review")["previous_round"])
+
+
+class KeepTextsTests(unittest.TestCase):
+    def test_a_path_outside_the_folder_is_refused_and_nothing_is_written(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "texts"
+            inside = folder / "issue-5.md"
+            outside = Path(tmp) / "elsewhere.md"
+            files = [
+                {"path": str(inside), "text": "in"},
+                {"path": str(folder / ".." / "elsewhere.md"), "text": "out"},
+            ]
+            with self.assertRaisesRegex(ValueError, "is not in"):
+                keep_texts(files, folder)
+            self.assertFalse(inside.exists())
+            self.assertFalse(outside.exists())
+            self.assertFalse(folder.exists())
+            keep_texts(files[:1], folder)
+            self.assertEqual(inside.read_text(encoding="utf-8"), "in")
 
 
 class VouchedIssueTests(unittest.TestCase):

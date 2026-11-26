@@ -1,6 +1,7 @@
 """The docs' map lists every doc, with the decisions listed through their index. The links of the
-map, of the docs standard, of the architecture page, of the security page, of the decisions and of
-AGENTS.md resolve. AGENTS.md keeps within its word limits, and the architecture page's job and
+map, of the docs standard, of the architecture page, of the security page, of the decisions, of the
+maintenance skills and of AGENTS.md resolve. Each task of the nexkit-maintain skill links a section
+of the delivery page. AGENTS.md keeps within its word limits, and the architecture page's job and
 module tables match the workflows and nexkit/. The decisions index matches the decision files, and
 each decision is linked. Each test the security page names exists, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
@@ -282,6 +283,37 @@ class DecisionsTests(unittest.TestCase):
             self.assertIn(
                 file.resolve(), linked, f"no rule of AGENTS.md and no page links {file.name}"
             )
+
+
+class MaintenanceSkillsTests(unittest.TestCase):
+    SKILLS = ROOT / ".claude" / "skills"
+    MAINTAIN = SKILLS / "nexkit-maintain"
+
+    def test_the_links_of_the_maintenance_skills_resolve(self):
+        pages = sorted(self.SKILLS.rglob("*.md"))
+        self.assertTrue(pages, "there is no maintenance skill under .claude/skills/")
+        for page in pages:
+            for file, anchor in links(page):
+                where = page.relative_to(ROOT)
+                self.assertTrue(file.exists(), f"{where} links {file}, which does not exist")
+                if anchor and file.suffix == ".md":
+                    self.assertIn(anchor, anchors(file), f"{where} links #{anchor} of {file.name}")
+
+    def test_each_task_of_nexkit_maintain_links_a_delivery_section(self):
+        tasks = sorted(
+            file
+            for file, _ in links(self.MAINTAIN / "SKILL.md")
+            if file.suffix == ".md" and file.parent == self.MAINTAIN.resolve()
+        )
+        self.assertEqual(len(tasks), 6, "SKILL.md must link the six task files beside it")
+        delivery = anchors(DOCS / "delivery.md")
+        for task in tasks:
+            sections = [
+                anchor
+                for file, anchor in links(task)
+                if file == (DOCS / "delivery.md").resolve() and anchor in delivery
+            ]
+            self.assertTrue(sections, f"{task.name} links no section of docs/delivery.md")
 
 
 if __name__ == "__main__":

@@ -63,7 +63,46 @@ KNOWN = [
             and bool(new["report"]["attention"])
         ),
     },
+    {
+        "name": "409 on the same head",
+        "family": "refusals",
+        "by": "#391",
+        "why": (
+            "When GitHub answered 409, as if the branch had moved, but the pull request still "
+            "showed the head that the round checked, NexKit 6 started `/nexkit review` on that "
+            "same commit. The engine has no newer version to check, so it asks a person: the "
+            "merge is `merge_refused`, and no review starts."
+        ),
+        "match": lambda sc, old, new: (
+            sc["refusal"] == "409_same_head"
+            and _outcomes(old, "head_moved")
+            and not _outcomes(new, "head_moved")
+            and _outcomes(new, "merge_refused")
+            and not _reviews(new)
+            and _reviews(old)
+        ),
+    },
 ]
+
+
+def _after(record):
+    """What GitHub holds in `record` after the command and after each sweep."""
+    found = (record.get(key) for key in ("gh", "gh1", "gh2"))
+    return [item for item in found if isinstance(item, dict)]
+
+
+def _outcomes(record, outcome):
+    """Whether a round's comment in `record` ends as `outcome`."""
+    return any(f'"outcome": "{outcome}"' in str(item) for item in _after(record))
+
+
+def _reviews(record):
+    """Whether `record` has a dispatch of `/nexkit review`."""
+    return any(
+        dispatch["inputs"].get("command") == "review"
+        for item in _after(record)
+        for dispatch in item.get("dispatches", [])
+    )
 
 
 def listed(family, sc, old, new):

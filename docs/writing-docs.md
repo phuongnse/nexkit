@@ -242,8 +242,10 @@ when a list of what the code defines misses an entry. These rules close each of 
 9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
    every doc, with the decisions listed through [the index](decisions.md); that the links of the
    map, of this page, of the architecture page, of the security page, of the index, of each decision
-   file and of [AGENTS.md](../AGENTS.md) resolve; that AGENTS.md keeps within its word limits; that
-   the job and module tables of the architecture page match the workflows and `nexkit/`; that each
-   test the security page names exists; and that the index matches the decision files, each of which
-   follows the template and is linked from a rule or a page. A docs check is added only once the whole
-   tree passes it: there are no lists of exceptions.
+   file, of the maintenance skills under `.claude/skills/` and of [AGENTS.md](../AGENTS.md) resolve;
+   that each task of the `nexkit-maintain` skill links a section of [Delivery](delivery.md); that
+   AGENTS.md keeps within its word limits; that the job and module tables of the architecture page
+   match the workflows and `nexkit/`; that each test the security page names exists; and that the
+   index matches the decision files, each of which follows the template and is linked from a rule or
+   a page. A docs check is added only once the whole tree passes it: there are no lists of
+   exceptions.

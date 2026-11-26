@@ -195,5 +195,6 @@ carry out the tasks that [How it works](how-it-works.md) describes:
 
 The maintenance skills under `.claude/skills/` serve work on NexKit itself. For example,
 [`nexkit-docs-audit`](../.claude/skills/nexkit-docs-audit/SKILL.md) reads the docs against the
-code. `claude plugin validate --strict .` checks the manifests and the skills, as
-[the checks](testing.md#which-check-covers-what) say.
+code, and [`nexkit-maintain`](../.claude/skills/nexkit-maintain/SKILL.md) carries out the owner's
+session on this repository as [Delivery](delivery.md) describes. `claude plugin validate --strict .`
+checks the manifests and the skills, as [the checks](testing.md#which-check-covers-what) say.

@@ -1,0 +1,436 @@
+{
+  "policies": {
+    "fixRounds": 2
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:review"
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "accept"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix",
+        "note": "Keep the header"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.fixRound": {
+          "auto": false,
+          "diagnosis": false,
+          "note": "Keep the header"
+        }
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": null,
+          "limit": null,
+          "transient": false,
+          "noResult": false,
+          "error": null,
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": null,
+          "usd": null,
+          "output": {
+            "status": "done",
+            "summary": "Kept the header and fixed the title.",
+            "blocker": "",
+            "questions": [],
+            "checks_run": [
+              "python3 -m unittest"
+            ],
+            "protected_paths": [],
+            "cause": "The header was dropped when the title was rewritten.",
+            "cause_outside": false,
+            "open_conflicts": []
+          }
+        }
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "publish"
+      ],
+      "expect": {
+        "rounds.fixes.0.round": 2,
+        "rounds.fixes.0.auto": false,
+        "rounds.fixes.0.diagnosis": false,
+        "rounds.fixes.0.note": "Keep the header",
+        "rounds.fixes.0.summary": "Kept the header and fixed the title.",
+        "rounds.fixes.0.cause": "The header was dropped when the title was rewritten."
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v2"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v2",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": false,
+              "skipped": false,
+              "signature": "fail test_x",
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.fixes.0.failing": [
+          {
+            "name": "test",
+            "signature": "fail test_x"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": null,
+          "limit": null,
+          "transient": false,
+          "noResult": false,
+          "error": null,
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": null,
+          "usd": null,
+          "output": {
+            "verdict": "request_changes",
+            "summary": "The change does what the plan says.",
+            "criteria": [
+              {
+                "criterion": "A test shows the round says the issue is closed.",
+                "status": "met",
+                "test": "tests/test_report.py",
+                "evidence": "The test passes."
+              }
+            ],
+            "findings": [
+              {
+                "severity": "suggestion",
+                "file": "a.py",
+                "line": 3,
+                "body": "Name the helper after what it reads."
+              },
+              {
+                "severity": "blocking",
+                "file": "b.py",
+                "line": 9,
+                "body": "The title is not read again after a 422."
+              }
+            ],
+            "previous_findings": []
+          }
+        }
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.lastReview.round": 2,
+        "rounds.lastReview.verdict": "request_changes",
+        "rounds.lastReview.findings.1.file": "b.py",
+        "rounds.lastReview.findings.1.line": 9,
+        "rounds.lastReview.findings.1.body": "The title is not read again after a 422.",
+        "rounds.fixRound": {
+          "auto": true,
+          "diagnosis": false,
+          "note": ""
+        }
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": null,
+          "limit": null,
+          "transient": false,
+          "noResult": false,
+          "error": null,
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": null,
+          "usd": null,
+          "output": {
+            "status": "done",
+            "summary": "Read the stale fake issue again.",
+            "blocker": "",
+            "questions": [],
+            "checks_run": [
+              "python3 -m unittest"
+            ],
+            "protected_paths": [],
+            "cause": "The test read a stale fake issue.",
+            "cause_outside": false,
+            "open_conflicts": []
+          }
+        }
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "publish"
+      ],
+      "expect": {
+        "rounds.fixes.1.round": 3,
+        "rounds.fixes.1.auto": true,
+        "rounds.fixes.1.note": "",
+        "rounds.fixes.1.summary": "Read the stale fake issue again.",
+        "rounds.fixes.1.cause": "The test read a stale fake issue."
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v3"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v3",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.fixes.1.failing": [],
+        "rounds.fixes.0.failing": [
+          {
+            "name": "test",
+            "signature": "fail test_x"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": null,
+          "limit": null,
+          "transient": false,
+          "noResult": false,
+          "error": null,
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": null,
+          "usd": null,
+          "output": {
+            "verdict": "approve",
+            "summary": "The change does what the plan says.",
+            "criteria": [
+              {
+                "criterion": "A test shows the round says the issue is closed.",
+                "status": "met",
+                "test": "tests/test_report.py",
+                "evidence": "The test passes."
+              }
+            ],
+            "findings": [
+              {
+                "severity": "suggestion",
+                "file": "c.py",
+                "line": 12,
+                "body": "The comment repeats the name."
+              }
+            ],
+            "previous_findings": []
+          }
+        }
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "accept",
+        "rounds.lastReview.round": 3,
+        "rounds.lastReview.verdict": "approve",
+        "rounds.lastReview.version": "v3",
+        "rounds.lastReview.findings.0.severity": "suggestion",
+        "rounds.lastReview.findings.0.file": "c.py",
+        "rounds.lastReview.findings.0.line": 12,
+        "rounds.lastReview.findings.0.body": "The comment repeats the name.",
+        "rounds.fixes.0.note": "Keep the header",
+        "rounds.fixes.1.auto": true
+      }
+    }
+  ]
+}

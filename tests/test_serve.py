@@ -248,8 +248,30 @@ class ServeTest(unittest.TestCase):
             self.assertEqual(send_raw(port, head % b" 15 " + b"\r\n" + describe)[0], 200)
             twice = head % b"15" + b"Content-Length: 15\r\n\r\n" + describe
             self.assertEqual(send_raw(port, twice)[0], 200)
+            # A length is read as its number, whatever zeros come before it.
+            self.assertEqual(send_raw(port, head % b"000000015" + b"\r\n" + describe)[0], 200)
+            zeros = head % b"015" + b"Content-Length: 15\r\n\r\n" + describe
+            self.assertEqual(send_raw(port, zeros)[0], 200)
+            self.assertRefused(
+                send(port, "/step", b"{}", headers={"Content-Length": "0" * 50 + "9" * 50}),
+                413,
+                "at most",
+            )
             two = head % b"15" + b"Content-Length: 14\r\n\r\n" + describe
             self.assertRefused(send_raw(port, two), 400, "more than one Content-Length")
+
+    def test_a_prompt_request_over_the_limit_goes_on_standard_input(self):
+        body = (protocol.ROOT / "examples" / "calls" / "prompt.json").read_bytes()
+        with (
+            mock.patch.dict(serve.MAX_BODIES, {"prompt": 10}),
+            server_in_this_process() as port,
+        ):
+            status, answer = send(port, "/prompt", body)
+        self.assertEqual(status, 413)
+        self.assertIn("at most 10 bytes", json.loads(answer)["error"])
+        code, answer = on_standard_input("prompt", body)
+        self.assertEqual(code, 0)
+        self.assertNotIn("error", json.loads(answer))
 
     def test_a_body_that_stops_coming_is_the_request_s_fault(self):
         with (

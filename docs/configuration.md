@@ -80,7 +80,7 @@ Checks, autopilot, and merges and waits have pages of their own: [Configuring ch
 | `parallel_checks` | `false` | Run the checks in parallel jobs, each check, or each `group` of checks, in a job of its own, so a round takes about as long as its slowest job. See [Parallel checks](checks.md#parallel-checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
 | `evidence.artifacts` | `[]` | Names of the CI artifacts that NexKit downloads for the plan, implement and fix agents, from the CI runs an issue names. A name ending in `*` matches every artifact that starts with the rest. See [Evidence from CI runs](checks.md#evidence-from-ci-runs). |
-| `stages` | see [Stages](#stages) | Per-stage agent, model, effort, timeout and budget. |
+| `stages` | see [Stages](#stages) | Per-stage agent, model, effort and timeout. |
 | `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See [Profiles](#profiles). |
 | `default_profile` | `null` | The profile to use when no plan chose one. Required with `profiles`. |
 
@@ -423,7 +423,7 @@ ones, without choosing by hand on every issue.
   `stages.<stage>`, then `profiles.<profile>.stages.<stage>`. What a profile leaves out
   comes from `stages`. A profile can also run a stage on another agent, such as a second
   Claude account.
-- `stages.triage` sets the agent, model, effort, timeout and budget of the triage call. It
+- `stages.triage` sets the agent, model, effort and timeout of the triage call. It
   takes the top-level `agent`, `model` and `effort` unless it sets its own. A profile
   cannot set it, because triage runs before there is a profile.
 - `default_profile` is used when no plan chose a profile: `/nexkit go` without a plan, a

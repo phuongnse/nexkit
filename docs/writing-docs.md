@@ -269,7 +269,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    table of [the README](../README.md#use-it) lists each comment command `nexkit/route.py` accepts,
    where it accepts it, and no other; that the key tables and the complete configuration of the
    [configuration reference](configuration.md) list each key the code defines and no other, with its
-   default and range; that the runtime table of the configuration reference lists each runtime the
+   default and range; that the table of a stage's keys in
+   [the configuration reference](configuration.md#stages) lists each key `nexkit/config.py` accepts
+   and no other; that the runtime table of the configuration reference lists each runtime the
    code defines, with its providers and effort levels, and which runtimes report
    usage limits; that the provider table of the configuration reference lists each provider the code
    defines and no other, with its settings and secret fields; that the table of the App's

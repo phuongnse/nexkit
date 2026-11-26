@@ -584,7 +584,11 @@ class RefusedTest(HostCase):
             self.assertEqual(self.started(), [("go", 6)])
             self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
             event = comment_event(5, "/nexkit plan Close the issue")
-            self.assertEqual(route(self.gh, "issue_comment", event)["action"], "plan")
+            # An engine that refuses the item starts nothing for a person's command either: the
+            # person gets a reply that says so.
+            refusal = route(self.gh, "issue_comment", event)
+            self.assertEqual((refusal["action"], refusal["reply_to"]), ("none", 5))
+            self.assertIn("passes the limit", refusal["reason"])
         self.assertEqual(route(self.gh, "issue_comment", event)["task"], "close_answer")
 
 
@@ -1143,8 +1147,10 @@ class RoundClosingCommandTest(HostCase):
         self.assertEqual(
             (decision["task"], decision["answer"]), ("close_answer", "Close the issue")
         )
-        [call] = answer.call_args_list
-        self.assertEqual(call.args[0]["event"]["kind"], "answered")
+        # The command goes to the engine first, then the answer that only closes the issue.
+        kinds = [call.args[0]["event"]["kind"] for call in answer.call_args_list]
+        self.assertEqual(kinds, ["requested", "answered"])
+        call = answer.call_args_list[-1]
         self.assertEqual(call.args[0]["state"]["questions"]["ref"], str(self.asked["id"]))
 
     def test_an_open_pull_request_keeps_the_issue_for_a_person(self):
@@ -1955,7 +1961,10 @@ class DiagnosisTest(HostCase):
             event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": auto}}
             with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
                 found[auto] = route(self.gh, "workflow_dispatch", event, event["inputs"])
-            self.assertEqual(len(answer.call_args_list), 1)
+            # The command is the engine's to start, and then it names what the round diagnoses.
+            kinds = [call.args[0]["event"]["kind"] for call in answer.call_args_list]
+            self.assertEqual(len(kinds), 2, kinds)
+            self.assertEqual(kinds[0], "requested")
         self.assertEqual(found["true"]["diagnose"], ["test"])
         self.assertNotIn("diagnose", found["conflicts"])
         self.assertNotIn("diagnose", found["false"])

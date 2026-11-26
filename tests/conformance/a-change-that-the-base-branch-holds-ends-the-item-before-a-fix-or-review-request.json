@@ -1,0 +1,37 @@
+{
+  "policies": {},
+  "state": {
+    "example": "ready"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "changeObserved",
+        "empty": true
+      },
+      "state": "noChange",
+      "changed": true,
+      "actions": [
+        "close"
+      ]
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix"
+      },
+      "state": "noChange",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "noChange",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

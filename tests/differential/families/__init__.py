@@ -35,4 +35,5 @@ FAMILIES = {
     "parents": "#531",
     "vouch": "#538",
     "cleared": "#570",
+    "command": "#568",
 }

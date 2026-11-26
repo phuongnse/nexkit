@@ -584,7 +584,22 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    request as a `sweep` call, with the busy count as `running`, the index of each issue's
    milestone, its wave and whether pull requests wait for it as a bug issue about the default
    branch, and says each answer in NexKit 6's words. It names no account at a usage limit, so
-   that rule shows only in the conformance cases. Every existing test
+   that rule shows only in the conformance cases. A person's command starts its stage
+   only as the engine answers it too (`host.command`, called by `route`): a `/nexkit` comment,
+   a *Request changes* review and each dispatch of a command that NexKit sends, such as an
+   automatic fix round, a conflict round, a resume or a carried review. `route` builds a small
+   document from the facts that NexKit 6's `route` read, whether the issue or pull request is
+   open, the latest plan, an open pull request for `/nexkit go`, and whether the base branch
+   already holds the change, sends the command as a `requested` event (a review as
+   `changesRequested`) and starts the stage that the engine answers: a plan, an implement or a
+   fix round, or the checks and review. A closed issue or pull request, an open pull request
+   for `/nexkit go` and a change that the base branch holds are the engine's to refuse or end,
+   and `route` says each in NexKit 6's words; a change that the engine ends as `noChange` is
+   closed by the `maintain` job. An engine that refuses, or answers another stage, starts
+   nothing, and the person gets a reply that says so, which NexKit 6 never gave. A fork, a
+   person's pull request, which takes no `/nexkit fix`, an unknown command and an implement
+   round that still runs stay host checks, since they read facts only GitHub shows. Every
+   existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the
    conformance suite as it goes.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on

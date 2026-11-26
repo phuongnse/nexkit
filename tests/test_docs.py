@@ -22,8 +22,9 @@ supported versions is compared with the pins in nexkit/__init__.py, and each ubu
 README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
 row names exists. The configuration example of the README is what `nexkit init` writes for the
-README's own setup command. The decisions index matches the decision files, and each decision is
-linked, as
+README's own setup command. No doc, the README, AGENTS.md or a skill repeats a pinned version:
+each pin that D9 governs, or a lint tool's version from scripts/lint.sh. The decisions index
+matches the decision files, and each decision is linked, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import argparse
@@ -350,6 +351,28 @@ class ReadmeVersionsTests(unittest.TestCase):
         self.assertEqual(
             names, {nexkit.RUNNER}, "README.md names a runner other than nexkit.RUNNER"
         )
+
+
+class PinSourcesTests(unittest.TestCase):
+    def test_no_doc_repeats_a_pinned_version(self):
+        text = (ROOT / "scripts" / "lint.sh").read_text()
+        lint = dict(re.findall(r"^(RUFF|ACTIONLINT)_VERSION=(\S+)$", text, re.M))
+        self.assertEqual(
+            set(lint),
+            {"RUFF", "ACTIONLINT"},
+            "scripts/lint.sh does not set each tool's version once",
+        )
+        pins = {runtime.version for runtime in runtimes.RUNTIMES.values()}
+        pins |= {nexkit.PYTHON_IMAGE.split("@")[1], *lint.values()}
+        self.assertNotIn("", pins)
+        files = [AGENTS, README, *DOCS.rglob("*.md"), *(ROOT / "skills").rglob("*.md")]
+        for path in files:
+            with self.subTest(file=str(path.relative_to(ROOT))):
+                body = path.read_text()
+                for pin in sorted(pins):
+                    self.assertNotIn(
+                        pin, body, f"{path.relative_to(ROOT)} repeats the pinned version {pin}"
+                    )
 
 
 def table(path, header):

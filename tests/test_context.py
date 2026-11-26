@@ -515,6 +515,16 @@ class ContextTests(unittest.TestCase):
                 ]
             },
         }
+        # NexKit 6 records the review beside the checks it fed to the fix round.
+        state["last_review"] = {
+            "round": 2,
+            "head": HEAD,
+            "verdict": "request_changes",
+            "findings": [
+                {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Sign"},
+                {"severity": "suggestion", "file": "", "line": 0, "body": "Docs"},
+            ],
+        }
         self.gh.comment(6, render_state(state))
         self.gh.pr_reviews[6] = [
             {

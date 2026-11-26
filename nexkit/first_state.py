@@ -721,12 +721,41 @@ class Item:
             {"severity": item["severity"], "text": clip(item.get("body") or "", "finding")}
             for item in findings[: MOST["findings"]]
         ]
-        fixes = [fix for fix in map(_fix, record.get("fixes") or []) if fix]
-        if fixes:
-            rounds["fixes"] = fixes[-MOST["fixes"] :]
-        last = _last_review(record.get("last_review"))
-        if last:
-            rounds["lastReview"] = last
+        rounds.update(history(record))
+
+
+def history(record):
+    """The fix rounds and the last review of NexKit 6's state comment `record`, as the engine
+    keeps them in `rounds`: {fixes, lastReview}, each only when the record holds one."""
+    found = {}
+    fixes = [fix for fix in map(_fix, record.get("fixes") or []) if fix]
+    if fixes:
+        found["fixes"] = fixes[-MOST["fixes"] :]
+    last = _last_review(record.get("last_review"))
+    if last:
+        found["lastReview"] = last
+    return found
+
+
+def for_prompt(item, change, record, fix=None):
+    """The state document that the prompt call reads the earlier rounds from, for the work
+    item `item` whose change is `change`, {id, version} or None, on NexKit 6's state comment
+    `record`. It holds the change and the history only. With `fix`, this run's fix round, in
+    NexKit 6's form {auto, summary, note, cause}, the history ends with it as the newest
+    record: the round that a review after it follows."""
+    doc = empty(str(item))
+    doc["change"] = change
+    record = record if isinstance(record, dict) else {}
+    if fix:
+        rounds = [
+            entry.get("round")
+            for entry in [*(record.get("fixes") or []), record.get("last_review")]
+            if isinstance(entry, dict)
+        ]
+        number = max([n for n in map(_number, rounds) if n is not None], default=0) + 1
+        record = {**record, "fixes": [*(record.get("fixes") or []), {**fix, "round": number}]}
+    doc["rounds"].update(history(record))
+    return doc
 
 
 def _number(value):

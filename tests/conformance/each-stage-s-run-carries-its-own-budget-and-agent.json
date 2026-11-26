@@ -1,0 +1,219 @@
+{
+  "note": "Every stage and the item have a budget, and every stage has an agent. The plan run carries the plan's, not the triage's: the engine runs no triage, so the triage values reach no run.",
+  "policies": {
+    "budgets": {
+      "triage": {
+        "tokens": 1000,
+        "seconds": 1001,
+        "modelCalls": 1002
+      },
+      "plan": {
+        "tokens": 2000,
+        "seconds": 2001,
+        "modelCalls": 2002
+      },
+      "implement": {
+        "tokens": 3000,
+        "seconds": 3001,
+        "modelCalls": 3002
+      },
+      "fix": {
+        "tokens": 4000,
+        "seconds": 4001,
+        "modelCalls": 4002
+      },
+      "review": {
+        "tokens": 5000,
+        "seconds": 5001,
+        "modelCalls": 5002
+      },
+      "item": {
+        "tokens": 900000,
+        "seconds": 99999
+      }
+    },
+    "agents": {
+      "triage": {
+        "agent": "agent-triage",
+        "model": "model-triage",
+        "effort": "effort-triage"
+      },
+      "plan": {
+        "agent": "agent-plan",
+        "model": "model-plan",
+        "effort": "effort-plan"
+      },
+      "implement": {
+        "agent": "agent-implement",
+        "model": "model-implement",
+        "effort": "effort-implement"
+      },
+      "fix": {
+        "agent": "agent-fix",
+        "model": "model-fix",
+        "effort": "effort-fix"
+      },
+      "review": {
+        "agent": "agent-review",
+        "model": "model-review",
+        "effort": "effort-review"
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "pending.0.budget": {
+          "tokens": 2000,
+          "seconds": 2001,
+          "modelCalls": 2002
+        },
+        "pending.0.agent": "agent-plan",
+        "pending.0.model": "model-plan",
+        "pending.0.effort": "effort-plan"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "pending.2.budget": {
+          "tokens": 3000,
+          "seconds": 3001,
+          "modelCalls": 3002
+        },
+        "pending.2.agent": "agent-implement",
+        "pending.2.model": "model-implement",
+        "pending.2.effort": "effort-implement"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runChecks",
+        "result": {
+          "checks": [
+            {
+              "name": "test",
+              "passed": true,
+              "skipped": false,
+              "signature": null,
+              "knownBaseFailure": false
+            }
+          ]
+        }
+      },
+      "state": "reviewing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "pending.2.budget": {
+          "tokens": 5000,
+          "seconds": 5001,
+          "modelCalls": 5002
+        },
+        "pending.2.agent": "agent-review",
+        "pending.2.model": "model-review",
+        "pending.2.effort": "effort-review"
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:reviewChanges"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "pending.2.budget": {
+          "tokens": 4000,
+          "seconds": 4001,
+          "modelCalls": 4002
+        },
+        "pending.2.agent": "agent-fix",
+        "pending.2.model": "model-fix",
+        "pending.2.effort": "effort-fix"
+      }
+    }
+  ]
+}

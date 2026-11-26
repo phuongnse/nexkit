@@ -60,6 +60,7 @@ DEFAULTS = {
     "requested": {"by": PERSON, "note": ""},
     "planApproved": {"by": PERSON},
     "answered": {"by": PERSON, "answers": [{"question": 1, "option": 1}], "note": ""},
+    "textChanged": {"by": PERSON, "text": {"name": "body", "ref": "42"}},
     "commented": {"by": PERSON, "text": {"name": "comment", "ref": "9"}},
     "changesRequested": {"by": PERSON, "note": {"name": "comment", "ref": "9"}},
     "changeApproved": {"by": PERSON},
@@ -198,6 +199,82 @@ def allowed(policies, had_change):
     return pairs
 
 
+def policy_shapes(properties):
+    """What each policy of `properties` needs played, by its name: the tuples that must be
+    covered, and a function from a value to the tuples that value plays. It refuses a policy of
+    a shape it does not know, so a new kind of policy cannot slip past the check."""
+    return {name: _shape(name, schema) for name, schema in properties.items()}
+
+
+def _shape(name, schema):
+    kind = schema.get("type")
+    if "enum" in schema or kind == "boolean":
+
+        def play(value):
+            return {("policy", name, value)}
+
+        values = schema["enum"] if "enum" in schema else (True, False)
+        return {("policy", name, value) for value in values}, play
+    if kind == "integer" and "minimum" in schema:
+
+        def play(value):
+            return {("policy", name, "minimum" if value == schema["minimum"] else "above minimum")}
+
+        return {("policy", name, "minimum"), ("policy", name, "above minimum")}, play
+    if kind == "array":
+
+        def play(value):
+            return {("policy", name, "not empty" if value else "empty")}
+
+        return {("policy", name, "empty"), ("policy", name, "not empty")}, play
+    if kind == "object" and "properties" in schema:
+
+        def play(value):
+            return {
+                ("policy", name, key)
+                for key, sub in value.items()
+                if isinstance(sub, dict) and any(item is not None for item in sub.values())
+            }
+
+        return {("policy", name, key) for key in schema["properties"]}, play
+    raise ValueError(f"policy {name}: a schema shape the conformance test does not know")
+
+
+def kinds(name):
+    """The `kind` of each schema that the `anyOf` of schema file `name` refers to."""
+    return {
+        protocol.load(_relative(name, ref["$ref"]))["properties"]["kind"]["const"]
+        for ref in protocol.load(name)["anyOf"]
+    }
+
+
+def _relative(name, ref):
+    return str(Path(name).parent / ref) if "/" in name else ref
+
+
+def required():
+    """Everything the cases must play, read from the protocol's schemas: each policy value,
+    each event kind and each action kind."""
+    shapes = policy_shapes(protocol.load("policies.schema.json")["properties"])
+    values = set().union(*(need for need, _ in shapes.values()))
+    values |= {("event", kind) for kind in kinds("event.schema.json")}
+    return values | {("action", kind) for kind in kinds("action.schema.json")}
+
+
+def played(request, answer):
+    """What one accepted step plays: each policy, the missing ones as their defaults, the
+    event's kind and the kind of each action it answers."""
+    shapes = policy_shapes(protocol.load("policies.schema.json")["properties"])
+    policies = {**_defaults(), **request["policies"]}
+    values = set()
+    for name, value in policies.items():
+        # A name the schema does not list, such as `start`, is nothing the schema asks for.
+        if name in shapes:
+            values |= shapes[name][1](value)
+    values.add(("event", request["event"]["kind"]))
+    return values | {("action", action["kind"]) for action in answer["actions"]}
+
+
 def run_program(request):
     """The program's answer to `request`, as text. It reads standard input as bytes."""
     out = io.StringIO()
@@ -238,7 +315,7 @@ def every_request():
 
 
 class ConformanceTest(unittest.TestCase):
-    def run_case(self, path, seen, dropped):
+    def run_case(self, path, seen, dropped, covered):
         case = json.loads(path.read_text())
         state = start_of(case)
         if state is not None:
@@ -254,6 +331,7 @@ class ConformanceTest(unittest.TestCase):
                 self.assertIn(step["error"], answer.get("error", ""), where)
                 self.assertEqual(protocol.check(answer, "calls/error.schema.json"), [], where)
                 continue
+            covered |= played(request, answer)
             self.assertNotIn("error", answer, where)
             self.assertEqual(protocol.check(answer, "calls/step.answer.schema.json"), [], where)
             self.assertEqual(answer["changed"], step["changed"], where)
@@ -335,15 +413,49 @@ class ConformanceTest(unittest.TestCase):
             self.assertEqual(ref, questions["ref"], f"{where}: attention names other questions")
 
     def test_the_cases(self):
-        seen, dropped = set(), set()
+        seen, dropped, covered = set(), set(), set()
         paths = cases()
         self.assertTrue(paths)
         for path in paths:
             with self.subTest(case=path.stem):
-                self.run_case(path, seen, dropped)
+                self.run_case(path, seen, dropped, covered)
         self.assertEqual(table_transitions() - seen, set(), "transitions no case plays")
         open_states = set(_states()) - set(FINAL)
         self.assertEqual(open_states - dropped, set(), "states no case drops an item from")
+        missing = sorted(required() - covered, key=str)
+        self.assertEqual(missing, [], "values no case plays")
+
+    def test_a_value_no_case_plays_is_found(self):
+        # Leave out every request that sends `onlyAfterPassing`: the check names it.
+        covered = set()
+        for path in cases():
+            for _, step, request, text in play(json.loads(path.read_text())):
+                effective = {**_defaults(), **request["policies"]}
+                if "error" not in step and effective["reviewAfterFailingChecks"] == "always":
+                    covered |= played(request, json.loads(text))
+        missing = required() - covered
+        self.assertIn(("policy", "reviewAfterFailingChecks", "onlyAfterPassing"), missing)
+        self.assertNotIn(("policy", "reviewAfterFailingChecks", "always"), missing)
+
+    def test_what_the_schemas_require(self):
+        values = required()
+        for value in (
+            ("event", "textChanged"),
+            ("action", "withdrawChange"),
+            ("policy", "budgets", "triage"),
+            ("policy", "budgets", "item"),
+            ("policy", "agents", "review"),
+            ("policy", "retryWaits", "empty"),
+            ("policy", "splits", True),
+            ("policy", "fixRounds", "above minimum"),
+        ):
+            self.assertIn(value, values)
+
+    def test_a_policy_of_an_unknown_shape_is_refused(self):
+        with self.assertRaises(ValueError):
+            policy_shapes({"title": {"type": "string"}})
+        with self.assertRaises(ValueError):
+            policy_shapes({"mode": {"type": "object"}})
 
     def test_a_runner_that_checks_nothing_would_fail(self):
         # The outbox check finds an action that went away with no result, cancel or loss.

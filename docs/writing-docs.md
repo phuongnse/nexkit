@@ -254,7 +254,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    [how it works](how-it-works.md#one-run-ten-jobs) matches the jobs of `pipeline.yml`, the
    permissions its rows name, and the number in its heading; that the plan and review layouts of
    [stages](stages.md) list the sections the code writes, and that each value the pages repeat
-   matches its constant; that each test the security page names exists; that the outcome table of
+   matches its constant; that each test the security page names exists; that the refusals of
+   `unaffected_by` that [the checks page](checks.md#checks-that-a-change-cannot-affect) lists are
+   the code's, and that the code refuses each one; that the outcome table of
    [how it works](how-it-works.md) lists each outcome the code defines and no other; that the mention
    table of [troubleshooting](troubleshooting.md#what-a-mention-says) lists each outcome that needs a
    person and no other, with the code's text for what to do and why; that the command

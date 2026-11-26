@@ -60,8 +60,7 @@ its token allow, so what it holds is what decides the damage.
 - **A job that runs an agent or repository code has a read-only token and no App key.** It holds
   no token that can write, so the worst it can do is read.
 - **A job with a write token never runs repository code and never gets an agent's credential.**
-  Each writing job mints its own App token in a step of its own, and `route`, `publish`, `report`,
-  `maintain` and `finish` are the jobs that do. See
+  Each writing job mints its own App token in a step of its own. See
   [Tokens and secrets](architecture.md#tokens-and-secrets) for each job's tokens.
 - **Setup and check commands get no secrets,** and `verify` holds none, so a check that runs an
   agent's code cannot read a credential.

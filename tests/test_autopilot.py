@@ -11,11 +11,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, state
+from nexkit import autopilot, item_state, state
 from nexkit import maintain as maintain_module
 from nexkit.engine.textutil import TEXT_LIMIT
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
+from nexkit.progress import StateMoved
 from nexkit.report import report
 from nexkit.route import route
 from nexkit.state import ACTIONS_BOT, PLAN_MARKER, render_run
@@ -3517,6 +3518,67 @@ class CIWaitTests(AutopilotCase):
         with mock.patch.object(autopilot, "save_state", side_effect=GitHubError(502, "Bad")):
             self.sweep(self.cfg)
         self.assertEqual(self.fixes(), [])
+
+    def test_a_report_that_raises_the_count_while_a_sweep_counts_a_round_keeps_both(self):
+        pull = self.open_pull(5, 10)
+        self.assertEqual(self.report_round(5, pull)["outcome"], "ci_waiting")
+        self.ci_run("success", 52)
+        real = self.gh.issue_comment
+        raised = []
+
+        def reported(comment_id):
+            if not raised:
+                # A report raises the count after the sweep read the state.
+                raised.append(comment_id)
+                stored = self.state(pull)
+                raised_to = {**stored, "auto_fixes": stored["auto_fixes"] + 1}
+                self.gh.update_comment(comment_id, state.render_state(raised_to))
+            return real(comment_id)
+
+        with mock.patch.object(self.gh, "issue_comment", side_effect=reported):
+            self.sweep(self.cfg)
+        self.assertEqual(len(raised), 1)
+        after = self.state(pull)
+        self.assertEqual(after["auto_fixes"], 2)
+        self.assertNotIn("ci_wait", after)
+
+    def test_a_flag_stored_while_a_record_is_saved_stays_in_the_record(self):
+        step = {"number": 5, "basis": "b" * 8}
+        self.gh.comment(5, f"Asked.\n\n{autopilot.record_marker({'basis': 'a'})}")
+        real = self.gh.issue_comment
+        flagged = []
+
+        def asked(comment_id):
+            if not flagged:
+                flagged.append(comment_id)
+                self.gh.update_comment(
+                    comment_id, f"Asked.\n\n{autopilot.record_marker({'split_asked': True})}"
+                )
+            return real(comment_id)
+
+        with mock.patch.object(self.gh, "issue_comment", side_effect=asked):
+            autopilot._save_record(self.gh, step, {"command": "go"}, "Started.")
+        _, record = autopilot.find_record(self.gh.comments(5))
+        self.assertEqual((record["split_asked"], record["command"]), (True, "go"))
+
+    def test_a_record_that_changes_before_every_try_fails_and_stays_as_stored(self):
+        step = {"number": 5, "basis": "b" * 8}
+        self.gh.comment(5, f"Asked.\n\n{autopilot.record_marker({'basis': 'a'})}")
+        real = self.gh.issue_comment
+        counter = []
+
+        def changes(comment_id):
+            counter.append(comment_id)
+            self.gh.update_comment(
+                comment_id, f"Asked.\n\n{autopilot.record_marker({'basis': len(counter)})}"
+            )
+            return real(comment_id)
+
+        with mock.patch.object(self.gh, "issue_comment", side_effect=changes):
+            with self.assertRaises(StateMoved):
+                autopilot._save_record(self.gh, step, {"command": "go"}, "Started.")
+        self.assertEqual(len(counter), item_state.TRIES)
+        self.assertEqual(autopilot.find_record(self.gh.comments(5))[1], {"basis": len(counter)})
 
     def test_a_round_waited_for_that_ends_without_a_report_starts_as_the_same_kind(self):
         from nexkit.context import _after_failed_checks

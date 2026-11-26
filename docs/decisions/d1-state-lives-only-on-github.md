@@ -25,7 +25,7 @@ The detail is in [How it works: State](../how-it-works.md#state) and
   can read the state on GitHub.
 - No server, database or self-hosted runner is needed, so setup stays small.
 - GitHub has no compare-and-set for comments. A write by someone else between a read and an edit
-  can be overwritten. The revision check narrows that race, and does not close it.
+  can be overwritten. Reading the comment again just before each edit narrows that race, and does not close it.
 
 ## Alternatives
 

@@ -959,6 +959,7 @@ def _give_back(gh, number, comments, run):
     state_id, state = read_state(comments)
     if not (state and state.get("auto_fixes")):
         return
+    read = json.loads(json.dumps(state))
     try:
         found = state["auto_fixes"]
         counted = stopped_counts(number, number, run.get("head"), found, automatic, True, True)
@@ -966,7 +967,7 @@ def _give_back(gh, number, comments, run):
         return
     if counted != state["auto_fixes"]:
         state["auto_fixes"] = counted
-        progress.save_state(gh, number, state_id, state)
+        progress.save_state(gh, number, state_id, state, read)
 
 
 def resolve_conflicts(

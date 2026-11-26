@@ -1118,6 +1118,7 @@ def _stop_round(gh, decision, agent, outcome, message, reason=None, **fields):
     back, as the engine decides (`host.stopped_counts`)."""
     comments = gh.comments(decision["pr"])
     state_id, state = read_state(comments)
+    read = json.loads(json.dumps(state))
     _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
     if state and state.get("auto_fixes"):
         from .host import Refused, stopped_counts
@@ -1137,7 +1138,7 @@ def _stop_round(gh, decision, agent, outcome, message, reason=None, **fields):
             counted = state["auto_fixes"]
         if counted != state["auto_fixes"]:
             state["auto_fixes"] = counted
-            progress.save_state(gh, decision["pr"], state_id, state)
+            progress.save_state(gh, decision["pr"], state_id, state, read)
     comment_id, row = progress.find_round(comments, decision)
     status = run_status(outcome)
     row.update(status=status, head=decision["head"], tokens=_tokens(agent), outcome=outcome)
@@ -1818,13 +1819,14 @@ def _required_failed(gh, cfg, target, row, message, names, workflow, default_bra
     reporting = target.get("state")
     if reporting is None:
         comment_id, state = read_state(gh.comments(pr))
+        read = json.loads(json.dumps(state))
         state = state or empty_state(target["issue"])
     else:
         comment_id, state = None, reporting
 
     def save():
         if reporting is None:
-            progress.save_state(gh, pr, comment_id, state)
+            progress.save_state(gh, pr, comment_id, state, read)
 
     state["feedback"] = {**(state.get("feedback") or {"head": head}), "required": failed}
     what = _failed_line(failed, head, bool(target.get("waiting")))
@@ -1942,8 +1944,10 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
         if target.get("state") is not None:
             # The reporting round's approval, before the review it starts reads it: an
             # implement round's report runs beside that review, in the issue's queue.
-            progress.save_state(gh, pr, target.get("state_comment"), target["state"])
-            target["state_comment"] = read_state(gh.comments(pr))[0]
+            target["state_comment"], target["state"] = progress.save_state(
+                gh, pr, target.get("state_comment"), target["state"], target.get("state_read")
+            )
+            target["state_read"] = json.loads(json.dumps(target["state"]))
 
     why = update_branch(gh, target, row, limit, workflow, default_branch, before_review=save)
     if why:
@@ -2488,6 +2492,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
     comments = gh.comments(pr)
     comment_id, state = read_state(comments)
+    read = json.loads(json.dumps(state))
     state = state or empty_state(decision["issue"])
     person = bool(decision.get("person"))
     if person:
@@ -2697,11 +2702,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         elif ends == "merge":
             target = {"pr": pr, "head": head, "issue": decision["issue"], "base": decision["base"]}
             # A required check that failed gets its fix round through this round's state.
-            target.update(state=state, state_comment=comment_id)
+            target.update(state=state, state_comment=comment_id, state_read=read)
             outcome, message = merge_pull(
                 gh, cfg, target, row, message, workflow_file(workflow_ref), default_branch
             )
-            comment_id = target["state_comment"]
+            comment_id, state = target["state_comment"], target["state"]
+            read = target["state_read"]
             found = target.get("found", {})
         elif ends == "recheck_failed":
             # The fix agent found nothing to change for a cause outside the code, and the
@@ -2799,7 +2805,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     if outcome == "auto_fix":
         # The round this one starts, so a sweep starts it once more when it never runs.
         row["next"] = fix
-    progress.save_state(gh, pr, comment_id, state)
+    progress.save_state(gh, pr, comment_id, state, read)
     progress.save_round(gh, pr, round_id, row, message)
     if outcome == "auto_fix":
         gh.dispatch(workflow_file(workflow_ref), default_branch, fix)

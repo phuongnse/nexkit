@@ -1169,8 +1169,9 @@ class MergeRefusalTests(ReportCase):
         # With no automatic round left, a person decides.
         self.gh.dispatches.clear()
         comment_id, state = read_state(self.gh.comments(6))
+        read = json.loads(json.dumps(state))
         state["auto_fixes"] = 2
-        progress.save_state(self.gh, 6, comment_id, state)
+        progress.save_state(self.gh, 6, comment_id, state, read)
         self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is failing.')]
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "needs_human")
         self.assertFalse(rounds_started(self.gh))
@@ -1181,8 +1182,9 @@ class MergeRefusalTests(ReportCase):
 
         self.waiting_merge()
         comment_id, state = read_state(self.gh.comments(6))
+        read = json.loads(json.dumps(state))
         state["auto_fixes"] = 2
-        progress.save_state(self.gh, 6, comment_id, state)
+        progress.save_state(self.gh, 6, comment_id, state, read)
         self.e2e_fails()
         autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
         row = self.gh.run_comments(6)[-1]["run"]

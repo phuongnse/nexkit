@@ -381,6 +381,14 @@ output. With autopilot, each issue
 it worked on has one record comment, edited in place, that names the command it started
 last. Nothing else is stored, so there is nothing to migrate or repair.
 
+A writer edits the state comment, and autopilot's record comment, only while the comment still
+holds what the writer read: it reads the comment again just before the edit
+([D1](decisions/d1-state-lives-only-on-github.md)). When another write came first, the writer
+applies its own changes to the newer state and tries again, a few times: for the count of
+automatic fix rounds it adds its own difference to the stored count, and for any other field it
+changed, its value wins. After the last try it fails and changes nothing. The check narrows the
+race and does not close it, because GitHub has no compare-and-set.
+
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
 status (running, success, failure, paused, continued), the outcome (for example `planned`,
 `ready`, `merged`, `merge_refused`, `agent_blocked`, `paused`, `ci_waiting` with the `bug`

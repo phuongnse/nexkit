@@ -42,7 +42,9 @@ Read by people, and agents, who change NexKit itself.
 | Doc | What it holds | Read it when |
 | --- | --- | --- |
 | [Architecture](architecture.md) | How NexKit is built: the package and its modules, the workflows and their jobs, tokens and secrets, state, the engine and its hosts, and the plugin | You change a module, a job, or what a job holds |
-| [The engine](engine.md) | The engine, its protocol, states, events and actions, hosts, and the way there from NexKit 6 | You change a decision of the loop, the protocol or a host |
+| [The engine](engine.md) | The engine, its protocol and calls, the state document, the sweep, conformance, versions, and the way there from NexKit 6 | You change a decision of the loop, the protocol or a host |
+| [States, events and actions](engine-states.md) | The states of a work item and what moves it between them, attention, holds and waits, and the protocol's events and actions | You change what happens next to a work item, or add an event or action |
+| [Runners, policies and hosts](engine-hosts.md) | The runners and their contract, the policies a host decides, and how the GitHub host and an application carry out the engine's work | You change a runner, a policy or what a host does |
 | [Roadmap](roadmap.md) | NexKit's features, one milestone each, done and under way, and what labels are for | You need a feature's milestone or the work under way |
 | [Delivery](delivery.md) | Which issue a session takes, pull requests, labels and milestones, NexKit on this repository, and releases | You take an issue, open a pull request or prepare a release |
 | [Testing](testing.md) | Which check covers what, the smoke test, and what a change that moves a decision into the engine proves | You add a test, or change what a check covers |

@@ -14,7 +14,8 @@ from tests.support import make_config, profile_config
 from tests.test_agent import CHECKLIST
 
 HERE = Path(__file__).resolve().parent
-DOC = HERE.parent / "docs" / "engine.md"
+# The pages that hold the engine's states, events and actions, and what a host decides.
+PAGES = [HERE.parent / "docs" / name for name in ("engine-states.md", "engine-hosts.md")]
 EXAMPLES = protocol.ROOT / "examples"
 # What NexKit 6.12.2 gave each stage's agent as its result schema, as `json.dumps` wrote it,
 # with no configuration and with profiles and a checklist.
@@ -27,7 +28,11 @@ UNIONS = {"actions": "action.schema.json", "events": "event.schema.json"}
 
 
 def section(heading):
-    return DOC.read_text(encoding="utf-8").split(f"\n## {heading}\n", 1)[1].split("\n## ", 1)[0]
+    for page in PAGES:
+        parts = page.read_text(encoding="utf-8").split(f"\n## {heading}\n", 1)
+        if len(parts) == 2:
+            return parts[1].split("\n## ", 1)[0]
+    raise AssertionError(f"no engine page has the section {heading}")
 
 
 def table_names(heading, every_row=False):

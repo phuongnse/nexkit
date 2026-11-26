@@ -42,8 +42,9 @@ merges it on the head its checks and review passed, with the guards of every mer
 approval of that head accepts the checklist items a person decides and turns
 `nexkit/review` green there, also with `merge.auto` off, which then leaves the merge to the
 person;
-a head that moved gets `/nexkit review`. The run waits in the pull request's queue, and an
-approval while a round runs, or of a pull request whose round ended otherwise, starts
+a head that moved gets `/nexkit review`. The run has a concurrency group of its own,
+`nexkit-approved-<pr>`, so it never replaces or waits behind a command (see [One run at a
+time](how-it-works.md#one-run-at-a-time)), and an approval while a round runs, or of a pull request whose round ended otherwise, starts
 nothing. Nor does one of a pull request that a person merged or closed first, as an owner
 who approves and merges in the same minute does: its round comment stays as it was, and
 nobody is mentioned. With autopilot, each sweep also sends a `step` run that merges a
@@ -198,6 +199,8 @@ same step and sends it again.
   that opens or is reopened. An issue that gets a milestone, and a closed milestone: for
   the milestone scope, the issue comes into scope, or the next milestone becomes the
   scope.
+  An issue that gets or loses a label. A writer's `/nexkit trust` on an issue, whose
+  `maintain` run starts one.
   A finished run on the default branch of a workflow in `merge.after_workflows` or
   `autopilot.watch_workflows`, through a `workflow_run` trigger, and for the first,
   through the job that ends such a workflow and dispatches a sweep that waits for its run
@@ -239,8 +242,7 @@ same step and sends it again.
   the comment as ended without a report and sets the round's pending statuses to errors (the `maintain` job
   has `statuses: write` for this). A command autopilot started, or an automatic round,
   starts again, as the same kind of round, so one after failing checks merges a base
-  branch that moved first: at once, then 30, 60 and 120 minutes after its last start, as
-  for a command that did not run. When its agent or review job ran to its end, so that
+  branch that moved first, as for a command that did not run. When its agent or review job ran to its end, so that
   only the report was lost, it starts once more only, since these starts count toward no
   budget. A person's command waits for a person. With autopilot off and `conflicts.auto_resolve` on, a sweep, the schedule or a
   push to the default branch ends such a comment too when it is the latest round of a
@@ -308,7 +310,8 @@ same step and sends it again.
   prompt asks that a part that later parts depend on has criteria that prove end to end
   the behaviour they rely on, such as a request that goes through every service a later
   part calls, not only that the part starts or answers. The plan of a part that needs
-  earlier parts gets each one's text, state and latest plan, and must name what it
+  earlier parts gets the text, state and latest plan of at most six of those parts, the
+  oldest first, found among the first twelve blockers it lists, and must name what it
   assumes those parts do and check it in the code before it plans on top of them: each
   assumption goes in `decisions` with the code that shows it, and one the code does not
   bear out, or a part still open, goes in `risks` or `questions`. A NexKit pull request
@@ -326,9 +329,7 @@ same step and sends it again.
 - **Limits on parts.** A split has at most ten parts, as the plan prompt says, and
   autopilot never files one cut. A plan with more is planned once more, with a note that
   names both counts and asks for fewer, larger parts, each of which may split again when
-  it is planned; a second such plan waits for a person. A plan's record keeps how many
-  parts it lists; for a plan from before it did, which kept ten, the comment's *Suggested
-  split* counts them. A part inherits the time-outs of the issues above it, found through
+  it is planned; a second such plan waits for a person. A part inherits the time-outs of the issues above it, found through
   GitHub's sub-issue parents: when an issue above it already asked for a split, a part
   that runs out of time waits for a person instead of asking again, however deep it is. A
   part whose title is its parent's title, or starts with it (ignoring case, spaces and
@@ -388,8 +389,7 @@ same step and sends it again.
   annotation that names a failure is named by its first failed step and the message of
   its first error annotation, so one step that fails the same way in several jobs, or in
   several workflows, such as a setup step whose download host refused requests, is one
-  failure; an issue that NexKit 5.0 or earlier opened for one job's step keeps getting
-  that job's records. An attempt with no failed job is named by the workflow, and its
+  failure. An attempt with no failed job is named by the workflow, and its
   record names the jobs that the newest run that passed had and it lacks, and says to look
   for an outage of GitHub Actions before a cause in the repository. Each failure's issue
   is `bug`,
@@ -406,12 +406,10 @@ same step and sends it again.
   broken runner, records those on one issue for the run instead; failures that have an
   issue still get their records there. Every bug and flaky-run report ends with a marker
   that lists the run attempts it covers, so each run and attempt is recorded once per
-  failure, and a sweep reads no attempt that a marker covers. An issue from NexKit 4.3.0,
-  one per workflow with every failure on it, keeps the records it has and gets no new
-  ones; the runs it covers are not recorded again. The first sweep after an upgrade looks
+  failure, and a sweep reads no attempt that a marker covers. The first sweep after an upgrade looks
   back one day, as every sweep does; sweeps run at least hourly. To know which runs are
-  recorded, a sweep reads every open issue NexKit opened and every one updated within
-  that day, not a fixed number of the newest: a record is written after its run started,
+  recorded, a sweep reads the open issues NexKit opened and those updated within
+  that day, at most 1,000 of each: a record is written after its run started,
   so its issue was updated since. A finished run starts a
   sweep within minutes through the `workflow_run` trigger, when the run is one a sweep
   acts on: it failed or was run again, or it passed while a `bug` issue about its

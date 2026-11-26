@@ -16,7 +16,7 @@ Each kind of content has one home. Write a fact in its home and link to it from 
 | How NexKit behaves on a repository: commands, jobs, stages, state, failure handling | [How it works](how-it-works.md) and the pages it links: [stages](stages.md), [work without a command](work-without-a-command.md), [agents and profiles](agents-and-profiles.md) and [failure handling](failure-handling.md) |
 | Every setting, its default and what it does | The [configuration reference](configuration.md) and its pages for [checks](checks.md), [autopilot](autopilot.md) and [merges and waits](merges-and-waits.md) |
 | Why a run stopped or waits, and what to do | [Troubleshooting](troubleshooting.md) |
-| The engine, its protocol and its hosts | [The engine](engine.md) |
+| The engine, its protocol and its hosts | [The engine](engine.md) and its pages of [states, events and actions](engine-states.md) and [runners, policies and hosts](engine-hosts.md) |
 | How NexKit is built: modules, workflows and jobs, tokens and secrets | [Architecture](architecture.md) |
 | What NexKit trusts, and the rule that contains each input it does not | [Security](security.md) |
 | A choice between real alternatives, with its reasons | A [decision](#decisions), listed in the [index of decisions](decisions.md) |
@@ -95,9 +95,10 @@ A reference page describes how NexKit behaves, as it is, and the agreed work tha
 [How it works](how-it-works.md) and the pages split from it ([stages](stages.md), [work without a
 command](work-without-a-command.md), [agents and profiles](agents-and-profiles.md) and [failure
 handling](failure-handling.md)), the [configuration reference](configuration.md) and the pages split
-from it ([checks](checks.md), [autopilot](autopilot.md) and [merges and waits](merges-and-waits.md)),
-[troubleshooting](troubleshooting.md), [the engine](engine.md) and [security](security.md) are
-reference pages.
+from it ([checks](checks.md), [autopilot](autopilot.md) and [merges and
+waits](merges-and-waits.md)), [troubleshooting](troubleshooting.md), [the engine](engine.md) and the
+pages split from it ([states, events and actions](engine-states.md) and [runners, policies and
+hosts](engine-hosts.md)) and [security](security.md) are reference pages.
 
 - **Write the current rule, never the change.** When a rule changes, rewrite it where it lives and
   delete the old text. A page does not say "no longer", "now" or "this replaces". What changed between
@@ -249,8 +250,15 @@ when a list of what the code defines misses an entry. These rules close each of 
    `skills/` and of the maintenance skills under `.claude/skills/` resolve; that each link to how it
    works and the pages split from it resolves; that each task of the `nexkit-maintain` skill links a
    section of [Delivery](delivery.md); that AGENTS.md keeps within its word limits; that the job and
-   module tables of the architecture page match the workflows and `nexkit/`; that each test the
-   security page names exists; that the outcome table of [how it works](how-it-works.md) lists each
-   outcome the code defines and no other; and that the index matches the decision files, each of
-   which follows the template and is linked from a rule or a page. A docs check is added only once
-   the whole tree passes it: there are no lists of exceptions.
+   module tables of the architecture page match the workflows and `nexkit/`; that the job table of
+   [how it works](how-it-works.md#one-run-ten-jobs) matches the jobs of `pipeline.yml`, the
+   permissions its rows name, and the number in its heading; that the plan and review layouts of
+   [stages](stages.md) list the sections the code writes, and that each value the pages repeat
+   matches its constant; that each test the security page names exists; that the outcome table of
+   [how it works](how-it-works.md) lists each outcome the code defines and no other; that the key
+   tables and the complete configuration of the [configuration reference](configuration.md) list
+   each key the code defines and no other, with its default and range; that the table of the App's
+   permissions in [configuration](configuration.md#the-github-app) matches the permissions and
+   levels `nexkit/app.py` asks for; and that the index matches the decision files, each of which
+   follows the template and is linked from a rule or a page. A docs check is added only once the
+   whole tree passes it: there are no lists of exceptions.

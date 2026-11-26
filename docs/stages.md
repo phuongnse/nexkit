@@ -21,12 +21,13 @@ One or two sentences: what changes and why.
 **Profile: hard**: plan `claude` (`opus`) · …  only with profiles: each stage's agent and model, why, and how to change it
 
 ### Since the last plan   only on a re-plan: revised or started over, and what changed
+### No change needed      only when the evidence shows the issue needs none; the finding, and the run that passed since
+### Needs a hand-made change  only when the change needs protected paths, which a person changes
 ### What changes          up to six bullets about behaviour
 ### Decisions to check    choices the issue did not settle, each with a short reason
 ### Risks and limits      what could go wrong or is left out
 ### Acceptance criteria   one check each, at most about 30 words
-### No change needed      only when the evidence shows the issue needs none; the finding, and the run that passed since
-### Needs a hand-made change  only when the change needs protected paths, which a person changes
+### Checklist             how the plan meets each [review checklist](configuration.md#review-checklist) item
 ### Questions             only when answers would change the work; options, one marked (recommended)
 ### Suggested split       only when the work is too large for one session: at most ten parts, each saying which earlier parts it needs
 
@@ -491,10 +492,11 @@ One or two sentences: the main reason for the verdict.
 **Things to look at**         findings, blocking first, with file and line
 **Previous findings**         what happened to each earlier finding (later rounds)
 **Acceptance criteria**       ✅ met, ❌ unmet or ❔ unverifiable, and the covering test
+**Checklist**                 ✅ met, ❌ not met or ⚖️ a person decides, for each [review checklist](configuration.md#review-checklist) item
 **Checks**: ✅ `test`
 
 <details><summary>Evidence</summary>
-file:line references and assertions for each criterion and previous finding
+file:line references and assertions for each criterion, checklist item and previous finding
 </details>
 ```
 

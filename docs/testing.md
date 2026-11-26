@@ -21,7 +21,7 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 | Differential check | `tests/differential/`, run by `tests/differential/check.sh` | The engine against NexKit 6, with random walks of the engine and its mutants, as [its README](../tests/differential/README.md) says |
 | Lint | `scripts/lint.sh` | ruff on the Python code, and actionlint on the workflows |
 | Plugin | `claude plugin validate --strict .` | The plugin's manifest and skills |
-| Docs | `tests/test_docs.py` | The map lists every doc, with the decisions listed through [their index](decisions.md), and its list of the plugin's skills is compared with `skills/`. The links of every page under `docs/`, of the README, of AGENTS.md and of the plugin's skills resolve. Each decision file follows the template, its index row matches it, and a rule or a page links each decision. Each test the security page names exists. AGENTS.md stays within 800 words, and each of its rules within 60, as [writing the docs](writing-docs.md#how-the-docs-stay-correct) says. It also compares the job table of [the architecture page](architecture.md) with the three pipeline workflows, and its module table with `nexkit/`. The outcome table of [how it works](how-it-works.md) lists each outcome the code defines and no other. |
+| Docs | `tests/test_docs.py` | The map lists every doc, with the decisions listed through [their index](decisions.md), and its list of the plugin's skills is compared with `skills/`. The links of every page under `docs/`, of the README, of AGENTS.md and of the plugin's skills resolve. Each decision file follows the template, its index row matches it, and a rule or a page links each decision. Each test the security page names exists. AGENTS.md stays within 800 words, and each of its rules within 60, as [writing the docs](writing-docs.md#how-the-docs-stay-correct) says. It also compares the job table of [the architecture page](architecture.md) with the three pipeline workflows, and its module table with `nexkit/`. It compares the job table of [how it works](how-it-works.md#one-run-ten-jobs) with the jobs of `pipeline.yml`, the permissions its rows name, and the number in its heading. The outcome table of [how it works](how-it-works.md) lists each outcome the code defines and no other. The key tables and the complete configuration of [the configuration reference](configuration.md) list each key the code defines and no other, with its default and range. The table of the App's permissions in [configuration](configuration.md#the-github-app) matches the permissions and levels `nexkit/app.py` asks for. |
 | The engine's image | `release.yml` | The image builds from the pinned base and answers over HTTP as `nexkit-engine` answers on standard input. `update-image.yml` proposes a new base, and its pull request needs this check |
 | Code scanning | `codeql.yml` | CodeQL on the Python code and the workflows |
 | Smoke test | `scripts/smoke.py` | Real Claude Code at its pin, as [the smoke test](#the-smoke-test) says |
@@ -31,14 +31,16 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 The smoke test runs every agent stage against real Claude Code, at the version that
 `nexkit/__init__.py` pins, on a tiny repository. NexKit tests only the versions it pins, with no
 matrix of versions. It exercises the CLI's real flags, event stream and structured results, which
-the unit tests replace with a fake. It runs each stage through [the runner](engine.md#runners)
+the unit tests replace with a fake. It runs each stage through [the runner](engine-hosts.md#runners)
 and fails when the runner's result, or its output, does not fit the protocol's schemas. It needs a Claude login or credential,
 `CLAUDE_CODE_OAUTH_TOKEN` in CI, and costs a real session, so it runs only when a change touches
 what it covers.
 
 Run it when changing `engine/prompts/`, `engine/prompt.py`, `engine/textutil.py`, `agent.py`,
 `schema.py`, `runtimes/` or a pin. CI runs it on such a pull request, and on the pull request of
-`update-agents.yml` for the runtime it updates.
+`update-agents.yml` for the runtime it updates. A ruleset on `main` requires its job,
+`smoke-claude-code`, which GitHub counts as passed when CI skips it, so a pull request that breaks
+real Claude Code does not merge, also one that NexKit merges.
 
 The reasons for pinning each version in one place, and testing only the pinned versions, are in
 [D9](decisions/d9-pins-live-in-one-place.md).

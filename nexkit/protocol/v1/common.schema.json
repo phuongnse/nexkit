@@ -155,7 +155,7 @@
       ]
     },
     "attentionReason": {
-      "$comment": "Why a person is needed, as docs/engine.md#states lists the reasons.",
+      "$comment": "Why a person is needed, as docs/engine-states.md#states lists the reasons.",
       "enum": [
         "approval",
         "question",
@@ -180,7 +180,7 @@
       ]
     },
     "observation": {
-      "$comment": "The change as the host reads it: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way. Optionally, whether it is behind the branch it was made on, which leaves it out when it is not: only the six-hour end of the wait for required checks reads it (docs/engine.md#states).",
+      "$comment": "The change as the host reads it: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way. Optionally, whether it is behind the branch it was made on, which leaves it out when it is not: only the six-hour end of the wait for required checks reads it (docs/engine-states.md#states).",
       "type": "object",
       "properties": {
         "changeId": {

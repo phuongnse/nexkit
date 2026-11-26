@@ -366,7 +366,7 @@ LATER = "2026-01-02T00:00:00Z"
 
 class TakeTest(TestCase):
     """A run takes its item's events from their sources, after the state comment's cursor
-    (docs/engine.md#hosts)."""
+    (docs/engine-hosts.md#hosts)."""
 
     CFG = make_config(autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}})
 

@@ -3,15 +3,25 @@ plugin's skills matches skills/. The links of every page under docs/, of the REA
 of the plugin's skills and of the maintenance skills resolve, every link to how it works and the
 pages split from it resolves, each task of the nexkit-maintain skill links a section of the delivery
 page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
-the workflows and nexkit/, each test the security page names exists, and the outcome table of how it
-works lists each outcome the code defines and no other. The decisions index matches the decision
-files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct says."""
+the workflows and nexkit/, the how-it-works page's job table matches the jobs of pipeline.yml, the
+permissions its rows name and the number in its heading, each test the security page names exists,
+and the outcome table of how it works lists each outcome the code defines and no other. The key
+tables and the complete configuration of the configuration reference list each key the code
+defines and no other, with the defaults and ranges the code has. The table of the App's
+permissions matches the permissions and levels of the App manifest. The plan and review layouts of
+stages match the sections the code writes, and the values the pages repeat match their constants.
+The decisions index matches the decision files, and each decision is linked, as
+docs/writing-docs.md#how-the-docs-stay-correct says."""
 
+import copy
+import json
 import re
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from nexkit import autopilot, report, state
+from nexkit import app, autopilot, checks, config, context, github, publish, report, runtimes, state
+from nexkit.engine import prompt, textutil
 from tests.test_cli import jobs_of, permissions_of
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,9 +31,24 @@ HEADING = re.compile(r"^#{1,6} (.+?)\s*$", re.M)
 FENCE = re.compile(r"^```.*?^```", re.M | re.S)
 AGENTS = ROOT / "AGENTS.md"
 ARCH = DOCS / "architecture.md"
-SECURITY = DOCS / "security.md"
 HOW_IT_WORKS_PAGE = DOCS / "how-it-works.md"
+STAGES = DOCS / "stages.md"
+SECURITY = DOCS / "security.md"
 OUTCOMES_HEADER = "| Outcome | Meaning |"
+CONFIG_PAGE = DOCS / "configuration.md"
+PERMISSIONS_HEADER = "| Permission | Level | For |"
+# GitHub's names on an App's settings page, by the manifest's keys in nexkit/app.py.
+PERMISSION_NAMES = {
+    "Actions": "actions",
+    "Checks": "checks",
+    "Contents": "contents",
+    "Issues": "issues",
+    "Pull requests": "pull_requests",
+    "Commit statuses": "statuses",
+    "Workflows": "workflows",
+    "Dependabot alerts": "vulnerability_alerts",
+}
+KEYS_HEADER = "| Key | Default | Meaning |"
 DECISIONS = DOCS / "decisions"
 DECISIONS_INDEX = DOCS / "decisions.md"
 HOW_IT_WORKS = (
@@ -38,6 +63,31 @@ TEST_NAME = re.compile(r"`(test_\w+)`")
 WORKFLOWS = ("pipeline.yml", "pipeline-agent.yml", "pipeline-review.yml")
 JOBS_HEADER = "| Workflow | Job | Job token | App token | Secrets |"
 MODULES_HEADER = "| Module | Purpose |"
+RUN_JOBS_HEADER = "| Job | Runs for | Does |"
+RUN_HEADING = re.compile(r"^## One run, (\w+) jobs$", re.M)
+NUMBERS = (
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
+)
 DECISIONS_HEADER = "| Decision | Title | Status |"
 WORD = re.compile(r"\S*\w\S*")
 RULES = re.compile(r"^## Rules\n(.*?)(?=^## |\Z)", re.M | re.S)
@@ -213,6 +263,21 @@ def table(path, header):
     """The rows under the table line that starts with `header`, as lists of stripped cells."""
     lines = path.read_text().splitlines()
     start = next((i + 1 for i, line in enumerate(lines) if line.startswith(header)), len(lines))
+    return rows_from(lines, start)
+
+
+def tables(path, header):
+    """The rows of every table whose header line is `header`, as lists of stripped cells."""
+    lines = path.read_text().splitlines()
+    rows = []
+    for i, line in enumerate(lines):
+        if line == header:
+            rows += rows_from(lines, i + 1)
+    return rows
+
+
+def rows_from(lines, start):
+    """The table rows from `lines[start]` on, as lists of stripped cells."""
     rows = []
     for line in lines[start:]:
         if not line.startswith("|"):
@@ -244,6 +309,171 @@ class OutcomesTests(unittest.TestCase):
                     name,
                     code,
                     f"docs/how-it-works.md lists {name}, which the code does not define",
+                )
+
+
+class AppPermissionsTests(unittest.TestCase):
+    def test_the_permissions_table_lists_each_permission_the_app_asks_for_at_its_level(self):
+        rows = table(CONFIG_PAGE, PERMISSIONS_HEADER)
+        self.assertTrue(rows, "docs/configuration.md has no table of the App's permissions")
+        listed = {}
+        for row in rows:
+            with self.subTest(row=row[0]):
+                self.assertIn(
+                    row[0],
+                    PERMISSION_NAMES,
+                    f"docs/configuration.md lists {row[0]}; add it to PERMISSION_NAMES in "
+                    "tests/test_docs.py",
+                )
+                key = PERMISSION_NAMES[row[0]]
+                listed[key] = row[1]
+                self.assertEqual(
+                    "autopilot.dependabot" in row[2],
+                    key in app.ALERTS_PERMISSION,
+                    f"docs/configuration.md and nexkit/app.py disagree on autopilot.dependabot "
+                    f"for {key}",
+                )
+        code = {**app.PERMISSIONS, **app.ALERTS_PERMISSION}
+        for key in sorted(code):
+            with self.subTest(permission=key):
+                self.assertIn(key, listed, f"docs/configuration.md has no row for permission {key}")
+                self.assertEqual(
+                    listed[key],
+                    code[key],
+                    f"docs/configuration.md gives {key} as {listed[key]}, "
+                    f"but nexkit/app.py asks for {code[key]}",
+                )
+        for key in sorted(listed):
+            with self.subTest(row=key):
+                self.assertIn(
+                    key,
+                    code,
+                    f"docs/configuration.md lists {key}, which nexkit/app.py does not ask for",
+                )
+
+
+def complete_configuration():
+    """The complete configuration of the configuration reference: its first ```json block
+    after 'A complete configuration'."""
+    text = CONFIG_PAGE.read_text()
+    start = text.index("```json\n", text.index("A complete configuration")) + len("```json\n")
+    return json.loads(text[start : text.index("\n```", start)])
+
+
+def key_rows():
+    """The rows of the three key tables of the configuration reference, by their key."""
+    return {cells[0].strip("`"): cells for cells in tables(CONFIG_PAGE, KEYS_HEADER)}
+
+
+def is_key(key):
+    """Whether config.DEFAULTS defines `key`, top-level or `group.sub` of a group."""
+    head, _, sub = key.partition(".")
+    if head not in config.DEFAULTS:
+        return False
+    return not sub or (head in config.GROUPS and sub in config.DEFAULTS[head])
+
+
+def recorded_ranges():
+    """The (minimum, maximum) pairs that validate() checks, by the setting each one is for.
+
+    validate() runs on the complete configuration, with a value in each list that may hold
+    several. Checks have limits of their own, outside the tables, so the sample has none."""
+    seen = {}
+    real = config._positive_int
+
+    def record(value, where, maximum, minimum=1):
+        key = re.sub(r"\[\d+\].*", "", where.removeprefix("each wait in "))
+        seen.setdefault(key, set()).add((minimum, maximum))
+        return real(value, where, maximum, minimum)
+
+    sample = complete_configuration()
+    sample["checks"] = []
+    sample["autopilot"]["max_parallel"] = 1
+    sample["merge"]["after_workflows"] = [{"workflow": "ci.yml", "every": 1}]
+    with mock.patch.object(config, "_positive_int", record):
+        config.validate(sample)
+    return seen
+
+
+class ConfigurationTests(unittest.TestCase):
+    def test_the_key_tables_list_each_key_the_code_defines_and_no_other(self):
+        rows = key_rows()
+        self.assertTrue(rows, "docs/configuration.md has no key tables")
+        for key in sorted(rows):
+            with self.subTest(row=key):
+                self.assertTrue(
+                    is_key(key),
+                    f"docs/configuration.md has a row for {key}, which the code does not define",
+                )
+        listed = set(rows)
+        for key, value in config.DEFAULTS.items():
+            if key in listed:  # a table may list an object whole, as it lists `log`
+                continue
+            names = [f"{key}.{sub}" for sub in value] if key in config.GROUPS else [key]
+            for name in names:
+                with self.subTest(key=name):
+                    self.assertIn(name, listed, f"docs/configuration.md has no row for {name}")
+
+    def test_each_key_row_gives_the_code_default_and_range(self):
+        seen = recorded_ranges()
+        rows = key_rows()
+        for key, cells in sorted(rows.items()):
+            if not is_key(key):  # the test above names it
+                continue
+            with self.subTest(row=key):
+                code = config.setting(config.DEFAULTS, key)
+                span = re.fullmatch(r"`([^`]+)`", cells[1])
+                if span:
+                    self.assertEqual(
+                        json.loads(span.group(1)),
+                        code,
+                        f"the default of {key} in docs/configuration.md differs from the code",
+                    )
+                else:  # `agents`, `stages` and `github_app` have no single default
+                    self.assertIsInstance(code, dict, f"the default of {key} is not an object")
+                found = {(int(a), int(b)) for a, b in re.findall(r"(\d+) to (\d+)", cells[2])}
+                self.assertEqual(
+                    found,
+                    seen.get(key, set()),
+                    f"the range of {key} in docs/configuration.md differs from validate()",
+                )
+        retry = rows["retry.wait_minutes"][2]
+        self.assertIn(
+            f"at most {config.MAX_RETRIES} waits",
+            retry,
+            "the retry.wait_minutes row differs from validate()",
+        )
+
+    def test_the_complete_configuration_lists_each_key_the_code_defines_and_no_other(self):
+        block = complete_configuration()
+        sections = [("", config.DEFAULTS, block)]
+        sections += [(f"{g}.", config.DEFAULTS[g], block.get(g, {})) for g in config.GROUPS]
+        for where, defined, listed in sections:
+            for key in sorted(set(defined) | set(listed)):
+                with self.subTest(key=where + key):
+                    if key in defined:
+                        self.assertIn(
+                            key, listed, f"the complete configuration has no {where}{key}"
+                        )
+                    else:
+                        self.fail(
+                            f"the complete configuration lists {where}{key}, "
+                            "which the code does not define"
+                        )
+
+    def test_the_complete_configuration_holds_each_default_it_says_it_does(self):
+        block = complete_configuration()
+        full = config.validate(copy.deepcopy(block))
+        # `agents` and `github_app` are the block's own, as `nexkit init` writes them.
+        base = config.validate({"agents": block["agents"], "github_app": block["github_app"]})
+        for key in config.DEFAULTS:
+            if key in ("setup", "checks"):  # `nexkit init` writes these too
+                continue
+            with self.subTest(key=key):
+                self.assertEqual(
+                    full[key],
+                    base[key],
+                    f"the complete configuration sets {key} to something but its default",
                 )
 
 
@@ -304,6 +534,39 @@ class ArchitectureTests(unittest.TestCase):
                 any(f"`{name}`" in cell for cell in firsts),
                 f"docs/architecture.md has no row for nexkit/{name}",
             )
+
+
+class HowItWorksTests(unittest.TestCase):
+    def test_the_run_table_has_a_row_for_each_job_of_the_pipeline(self):
+        rows = {row[0]: row for row in table(HOW_IT_WORKS_PAGE, RUN_JOBS_HEADER)}
+        self.assertTrue(rows, "docs/how-it-works.md has no job table")
+        jobs = jobs_of((ROOT / ".github/workflows/pipeline.yml").read_text())
+        for name, job in sorted(jobs.items()):
+            self.assertIn(
+                f"`{name}`", rows, f"docs/how-it-works.md has no row for pipeline.yml job {name}"
+            )
+            named = dict(re.findall(r"`([\w-]+): (read|write)`", rows[f"`{name}`"][2]))
+            for permission, level in named.items():
+                self.assertEqual(
+                    level,
+                    permissions_of(job).get(permission),
+                    f"the row of {name} in docs/how-it-works.md differs from its workflow "
+                    f"on {permission}",
+                )
+        for key in rows:
+            self.assertIn(
+                key.strip("`"),
+                jobs,
+                f"docs/how-it-works.md has a row for {key}, which pipeline.yml does not define",
+            )
+        match = RUN_HEADING.search(HOW_IT_WORKS_PAGE.read_text())
+        self.assertIsNotNone(match, "docs/how-it-works.md has no heading 'One run, <number> jobs'")
+        self.assertEqual(
+            match.group(1),
+            NUMBERS[len(jobs)],
+            f"the heading of docs/how-it-works.md says {match.group(1)} jobs; "
+            f"pipeline.yml has {len(jobs)}",
+        )
 
 
 def decision(path):
@@ -393,6 +656,144 @@ class MaintenanceSkillsTests(unittest.TestCase):
                 if file == (DOCS / "delivery.md").resolve() and anchor in delivery
             ]
             self.assertTrue(sections, f"{task.name} links no section of docs/delivery.md")
+
+
+def block_after(path, marker):
+    """The first ```markdown block of `path` after the text `marker`, without its fences."""
+    text = path.read_text()
+    opening = text.index("```markdown\n", text.index(marker)) + len("```markdown\n")
+    return text[opening : text.index("\n```", opening)]
+
+
+def parts(text):
+    """The bold parts that start a line of `text`, except **Checks**, which a review writes last."""
+    return [part for part in re.findall(r"^\*\*([^*]+)\*\*", text, re.M) if part != "Checks"]
+
+
+def restart_delays():
+    """The restart delays of a command that did not run, as the pages word them: 30, 60 and 120
+    minutes."""
+    minutes = [int(delay.total_seconds() // 60) for delay in autopilot.AGAIN[1:]]
+    return ", ".join(str(m) for m in minutes[:-1]) + f" and {minutes[-1]} minutes"
+
+
+def full_plan():
+    """A plan that fills every field its layout shows, as a re-plan that split its issue."""
+    return {
+        "summary": "add() returns the sum of its arguments.",
+        "changes": ["add(a, b) returns a + b."],
+        "decisions": [{"decision": "add() keeps its name.", "reason": "Callers use it today."}],
+        "risks": ["Floats are out of scope."],
+        "acceptance_criteria": ["add(2, 3) returns 5."],
+        "checklist": [
+            {"number": 1, "item": "Docs change with the code", "how": "It updates the page."}
+        ],
+        "questions": [
+            {"question": "Which name?", "options": ["Keep add.", "Rename it."], "recommended": 1}
+        ],
+        "no_change": "The host answered 409, and a retry went through.",
+        "protected_paths": [".github/workflows/ci.yml"],
+        "too_large": True,
+        "split": [{"title": "Add the sum", "body": "Changes add().", "depends_on": []}],
+        "implementation_notes": ["Edit `calc.py`: `return a + b`."],
+        "revision": {"started_over": False, "changes": ["Added a question."]},
+    }
+
+
+def full_review():
+    """A review that fills every part its layout shows."""
+    return {
+        "status": "done",
+        "output": {
+            "verdict": "request_changes",
+            "summary": "One finding is blocking.",
+            "criteria": [
+                {"criterion": "add works", "status": "met", "test": "test_add", "evidence": "e"},
+                {"criterion": "floats add", "status": "unmet", "test": "", "evidence": "No test."},
+            ],
+            "findings": [
+                {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Floats are cut."}
+            ],
+            "previous_findings": [
+                {"finding": "Add a docstring.", "resolution": "resolved", "evidence": "calc.py:1"},
+                {"finding": "Keep the name.", "resolution": "unresolved", "severity": "blocking"},
+            ],
+            "checklist": [
+                {"item": "Docs change", "answer": "met", "evidence": "docs/calc.md"},
+                {"item": "No dependency", "answer": "not_met", "person": True, "evidence": "e"},
+            ],
+        },
+    }
+
+
+VALUES = (
+    ("agents-and-profiles.md", f"latest {prompt.MAX_COMMENTS} comments"),
+    ("agents-and-profiles.md", f"{prompt.BLOCK_LIMIT:,} characters"),
+    ("agents-and-profiles.md", f"first {prompt.SHORT:,} characters"),
+    (
+        "agents-and-profiles.md",
+        f"at most {context.MAX_LINKED} linked comments and "
+        f"{context.MAX_LINKED_ISSUES} linked issues",
+    ),
+    ("agents-and-profiles.md", f"up to {context.MAX_SKIPPED} of them"),
+    ("agents-and-profiles.md", f"last {textutil.OUTPUT_TAIL:,}"),
+    ("agents-and-profiles.md", f"last {prompt.FIX_OUTPUT_TAIL:,} characters"),
+    ("agents-and-profiles.md", f"last {prompt.REVIEW_OUTPUT_TAIL:,}"),
+    ("agents-and-profiles.md", f"one of {runtimes.SECRET_SLOTS} slots"),
+    ("agents-and-profiles.md", f"at most {config.MAX_STAGE_MINUTES} minutes"),
+    ("how-it-works.md", f"last {textutil.OUTPUT_TAIL:,} characters"),
+    ("how-it-works.md", f"at most {checks.RESULTS_LIMIT // 1_000_000} MB per round"),
+    ("how-it-works.md", f"{checks.JOB_RESULTS_FLOOR // 1_000_000} MB per job"),
+    ("work-without-a-command.md", f"last {github.DOWNLOAD_LIMIT // 1_000_000} MB"),
+    ("work-without-a-command.md", f"at most {NUMBERS[context.MAX_EARLIER]} of those parts"),
+    ("work-without-a-command.md", f"first {NUMBERS[context.MAX_EARLIER * 2]} blockers"),
+    ("work-without-a-command.md", f"at most {autopilot.ISSUES_LIMIT:,} of each"),
+    ("work-without-a-command.md", f"{restart_delays()} after its last start"),
+    ("failure-handling.md", f"{restart_delays()} after its last start"),
+)
+
+
+class LayoutTests(unittest.TestCase):
+    def test_the_plan_layout_lists_the_sections_the_code_writes(self):
+        block = block_after(STAGES, "**Plan.**")
+        listed = [
+            re.split(r"\s{2,}", line[4:])[0]
+            for line in block.splitlines()
+            if line.startswith("### ")
+        ]
+        written = [
+            line[4:]
+            for line in publish.render_plan(full_plan(), replan=True).splitlines()
+            if line.startswith("### ")
+        ]
+        self.assertEqual(
+            listed,
+            written,
+            f"docs/stages.md says the plan's sections are {listed}; "
+            f"publish.render_plan writes {written}",
+        )
+
+    def test_the_review_layout_lists_the_parts_the_code_writes(self):
+        listed = parts(block_after(STAGES, "The pull request review starts with"))
+        body = report.review_body(full_review(), [{"name": "test", "passed": True}])
+        written = parts(body.split("<details>", 1)[0])  # the evidence repeats some parts
+        self.assertEqual(
+            listed,
+            written,
+            f"docs/stages.md says the review's parts are {listed}; "
+            f"report.review_body writes {written}",
+        )
+
+
+class ValuesTests(unittest.TestCase):
+    def test_each_value_a_page_repeats_is_its_constant(self):
+        for name, phrase in VALUES:
+            with self.subTest(page=name, phrase=phrase):
+                # Lines are wrapped, so the page is compared with its spaces made one each.
+                text = " ".join((DOCS / name).read_text().split())
+                self.assertIn(
+                    phrase, text, f"docs/{name} does not say {phrase!r}, the code's value"
+                )
 
 
 if __name__ == "__main__":

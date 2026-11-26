@@ -78,7 +78,7 @@ their defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings, or after a required check failed and GitHub refused an automatic merge for it (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see *Failing checks the base branch fixed* under [How it works](how-it-works.md#stages). After a check failed the same way twice in a row, the next one is a [diagnosis round](how-it-works.md#failure-handling). |
+| `fix.max_auto_rounds` | `2` | Repair rounds NexKit may start by itself on one pull request after failing checks or blocking findings, or after a required check failed and GitHub refused an automatic merge for it (0 to 10). Rounds requested by people do not count. After failing checks, such a round first merges a base branch that has moved; see *Failing checks the base branch fixed* under [Plan, implement, fix and review](stages.md#stages). After a check failed the same way twice in a row, the next one is a [diagnosis round](failure-handling.md#failure-handling). |
 | `merge.auto` | `false` | Merge (squash) when every check passes and the AI review approves, unless it leaves a criterion for a person to confirm. Branch protection still applies. See [Automatic merge](#automatic-merge). |
 | `merge.after_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, that NexKit starts on the base branch after it merges. File names only, each listed once. An entry `{"workflow": "ci.yml", "every": 5}` starts it once 5 commits reached the base branch since its latest run there (1 to 1000; a file name alone is `"every": 1`). See *Running a workflow every few merges* under [Automatic merge](#automatic-merge). |
 | `conflicts.auto_resolve` | `false` | Start a fix round by itself when a NexKit pull request conflicts with its base branch. See [Conflicts with the base branch](#conflicts-with-the-base-branch). |
@@ -256,7 +256,7 @@ round starts, instead of being listed once per shard:
 
 **Many checks at once.** The checks after a fix round are compared with the checks before it
 to find those that failed the same way, which the next automatic fix round diagnoses (see
-[Failure handling](how-it-works.md#failure-handling)). The comparison reads at most the first
+[Failure handling](failure-handling.md#failure-handling)). The comparison reads at most the first
 300 failing results of the checks before the round, which 15 checks of 20 shards each reach.
 A check whose failing result comes after those is not compared, so it never makes the next
 automatic fix round a diagnosis round. NexKit keeps at most 150 checks that repeated, and a
@@ -274,7 +274,7 @@ characters, and the first 20 lines before them that report a failure. The fix pr
 the last 6,000 characters and the review prompt the last 3,000, each after the lines that
 report a failure (at most 20 in the fix prompt, 10 in the review prompt), and each names a
 file outside the working tree with all that NexKit kept (see
-[Agents](how-it-works.md#agents)). A failing end-to-end suite often leaves its real
+[Agents](agents-and-profiles.md#agents)). A failing end-to-end suite often leaves its real
 evidence in files instead. Name them in `results`, and the next fix round's agent
 reads them before it runs anything, rather than running the slow suite again to see the
 failure.
@@ -301,7 +301,7 @@ failure.
 - When a kept file is a JUnit XML report (a `.xml` file whose root is `testsuites` or
   `testsuite`), the check also records the test cases that failed or erred in it, which
   autopilot compares with the default branch's failing tests (see *Failing checks the
-  default branch has* under [How it works](how-it-works.md#stages)).
+  default branch has* under [Plan, implement, fix and review](stages.md#stages)).
 - Checks without `results` behave as before.
 
 The artifact can be downloaded by anyone who can read the run, like the rest of NexKit's
@@ -411,7 +411,7 @@ Each check also gets `NEXKIT_CHECK_VERIFIED_SHA`, in its own environment only: t
 the latest earlier round of the pull request on which that check passed with the same
 `run` command and the same `setup` commands. It counts rounds whose other checks failed, and rounds that NexKit stopped
 in their checks because the base branch moved (`superseded`, see *Stopping a round in its
-checks* under [How it works](how-it-works.md#work-without-a-command)), so after a stop or
+checks* under [Work NexKit starts by itself](work-without-a-command.md#work-without-a-command)), so after a stop or
 a failed round, a check whose paths did not change since it passed can skip its work
 while the others run again.
 
@@ -647,7 +647,7 @@ The review approves only when no acceptance criterion is unmet. When it could no
 criterion from the diff, its tests and the check results, NexKit does not merge: the
 round's comment lists the criteria for a person to confirm, and `notify` mentions its
 people. Once they are confirmed, approving the pull request is enough: NexKit merges it
-(see below). See [How it works](how-it-works.md#stages).
+(see below). See [Plan, implement, fix and review](stages.md#stages).
 
 After the merge, NexKit closes the issue the pull request implements as completed and
 comments a link to the pull request and the merge commit on it, unless GitHub closed it
@@ -700,7 +700,7 @@ pass alone from breaking the base branch together. Under it, checks count only o
 that contains the base branch's tip. So when the base branch moved while a round's agent
 worked, `publish` merges its tip after the round's commit when it merges cleanly, and the
 round checks a head that can merge (see *A base branch that moved while the agent worked*
-under [How it works](how-it-works.md#stages)). NexKit reads the rule from the branch rules
+under [Plan, implement, fix and review](stages.md#stages)). NexKit reads the rule from the branch rules
 API, or from classic branch protection when its token may read it. When the base branch
 moves later, while the round checks, its checks cannot lead to a merge any more. With
 `conflicts.auto_resolve`, NexKit then stops that round, brings the pull request up to date
@@ -708,7 +708,7 @@ with its base branch and runs its checks again; a move after the checks, which G
 refuses at the merge, is handled the same way. When that merge had no conflict and the pull request's
 own change is the one the review approved, the approval carries over and no review agent
 runs, so the rule costs a run of the checks, not a second AI review (see *A pull request
-brought up to date* under [How it works](how-it-works.md#stages)).
+brought up to date* under [Plan, implement, fix and review](stages.md#stages)).
 
 A merge by NexKit starts your `push` workflows on the base branch, like a person's merge.
 `merge.after_workflows` is a choice to save runners, not the only way to test the default
@@ -779,7 +779,7 @@ than it has sub-issues. NexKit then checks the parent's own parent. It works the
 whether a person or NexKit merged the work, and autopilot's sweeps close such a parent too,
 instead of asking a person to. Without the setting, autopilot lists a parent whose
 sub-issues are all closed under *Needs a person*. See
-[How it works](how-it-works.md#work-without-a-command).
+[Work NexKit starts by itself](work-without-a-command.md#work-without-a-command).
 
 The workflow must listen to `issues: closed`, as `nexkit init` writes it; `nexkit doctor`
 warns when it does not. With the setting off, a closed issue starts a short run that ends
@@ -1013,7 +1013,7 @@ every open issue in scope, in order, and starts the one command that moves it on
   workflow from its failed jobs' error annotations, so with a test reporter that writes
   JUnit files and annotates failures, a pull request that breaks another test in the same
   script gets its fix round at once. See *Failing checks the default branch has* under
-  [How it works](how-it-works.md#stages).
+  [Plan, implement, fix and review](stages.md#stages).
 - **Flaky runs.** A run that passed only when run again, and an older run that failed when
   a newer run had already started, are recorded under each of their failures, on one
   `bug` issue per failure, labelled `nexkit:flaky`, which mentions `notify` and is planned
@@ -1147,7 +1147,7 @@ right after turning autopilot on:
 gh workflow run nexkit.yml -f command=autopilot -f number=autopilot
 ```
 
-See [How it works](how-it-works.md#autopilot).
+See [Work NexKit starts by itself](work-without-a-command.md#autopilot).
 
 ### Issues from a workflow
 
@@ -1351,7 +1351,7 @@ requests conflict.
   `fix.max_auto_rounds`, and one per base commit until another round of the pull request
   ran.
 
-See [How it works](how-it-works.md#work-without-a-command).
+See [Work NexKit starts by itself](work-without-a-command.md#work-without-a-command).
 
 ## Usage limits
 
@@ -1366,7 +1366,7 @@ pauses the run, shows the reset time in its comment and keeps `nexkit/checks` an
 after the reset, once, with the same note; when the reset time is unknown, after
 `retry_minutes` (default 60). With `false`, the comment still names the limit and the
 reset time, and a person comments the command again. Each runtime says whether it reports
-such limits; `claude-code` does (see [How it works](how-it-works.md#usage-limits)).
+such limits; `claude-code` does (see [Work NexKit starts by itself](work-without-a-command.md#usage-limits)).
 
 When the reset is at most `wait_minutes` away (330, five and a half hours, by default),
 NexKit starts a run that waits for it and resumes the command within ten minutes of the
@@ -1392,7 +1392,7 @@ A run can stop for a reason outside the work: an overloaded or failing API, a lo
 connection or runner, a request that something in front of the API turned away before it
 reached the API (such as Cloudflare's challenge page for the runner's IP address), GitHub's
 errors while `publish` writes, or an agent session that gave no result that fits (see
-[Failure handling](how-it-works.md#failure-handling)). A key that the API itself refuses is
+[Failure handling](failure-handling.md#failure-handling)). A key that the API itself refuses is
 not among them: that stop waits for a person at once. Such an outage usually lasts minutes
 to hours, so NexKit runs the same command again, with the same
 note, after each wait of `wait_minutes` in turn: by default 15 minutes after the first stop,
@@ -1631,7 +1631,7 @@ ones, without choosing by hand on every issue.
   `when` text that is too wide. Check whether newer models make a profile's models out of
   date.
 
-[How it works](how-it-works.md#profiles) describes how triage chooses and how to change a
+[Agents and profiles](agents-and-profiles.md#profiles) describes how triage chooses and how to change a
 plan's profile.
 
 ## Logs and transcripts
@@ -1657,7 +1657,7 @@ shows what the log, run summary and artifacts contain and what is redacted.
 writes it, so the pipeline can read each agent's secrets by the names in
 `.nexkit/config.json`. It passes a job only the secrets of the agents its stages use, at
 most 8 per job, and each agent's CLI only its own; setup and check commands get none. See
-[How it works](how-it-works.md#agents) for what this does and does not isolate. An older
+[Agents and profiles](agents-and-profiles.md#agents) for what this does and does not isolate. An older
 workflow that lists secrets one by one can pass only `CLAUDE_CODE_OAUTH_TOKEN`,
 `ANTHROPIC_API_KEY`, `NEXKIT_APP_ID` and `NEXKIT_APP_PRIVATE_KEY`; `nexkit doctor` says when
 an agent or the App needs `secrets: inherit`.
@@ -1754,7 +1754,7 @@ such as a NexKit upgrade, is a person's pull request. Comment `/nexkit review` o
 account with write access. NexKit runs its checks and its review on the head and sets
 `nexkit/checks` and `nexkit/review`, as for a NexKit pull request, and reviews the protected
 paths like any other code. See *A person's pull request* under [How it
-works](how-it-works.md#stages).
+works](stages.md#stages).
 
 So a repository whose rules on the default branch require those two statuses needs no admin
 bypass for these changes: comment the command, read the review, and merge. A new commit needs

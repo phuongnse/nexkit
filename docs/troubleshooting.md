@@ -184,7 +184,7 @@ again and comment the command again.
 **"… returned a result that does not fit the … schema" or
 "stopped (error_max_structured_output_retries)".** The agent finished, but its structured
 result lacks a field or has one of the wrong type. NexKit handles it by itself (see [A
-result that does not fit](how-it-works.md#agents)): a field whose empty value means the
+result that does not fit](agents-and-profiles.md#agents)): a field whose empty value means the
 same as leaving it out takes that value, and otherwise NexKit asks the same session for its
 result alone, keeping its changes, and goes on when that result fits. When it does not,
 NexKit runs the command again, as after a transient error. A person is needed only when the
@@ -307,7 +307,7 @@ To tell the two apart, name the check's JUnit output in its `results` and let yo
 test reporter annotate failures.
 A pull request whose checks are not compared this way, because your CI runs its commands
 differently from NexKit's checks, gets the usual fix rounds (see *Failing checks the
-default branch has* under [How it works](how-it-works.md#stages)).
+default branch has* under [Plan, implement, fix and review](stages.md#stages)).
 
 **"The change modifies protected paths".** The agent edited `.github/` or `.nexkit/`, or a
 path you added to `protected_paths`. Make those changes yourself, then use `/nexkit fix`.
@@ -354,7 +354,7 @@ sweep, and the end of every NexKit run, starts the conflict round of a pull requ
 GitHub reports as conflicting while no round of it is queued or running, once for each
 commit of `main` and each round of the pull request that ended since; while GitHub has
 not worked out mergeability yet, the next sweep asks again (see *Resolving conflicts*
-under [How it works](how-it-works.md#work-without-a-command)). So a conflict that stays
+under [Work NexKit starts by itself](work-without-a-command.md#work-without-a-command)). So a conflict that stays
 has one of these reasons: the latest round is blocked on a conflict that needs your
 decision, which you answer with `/nexkit fix`; `conflicts.max_rounds` (3 by default)
 rounds are used up; or the conflict needs a manual merge (below). The `maintain` job's
@@ -423,7 +423,7 @@ Autopilot leaves it alone: opened by @someone, who cannot write to the repositor
 
 Read the run's comment and the `publish` job's log. A server error, a rate limit or a
 dropped connection is not the cause: `publish` already tried four times, and NexKit ran
-the command once more (see [Failure handling](how-it-works.md#failure-handling)). When the
+the command once more (see [Failure handling](failure-handling.md#failure-handling)). When the
 base branch was force-pushed, the same `/nexkit go` implements the plan again on it (see
 above). Otherwise find the cause, such as a branch rule or a missing App permission,
 before posting `/nexkit go` again: it runs the whole implement round again, and stops the
@@ -575,7 +575,7 @@ rather than copy the rules they hold.
 ### A diagnosis round stopped as `blocked`
 
 It found no cause in the evidence (see [Diagnosis
-rounds](how-it-works.md#failure-handling)). Do not pick a cause without evidence. Read
+rounds](failure-handling.md#failure-handling)). Do not pick a cause without evidence. Read
 what it found, the run log, the result files and the CI evidence the round downloaded;
 its *Collect issue context* log lists it. When they show the cause, post
 `/nexkit fix <the cause, with the evidence>`. Otherwise answer its question, or find the
@@ -584,7 +584,7 @@ cause first.
 ### A round failed because of its plan
 
 When the run log or the result files show that the plan asked for the wrong thing, change
-the plan as *Changing a plan* under [Stages](how-it-works.md#stages) says. For a
+the plan as *Changing a plan* under [Stages](stages.md#stages) says. For a
 `/nexkit go` that stopped, comment the change on the issue: with autopilot, the next sweep
 plans again with it; without, comment `/nexkit plan <what to change>`. On a pull request,
 post `/nexkit fix <what to change>`.
@@ -604,7 +604,7 @@ code outside the protected paths, make the protected part first, then comment
 ### The plan comment says triage failed
 
 The plan ran on the previous plan's profile, or on `default_profile` (see
-[Profiles](how-it-works.md#profiles)). When that profile is wrong for the issue, comment
+[Profiles](agents-and-profiles.md#profiles)). When that profile is wrong for the issue, comment
 `/nexkit plan Use the <profile> profile`.
 
 ### The plan names a profile that no longer exists
@@ -703,7 +703,7 @@ A sweep marked the run as ended without a report and started it again, at once a
 30, 60 and 120 minutes after the last start, or once more only when its agent had run to
 its end, and each run ended the same way; or it was
 a person's command, which NexKit never starts again (see [Runs that never
-end](how-it-works.md#autopilot)). Read the workflow runs for why they ended, such as
+end](work-without-a-command.md#autopilot)). Read the workflow runs for why they ended, such as
 cancelled runs, lost runners or jobs that GitHub never created, and check
 [githubstatus.com](https://www.githubstatus.com) for an outage of GitHub Actions. Once
 Actions works again, post the same command once more. When it ends without a report
@@ -720,7 +720,7 @@ GitHub Actions (see ["Autopilot does not start an issue"](#agents)). A continued
 an automatic round that a round started, whose run has not started after
 `lost_after_minutes`, start once more, and wait for a person when that one does not start
 either; a round from before NexKit recorded what it started waits six hours (see [Runs
-that never end](how-it-works.md#autopilot)). Read the dispatched run in the Actions tab,
+that never end](work-without-a-command.md#autopilot)). Read the dispatched run in the Actions tab,
 or the reply on the issue or pull request, for why it did not run, such as a refusal by
 `route`, a run cancelled in the queue, or [an outage](https://www.githubstatus.com). Once
 the cause is gone, post the command yourself, once.

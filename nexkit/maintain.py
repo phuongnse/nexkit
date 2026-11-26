@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 from . import autopilot, progress
 from .autopilot import in_repository
-from .config import DEFAULTS, setting
+from .config import CLAUDE_AGENT, DEFAULTS, setting
 from .github import GitHubError
 from .route import (
     APPROVAL,
@@ -1116,8 +1116,12 @@ def resolve_conflicts(
     lines, rules = [], []
 
     # What the engine is asked, whatever the caller read: the round it starts is automatic
-    # and within `max_rounds`, so it decides with those policies.
-    asked = {**(cfg or DEFAULTS), "conflicts": {"auto_resolve": True, "max_rounds": max_rounds}}
+    # and within `max_rounds`, so it decides with those policies. The defaults declare no agent,
+    # and the engine's budgets read each stage's agent.
+    asked = {
+        **(cfg or {**DEFAULTS, "agents": {"claude": CLAUDE_AGENT}}),
+        "conflicts": {"auto_resolve": True, "max_rounds": max_rounds},
+    }
 
     def strict():
         # The rule of `base`, read once, and only for a round in its checks.

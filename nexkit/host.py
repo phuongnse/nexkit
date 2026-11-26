@@ -151,6 +151,7 @@ import re
 import time
 
 from . import autopilot, engine, first_state, item_state, protocol, usage
+from . import config as configuration
 from .checks import failing_signatures
 from .engine.machine import RUNS
 from .protocol.size import LONGEST, MOST
@@ -231,6 +232,12 @@ def policies(cfg):
         "splitDepth": autopilot.MAX_DEPTH,
         "retryWaits": list(cfg["retry"]["wait_minutes"]),
         "lostWaits": [int(wait.total_seconds() // 60) for wait in autopilot.AGAIN] if taken else [],
+        # Triage has a time only when there are profiles to choose from.
+        "budgets": {
+            stage: {"seconds": configuration.stage_minutes(cfg, stage) * 60}
+            for stage in ("triage", "plan", "implement", "fix", "review")
+            if stage == "fix" or stage in cfg["stages"]
+        },
     }
 
 

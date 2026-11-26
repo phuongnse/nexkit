@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/calls/prompt.schema.json",
-  "$comment": "A prompt call: the prompt of one stage, written from the texts the host fetched for it, by the kinds runAgent names. `texts` is the absolute path, POSIX or Windows, of the folder outside the working tree where the host keeps the whole texts a prompt shortens, which the agent reads; null when it reads no files. With `unfit`, why a session's result did not fit its schema, the answer is the prompt that asks the same session for its result alone. Beside the host's policies, `checklist`, `profiles` and `budgets` feed the prompts.",
+  "$comment": "A prompt call: the prompt of one stage, written from the texts the host fetched for it, by the kinds runAgent names. `texts` is the absolute path, POSIX or Windows, of the folder outside the working tree where the host keeps the whole texts a prompt shortens, which the agent reads; null when it reads no files. With `unfit`, why a session's result did not fit its schema, the answer is the prompt that asks the same session for its result alone. Beside the host's policies, `checklist` and `profiles` feed the prompts.",
   "type": "object",
   "required": [
     "protocol",
@@ -36,7 +36,7 @@
       "$ref": "#/$defs/inputs"
     },
     "policies": {
-      "$comment": "The host's policies, as every call has them, and three that only the prompts read so far: `checklist`, the items the plan and the review answer; `profiles`, the profiles triage chooses from, each name with an object whose `when` is a string; and `budgets`, what each stage may spend, by stage. A plan needs `budgets.implement.seconds` as an integer, the implement stage's time, which its prompt names; the engine refuses a plan without it, and a profile without a string `when`.",
+      "$comment": "The host's policies, as every call has them, and two that only the prompts read so far: `checklist`, the items the plan and the review answer, and `profiles`, the profiles triage chooses from, each name with an object whose `when` is a string. A plan needs `budgets.implement.seconds` as an integer, the implement stage's time, which its prompt names; the engine refuses a plan without it, and a profile without a string `when`.",
       "$ref": "../policies.schema.json",
       "properties": {
         "checklist": {
@@ -65,126 +65,6 @@
         },
         "profiles": {
           "type": "object"
-        },
-        "budgets": {
-          "type": "object",
-          "properties": {
-            "triage": {
-              "type": "object",
-              "properties": {
-                "tokens": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "seconds": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              }
-            },
-            "plan": {
-              "type": "object",
-              "properties": {
-                "tokens": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "seconds": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              }
-            },
-            "implement": {
-              "type": "object",
-              "properties": {
-                "tokens": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "seconds": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              }
-            },
-            "fix": {
-              "type": "object",
-              "properties": {
-                "tokens": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "seconds": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              }
-            },
-            "review": {
-              "type": "object",
-              "properties": {
-                "tokens": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "seconds": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              }
-            }
-          }
         }
       }
     },

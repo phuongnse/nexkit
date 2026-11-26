@@ -818,6 +818,10 @@
         "lostWaits": {
           "$comment": "Named so that the state knows every policy, but the engine never keeps it: it reads `lostWaits` as the host gives it at each loss.",
           "$ref": "policies.schema.json#/properties/lostWaits"
+        },
+        "budgets": {
+          "$comment": "Named so that the state knows every policy, but the engine never keeps it: it reads `budgets` as the host gives it at each step.",
+          "$ref": "policies.schema.json#/properties/budgets"
         }
       },
       "required": [],

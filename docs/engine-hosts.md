@@ -12,7 +12,7 @@ policies a host decides, and how the GitHub host and an application carry out th
 A runner runs one agent session for one stage. Its contract is part of the protocol: `runAgent`
 gives it the stage, the version of the change it starts from, the stage's access, the prompt that
 `prompt` writes from the inputs it names, the name of the stage's result schema, the agent, the
-model and effort, the budget left in tokens, time and money, a session id to ask the same session
+model and effort, the budget in tokens, time, model calls and money, a session id to ask the same session
 again, and for a fix round the checks it looks into first (`diagnose`). Until the protocol holds the
 checklist and agents policies, the host adds to that schema what they add: a checklist field, and
 the names of triage's profiles. Its result gives the stage's result, the tokens as input, cached and
@@ -21,7 +21,17 @@ transient, whether it ran out of time, whether no result fit the schema, and the
 change it produced.
 
 Each stage has its access, which the runner enforces: none for triage, read for plan and review,
-write for implement and fix. There are two kinds of runner:
+write for implement and fix. A limit on what work costs belongs to one of three places, each where
+its facts are:
+
+- **The runner** decides a limit on one session, since only it sees each model call as it
+  happens. Its result says that the run stopped at it. GitHub's `stages.*.timeout_minutes` is one.
+- **The engine** decides a limit on one item across its stages and rounds, since stopping an item
+  is a move between states. An item's own budget is not in the protocol yet.
+- **The host** decides a limit on many items or an account, such as a quota or who pays for a
+  key. It refuses to start work, or sends a `stopped` event.
+
+There are two kinds of runner:
 
 - **An agent CLI in a workspace:** Claude Code today, and Codex and Gemini when their runtimes
   are added. The agent works on files, and the host publishes them. NexKit 6's `Runtime` and
@@ -49,12 +59,12 @@ shapes, and a host shows them in its own words.
 
 A host gives the engine its policies in its configuration. Each has a default, and the
 protocol's `policies.schema.json` names it, as the first column does below. The policies with no
-name there, start, budgets, usage limits, agents and
-the checklist, are not in the protocol yet: they come into it as the
+name there, start, usage limits, agents and the
+checklist, are not in the protocol yet: they come into it as the
 engine takes over the decisions that read them, and until then the host applies them itself. The
-`prompt` call already reads three of them beside the host's policies, as its schema names them:
-`checklist`, the items the plan and the review answer; `profiles`, the profiles triage chooses
-from; and `budgets`, of which the plan prompt names the implement stage's time. The `sweep` call
+`prompt` call already reads two of them beside the host's policies, as its schema names them:
+`checklist`, the items the plan and the review answer; and `profiles`, the profiles triage chooses
+from. Its plan prompt also names the implement stage's time from `budgets`. The `sweep` call
 reads two more beside them, as its schema names them: `maxParallel`, the most items that run at
 once, and `priority`, the labels that go first. Neither is in `policies.schema.json`, so no state
 document keeps them.
@@ -69,7 +79,7 @@ document keeps them.
 | Fix rounds (`fixRounds`) | 0–10, and which rounds count | 2: rounds a person asked for, resumed, retried and stopped rounds do not count | 3; a request for changes and a retry start the count again |
 | When fix rounds run out (`whenRoundsRunOut`) | `person`, `failed` | `person` | `person`: the draft is ready with its open findings |
 | Conflicts (`conflicts`, `conflictRounds`) | `person`, `resolve`, `redo`, by who accepted; the most rounds that resolve or redo, 1–10 | `person`; `resolve` with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
-| Budgets | Tokens, time, money and model calls, per item and per stage | Time and money per stage | Tokens and time per request, model calls per stage |
+| Budgets (`budgets`) | Tokens, seconds and model calls per stage; an item's own budget is not in the protocol yet | Each stage's `stages.*.timeout_minutes` as its seconds; `max_budget_usd` stays the runner's own | Tokens and time per request, model calls per stage |
 | Retries (`retryWaits`) | Waits in minutes after a transient stop, at most 10, each 0–330 | `retry.wait_minutes` | The lease of a claimed request |
 | Lost work (`lostWaits`) | Waits in minutes before lost agent work or checks start again, at most 10, each 0–330; a person after the last, or after one more start when its agent ran | None; at once, then 30, 60 and 120 minutes with autopilot | None |
 | Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |
